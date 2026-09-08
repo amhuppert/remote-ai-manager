@@ -3,6 +3,12 @@
 import { useState } from "react";
 import { z } from "zod";
 
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/Collapsible";
+
 import { ApiCallError } from "@/lib/api/errors";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
@@ -55,6 +61,7 @@ export default function SpecPostLaunchCapture({
   detail: SpecDetailView;
   projectName: string;
 }): React.JSX.Element | null {
+  const [expanded, setExpanded] = useState(false);
   const [outcomePath, setOutcomePath] = useState<"discovery" | "replan" | null>(
     null,
   );
@@ -75,44 +82,49 @@ export default function SpecPostLaunchCapture({
   if (execution === undefined) return null;
 
   return (
-    <PostLaunchCapturePaths
-      projectName={projectName}
-      slug={detail.spec.slug}
-      executionId={execution.workflowExecutionId}
-      state="running"
-      capturePending={capture.isPending}
-      captureOutcomePath={outcomePath}
-      captureReceipt={capture.data ?? null}
-      captureFailure={captureFailure(capture.error)}
-      onCapture={(path, request) => {
-        capture.reset();
-        setOutcomePath(path);
-        logger.info("spec_studio.discovery.capture_requested", {
-          specId: detail.spec.id,
-          executionId: execution.id,
-          blocking: request.blockingReason !== undefined,
-        });
-        capture.mutate(request, {
-          onSuccess: (receipt) => {
-            logger.info("spec_studio.discovery.capture_completed", {
-              specId: detail.spec.id,
-              executionId: receipt.discovery.executionId,
-              discoveryId: receipt.discovery.id,
-              restartRequired: receipt.restartRequired,
-              replacementAttemptId:
-                receipt.replacement?.replacementAttemptId ?? null,
-            });
-          },
-          onError: (error) => {
-            logger.warn("spec_studio.discovery.capture_failed", {
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <CollapsibleTrigger>Record discovered work or replan</CollapsibleTrigger>
+      <CollapsibleContent forceMount hidden={!expanded}>
+        <PostLaunchCapturePaths
+          projectName={projectName}
+          slug={detail.spec.slug}
+          executionId={execution.workflowExecutionId}
+          state="running"
+          capturePending={capture.isPending}
+          captureOutcomePath={outcomePath}
+          captureReceipt={capture.data ?? null}
+          captureFailure={captureFailure(capture.error)}
+          onCapture={(path, request) => {
+            capture.reset();
+            setOutcomePath(path);
+            logger.info("spec_studio.discovery.capture_requested", {
               specId: detail.spec.id,
               executionId: execution.id,
               blocking: request.blockingReason !== undefined,
-              error: error.message,
             });
-          },
-        });
-      }}
-    />
+            capture.mutate(request, {
+              onSuccess: (receipt) => {
+                logger.info("spec_studio.discovery.capture_completed", {
+                  specId: detail.spec.id,
+                  executionId: receipt.discovery.executionId,
+                  discoveryId: receipt.discovery.id,
+                  restartRequired: receipt.restartRequired,
+                  replacementAttemptId:
+                    receipt.replacement?.replacementAttemptId ?? null,
+                });
+              },
+              onError: (error) => {
+                logger.warn("spec_studio.discovery.capture_failed", {
+                  specId: detail.spec.id,
+                  executionId: execution.id,
+                  blocking: request.blockingReason !== undefined,
+                  error: error.message,
+                });
+              },
+            });
+          }}
+        />
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

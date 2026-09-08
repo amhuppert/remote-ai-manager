@@ -330,7 +330,7 @@ export function SpecDetailContent({
     ),
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
-  const gateHref = `${detailHref}#gate-policy`;
+  const gateHref = `${detailHref}?view=gate-policy`;
   const reviewHref = `${detailHref}?view=${
     (detail.currentRevision ?? detail.currentApprovedRevision)?.revision
       .authoringStage === "design"
@@ -1103,6 +1103,7 @@ export function resolveRequestedDetailView(
     rawView === "requirements" ||
     rawView === "design" ||
     rawView === "delivery" ||
+    rawView === "gate-policy" ||
     rawView === "history"
   ) {
     return rawView;

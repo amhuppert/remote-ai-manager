@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveRequestedDetailView } from "./SpecDetailPage";
 import { initialDetailViewForDeepLink } from "./SpecDetailViews";
 
-describe("Spec Studio five-surface reachability", () => {
+describe("Spec Studio surface reachability", () => {
   it.each([
     ["R1", "requirements"],
     ["R1.1", "requirements"],
@@ -18,12 +18,16 @@ describe("Spec Studio five-surface reachability", () => {
     expect(initialDetailViewForDeepLink(handle, "native-sdd")).toBe(view);
   });
 
-  it.each(["overview", "requirements", "design", "delivery", "history"])(
-    "accepts the selected %s destination",
-    (view) => {
-      expect(resolveRequestedDetailView(view, null, "native-sdd")).toBe(view);
-    },
-  );
+  it.each([
+    "overview",
+    "requirements",
+    "design",
+    "delivery",
+    "gate-policy",
+    "history",
+  ])("accepts the selected %s destination", (view) => {
+    expect(resolveRequestedDetailView(view, null, "native-sdd")).toBe(view);
+  });
 
   it.each([
     "review",

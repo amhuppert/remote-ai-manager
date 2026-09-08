@@ -17,7 +17,7 @@ import type {
 } from "@/lib/specs/schemas";
 import { useSpecLintQuery, useSpecPlanReviewQuery } from "@/lib/specs/queries";
 
-import SpecControlsPanel from "./SpecControls";
+import SpecControlsPanel, { SpecGatePolicyPanel } from "./SpecControls";
 import SpecCriterionEvidence from "./SpecCriterionEvidence";
 import SpecDeliveryBridge from "./SpecDeliveryBridge";
 import SpecDeliveryDeltaPanel from "./SpecDeliveryDeltaPanel";
@@ -35,6 +35,7 @@ export type DetailView =
   | "requirements"
   | "design"
   | "delivery"
+  | "gate-policy"
   | "history";
 
 const views: ReadonlyArray<{ view: DetailView; label: string }> = [
@@ -42,6 +43,7 @@ const views: ReadonlyArray<{ view: DetailView; label: string }> = [
   { view: "requirements", label: "Requirements" },
   { view: "design", label: "Design" },
   { view: "delivery", label: "Delivery" },
+  { view: "gate-policy", label: "Gate policy" },
   { view: "history", label: "History" },
 ];
 
@@ -99,7 +101,7 @@ export default function SpecDetailViews({
         <div className="mt-md">
           {overviewBanner}
           {children}
-          <div className="mx-auto mt-xl max-w-[1000px]">
+          <div className="mt-xl">
             <SpecControlsPanel detail={detail} projectName={projectName} />
           </div>
         </div>
@@ -124,25 +126,29 @@ export default function SpecDetailViews({
         />
       )}
       {view === "delivery" && (
-        <div className="mx-auto mt-lg grid max-w-[1100px] gap-xl">
+        <div className="mt-lg grid gap-xl">
           <SurfaceIntro
             title="Delivery"
-            description="Configure, review, approve, and launch the managed definition in Workflow Builder."
+            description="Track verified delivery, inspect remaining scope, and manage the next plan."
           />
-          <SpecDeliveryBridge detail={detail} projectName={projectName} />
+          <SpecDeliveryDeltaPanel
+            plan={
+              <SpecDeliveryBridge detail={detail} projectName={projectName} />
+            }
+            detail={detail}
+            projectName={projectName}
+            slug={detail.spec.slug}
+          />
           <SpecPostLaunchCapture detail={detail} projectName={projectName} />
-          <div>
-            <h3 className="m-0 font-display text-[0.9rem] font-bold text-text-primary">
-              Next plan seed
-            </h3>
-            <p className="mt-xs mb-md font-mono text-[0.7rem] text-text-tertiary">
-              The delivery delta below is the scope basis for the next plan.
-            </p>
-            <SpecDeliveryDeltaPanel
-              projectName={projectName}
-              slug={detail.spec.slug}
-            />
-          </div>
+        </div>
+      )}
+      {view === "gate-policy" && (
+        <div className="mt-lg grid gap-xl">
+          <SurfaceIntro
+            title="Gate policy"
+            description="Set the review requirements for authoring, execution, and delivery."
+          />
+          <SpecGatePolicyPanel detail={detail} projectName={projectName} />
         </div>
       )}
       {view === "history" && (

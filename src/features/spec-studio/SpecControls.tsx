@@ -179,7 +179,7 @@ export function PolicyDialog({
         ))}
       </RadioGroup>
 
-      <div className="mt-md grid gap-sm">
+      <div className="mt-xl grid grid-cols-2 gap-lg max-768:grid-cols-1">
         {ACTIVE_GATES.map((gate) => (
           <FormGroup key={gate}>
             <FormLabel htmlFor={`gate-policy-${gate}`}>
@@ -437,15 +437,6 @@ export default function SpecControlsPanel({
   detail: SpecDetailView;
   projectName: string;
 }): React.JSX.Element {
-  const changePolicy = useSpecActionMutation<
-    { proposedPolicy: SpecGatePolicy; hardConfirmed: boolean },
-    z.infer<typeof specPolicyChangeResultSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "change-policy",
-    specPolicyChangeResultSchema,
-  );
   const rename = useSpecActionMutation<
     { slug: string; name?: string },
     RenameSpecResultView
@@ -466,7 +457,6 @@ export default function SpecControlsPanel({
 
   return (
     <div className="grid gap-xl">
-      <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
       <RenameSpecControl
         currentSlug={detail.spec.slug}
         currentName={detail.spec.name}
@@ -476,21 +466,6 @@ export default function SpecControlsPanel({
           rename.mutate(input, {
             onSuccess: () =>
               logger.info("spec_studio.identity.changed", {
-                specId: detail.spec.id,
-              }),
-          })
-        }
-      />
-      <PolicyDialog
-        key={JSON.stringify(detail.spec.gatePolicy)}
-        currentPolicy={detail.spec.gatePolicy}
-        pending={changePolicy.isPending}
-        error={changePolicy.error?.message ?? null}
-        openDraft={openDraftForPolicyImpact(detail)}
-        onChangePolicy={(input) =>
-          changePolicy.mutate(input, {
-            onSuccess: () =>
-              logger.info("spec_studio.policy.changed", {
                 specId: detail.spec.id,
               }),
           })
@@ -511,6 +486,53 @@ export default function SpecControlsPanel({
           )
         }
       />
+    </div>
+  );
+}
+
+export function SpecGatePolicyPanel({
+  detail,
+  projectName,
+}: {
+  detail: SpecDetailView;
+  projectName: string;
+}): React.JSX.Element {
+  const changePolicy = useSpecActionMutation<
+    { proposedPolicy: SpecGatePolicy; hardConfirmed: boolean },
+    z.infer<typeof specPolicyChangeResultSchema>
+  >(
+    projectName,
+    detail.spec.slug,
+    "change-policy",
+    specPolicyChangeResultSchema,
+  );
+
+  if (detail.spec.abandonedAt !== null) {
+    return (
+      <SpecReadOnlyNotice
+        reason={detail.spec.abandonedReason}
+        context={`Recorded gate preset: ${presetLabels[detail.spec.gatePolicy.preset]}.`}
+      />
+    );
+  }
+  return (
+    <div className="grid gap-xl">
+      <PolicyDialog
+        key={JSON.stringify(detail.spec.gatePolicy)}
+        currentPolicy={detail.spec.gatePolicy}
+        pending={changePolicy.isPending}
+        error={changePolicy.error?.message ?? null}
+        openDraft={openDraftForPolicyImpact(detail)}
+        onChangePolicy={(input) =>
+          changePolicy.mutate(input, {
+            onSuccess: () =>
+              logger.info("spec_studio.policy.changed", {
+                specId: detail.spec.id,
+              }),
+          })
+        }
+      />
+      <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
     </div>
   );
 }

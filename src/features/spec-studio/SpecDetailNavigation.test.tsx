@@ -25,7 +25,7 @@ function Harness(): React.JSX.Element {
 }
 
 describe("SpecDetailViews navigation", () => {
-  it("offers exactly five destinations in one navigation row", () => {
+  it("offers gate policy alongside the document destinations", () => {
     render(<Harness />);
 
     const navigation = screen.getByRole("navigation", { name: "Spec views" });
@@ -33,10 +33,30 @@ describe("SpecDetailViews navigation", () => {
       within(navigation)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["Overview", "Requirements", "Design", "Delivery", "History"]);
+    ).toEqual([
+      "Overview",
+      "Requirements",
+      "Design",
+      "Delivery",
+      "Gate policy",
+      "History",
+    ]);
     expect(
       screen.queryByRole("navigation", { name: "Spec inspection" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps gate policy on its own screen", async () => {
+    render(<Harness />);
+    expect(
+      screen.queryByRole("radiogroup", { name: "Gate policy preset" }),
+    ).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Gate policy" }));
+    expect(
+      screen.getByRole("radiogroup", { name: "Gate policy preset" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Overview document")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Abandon spec" })).toBeNull();
   });
 
   it("selects each destination without introducing a second tab row", async () => {

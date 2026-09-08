@@ -61,6 +61,9 @@ describe("SpecPostLaunchCapture", () => {
       />,
     );
 
+    await userEvent.click(
+      screen.getByRole("button", { name: "Record discovered work or replan" }),
+    );
     const surface = screen.getByRole("region", { name: "Post-launch capture" });
     const discovery = within(surface).getByRole("region", {
       name: "Non-blocking discovery",
@@ -74,6 +77,12 @@ describe("SpecPostLaunchCapture", () => {
         name: "Discovery instructions",
       }),
       "Include it in the next delivery delta.",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Record discovered work or replan" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Record discovered work or replan" }),
     );
     await userEvent.click(
       within(discovery).getByRole("button", { name: "Record discovery" }),

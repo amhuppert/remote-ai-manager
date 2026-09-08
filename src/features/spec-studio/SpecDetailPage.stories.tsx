@@ -22,6 +22,7 @@ import {
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
 import { reviewView } from "./delivery-plan-review.fixtures";
+import { deliveryDashboardFixture } from "./SpecDeliveryScope.fixtures";
 import { SpecDetailContent } from "./SpecDetailPage";
 
 type SpecDetailContentProps = ComponentProps<typeof SpecDetailContent>;
@@ -65,6 +66,7 @@ function createStoryQueryClient(
       ? reviewView({
           attempt: {
             status: phase === "approved" ? "approved" : "launched",
+            launchedExecutionId: detail.executions.at(-1)?.id ?? null,
           },
           approval: {
             snapshotId: "snapshot-2",
@@ -75,9 +77,27 @@ function createStoryQueryClient(
           },
         })
       : null;
+  if (deliveryPlan && detail.currentApprovedRevision) {
+    deliveryPlan.attempt.pinnedRevisionId =
+      detail.currentApprovedRevision.revision.id;
+    deliveryPlan.document.binding.dispositions =
+      detail.currentApprovedRevision.elements
+        .filter((entry) => entry.element.kind === "criterion")
+        .map((entry) => ({
+          criterionElementId: entry.element.id,
+          disposition: "in_scope",
+          deliveredByExecutionId: null,
+        }));
+  }
   client.setQueryData(
     specQueries.planReview(projectName, detail.spec.slug).queryKey,
     deliveryPlan,
+  );
+
+  const dashboard = deliveryDashboardFixture();
+  client.setQueryData(
+    specQueries.delta(projectName, detail.spec.slug).queryKey,
+    dashboard.projection,
   );
 
   const snapshots = [
@@ -846,11 +866,25 @@ export const History: Story = {
 };
 
 export const ActiveDelivery: Story = {
-  args: { view: "delivery", detail: detailFor("executing") },
+  args: {
+    view: "delivery",
+    detail: {
+      ...detailFor("executing"),
+      revisions: deliveryDashboardFixture().detail.revisions,
+      status: {
+        ...detailFor("executing").status,
+        coverage: deliveryDashboardFixture().detail.status.coverage,
+        delivery: deliveryDashboardFixture().detail.status.delivery,
+      },
+      currentRevision: deliveryDashboardFixture().detail.currentRevision,
+      currentApprovedRevision:
+        deliveryDashboardFixture().detail.currentApprovedRevision,
+    },
+  },
 };
 
 export const GatePolicy: Story = {
-  args: { view: "overview", detail: detailFor("approved") },
+  args: { view: "gate-policy", detail: detailFor("approved") },
 };
 
 export const QuestionsAndAssumptions: Story = {

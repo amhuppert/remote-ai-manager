@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DeliveryDeltaProjection } from "@/lib/specs/delivery-delta";
 
+import userEvent from "@testing-library/user-event";
+import { specElementReaderDetailFixture } from "./SpecElementReader.fixtures";
+
 import SpecDeliveryDeltaPanel from "./SpecDeliveryDeltaPanel";
 
 function projection(
@@ -94,7 +97,11 @@ function renderPanel(body: DeliveryDeltaProjection | "error"): {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <SpecDeliveryDeltaPanel projectName="command-center" slug="native-sdd" />
+      <SpecDeliveryDeltaPanel
+        detail={specElementReaderDetailFixture()}
+        projectName="command-center"
+        slug="native-sdd"
+      />
     </QueryClientProvider>,
   );
   return { requested };
@@ -114,22 +121,22 @@ describe("SpecDeliveryDeltaPanel", () => {
     expect(requested[0]).toBe("/api/specs/command-center/native-sdd/delta");
   });
 
-  it("shows the compared execution and every class the server classified", async () => {
+  it("shows the delivery baseline and readable server classifications", async () => {
     renderPanel(projection());
 
     expect(
-      await screen.findByText(
-        /compared against execution exec-new, which pinned revision 2/,
-      ),
+      await screen.findByText(/Compared with delivered revision 2/),
     ).toBeVisible();
-    expect(screen.getByText("hard-stale 1")).toBeVisible();
-    expect(screen.getByText("delivered & fresh 0")).toBeVisible();
-    expect(screen.getByText("amended 1")).toBeVisible();
+    expect(screen.getByText("Needs revalidation")).toBeVisible();
+    expect(screen.getByText("Delivered & fresh")).toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: /Spec changes/ }));
+    expect(screen.getByText("Amended")).toBeVisible();
   });
 
   it("surfaces the carry-forward advisory with its remedy", async () => {
     renderPanel(projection());
 
+    await userEvent.click(await screen.findByText(/Carry-forward advisories/));
     expect(
       await screen.findByText(
         "R1.1 changed since the delivery that proved it, so re-prove it.",
@@ -142,12 +149,10 @@ describe("SpecDeliveryDeltaPanel", () => {
       projection({ base: null, comparedExecution: null, advisories: [] }),
     );
 
-    expect(
-      await screen.findByText(/has no delivered execution to compare against/),
-    ).toBeVisible();
+    expect(await screen.findByText(/No delivered execution yet/)).toBeVisible();
   });
 
-  it("points at the CLI when the projection cannot be read", async () => {
+  it("offers retry when the projection cannot be read", async () => {
     renderPanel("error");
 
     expect(

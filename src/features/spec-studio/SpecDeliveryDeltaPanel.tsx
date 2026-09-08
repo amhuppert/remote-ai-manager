@@ -1,12 +1,10 @@
 "use client";
 
-import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
-import type {
-  CriterionDeliveryClass,
-  DeliveryDeltaElementClass,
-  DeliveryDeltaProjection,
-} from "@/lib/specs/delivery-delta";
-import { useSpecDeltaQuery } from "@/lib/specs/queries";
+import type { ReactNode } from "react";
+import { Button } from "@/components/ui/Button";
+import { useSpecDeltaQuery, type SpecDetailView } from "@/lib/specs/queries";
+import { cn } from "@/lib/ui/cn";
+import SpecDeliveryScope from "./SpecDeliveryScope";
 
 /**
  * The delivery delta on the execution surface: what the last delivery no
@@ -15,190 +13,61 @@ import { useSpecDeltaQuery } from "@/lib/specs/queries";
  * derivation here is exactly how a Studio counter drifts from gate truth.
  */
 
-const ELEMENT_CLASS_ORDER: readonly DeliveryDeltaElementClass[] = [
-  "added",
-  "amended",
-  "removed",
-  "unchanged",
-];
-
-const CRITERION_CLASS_ORDER: readonly CriterionDeliveryClass[] = [
-  "hard_stale",
-  "soft_stale",
-  "never_delivered",
-  "deferred",
-  "waived",
-  "delivered_and_fresh",
-];
-
-const ELEMENT_CLASS_TONE: Record<DeliveryDeltaElementClass, StatusChipTone> = {
-  added: "cyan",
-  amended: "amber",
-  removed: "red",
-  unchanged: "neutral",
-};
-
-const CRITERION_CLASS_TONE: Record<CriterionDeliveryClass, StatusChipTone> = {
-  hard_stale: "red",
-  soft_stale: "amber",
-  never_delivered: "cyan",
-  deferred: "neutral",
-  waived: "violet",
-  delivered_and_fresh: "green",
-};
-
-const CRITERION_CLASS_LABEL: Record<CriterionDeliveryClass, string> = {
-  hard_stale: "hard-stale",
-  soft_stale: "soft-stale",
-  never_delivered: "never delivered",
-  deferred: "deferred",
-  waived: "waived",
-  delivered_and_fresh: "delivered & fresh",
-};
-
-/** Studio shows every row; the 30-row cap is the CLI's readability bound. */
-function ClassRow({
-  label,
-  tone,
-  count,
-  handles,
-}: {
-  label: string;
-  tone: StatusChipTone;
-  count: number;
-  handles: readonly string[];
-}): React.JSX.Element {
-  return (
-    <li className="flex flex-wrap items-baseline gap-xs py-xs">
-      <StatusChip tone={tone}>
-        {label} {count}
-      </StatusChip>
-      <span className="font-mono text-[0.7rem] text-text-tertiary">
-        {handles.length === 0 ? "none" : handles.join(", ")}
-      </span>
-    </li>
-  );
-}
-
-function ComparisonHeader({
-  projection,
-}: {
-  projection: DeliveryDeltaProjection;
-}): React.JSX.Element {
-  const compared = projection.comparedExecution;
-  return (
-    <p className="mt-0 mb-md font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
-      {compared === null
-        ? `Revision ${projection.current.revisionNumber} has no delivered execution to compare against, so every criterion is undelivered work.`
-        : `Revision ${projection.current.revisionNumber} compared against execution ${compared.executionId}, which pinned revision ${projection.base?.revisionNumber ?? "unknown"}${
-            compared.deliveredAt === null
-              ? ""
-              : ` and delivered ${compared.deliveredAt}`
-          }.`}
-    </p>
-  );
-}
-
 export default function SpecDeliveryDeltaPanel({
+  detail,
   projectName,
   slug,
   sinceExecutionId,
+  plan,
 }: {
+  detail: SpecDetailView;
   projectName: string;
   slug: string;
   sinceExecutionId?: string;
+  plan?: ReactNode;
 }): React.JSX.Element {
   const query = useSpecDeltaQuery(projectName, slug, sinceExecutionId);
-
-  if (query.isPending) {
-    return (
-      <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
-        Reading the delivery delta…
-      </p>
-    );
-  }
-  if (query.isError || query.data === undefined) {
-    return (
-      <p className="m-0 font-mono text-[0.72rem] text-red">
-        The delivery delta could not be read. Reload this surface, or run{" "}
-        <code>cctl spec delta {slug}</code> to see the server&apos;s reason.
-      </p>
-    );
-  }
-
-  const projection = query.data;
   return (
-    <section aria-label="Delivery delta">
-      <ComparisonHeader projection={projection} />
-
-      <h3 className="mt-lg mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
-        Criteria
-      </h3>
-      <ul className="m-0 list-none p-0">
-        {CRITERION_CLASS_ORDER.map((criterionClass) => {
-          const rows = projection.criteria.filter(
-            (row) => row.class === criterionClass,
-          );
-          return (
-            <ClassRow
-              key={criterionClass}
-              label={CRITERION_CLASS_LABEL[criterionClass]}
-              tone={CRITERION_CLASS_TONE[criterionClass]}
-              count={rows.length}
-              handles={rows.map((row) => row.handle)}
-            />
-          );
-        })}
-      </ul>
-
-      <h3 className="mt-lg mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
-        Elements
-      </h3>
-      <ul className="m-0 list-none p-0">
-        {ELEMENT_CLASS_ORDER.map((elementClass) => {
-          const rows = projection.elements.filter(
-            (row) => row.class === elementClass,
-          );
-          return (
-            <ClassRow
-              key={elementClass}
-              label={elementClass}
-              tone={ELEMENT_CLASS_TONE[elementClass]}
-              count={rows.length}
-              handles={rows.map((row) => row.handle)}
-            />
-          );
-        })}
-      </ul>
-
-      {projection.advisories.length > 0 && (
-        <>
-          <h3 className="mt-lg mb-xs font-display text-[0.85rem] font-extrabold text-text-primary">
-            Carry-forward advisories
-          </h3>
-          <ul className="m-0 list-none p-0">
-            {projection.advisories.map((advisory) => (
-              <li
-                key={advisory.criterionElementId}
-                className="flex flex-wrap items-baseline gap-xs py-xs"
-              >
-                <StatusChip
-                  tone={
-                    advisory.code === "delivered_elsewhere_refused"
-                      ? "red"
-                      : "amber"
-                  }
-                >
-                  {advisory.handle}
-                </StatusChip>
-                <span className="font-mono text-[0.7rem] leading-relaxed text-text-tertiary">
-                  {advisory.message}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
+    <div
+      className={cn(
+        "grid min-w-0 gap-xl",
+        plan && "grid-cols-2 max-1180:grid-cols-1",
       )}
-    </section>
+    >
+      {plan}
+      {query.isPending ? (
+        <p
+          role="status"
+          className="m-0 font-mono text-[0.78rem] text-text-secondary"
+        >
+          Reading delivery coverage…
+        </p>
+      ) : query.isError || query.data === undefined ? (
+        <div
+          role="alert"
+          className="grid gap-sm rounded-lg border border-solid border-border-subtle bg-bg-surface p-xl"
+        >
+          <p className="m-0 font-mono text-[0.78rem] text-text-primary">
+            The delivery delta could not be read.
+          </p>
+          <Button
+            size="sm"
+            touch
+            loading={query.isFetching}
+            layoutClassName="justify-self-start"
+            onClick={() => void query.refetch()}
+          >
+            Retry delivery coverage
+          </Button>
+        </div>
+      ) : (
+        <SpecDeliveryScope
+          detail={detail}
+          projectName={projectName}
+          projection={query.data}
+          besidePlan={Boolean(plan)}
+        />
+      )}
+    </div>
   );
 }

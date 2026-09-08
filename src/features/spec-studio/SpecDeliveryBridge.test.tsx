@@ -68,11 +68,9 @@ describe("SpecDeliveryBridge", () => {
         projectName="command-center"
       />,
     );
+    expect(await screen.findByText("changes requested")).toBeVisible();
     expect(
-      await screen.findByText(/Plan review: changes requested/),
-    ).toBeVisible();
-    expect(
-      screen.getByText("cctl workflow review --file <plan.json>"),
+      screen.getByRole("link", { name: "Open in Workflow Builder" }),
     ).toBeVisible();
   });
 

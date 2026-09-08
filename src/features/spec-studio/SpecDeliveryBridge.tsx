@@ -1,9 +1,14 @@
 "use client";
 
-import { planReviewFindingsCommand } from "@/lib/workflows/plan-review/status-schemas";
+import { createClientLogger } from "@/lib/logging/client-logger";
 
 import Link from "next/link";
 
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/Collapsible";
 import { Button } from "@/components/ui/Button";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
@@ -13,6 +18,8 @@ import {
   deliveryPlanMutationViewSchema,
   type DeliveryPlanMutationView,
 } from "@/lib/specs/delivery-plan-views";
+
+const logger = createClientLogger("spec-studio-delivery-plan");
 
 const lifecycleTone: Record<
   NonNullable<
@@ -24,7 +31,7 @@ const lifecycleTone: Record<
   proposed: "amber",
   approved: "green",
   parked: "amber",
-  launched: "green",
+  launched: "cyan",
   abandoned: "neutral",
 };
 
@@ -80,7 +87,7 @@ export default function SpecDeliveryBridge({
     return (
       <section
         aria-label="Delivery plan"
-        className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg"
+        className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-xl max-768:p-lg"
       >
         <h3 className="m-0 font-display text-[0.95rem] font-bold text-text-primary">
           No delivery plan
@@ -94,7 +101,11 @@ export default function SpecDeliveryBridge({
             variant="primary"
             size="sm"
             disabled={open.isPending}
-            onClick={() =>
+            touch
+            onClick={() => {
+              logger.info("spec_studio.delivery.plan_open_requested", {
+                specId: detail.spec.id,
+              });
               open.mutate(
                 {},
                 {
@@ -107,8 +118,8 @@ export default function SpecDeliveryBridge({
                       );
                   },
                 },
-              )
-            }
+              );
+            }}
           >
             {open.isPending ? "Creating…" : "Create delivery plan"}
           </Button>
@@ -136,72 +147,113 @@ export default function SpecDeliveryBridge({
     launchedExecution?.sessionName === null || launchedExecution === null
       ? null
       : `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(launchedExecution.sessionName)}/workflow?execution=${encodeURIComponent(launchedExecution.id)}`;
+  const pinnedRevision = detail.revisions.find(
+    (revision) => revision.id === review.attempt.pinnedRevisionId,
+  );
   return (
     <section
       aria-label="Delivery plan"
-      className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg"
+      className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-xl max-768:p-lg"
     >
-      <div className="flex flex-wrap items-center justify-between gap-md">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-lg">
+        <div className="grid gap-sm">
           <div className="flex flex-wrap items-center gap-sm">
-            <h3 className="m-0 font-display text-[0.95rem] font-bold text-text-primary">
+            <h3 className="m-0 font-display text-[1.05rem] font-bold text-text-primary">
               Delivery plan
             </h3>
-            <StatusChip tone={lifecycleTone[review.attempt.status]}>
-              {review.attempt.status === "proposed"
-                ? "In review"
-                : review.attempt.status}
+            <StatusChip
+              tone={
+                launchedExecution?.state === "delivered"
+                  ? "green"
+                  : launchedExecution?.state === "abandoned" ||
+                      launchedExecution?.state === "abandoning"
+                    ? "neutral"
+                    : lifecycleTone[review.attempt.status]
+              }
+            >
+              {launchedExecution
+                ? launchedExecution.state.replaceAll("_", " ")
+                : review.attempt.status === "proposed"
+                  ? "In review"
+                  : review.attempt.status}
             </StatusChip>
           </div>
-          <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
-            Pinned revision {review.attempt.pinnedRevisionId} · definition
-            revision {review.workflowDefinition.revision} · {totalScope} scoped
-            · {review.health.blocking} blocking
+          <p className="m-0 font-mono text-[0.78rem] leading-relaxed text-text-secondary">
+            {launchedExecution?.state === "running"
+              ? "Execution is running with its pinned scope."
+              : review.attempt.status === "launched"
+                ? "Inspect execution outcomes and remaining scope below."
+                : "Configure and review this plan in Workflow Builder."}
           </p>
-          <p className="mt-xs mb-0 text-sm text-text-secondary">
-            Plan review:{" "}
-            {review.reviewStatus.state === "unreviewed"
-              ? "none recorded for this revision"
-              : review.reviewStatus.state.replaceAll("_", " ")}{" "}
-            (advisory)
-          </p>
-          {review.reviewStatus.state !== "unreviewed" && (
-            <p className="mt-xs mb-0 text-sm text-text-tertiary">
-              {review.reviewStatus.reviewerConversationId} ·{" "}
-              {review.reviewStatus.reviewedAt}
-              <br />
-              <code>{planReviewFindingsCommand()}</code>
-            </p>
-          )}
         </div>
-        <Link
-          href={review.workflowDefinition.builderHref}
-          className="inline-flex h-[32px] items-center rounded-sm border border-solid border-cyan-dim bg-cyan-glow px-md font-mono text-[0.72rem] font-semibold text-cyan no-underline hover:border-cyan"
-        >
-          Open in Workflow Builder
-        </Link>
+        <div className="flex flex-wrap items-center gap-sm">
+          {executionHref !== null && (
+            <Link href={executionHref} className={planLinkClass}>
+              Open execution
+            </Link>
+          )}
+          <Link
+            href={review.workflowDefinition.builderHref}
+            className={planLinkClass}
+          >
+            Open in Workflow Builder
+          </Link>
+        </div>
       </div>
-      {review.attempt.status === "launched" &&
-        review.attempt.launchedExecutionId !== null && (
-          <div className="mt-md flex flex-wrap items-center justify-between gap-sm font-mono text-[0.7rem] text-text-secondary">
-            <span>
-              Execution {review.attempt.launchedExecutionId}
-              {launchedExecution ? ` · ${launchedExecution.state}` : ""}
-            </span>
-            {executionHref === null ? (
-              <span className="text-text-tertiary">
-                Open it from the project execution list.
+      <dl className="mt-xl mb-0 grid grid-cols-4 gap-lg max-768:grid-cols-2">
+        <PlanFact
+          label="Pinned revision"
+          value={
+            pinnedRevision ? `Revision ${pinnedRevision.number}` : "Pinned"
+          }
+        />
+        <PlanFact label="Criteria planned" value={String(totalScope)} />
+        <PlanFact
+          label="Plan blockers"
+          value={String(review.health.blocking)}
+          warning={review.health.blocking > 0}
+        />
+        <PlanFact
+          label="Plan review · advisory"
+          value={
+            review.reviewStatus.state === "unreviewed"
+              ? "Not reviewed"
+              : review.reviewStatus.state.replaceAll("_", " ")
+          }
+        />
+      </dl>
+      <Collapsible asChild>
+        <div className="mt-lg border-x-0 border-t border-b-0 border-solid border-border-dim pt-md font-mono text-[0.7rem] text-text-secondary">
+          <CollapsibleTrigger asChild>
+            <Button size="sm" touch>
+              Plan details
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-md grid gap-sm leading-relaxed [overflow-wrap:anywhere]">
+              <span>
+                Pinned revision {review.attempt.pinnedRevisionId} · definition
+                revision {review.workflowDefinition.revision}
               </span>
-            ) : (
-              <Link
-                href={executionHref}
-                className="font-semibold text-cyan no-underline hover:underline"
-              >
-                Open execution
-              </Link>
-            )}
-          </div>
-        )}
+              {review.attempt.launchedExecutionId && (
+                <span>
+                  Execution {review.attempt.launchedExecutionId}
+                  {launchedExecution ? ` · ${launchedExecution.state}` : ""}
+                </span>
+              )}
+              {review.attempt.launchedExecutionId && executionHref === null && (
+                <span>Open it from the project execution list.</span>
+              )}
+              {review.reviewStatus.state !== "unreviewed" && (
+                <span>
+                  Reviewed by {review.reviewStatus.reviewerConversationId} ·{" "}
+                  {review.reviewStatus.reviewedAt}
+                </span>
+              )}
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
     </section>
   );
 }
@@ -223,5 +275,30 @@ function BridgeMessage({
     >
       {children}
     </p>
+  );
+}
+
+const planLinkClass =
+  "inline-flex min-h-[36px] items-center rounded-md border border-solid border-border-default bg-bg-surface px-md font-mono text-[0.72rem] font-semibold text-cyan no-underline hover:border-border-strong hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]";
+
+function PlanFact({
+  label,
+  value,
+  warning = false,
+}: {
+  label: string;
+  value: string;
+  warning?: boolean;
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-sm">
+      <dt className="text-[0.7rem] text-text-tertiary">{label}</dt>
+      <dd
+        data-warning={warning}
+        className="m-0 font-mono text-[0.82rem] font-semibold text-text-primary data-[warning=true]:text-amber"
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
