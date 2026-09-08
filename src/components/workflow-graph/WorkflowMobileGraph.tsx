@@ -306,8 +306,9 @@ function MobileLaneMember({
   }, [clear, node.id, onLongPressContext]);
 
   return (
-    <button
-      type="button"
+    <div
+      role="group"
+      tabIndex={0}
       data-testid="mobile-lane-member"
       data-context-id={node.id}
       aria-label={contextNodeAccessibleName(node.data)}
@@ -320,6 +321,15 @@ function MobileLaneMember({
         }
         onSelect(node.id);
       }}
+      onKeyDown={(event) => {
+        if (
+          event.target !== event.currentTarget ||
+          (event.key !== "Enter" && event.key !== " ")
+        )
+          return;
+        event.preventDefault();
+        onSelect(node.id);
+      }}
       onPointerDown={startPress}
       onPointerUp={clear}
       onPointerCancel={clear}
@@ -329,6 +339,6 @@ function MobileLaneMember({
       className="flex-shrink-0 cursor-pointer appearance-none border-0 bg-transparent p-0 text-left focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]"
     >
       <ContextNodeCard data={node.data} selected={selected} />
-    </button>
+    </div>
   );
 }

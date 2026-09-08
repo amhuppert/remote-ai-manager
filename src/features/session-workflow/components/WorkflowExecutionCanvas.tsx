@@ -13,6 +13,9 @@ import {
   type NodeTypes,
   type EdgeTypes,
 } from "@xyflow/react";
+import { classifyConfigAffordance } from "@/components/workflow-config-panel/execution-affordance";
+import { nodeAgentPatch } from "@/components/workflow-graph/node-agent-edit";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import AutoLayout from "@/components/workflow-graph/AutoLayout";
 import ExecutionContextNode from "@/components/workflow-graph/ExecutionContextNode";
 import CanvasControls from "@/components/workflow-graph/CanvasControls";
@@ -83,6 +86,11 @@ interface WorkflowExecutionCanvasProps {
    */
   onOpenLaneWorktree?: (contextId: string) => void;
   onEditOwnership?: (contextId: string) => void;
+  onSaveContextConfig?: (operations: WorkflowLiveEditOperation[]) => void;
+  isSavingConfig?: boolean;
+  configSaveFromNode?: boolean;
+  configEditError?: string | null;
+  configEditConflict?: boolean;
 }
 
 export default function WorkflowExecutionCanvas({
@@ -94,6 +102,11 @@ export default function WorkflowExecutionCanvas({
   selectedContextId = null,
   onOpenLaneWorktree,
   onEditOwnership,
+  onSaveContextConfig,
+  isSavingConfig = false,
+  configSaveFromNode = true,
+  configEditError,
+  configEditConflict = false,
 }: WorkflowExecutionCanvasProps) {
   // Positions AutoLayout generated from measured cards, tagged with the
   // execution they were measured for so another execution's geometry can never
@@ -141,12 +154,88 @@ export default function WorkflowExecutionCanvas({
   // provenance the resolved context records.
   const authoredDefinition = execution.launchDocument?.definition;
 
+  const [editingContext, setEditingContext] = useState<{
+    executionId: string;
+    contextId: string;
+  } | null>(null);
+  const editingContextId =
+    editingContext?.executionId === execution.id
+      ? editingContext.contextId
+      : null;
+
   const derivedNodes = useMemo(
     () =>
       deriveNodes(execution.workingDefinition, effectiveLayout, execution, {
         ...(authoredDefinition ? { authoredDefinition } : {}),
-      }),
-    [execution, effectiveLayout, authoredDefinition],
+      }).map(
+        (node) =>
+          ({
+            ...node,
+            data: {
+              ...node.data,
+              agentEditor: onSaveContextConfig
+                ? {
+                    disabled: isSavingConfig,
+                    pending:
+                      configSaveFromNode &&
+                      isSavingConfig &&
+                      editingContextId === node.id,
+                    error:
+                      configSaveFromNode && editingContextId === node.id
+                        ? configEditConflict
+                          ? "Configuration changed elsewhere. Choose the value again to retry."
+                          : configEditError
+                        : null,
+                    onChange:
+                      classifyConfigAffordance(execution, node.id)
+                        .affordance === "editable"
+                        ? (target, agent) => {
+                            if (
+                              isSavingConfig ||
+                              classifyConfigAffordance(execution, node.id)
+                                .affordance !== "editable"
+                            )
+                              return;
+                            const context =
+                              execution.workingDefinition.executionContexts.find(
+                                (entry) => entry.id === node.id,
+                              );
+                            if (!context) return;
+                            const patch = nodeAgentPatch(
+                              context,
+                              target,
+                              agent,
+                            );
+                            if (Object.keys(patch).length === 0) return;
+                            setEditingContext({
+                              executionId: execution.id,
+                              contextId: node.id,
+                            });
+                            onSaveContextConfig([
+                              {
+                                type: "update-context",
+                                contextId: node.id,
+                                ...patch,
+                              },
+                            ]);
+                          }
+                        : undefined,
+                  }
+                : undefined,
+            },
+          }) satisfies Node<ExecutionContextNodeData>,
+      ),
+    [
+      execution,
+      effectiveLayout,
+      authoredDefinition,
+      onSaveContextConfig,
+      isSavingConfig,
+      configSaveFromNode,
+      editingContextId,
+      configEditConflict,
+      configEditError,
+    ],
   );
 
   const derivedEdges = useMemo(
@@ -170,7 +259,15 @@ export default function WorkflowExecutionCanvas({
   );
 
   useEffect(() => {
-    setNodes(derivedNodes);
+    setNodes((current) => {
+      const selectedIds = new Set(
+        current.filter((node) => node.selected).map((node) => node.id),
+      );
+      return derivedNodes.map((node) => ({
+        ...node,
+        selected: selectedIds.has(node.id),
+      }));
+    });
   }, [derivedNodes, setNodes]);
 
   useEffect(() => {

@@ -27,6 +27,11 @@ import {
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
 import AutoLayout from "@/components/workflow-graph/AutoLayout";
+import {
+  nodeAgentPatch,
+  type NodeAgentTarget,
+} from "@/components/workflow-graph/node-agent-edit";
+import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import ExecutionContextNode from "@/components/workflow-graph/ExecutionContextNode";
 import CanvasControls from "@/components/workflow-graph/CanvasControls";
 import ContextEdge from "@/components/workflow-graph/ContextEdge";
@@ -55,6 +60,7 @@ import {
   removeContextDependency,
   deleteExecutionContext,
   updateContextPosition,
+  updateExecutionContext,
 } from "@/lib/workflow-graph/builder-draft";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
@@ -196,6 +202,36 @@ export default function WorkflowBuilderCanvas({
 
   const isDraggingRef = useRef(false);
 
+  const handleNodeAgentChange = useCallback(
+    (
+      contextId: string,
+      target: NodeAgentTarget,
+      agent: GraphWorkflowAgentConfig,
+    ) => {
+      if (readOnly) return;
+      const current = _useGraphWorkflowBuilderStore.getState().draftDefinition;
+      if (!current) return;
+      const resolved = resolveWorkflowDefinition(
+        { workflowDefaults: globalDefaults } as GlobalConfig,
+        current,
+      );
+      const context = resolved.executionContexts.find(
+        (entry) => entry.id === contextId,
+      );
+      if (!context) return;
+      const patch = nodeAgentPatch(context, target, agent);
+      if (Object.keys(patch).length === 0) return;
+      updateDefinition(updateExecutionContext(current, contextId, patch));
+      log.info("node.agent_config.changed", {
+        contextId,
+        target,
+        backend: agent.backend,
+        modelSelection: agent.modelSelection,
+      });
+    },
+    [readOnly, globalDefaults, updateDefinition],
+  );
+
   const derivedNodes = useMemo(() => {
     if (!draftDefinition || !draftLayout) return [];
     const resolved = resolveWorkflowDefinition(
@@ -213,9 +249,24 @@ export default function WorkflowBuilderCanvas({
       data: {
         ...node.data,
         scopeHighlighted: highlighted.has(node.id),
+        agentEditor: readOnly
+          ? undefined
+          : {
+              onChange: (
+                target: NodeAgentTarget,
+                agent: GraphWorkflowAgentConfig,
+              ) => handleNodeAgentChange(node.id, target, agent),
+            },
       },
     }));
-  }, [draftDefinition, draftLayout, globalDefaults, highlightedContextIds]);
+  }, [
+    draftDefinition,
+    draftLayout,
+    globalDefaults,
+    highlightedContextIds,
+    readOnly,
+    handleNodeAgentChange,
+  ]);
 
   const derivedEdges = useMemo(() => {
     if (!draftDefinition) return [];

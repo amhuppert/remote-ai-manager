@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { fn } from "storybook/test";
+import { nodeAgentPatch } from "./node-agent-edit";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import type { NodeTypes } from "@xyflow/react";
@@ -69,14 +72,14 @@ function NodeStory({
 
   return (
     <ReactFlowProvider>
-      <div style={{ width: 380, height: 320, background: "var(--bg-void)" }}>
+      <div className="h-[540px] w-[420px] max-w-[calc(100vw-32px)] bg-bg-void">
         <ReactFlow
           nodes={nodes}
           edges={[]}
           nodeTypes={nodeTypes}
           nodesDraggable={false}
           nodesConnectable={false}
-          elementsSelectable={false}
+          elementsSelectable={data.agentEditor !== undefined}
           panOnDrag={false}
           zoomOnScroll={false}
           zoomOnDoubleClick={false}
@@ -1422,4 +1425,129 @@ function GalleryStory() {
 export const DesignStateGallery: Story = {
   args: { data: GALLERY[0].data },
   render: () => <GalleryStory />,
+};
+
+const recordAgentEdit = fn();
+
+function InlineConfigurationStory({
+  mode = "builder",
+  multipleValidators = false,
+}: {
+  mode?: "builder" | "execution";
+  multipleValidators?: boolean;
+}) {
+  const [context, setContext] = useState(() =>
+    makeContext({
+      title: "Real backend continuation and enablement",
+      placement: { lane: "checkpoint-delivery", mode: "full" },
+      implementer: {
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "xhigh" } },
+        },
+      },
+      contextValidator: {
+        enabled: true,
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin", id: "general-reviewer" },
+            strategy: "task",
+            authority: "blocking",
+            continuity: { enabled: true },
+            agent: {
+              backend: "codex",
+              modelSelection: {
+                modelId: "gpt-6-astra",
+                parameters: { reasoning: "xhigh", fast: "false" },
+              },
+            },
+          },
+          ...(multipleValidators
+            ? [
+                {
+                  id: "security",
+                  profile: {
+                    tier: "builtin" as const,
+                    id: "security-reviewer",
+                  },
+                  strategy: "task" as const,
+                  authority: "blocking" as const,
+                  continuity: { enabled: true },
+                  agent: {
+                    backend: "codex" as const,
+                    modelSelection: {
+                      modelId: "gpt-5.6-sol",
+                      parameters: { reasoning: "high", fast: "true" },
+                    },
+                  },
+                },
+                {
+                  id: "product-and-accessibility",
+                  profile: { tier: "builtin" as const, id: "general-reviewer" },
+                  strategy: "conversation" as const,
+                  authority: "advisory" as const,
+                  continuity: { enabled: false },
+                  agent: {
+                    backend: "claude" as const,
+                    modelSelection: {
+                      modelId: "sonnet",
+                      parameters: { effort: "medium" },
+                    },
+                  },
+                },
+              ]
+            : []),
+        ],
+      },
+    }),
+  );
+  return (
+    <NodeStory
+      data={{
+        context,
+        tasks: makeTasks(3),
+        mode,
+        ...(mode === "execution"
+          ? {
+              waitState: {
+                kind: "dependency-blocked" as const,
+                unmetDependencyIds: ["upstream"],
+                blockedByApproval: false,
+              },
+            }
+          : {}),
+        laneState: "active",
+        configOverrides: ["implementer", "validator cohort"],
+        agentEditor: {
+          onChange: (target, agent) => {
+            recordAgentEdit(target, agent);
+            setContext((current) => ({
+              ...current,
+              ...nodeAgentPatch(current, target, agent),
+            }));
+          },
+        },
+      }}
+    />
+  );
+}
+
+export const InlineConfiguration: Story = {
+  args: Draft.args,
+  render: () => <InlineConfigurationStory />,
+};
+
+export const EditableExecution: Story = {
+  args: Draft.args,
+  render: () => <InlineConfigurationStory mode="execution" />,
+};
+
+export const MultipleValidatorCohorts: Story = {
+  args: Draft.args,
+  render: () => (
+    <InlineConfigurationStory mode="execution" multipleValidators />
+  ),
 };

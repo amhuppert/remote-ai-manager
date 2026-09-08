@@ -7,7 +7,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
 import type { ContextWaitState } from "./derive-wait-state";
 import type { ExecutionContextNodeData } from "./derive-graph";
-import { modelSelectionParametersLabel } from "../model-selection-presentation";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 /**
  * The context node's presentation vocabulary — everything the card says,
@@ -162,6 +162,23 @@ export function ownedPathsText(placement: ContextPlacement): string {
   return placement.mode === "owned" ? placement.ownedPaths.join(", ") : "";
 }
 
+export function nodeParameterLabel(
+  id: string,
+  value: string,
+  label = id,
+): string {
+  if (id === "effort" || id === "reasoning") return value;
+  if (id === "fast") return `Fast ${value === "true" ? "on" : "off"}`;
+  return `${label} ${value}`;
+}
+
+function nodeParametersLabel(selection: BackendModelSelection): string {
+  return Object.entries(selection.parameters)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, value]) => nodeParameterLabel(id, value))
+    .join(", ");
+}
+
 export interface NodeCrewImplementer {
   backend: AgentBackendId;
   /** The catalog's canonical long name — never the short selector id. */
@@ -201,7 +218,7 @@ export function contextNodeCrew(
             implementer.agent.backend,
             implementer.agent.modelSelection.modelId,
           ),
-          parametersLabel: modelSelectionParametersLabel(
+          parametersLabel: nodeParametersLabel(
             implementer.agent.modelSelection,
           ),
         }
@@ -216,7 +233,7 @@ export function contextNodeCrew(
               assignment.agent.backend,
               assignment.agent.modelSelection.modelId,
             ),
-            parametersLabel: modelSelectionParametersLabel(
+            parametersLabel: nodeParametersLabel(
               assignment.agent.modelSelection,
             ),
           }))
