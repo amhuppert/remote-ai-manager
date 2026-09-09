@@ -59,6 +59,10 @@ import {
 } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowRuntimeEditRouteHandlers } from "@/lib/workflow-graph/runtime-edit-route-handlers";
 import {
+  applyLiveEditsToActiveExecution,
+  type LiveEditApplyServiceDeps,
+} from "@/lib/workflow-graph/live-edit-apply";
+import {
   buildInitialContextStates,
   buildInitialTaskStates,
 } from "@/lib/workflow-graph/execution-state";
@@ -1649,10 +1653,8 @@ export function createSpecSpineWorld(
       publishedSse.push(event);
     },
   });
-  const runtimeEditHandlers = createGraphWorkflowRuntimeEditRouteHandlers({
+  const liveEditApplyDeps: LiveEditApplyServiceDeps = {
     executionContract: createNonParticipatingGraphExecutionContract(),
-    resolveProjectPath: async (name) =>
-      name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
     getSession: async (projectPath, sessionName) =>
       projectPath === SPINE_PROJECT_PATH && sessionName === SPINE_SESSION_NAME
         ? spineSession
@@ -1665,6 +1667,17 @@ export function createSpecSpineWorld(
     publishLiveEditApplied: liveEditEventPublisher.publishLiveEditApplied,
     publishCharterUpdated: liveEditEventPublisher.publishCharterUpdated,
     writeCharterDocument: async () => {},
+  };
+  const runtimeEditHandlers = createGraphWorkflowRuntimeEditRouteHandlers({
+    resolveProjectPath: async (name) =>
+      name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
+    getSession: async (projectPath, sessionName) =>
+      projectPath === SPINE_PROJECT_PATH && sessionName === SPINE_SESSION_NAME
+        ? spineSession
+        : null,
+    getActiveExecution: async () => activeWorkflowExecution,
+    applyLiveEdits: (input) =>
+      applyLiveEditsToActiveExecution(input, liveEditApplyDeps),
   });
 
   /**

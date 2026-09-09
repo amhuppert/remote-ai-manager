@@ -1,7 +1,3 @@
-import type {
-  ExecutionMutationDecision,
-  ExecutionMutationOutcome,
-} from "@/lib/workflow-graph/execution-mutation";
 import { NextResponse } from "next/server";
 import { withTracing } from "@/lib/logging";
 import {
@@ -12,62 +8,26 @@ import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/
 import {
   getSession as defaultGetSession,
   getActiveGraphWorkflowExecution,
-  mutateActiveGraphWorkflowExecution,
-  reserveActiveGraphWorkflowExecution,
-  archiveActiveGraphWorkflowExecution,
-  markGraphWorkflowContextEventsPreReset,
-  getGraphWorkflowPendingArtifacts,
-  clearGraphWorkflowPendingArtifacts,
 } from "@/lib/state-store";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import {
-  workflowLiveEditRequestSchema,
-  type WorkflowLiveEditOperation,
-} from "@/lib/workflows/edit-schemas";
-import {
-  createGraphWorkflowExecutionEventPublisher,
-  type GraphWorkflowEventDelivery,
-  type PublishCharterUpdatedInput,
-  type PublishLiveEditAppliedInput,
-} from "./execution-events";
-import { createGraphWorkflowExecutionRepository } from "./execution-repository";
+import { workflowLiveEditRequestSchema } from "@/lib/workflows/edit-schemas";
 import { formatDefinitionEditIssue } from "./definition-edits";
-import {
-  applyLiveEditsToActiveExecution,
-  buildDefaultAssignmentSnapshotPreparation,
-  buildDefaultLiveEditDeps,
-  defaultWriteCharterDocument,
-  type LiveEditFailure,
+import type {
+  LiveEditApplyOutcome,
+  LiveEditApplyRequest,
+  LiveEditFailure,
 } from "./live-edit-apply";
-import type { PrepareAssignmentSnapshotsResult } from "./live-edit-preparation";
-import type { LiveEditDeps } from "./runtime-edits";
 import {
   guardExecutionMutation,
   runPinnedMutation,
   type WorkflowMutationGuardDeps,
 } from "./mutation-guard";
-import {
-  createRegisteredGraphExecutionContract,
-  type GraphExecutionContract,
-} from "./execution-contract-port";
+import { applyProductionGraphWorkflowLiveEdits } from "./production";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
 };
-
-const eventPublisher = createGraphWorkflowExecutionEventPublisher();
-const executionRepository = createGraphWorkflowExecutionRepository({
-  getSession: defaultGetSession,
-  getActiveGraphWorkflowExecution,
-  mutateActiveGraphWorkflowExecution,
-  reserveActiveGraphWorkflowExecution,
-  archiveActiveGraphWorkflowExecution,
-  markGraphWorkflowContextEventsPreReset,
-  getGraphWorkflowPendingArtifacts,
-  clearGraphWorkflowPendingArtifacts,
-  eventPublisher,
-});
 
 export interface GraphWorkflowRuntimeEditRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
@@ -79,36 +39,11 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  mutateActive<Value = void, Refusal = never>(
-    projectPath: string,
-    sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => ExecutionMutationDecision<Value, Refusal>,
-  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
-  buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
-  executionContract: GraphExecutionContract;
-  prepareAssignmentSnapshots(
-    projectPath: string,
-    operations: readonly WorkflowLiveEditOperation[],
-  ): Promise<PrepareAssignmentSnapshotsResult>;
-  publishLiveEditApplied(
-    input: PublishLiveEditAppliedInput,
-  ): GraphWorkflowEventDelivery;
-  publishCharterUpdated(
-    input: PublishCharterUpdatedInput,
-  ): GraphWorkflowEventDelivery;
-  /**
-   * Rewrite the session worktree's charter.md pointer copy after an accepted
-   * amendment. Lane worktrees re-materialize per iteration; the session
-   * worktree's copy is only written at seed time, so it goes stale without
-   * this. Best-effort: a failure is logged, never a request failure — the
-   * inline prompt digest is authoritative, the file is a pointer copy.
-   */
-  writeCharterDocument(input: {
-    worktreePath: string;
-    markdown: string;
-  }): Promise<void>;
+  applyLiveEdits(input: {
+    projectPath: string;
+    sessionName: string;
+    request: LiveEditApplyRequest;
+  }): Promise<LiveEditApplyOutcome>;
   /**
    * Principal verification seams for the shared mutation guard. Optional so
    * production inherits the registered verifiers and tests inject their own.
@@ -122,13 +57,7 @@ const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   getActiveExecution: getActiveGraphWorkflowExecution,
-  mutateActive: executionRepository.mutateActive,
-  buildLiveEditDeps: buildDefaultLiveEditDeps,
-  executionContract: createRegisteredGraphExecutionContract(),
-  prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
-  publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
-  publishCharterUpdated: eventPublisher.publishCharterUpdated,
-  writeCharterDocument: defaultWriteCharterDocument,
+  applyLiveEdits: applyProductionGraphWorkflowLiveEdits,
 };
 
 /** Map a service-layer rejection onto the doc-06 HTTP error contract. */
@@ -237,10 +166,7 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
     // successor the lease turned over to would restructure a run this caller
     // was never admitted on.
     const acted = await runPinnedMutation(guarded.fence, "edit", () =>
-      applyLiveEditsToActiveExecution(
-        { projectPath, sessionName, request: editRequest },
-        deps,
-      ),
+      deps.applyLiveEdits({ projectPath, sessionName, request: editRequest }),
     );
     if (acted.kind === "turnover") return acted.refusal;
     const outcome = acted.value;

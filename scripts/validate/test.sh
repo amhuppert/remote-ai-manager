@@ -12,15 +12,24 @@ if [ "$#" -gt 0 ]; then
   run_vitest paths both "$@"
 elif [ -z "$merge_base" ]; then
   run_vitest full both
-elif [ "$shared_test_setup_changed" = true ] || { [ "$node_test_setup_changed" = true ] && [ "$jsdom_test_setup_changed" = true ]; }; then
+elif [ "$test_profile_config_changed" = true ]; then
+  # Vitest does not treat its config or the profile inventory as test inputs.
   run_vitest full both
+elif [ "$shared_test_setup_changed" = true ] || { [ "$node_test_setup_changed" = true ] && [ "$jsdom_test_setup_changed" = true ]; }; then
+  run_vitest full integration
+  run_vitest changed pure "$merge_base"
 elif [ "$node_test_setup_changed" = true ]; then
   # Vitest excludes project setup files from --changed dependency traversal.
-  run_vitest full node
-  run_vitest changed jsdom "$merge_base"
+  run_vitest full node-setup
+  run_vitest changed pure-dom "$merge_base"
 elif [ "$jsdom_test_setup_changed" = true ]; then
   run_vitest full jsdom
-  run_vitest changed node "$merge_base"
+  run_vitest full architecture
+  run_vitest changed pure-node "$merge_base"
 else
-  run_vitest changed both "$merge_base"
+  # Architecture tests read source and configuration by path, outside Vitest's
+  # import graph. Until those inputs are declared, full selection is the only
+  # sound changed-scope behavior for this profile.
+  run_vitest full architecture
+  run_vitest changed runtime "$merge_base"
 fi

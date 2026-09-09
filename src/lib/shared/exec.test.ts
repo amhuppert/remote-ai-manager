@@ -6,9 +6,8 @@ import { execFile, execFileGroup, spawn } from "./exec";
 import { _resetLoggerForTesting } from "../logging/logger";
 import { _resetTimedForTesting } from "../logging/timed";
 
-// Scoped per process: the full suite runs this file under two vitest projects
-// (`unit` and `unit-node`) in concurrently running forks, and a shared path
-// lets one copy's cleanup delete the log the other copy is about to read.
+// Scoped per process so concurrent forks cannot let one copy's cleanup delete
+// the log another copy is about to read.
 const tmpDir = path.join(os.tmpdir(), `cc-exec-test-${process.pid}`);
 const testLogFile = path.join(tmpDir, "exec-test.log");
 

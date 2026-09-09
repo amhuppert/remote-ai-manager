@@ -45,16 +45,29 @@ Three bookkeeping tables, kept distinct: `applied_migrations` (Umzug ledger, by 
 ## Commands
 
 ```bash
-bun install          # install dependencies
-bun run dev          # dev server
-bun run build        # production Next.js + cctl builds
-bun run test         # full Vitest suite
-bun run test path/to/file.test.ts # targeted Vitest file
-bun run test:watch   # vitest watch
-bun run typecheck    # tsc --noEmit
-bun run lint         # ESLint + architecture seam ratchet
-bun run seams:check  # architecture seam ratchet only
+bun install                                             # install dependencies
+bun run dev                                             # unmanaged local dev server; CC sessions use cctl dev ensure
+bun run build                                           # production Next.js + cctl builds
+cctl validate run test --scope full --queue-if-busy     # full registered unit suite
+cctl validate run test --queue-if-busy -- path/to/file.test.ts
+cctl validate run typecheck --queue-if-busy
+cctl validate run lint --queue-if-busy
+cctl validate run seams --queue-if-busy                 # architecture seams + test-profile inventory
 ```
+
+`AGENTS.md` owns the canonical validation policy, including the narrow diagnostic exception for direct package-script invocation.
+
+## Test execution profiles
+
+`scripts/test-profiles.ts` is the single owner of test discovery and profile membership. The registered `seams` validator proves that every test has exactly one profile; do not select Vitest projects by hand to compensate for an incorrect assignment.
+
+- An ordinary test defaults to `node-integration`; it needs no registry entry.
+- A test with `// @vitest-environment jsdom` belongs to `dom-integration`.
+- Tests under `scripts/` or `eslint-rules/`, and files named `*.arch.test.*` or `*.architecture.test.*`, belong to `architecture-toolchain`. Any other test that reads repository, configuration, generated, packaged, or toolchain files outside its import graph must be added to `ARCHITECTURE_TOOLCHAIN_TEST_FILES`, even when the file also contains behavioral tests.
+- A file named `*.acceptance.test.ts` belongs to `browser-live-acceptance` and is not part of the unit validator.
+- `pure-node` is an audited, setup-free cohort. Add a file to `PURE_NODE_TEST_FILES` only after checking its transitive imports for process-global side effects and confirming that it does not rely on shared setup; a profile directive cannot bypass that registry review.
+
+Keep profile counts, worker settings, and benchmark results out of steering. They are derived from the inventory or recorded with their evidence in `PERFORMANCE.md`.
 
 ## Code style
 

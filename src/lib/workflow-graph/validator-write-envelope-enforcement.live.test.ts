@@ -37,9 +37,9 @@
  * branching. Claude surfaces the direct attempt too, as an `is_error`
  * tool_result.
  *
- * These runs cost real model calls and take minutes, so they are opt-in. Always
- * pass `--project unit-node`: the `unit` project is a compatibility alias that
- * also picks this file up, which would run every live turn twice.
+ * These runs cost real model calls and take minutes, so they are opt-in. Select
+ * the owning Node integration project explicitly to avoid collecting unrelated
+ * profiles.
  *
  *     CC_LIVE_ENFORCEMENT_TESTS=1 bun run test --project unit-node \
  *       src/lib/workflow-graph/validator-write-envelope-enforcement.live.test.ts

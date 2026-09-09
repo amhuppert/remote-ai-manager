@@ -11,6 +11,7 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { buildRepositoryTestProfileInventory } from "./test-profiles";
 
 export type CachedResultEntry = readonly [
   string,
@@ -32,6 +33,18 @@ export interface DurationReport {
   }>;
   readonly slowestShare: number;
   readonly failedFiles: readonly string[];
+}
+
+export function filterTestDurationEntries(
+  entries: ReadonlyArray<CachedResultEntry>,
+  projectFiles: Readonly<Record<string, readonly string[]>>,
+): CachedResultEntry[] {
+  const ownedKeys = new Set(
+    Object.entries(projectFiles).flatMap(([project, files]) =>
+      files.map((file) => `${project}:${file}`),
+    ),
+  );
+  return entries.filter(([key]) => ownedKeys.has(key));
 }
 
 function median(values: readonly number[]): number {
@@ -172,8 +185,18 @@ if (import.meta.main) {
     );
     process.exit(1);
   }
-  const report = rankTestDurations(
+  const inventory = buildRepositoryTestProfileInventory(process.cwd());
+  const entries = filterTestDurationEntries(
     parseEntries(readFileSync(source, "utf8")),
+    {
+      "unit-pure": inventory.byProfile["pure-node"],
+      "unit-node": inventory.byProfile["node-integration"],
+      "unit-jsdom": inventory.byProfile["dom-integration"],
+      "unit-architecture": inventory.byProfile["architecture-toolchain"],
+    },
+  );
+  const report = rankTestDurations(
+    entries,
     Number.isInteger(limit) && limit > 0 ? limit : 25,
   );
   console.log(formatReport(report, path.relative(process.cwd(), source)));

@@ -42,6 +42,8 @@ interface Invocation {
 
 let invocations: Invocation[] = [];
 let changedInvocations: Invocation[] = [];
+let pathInvocations: Invocation[] = [];
+let configInvocations: Invocation[] = [];
 let workdir: string;
 let exitCode: number | null = null;
 let changedExitCode: number | null = null;
@@ -65,6 +67,23 @@ function writeNodeStub(binDir: string): void {
     "utf8",
   );
   chmodSync(stub, 0o755);
+}
+
+function readInvocations(logPath: string): Invocation[] {
+  return readFileSync(logPath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [args = "", bail = "", workers = "", heapMb = "", maxForks = ""] =
+        line.split("\t");
+      return {
+        args: args.split(" ").filter(Boolean),
+        bail,
+        workers,
+        heapMb,
+        maxForks,
+      };
+    });
 }
 
 beforeAll(() => {
@@ -120,20 +139,7 @@ beforeAll(() => {
     output = `${failure.stdout ?? ""}${failure.stderr ?? ""}`;
   }
 
-  invocations = readFileSync(logPath, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [args = "", bail = "", workers = "", heapMb = "", maxForks = ""] =
-        line.split("\t");
-      return {
-        args: args.split(" ").filter(Boolean),
-        bail,
-        workers,
-        heapMb,
-        maxForks,
-      };
-    });
+  invocations = readInvocations(logPath);
 
   writeFileSync(logPath, "", "utf8");
   try {
@@ -162,20 +168,36 @@ beforeAll(() => {
     changedOutput = `${failure.stdout ?? ""}${failure.stderr ?? ""}`;
   }
 
-  changedInvocations = readFileSync(logPath, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [args = "", bail = "", workers = "", heapMb = "", maxForks = ""] =
-        line.split("\t");
-      return {
-        args: args.split(" ").filter(Boolean),
-        bail,
-        workers,
-        heapMb,
-        maxForks,
-      };
-    });
+  changedInvocations = readInvocations(logPath);
+
+  writeFileSync(logPath, "", "utf8");
+  execFileSync("bash", [changedScriptPath, "src/example.test.ts"], {
+    cwd: repo,
+    encoding: "utf8",
+    stdio: "pipe",
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      FULL_SUITE_TEST_LOG: logPath,
+      TARGET_BRANCH: "main",
+    },
+  });
+  pathInvocations = readInvocations(logPath);
+
+  writeFileSync(join(repo, "vitest.config.ts"), "export default {};\n", "utf8");
+  writeFileSync(logPath, "", "utf8");
+  execFileSync("bash", [changedScriptPath], {
+    cwd: repo,
+    encoding: "utf8",
+    stdio: "pipe",
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      FULL_SUITE_TEST_LOG: logPath,
+      TARGET_BRANCH: "main",
+    },
+  });
+  configInvocations = readInvocations(logPath);
 });
 
 afterAll(() => {
@@ -192,14 +214,29 @@ describe("test-full-suite validation command", () => {
     expect(invocation?.args.slice(1)).toEqual(["full", "both"]);
   });
 
-  it("keeps the changed variant on Vitest's native affected-file mode", () => {
+  it("runs architecture fully before using affected-file mode for runtime profiles", () => {
     expect(changedExitCode, `script failed:\n${changedOutput}`).toBe(0);
-    expect(changedInvocations).toHaveLength(1);
-    expect(changedInvocations[0]?.args.slice(1)).toEqual([
-      "changed",
-      "both",
-      expect.any(String),
+    expect(changedInvocations).toHaveLength(2);
+    expect(
+      changedInvocations.map((invocation) => invocation.args.slice(1)),
+    ).toEqual([
+      ["full", "architecture"],
+      ["changed", "runtime", expect.any(String)],
     ]);
+  });
+
+  it("keeps explicit path selection exact instead of widening architecture", () => {
+    expect(pathInvocations).toHaveLength(1);
+    expect(pathInvocations[0]?.args.slice(1)).toEqual([
+      "paths",
+      "both",
+      "src/example.test.ts",
+    ]);
+  });
+
+  it("runs every profile when the Vitest config changes", () => {
+    expect(configInvocations).toHaveLength(1);
+    expect(configInvocations[0]?.args.slice(1)).toEqual(["full", "both"]);
   });
 
   it("disables the launcher bail threshold so every failure is reported", () => {
@@ -209,6 +246,10 @@ describe("test-full-suite validation command", () => {
   it("keeps changed and full variants on one worker and heap profile", () => {
     expect(invocations[0]).toMatchObject({ workers: "8", heapMb: "1536" });
     expect(changedInvocations[0]).toMatchObject({
+      workers: "8",
+      heapMb: "1536",
+    });
+    expect(changedInvocations[1]).toMatchObject({
       workers: "8",
       heapMb: "1536",
     });
@@ -223,7 +264,11 @@ describe("test-full-suite validation command", () => {
   // out, killing a run in which everything passed.
   it("clears Vitest's own pool override so the machine budget stays authoritative", () => {
     expect(invocations.at(0)?.maxForks).toBe("<unset>");
-    expect(changedInvocations.at(0)?.maxForks).toBe("<unset>");
+    expect(
+      changedInvocations.every(
+        (invocation) => invocation.maxForks === "<unset>",
+      ),
+    ).toBe(true);
   });
 
   it("is registered in CommandCenter.json with an executable script", () => {

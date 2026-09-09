@@ -17,7 +17,6 @@ const PRODUCTION_COMPOSITION_ROOTS = [
   "src/lib/conversations/answer-route-handlers.ts",
   "src/lib/conversations/ask-route-handlers.ts",
   "src/lib/workflow-graph/expansion-production.ts",
-  "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
 ];
 
 function readSource(relativePath: string): string {

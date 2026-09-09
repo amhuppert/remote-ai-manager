@@ -87,6 +87,8 @@ import {
   buildDefaultAssignmentSnapshotPreparation,
   buildDefaultLiveEditDeps,
   defaultWriteCharterDocument,
+  type LiveEditApplyOutcome,
+  type LiveEditApplyRequest,
 } from "./live-edit-apply";
 import { createPlanRepairAgentRunner } from "./plan-repair/agent-runner";
 
@@ -543,6 +545,27 @@ export function getGraphWorkflowRuntime() {
   assertGraphExecutionLifecycleCallbacksRegistered();
   runtime ??= createProductionGraphWorkflowRuntime();
   return runtime;
+}
+
+export async function applyProductionGraphWorkflowLiveEdits(input: {
+  projectPath: string;
+  sessionName: string;
+  request: LiveEditApplyRequest;
+}): Promise<LiveEditApplyOutcome> {
+  const graphWorkflowRuntime = getGraphWorkflowRuntime();
+  return applyLiveEditsToActiveExecution(input, {
+    executionContract: createRegisteredGraphExecutionContract(),
+    getActiveExecution: getActiveGraphWorkflowExecution,
+    mutateActive: graphWorkflowRuntime.executionRepository.mutateActive,
+    buildLiveEditDeps: buildDefaultLiveEditDeps,
+    prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
+    publishLiveEditApplied:
+      graphWorkflowRuntime.eventPublisher.publishLiveEditApplied,
+    publishCharterUpdated:
+      graphWorkflowRuntime.eventPublisher.publishCharterUpdated,
+    getSession: defaultGetSession,
+    writeCharterDocument: defaultWriteCharterDocument,
+  });
 }
 
 export function createProductionGraphWorkflowLifecycleDeps(): GraphWorkflowLifecycleDeps {

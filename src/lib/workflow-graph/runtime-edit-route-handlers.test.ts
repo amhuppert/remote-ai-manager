@@ -11,6 +11,10 @@ import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import {
+  applyLiveEditsToActiveExecution,
+  type LiveEditApplyServiceDeps,
+} from "./live-edit-apply";
+import {
   createWorkflowExecution,
   makeProfileSnapshot,
   stubAssignmentSnapshotPreparation,
@@ -142,6 +146,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
   let broadcast: ReturnType<typeof vi.fn>;
   let handlers: ReturnType<typeof createGraphWorkflowRuntimeEditRouteHandlers>;
   let routeDeps: GraphWorkflowRuntimeEditRouteDeps;
+  let liveEditApplyDeps: LiveEditApplyServiceDeps;
   let buildLiveEditDeps: ReturnType<typeof vi.fn>;
   let writeCharterDocument: ReturnType<typeof vi.fn>;
 
@@ -175,10 +180,8 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     buildLiveEditDeps = vi.fn(async () => TEST_LIVE_EDIT_DEPS);
     writeCharterDocument = vi.fn(async () => {});
 
-    routeDeps = {
+    liveEditApplyDeps = {
       executionContract: createNonParticipatingGraphExecutionContract(),
-      resolveProjectPath: async (name) =>
-        name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
       getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
       mutateActive: repository.mutateActive,
@@ -187,6 +190,14 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
       publishLiveEditApplied: publisher.publishLiveEditApplied,
       publishCharterUpdated: publisher.publishCharterUpdated,
       writeCharterDocument,
+    };
+    routeDeps = {
+      resolveProjectPath: async (name) =>
+        name === "repo" ? PROJECT_PATH : null,
+      getSession: fixture.store.getSession,
+      getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
+      applyLiveEdits: (input) =>
+        applyLiveEditsToActiveExecution(input, liveEditApplyDeps),
     };
     handlers = createGraphWorkflowRuntimeEditRouteHandlers(routeDeps);
   });
@@ -586,8 +597,8 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
 
   it("returns a machine-readable 409 when the registered contract refuses", async () => {
     await seedExecution(createWorkflowExecution({ status: "paused" }));
-    handlers = createGraphWorkflowRuntimeEditRouteHandlers({
-      ...routeDeps,
+    const refusingLiveEditApplyDeps: LiveEditApplyServiceDeps = {
+      ...liveEditApplyDeps,
       executionContract: {
         loadPromptProjection: async () => null,
 
@@ -613,6 +624,11 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
           acceptanceCriteriaByContextId: {},
         }),
       },
+    };
+    handlers = createGraphWorkflowRuntimeEditRouteHandlers({
+      ...routeDeps,
+      applyLiveEdits: (input) =>
+        applyLiveEditsToActiveExecution(input, refusingLiveEditApplyDeps),
     });
 
     const response = await handlers.POST(
@@ -1122,29 +1138,29 @@ describe("graph workflow runtime edit route principals", () => {
     const readExecution = options.execution ?? ownedExecution();
     const applyMutation = vi.fn();
     const mutationAttempt = vi.fn();
-    const mutateActive: GraphWorkflowRuntimeEditRouteDeps["mutateActive"] =
-      async (_p, _s, reduce) => {
-        mutationAttempt();
-        if (activeAtWriteTime !== undefined) {
-          assertExecutionPrincipalFence(
-            PROJECT_PATH,
-            SESSION_NAME,
-            activeAtWriteTime,
-          );
-        }
-        applyMutation();
-        return applyFixtureMutation(
-          activeAtWriteTime ?? readExecution,
-          reduce,
-          () => {},
+    const mutateActive: LiveEditApplyServiceDeps["mutateActive"] = async (
+      _p,
+      _s,
+      reduce,
+    ) => {
+      mutationAttempt();
+      if (activeAtWriteTime !== undefined) {
+        assertExecutionPrincipalFence(
+          PROJECT_PATH,
+          SESSION_NAME,
+          activeAtWriteTime,
         );
-      };
+      }
+      applyMutation();
+      return applyFixtureMutation(
+        activeAtWriteTime ?? readExecution,
+        reduce,
+        () => {},
+      );
+    };
     const buildLiveEditDeps = vi.fn(async () => TEST_LIVE_EDIT_DEPS);
-
-    const handlers = createGraphWorkflowRuntimeEditRouteHandlers({
+    const liveEditApplyDeps: LiveEditApplyServiceDeps = {
       executionContract: createNonParticipatingGraphExecutionContract(),
-      resolveProjectPath: async (name: string) =>
-        name === "repo" ? PROJECT_PATH : null,
       getSession: async () => principalSession(conversationIds),
       getActiveExecution: async () => readExecution,
       mutateActive,
@@ -1153,6 +1169,15 @@ describe("graph workflow runtime edit route principals", () => {
       publishLiveEditApplied: vi.fn(),
       publishCharterUpdated: vi.fn(),
       writeCharterDocument: vi.fn(async () => {}),
+    };
+
+    const handlers = createGraphWorkflowRuntimeEditRouteHandlers({
+      resolveProjectPath: async (name: string) =>
+        name === "repo" ? PROJECT_PATH : null,
+      getSession: async () => principalSession(conversationIds),
+      getActiveExecution: async () => readExecution,
+      applyLiveEdits: (input) =>
+        applyLiveEditsToActiveExecution(input, liveEditApplyDeps),
       auth: { validateOptionalToken: async () => ({ kind: transport }) },
       verifyConversationCapability: async (request: Request) =>
         verifyConversationCapability(

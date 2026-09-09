@@ -176,7 +176,12 @@ describe("cursor acceptance test corpus", () => {
   });
 
   it("keeps acceptance files out of every unit project, which must not spend a credential", () => {
-    for (const project of ["unit-node", "unit-jsdom"]) {
+    for (const project of [
+      "unit-pure",
+      "unit-node",
+      "unit-jsdom",
+      "unit-architecture",
+    ]) {
       expect(
         includeFor(project).filter((file) =>
           file.endsWith(".acceptance.test.ts"),

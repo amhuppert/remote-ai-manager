@@ -156,6 +156,9 @@ interface Harness {
     pendingQuestion: unknown;
   };
   settled(): Promise<void>;
+  waitUntil(
+    predicate: (context: ReturnType<Harness["ctx"]>) => boolean,
+  ): Promise<void>;
 }
 
 const activeActors: AnyActorRef[] = [];
@@ -294,6 +297,20 @@ function makeHarness(opts: {
       );
       // Let same-tick side effects (async verification round-trip) land.
       await new Promise((r) => setTimeout(r, 5));
+    },
+    waitUntil: async (predicate) => {
+      await waitFor(
+        actor,
+        (snapshot) =>
+          predicate(
+            (
+              snapshot as {
+                context: ReturnType<Harness["ctx"]>;
+              }
+            ).context,
+          ),
+        { timeout: 3000 },
+      );
     },
   };
 }
@@ -513,6 +530,7 @@ describe("debug workflow parity (external interface)", () => {
 
     submitPrompt(h, "Clean up instrumentation");
     await h.settled();
+    await h.waitUntil((context) => context.debugMode === null);
 
     const ctx = h.ctx();
     expect(ctx.debugMode).toBeNull();
@@ -542,6 +560,9 @@ describe("debug workflow parity (external interface)", () => {
 
     submitPrompt(h, "Clean up instrumentation");
     await h.settled();
+    await h.waitUntil(
+      (context) => context.lastError === "Probe P1 still present in src/a.ts",
+    );
 
     const ctx = h.ctx();
     expect(ctx.debugMode).toMatchObject({
@@ -585,7 +606,7 @@ describe("debug workflow parity (external interface)", () => {
 
     // The current attempt's own verification still completes the workflow.
     verifier.resolve(1, { ok: true });
-    await h.settled();
+    await h.waitUntil((context) => context.debugMode === null);
     ctx = h.ctx();
     expect(ctx.debugMode).toBeNull();
     expect(ctx.activeTurn).toBeNull();
@@ -615,7 +636,7 @@ describe("debug workflow parity (external interface)", () => {
     expect(ctx.lastError).not.toBe("stale remediation for attempt A");
 
     verifier.resolve(1, { ok: true });
-    await h.settled();
+    await h.waitUntil((context) => context.debugMode === null);
     expect(h.ctx().debugMode).toBeNull();
   });
 

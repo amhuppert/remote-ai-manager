@@ -17,6 +17,7 @@ import {
   createGraphWorkflowRuntimeEditRouteHandlers,
   type GraphWorkflowRuntimeEditRouteDeps,
 } from "./runtime-edit-route-handlers";
+import { applyLiveEditsToActiveExecution } from "./live-edit-apply";
 import { createGraphWorkflowLiveOutlineRouteHandlers } from "./live-outline-route-handlers";
 
 /**
@@ -223,9 +224,8 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
     const resolveProjectPath = async (name: string) =>
       name === "repo" ? PROJECT_PATH : null;
 
-    const editDeps: GraphWorkflowRuntimeEditRouteDeps = {
+    const liveEditApplyDeps = {
       executionContract: createNonParticipatingGraphExecutionContract(),
-      resolveProjectPath,
       getSession: fixture.store.getSession,
       getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
       mutateActive: repository.mutateActive,
@@ -234,6 +234,13 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       publishLiveEditApplied: publisher.publishLiveEditApplied,
       publishCharterUpdated: publisher.publishCharterUpdated,
       writeCharterDocument: async () => {},
+    };
+    const editDeps: GraphWorkflowRuntimeEditRouteDeps = {
+      resolveProjectPath,
+      getSession: fixture.store.getSession,
+      getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
+      applyLiveEdits: (input) =>
+        applyLiveEditsToActiveExecution(input, liveEditApplyDeps),
     };
     editHandlers = createGraphWorkflowRuntimeEditRouteHandlers(editDeps);
     outlineHandlers = createGraphWorkflowLiveOutlineRouteHandlers({

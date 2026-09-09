@@ -21,9 +21,9 @@
  * consistent with a sandbox that simply denied everything, which would confine
  * the lane by breaking it.
  *
- * These runs cost real model calls and take minutes, so they are opt-in. Always
- * pass `--project unit-node`: the `unit` project is a compatibility alias that
- * also picks this file up, which would run every live turn twice.
+ * These runs cost real model calls and take minutes, so they are opt-in. Select
+ * the owning Node integration project explicitly to avoid collecting unrelated
+ * profiles.
  *
  *     CC_LIVE_ENFORCEMENT_TESTS=1 bun run test --project unit-node \
  *       src/lib/workflow-graph/implementer-write-envelope-enforcement.live.test.ts

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { rankTestDurations, type CachedResultEntry } from "./test-durations";
+import {
+  filterTestDurationEntries,
+  rankTestDurations,
+  type CachedResultEntry,
+} from "./test-durations";
 
 const entries: CachedResultEntry[] = [
   ["unit-node:src/a.test.ts", { duration: 1000, failed: false }],
@@ -36,6 +40,29 @@ describe("rankTestDurations", () => {
   it("lists failed files separately so a red full run is visible in the ledger", () => {
     expect(rankTestDurations(entries, 1).failedFiles).toEqual([
       "unit-node:src/b.test.ts",
+    ]);
+  });
+});
+
+describe("filterTestDurationEntries", () => {
+  it("drops stale cache keys after a file moves between projects", () => {
+    expect(
+      filterTestDurationEntries(
+        [
+          ...entries,
+          ["unit-pure:src/a.test.ts", { duration: 10, failed: false }],
+        ],
+        {
+          "unit-pure": ["src/a.test.ts"],
+          "unit-node": ["src/b.test.ts", "src/c.test.ts"],
+          "unit-jsdom": ["src/d.test.tsx"],
+        },
+      ),
+    ).toEqual([
+      ["unit-node:src/b.test.ts", { duration: 3000, failed: true }],
+      ["unit-node:src/c.test.ts", { duration: 2000, failed: false }],
+      ["unit-jsdom:src/d.test.tsx", { duration: 4000, failed: false }],
+      ["unit-pure:src/a.test.ts", { duration: 10, failed: false }],
     ]);
   });
 });

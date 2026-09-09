@@ -18,15 +18,8 @@ const privateModules = new Set([
 ]);
 
 function forbiddenImports(source: string, file: string): string[] {
-  const parsed = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-  );
   const violations: string[] = [];
-  function record(node: ts.StringLiteralLike) {
-    const specifier = node.text;
+  function record(specifier: string, position: number) {
     const resolved = specifier.startsWith("@/")
       ? specifier.slice(2)
       : specifier.startsWith(".")
@@ -61,33 +54,14 @@ function forbiddenImports(source: string, file: string): string[] {
       reason = "graph execution uses conversation admission and outcomes";
     if (reason)
       violations.push(
-        `${file}:${parsed.getLineAndCharacterOfPosition(node.getStart()).line + 1} ${reason}: ${specifier}`,
+        `${file}:${source.slice(0, position).split("\n").length} ${reason}: ${specifier}`,
       );
   }
-  function visit(node: ts.Node) {
-    if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      node.moduleSpecifier &&
-      ts.isStringLiteralLike(node.moduleSpecifier)
-    )
-      record(node.moduleSpecifier);
-    else if (
-      ts.isCallExpression(node) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) &&
-          node.expression.text === "require"))
-    ) {
-      const argument = node.arguments[0];
-      if (argument && ts.isStringLiteralLike(argument)) record(argument);
-    } else if (
-      ts.isImportTypeNode(node) &&
-      ts.isLiteralTypeNode(node.argument) &&
-      ts.isStringLiteralLike(node.argument.literal)
-    )
-      record(node.argument.literal);
-    ts.forEachChild(node, visit);
+
+  for (const dependency of ts.preProcessFile(source, true, true)
+    .importedFiles) {
+    record(dependency.fileName, dependency.pos);
   }
-  visit(parsed);
   return violations;
 }
 

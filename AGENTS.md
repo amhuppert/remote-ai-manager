@@ -72,6 +72,7 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 ## Testing boundaries
 
+- Before adding a test that scans repository or toolchain files, or changing a test's environment or isolation profile, follow `.kiro/steering/tech.md#test-execution-profiles`.
 - Unit tests must not import Storybook or `*.stories.*` modules. Test production components directly with Testing Library and Storybook-free fixtures/providers; keep CSF composition, play functions, and story interaction coverage in the Storybook browser project.
 - Never use `vi.mock()` for internal project modules. Use dependency injection, factories, XState `.provide()`, or extracted pure functions. Infrastructure modules with import-time side effects are the narrow exception.
 - Dependency interfaces use method syntax when production functions must satisfy them.
@@ -89,7 +90,7 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 - `.kiro/steering/engineering-principles.md` — type safety, TDD, module depth, composition philosophy
 - `.kiro/steering/product.md` — current product scope and capabilities
-- `.kiro/steering/tech.md` — stack, migrations, commands, version-sensitive constraints
+- `.kiro/steering/tech.md` — stack and version-sensitive constraints; read before changing dependencies, migrations, or test execution profiles
 - `.kiro/steering/structure.md` — directory, route, schema, and import boundaries
 - `.kiro/steering/agent-backends.md` — backend descriptors, facets, continuity, failures, structured output
 - `.kiro/steering/workflows.md` — lifecycle shapes, workflow modules, adoption matrix, graph configuration

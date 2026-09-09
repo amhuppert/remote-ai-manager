@@ -30,13 +30,22 @@ if (!Number.isInteger(testBail) || testBail < 0) {
 }
 
 const projectsBySelection = {
-  both: ["unit-node", "unit-jsdom"],
-  node: ["unit-node"],
+  both: ["unit-pure", "unit-node", "unit-jsdom", "unit-architecture"],
+  node: ["unit-pure", "unit-node", "unit-architecture"],
   jsdom: ["unit-jsdom"],
+  runtime: ["unit-pure", "unit-node", "unit-jsdom"],
+  integration: ["unit-node", "unit-jsdom", "unit-architecture"],
+  "node-setup": ["unit-node", "unit-architecture"],
+  "pure-dom": ["unit-pure", "unit-jsdom"],
+  "pure-node": ["unit-pure", "unit-node"],
+  pure: ["unit-pure"],
+  architecture: ["unit-architecture"],
 };
 const projects = projectsBySelection[projectSelection];
 if (!projects) {
-  throw new Error("expected project selection both, node, or jsdom");
+  throw new Error(
+    `unknown project selection ${projectSelection}; expected ${Object.keys(projectsBySelection).join(", ")}`,
+  );
 }
 
 let filters = [];

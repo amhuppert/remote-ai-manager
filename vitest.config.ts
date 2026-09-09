@@ -1,8 +1,8 @@
 import { defineConfig, type ConfigEnv } from "vitest/config";
-import { readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildRepositoryTestProfileInventory } from "./scripts/test-profiles";
 import { resolveWorkerBudget } from "./scripts/validate/worker-budget.mjs";
 
 const dirname =
@@ -10,51 +10,31 @@ const dirname =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url));
 
-const TEST_FILE_PATTERN = /\.test\.(?:ts|tsx|mjs)$/;
-const JSDOM_DIRECTIVE_PATTERN = /^\/\/ @vitest-environment jsdom\s*$/m;
 // The authenticated acceptance suite (spec R14.2, D19). Its files are named
 // apart from the unit corpus rather than merely placed apart, because the unit
 // projects collect by filename: an acceptance file that landed in the unit
 // suite would spend real credential and real money on every `test` run.
-const ACCEPTANCE_FILE_PATTERN = /\.acceptance\.test\.ts$/;
-
-function collectTestFiles(directory: string): string[] {
-  const absoluteDirectory = path.join(dirname, directory);
-  return readdirSync(absoluteDirectory, { withFileTypes: true }).flatMap(
-    (entry) => {
-      const relativePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) return collectTestFiles(relativePath);
-      if (!entry.isFile() || !TEST_FILE_PATTERN.test(entry.name)) return [];
-      return [relativePath.split(path.sep).join("/")];
-    },
-  );
-}
-
-const allTestFiles = ["src", "scripts", "eslint-rules"].flatMap(
-  collectTestFiles,
-);
+const testProfileInventory = buildRepositoryTestProfileInventory(dirname);
 // The closing sweep scans everything the matrix produced, so it has to run
 // after the cases that produce it. Ordering is stated here rather than left to
 // directory traversal, and the project runs one file at a time.
-const acceptanceTestFiles = allTestFiles
-  .filter((filePath) => ACCEPTANCE_FILE_PATTERN.test(filePath))
-  .sort((left, right) => {
-    const rank = (filePath: string): number =>
-      path.basename(filePath).startsWith("final-") ? 1 : 0;
-    return rank(left) - rank(right) || left.localeCompare(right);
-  });
-const unitTestFiles = allTestFiles.filter(
-  (filePath) => !ACCEPTANCE_FILE_PATTERN.test(filePath),
-);
-const jsdomTestFiles = unitTestFiles.filter((filePath) =>
-  JSDOM_DIRECTIVE_PATTERN.test(
-    readFileSync(path.join(dirname, filePath), "utf8"),
-  ),
-);
-const jsdomTestFileSet = new Set(jsdomTestFiles);
-const nodeTestFiles = unitTestFiles.filter(
-  (filePath) => !jsdomTestFileSet.has(filePath),
-);
+const acceptanceTestFiles = [
+  ...testProfileInventory.byProfile["browser-live-acceptance"],
+].sort((left, right) => {
+  const rank = (filePath: string): number =>
+    path.basename(filePath).startsWith("final-") ? 1 : 0;
+  return rank(left) - rank(right) || left.localeCompare(right);
+});
+const pureNodeTestFiles = [...testProfileInventory.byProfile["pure-node"]];
+const nodeIntegrationTestFiles = [
+  ...testProfileInventory.byProfile["node-integration"],
+];
+const domIntegrationTestFiles = [
+  ...testProfileInventory.byProfile["dom-integration"],
+];
+const architectureToolchainTestFiles = [
+  ...testProfileInventory.byProfile["architecture-toolchain"],
+];
 
 // Worker parallelism is bounded by RAM, not just core count — see
 // `scripts/validate/worker-budget.mjs`, which owns that policy for this config
@@ -171,9 +151,21 @@ export default async function resolveConfig(_env: ConfigEnv) {
         {
           extends: true,
           test: {
+            name: "unit-pure",
+            environment: "node",
+            include: pureNodeTestFiles,
+            testTimeout: 15000,
+            env: {
+              CC_LOG_SILENT: "1",
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
             name: "unit-node",
             environment: "node",
-            include: nodeTestFiles,
+            include: nodeIntegrationTestFiles,
             setupFiles: ["vitest.node.setup.ts"],
             testTimeout: 15000,
             env: {
@@ -186,8 +178,21 @@ export default async function resolveConfig(_env: ConfigEnv) {
           test: {
             name: "unit-jsdom",
             environment: "jsdom",
-            include: jsdomTestFiles,
+            include: domIntegrationTestFiles,
             setupFiles: ["vitest.jsdom.setup.ts"],
+            testTimeout: 15000,
+            env: {
+              CC_LOG_SILENT: "1",
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: "unit-architecture",
+            environment: "node",
+            include: architectureToolchainTestFiles,
+            setupFiles: ["vitest.node.setup.ts"],
             testTimeout: 15000,
             env: {
               CC_LOG_SILENT: "1",

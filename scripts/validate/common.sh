@@ -53,6 +53,7 @@ resolve_validation_diff() {
   shared_test_setup_changed=false
   node_test_setup_changed=false
   jsdom_test_setup_changed=false
+  test_profile_config_changed=false
 
   if [ -z "$merge_base" ]; then
     echo "validation: no merge base against '${TARGET_BRANCH}'; validating the full safe scope" >&2
@@ -65,6 +66,7 @@ resolve_validation_diff() {
       vitest.setup.ts) shared_test_setup_changed=true ;;
       vitest.node.setup.ts) node_test_setup_changed=true ;;
       vitest.jsdom.setup.ts) jsdom_test_setup_changed=true ;;
+      vitest.config.ts | scripts/test-profiles.ts) test_profile_config_changed=true ;;
     esac
     [ -f "$file" ] || continue
     changed_files+=("$file")

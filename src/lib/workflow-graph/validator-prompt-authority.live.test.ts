@@ -41,9 +41,8 @@ import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversati
  * in `validator-role-transport.integration.test.ts` — so spending live turns on
  * it would buy nothing this suite is about.
  *
- * These runs cost real model calls, so they are opt-in. Always pass
- * `--project unit-node`: the `unit` project is a compatibility alias that also
- * picks this file up, which would run every live turn twice.
+ * These runs cost real model calls, so they are opt-in. Select the owning Node
+ * integration project explicitly to avoid collecting unrelated profiles.
  *
  *     CC_LIVE_PROMPT_AUTHORITY_TESTS=1 bun run test --project unit-node \
  *       src/lib/workflow-graph/validator-prompt-authority.live.test.ts

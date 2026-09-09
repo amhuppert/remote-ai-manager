@@ -47,9 +47,8 @@ if (typeof globalThis.IntersectionObserver === "undefined") {
 }
 
 // Radix UI primitives (DropdownMenu / Select / …) call these DOM methods when a
-// menu/listbox opens; jsdom implements none of them. Guard on Element so the
-// setup can also load under the legacy compatibility `unit` project, whose
-// non-jsdom tests run in Node.
+// menu/listbox opens; jsdom implements none of them. Guard on Element so this
+// setup remains safe to load in a Node diagnostic.
 if (typeof Element !== "undefined") {
   Element.prototype.scrollIntoView = function () {};
   Element.prototype.hasPointerCapture = function () {
