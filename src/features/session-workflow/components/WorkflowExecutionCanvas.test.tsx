@@ -22,6 +22,11 @@ import WorkflowExecutionCanvas, {
   mergeMeasuredExecutionLayout,
 } from "./WorkflowExecutionCanvas";
 
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+Element.prototype.scrollIntoView = () => {};
+
 function planCard(): HTMLElement {
   const card = screen
     .getAllByTestId("context-node")
@@ -442,4 +447,104 @@ describe("WorkflowExecutionCanvas — mobile graph panel", () => {
     );
     expect(onEditOwnership).toHaveBeenCalledWith("context-implement");
   });
+});
+
+describe("WorkflowExecutionCanvas inline agent configuration", () => {
+  it("edits an unstarted context in a running workflow through update-context", () => {
+    const execution = createWorkflowExecution({ status: "running" });
+    const context = execution.workingDefinition.executionContexts[0]!;
+    const onSaveContextConfig = vi.fn();
+    render(
+      <WorkflowExecutionCanvas
+        execution={execution}
+        layout={createWorkflowLayout()}
+        onSelectContext={() => {}}
+        isMobile
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+    const card = screen.getAllByTestId("context-node")[0]!;
+    fireEvent.keyDown(
+      within(card).getByRole("combobox", { name: "Implementer level" }),
+      { key: "Enter" },
+    );
+    fireEvent.click(screen.getByRole("option", { name: "Low" }));
+    const { profileSnapshot: _snapshot, ...implementer } = context.implementer;
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: context.id,
+        implementer: {
+          ...implementer,
+          agent: {
+            ...implementer.agent,
+            modelSelection: {
+              ...implementer.agent.modelSelection,
+              parameters: { effort: "low" },
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("does not expose editing on running contexts or read-only views", () => {
+    const execution = createWorkflowExecution({ status: "running" });
+    Object.values(execution.contextStates).forEach((state) => {
+      state.status = "running";
+      state.iterationCount = 1;
+    });
+    const { rerender } = render(
+      <WorkflowExecutionCanvas
+        execution={execution}
+        layout={createWorkflowLayout()}
+        onSelectContext={() => {}}
+        isMobile
+        onSaveContextConfig={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("combobox")).toBeNull();
+    rerender(
+      <WorkflowExecutionCanvas
+        execution={createWorkflowExecution()}
+        layout={createWorkflowLayout()}
+        onSelectContext={() => {}}
+        isMobile
+      />,
+    );
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+});
+
+it("keeps a save refusal visible if the context starts before the edit is accepted", () => {
+  const execution = createWorkflowExecution({ status: "running" });
+  const props = {
+    execution,
+    layout: createWorkflowLayout(),
+    onSelectContext: () => {},
+    isMobile: true,
+    onSaveContextConfig: vi.fn(),
+  };
+  const { rerender } = render(<WorkflowExecutionCanvas {...props} />);
+  const card = screen.getAllByTestId("context-node")[0]!;
+  fireEvent.keyDown(
+    within(card).getByRole("combobox", { name: "Implementer level" }),
+    { key: "Enter" },
+  );
+  fireEvent.click(screen.getByRole("option", { name: "Low" }));
+  rerender(<WorkflowExecutionCanvas {...props} isSavingConfig />);
+  expect(within(card).getByRole("status")).toHaveTextContent("Saving");
+  expect(screen.getAllByRole("status")).toHaveLength(1);
+  const running = structuredClone(execution);
+  running.contextStates["context-plan"]!.status = "running";
+  running.contextStates["context-plan"]!.iterationCount = 1;
+  rerender(
+    <WorkflowExecutionCanvas
+      {...props}
+      execution={running}
+      configEditError="Context started. Pause the workflow to edit."
+    />,
+  );
+  expect(within(card).queryByRole("combobox")).toBeNull();
+  expect(within(card).getByRole("alert")).toHaveTextContent("Context started");
 });

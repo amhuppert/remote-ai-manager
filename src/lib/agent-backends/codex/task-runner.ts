@@ -58,6 +58,7 @@ import {
   type ResolvedCodexModelSelection,
 } from "./model-selection";
 import { ModelSelectionPolicyError } from "../model-selection";
+import { providerRefDigest } from "../provider-ref-digest";
 
 const logger = createLogger("codex:task-runner");
 const codexFailureClassifier = createCodexFailureClassifier();
@@ -707,7 +708,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       let thread;
       if (!isolatedOneShot && input.resumeRef?.backend === "codex") {
         logger.info("codex-task-runner.resume", {
-          threadId: input.resumeRef.ref,
+          threadIdDigest: providerRefDigest(input.resumeRef.ref),
         });
         thread = codex.resumeThread(input.resumeRef.ref, threadOptions);
       } else {
@@ -819,7 +820,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
     logger.info("codex-task-runner.complete", {
       workingDirectory: input.workingDirectory,
-      threadId,
+      threadIdDigest: providerRefDigest(threadId),
       timedOut,
       stalled,
       hasError: !!error,

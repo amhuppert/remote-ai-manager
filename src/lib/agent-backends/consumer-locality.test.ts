@@ -251,6 +251,12 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
 
   const deps: ActorFixtureDependencies = {
     log: createCapturingLogger(),
+    checkpoint: {
+      async repo() {
+        throw new Error("in-memory harness has no checkpoint repository");
+      },
+      now: () => new Date().toISOString(),
+    },
     acquireConversationLock: () => () => {},
     acquireQuerySlot: async () => () => {},
     getTranscriptPath: async (id) => `/inmemory/${id}.jsonl`,
@@ -346,7 +352,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     claimWorkflowResults: async () => [],
     settleWorkflowResults: async () => 0,
     releaseWorkflowResults: async () => 0,
-    markQueuedDelivered: async () => {},
+    confirmQueuedDelivery: async () => 0,
     markQueuedUncertain: async () => {},
     markQueuedPending: async () => {},
     markQueuedFailed: async () => {},

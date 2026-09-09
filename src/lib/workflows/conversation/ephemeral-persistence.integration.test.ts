@@ -463,6 +463,10 @@ function makeFakeBackendActorDeps(
   };
   return {
     log: createCapturingLogger(),
+    checkpoint: {
+      repo: unusedInTaskRun("checkpoint.repo"),
+      now: () => new Date().toISOString(),
+    },
     acquireConversationLock: () => () => {},
     acquireQuerySlot: async () => () => {},
     getTranscriptPath: async (id) => `/tmp/cc-ephemeral-test/${id}.jsonl`,
@@ -570,7 +574,7 @@ function makeFakeBackendActorDeps(
     saveTranscriptImage: async () => "/tmp/img.png",
     getNextImageIndex: async () => 0,
     getDebugLogUrl: (id) => `http://localhost/debug/${id}`,
-    markQueuedDelivered: async () => {},
+    confirmQueuedDelivery: async () => 0,
     markQueuedUncertain: async () => {},
     markQueuedPending: async () => {},
     markQueuedFailed: async () => {},
@@ -596,6 +600,12 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
           getSession: fixture.store.getSession,
           getProjectConversation: fixture.store.getProjectConversation,
           getProjectDisplayName: () => "proj",
+          hydrateCheckpointAuthority: async () => ({
+            projection: null,
+            state: { active: null, latestAccepted: null },
+            outcome: { kind: "none" as const },
+            continuationRetired: false,
+          }),
         },
         p,
         s,

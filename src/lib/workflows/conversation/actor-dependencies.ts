@@ -50,6 +50,7 @@ import type {
 
 import type { ConversationDurableEffects } from "./effects";
 import type { ConversationRuntimeState } from "./runtime-state";
+import type { CheckpointDeliveryDependencies } from "./pre-turn/checkpoint-seed";
 
 export interface TurnExecutionDependencies {
   // Resource acquisition
@@ -345,5 +346,11 @@ export interface ConversationActorDependencies {
   context: TurnContextDependencies;
   policy: ConversationPolicyDependencies;
   debug: DebugDependencies;
+  /**
+   * The checkpoint repository, for the one turn that delivers a ready
+   * checkpoint: it binds the attempt, reads the frozen payload and records
+   * acceptance. Every other turn never touches it.
+   */
+  checkpoint: CheckpointDeliveryDependencies;
   log: Logger;
 }

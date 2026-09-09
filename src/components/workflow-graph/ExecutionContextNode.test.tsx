@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import type { NodeProps, Node } from "@xyflow/react";
-import ExecutionContextNode from "./ExecutionContextNode";
+import ExecutionContextNode, { ContextNodeCard } from "./ExecutionContextNode";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import type { ExecutionContextNodeData } from "./derive-graph";
+
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+Element.prototype.scrollIntoView = () => {};
 
 function makeData(
   overrides: Partial<ExecutionContextNodeData> = {},
@@ -67,6 +74,39 @@ function renderNode(data: ExecutionContextNodeData, selected = false) {
 }
 
 describe("ExecutionContextNode — output schema glyph (R7.7)", () => {
+  it("shows the validator level without parameter prefixes and emphasizes catalog max levels", () => {
+    const data = makeData();
+    data.context.contextValidator = {
+      enabled: true,
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "task",
+          authority: "blocking",
+          continuity: { enabled: true },
+          agent: {
+            backend: "codex",
+            modelSelection: {
+              modelId: "gpt-6-astra",
+              parameters: { reasoning: "xhigh", fast: "false" },
+            },
+          },
+        },
+      ],
+    };
+    renderNode(data);
+    const crew = screen.getByTestId("node-crew");
+    expect(crew).not.toHaveTextContent(/effort=|reasoning=|fast=false/);
+    expect(screen.getByText("xhigh")).toHaveAttribute(
+      "data-emphasis",
+      "exceeds-scale",
+    );
+    expect(
+      screen.getByRole("img", { name: "Validator general fast mode: off" }),
+    ).toBeVisible();
+  });
+
   it("renders no glyph for a context that declares no output schema", () => {
     renderNode(makeData());
     expect(screen.queryByTestId("node-output-schema-glyph")).toBeNull();
@@ -364,18 +404,18 @@ describe("ExecutionContextNode — card anatomy", () => {
     const crew = screen.getByTestId("node-crew");
     // The catalog's canonical long name, never the short selector id.
     expect(crew).toHaveTextContent("Opus 5");
-    expect(crew).toHaveTextContent("effort=high");
+    expect(crew).toHaveTextContent("high");
 
     const seats = screen.getAllByTestId("node-crew-seat");
     expect(seats).toHaveLength(2);
     expect(seats[0]).toHaveTextContent("security");
     expect(seats[0]).toHaveTextContent("blocking");
     expect(seats[0]).toHaveTextContent("Sonnet");
-    expect(seats[0]).toHaveTextContent("effort=high");
+    expect(seats[0]).toHaveTextContent("high");
     expect(seats[1]).toHaveTextContent("style");
     expect(seats[1]).toHaveTextContent("advisory");
     expect(seats[1]).toHaveTextContent("GPT-5.6 Luna");
-    expect(seats[1]).toHaveTextContent("effort=medium");
+    expect(seats[1]).toHaveTextContent("medium");
   });
 
   it("names itself completely enough to be read without the visuals", () => {
@@ -394,7 +434,7 @@ describe("ExecutionContextNode — card anatomy", () => {
     );
 
     expect(screen.getByTestId("context-node")).toHaveAccessibleName(
-      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 effort=high, inherited",
+      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 high, inherited",
     );
   });
 
@@ -473,4 +513,231 @@ describe("ExecutionContextNode — card anatomy", () => {
     renderNode(makeData({ ...checkout, waitState: { kind: "running" } }));
     expect(screen.queryByTestId("node-notice")).toBeNull();
   });
+});
+
+describe("node agent configuration", () => {
+  it("closes the previous dropdown when another field or node is opened", () => {
+    render(
+      <>
+        <ContextNodeCard
+          data={makeData({ agentEditor: { onChange: vi.fn() } })}
+          selected={false}
+        />
+        <ContextNodeCard
+          data={makeData({ agentEditor: { onChange: vi.fn() } })}
+          selected={false}
+        />
+      </>,
+    );
+    const [firstBackend, secondBackend] = screen.getAllByRole("combobox", {
+      name: "Implementer backend",
+    });
+    const firstModel = screen.getAllByRole("combobox", {
+      name: "Implementer model",
+    })[0]!;
+    fireEvent.keyDown(firstBackend!, { key: "Enter" });
+    expect(firstBackend).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(firstModel, { key: "Enter" });
+    expect(firstBackend).toHaveAttribute("aria-expanded", "false");
+    expect(firstModel).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByRole("listbox", { hidden: true })).toHaveLength(1);
+    fireEvent.keyDown(secondBackend!, { key: "Enter" });
+    expect(firstModel).toHaveAttribute("aria-expanded", "false");
+    expect(secondBackend).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByRole("listbox", { hidden: true })).toHaveLength(1);
+  });
+
+  it("changes the implementer level directly and does not select the context", () => {
+    const onChange = vi.fn();
+    const data = makeData({ agentEditor: { onChange } });
+    renderNode(data);
+    fireEvent.keyDown(
+      screen.getByRole("combobox", { name: "Implementer level" }),
+      { key: "Enter" },
+    );
+    fireEvent.click(screen.getByRole("option", { name: "High" }));
+    expect(onChange).toHaveBeenCalledWith(
+      { kind: "implementer" },
+      {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "high" } },
+      },
+    );
+  });
+
+  it("has no editable controls when the host does not grant editing", () => {
+    renderNode(makeData());
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("disables configuration while saving and shows failures on the node", () => {
+    renderNode(
+      makeData({
+        agentEditor: {
+          onChange: vi.fn(),
+          pending: true,
+          error: "Revision changed. Try again.",
+        },
+      }),
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Implementer model" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Saving");
+    expect(screen.getByRole("alert")).toHaveTextContent("Revision changed");
+  });
+});
+
+it("switches backend to its valid default selection", () => {
+  const onChange = vi.fn();
+  renderNode(makeData({ agentEditor: { onChange } }));
+  fireEvent.keyDown(
+    screen.getByRole("combobox", { name: "Implementer backend" }),
+    { key: "Enter" },
+  );
+  fireEvent.click(screen.getByRole("option", { name: "Codex" }));
+  const catalog = getConfiguredBackendModelCatalog("codex");
+  expect(onChange).toHaveBeenCalledWith(
+    { kind: "implementer" },
+    {
+      backend: "codex",
+      modelSelection: defaultSelectionForModel(catalog, catalog.defaultModelId),
+    },
+  );
+});
+
+it("changes a model to its supported parameter defaults", () => {
+  const onChange = vi.fn();
+  renderNode(makeData({ agentEditor: { onChange } }));
+  fireEvent.keyDown(
+    screen.getByRole("combobox", { name: "Implementer model" }),
+    { key: "Enter" },
+  );
+  fireEvent.click(screen.getByRole("option", { name: "Opus 5" }));
+  expect(onChange).toHaveBeenCalledWith(
+    { kind: "implementer" },
+    {
+      backend: "claude",
+      modelSelection: defaultSelectionForModel(
+        getConfiguredBackendModelCatalog("claude"),
+        "opus",
+      ),
+    },
+  );
+});
+
+it("changes an existing validator's fast mode while keeping its model and level", () => {
+  const onChange = vi.fn();
+  const data = makeData({ agentEditor: { onChange } });
+  data.context.contextValidator = {
+    enabled: true,
+    assignments: [
+      {
+        id: "general",
+        profile: { tier: "builtin", id: "general-reviewer" },
+        strategy: "task",
+        authority: "blocking",
+        continuity: { enabled: true },
+        agent: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "gpt-6-astra",
+            parameters: { reasoning: "ultra", fast: "false" },
+          },
+        },
+      },
+    ],
+  };
+  const { unmount } = renderNode(data);
+  const toggle = screen.getByRole("button", {
+    name: "Validator general fast mode",
+  });
+  expect(toggle).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(toggle);
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(onChange).toHaveBeenCalledWith(
+    { kind: "validator", assignmentId: "general" },
+    {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-6-astra",
+        parameters: { reasoning: "ultra", fast: "true" },
+      },
+    },
+  );
+  expect(
+    screen.queryByRole("button", { name: /add.*validator|remove.*validator/i }),
+  ).toBeNull();
+  unmount();
+  data.context.contextValidator.assignments[0]!.agent =
+    onChange.mock.calls[0]![1];
+  renderNode(data);
+  const enabledToggle = screen.getByRole("button", {
+    name: "Validator general fast mode",
+  });
+  expect(enabledToggle).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(enabledToggle);
+  expect(onChange).toHaveBeenLastCalledWith(
+    { kind: "validator", assignmentId: "general" },
+    {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-6-astra",
+        parameters: { reasoning: "ultra", fast: "false" },
+      },
+    },
+  );
+});
+
+it("lets clicks on read-only agent details select the context", () => {
+  const select = vi.fn();
+  render(
+    <div onClick={select}>
+      <ContextNodeCard data={makeData()} selected={false} />
+    </div>,
+  );
+  fireEvent.click(screen.getByText("Sonnet"));
+  expect(select).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a configured custom Codex model editable", () => {
+  const onChange = vi.fn();
+  const data = makeData({ agentEditor: { onChange } });
+  data.context.implementer!.agent = {
+    backend: "codex",
+    modelSelection: {
+      modelId: "custom-codex-review",
+      parameters: { reasoning: "xhigh", fast: "false" },
+    },
+  };
+  renderNode(data);
+  fireEvent.keyDown(
+    screen.getByRole("combobox", { name: "Implementer level" }),
+    { key: "Enter" },
+  );
+  fireEvent.click(screen.getByRole("option", { name: "High" }));
+  expect(onChange).toHaveBeenCalledWith(
+    { kind: "implementer" },
+    {
+      backend: "codex",
+      modelSelection: {
+        modelId: "custom-codex-review",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    },
+  );
+});
+
+it("keeps inline agent control clicks from selecting the context", () => {
+  const select = vi.fn();
+  render(
+    <div onClick={select}>
+      <ContextNodeCard
+        data={makeData({ agentEditor: { onChange: vi.fn() } })}
+        selected={false}
+      />
+    </div>,
+  );
+  fireEvent.click(screen.getByRole("combobox", { name: "Implementer model" }));
+  expect(select).not.toHaveBeenCalled();
 });

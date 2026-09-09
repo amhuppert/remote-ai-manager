@@ -28,7 +28,10 @@ import {
   toQueuedMessageView as defaultToQueuedMessageView,
   messageQueueService,
 } from "@/lib/conversations/message-queue-service";
-import { ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain } from "@/lib/workflows/conversation/manager";
+import {
+  checkpointAcceptsQueuedInput,
+  ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
+} from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import {
@@ -60,6 +63,7 @@ export interface QueueRouteDeps extends QueueOperationDeps {
 }
 
 const defaultDeps: QueueRouteDeps = {
+  checkpointAcceptsQueuedInput,
   admitModelSelection: admitConfiguredModelSelection,
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,

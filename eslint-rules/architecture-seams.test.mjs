@@ -34,6 +34,10 @@ describe("architecture-seams", () => {
           filename: "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
         },
         {
+          code: 'import { applyLiveEditsToActiveExecution } from "./live-edit-apply";',
+          filename: "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+        },
+        {
           code: "execution.workingDefinition.tasks.push(task);",
           filename: "src/lib/workflow-graph/live-edit-apply.ts",
         },
@@ -94,6 +98,11 @@ describe("architecture-seams", () => {
         {
           code: 'import { moveDocumentTask } from "./document-edit-mechanics";',
           filename: "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+          errors: [{ messageId: "graphLiveEditOwnership" }],
+        },
+        {
+          code: 'import { applyLiveEditsToActiveExecution } from "./live-edit-apply";',
+          filename: "src/lib/workflow-graph/execution-route-handlers.ts",
           errors: [{ messageId: "graphLiveEditOwnership" }],
         },
         {

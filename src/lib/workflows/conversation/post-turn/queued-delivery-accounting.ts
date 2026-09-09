@@ -5,10 +5,16 @@
  * transcript: for a queued (auto-drained) turn the queue — not the transcript
  * — owns the user content until the backend confirms acceptance, so the
  * coalesced user entry is appended exactly once on `input_accepted` (append
- * BEFORE the queue mark), and the claimed rows leave the queue only after
+ * BEFORE the queue release), and the claimed rows leave the queue only after
  * both durable writes succeed. Any incomplete handoff is retained for review:
  * a missing acknowledgement does not prove the request never ran.
  * Normal turns append their user entry at dispatch and never touch queue marks.
+ *
+ * A checkpoint delivery splits the two halves: it archives the accepted input
+ * in event order but releases the rows only once its own acceptance is
+ * durable, so a release that runs from a repaired receipt may find the rows
+ * already held for review by this attempt's settlement. The confirming effect
+ * releases both.
  */
 
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -27,21 +33,27 @@ export interface QueuedDeliveryAccountingDeps {
     deliveryAttemptId: string;
     error: string;
   }): Promise<void>;
-  markQueuedDelivered(input: {
+  confirmQueuedDelivery(input: {
     projectPath: string;
     sessionName: string;
     conversationId: string;
     ids: string[];
     deliveryAttemptId: string;
-  }): Promise<void>;
+  }): Promise<number>;
 }
 
 export interface QueuedDeliveryAccounting {
   /** Append the user entry now for a NON-queued turn; no-op when queued. */
   appendUserEntryAtDispatch(): Promise<void>;
   /**
+   * Archive the accepted queued input now, for a caller that releases the
+   * rows later through `handleInputAccepted`; no-op for a normal turn, whose
+   * entry was appended at dispatch. Safe against repeated events.
+   */
+  appendAcceptedUserEntry(): Promise<void>;
+  /**
    * Backend accepted the input: append the coalesced user entry exactly once
-   * and mark the claimed rows delivered. Safe against repeated events.
+   * and release the claimed rows. Safe against repeated events.
    */
   handleInputAccepted(): Promise<void>;
   /**
@@ -61,11 +73,21 @@ export function createQueuedDeliveryAccounting(
     appendUserEntry(): Promise<void>;
   },
 ): QueuedDeliveryAccounting {
-  // A successful transcript append and a successful queue acknowledgement are
+  // A successful transcript append and a successful queue release are
   // separate facts. Retain ownership until both have completed.
-  let queuedUserEntryAppended = false;
+  let userEntry: Promise<void> | undefined;
   let deliveryRecorded = false;
   let acceptance: Promise<void> | undefined;
+
+  function appendQueuedUserEntryOnce(): Promise<void> {
+    userEntry ??= Promise.resolve()
+      .then(() => input.appendUserEntry())
+      .catch((error: unknown) => {
+        userEntry = undefined;
+        throw error;
+      });
+    return userEntry;
+  }
 
   return {
     async appendUserEntryAtDispatch(): Promise<void> {
@@ -73,15 +95,17 @@ export function createQueuedDeliveryAccounting(
       await input.appendUserEntry();
     },
 
+    async appendAcceptedUserEntry(): Promise<void> {
+      if (!input.queuedDelivery || deliveryRecorded) return;
+      await appendQueuedUserEntryOnce();
+    },
+
     handleInputAccepted(): Promise<void> {
       if (acceptance) return acceptance;
       acceptance = (async () => {
         if (!input.queuedDelivery || deliveryRecorded) return;
-        if (!queuedUserEntryAppended) {
-          await input.appendUserEntry();
-          queuedUserEntryAppended = true;
-        }
-        await deps.markQueuedDelivered({
+        await appendQueuedUserEntryOnce();
+        const released = await deps.confirmQueuedDelivery({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           conversationId: input.conversationId,
@@ -94,6 +118,7 @@ export function createQueuedDeliveryAccounting(
           conversationId: input.conversationId,
           messageIds: input.queuedDelivery.messageIds,
           deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+          released,
         });
       })();
       void acceptance.catch(() => {

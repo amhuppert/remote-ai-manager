@@ -159,6 +159,18 @@ export interface ConversationsRepo {
     text: string | null,
   ): boolean;
   /**
+   * Focused single-column clear of `backend_ref`, leaving the conversation's
+   * activity timestamp untouched: retiring a runtime is not conversation
+   * activity and must not reorder the list. Synchronous and statement-level so
+   * a caller that must clear the reference and record WHY in the same commit
+   * can run both inside one transaction. Returns whether a row matched.
+   */
+  clearBackendRef(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): boolean;
+  /**
    * Invalidate the parsed-row cache after conversation rows were removed
    * out-of-band — an FK `ON DELETE CASCADE` from a session/project delete drops
    * the rows at the SQL layer without routing through this repo's own `delete`.
@@ -553,6 +565,11 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
      SET pending_prompt_text = ?
      WHERE project_path = ? AND session_name = ? AND id = ?`,
   );
+  const clearBackendRefStmt = db.prepare(
+    `UPDATE conversations
+     SET backend_ref = NULL
+     WHERE project_path = ? AND session_name = ? AND id = ?`,
+  );
   const sessionTouchStmt = db.prepare(
     `UPDATE sessions
      SET last_activity_at = ?
@@ -886,6 +903,22 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
         () => {
           const info = setPendingPromptTextStmt.run(
             text,
+            projectPath,
+            sessionName,
+            conversationId,
+          );
+          const changed = info.changes > 0;
+          if (changed) cache.bump();
+          return changed;
+        },
+      );
+    },
+    clearBackendRef(projectPath, sessionName, conversationId) {
+      return timed(
+        "clearBackendRef",
+        { id: conversationId, projectPath, sessionName },
+        () => {
+          const info = clearBackendRefStmt.run(
             projectPath,
             sessionName,
             conversationId,

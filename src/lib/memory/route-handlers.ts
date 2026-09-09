@@ -32,6 +32,8 @@ import {
 } from "@/lib/workflows/conversation/manager";
 
 import { readNextTurnContextLoss } from "@/lib/workflows/conversation/pre-turn/next-turn-context-loss";
+import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
+import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { readBodyBounded } from "@/lib/shared/bounded-body";
@@ -1720,6 +1722,14 @@ function defaultDeps(): MemoryRouteDeps {
         {
           async findConversation(id) {
             const store = getStateStore();
+            // A ready checkpoint seeds the next turn's FRESH runtime, so the
+            // preview reads that intent from the checkpoint authority rather
+            // than inferring it from the cleared handle.
+            const pendingCheckpoint = async (
+              key: CheckpointScopeKey,
+            ): Promise<boolean> =>
+              (await getConversationCheckpointsRepo().getStateForAdmission(key))
+                .active?.phase === "ready";
             const session = await store.getConversationById(id);
             if (session !== null) {
               return {
@@ -1727,6 +1737,12 @@ function defaultDeps(): MemoryRouteDeps {
                 sessionName: session.sessionName,
                 promptCount: session.conversation.promptCount,
                 hasResumeHandle: session.conversation.backendRef !== null,
+                pendingCheckpoint: await pendingCheckpoint({
+                  scope: "session",
+                  projectPath: session.projectPath,
+                  sessionName: session.sessionName,
+                  conversationId: id,
+                }),
               };
             }
             const project = await store.getProjectConversationById(id);
@@ -1737,6 +1753,12 @@ function defaultDeps(): MemoryRouteDeps {
               sessionName: null,
               promptCount: project.conversation.promptCount,
               hasResumeHandle: project.conversation.backendRef !== null,
+              pendingCheckpoint: await pendingCheckpoint({
+                scope: "project",
+                projectPath: project.projectPath,
+                sessionName: null,
+                conversationId: id,
+              }),
             };
           },
           getRuntimeConfiguration: getConversationRuntimeConfiguration,

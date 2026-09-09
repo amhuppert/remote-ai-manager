@@ -7,6 +7,7 @@ import type {
   QueuedDeliveryMetadata,
 } from "./turn-spec";
 import type { ConversationDurableSeed } from "./actor-input-loader";
+import type { CheckpointActorProjection } from "@/lib/conversation-checkpoints/schemas";
 /**
  * Conversation machine types.
  *
@@ -123,6 +124,16 @@ export interface ConversationContext {
   // Last turn results
   lastResult: PromptActorResult | null;
   lastError: string | null;
+
+  /**
+   * The conversation's active checkpoint operation, as `{operationId, phase}`
+   * only. The checkpoint repository is the authority; the manager projects it
+   * here so the machine can hold ordinary admission while a checkpoint owns
+   * the host, and hydration re-reads the repository rather than trusting a
+   * restored snapshot. Absent from a snapshot written before this field
+   * existed, so readers treat `undefined` as `null`.
+   */
+  checkpoint: CheckpointActorProjection | null;
 }
 
 // ============================================================
@@ -163,7 +174,17 @@ export type ConversationEvent =
   // the pure reducer in `@/lib/workflows/debug/commands`.
   | { type: "DEBUG_COMMAND"; command: DebugCommand }
   | { type: "EXTERNAL_TURN_STARTED" }
-  | { type: "EXTERNAL_TURN_COMPLETED"; result: PromptActorResult };
+  | { type: "EXTERNAL_TURN_COMPLETED"; result: PromptActorResult }
+  // Sent only by the conversation manager under checkpoint maintenance
+  // ownership; boundaries.arch.test.ts refuses the event name anywhere but
+  // the manager, the machine and this union. A `ready` projection also
+  // clears the retired continuation, so an actor-derived row write can never
+  // restore the reference the checkpoint repository cleared in the same
+  // readiness commit.
+  | {
+      type: "CHECKPOINT_PHASE";
+      checkpoint: CheckpointActorProjection | null;
+    };
 
 // ============================================================
 // Input / Output
@@ -193,6 +214,13 @@ export interface ConversationInput extends Omit<
    * hydrated; the phase lives in `debugMode.phase`.
    */
   debugMode?: DebugModeState | null;
+  /**
+   * The active checkpoint projection loaded from the checkpoint repository
+   * before the actor starts, so a host restored during maintenance or
+   * reconciliation holds ordinary admission from its first idle entry.
+   * Ephemeral lanes and callers without checkpoint authority pass nothing.
+   */
+  checkpoint?: CheckpointActorProjection | null;
 }
 
 // ============================================================
@@ -318,6 +346,13 @@ export interface ExecutePromptInput {
   forkedFrom: ForkedFrom;
   role: ConversationRole;
   streamId: string | null;
+  /**
+   * The manager's checkpoint projection at dispatch. A `ready` projection
+   * makes this turn the checkpoint's delivery: a fresh runtime with no resume
+   * handle, seeded from the frozen payload ahead of the user's input. Absent
+   * or null for every other turn.
+   */
+  checkpoint?: CheckpointActorProjection | null;
   /** Report the final admitted selection before provider dispatch so the
    *  machine can make restart replay independent of mutable defaults. */
   onModelSelectionResolved(

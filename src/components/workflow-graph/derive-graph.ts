@@ -1,3 +1,5 @@
+import type { NodeAgentTarget } from "./node-agent-edit";
+import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import { classifyContextActivity } from "@/lib/workflow-graph/context-activity";
 import type { Node, Edge } from "@xyflow/react";
 import type {
@@ -85,6 +87,12 @@ export type ContextProvenanceDisplay = {
 };
 
 export type ExecutionContextNodeData = {
+  agentEditor?: {
+    onChange?(target: NodeAgentTarget, agent: GraphWorkflowAgentConfig): void;
+    pending?: boolean;
+    disabled?: boolean;
+    error?: string | null;
+  };
   context:
     | GraphWorkflowExecutionContextDefinition
     | GraphWorkflowCascadeContext;

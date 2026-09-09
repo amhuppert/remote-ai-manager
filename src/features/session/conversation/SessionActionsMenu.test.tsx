@@ -94,7 +94,7 @@ describe("SessionActionsMenu", () => {
     for (const [name, callback] of [
       [/push branch/i, onPush],
       [/rebase on main/i, onRebase],
-      [/compact conversation/i, onCompactConversation],
+      [/generate compaction artifact/i, onCompactConversation],
       [/view context artifact/i, onViewArtifact],
       [/copy reference/i, onCopyReference],
       [/delete session/i, onDelete],
@@ -145,7 +145,7 @@ describe("SessionActionsMenu — layout fallback", () => {
 
 describe("SessionActionsMenu — compaction actions", () => {
   function renderWithCompaction(
-    state: import("./compaction-chip-state").CompactionChipState,
+    state: import("@/components/conversation/compaction-chip-state").CompactionChipState,
   ) {
     return render(
       <SessionActionsMenu
@@ -176,18 +176,18 @@ describe("SessionActionsMenu — compaction actions", () => {
     );
     await openMenu();
     expect(
-      screen.queryByRole("menuitem", { name: /compact conversation/i }),
+      screen.queryByRole("menuitem", { name: /generate compaction artifact/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("menuitem", { name: /copy reference/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("none: offers Compact conversation and Copy reference, no view/refresh", async () => {
+  it("none: offers Generate compaction artifact and Copy reference, no view/refresh", async () => {
     renderWithCompaction({ kind: "none" });
     await openMenu();
     expect(
-      screen.getByRole("menuitem", { name: /compact conversation/i }),
+      screen.getByRole("menuitem", { name: /generate compaction artifact/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /copy reference/i }),
@@ -207,7 +207,7 @@ describe("SessionActionsMenu — compaction actions", () => {
       screen.getByRole("menuitem", { name: /compacting…/i }),
     ).toHaveAttribute("data-disabled");
     expect(
-      screen.queryByRole("menuitem", { name: /compact conversation/i }),
+      screen.queryByRole("menuitem", { name: /generate compaction artifact/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -245,11 +245,11 @@ describe("SessionActionsMenu — compaction actions", () => {
     ).toBeInTheDocument();
   });
 
-  it("failed: offers Compact conversation (retry) and View", async () => {
+  it("failed: offers Generate compaction artifact (retry) and View", async () => {
     renderWithCompaction({ kind: "failed" });
     await openMenu();
     expect(
-      screen.getByRole("menuitem", { name: /compact conversation/i }),
+      screen.getByRole("menuitem", { name: /generate compaction artifact/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /view context artifact/i }),

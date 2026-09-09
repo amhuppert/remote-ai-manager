@@ -1,7 +1,6 @@
 import { buildDebugPromptContext } from "@/lib/workflows/debug/prompt-policy";
 
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ExecutePromptInput } from "./types";
 import type { ConversationActorDependencies } from "./actor-dependencies";
 import type { ConversationExecutionContext } from "./turn-spec";
@@ -13,11 +12,10 @@ import { getDebugManifestPath } from "@/lib/debug-log/service";
 import { prepareNotepadContext } from "./pre-turn/notepad-context";
 import { prepareMemoryContext } from "./pre-turn/memory-context";
 import { prepareWorkflowResultContext } from "./pre-turn/workflow-result-context";
-import {
-  resolveSyntheticForkSeed,
-  acknowledgeSyntheticForkSeed,
-} from "./pre-turn/fork-seed";
+import { acknowledgeSyntheticForkSeed } from "./pre-turn/fork-seed";
 import { createRequiredInputReceipt } from "./pre-turn/required-input-receipt";
+import type { ContinuationSeed } from "./pre-turn/continuation-seed";
+import type { PreparedCheckpointSeed } from "./pre-turn/checkpoint-seed";
 
 export interface PreparedTurnContribution {
   block: string | null;
@@ -45,6 +43,12 @@ export interface PreparedTurnContribution {
  * generated `<memory-index>`, rebuilt per turn from live rows and placed
  * directly below the ticket block so the artifact being worked on reads
  * before the memory about it. Transient like the rest, never baked in.
+ *
+ * `checkpointSeedBlock` is the frozen CC checkpoint a fresh runtime is seeded
+ * from, delivered exactly once on the first ordinary turn after readiness. It
+ * leads everything else because it IS the conversation's prior history — the
+ * transient blocks describe the present — and it is passed through byte for
+ * byte: the saved payload's hash is what acceptance is later recorded against.
  */
 export function assembleTurnPrompt(input: {
   userText: string;
@@ -53,8 +57,10 @@ export function assembleTurnPrompt(input: {
   workflowResultsBlock: string | null;
   notepadChangeNoticeBlock: string | null;
   memoryIndexBlock: string | null;
+  checkpointSeedBlock: string | null;
 }): string {
   return [
+    input.checkpointSeedBlock,
     input.notepadChangeNoticeBlock,
     input.workflowResultsBlock,
     input.activeTicketBlock,
@@ -106,15 +112,26 @@ export async function prepareConversationTurnContext(
   input: {
     execution: ExecutePromptInput;
     promptText: string;
-    forkedFrom: ConversationState["forkedFrom"];
+    /** The one continuation this turn runs under; see `resolveContinuationSeed`. */
+    continuation: ContinuationSeed;
+    /**
+     * The ready checkpoint this turn delivers, when `continuation` is one.
+     * Prepared by the caller before any runtime exists and settled through
+     * the attempt's own receipts, so this step only places its block and
+     * routes the turn's events to it.
+     */
+    checkpoint: PreparedCheckpointSeed | null;
     workflowContext: ConversationExecutionContext["workflowContext"];
     runtimeCreatedWithoutResume: boolean;
     resultAttemptId: string;
     ownReceipt(finish: () => Promise<void>): void;
+    /** Archive the accepted queued input without releasing its rows. */
+    archiveQueuedInput(): Promise<void>;
+    /** Archive the accepted queued input if not yet, and release its rows. */
     onQueueAccepted(): Promise<void>;
   },
 ) {
-  const { execution } = input;
+  const { execution, continuation, checkpoint } = input;
   const { target } = execution;
   const sessionName = conversationTargetStoreSessionName(target);
   const finishes: (() => Promise<void>)[] = [];
@@ -131,13 +148,14 @@ export async function prepareConversationTurnContext(
       throw new AggregateError(errors, "Turn context receipts failed");
   };
   try {
-    const syntheticForkSeed = await resolveSyntheticForkSeed(deps.transcript, {
-      sessionName,
-      agentBackend: execution.agentBackend,
-      backendRef: execution.backendRef,
-      forkedFrom: input.forkedFrom,
-      transcriptPath: execution.transcriptPath,
-    });
+    // The checkpoint seed and the fork seed are alternatives the resolver
+    // chose between; neither is re-derived here, so they cannot both fire.
+    if ((checkpoint !== null) !== (continuation.kind === "checkpoint"))
+      throw new Error(
+        "a checkpoint seed is prepared exactly when the continuation is one",
+      );
+    const syntheticForkSeed =
+      continuation.kind === "fork" ? continuation.seed : undefined;
     let acceptedBackendRef: AgentSessionRef | null = null;
     const fork = createRequiredInputReceipt(async () => {
       if (!syntheticForkSeed || !acceptedBackendRef) return;
@@ -202,6 +220,7 @@ export async function prepareConversationTurnContext(
     });
     const promptText = assembleTurnPrompt({
       userText: notepad.text,
+      checkpointSeedBlock: checkpoint?.block ?? null,
       activeTicketBlock,
       workflowResultsBlock: workflow.block,
       memoryIndexBlock: memory.block,
@@ -215,18 +234,44 @@ export async function prepareConversationTurnContext(
         ),
       }),
     });
+    // Everything the accepted input releases, in the order the durable
+    // handoffs require: context receipts first, the queue last, because a
+    // released row is the one write nothing later could take back.
+    const acknowledgeAccepted = async (
+      backendRef: AgentSessionRef | null,
+    ): Promise<void> => {
+      await notepad.onInputAccepted?.();
+      await memory.onInputAccepted?.();
+      await workflow.onInputAccepted?.();
+      if (syntheticForkSeed && backendRef) {
+        acceptedBackendRef ??= backendRef;
+        await fork.onInputAccepted();
+      }
+      await input.onQueueAccepted();
+    };
     return {
       promptText,
       syntheticForkSeed,
       async onInputAccepted(backendRef: AgentSessionRef | null) {
-        await notepad.onInputAccepted?.();
-        await memory.onInputAccepted?.();
-        await workflow.onInputAccepted?.();
-        if (syntheticForkSeed && backendRef) {
-          acceptedBackendRef ??= backendRef;
-          await fork.onInputAccepted();
+        if (!checkpoint) {
+          await acknowledgeAccepted(backendRef);
+          return;
         }
-        await input.onQueueAccepted();
+        // A checkpoint delivery hands the receipt what the accepted input
+        // owes: the archive, run now in event order ahead of the backend's
+        // own entries, and everything else, released only once the
+        // acceptance is durable — the queue advanced on this event alone
+        // would outrun a reference that never arrives or a write that fails,
+        // and nothing durable could then repair it. The receipt records the
+        // acceptance before the archive runs, and a repaired receipt
+        // completes both obligations without another provider call.
+        await checkpoint.onInputAccepted({
+          archive: () => input.archiveQueuedInput(),
+          acknowledge: () => acknowledgeAccepted(backendRef),
+        });
+      },
+      async onBackendInit(backendRef: AgentSessionRef) {
+        await checkpoint?.onBackendInit(backendRef);
       },
       finish,
     };

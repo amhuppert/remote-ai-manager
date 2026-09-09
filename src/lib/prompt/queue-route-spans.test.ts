@@ -54,6 +54,7 @@ function createTestDeps(
 ): QueueRouteDeps {
   const entry = makePendingEntry();
   return {
+    checkpointAcceptsQueuedInput: () => false,
     admitModelSelection: vi.fn(async ({ modelSelection }) => ({
       ok: true as const,
       modelSelection,

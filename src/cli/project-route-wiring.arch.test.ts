@@ -188,6 +188,53 @@ const MEMORY_LINK_BODY = {
   createdAt: "2026-08-01T00:00:00.000Z",
 };
 
+/** A checkpoint receipt the checkpoint leaves' response parsing accepts. */
+const CHECKPOINT_RECEIPT_BODY = {
+  operationId: "op-1",
+  mechanism: "cc_checkpoint",
+  scope: "project",
+  conversationId: "conv-1",
+  ordinal: 1,
+  phase: "building",
+  lastStablePhase: null,
+  boundary: { capturedThroughSeq: 4, sourceHash: "h" },
+  checkpoint: null,
+  delivery: null,
+  acceptance: null,
+  hasAcceptedContinuation: false,
+  failure: null,
+  recoversOperationId: null,
+  supersededByOperationId: null,
+  generationPassCount: null,
+  compactionUsage: {
+    inputTokens: null,
+    cachedInputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+    durationMs: null,
+  },
+  seedTokenEstimate: null,
+  contextOccupancy: null,
+  requestedAt: "2026-09-01T00:00:00.000Z",
+  updatedAt: "2026-09-01T00:00:00.000Z",
+};
+
+/** An archive entry projection the evidence leaves' response parsing accepts. */
+const HISTORY_ENTRY_BODY = {
+  conversationId: "conv-1",
+  seq: 148,
+  kind: "message",
+  role: "assistant",
+  entryId: null,
+  timestamp: null,
+  messageIndex: 4,
+  includeThinking: false,
+  thinkingOmitted: 0,
+  bytes: 3,
+  sha256: "abc",
+  images: [],
+};
+
 /**
  * Project-supported commands that issue a request with inline arguments. Each
  * entry is a real `cctl` invocation driven through the production dispatch; the
@@ -223,6 +270,53 @@ const PROJECT_SCOPE_INVOCATIONS: {
       messages: [],
       window: { from: 0, to: 0, total: 0 },
     },
+  },
+  // The checkpoint and evidence leaves address routes this suite is the only
+  // proof of: a CliHost answers any path with 200, so a wrong path would pass
+  // every other CLI test in the group.
+  {
+    name: "conversation compact-context",
+    argv: ["conversation", "compact-context", "conv-1"],
+    body: {
+      outcome: "admitted",
+      receipt: CHECKPOINT_RECEIPT_BODY,
+      statusUrl: "/x",
+    },
+  },
+  {
+    name: "conversation checkpoint check",
+    argv: ["conversation", "checkpoint", "check", "conv-1"],
+    body: { eligible: true, refusals: [], active: null, hosted: false },
+  },
+  {
+    name: "conversation checkpoint list",
+    argv: ["conversation", "checkpoint", "list", "conv-1"],
+    body: { receipts: [], nextBefore: null },
+  },
+  {
+    name: "conversation checkpoint get",
+    argv: ["conversation", "checkpoint", "get", "conv-1", "op-1"],
+    body: { receipt: CHECKPOINT_RECEIPT_BODY },
+  },
+  {
+    name: "conversation checkpoint cancel",
+    argv: ["conversation", "checkpoint", "cancel", "conv-1", "op-1"],
+    body: { outcome: "cancelled", receipt: CHECKPOINT_RECEIPT_BODY },
+  },
+  {
+    name: "conversation checkpoint reconcile",
+    argv: ["conversation", "checkpoint", "reconcile", "conv-1", "op-1"],
+    body: { outcome: "repaired", receipt: CHECKPOINT_RECEIPT_BODY },
+  },
+  {
+    name: "conversation entry get",
+    argv: ["conversation", "entry", "get", "conv-1", "148"],
+    body: { entry: HISTORY_ENTRY_BODY },
+  },
+  {
+    name: "conversation image get",
+    argv: ["conversation", "image", "get", "conv-1", "148", "2"],
+    body: { entry: HISTORY_ENTRY_BODY },
   },
   {
     name: "doctor",

@@ -29,11 +29,19 @@ export interface MemoryRuntimeContinuityInput {
   readonly promptCount: number;
   /** A stored backend handle the new runtime could resume from. */
   readonly hasResumeHandle: boolean;
+  /**
+   * A ready CC checkpoint will seed the next turn's runtime. Its whole point
+   * is a fresh provider session with no resume, so the fresh-start intent is
+   * stated here rather than inferred from a cleared handle: both readers see
+   * the same reason a full block is due.
+   */
+  readonly pendingCheckpoint?: boolean;
 }
 
 export function isRuntimeCreatedWithoutResume(
   input: MemoryRuntimeContinuityInput,
 ): boolean {
+  if (input.pendingCheckpoint === true) return true;
   return (
     input.willCreateRuntime && input.promptCount > 0 && !input.hasResumeHandle
   );

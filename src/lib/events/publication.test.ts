@@ -383,6 +383,57 @@ describe("publishEventBestEffort", () => {
     });
   });
 
+  /**
+   * A caller whose logs may not carry free text — checkpoint diagnostics under
+   * R9.2 — projects the failure itself. The default stays the message, so
+   * every other publisher is unchanged.
+   */
+  it("lets a caller project the failure into its own log fields", () => {
+    const warn = vi.fn();
+    const describeError = (error: unknown) => ({
+      errorKind: error instanceof Error ? error.name : typeof error,
+      errorChars: error instanceof Error ? error.message.length : 0,
+    });
+
+    publishEventBestEffort({
+      publish: () => {
+        throw new TypeError("quoted source: ship the widget");
+      },
+      build: () => sampleEvent,
+      logger: { warn },
+      failureEvent: "x.broadcast_failed",
+      context: { conversationId: "c1" },
+      describeError,
+    });
+
+    expect(warn).toHaveBeenCalledWith("x.broadcast_failed", {
+      conversationId: "c1",
+      errorKind: "TypeError",
+      errorChars: "quoted source: ship the widget".length,
+    });
+  });
+
+  it("applies the caller's projection to a reported failed delivery too", () => {
+    const warn = vi.fn();
+
+    publishEventBestEffort({
+      publish: () => ({
+        delivered: false,
+        error: new Error("quoted source: ship the widget"),
+      }),
+      build: () => sampleEvent,
+      logger: { warn },
+      failureEvent: "x.broadcast_failed",
+      context: { conversationId: "c1" },
+      describeError: () => ({ errorKind: "projected" }),
+    });
+
+    expect(warn).toHaveBeenCalledWith("x.broadcast_failed", {
+      conversationId: "c1",
+      errorKind: "projected",
+    });
+  });
+
   it("warns when an injected publisher reports failure without an error", () => {
     const warn = vi.fn();
     const malformedPublish = (() => ({

@@ -172,6 +172,23 @@ export default function GraphWorkflowPanel({
   renderContextApproval,
 }: GraphWorkflowPanelProps) {
   const actionsAvailable = actionCapability === "current";
+  const [configSaveSource, setConfigSaveSource] = useState<
+    "node" | "inspector"
+  >("inspector");
+  const handleNodeConfigSave = useCallback(
+    (operations: WorkflowLiveEditOperation[]) => {
+      setConfigSaveSource("node");
+      onSaveContextConfig(operations);
+    },
+    [onSaveContextConfig],
+  );
+  const handleInspectorConfigSave = useCallback(
+    (operations: WorkflowLiveEditOperation[]) => {
+      setConfigSaveSource("inspector");
+      onSaveContextConfig(operations);
+    },
+    [onSaveContextConfig],
+  );
   const [selectedContextId, setSelectedContextId] = useState<string | null>(
     null,
   );
@@ -477,6 +494,13 @@ export default function GraphWorkflowPanel({
                   layout={mergedLayout}
                   onSelectContext={handleSelectContext}
                   preserveLayout={!actionsAvailable}
+                  onSaveContextConfig={
+                    actionsAvailable ? handleNodeConfigSave : undefined
+                  }
+                  isSavingConfig={isSavingConfig}
+                  configSaveFromNode={configSaveSource === "node"}
+                  configEditError={configEditError}
+                  configEditConflict={configEditConflict}
                   isMobile
                   selectedContextId={selectedContextId}
                   onOpenLaneWorktree={handleOpenLaneWorktree}
@@ -511,15 +535,21 @@ export default function GraphWorkflowPanel({
                     onViewTask={handleViewTask}
                     viewingTaskId={viewingTaskId}
                     isMutating={isMutating}
-                    onSaveContextConfig={onSaveContextConfig}
+                    onSaveContextConfig={handleInspectorConfigSave}
                     onPauseExecution={onPause}
                     onResumeExecution={() => onResume()}
                     isSavingConfig={isSavingConfig}
                     isPausingExecution={isPausingExecution}
                     isResumingExecution={isResumingExecution}
-                    configEditConflict={configEditConflict}
-                    configEditError={configEditError}
-                    configSaveSucceeded={configSaveSucceeded}
+                    configEditConflict={
+                      configSaveSource === "inspector" && configEditConflict
+                    }
+                    configEditError={
+                      configSaveSource === "inspector" ? configEditError : null
+                    }
+                    configSaveSucceeded={
+                      configSaveSource === "inspector" && configSaveSucceeded
+                    }
                     onViewConversation={handleViewConversation}
                     onEditSchema={handleEditOutputSchema}
                     onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
@@ -591,6 +621,13 @@ export default function GraphWorkflowPanel({
                     layout={mergedLayout}
                     onSelectContext={handleSelectContext}
                     preserveLayout={!actionsAvailable}
+                    onSaveContextConfig={
+                      actionsAvailable ? handleNodeConfigSave : undefined
+                    }
+                    isSavingConfig={isSavingConfig}
+                    configSaveFromNode={configSaveSource === "node"}
+                    configEditError={configEditError}
+                    configEditConflict={configEditConflict}
                     onOpenLaneWorktree={handleOpenLaneWorktree}
                     onEditOwnership={handleEditOwnership}
                   />
@@ -648,15 +685,24 @@ export default function GraphWorkflowPanel({
                         onViewTask={handleViewTask}
                         viewingTaskId={viewingTaskId}
                         isMutating={isMutating}
-                        onSaveContextConfig={onSaveContextConfig}
+                        onSaveContextConfig={handleInspectorConfigSave}
                         onPauseExecution={onPause}
                         onResumeExecution={() => onResume()}
                         isSavingConfig={isSavingConfig}
                         isPausingExecution={isPausingExecution}
                         isResumingExecution={isResumingExecution}
-                        configEditConflict={configEditConflict}
-                        configEditError={configEditError}
-                        configSaveSucceeded={configSaveSucceeded}
+                        configEditConflict={
+                          configSaveSource === "inspector" && configEditConflict
+                        }
+                        configEditError={
+                          configSaveSource === "inspector"
+                            ? configEditError
+                            : null
+                        }
+                        configSaveSucceeded={
+                          configSaveSource === "inspector" &&
+                          configSaveSucceeded
+                        }
                         onViewConversation={handleViewConversation}
                         onEditSchema={handleEditOutputSchema}
                         onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}

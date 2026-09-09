@@ -54,6 +54,7 @@ import {
   type ResolvedClaudeModelSelection,
 } from "./model-selection";
 import { ModelSelectionPolicyError } from "../model-selection";
+import { providerRefDigest } from "../provider-ref-digest";
 
 const logger = createLogger("claude:task-runner");
 const claudeFailureClassifier = createClaudeFailureClassifier();
@@ -324,7 +325,9 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         : undefined;
 
     if (resumeSessionId) {
-      logger.info("claude-task-runner.resume", { sessionId: resumeSessionId });
+      logger.info("claude-task-runner.resume", {
+        sessionIdDigest: providerRefDigest(resumeSessionId),
+      });
     }
 
     // Log Codex-only fields that are non-default, since Claude ignores them
@@ -603,7 +606,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 
     logger.info("claude-task-runner.complete", {
       workingDirectory: input.workingDirectory,
-      sessionId,
+      sessionIdDigest: providerRefDigest(sessionId),
       timedOut,
       hasError: !!error,
       executionProfile: input.executionProfile ?? "standard",

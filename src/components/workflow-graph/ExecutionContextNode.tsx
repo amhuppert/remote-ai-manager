@@ -12,18 +12,16 @@ import type {
 import { contextNodeAccessibleName } from "./derive-graph";
 import { StatusChip } from "@/components/ui/StatusChip";
 import {
-  backendIsCodexToned,
-  contextNodeCrew,
   contextNodeGrade,
   contextNodeNotice,
   contextNodeStatus,
   ownedPathsText,
-  type NodeCrewSeat,
   type NodeGradeKey,
   type NodeStatusKey,
 } from "./node-presentation";
 import type { LaneBandState } from "@/lib/workflow-graph/lane-bands";
 import type { ContextWaitState } from "./derive-wait-state";
+import { NodeAgentControls, NODE_AGENT_GRID_CLASS } from "./NodeAgentControls";
 
 /**
  * The context node card (design bundle, `Context Node.dc.html`).
@@ -36,7 +34,7 @@ import type { ContextWaitState } from "./derive-wait-state";
  */
 const NODE_BASE = cn(
   "graph-node",
-  "relative w-[264px] overflow-hidden rounded-[10px] px-[13px] pt-[11px] pb-[10px]",
+  "relative w-[264px] overflow-hidden rounded-lg p-md",
   "cursor-pointer border border-solid bg-[var(--cc-graph-node-grad-bottom)]",
   "font-mono transition-opacity duration-200",
   "[--node-color:var(--border-subtle)]",
@@ -144,20 +142,8 @@ const NOTICE_TONE = {
   cyan: "border-[var(--cc-cyan-a25)] bg-[var(--cc-cyan-a08)] text-cyan",
 } as const;
 
-const AUTHORITY_PILL = {
-  blocking: "border-[var(--amber-dim)] bg-[var(--amber-glow)] text-amber",
-  advisory: "border-border-default bg-transparent text-text-secondary",
-} as const;
-
 const CHIP_BASE =
   "rounded-[4px] border border-solid px-[6px] py-px text-[0.7rem] font-medium";
-
-const LEDGER_SLOT =
-  "w-[30px] shrink-0 text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase";
-
-function backendDotClass(backend: NodeCrewSeat["backend"]): string {
-  return backendIsCodexToned(backend) ? "bg-violet" : "bg-cyan";
-}
 
 type ExecutionContextNodeType = Node<
   ExecutionContextNodeData,
@@ -483,7 +469,6 @@ export function ContextNodeCard({
   const status = contextNodeStatus(mode, waitState);
   const grade = contextNodeGrade(context.placement);
   const paths = ownedPathsText(context.placement);
-  const crew = contextNodeCrew(context);
   const notice = contextNodeNotice({ placement: context.placement, waitState });
 
   const totalCount = contextState?.totalTaskCount ?? tasks.length;
@@ -537,8 +522,8 @@ export function ContextNodeCard({
     >
       {handles}
 
-      <div className="mb-[5px] flex items-start justify-between gap-[8px]">
-        <span className="text-[0.8rem] leading-[1.25] font-semibold text-text-primary">
+      <div className="mb-sm flex flex-wrap items-start justify-between gap-sm">
+        <span className="min-w-0 flex-[1_1_140px] text-[0.8rem] leading-snug font-semibold break-words text-text-primary">
           {context.title}
         </span>
         <div className="flex shrink-0 items-center gap-[4px]">
@@ -555,7 +540,7 @@ export function ContextNodeCard({
           data-lane-state={data.laneState}
           className={cn(
             CHIP_BASE,
-            "inline-flex items-center gap-[5px] border-border-subtle text-text-secondary",
+            "inline-flex min-w-0 items-center gap-xs border-border-subtle break-words text-text-secondary",
           )}
         >
           <span
@@ -565,7 +550,7 @@ export function ContextNodeCard({
               LANE_SWATCH[data.laneState],
             )}
           />
-          {context.placement.lane}
+          <span className="min-w-0 break-words">{context.placement.lane}</span>
         </span>
         <span
           data-testid="node-grade-chip"
@@ -596,76 +581,94 @@ export function ContextNodeCard({
 
       <D4ChipRow data={data} />
 
-      {crew.implementer && (
+      {context.implementer && (
         <div
           data-testid="node-crew"
-          className="mb-[9px] overflow-hidden rounded-[6px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)]"
+          className="mb-sm border-x-0 border-y border-solid border-border-subtle"
         >
-          <div className="flex items-center gap-[6px] px-[9px] py-[6px]">
-            <span className={LEDGER_SLOT}>Impl</span>
-            <span
-              aria-hidden="true"
-              className={cn(
-                "h-[6px] w-[6px] rounded-full",
-                backendDotClass(crew.implementer.backend),
-              )}
-            />
-            <span className="text-[0.72rem] font-medium whitespace-nowrap text-text-primary">
-              {crew.implementer.modelLabel}
-            </span>
-            {overrideReason && (
-              <span
-                aria-hidden="true"
-                data-testid="node-set-here-marker"
-                title={overrideReason}
-                className="h-[5px] w-[5px] shrink-0 rounded-full bg-cyan"
-              />
-            )}
-            {crew.implementer.parametersLabel && (
-              <span className="ml-auto rounded-full border border-solid border-border-default px-[7px] text-[0.7rem] font-medium text-text-secondary">
-                {crew.implementer.parametersLabel}
-              </span>
-            )}
-          </div>
-          {crew.seats.map((seat, index) => (
-            <div
-              key={seat.seatId}
-              data-testid="node-crew-seat"
-              className="flex flex-col gap-[2px] border-x-0 border-t border-b-0 border-solid border-border-dim px-[9px] py-[5px]"
-            >
-              <div className="flex items-center gap-[6px]">
-                <span className={LEDGER_SLOT}>{index === 0 ? "Val" : ""}</span>
-                <span className="min-w-0 overflow-hidden text-[0.72rem] font-medium text-ellipsis whitespace-nowrap text-text-primary">
-                  {seat.seatId}
-                </span>
-                <span
-                  className={cn(
-                    "ml-auto shrink-0 rounded-full border border-solid px-[7px] text-[0.7rem] font-medium",
-                    AUTHORITY_PILL[seat.authority],
-                  )}
-                >
-                  {seat.authority}
-                </span>
-              </div>
-              <div className="flex items-center gap-[6px] pl-[30px]">
+          <div className="flex flex-col px-2xs py-xs">
+            <div className="flex items-center gap-xs px-2xs text-[0.7rem] font-medium tracking-wide text-text-secondary uppercase">
+              Implementer
+              {overrideReason && (
                 <span
                   aria-hidden="true"
-                  className={cn(
-                    "h-[6px] w-[6px] shrink-0 rounded-full",
-                    backendDotClass(seat.backend),
-                  )}
+                  data-testid="node-set-here-marker"
+                  title={overrideReason}
+                  className="size-[5px] shrink-0 rounded-full bg-cyan"
                 />
-                <span className="text-[0.7rem] font-normal whitespace-nowrap text-text-secondary">
-                  {seat.modelLabel}
-                </span>
-                {seat.parametersLabel && (
-                  <span className="min-w-0 overflow-hidden text-[0.7rem] font-normal text-ellipsis whitespace-nowrap text-text-tertiary">
-                    {seat.parametersLabel}
-                  </span>
-                )}
-              </div>
+              )}
             </div>
-          ))}
+            <NodeAgentControls
+              agent={context.implementer.agent}
+              label="Implementer"
+              disabled={data.agentEditor?.pending || data.agentEditor?.disabled}
+              onChange={
+                data.agentEditor?.onChange
+                  ? (agent) =>
+                      data.agentEditor?.onChange?.(
+                        { kind: "implementer" },
+                        agent,
+                      )
+                  : undefined
+              }
+            />
+          </div>
+          {context.contextValidator?.enabled &&
+            context.contextValidator.assignments.map((seat) => (
+              <div
+                key={seat.id}
+                data-testid="node-crew-seat"
+                className="flex flex-col border-x-0 border-t border-b-0 border-solid border-border-subtle px-2xs py-xs"
+              >
+                <div className={cn(NODE_AGENT_GRID_CLASS, "items-start")}>
+                  <div className="col-span-2 flex min-w-0 items-start gap-xs px-2xs">
+                    <span className="shrink-0 font-medium tracking-wide text-text-secondary uppercase">
+                      Val
+                    </span>
+                    <span className="min-w-0 break-words text-text-primary">
+                      {seat.id}
+                    </span>
+                  </div>
+                  <span
+                    className={cn(
+                      "col-span-2 col-start-3 px-2xs",
+                      seat.authority === "blocking"
+                        ? "text-amber"
+                        : "text-text-secondary",
+                    )}
+                  >
+                    {seat.authority}
+                  </span>
+                </div>
+                <NodeAgentControls
+                  agent={seat.agent}
+                  label={`Validator ${seat.id}`}
+                  disabled={
+                    data.agentEditor?.pending || data.agentEditor?.disabled
+                  }
+                  onChange={
+                    data.agentEditor?.onChange
+                      ? (agent) =>
+                          data.agentEditor?.onChange?.(
+                            { kind: "validator", assignmentId: seat.id },
+                            agent,
+                          )
+                      : undefined
+                  }
+                />
+              </div>
+            ))}
+        </div>
+      )}
+
+      {data.agentEditor?.pending && (
+        <div role="status" className="mb-sm text-[0.7rem] text-cyan">
+          Saving configuration…
+        </div>
+      )}
+      {data.agentEditor?.error && (
+        <div role="alert" className="mb-sm text-[0.7rem] break-words text-red">
+          {data.agentEditor.error}
         </div>
       )}
 

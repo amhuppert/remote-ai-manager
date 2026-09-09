@@ -589,6 +589,10 @@ export function describeBackendConformance(
       expect(
         structuredOutputSupportSchema.safeParse(caps.structuredOutput).success,
       ).toBe(true);
+      // A checkpoint claim is a release decision (D9): it is declared, never
+      // absent, so a consumer reads a boolean rather than treating silence as
+      // support.
+      expect(typeof caps.checkpoint).toBe("boolean");
 
       const kinds = caps.capabilityKinds.map((k) => k.kind);
       expect(new Set(kinds).size).toBe(kinds.length);

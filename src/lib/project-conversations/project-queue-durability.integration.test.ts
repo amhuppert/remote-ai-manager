@@ -109,6 +109,7 @@ describe("project message queue durability", () => {
   function handlers(store: StateStore) {
     const svc = queueService(store);
     return createProjectQueueRouteHandlers({
+      checkpointAcceptsQueuedInput: () => false,
       admitModelSelection: async ({ modelSelection }) => ({
         ok: true,
         modelSelection: modelSelection ?? {

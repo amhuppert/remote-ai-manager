@@ -14,14 +14,22 @@ import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopov
 import AlignmentChip from "@/features/session/conversation/AlignmentChip";
 import { deriveAlignmentChipState } from "@/features/session/conversation/alignment-chip-state";
 import CompactionStatusChip from "@/features/session/conversation/CompactionStatusChip";
+import CheckpointStatusChip from "@/components/conversation/CheckpointStatusChip";
+import CheckpointPanel from "@/components/conversation/CheckpointPanel";
+import { useConversationCheckpoint } from "@/components/conversation/use-conversation-checkpoint";
+import { checkpointArtifactCoverage } from "@/components/conversation/use-checkpoint-artifact-comparison";
 import ConversationProfileChip from "@/components/conversation/ConversationProfileChip";
 import { deriveConversationProfileChipState } from "@/components/conversation/conversation-profile-chip-state";
-import { deriveCompactionChipState } from "@/features/session/conversation/compaction-chip-state";
+import { deriveCompactionChipState } from "@/components/conversation/compaction-chip-state";
 import { useAlignmentStateQuery } from "@/lib/session-alignment/queries";
 import { useContextArtifacts } from "@/lib/context-artifacts/queries";
 import { useCompactMutation } from "@/lib/context-artifacts/mutations";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
-import { useOpenContextArtifactPanel } from "@/stores/session-detail.store";
+import type { CheckpointTarget } from "@/lib/conversation-checkpoints/query-keys";
+import {
+  useOpenContextArtifactPanel,
+  useRequestMessageNav,
+} from "@/stores/session-detail.store";
 import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
@@ -163,6 +171,32 @@ function SessionInfoStrip({
     });
   }, [compactMutate, artifactOutdated]);
 
+  // The checkpoint surface shares this strip's conversation identity. Its
+  // state lives in queries, so opening or closing the panel below never loses
+  // an operation's progress.
+  const checkpointTarget = useMemo<CheckpointTarget>(
+    () => ({ scope: "session", projectName, sessionName, conversationId }),
+    [projectName, sessionName, conversationId],
+  );
+  const checkpoint = useConversationCheckpoint(checkpointTarget);
+  const requestMessageNav = useRequestMessageNav();
+  const navigateToCheckpointMessage = useCallback(
+    (messageIndex: number) => requestMessageNav(conversationId, messageIndex),
+    [requestMessageNav, conversationId],
+  );
+  // The rolling artifact and the frozen checkpoint are compared, never merged:
+  // the panel says when the artifact covers later history. This reduces the
+  // list the compaction chip above already observes.
+  const checkpointArtifact = useMemo(
+    () => checkpointArtifactCoverage(artifacts),
+    [artifacts],
+  );
+  const [checkpointPanelOpen, setCheckpointPanelOpen] = useState(false);
+  const openCheckpointPanel = useCallback(
+    () => setCheckpointPanelOpen(true),
+    [],
+  );
+
   const conversationName = activeConversation?.name ?? null;
   const handleCopyReference = useCallback(() => {
     void navigator.clipboard.writeText(
@@ -267,6 +301,12 @@ function SessionInfoStrip({
               onOpen={openContextArtifactPanel}
             />
           </div>
+          <div className="@max-[760px]:hidden">
+            <CheckpointStatusChip
+              state={checkpoint.chip}
+              onOpen={openCheckpointPanel}
+            />
+          </div>
           <SessionActionsMenu
             targetBranch={targetBranch}
             activeLayout={layout}
@@ -278,6 +318,10 @@ function SessionInfoStrip({
             onViewArtifact={openContextArtifactPanel}
             onRefreshArtifact={handleRefreshArtifact}
             onCopyReference={handleCopyReference}
+            checkpointChip={checkpoint.chip}
+            checkpointAction={checkpoint.action}
+            onCompactContextNow={checkpoint.start}
+            onViewCheckpoint={openCheckpointPanel}
           />
           <InfoDetailsPopover
             conversationId={conversationId}
@@ -297,6 +341,13 @@ function SessionInfoStrip({
           </div>
         </div>
       </div>
+      <CheckpointPanel
+        open={checkpointPanelOpen}
+        onOpenChange={setCheckpointPanelOpen}
+        surface={checkpoint}
+        artifact={checkpointArtifact}
+        onNavigateToMessage={navigateToCheckpointMessage}
+      />
       <ScopedAgentCapabilitiesConfig
         level="session"
         projectName={projectName}

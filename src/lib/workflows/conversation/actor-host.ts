@@ -5,9 +5,13 @@ import { ManagedConversationRuntime } from "./runtime-binding";
 import { createActor } from "xstate";
 import { conversationMachine, type ConversationActorRef } from "./machine";
 import type { ConversationInput } from "./types";
-import { conversationRuntimeKey } from "./runtime-state";
+import {
+  conversationRuntimeKey,
+  type ConversationRuntimeRegistration,
+} from "./runtime-state";
 import { type ConversationPersistenceAdapter } from "./persistence-adapter";
 import { createLogger } from "@/lib/logging";
+import { checkpointHoldsOrdinaryAdmission } from "@/lib/conversation-checkpoints/admission";
 
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 
@@ -280,6 +284,9 @@ export function createProvidedMachine(
         // Queue delivery is only for user-interactive conversations (req 10.2);
         // workflow roles own their own turn orchestration.
         if (context.role !== null) return;
+        // A checkpoint that owns this host keeps every queued message where it
+        // is; the manager drains once the operation reaches a safe outcome.
+        if (checkpointHoldsOrdinaryAdmission(context.checkpoint)) return;
         deps.drainQueue(context);
       },
     },
@@ -287,7 +294,7 @@ export function createProvidedMachine(
 }
 export interface ConversationActorHostDependencies {
   registry: Map<string, ConversationActorRef>;
-  registerRuntime(key: string, runtime: ConversationRuntimeState): void;
+  registerRuntime(key: string, runtime: ConversationRuntimeRegistration): void;
   getRuntime(key: string): ConversationRuntimeState | undefined;
   removeRuntime(key: string): void;
   persistence(mode: "durable" | "ephemeral"): ConversationPersistenceAdapter;
@@ -328,8 +335,35 @@ export function createConversationActorHost(
       throw error;
     }
   }
+  /**
+   * In-flight exclusive sections by runtime key. Actor creation, startup
+   * restore and on-demand application of the checkpoint restart rules all
+   * run inside one, so none of them can observe a conversation between
+   * another's ownership check and its effect.
+   */
+  const exclusives = new Map<string, Promise<unknown>>();
+  async function exclusive<T>(key: string, work: () => Promise<T>): Promise<T> {
+    let pending = exclusives.get(key);
+    while (pending !== undefined) {
+      await pending.catch(() => undefined);
+      pending = exclusives.get(key);
+    }
+    const run = work();
+    exclusives.set(key, run);
+    try {
+      return await run;
+    } finally {
+      if (exclusives.get(key) === run) exclusives.delete(key);
+    }
+  }
   return {
     create,
+    /**
+     * Run `work` while no other exclusive section for `key` runs. A waiter
+     * that finds the section taken re-checks after the holder finishes, so a
+     * failed holder never fails its waiters.
+     */
+    exclusive,
     start(input: ConversationInput) {
       const actor = create(input);
       actor.start();

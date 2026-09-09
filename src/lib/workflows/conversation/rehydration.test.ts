@@ -193,7 +193,7 @@ describe("collectRehydrationCandidates", () => {
           },
         });
         machineFactory = createTestMachine;
-        const count = await rehydrateConversationActors({
+        const count = await runRehydration({
           ...rehydrationInfrastructure(),
           mutateConversation: fixture.store.mutateConversation,
           readAllForStartup: () => readAllForStartupFromDb(fixture.db),
@@ -255,7 +255,7 @@ describe("rehydrateConversationActors (project conversations)", () => {
     projectConvs: { projectPath: string; conversation: ConversationState }[],
     validate: RehydrateConversationActorsDeps["validateRestoredSnapshot"],
     snapshots: Record<string, unknown> = {},
-  ): RehydrateConversationActorsDeps {
+  ): SweepDeps {
     return {
       ...rehydrationInfrastructure(),
       readAllForStartup: () => emptyState(),
@@ -274,7 +274,7 @@ describe("rehydrateConversationActors (project conversations)", () => {
   it("walks a project conversation's sidecar snapshot via the injected validator", async () => {
     const projConv = conv({ id: "p1", scope: "project" });
     const validate = vi.fn(() => null); // treat as invalid → no actor
-    const count = await rehydrateConversationActors(
+    const count = await runRehydration(
       makeDeps([{ projectPath: "/repo", conversation: projConv }], validate, {
         p1: { marker: "p1-snapshot" },
       }),
@@ -290,7 +290,7 @@ describe("rehydrateConversationActors (project conversations)", () => {
       value: "running",
       context: {},
     });
-    const count = await rehydrateConversationActors(
+    const count = await runRehydration(
       makeDeps(
         [{ projectPath: "/repo", conversation: projConv }],
         () => nonResumable,
@@ -303,7 +303,7 @@ describe("rehydrateConversationActors (project conversations)", () => {
   it("does not validate a project conversation with no persisted sidecar snapshot", async () => {
     const projConv = conv({ id: "p1", scope: "project" });
     const validate = vi.fn(() => null);
-    const count = await rehydrateConversationActors(
+    const count = await runRehydration(
       // No sidecar snapshot registered for p1.
       makeDeps([{ projectPath: "/repo", conversation: projConv }], validate),
     );
@@ -316,7 +316,7 @@ describe("workflow-result post-commit reconciliation", () => {
   it("replays pending effects for a session even when it has no conversation actors", async () => {
     const reconcileWorkflowResultEffects = vi.fn(async () => 1);
 
-    const count = await rehydrateConversationActors({
+    const count = await runRehydration({
       ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([]),
       listAllProjectConversations: async () => [],
@@ -336,7 +336,7 @@ describe("workflow-result post-commit reconciliation", () => {
   it("recovers abandoned claims for a session with no remaining conversations", async () => {
     const recoverWorkflowResultClaims = vi.fn(async () => 1);
 
-    const count = await rehydrateConversationActors({
+    const count = await runRehydration({
       ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([]),
       listAllProjectConversations: async () => [],
@@ -496,7 +496,7 @@ describe("waitingForInput rehydration contract", () => {
       id: "c-wfi",
       status: "waiting_for_input",
     });
-    const deps: RehydrateConversationActorsDeps = {
+    const deps: SweepDeps = {
       ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([conversation]),
       listAllProjectConversations: async () => [],
@@ -508,7 +508,7 @@ describe("waitingForInput rehydration contract", () => {
       validateRestoredSnapshot: (raw) => raw as Snapshot<unknown>,
     };
 
-    const count = await rehydrateConversationActors(deps);
+    const count = await runRehydration(deps);
     expect(count).toBe(1);
 
     const actor = managerFixture.actor("/repo", "feat", "c-wfi");
@@ -550,7 +550,7 @@ describe("waitingForInput rehydration contract", () => {
       id: "c-wfi",
       status: "waiting_for_input",
     });
-    const deps: RehydrateConversationActorsDeps = {
+    const deps: SweepDeps = {
       ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([conversation]),
       listAllProjectConversations: async () => [],
@@ -560,7 +560,7 @@ describe("waitingForInput rehydration contract", () => {
       validateRestoredSnapshot,
     };
 
-    const count = await rehydrateConversationActors(deps);
+    const count = await runRehydration(deps);
     expect(count).toBe(1);
 
     const actor = managerFixture.actor("/repo", "feat", "c-wfi");
@@ -606,7 +606,7 @@ describe("waitingForInput rehydration contract", () => {
       machineFactory = stubbedMachine;
       setConversationQueueDeps(noopQueueDeps);
 
-      const count = await rehydrateConversationActors({
+      const count = await runRehydration({
         ...rehydrationInfrastructure(),
         readAllForStartup: () => readAllForStartupFromDb(fixture.db),
         listAllProjectConversations: fixture.store.listAllProjectConversations,
@@ -838,6 +838,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
         debugMode: null,
       },
       snapshot,
+      authority: NO_AUTHORITY,
     };
   }
 
@@ -947,7 +948,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
       );
       const restartedStore = fixture.recreateStore();
 
-      await rehydrateConversationActors({
+      await runRehydration({
         ...rehydrationInfrastructure(),
         readAllForStartup: () => stateWith([conv({ id: CONV_ID })]),
         listAllProjectConversations: async () => [],
@@ -959,7 +960,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
             projectPath,
             sessionName,
           ),
-      } as RehydrateConversationActorsDeps & {
+      } as SweepDeps & {
         recoverWorkflowResultClaims(
           projectPath: string,
           sessionName: string,
@@ -1060,6 +1061,7 @@ describe("project-scope rehydration diagnostics", () => {
         debugMode: null,
       },
       snapshot: makeProjectSnapshot(),
+      authority: NO_AUTHORITY,
       log,
     };
   }
@@ -1172,10 +1174,47 @@ describe("project-scope rehydration diagnostics", () => {
   });
 });
 
+const NO_AUTHORITY = {
+  projection: null,
+  state: { active: null, latestAccepted: null },
+  outcome: { kind: "none" as const },
+  continuationRetired: false,
+};
+
+/**
+ * The sweep with the production signature. Unless a test injects its own,
+ * the per-conversation row read resolves from the same state the whole-state
+ * read returns, which is what the store's point read would answer for these
+ * fixtures.
+ */
+type SweepDeps = Omit<RehydrateConversationActorsDeps, "readConversation"> &
+  Partial<Pick<RehydrateConversationActorsDeps, "readConversation">>;
+
+function runRehydration(deps: SweepDeps) {
+  return rehydrateConversationActors({
+    async readConversation(projectPath, storeSessionName, conversationId) {
+      const candidates = collectRehydrationCandidates(
+        deps.readAllForStartup(),
+        await deps.listAllProjectConversations(),
+      );
+      return (
+        candidates.find(
+          (candidate) =>
+            candidate.projectPath === projectPath &&
+            candidate.storeSessionName === storeSessionName &&
+            candidate.conversation.id === conversationId,
+        )?.conversation ?? null
+      );
+    },
+    ...deps,
+  });
+}
+
 function rehydrationInfrastructure() {
   return {
     host: managerFixture.host,
     queue: currentQueueDependencies(),
     mutateConversation: async () => {},
+    hydrateCheckpointAuthority: async () => NO_AUTHORITY,
   };
 }

@@ -148,6 +148,7 @@ export const testfakeConversationCapabilities: BackendConversationCapabilities =
     contextWindowMetrics: false,
     nativeMidTurnAskUser: false,
     externalTurns: false,
+    checkpoint: false,
     capabilityKinds: [{ kind: "agents", applyTiming: "next_turn" }],
   };
 

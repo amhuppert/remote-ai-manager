@@ -14,18 +14,17 @@ import {
 } from "@/lib/notepads/schemas";
 import { dispatchGroup } from "../dispatch";
 import {
+  artifactReceiptLines,
+  artifactWriteFailure,
   boundedItems,
   emitLarge,
   omissionSummary,
-  type ArtifactManifest,
 } from "../disclosure";
 import {
   EXIT_OK,
-  EXIT_OPERATION_FAILED,
   checkFlags,
   cliRequest,
   encodePathSegment,
-  failure,
   failureFromRequest,
   invalidResponseFailure,
   render,
@@ -641,44 +640,6 @@ async function runNotepadGet(
     stdout: render(json, humanBody, { ok: true, notepad }),
     stderr: "",
   };
-}
-
-/** The receipt that stands in for content stdout does not carry. */
-function artifactReceiptLines(
-  command: string,
-  manifest: ArtifactManifest,
-): string[] {
-  return [
-    `${command}\tstdout budget exceeded`,
-    `artifact: ${manifest.path}`,
-    `format: ${manifest.format}`,
-    `bytes: ${manifest.bytes}`,
-    `sha256: ${manifest.sha256}`,
-  ];
-}
-
-/**
- * A spill the caller's own filesystem refused. Exit 1 rather than 2: the read
- * itself succeeded and the server is not at fault, so the recovery is local.
- */
-function artifactWriteFailure(
-  command: string,
-  outcome: { reason: "host_cannot_write" | "write_failed"; path: string },
-  json: boolean,
-): CliResult {
-  return outcome.reason === "host_cannot_write"
-    ? failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: `${command}: this CLI host cannot write artifact files`,
-        code: "write_unavailable",
-        json,
-      })
-    : failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: `${command}: could not write ${JSON.stringify(outcome.path)}`,
-        code: "write_failed",
-        json,
-      });
 }
 
 async function runNotepadCommentList(

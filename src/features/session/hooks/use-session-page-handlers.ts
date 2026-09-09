@@ -7,6 +7,8 @@ import {
 } from "@/lib/conversations/mutations";
 import { useDeleteSessionMutation } from "@/lib/sessions/mutations";
 import { usePromptSubmission } from "@/features/session/hooks/use-prompt-submission";
+import { useCheckpointMaintenanceHold } from "@/lib/conversation-checkpoints/maintenance-hold";
+import { CHECKPOINT_RECENT_LIMIT } from "@/lib/conversation-checkpoints/queries";
 import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useSessionHandlers } from "@/features/session/hooks/use-session-handlers";
 import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
@@ -75,6 +77,16 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     sessionName,
   );
 
+  // Read from the receipt cache the info strip's chip already observes, so the
+  // composer routes around checkpoint maintenance without opening a second
+  // observer on the index.
+  const checkpointMaintenanceHold = useCheckpointMaintenanceHold(
+    conversationId === ""
+      ? null
+      : { scope: "session", projectName, sessionName, conversationId },
+    { limit: CHECKPOINT_RECENT_LIMIT },
+  );
+
   const {
     handleSendPrompt,
     handleDirectPrompt,
@@ -98,6 +110,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     messagesLength,
     selectedModelSelection,
     selectedBackend,
+    checkpointMaintenanceHold,
     sendPrompt,
     queueMessage,
     collaborationStartMutation,

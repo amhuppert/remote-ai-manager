@@ -111,4 +111,3 @@ The same record explicitly [reports a failed full-suite run](/Users/alex/github/
 The original numeric architecture score belongs to the older review baseline. I would update the report through the completed/remaining boundaries above rather than infer a new whole-graph score from a conversation-focused delivery.
 
 The updated acceptance standard is more concrete: graph features compose the admitted-turn and task APIs already implemented; only graph policy changes require graph orchestration changes. The remaining work should make context completion, validation, scheduling, mutations, and landing comparably complete and easy to compose.
-

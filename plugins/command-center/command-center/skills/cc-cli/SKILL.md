@@ -427,17 +427,39 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl validate cancel <run-id> [--json]`
 
 - `cctl conversation` — read conversation transcripts and manage compaction artifacts
-  - `cctl conversation <read|compact|compaction get|compaction list>`
+  - `cctl conversation <read|compact|compact-context|compaction get|compaction list|checkpoint check|checkpoint list|checkpoint get|checkpoint cancel|checkpoint reconcile|entry get|image get>`
 - `cctl conversation read` — render a bounded window of a transcript
   - `cctl conversation read [<conversation-id>] [--outline] [--message N] [--message-range A:B] [--seq-range A:B] [--include-tools none|summary|full] [--include-thinking] [--search <regex>] [--max-bytes N] [--format json|markdown] [--json]`
 - `cctl conversation compact` — create or refresh a compaction artifact
   - `cctl conversation compact <conversation-id> [--message N] [--force] [--wait] [--json]`
 - `cctl conversation compaction` — read compaction artifacts
   - `cctl conversation compaction <get|list>`
+- `cctl conversation compact-context` — start a CC checkpoint that retires this conversation's context
+  - `cctl conversation compact-context [<conversation-id>] [--wait] [--recover <operation-id>] [--json]`
+- `cctl conversation checkpoint` — inspect and repair conversation checkpoint operations
+  - `cctl conversation checkpoint <check|list|get|cancel|reconcile>`
+- `cctl conversation entry` — export one complete archive entry
+  - `cctl conversation entry <get>`
+- `cctl conversation image` — materialize an archived image
+  - `cctl conversation image <get>`
 - `cctl conversation compaction get` — fetch the newest matching compaction envelope
   - `cctl conversation compaction get <conversation-id> [--message N] [--format json|markdown] [--json]`
 - `cctl conversation compaction list` — list a conversation's compaction artifacts
   - `cctl conversation compaction list <conversation-id> [--json]`
+- `cctl conversation checkpoint check` — report whether a checkpoint would be admitted right now
+  - `cctl conversation checkpoint check [<conversation-id>] [--recover <operation-id>] [--json]`
+- `cctl conversation checkpoint list` — list a conversation's checkpoint receipts, newest first
+  - `cctl conversation checkpoint list [<conversation-id>] [--before <ordinal>] [--limit <n>] [--json]`
+- `cctl conversation checkpoint get` — read one checkpoint receipt, or its exact frozen seed
+  - `cctl conversation checkpoint get <conversation-id> <operation-id> [--detail receipt|seed] [--json]`
+- `cctl conversation checkpoint cancel` — cancel an in-flight checkpoint operation
+  - `cctl conversation checkpoint cancel <conversation-id> <operation-id> [--json]`
+- `cctl conversation checkpoint reconcile` — retry the deterministic repair of a stuck checkpoint operation
+  - `cctl conversation checkpoint reconcile <conversation-id> <operation-id> [--json]`
+- `cctl conversation entry get` — export one complete archive entry at a raw sequence
+  - `cctl conversation entry get <conversation-id> <seq> [--include-thinking] [--json]`
+- `cctl conversation image get` — write an archived image to a file and report its hash
+  - `cctl conversation image get <conversation-id> <seq> <block-index> [--json]`
 
 - `cctl ticket` — create, list, read, update, link, post updates to, and attach context to work tickets
   - `cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment|export|import>`
@@ -767,10 +789,14 @@ unchanged.
 
 `--json` preserves whichever level was selected. For an artifact read it
 serializes the manifest; it does not put the rendered or full body back into
-the envelope. Read the returned path with ranged file tools or search it
-locally. If even a bounded summary or outline would exceed the stdout budget,
-the CLI writes that exact inline envelope to JSON and returns a
-`storage: "artifact"` receipt with `reason: "stdout_budget_exceeded"`.
+the envelope. Read the returned path in **byte** ranges (`head -c N <path>`,
+then `tail -c +N <path> | head -c N`) or search it locally — the receipt's hint
+spells the exact commands out. Do not reach for a line-ranged read: a spilled
+JSON envelope is one very long line, and a single huge tool result can be too,
+so `sed -n '1,200p'` prints the whole file you just avoided printing. If even a
+bounded summary or outline would exceed the stdout budget, the CLI writes that
+exact inline envelope to JSON and returns a `storage: "artifact"` receipt with
+`reason: "stdout_budget_exceeded"`.
 
 Inline summary and outline show envelopes are flattened: `spec` is the spec
 identity, while view data such as `counts`, `requirements`, and `tasks` are
@@ -1098,7 +1124,10 @@ reference above; `cctl conversation read --help` lists the full selector set.
 systems, don't mix them: the `#N` unit headers in read output are **message
 indexes** (`--message` / `--message-range`), while the `[sN]` line markers are
 **seq coordinates** — raw JSONL lines, windowed with `--seq-range`. Compaction
-source refs carry both (`messageIndex` + `seqStart`/`seqEnd`).
+source refs carry both (`messageIndex` + `seqStart`/`seqEnd`). `entry get`
+takes a seq; `image get` takes that same seq **plus** the image-bearing content
+block index inside it — copy both from the entry export, which lists a
+ready-to-run command per image, rather than counting blocks by eye.
 
 **Output sizes — read whole, don't pre-truncate.** An outline is typically
 1–3 KB, a compaction envelope 10–20 KB, and windowed reads are bounded by
@@ -1117,20 +1146,37 @@ needs no `--project`/`--session`. Flags stay an override: an explicit
 project scope). Auto-resolution is skipped for your own conversation id (already
 in scope) and whenever you pass those flags; a truly unknown id exits `2`.
 
-### Three-tier escalation — read in this order
+### Progressive evidence access — read in this order
 
-1. **Compaction first.** `cctl conversation compaction get <id> --format
+Each rung recovers more of the original and costs more of your context than the
+one above it. Stop at the first rung that answers the question.
+
+1. **Saved checkpoint, when one exists.** `cctl conversation checkpoint list`
+   indexes a conversation's frozen continuation seeds; `checkpoint get <id>
+   <operation-id>` reads one receipt and `--detail seed` returns its exact
+   frozen bytes — capped at 32 KB, and the conversation's own working state at
+   a recorded boundary. Reading one triggers no generation. Most conversations
+   have none; go to 2.
+2. **Compaction artifact.** `cctl conversation compaction get <id> --format
    markdown` renders the full envelope (agent brief, current state, decisions,
    files, commands, open questions, blockers) as prose with exact
    `messageIndex`/`seq` source refs — typically 10–20 KB, read it whole. This
    is almost always all the context you need, at zero token cost to generate.
    Use `--json` instead when you need the refs' verbatim quotes or
    machine-readable fields.
-2. **Windowed read second.** When the compaction points you at something (or is
+3. **Windowed read.** When the compaction points you at something (or is
    stale/absent), pull a *bounded* window: `read --outline` for the table of
    contents, then `read --message-range A:B` or `--seq-range A:B` for the exact
    slice. Use `--search <regex>` to find matching units.
-3. **Full transcript read — never.** Do not fetch an entire transcript
+4. **Complete entry, then original image.** A bounded read states what it
+   shortened and names the command that recovers it: `entry get <id> <seq>`
+   returns that entry whole — full tool detail, no excerpt limits — and lists
+   the image handles it carries, while `image get <id> <seq> <block-index>`
+   writes the original bytes under `.cc/temp/` and prints the path, media type
+   and sha256. Past the stdout budget an export spills to a file the same way,
+   so a huge tool result survives the round trip. Run the command the output
+   named; don't retype the coordinate.
+5. **Full transcript read — never.** Do not fetch an entire transcript
    unwindowed; `--max-bytes` (default 256 KiB) will truncate it anyway, and an
    unbounded read wastes your context on tool noise the compaction already
    distilled.
@@ -1147,7 +1193,12 @@ in scope) and whenever you pass those flags; a truly unknown id exits `2`.
   the `markdown` field when `--format markdown` is set. Invalid options exit
   `2` with one issue per line; an unknown conversation exits `2`. An empty
   window (e.g. message indexes that don't exist) reports the conversation's
-  real coordinate bounds so you can re-aim.
+  real coordinate bounds so you can re-aim. A bounded window closes by naming
+  what it left out, by kind, each with the command that recovers it: entries
+  the byte budget never reached (recovered by their raw `--seq-range`), the
+  entry a cut landed inside, and every entry the renderer shortened (both
+  recovered only by `entry get`, since raising `--max-bytes` returns the same
+  excerpt). Run the printed command; do not retype the coordinate.
 - `compact` — create or refresh a compaction artifact (the whole conversation,
   or one message with `--message N`). Without `--wait` it returns immediately:
   `{ ok, artifactId, status: "pending", hint }` — the artifact generates in the
@@ -1183,6 +1234,54 @@ cctl conversation read 0197a3c2-... --outline
 #   (with no artifact: "…; no compaction exists — create one (background LLM generation) with: cctl conversation compact 0197a3c2-...")
 cctl conversation read 0197a3c2-... --message-range 4:6 --include-tools summary
 cctl conversation compaction get 0197a3c2-... --format markdown
+```
+
+### `compact` writes a document; `compact-context` changes the live conversation
+
+`cctl conversation compact` produces a **reading artifact**. It retires no
+context, consumes no message, and the conversation's next turn sees exactly
+what it would have seen.
+
+`cctl conversation compact-context` is a **lifecycle action on the live
+conversation**: it freezes a bounded seed, retires the conversation's provider
+context, and leaves the seed **ready**. Reach for it when a conversation's
+context is the problem — not when you want something to read.
+
+**Ready is not applied.** `ready` means the frozen seed is waiting; the next
+ordinary user message delivers it once and the operation becomes `applied`.
+Building the seed **does use model work** — a working-state pass plus any
+repair pass, whose measured cost the receipt reports as compaction usage — but
+that work adds no ordinary turn to the conversation and consumes no queued
+message, so nothing else happens until you send that message. `--wait` exits
+`0` only at ready/applied; a client timeout leaves the server's operation
+running and prints the exact `checkpoint get` that reads it.
+
+**Check before you start.** `cctl conversation checkpoint check` is read-only
+and evaluates the same admission predicates the start enforces: exit `0` names
+the eligible transition, exit `1` lists each blocker with its code and remedy.
+It creates no operation and changes nothing.
+
+**Mutations stay in your scope.** `compact-context`, `checkpoint cancel` and
+`checkpoint reconcile` act on your ambient project/session. Acting on a
+conversation elsewhere takes an explicit `--project` (and `--session` for a
+session conversation) — cctl never discovers another owning scope and writes
+there for you. The reads keep the id-only auto-resolution described above.
+
+**Stuck operations.** `checkpoint reconcile` is deterministic repair: it never
+sends a model request and never replays a message. When delivery stays unknown
+it says so and remains blocked — resolve the uncertain queued messages first,
+then supersede the operation explicitly with `compact-context --recover
+<operation-id>`, which rebuilds from the recorded archive. Neither undoes tool
+effects, files, or provider-side state.
+
+```
+cctl conversation checkpoint check
+# → exit 0: "eligible: compact_context"  |  exit 1: one line per blocker + remedy
+cctl conversation compact-context --wait
+cctl conversation checkpoint list 0197a3c2-...
+cctl conversation checkpoint get 0197a3c2-... 3f5c1e64-... --detail seed
+cctl conversation entry get 0197a3c2-... 148 --include-thinking
+cctl conversation image get 0197a3c2-... 148 2
 ```
 
 ## cctl dev

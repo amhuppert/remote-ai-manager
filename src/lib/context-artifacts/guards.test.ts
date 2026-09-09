@@ -4,7 +4,15 @@ import type { CompactionEnvelope, Decision } from "./schemas";
 import {
   validateCompactionGuards,
   type CompactionGuardContext,
+  type CompactionGuardResult,
 } from "./guards";
+
+/** The model-facing repair channel, which is allowed to quote the envelope. */
+function messagesOf(result: CompactionGuardResult): string {
+  return result.ok
+    ? ""
+    : result.violations.map((violation) => violation.message).join("\n");
+}
 
 function makeRef(overrides: Partial<SourceRef> = {}): SourceRef {
   return {
@@ -89,7 +97,7 @@ describe("validateCompactionGuards — coverage", () => {
     const result = validateCompactionGuards(envelope, fullCtx);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.violations.join("\n")).toContain(expectedMention);
+      expect(messagesOf(result)).toContain(expectedMention);
     }
   });
 });
@@ -138,7 +146,7 @@ describe("validateCompactionGuards — sourceRefs bounds", () => {
     const result = validateCompactionGuards(makeEnvelope(patch), fullCtx);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.violations.join("\n")).toContain(name);
+      expect(messagesOf(result)).toContain(name);
     }
   });
 
@@ -236,7 +244,50 @@ describe("validateCompactionGuards — delta continuity", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.violations.join("\n")).toContain("Keep me");
+      expect(messagesOf(result)).toContain("Keep me");
+    }
+  });
+
+  /**
+   * The repair message has to quote the dropped statement — that is what the
+   * model needs to put it back. The code and coordinate beside it exist so a
+   * caller that logs a violation has something to log that is not the
+   * conversation: checkpoint diagnostics may not carry envelope prose (R9.2).
+   */
+  it("separates the structural cause from the prose that quotes the envelope", () => {
+    const result = validateCompactionGuards(
+      deltaEnvelope({ decisions: [] }),
+      deltaCtx(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const dropped = result.violations.find(
+      (violation) => violation.code === "delta_decision_dropped",
+    );
+    expect(dropped).toBeDefined();
+    expect(dropped?.at).toBe("previous.decisions[0]");
+    expect(`${dropped?.code} ${dropped?.at}`).not.toContain("Keep me");
+    expect(dropped?.message).toContain("Keep me");
+  });
+
+  it("codes and coordinates never repeat envelope text", () => {
+    const result = validateCompactionGuards(
+      deltaEnvelope({
+        source: { ...makeEnvelope().source, coveredEndSeq: 19 },
+        decisions: [],
+      }),
+      deltaCtx(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.violations.map((v) => v.code).sort()).toEqual([
+      "coverage_end_mismatch",
+      "delta_decision_dropped",
+    ]);
+    for (const violation of result.violations) {
+      expect(`${violation.code} ${violation.at}`).not.toContain("Keep me");
     }
   });
 
@@ -252,7 +303,7 @@ describe("validateCompactionGuards — delta continuity", () => {
     const result = validateCompactionGuards(envelope, ctx);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.violations.join("\n")).toContain("coveredStartSeq");
+      expect(messagesOf(result)).toContain("coveredStartSeq");
     }
   });
 
@@ -264,7 +315,7 @@ describe("validateCompactionGuards — delta continuity", () => {
     const result = validateCompactionGuards(envelope, ctx);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.violations.join("\n")).toContain("monoton");
+      expect(messagesOf(result)).toContain("monoton");
     }
   });
 

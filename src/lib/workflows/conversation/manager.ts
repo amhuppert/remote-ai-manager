@@ -25,6 +25,7 @@ import {
   targetFromStoreSessionName,
   conversationTargetStoreSessionName,
   conversationTargetLogFields,
+  type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
 
 import { type ConversationActorRef } from "./machine";
@@ -37,6 +38,7 @@ import {
 import { createLogger } from "@/lib/logging";
 import {
   ConversationBindingNotFoundError,
+  checkpointScopeKeyForStoreIdentity,
   type EnsureActorInputData,
 } from "./actor-input-loader";
 
@@ -45,6 +47,53 @@ import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-t
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import { drainConversationQueue } from "@/lib/conversations/message-queue-drain";
 import { getErrorMessage } from "@/lib/shared/errors";
+import {
+  checkpointHoldsOrdinaryAdmission,
+  evaluateCheckpointAdmission,
+  evaluateCheckpointConversation,
+  type CheckpointAdmissionObservation,
+  type CheckpointConversationObservation,
+  type CheckpointHostObservation,
+  type CheckpointRefusal,
+  type CheckpointRefusalCode,
+} from "@/lib/conversation-checkpoints/admission";
+import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostics";
+import type { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
+import type { CheckpointReceipt } from "@/lib/conversation-checkpoints/receipt";
+import type { ConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
+import { isTerminalCheckpointPhase } from "@/lib/conversation-checkpoints/transitions";
+import {
+  checkpointActorProjection,
+  type CheckpointActorProjection,
+  type CheckpointOperation,
+  type CheckpointScopeKey,
+} from "@/lib/conversation-checkpoints/schemas";
+import type { CheckpointAdmissionState } from "@/lib/conversation-checkpoints/repo";
+import type { CompactionConfig } from "@/lib/config/schemas";
+import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
+import type {
+  ConversationBackgroundActivity,
+  ConversationState,
+} from "@/lib/conversations/schemas";
+import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  captureCheckpointSourceForHost,
+  runCheckpointMaintenance,
+  type CheckpointMaintenanceHost,
+  restoredGateFor,
+} from "./checkpoint-maintenance";
+import {
+  checkpointKeyLogFields,
+  hydrateCheckpointAuthority,
+  type CheckpointAuthorityHydration,
+  readCheckpointAuthority,
+} from "./checkpoint-restart";
+import { repairQueuedAcceptanceFromCheckpoint } from "./checkpoint-queue-repair";
+import type { TranscriptEntry } from "@/lib/prompt/transcript";
+import type { ExecuteWorkflowTaskRunInput } from "./execute-workflow-task-run";
+import type { TaskRunResult } from "./turn-result";
+import type { ConversationCheckpointMaintenance } from "./runtime-state";
 
 const logger = createLogger("conversation-manager");
 export {
@@ -87,6 +136,124 @@ export type ConversationCommandOutcome =
       code: "not_found" | "busy" | "invalid_state";
       message: string;
     };
+
+/**
+ * Checkpoint maintenance owns this host: ordinary work waits for it, a rebind
+ * is refused, and an eviction of a host still held after its work settled is
+ * refused too, because eviction would close or abandon the runtime the
+ * operation still accounts for.
+ */
+export class ConversationMaintenanceActiveError extends Error {}
+
+/**
+ * The checkpoint domain the manager composes: durable operations, the
+ * captured archive, the compaction generator on a synthetic lane, and the
+ * settled-state channels admission consults. Every method resolves lazily so
+ * the manager's import graph stays as it was.
+ */
+export interface ConversationCheckpointDependencies {
+  repo(): Promise<ConversationCheckpointsRepo>;
+  readConversation(identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): Promise<ConversationState | null>;
+  readEntries(transcriptPath: string | null): Promise<TranscriptEntriesResult>;
+  findArtifact(conversationId: string): Promise<ContextArtifactRow | null>;
+  resolveConfig(projectPath: string): Promise<CompactionConfig>;
+  executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
+  backendSupportsCheckpoint(backend: AgentBackendId): boolean;
+  /**
+   * Append the user entry a crashed delivery turn owed the archive, at most
+   * once per stable id; see `checkpoint-queue-repair`.
+   */
+  appendUserEntryOnce(
+    conversationId: string,
+    entry: TranscriptEntry & { id: string },
+  ): Promise<void>;
+  /** Release queued rows on durable acceptance evidence; see `MessageQueueService.confirmDelivery`. */
+  confirmQueuedDelivery(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
+  }): Promise<number>;
+  getBackgroundActivity(
+    conversationId: string,
+  ): ConversationBackgroundActivity | null;
+  /** The channel's change count; see `BackgroundActivityChannel.epoch`. */
+  getBackgroundActivityEpoch(conversationId: string): number;
+  generate: typeof generateCheckpoint;
+  now(): string;
+}
+
+export interface ConversationCheckpointRequest {
+  address: ConversationAddress;
+  /** Caller-generated UUID: the operation id, and the reuse key on retransmit. */
+  requestId: string;
+  /**
+   * Explicit recovery: the recovery-required operation this build supersedes.
+   * Absent for an ordinary checkpoint, which cannot supersede anything.
+   */
+  recover?: string | null;
+}
+
+export type ConversationCheckpointReconcile =
+  | { kind: "repaired"; operation: CheckpointOperation }
+  | {
+      kind: "blocked";
+      operation: CheckpointOperation;
+      refusal: CheckpointRefusal;
+    }
+  | { kind: "unchanged"; operation: CheckpointOperation }
+  | { kind: "refused"; refusal: CheckpointRefusal };
+
+export type ConversationCheckpointStart =
+  | {
+      kind: "admitted" | "reused";
+      operation: CheckpointOperation;
+      receipt: CheckpointReceipt;
+      /** Settles with the operation's durable outcome; never rejects. */
+      completion: Promise<CheckpointOperation>;
+    }
+  | { kind: "refused"; refusal: CheckpointRefusal };
+
+export interface ConversationCheckpointCheck {
+  eligible: boolean;
+  /** Every failing predicate, primary first; empty when eligible. */
+  refusals: CheckpointRefusal[];
+  /** The operation holding the slot, when one does. */
+  active: CheckpointReceipt | null;
+  hosted: boolean;
+}
+
+export type ConversationCheckpointCancel =
+  | { kind: "cancelled"; operation: CheckpointOperation }
+  | { kind: "completed"; operation: CheckpointOperation }
+  | { kind: "refused"; refusal: CheckpointRefusal };
+
+/** The manager's owned reservation; `runtime.maintenance` aliases it once hosted. */
+interface ManagedCheckpointMaintenance extends ConversationCheckpointMaintenance {
+  /** Settles once the repository admitted the operation, or null when refused first. */
+  readonly admitted: Promise<CheckpointOperation | null>;
+  admit(operation: CheckpointOperation): void;
+  settle(operation: CheckpointOperation | null): void;
+  release(): void;
+}
+
+function checkpointRefusal(
+  code: CheckpointRefusalCode,
+  reason: string,
+  operation: CheckpointOperation | null = null,
+): CheckpointRefusal {
+  return {
+    code,
+    reason,
+    operationId: operation?.id ?? null,
+    phase: operation?.phase ?? null,
+  };
+}
 
 export interface EnsureConversationActorDeps {
   loadActorInput(
@@ -192,6 +359,7 @@ export interface ConversationManagerDependencies {
       ...args: Parameters<typeof unregisterAbortController>
     ): ReturnType<typeof unregisterAbortController>;
   };
+  checkpoint: ConversationCheckpointDependencies;
 }
 
 export function createConversationManager(
@@ -201,8 +369,47 @@ export function createConversationManager(
     drainQueue: drainAfterTurn,
     executeDebugCommand: executeConversationCommand,
   });
+  /**
+   * Checkpoint reservations by runtime key. Set synchronously before a start
+   * awaits anything, so a dormant host's startup drain and any concurrent
+   * admission see the hold; kept for `needs_reconciliation` until an explicit
+   * repair, and dropped with the host on disposal because the durable
+   * operation re-establishes the hold through the actor input on restart.
+   */
+  const maintenances = new Map<string, ManagedCheckpointMaintenance>();
+
+  function activeMaintenance(
+    key: string,
+  ): ManagedCheckpointMaintenance | undefined {
+    return maintenances.get(key);
+  }
+
+  /** Whether ordinary work must wait: an in-process reservation or a loaded hold. */
+  function maintenanceHolds(key: string): boolean {
+    if (maintenances.has(key)) return true;
+    const actor = host.get(key);
+    const snapshot = actor ? readUsableSnapshot(actor) : null;
+    return checkpointHoldsOrdinaryAdmission(snapshot?.context.checkpoint);
+  }
   function restorePersistedConversations(): Promise<number> {
     return deps.rehydrate(host);
+  }
+
+  function checkpointAcceptsQueuedInput(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): boolean {
+    const key = conversationRuntimeKey(
+      projectPath,
+      sessionName,
+      conversationId,
+    );
+    if (maintenanceHolds(key)) return true;
+    const actor = host.get(key);
+    const snapshot = actor ? readUsableSnapshot(actor) : null;
+    // A composer may submit its queued input just as readiness releases the hold.
+    return snapshot?.context.checkpoint?.phase === "ready";
   }
 
   function describeActiveTurn(
@@ -290,6 +497,12 @@ export function createConversationManager(
             code: "busy",
             message: "Conversation host is stopping",
           };
+        if (maintenanceHolds(key))
+          return {
+            kind: "refused",
+            code: "busy",
+            message: "Conversation checkpoint maintenance is in progress",
+          };
         if (runtime.durabilityFailure) throw runtime.durabilityFailure.error;
         const before = actor.getSnapshot().context;
         if (
@@ -372,15 +585,43 @@ export function createConversationManager(
       !runtime ||
       runtime.stopping ||
       runtime.disposing ||
-      runtime.durabilityFailure
+      runtime.durabilityFailure ||
+      // A provider-initiated turn owns the host; its completion re-enters
+      // idle, whose entry drains.
+      runtime.managed.externalTurnActive
     )
       return;
+    // Every drain path — idle entry, post-turn, explicit nudge — lands here,
+    // and a checkpoint that owns the host keeps queued messages exactly where
+    // they are until it reaches a safe outcome.
+    if (maintenanceHolds(key)) {
+      logger.info("queue.drain_held_checkpoint", {
+        ...conversationTargetLogFields(context.target),
+      });
+      return;
+    }
     const queueDeps = deps.queue;
     const drain = () => {
-      if (runtime?.stopping || runtime?.disposing || runtime?.durabilityFailure)
+      if (
+        runtime.stopping ||
+        runtime.disposing ||
+        runtime.durabilityFailure ||
+        runtime.managed.externalTurnActive
+      )
         return;
       if (deps.getRuntime(key) !== runtime) return;
-      return drainConversationQueue(context, queueDeps);
+      if (maintenanceHolds(key)) return;
+      // Registered for its whole claim-and-dispatch lifetime, so a checkpoint
+      // reservation taken while it is in flight yields to it instead of
+      // bouncing the claimed batch or running its command under maintenance.
+      const inflight = drainConversationQueue(context, queueDeps);
+      runtime.queueDrains.add(inflight);
+      void inflight
+        .finally(() => {
+          runtime.queueDrains.delete(inflight);
+        })
+        .catch(() => {});
+      return inflight;
     };
     if (runtime?.attempt) {
       void runtime.attempt.completed.then(drain).catch((error) =>
@@ -452,31 +693,18 @@ export function createConversationManager(
       sessionName,
       conversationId,
     );
-    const pending = pendingActorStarts.get(key);
-    if (pending) {
-      await pending;
-      return ensureConversationActor(
+    // The host's per-conversation section: startup restore and the on-demand
+    // restart rules take the same one, so none of them sees this
+    // conversation between another's ownership check and its effect.
+    return host.exclusive(key, () =>
+      ensureConversationActorUnserialized(
         projectPath,
         sessionName,
         conversationId,
         options,
-      );
-    }
-    const start = ensureConversationActorUnserialized(
-      projectPath,
-      sessionName,
-      conversationId,
-      options,
+      ),
     );
-    pendingActorStarts.set(key, start);
-    try {
-      return await start;
-    } finally {
-      pendingActorStarts.delete(key);
-    }
   }
-
-  const pendingActorStarts = new Map<string, Promise<ConversationActorRef>>();
 
   async function ensureConversationActorUnserialized(
     projectPath: string,
@@ -540,6 +768,14 @@ export function createConversationManager(
           `Conversation actor ${conversationId} is running with worktreePath=${currentWorktreePath}; cannot rebind to executionTarget worktreePath=${requestedWorktreePath}`,
         );
       }
+      if (
+        maintenanceHolds(
+          conversationRuntimeKey(projectPath, sessionName, conversationId),
+        )
+      )
+        throw new ConversationMaintenanceActiveError(
+          `Conversation actor ${conversationId} is under checkpoint maintenance; cannot rebind to executionTarget worktreePath=${requestedWorktreePath}`,
+        );
       logger.info(
         "conversation-manager.execution_target_mismatch_idle_rebind",
         {
@@ -569,6 +805,13 @@ export function createConversationManager(
         sessionName,
         conversationId,
       });
+      // A delivery the crash cut off between the checkpoint's acceptance and
+      // the queue's is confirmed from that acceptance before anything drains.
+      await repairQueuedAcceptance({
+        projectPath,
+        sessionName,
+        conversationId,
+      });
     }
 
     const worktreePath = requestedWorktreePath ?? data.sessionWorktreePath;
@@ -586,6 +829,7 @@ export function createConversationManager(
 
       persistence: data.persistence,
       ...data.conversation,
+      checkpoint: data.checkpoint,
     });
   }
 
@@ -606,49 +850,72 @@ export function createConversationManager(
         identity.conversationId,
       ),
     );
-    if (
-      runtime &&
-      (runtime.stopFailure ||
-        runtime.durabilityFailure ||
-        runtime.reconciliation)
-    ) {
-      const reconciliation = (runtime.reconciliation ??= Promise.resolve().then(
-        async () => {
-          if (runtime.stopFailure) {
-            runtime.managed.reconcileClose();
-            await closeHostedRuntime(key);
-            await Promise.allSettled(runtime.debugVerificationWork ?? []);
-          }
-          if (runtime.durabilityFailure) {
-            const failure = runtime.durabilityFailure;
-            if (failure.attempt?.requiresCloseRetry)
-              runtime.managed.reconcileClose();
-            await failure.attempt?.reconcile();
-            await deps
-              .persistence(failure.context.transient ? "ephemeral" : "durable")
-              .reconcile(failure.context);
-            if (runtime.durabilityFailure === failure)
-              runtime.durabilityFailure = undefined;
-            logger.info("conversation.finalization_reconciled", {
-              ...conversationTargetLogFields(binding.address.target),
-            });
-          }
-          if (runtime.stopFailure) {
-            runtime.stopFailure = undefined;
-            runtime.stopping = undefined;
-            runtime.disposing = false;
-          }
-        },
-      ));
-      try {
-        await reconciliation;
-      } finally {
-        if (runtime.reconciliation === reconciliation)
-          runtime.reconciliation = undefined;
-      }
-    }
+    if (runtime)
+      await reconcileHostFailures(key, runtime, binding.address.target);
     await runtime?.stopping;
     await ensureBinding(conversationBindingSchema.parse(binding));
+  }
+
+  /**
+   * Retry a host's recorded stop and durability failures — the owned close,
+   * the attempt's receipts, the row and snapshot writes. One reconciliation
+   * runs at a time per host; a second caller awaits the same one.
+   */
+  async function reconcileHostFailures(
+    key: string,
+    runtime: ConversationRuntimeState,
+    target: ConversationTarget,
+  ): Promise<void> {
+    if (
+      !(
+        runtime.stopFailure ||
+        runtime.durabilityFailure ||
+        runtime.reconciliation
+      )
+    )
+      return;
+    const reconciliation = (runtime.reconciliation ??= Promise.resolve().then(
+      async () => {
+        if (runtime.stopFailure) {
+          runtime.managed.reconcileClose();
+          await closeHostedRuntime(key);
+          await Promise.allSettled(runtime.debugVerificationWork ?? []);
+        }
+        if (runtime.durabilityFailure) {
+          const failure = runtime.durabilityFailure;
+          if (failure.attempt?.requiresCloseRetry)
+            runtime.managed.reconcileClose();
+          await failure.attempt?.reconcile();
+          await deps
+            .persistence(failure.context.transient ? "ephemeral" : "durable")
+            .reconcile(failure.context);
+          if (runtime.durabilityFailure === failure)
+            runtime.durabilityFailure = undefined;
+          logger.info("conversation.finalization_reconciled", {
+            ...conversationTargetLogFields(target),
+          });
+          // The failure held the queue at the settled host's idle entry;
+          // that entry does not recur, so the repair restores the drain.
+          const actor = host.get(key);
+          const context = actor
+            ? readUsableSnapshot(actor)?.context
+            : undefined;
+          if (actor && context && isActorSettled(actor))
+            drainAfterTurn(context);
+        }
+        if (runtime.stopFailure) {
+          runtime.stopFailure = undefined;
+          runtime.stopping = undefined;
+          runtime.disposing = false;
+        }
+      },
+    ));
+    try {
+      await reconciliation;
+    } finally {
+      if (runtime.reconciliation === reconciliation)
+        runtime.reconciliation = undefined;
+    }
   }
 
   async function ensureBinding(
@@ -701,6 +968,18 @@ export function createConversationManager(
         throw new ConversationBindingMismatchError(
           "An active conversation cannot be rebound",
         );
+      if (
+        maintenanceHolds(
+          conversationRuntimeKey(
+            identity.projectPath,
+            identity.sessionName,
+            identity.conversationId,
+          ),
+        )
+      )
+        throw new ConversationMaintenanceActiveError(
+          "A conversation under checkpoint maintenance cannot be rebound",
+        );
       await stopConversationActor(
         identity.projectPath,
         identity.sessionName,
@@ -727,6 +1006,7 @@ export function createConversationManager(
       contextWindowMax: null,
       forkedFrom: null,
       backendRef: null,
+      checkpoint: null,
     });
   }
 
@@ -770,6 +1050,8 @@ export function createConversationManager(
           code: "binding_mismatch",
           message: error.message,
         };
+      if (error instanceof ConversationMaintenanceActiveError)
+        return { kind: "refused", code: "busy", message: error.message };
       throw error;
     }
     const turn =
@@ -820,28 +1102,53 @@ export function createConversationManager(
           code: "binding_mismatch",
           message: "Conversation host is being disposed",
         };
+      const maintenance = activeMaintenance(key);
+      // A queue drain that was already claiming when a checkpoint reserved
+      // this host finishes first: its submission is admitted while the
+      // reservation is still pre-admission, and the checkpoint then observes
+      // the running turn and refuses itself.
+      const drainPrecedesReservation =
+        maintenance?.phase === "reserving" &&
+        runtime.queueDrains.size > 0 &&
+        turn.kind === "conversation_turn" &&
+        turn.queuedDelivery !== undefined;
+      const heldByMaintenance =
+        maintenance !== undefined && !drainPrecedesReservation;
       if (
         runtime.stopping ||
         runtime.command ||
         runtime.admission ||
         runtime.attempt ||
+        heldByMaintenance ||
+        runtime.managed.externalTurnActive ||
         !actor.getSnapshot().can(makeEvent())
       ) {
         if (!input.waitUntilReady)
           return {
             kind: "refused",
             code: "busy",
-            message: "Conversation is not ready to accept a turn",
+            message: heldByMaintenance
+              ? "Conversation checkpoint maintenance is in progress"
+              : "Conversation is not ready to accept a turn",
           };
         try {
           if (runtime.stopping)
             await waitWithCancellation(runtime.stopping, input.signal);
+          else if (heldByMaintenance && maintenance !== undefined)
+            await waitWithCancellation(maintenance.released, input.signal);
           else if (runtime.command)
             await waitWithCancellation(runtime.command, input.signal);
           else if (runtime.admission)
             await waitWithCancellation(runtime.admission.settled, input.signal);
           else if (runtime.attempt)
             await waitWithCancellation(runtime.attempt.completed, input.signal);
+          else if (runtime.managed.externalTurnActive)
+            // Seen here before the start frame reaches the machine; the turn's
+            // settlement, not the machine's state, is what ends the wait.
+            await waitWithCancellation(
+              runtime.managed.externalTurnSettled(),
+              input.signal,
+            );
           else await waitForAcceptance(actor, makeEvent(), input.signal);
         } catch (error) {
           if (input.signal?.aborted)
@@ -873,7 +1180,7 @@ export function createConversationManager(
         // lock a profile it never ran under. Readiness is checked again after
         // this await so another turn cannot claim the actor in the gap.
         if (binding.kind === "durable") {
-          const state = await deps.readAdmissionState(identity);
+          const state = await readAdmissionStateRepaired(identity);
           if (!state.found)
             return {
               kind: "refused",
@@ -939,6 +1246,28 @@ export function createConversationManager(
             message: "Conversation host changed during profile admission",
           };
         }
+        // Checkpoint continuity is the last admission predicate: a ready
+        // seed is delivered only by an ordinary conversation turn, and an
+        // applied continuation that has since been lost is gated for
+        // recovery here rather than resumed as nothing.
+        if (binding.kind === "durable") {
+          const continuity = await admitCheckpointContinuity(
+            checkpointKeyFor(binding.address),
+            actor,
+            turn.kind,
+          );
+          if (continuity !== null) return continuity;
+          if (
+            deps.getRuntime(key) !== runtime ||
+            runtime.admission !== reservation ||
+            !actor.getSnapshot().can(makeEvent())
+          )
+            return {
+              kind: "refused",
+              code: "binding_mismatch",
+              message: "Conversation host changed during admission",
+            };
+        }
         const attempt: TurnAttempt = new TurnAttempt({
           conversationId: identity.conversationId,
           executionContext: input.executionContext,
@@ -949,6 +1278,12 @@ export function createConversationManager(
             actor.send({ type: "ABORT_TURN", reason, executionAttemptId }),
           closeRuntime: () => closeHostedRuntime(key),
         });
+        if (binding.kind === "durable") {
+          const scopeKey = checkpointKeyFor(binding.address);
+          attempt.ownFinalizer(() =>
+            settleCheckpointAfterTurn(scopeKey, actor),
+          );
+        }
         runtime.attempt = attempt;
         runtime.abortController = attempt.controller;
         runtime.tooling = input.executionContext?.tooling;
@@ -1200,6 +1535,18 @@ export function createConversationManager(
     if (!actor || !runtime)
       return { requested: false, settled: Promise.resolve() };
     if (runtime.stopping) return { requested: true, settled: runtime.stopping };
+    // A checkpoint owns the host: there is no turn to stop, and closing the
+    // runtime here would retire it before the payload is frozen — or, for an
+    // operation held after a failed close or a failed outcome write, retire
+    // it without the evidence that says it may be. The caller can wait for
+    // the maintenance to settle; a held operation is released only by the
+    // reconcile owner.
+    const maintenance = activeMaintenance(key);
+    if (maintenance)
+      return {
+        requested: false,
+        settled: maintenance.work.then(() => undefined),
+      };
     runtime.admission?.cancel();
     const admission = runtime.admission;
     const attempt = runtime.attempt;
@@ -1269,6 +1616,34 @@ export function createConversationManager(
       conversationId,
       reason,
     });
+    // Disposal cannot cross maintenance: a build is cancelled through its own
+    // signal and a retirement finishes forward, and the host is evicted only
+    // once the operation reached a durable safe outcome. A hold that outlives
+    // the work — a failed close, failed receipts, or an outcome the
+    // repository never accepted — is not settled by eviction: the runtime it
+    // still accounts for would be closed before its payload was frozen or
+    // abandoned after a close it could not complete, and a reloaded
+    // projection could never recover that handle. Only the reconcile owner
+    // releases such a hold, so the eviction is refused and the host stays.
+    const maintenance = activeMaintenance(key);
+    if (maintenance) {
+      maintenance.controller.abort(reason);
+      await maintenance.work;
+      if (maintenances.get(key) === maintenance) {
+        if (ownedRuntime) ownedRuntime.disposing = undefined;
+        logger.error("checkpoint.disposal_refused", {
+          conversationId,
+          ...scopeRefFromStoreSessionName(sessionName),
+          operationId: maintenance.operationId,
+          phase: maintenance.phase,
+          outcome: maintenance.outcome,
+          reason,
+        });
+        throw new ConversationMaintenanceActiveError(
+          `Conversation ${conversationId} is held by checkpoint operation ${maintenance.operationId ?? "(unadmitted)"} (${maintenance.phase}); reconcile the checkpoint before disposing the host`,
+        );
+      }
+    }
     const snapshot = readUsableSnapshot(actor);
     if (
       reason === "server_shutdown" &&
@@ -1325,6 +1700,1590 @@ export function createConversationManager(
 
     host.remove(key, actor);
   }
+  // ==========================================================
+  // Checkpoint maintenance
+  //
+  // The manager is a checkpoint's only lifecycle owner: nothing else sends
+  // the actor's CHECKPOINT_PHASE projection, sets `runtime.maintenance` or
+  // runs `checkpoint-maintenance` / `checkpoint-restart`
+  // (boundaries.arch.test.ts refuses all of them elsewhere). The HTTP and CLI
+  // surfaces compose the semantic methods below — check, start (ordinary or
+  // explicit recovery), cancel, reconcile — and the repository's receipts,
+  // never the actor or the runtime. Ownership here ends at a durable safe
+  // outcome: carrying a `ready` seed into a fresh runtime (ready →
+  // delivering → applied) is the next ordinary turn's admission. An
+  // operation a restart interrupted is settled by the restart rules when its
+  // authority is hydrated; one held as `needs_reconciliation` is repaired by
+  // reconcile, or superseded by a recovery that names it, from its durable
+  // phase — never from an in-process reservation.
+  // ==========================================================
+
+  function checkpointKeyFor(address: ConversationAddress): CheckpointScopeKey {
+    return checkpointScopeKeyForStoreIdentity(
+      conversationStoreIdentity(address),
+    );
+  }
+
+  /**
+   * Confirm queued rows a durable checkpoint acceptance proves delivered;
+   * see `checkpoint-queue-repair`. Runs wherever the queue is read for
+   * admission so a crash between the two receipts never strands a delivered
+   * row in review — and never replays one.
+   */
+  async function repairQueuedAcceptance(identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): Promise<number> {
+    return repairQueuedAcceptanceFromCheckpoint(identity, {
+      repo: await deps.checkpoint.repo(),
+      readQueue: async (target) =>
+        (await deps.checkpoint.readConversation(target))?.pendingQueue ?? null,
+      confirmDelivery: (input) => deps.checkpoint.confirmQueuedDelivery(input),
+      appendUserEntryOnce: deps.checkpoint.appendUserEntryOnce,
+      now: deps.checkpoint.now,
+      log: logger,
+    });
+  }
+
+  /** The admission-state read, after any queued receipt the checkpoint can repair. */
+  async function readAdmissionStateRepaired(identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): ReturnType<ConversationManagerDependencies["readAdmissionState"]> {
+    const state = await deps.readAdmissionState(identity);
+    if (!state.found || !state.requiresQueueReview) return state;
+    const released = await repairQueuedAcceptance(identity);
+    return released > 0 ? deps.readAdmissionState(identity) : state;
+  }
+
+  function observeHostedConversation(
+    key: string,
+    actor: ConversationActorRef | undefined,
+  ):
+    | (CheckpointHostObservation & {
+        debugActive: boolean;
+        questionPending: boolean;
+        transient: boolean;
+        backendRef: string | null;
+        activityEpoch: number;
+      })
+    | null {
+    const runtime = deps.getRuntime(key);
+    if (!actor || !runtime) return null;
+    const snapshot = readUsableSnapshot(actor);
+    if (!snapshot) {
+      return {
+        idle: false,
+        turnActive: false,
+        busy: true,
+        trackedWork: false,
+        debugActive: false,
+        questionPending: false,
+        transient: false,
+        backendRef: null,
+        activityEpoch: runtime.managed.activityEpoch,
+      };
+    }
+    return {
+      idle: snapshot.value === "idle",
+      // A provider-initiated external turn counts even though the machine
+      // refuses its start under a hold: the runtime is executing either way.
+      turnActive:
+        runtime.attempt !== undefined ||
+        runtime.admission !== undefined ||
+        runtime.managed.externalTurnActive,
+      busy: Boolean(
+        runtime.stopping ||
+        runtime.disposing ||
+        runtime.command ||
+        runtime.reconciliation ||
+        runtime.durabilityFailure ||
+        runtime.stopFailure,
+      ),
+      trackedWork: runtime.managed.hasTrackedWork,
+      debugActive: snapshot.context.debugMode?.active === true,
+      questionPending: snapshot.context.pendingQuestion !== null,
+      transient: snapshot.context.transient === true,
+      backendRef: snapshot.context.backendRef?.ref ?? null,
+      activityEpoch: runtime.managed.activityEpoch,
+    };
+  }
+
+  function conversationObservationFromRow(
+    row: ConversationState | null,
+    hosted: ReturnType<typeof observeHostedConversation>,
+  ): CheckpointConversationObservation | null {
+    if (row === null) return null;
+    return {
+      archived: row.archived,
+      role: row.role,
+      owned: row.owner !== null,
+      agentBackend: row.agentBackend,
+      debugActive:
+        row.debugMode?.active === true || hosted?.debugActive === true,
+      questionPending:
+        row.pendingQuestionId !== null || hosted?.questionPending === true,
+      transient: hosted?.transient === true,
+      promptCount: row.promptCount,
+      transcriptPath: row.transcriptPath,
+      running: row.status === "running",
+    };
+  }
+
+  /**
+   * The checkpoint repository's authority with the restart rules applied.
+   * Only a conversation with no live host can hold an operation a crash
+   * interrupted — a hosted one is owned by this process's maintenance or
+   * was hydrated when its host was loaded — so this is where an ordinary
+   * start, a cancel or a reconcile catches up with a restart that startup
+   * rehydration has not reached yet. A read-only check never writes.
+   */
+  async function hydrateAuthorityForUnhosted(
+    key: string,
+    scopeKey: CheckpointScopeKey,
+    identity: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
+  ): Promise<CheckpointAuthorityHydration> {
+    const repo = await deps.checkpoint.repo();
+    return host.exclusive(key, async () => {
+      // Ownership is re-read inside the section: a host that started while
+      // this call waited applied the rules itself when it loaded, and its
+      // live work must not be read as interrupted.
+      if (host.get(key) !== undefined)
+        return readCheckpointAuthority(scopeKey, repo);
+      const hydration = await hydrateCheckpointAuthority(scopeKey, {
+        repo,
+        now: deps.checkpoint.now,
+        log: logger,
+      });
+      if (
+        hydration.outcome.kind !== "none" &&
+        hydration.outcome.kind !== "held"
+      )
+        logger.info("checkpoint.restart.applied_on_demand", {
+          ...checkpointKeyLogFields(scopeKey),
+          outcome: hydration.outcome.kind,
+        });
+      await repairQueuedAcceptance(identity);
+      return hydration;
+    });
+  }
+
+  async function observeCheckpointAdmission(
+    address: ConversationAddress,
+    request: { requestId: string | null; recover: string | null },
+    options: { self?: ManagedCheckpointMaintenance; hydrate?: boolean } = {},
+  ): Promise<CheckpointAdmissionObservation> {
+    const identity = conversationStoreIdentity(address);
+    const key = conversationRuntimeKey(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+    );
+    const scopeKey = checkpointKeyFor(address);
+    // Read before the first await: a reservation is what a start sets
+    // synchronously, and a check must see it whether or not a host exists.
+    const reservation = activeMaintenance(key);
+    const [row, repo] = await Promise.all([
+      deps.checkpoint.readConversation(identity),
+      deps.checkpoint.repo(),
+    ]);
+    const hosted = observeHostedConversation(key, host.get(key));
+    let checkpoints =
+      options.hydrate === true && host.get(key) === undefined
+        ? (await hydrateAuthorityForUnhosted(key, scopeKey, identity)).state
+        : await repo.getStateForAdmission(scopeKey);
+    // The live reference: the hosted actor's when there is one, else the row's.
+    const liveRef = hosted ? hosted.backendRef : (row?.backendRef?.ref ?? null);
+    if (options.hydrate === true) {
+      const lost = await settleLostContinuation(
+        scopeKey,
+        host.get(key),
+        checkpoints,
+        liveRef !== null,
+      );
+      if (lost !== null)
+        checkpoints = await repo.getStateForAdmission(scopeKey);
+    }
+    const continuationLost =
+      checkpoints.active === null &&
+      checkpoints.latestAccepted !== null &&
+      liveRef === null
+        ? {
+            operationId: checkpoints.latestAccepted.operationId,
+            phase: checkpoints.latestAccepted.currentPhase,
+          }
+        : null;
+    return {
+      continuationLost,
+      requestId: request.requestId,
+      recover: request.recover,
+      conversation: conversationObservationFromRow(row, hosted),
+      backendSupportsCheckpoint:
+        row !== null &&
+        deps.checkpoint.backendSupportsCheckpoint(row.agentBackend),
+      host: hosted,
+      reservation:
+        reservation !== undefined && reservation !== options.self
+          ? { operationId: reservation.operationId }
+          : null,
+      backgroundActivity:
+        deps.checkpoint.getBackgroundActivity(identity.conversationId) !== null,
+      queueReviewRequired: (await deps.readAdmissionState(identity))
+        .requiresQueueReview,
+      checkpoints,
+    };
+  }
+
+  /**
+   * An applied checkpoint whose accepted continuation is gone: the
+   * conversation holds no live reference, no operation is active, and the
+   * latest acceptance still stands. The accepted operation is moved to
+   * `needs_reconciliation` with its acceptance evidence retained — the repo
+   * refuses to hand that seed back — and a hosted actor takes the hold, so
+   * ordinary admission and queue drain wait for an explicit recovery built
+   * from the recorded history since. Returns the held operation, or null
+   * when nothing was lost.
+   */
+  async function settleLostContinuation(
+    scopeKey: CheckpointScopeKey,
+    actor: ConversationActorRef | undefined,
+    state: CheckpointAdmissionState,
+    hasContinuation: boolean,
+  ): Promise<CheckpointOperation | null> {
+    if (state.active !== null || state.latestAccepted === null) return null;
+    if (hasContinuation) return null;
+    const accepted = state.latestAccepted;
+    const repo = await deps.checkpoint.repo();
+    const held = await repo.recordOutcome({
+      key: scopeKey,
+      operationId: accepted.operationId,
+      expectedPhase: "applied",
+      phase: "needs_reconciliation",
+      failure: {
+        code: "continuation_lost",
+        message:
+          "the accepted provider continuation is no longer usable; run compact-context --recover with this operation id to build a fresh checkpoint from the recorded history",
+      },
+      at: deps.checkpoint.now(),
+    });
+    const operation = held.ok
+      ? held.value
+      : await repo.getOperation(scopeKey, accepted.operationId);
+    if (operation === null || operation.phase !== "needs_reconciliation") {
+      logger.warn("checkpoint.continuation_loss_unrecorded", {
+        ...checkpointKeyLogFields(scopeKey),
+        operationId: accepted.operationId,
+        refusal: held.ok ? null : held.refusal.code,
+        phase: operation?.phase ?? null,
+      });
+      return null;
+    }
+    logger.error("checkpoint.continuation_lost", {
+      ...checkpointKeyLogFields(scopeKey),
+      operationId: operation.id,
+      ordinal: operation.ordinal,
+      acceptedAttemptId: accepted.acceptance.attemptId,
+      acceptedAt: accepted.acceptance.acceptedAt,
+    });
+    actor?.send({
+      type: "CHECKPOINT_PHASE",
+      checkpoint: { operationId: operation.id, phase: "needs_reconciliation" },
+    });
+    return operation;
+  }
+
+  /**
+   * The turn-admission half of checkpoint continuity, after the queue and
+   * profile predicates: a lost continuation is gated for recovery, a ready
+   * seed admits only an ordinary conversation turn, and any other active
+   * phase is the hold the projection already carries.
+   */
+  async function admitCheckpointContinuity(
+    scopeKey: CheckpointScopeKey,
+    actor: ConversationActorRef,
+    turnKind: "conversation_turn" | "task_run",
+  ): Promise<TurnAdmissionRefusal | null> {
+    const context = readUsableSnapshot(actor)?.context;
+    if (!context || context.transient) return null;
+    const repo = await deps.checkpoint.repo();
+    const state = await repo.getStateForAdmission(scopeKey);
+    const lost = await settleLostContinuation(
+      scopeKey,
+      actor,
+      state,
+      context.backendRef !== null,
+    );
+    if (lost !== null)
+      return {
+        kind: "refused",
+        code: "busy",
+        message: `The applied checkpoint continuation was lost; run compact-context --recover ${lost.id}`,
+      };
+    const active = state.active;
+    if (active === null) return null;
+    if (active.phase === "ready") {
+      if (turnKind === "task_run")
+        return {
+          kind: "refused",
+          code: "busy",
+          message:
+            "A ready checkpoint is delivered by the next ordinary conversation turn",
+        };
+      if (context.checkpoint?.operationId !== active.id)
+        actor.send({
+          type: "CHECKPOINT_PHASE",
+          checkpoint: { operationId: active.id, phase: "ready" },
+        });
+      return null;
+    }
+    // Held. The projection normally says so already; a durable hold the
+    // actor does not yet carry is projected before the refusal so the drain
+    // and every later admission see it.
+    if (!checkpointHoldsOrdinaryAdmission(context.checkpoint))
+      actor.send({
+        type: "CHECKPOINT_PHASE",
+        checkpoint: checkpointActorProjection(active),
+      });
+    logger.info("checkpoint.admission_held", {
+      ...checkpointKeyLogFields(scopeKey),
+      operationId: active.id,
+      phase: active.phase,
+    });
+    return {
+      kind: "refused",
+      code: "busy",
+      message: "Conversation checkpoint maintenance is in progress",
+    };
+  }
+
+  /**
+   * The settlement half, run as the attempt's finalizer once its receipts —
+   * including a checkpoint delivery's acceptance — have settled: project the
+   * durable phase (an applied seed leaves no projection, an unsent one
+   * returns to ready, an unresolved one holds), and gate a continuation the
+   * turn just lost. A delivery whose receipt is still unsettled fails here,
+   * and the failure is retained and re-run after the receipt is repaired.
+   */
+  async function settleCheckpointAfterTurn(
+    scopeKey: CheckpointScopeKey,
+    actor: ConversationActorRef,
+  ): Promise<void> {
+    const context = readUsableSnapshot(actor)?.context;
+    if (!context || context.transient) return;
+    const repo = await deps.checkpoint.repo();
+    const state = await repo.getStateForAdmission(scopeKey);
+    if (state.active?.phase === "delivering")
+      throw new Error(
+        `checkpoint operation ${state.active.id} is still delivering after the turn settled; its acceptance receipt has not landed`,
+      );
+    const lost = await settleLostContinuation(
+      scopeKey,
+      actor,
+      state,
+      context.backendRef !== null,
+    );
+    if (lost !== null) return;
+    const projection = checkpointActorProjection(state.active);
+    const current = context.checkpoint ?? null;
+    if (
+      projection?.operationId === current?.operationId &&
+      projection?.phase === current?.phase
+    )
+      return;
+    actor.send({ type: "CHECKPOINT_PHASE", checkpoint: projection });
+    logger.info("checkpoint.projection_settled", {
+      ...checkpointKeyLogFields(scopeKey),
+      operationId: projection?.operationId ?? null,
+      phase: projection?.phase ?? null,
+    });
+  }
+
+  /**
+   * Read-only eligibility: the same predicates a start enforces, over durable
+   * and hosted state only. Starts no actor, drains nothing, reserves nothing.
+   */
+  async function checkConversationCheckpoint(
+    address: ConversationAddress,
+    options: { recover?: string | null } = {},
+  ): Promise<ConversationCheckpointCheck> {
+    const observation = await observeCheckpointAdmission(address, {
+      requestId: null,
+      recover: options.recover ?? null,
+    });
+    const verdict = evaluateCheckpointAdmission(observation);
+    const active = observation.checkpoints.active;
+    const repo = await deps.checkpoint.repo();
+    return {
+      eligible: verdict.eligible,
+      refusals: verdict.eligible ? [] : verdict.refusals,
+      active: active
+        ? await repo.getReceipt(checkpointKeyFor(address), active.id)
+        : null,
+      hosted: observation.host !== null,
+    };
+  }
+
+  function createMaintenance(
+    requestId: string,
+    options: { recovers: string | null; retryClose: boolean } = {
+      recovers: null,
+      retryClose: false,
+    },
+  ): ManagedCheckpointMaintenance {
+    let settleWork!: (operation: CheckpointOperation | null) => void;
+    let settleAdmitted!: (operation: CheckpointOperation | null) => void;
+    let release!: () => void;
+    const work = new Promise<CheckpointOperation | null>((resolve) => {
+      settleWork = resolve;
+    });
+    const admitted = new Promise<CheckpointOperation | null>((resolve) => {
+      settleAdmitted = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return {
+      requestId,
+      operationId: null,
+      recovers: options.recovers,
+      retryClose: options.retryClose,
+      phase: "reserving",
+      outcome: "pending",
+      controller: new AbortController(),
+      work,
+      admitted,
+      released,
+      admit: settleAdmitted,
+      settle(operation) {
+        settleAdmitted(operation);
+        settleWork(operation);
+      },
+      release,
+    };
+  }
+
+  /**
+   * Admit and start a checkpoint. Returns after the operation is durable;
+   * generation and retirement continue as owned maintenance and settle
+   * through `completion`. Nothing about the conversation changes before the
+   * durable admission: a refusal allocates no provider session, drains no
+   * queue and leaves the continuation as it was.
+   *
+   * With `recover`, the build is an explicit recovery: it supersedes exactly
+   * the named recovery-required operation by compare-and-swap on its id and
+   * phase, builds from the complete recorded archive, closes the suspect
+   * runtime before readiness, and — should it fail or be cancelled — hands
+   * the host back to that operation's hold rather than releasing the queue.
+   */
+  async function startConversationCheckpoint(
+    input: ConversationCheckpointRequest,
+  ): Promise<ConversationCheckpointStart> {
+    const identity = conversationStoreIdentity(input.address);
+    const key = conversationRuntimeKey(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+    );
+    const scopeKey = checkpointKeyFor(input.address);
+    const logFields = {
+      ...conversationTargetLogFields(input.address.target),
+      requestId: input.requestId,
+    };
+    const recover = input.recover ?? null;
+    const existing = activeMaintenance(key);
+    /** The settled hold an explicit recovery takes over; restored if admission fails. */
+    let superseded: ManagedCheckpointMaintenance | undefined;
+    if (existing) {
+      if (existing.requestId === input.requestId) {
+        const operation = await existing.admitted;
+        if (operation) {
+          return reusedStart(scopeKey, operation, existing.work);
+        }
+      }
+      // An explicit recovery may take over the hold of exactly the operation
+      // it names, once that hold has settled into needs_reconciliation with
+      // a durable outcome; anything else is a competing checkpoint.
+      const recoverable =
+        recover !== null &&
+        existing.operationId === recover &&
+        existing.phase === "needs_reconciliation" &&
+        existing.outcome === "durable";
+      if (!recoverable) {
+        const refusal = checkpointRefusal(
+          "checkpoint_pending",
+          "a checkpoint already owns this conversation",
+          existing.operationId
+            ? await (
+                await deps.checkpoint.repo()
+              ).getOperation(scopeKey, existing.operationId)
+            : null,
+        );
+        logger.info("checkpoint.admission_refused", {
+          ...logFields,
+          code: refusal.code,
+        });
+        return { kind: "refused", refusal };
+      }
+      superseded = existing;
+    }
+
+    // Reserve before the first await: from here every competing admission,
+    // drain, rebind and stop sees the hold, including the idle-entry drain
+    // of a host this start is about to wake. A recovery's owned close may
+    // retry the recorded close failure of the runtime it supersedes.
+    const maintenance = createMaintenance(input.requestId, {
+      recovers: recover,
+      retryClose: recover !== null,
+    });
+    maintenances.set(key, maintenance);
+    if (superseded) {
+      const runtime = deps.getRuntime(key);
+      if (runtime?.maintenance === superseded)
+        runtime.maintenance = maintenance;
+    }
+    let admitted = false;
+    try {
+      const observation = await observeCheckpointAdmission(
+        input.address,
+        { requestId: input.requestId, recover },
+        { self: maintenance, hydrate: true },
+      );
+      const verdict = evaluateCheckpointAdmission(observation);
+      if (!verdict.eligible) {
+        logger.info("checkpoint.admission_refused", {
+          ...logFields,
+          code: verdict.refusals[0].code,
+          codes: verdict.refusals.map((entry) => entry.code),
+        });
+        return { kind: "refused", refusal: verdict.refusals[0] };
+      }
+      if (verdict.reuse) {
+        return reusedStart(
+          scopeKey,
+          verdict.reuse,
+          Promise.resolve(verdict.reuse),
+        );
+      }
+
+      let actor: ConversationActorRef;
+      try {
+        actor = await ensureConversationActor(
+          identity.projectPath,
+          identity.sessionName,
+          identity.conversationId,
+        );
+      } catch (error) {
+        if (error instanceof ConversationBindingNotFoundError)
+          return {
+            kind: "refused",
+            refusal: checkpointRefusal("conversation_not_found", error.message),
+          };
+        throw error;
+      }
+      const runtime = deps.getRuntime(key);
+      if (!runtime)
+        return {
+          kind: "refused",
+          refusal: checkpointRefusal(
+            "conversation_busy",
+            "the conversation host is not registered",
+          ),
+        };
+      runtime.maintenance = maintenance;
+      const maintenanceHost = createMaintenanceHost(
+        scopeKey,
+        key,
+        actor,
+        runtime,
+        maintenance,
+      );
+
+      // Settled hosted state, then the receipts every transcript and turn
+      // effect owes, then the capture. The hosted recheck runs after the
+      // receipts settle because settling them is what an in-flight external
+      // frame needed to become visible.
+      const hostedRefusal = refuseUnsettledHost(maintenanceHost.observe());
+      if (hostedRefusal) {
+        logger.info("checkpoint.admission_refused", {
+          ...logFields,
+          code: hostedRefusal.code,
+        });
+        return { kind: "refused", refusal: hostedRefusal };
+      }
+      let source;
+      try {
+        source = await captureCheckpointSourceForHost(maintenanceHost, {
+          readEntries: deps.checkpoint.readEntries,
+        });
+      } catch (error) {
+        runtime.durabilityFailure ??= {
+          context: actor.getSnapshot().context,
+          error,
+        };
+        return {
+          kind: "refused",
+          refusal: checkpointRefusal(
+            "conversation_busy",
+            `the conversation's receipts did not settle: ${getErrorMessage(error)}`,
+          ),
+        };
+      }
+      const settled = maintenanceHost.observe();
+      const lateRefusal = refuseUnsettledHost(settled);
+      if (lateRefusal) {
+        logger.info("checkpoint.admission_refused", {
+          ...logFields,
+          code: lateRefusal.code,
+        });
+        return { kind: "refused", refusal: lateRefusal };
+      }
+
+      const repo = await deps.checkpoint.repo();
+      const admissionInput = {
+        key: scopeKey,
+        requestId: input.requestId,
+        sourceBasis: source.basis,
+        priorBackendRef: settled.backendRef,
+        requestedAt: deps.checkpoint.now(),
+      };
+      const admission =
+        recover === null
+          ? await repo.admitOperation(admissionInput)
+          : await repo.admitRecovery({
+              ...admissionInput,
+              recoversOperationId: recover,
+            });
+      if (!admission.ok) {
+        logger.info("checkpoint.admission_refused", {
+          ...logFields,
+          code: admission.refusal.code,
+        });
+        return { kind: "refused", refusal: admission.refusal };
+      }
+      const { operation } = admission.value;
+      if (admission.value.outcome === "reused") {
+        return reusedStart(scopeKey, operation, Promise.resolve(operation));
+      }
+      admitted = true;
+      maintenance.operationId = operation.id;
+      maintenance.phase = "building";
+      maintenance.admit(operation);
+      maintenanceHost.project({ operationId: operation.id, phase: "building" });
+      logger.info(
+        recover === null
+          ? "checkpoint.admitted"
+          : "checkpoint.recovery_admitted",
+        {
+          ...logFields,
+          operationId: operation.id,
+          ordinal: operation.ordinal,
+          capturedThroughSeq: operation.sourceBasis.capturedThroughSeq,
+          ...(recover === null ? {} : { recoversOperationId: recover }),
+        },
+      );
+
+      const completion = runOwnedMaintenance(
+        key,
+        actor,
+        maintenance,
+        maintenanceHost,
+        operation,
+        source,
+        settled,
+      );
+      const receipt = await repo.getReceipt(scopeKey, operation.id);
+      if (!receipt) throw new Error("Admitted checkpoint has no receipt");
+      return { kind: "admitted", operation, receipt, completion };
+    } finally {
+      if (!admitted) {
+        if (superseded) restoreMaintenance(key, maintenance, superseded);
+        else releaseMaintenance(key, maintenance, null);
+      }
+    }
+  }
+
+  /**
+   * Put a settled hold back after a recovery that never admitted: the
+   * replaced reservation settles for anyone waiting on it, and nothing
+   * drains, because the prior operation still owns the host.
+   */
+  function restoreMaintenance(
+    key: string,
+    replaced: ManagedCheckpointMaintenance,
+    prior: ManagedCheckpointMaintenance,
+  ): void {
+    if (maintenances.get(key) === replaced) maintenances.set(key, prior);
+    const runtime = deps.getRuntime(key);
+    if (runtime?.maintenance === replaced) runtime.maintenance = prior;
+    replaced.settle(null);
+    replaced.release();
+  }
+
+  /**
+   * Drop a transient reservation without draining: the durable hold — the
+   * actor's projection — stays exactly as it was, and waiters settle.
+   */
+  function dropReservation(
+    key: string,
+    reservation: ManagedCheckpointMaintenance,
+    operation: CheckpointOperation | null,
+  ): void {
+    if (maintenances.get(key) === reservation) maintenances.delete(key);
+    const runtime = deps.getRuntime(key);
+    if (runtime?.maintenance === reservation) runtime.maintenance = undefined;
+    reservation.settle(operation);
+    reservation.release();
+  }
+
+  async function reusedStart(
+    scopeKey: CheckpointScopeKey,
+    operation: CheckpointOperation,
+    completion: Promise<CheckpointOperation | null>,
+  ): Promise<ConversationCheckpointStart> {
+    const receipt = await (
+      await deps.checkpoint.repo()
+    ).getReceipt(scopeKey, operation.id);
+    if (!receipt) throw new Error("Reused checkpoint has no receipt");
+    return {
+      kind: "reused",
+      operation,
+      receipt,
+      completion: completion.then((settled) => settled ?? operation),
+    };
+  }
+
+  function refuseUnsettledHost(
+    observed: ReturnType<CheckpointMaintenanceHost["observe"]>,
+  ): CheckpointRefusal | null {
+    if (observed.settled) return null;
+    const code = observed.reason ?? "conversation_busy";
+    return checkpointRefusal(code, `the conversation is not settled: ${code}`);
+  }
+
+  function createMaintenanceHost(
+    scopeKey: CheckpointScopeKey,
+    key: string,
+    actor: ConversationActorRef,
+    runtime: ConversationRuntimeState,
+    maintenance: ManagedCheckpointMaintenance,
+  ): CheckpointMaintenanceHost {
+    const context = () => actor.getSnapshot().context;
+    const persistence = () =>
+      deps.persistence(context().transient ? "ephemeral" : "durable");
+    return {
+      key: scopeKey,
+      target: context().target,
+      projectPath: context().projectPath,
+      worktreePath: context().worktreePath,
+      transcriptPath: context().transcriptPath,
+      signal: maintenance.controller.signal,
+      async settleReceipts() {
+        // Every drain that was claiming or dispatching when the reservation
+        // landed finishes first; whatever it admitted is then visible to
+        // `observe`.
+        while (runtime.queueDrains.size > 0)
+          await Promise.allSettled([...runtime.queueDrains]);
+        await Promise.allSettled(runtime.debugVerificationWork ?? []);
+        await runtime.managed.settleOwnedWork();
+        await persistence().whenDurable(context());
+      },
+      observe() {
+        const hosted = observeHostedConversation(key, host.get(key));
+        if (
+          host.get(key) !== actor ||
+          deps.getRuntime(key) !== runtime ||
+          !hosted
+        )
+          return {
+            settled: false,
+            reason: "conversation_busy",
+            backendRef: null,
+            activityEpoch: -1,
+            backgroundEpoch: -1,
+          };
+        const reason: CheckpointRefusalCode | null = hosted.busy
+          ? "conversation_busy"
+          : hosted.turnActive || !hosted.idle
+            ? "turn_active"
+            : hosted.debugActive
+              ? "debug_mode"
+              : hosted.questionPending
+                ? "question_pending"
+                : hosted.trackedWork ||
+                    deps.checkpoint.getBackgroundActivity(
+                      context().target.conversationId,
+                    ) !== null
+                  ? "background_work"
+                  : null;
+        return {
+          settled: reason === null,
+          reason,
+          backendRef: hosted.backendRef,
+          activityEpoch: hosted.activityEpoch,
+          backgroundEpoch: deps.checkpoint.getBackgroundActivityEpoch(
+            context().target.conversationId,
+          ),
+        };
+      },
+      observeDurable(conversation) {
+        const refusals = evaluateCheckpointConversation(
+          conversationObservationFromRow(
+            conversation,
+            observeHostedConversation(key, host.get(key)),
+          ),
+          conversation !== null &&
+            deps.checkpoint.backendSupportsCheckpoint(
+              conversation.agentBackend,
+            ),
+        );
+        return refusals[0]?.code ?? null;
+      },
+      project(projection) {
+        actor.send({ type: "CHECKPOINT_PHASE", checkpoint: projection });
+        if (projection?.phase === "retiring") maintenance.phase = "retiring";
+        if (projection?.phase === "ready") maintenance.phase = "publishing";
+        if (projection?.phase === "needs_reconciliation")
+          maintenance.phase = "needs_reconciliation";
+      },
+      async closeRuntime() {
+        // Only a reconcile or a recovery reopens a recorded close failure;
+        // an ordinary checkpoint that finds one is refused as busy instead.
+        if (maintenance.retryClose) runtime.managed.reconcileClose();
+        await closeHostedRuntime(key);
+      },
+      awaitDurable: () => persistence().whenDurable(context()),
+      recordDurabilityFailure(error) {
+        runtime.durabilityFailure ??= { context: context(), error };
+      },
+    };
+  }
+
+  /** The owned work after durable admission; settles the reservation either way. */
+  async function runOwnedMaintenance(
+    key: string,
+    actor: ConversationActorRef,
+    maintenance: ManagedCheckpointMaintenance,
+    maintenanceHost: CheckpointMaintenanceHost,
+    operation: CheckpointOperation,
+    source: Awaited<ReturnType<typeof captureCheckpointSourceForHost>>,
+    captured: ReturnType<CheckpointMaintenanceHost["observe"]>,
+  ): Promise<CheckpointOperation> {
+    const infra = {
+      repo: await deps.checkpoint.repo(),
+      readEntries: deps.checkpoint.readEntries,
+      findArtifact: deps.checkpoint.findArtifact,
+      resolveConfig: deps.checkpoint.resolveConfig,
+      executeTaskRun: deps.checkpoint.executeTaskRun,
+      generate: deps.checkpoint.generate,
+      now: deps.checkpoint.now,
+      log: logger,
+    };
+    try {
+      const result = await runCheckpointMaintenance(
+        { operation, source, captured, host: maintenanceHost },
+        infra,
+      );
+      maintenance.outcome = "durable";
+      if (result.released) {
+        releaseMaintenance(key, maintenance, result.operation);
+      } else {
+        maintenance.operationId = result.hold.operationId;
+        maintenance.phase = "needs_reconciliation";
+        maintenance.settle(result.operation);
+      }
+      return result.operation;
+    } catch (error) {
+      // The outcome itself could not be made durable. Nothing is released
+      // and nothing counts as finished: the durable phase still says what the
+      // operation was doing, and the reconcile owner decides from that record.
+      maintenance.phase = "persistence_failed";
+      maintenance.outcome = "undurable";
+      logger.error("checkpoint.outcome_persist_failed", {
+        ...conversationTargetLogFields(actor.getSnapshot().context.target),
+        operationId: operation.id,
+        ...checkpointErrorFields(error),
+      });
+      maintenance.settle(operation);
+      return operation;
+    }
+  }
+
+  function releaseMaintenance(
+    key: string,
+    maintenance: ManagedCheckpointMaintenance,
+    operation: CheckpointOperation | null,
+  ): void {
+    if (maintenances.get(key) === maintenance) maintenances.delete(key);
+    const runtime = deps.getRuntime(key);
+    if (runtime?.maintenance === maintenance) runtime.maintenance = undefined;
+    maintenance.settle(operation);
+    maintenance.release();
+    if (operation)
+      logger.info("checkpoint.released", {
+        operationId: operation.id,
+        phase: operation.phase,
+      });
+    // Every release restores ordinary queued admission — a nudge that arrived
+    // under the hold would otherwise wait for an unrelated idle entry. The
+    // checkpoint itself never consumes a queued message.
+    const actor = host.get(key);
+    const context = actor ? readUsableSnapshot(actor)?.context : undefined;
+    if (context) drainAfterTurn(context);
+  }
+
+  /**
+   * Cancel a building checkpoint. After the payload is frozen the transition
+   * finishes forward to a safe outcome instead, and the caller learns which.
+   */
+  async function cancelConversationCheckpoint(input: {
+    address: ConversationAddress;
+    operationId: string;
+  }): Promise<ConversationCheckpointCancel> {
+    const identity = conversationStoreIdentity(input.address);
+    const key = conversationRuntimeKey(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+    );
+    const scopeKey = checkpointKeyFor(input.address);
+    const repo = await deps.checkpoint.repo();
+    const maintenance = activeMaintenance(key);
+    if (maintenance && maintenance.operationId === input.operationId) {
+      if (maintenance.phase === "needs_reconciliation") {
+        const operation = await repo.getOperation(scopeKey, input.operationId);
+        return {
+          kind: "refused",
+          refusal: checkpointRefusal(
+            "not_cancellable",
+            "this operation needs reconciliation or explicit recovery",
+            operation,
+          ),
+        };
+      }
+      const cancellable = maintenance.phase === "building";
+      if (cancellable) maintenance.controller.abort("cancelled");
+      const operation =
+        (await maintenance.work) ??
+        (await repo.getOperation(scopeKey, input.operationId));
+      if (!operation)
+        return {
+          kind: "refused",
+          refusal: checkpointRefusal(
+            "checkpoint_not_found",
+            "the operation no longer exists",
+          ),
+        };
+      if (maintenance.outcome === "undurable")
+        return {
+          kind: "refused",
+          refusal: checkpointRefusal(
+            "recovery_required",
+            "the operation's outcome could not be made durable; run checkpoint reconcile",
+            (await repo.getOperation(scopeKey, input.operationId)) ?? operation,
+          ),
+        };
+      return operation.phase === "cancelled"
+        ? { kind: "cancelled", operation }
+        : { kind: "completed", operation };
+    }
+    // Nothing in this process owns the operation. An unhosted conversation
+    // may still hold one a restart interrupted, and the restart rules decide
+    // what it became before this cancel answers: an interrupted build is
+    // already failed, an interrupted retirement has finished forward.
+    const hydration =
+      host.get(key) === undefined
+        ? await hydrateAuthorityForUnhosted(key, scopeKey, identity)
+        : null;
+    const operation = await repo.getOperation(scopeKey, input.operationId);
+    if (!operation)
+      return {
+        kind: "refused",
+        refusal: checkpointRefusal(
+          "checkpoint_not_found",
+          "no such checkpoint operation in this scope",
+        ),
+      };
+    if (operation.phase === "cancelled")
+      return { kind: "cancelled", operation };
+    // The cancel arrived after retirement had begun and this call finished
+    // it forward: the caller learns that, as it would from a live cancel.
+    if (
+      hydration?.outcome.kind === "retirement_completed" &&
+      hydration.outcome.operation.id === operation.id
+    )
+      return { kind: "completed", operation };
+    if (operation.phase === "building" || operation.phase === "retiring")
+      return {
+        kind: "refused",
+        refusal: checkpointRefusal(
+          "not_owned",
+          "this operation is not owned by the running server; run checkpoint reconcile",
+          operation,
+        ),
+      };
+    return {
+      kind: "refused",
+      refusal: checkpointRefusal(
+        "not_cancellable",
+        operation.phase === "needs_reconciliation"
+          ? "this operation needs reconciliation or explicit recovery"
+          : `a ${operation.phase} operation cannot be cancelled`,
+        operation,
+      ),
+    };
+  }
+
+  /**
+   * Deterministic repair of an owned checkpoint: retry the recorded close,
+   * the readiness commit and the row/snapshot receipts, or record a build
+   * whose outcome never became durable. Never sends a model request. An
+   * unresolved delivery stays blocked — first behind the existing queue
+   * review, then behind an explicit recovery that names the operation.
+   *
+   * Ownership is taken before the first await. An in-process hold is claimed
+   * as `reconciling`; a hold that exists only durably gets a transient
+   * reservation. Either way a competing reconcile, recovery, drain or stop
+   * sees the repair in progress instead of passing the same checks in
+   * parallel and projecting over its result.
+   *
+   * An infrastructure error settles that ownership rather than leaking it.
+   * Before the host is bound the claim is handed back and the error
+   * propagates; after it, the maintenance stays as a hold that the next
+   * reconcile resumes from the durable phase, because nothing short of a
+   * read that may fail the same way can say what the repair left behind.
+   */
+  async function reconcileConversationCheckpoint(input: {
+    address: ConversationAddress;
+    operationId: string;
+  }): Promise<ConversationCheckpointReconcile> {
+    const identity = conversationStoreIdentity(input.address);
+    const key = conversationRuntimeKey(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+    );
+    const scopeKey = checkpointKeyFor(input.address);
+    const logFields = {
+      ...conversationTargetLogFields(input.address.target),
+      operationId: input.operationId,
+    };
+    const refused = (
+      code: CheckpointRefusalCode,
+      reason: string,
+      operation: CheckpointOperation | null = null,
+    ): ConversationCheckpointReconcile => {
+      logger.info("checkpoint.reconcile.refused", { ...logFields, code });
+      return {
+        kind: "refused",
+        refusal: checkpointRefusal(code, reason, operation),
+      };
+    };
+
+    const existing = activeMaintenance(key);
+    if (existing && existing.operationId !== input.operationId) {
+      const repo = await deps.checkpoint.repo();
+      if ((await repo.getOperation(scopeKey, input.operationId)) === null)
+        return refused(
+          "checkpoint_not_found",
+          "no such checkpoint operation in this scope",
+        );
+      return refused(
+        "checkpoint_pending",
+        "another checkpoint operation owns this conversation",
+        existing.operationId
+          ? await repo.getOperation(scopeKey, existing.operationId)
+          : null,
+      );
+    }
+    if (
+      existing &&
+      existing.phase !== "needs_reconciliation" &&
+      existing.phase !== "persistence_failed"
+    )
+      return refused(
+        "conversation_busy",
+        existing.phase === "reconciling"
+          ? "a reconcile is already running for this operation"
+          : "the operation is still running; wait for its outcome",
+        await (
+          await deps.checkpoint.repo()
+        ).getOperation(scopeKey, input.operationId),
+      );
+
+    // Claim before the first await.
+    const transient = existing === undefined;
+    const previousPhase = existing?.phase ?? "reconciling";
+    const maintenance =
+      existing ??
+      createMaintenance(`reconcile:${input.operationId}`, {
+        recovers: null,
+        retryClose: true,
+      });
+    maintenance.operationId = input.operationId;
+    maintenance.phase = "reconciling";
+    if (transient) maintenances.set(key, maintenance);
+
+    /** Hand the claim back with nothing durable changed. */
+    const abandon = (operation: CheckpointOperation | null): void => {
+      if (transient) dropReservation(key, maintenance, operation);
+      else maintenance.phase = previousPhase;
+    };
+    const refusedAfterClaim = (
+      code: CheckpointRefusalCode,
+      reason: string,
+      operation: CheckpointOperation | null = null,
+    ): ConversationCheckpointReconcile => {
+      abandon(operation);
+      return refused(code, reason, operation);
+    };
+
+    // Nothing durable has changed yet, so a failure here hands the claim
+    // back; left `reconciling`, it would refuse every later reconcile as busy
+    // and every recovery as pending long after the infrastructure recovered.
+    let repo: ConversationCheckpointsRepo;
+    let read: CheckpointOperation | null;
+    try {
+      repo = await deps.checkpoint.repo();
+      if (transient && host.get(key) === undefined)
+        await hydrateAuthorityForUnhosted(key, scopeKey, identity);
+      read = await repo.getOperation(scopeKey, input.operationId);
+    } catch (error) {
+      abandon(null);
+      throw error;
+    }
+    if (!read)
+      return refusedAfterClaim(
+        "checkpoint_not_found",
+        "no such checkpoint operation in this scope",
+      );
+    const operation: CheckpointOperation = read;
+    if (operation.supersededByOperationId !== null)
+      return refusedAfterClaim(
+        "stale_operation",
+        `operation ${operation.id} is superseded by recovery ${operation.supersededByOperationId}`,
+        operation,
+      );
+    if (transient) {
+      if (operation.phase === "delivering")
+        return refusedAfterClaim(
+          "conversation_busy",
+          "a delivery attempt is in flight for this operation",
+          operation,
+        );
+      if (operation.phase === "building" || operation.phase === "retiring")
+        return refusedAfterClaim(
+          "conversation_busy",
+          "the operation is still running; wait for its outcome",
+          operation,
+        );
+      if (operation.phase !== "needs_reconciliation") {
+        abandon(operation);
+        return { kind: "unchanged", operation };
+      }
+    }
+
+    // The repair projects onto the actor and awaits its receipts, so a host
+    // is needed; waking a dormant one loads the durable hold it starts under.
+    let actor: ConversationActorRef;
+    try {
+      actor = await ensureConversationActor(
+        identity.projectPath,
+        identity.sessionName,
+        identity.conversationId,
+      );
+    } catch (error) {
+      if (error instanceof ConversationBindingNotFoundError)
+        return refusedAfterClaim("conversation_not_found", error.message);
+      abandon(operation);
+      throw error;
+    }
+    const hostRuntime = deps.getRuntime(key);
+    if (!hostRuntime)
+      return refusedAfterClaim(
+        "conversation_busy",
+        "the conversation host is not registered",
+        operation,
+      );
+    const runtime: ConversationRuntimeState = hostRuntime;
+    if (transient) {
+      runtime.maintenance = maintenance;
+      maintenance.admit(operation);
+    }
+    const maintenanceHost = createMaintenanceHost(
+      scopeKey,
+      key,
+      actor,
+      runtime,
+      maintenance,
+    );
+    logger.info("checkpoint.reconcile.started", {
+      ...logFields,
+      phase: operation.phase,
+      lastStablePhase: operation.lastStablePhase,
+      undurableOutcome: existing?.outcome === "undurable",
+      hosted: !transient,
+    });
+    const at = () => deps.checkpoint.now();
+
+    const repaired = (
+      repairedOperation: CheckpointOperation,
+    ): ConversationCheckpointReconcile => {
+      maintenance.outcome = "durable";
+      releaseMaintenance(key, maintenance, repairedOperation);
+      logger.info("checkpoint.reconcile.repaired", {
+        ...logFields,
+        phase: repairedOperation.phase,
+      });
+      return { kind: "repaired", operation: repairedOperation };
+    };
+    /**
+     * A hold kept past this call is one the next reconcile — or an explicit
+     * recovery, which takes over only a durably settled hold — reasons about
+     * from the durable record. The exception is a hold whose own outcome
+     * write never landed while the record still shows the build in flight:
+     * only the undurable branch knows how to finish that, so it keeps its
+     * marker.
+     */
+    const settleOutcome = (known: CheckpointOperation): void => {
+      if (
+        maintenance.outcome === "undurable" &&
+        known.phase !== "needs_reconciliation" &&
+        !isTerminalCheckpointPhase(known.phase)
+      )
+        return;
+      maintenance.outcome = "durable";
+    };
+    const blocked = (
+      blockedOperation: CheckpointOperation,
+      code: CheckpointRefusalCode,
+      reason: string,
+    ): ConversationCheckpointReconcile => {
+      // Once a durable-only hold's reservation is dropped, the projection is
+      // all that keeps ordinary admission held: it follows the durable
+      // record, never a step this call projected ahead of a write.
+      if (blockedOperation.phase === "needs_reconciliation")
+        maintenanceHost.project({
+          operationId: blockedOperation.id,
+          phase: "needs_reconciliation",
+        });
+      if (transient) dropReservation(key, maintenance, blockedOperation);
+      else {
+        settleOutcome(blockedOperation);
+        maintenance.phase = "needs_reconciliation";
+      }
+      logger.warn("checkpoint.reconcile.blocked", {
+        ...logFields,
+        code,
+        phase: blockedOperation.phase,
+        lastStablePhase: blockedOperation.lastStablePhase,
+        attemptId: blockedOperation.delivery?.attemptId ?? null,
+      });
+      return {
+        kind: "blocked",
+        operation: blockedOperation,
+        refusal: checkpointRefusal(code, reason, blockedOperation),
+      };
+    };
+    /**
+     * A recovery build that ended without a checkpoint: the repository
+     * restored the gate it superseded in the same write, and the host stays
+     * held by that prior operation — exactly as an in-process settlement of
+     * the same build leaves it — rather than draining into uncertain
+     * continuity.
+     */
+    async function holdRestoredGate(
+      settledOperation: CheckpointOperation,
+      hold: CheckpointActorProjection,
+    ): Promise<ConversationCheckpointReconcile> {
+      maintenanceHost.project(hold);
+      maintenance.operationId = hold.operationId;
+      maintenance.phase = "needs_reconciliation";
+      maintenance.outcome = "durable";
+      maintenance.settle(settledOperation);
+      const prior = await repo.getOperation(scopeKey, hold.operationId);
+      logger.warn("checkpoint.reconcile.gate_restored", {
+        ...logFields,
+        phase: settledOperation.phase,
+        restoredOperationId: hold.operationId,
+      });
+      const reason = `recovery ${settledOperation.id} ended ${settledOperation.phase}; operation ${hold.operationId} still needs explicit recovery`;
+      return {
+        kind: "blocked",
+        operation: settledOperation,
+        refusal: prior
+          ? checkpointRefusal("recovery_required", reason, prior)
+          : {
+              code: "recovery_required",
+              reason,
+              operationId: hold.operationId,
+              phase: hold.phase,
+            },
+      };
+    }
+    const unchanged = async (
+      current: CheckpointOperation,
+    ): Promise<ConversationCheckpointReconcile> => {
+      if (transient) dropReservation(key, maintenance, current);
+      else if (isTerminalCheckpointPhase(current.phase)) {
+        const restored =
+          current.phase === "failed" || current.phase === "cancelled"
+            ? restoredGateFor(current)
+            : null;
+        if (restored) return holdRestoredGate(current, restored);
+        releaseMaintenance(key, maintenance, current);
+      } else maintenance.phase = previousPhase;
+      return { kind: "unchanged", operation: current };
+    };
+
+    /**
+     * The repair threw partway. What it wrote before that is durable or is
+     * not, and the read that would tell may fail the same way — so the host
+     * is not released on either reading. The maintenance stays as a hold,
+     * a loaded hold's reservation becoming the in-process hold the failure
+     * would have left under the original owner, and the next reconcile
+     * resumes from whichever durable phase it finds.
+     */
+    async function retainAfterFailure(): Promise<ConversationCheckpointReconcile> {
+      let current: CheckpointOperation | null = null;
+      try {
+        current = await repo.getOperation(scopeKey, operation.id);
+      } catch (lookupError) {
+        logger.error("checkpoint.reconcile.lookup_failed", {
+          ...logFields,
+          ...checkpointErrorFields(lookupError),
+        });
+      }
+      const known = current ?? operation;
+      // A readiness nothing proved durable must not be what the projection
+      // reports; a durable `ready` keeps its projection and this hold.
+      if (known.phase !== "ready")
+        maintenanceHost.project({
+          operationId: known.id,
+          phase: "needs_reconciliation",
+        });
+      settleOutcome(known);
+      maintenance.phase = "needs_reconciliation";
+      maintenance.settle(known);
+      logger.warn("checkpoint.reconcile.blocked", {
+        ...logFields,
+        code: "reconciliation_failed",
+        phase: known.phase,
+        lastStablePhase: known.lastStablePhase,
+        attemptId: known.delivery?.attemptId ?? null,
+        retained: true,
+      });
+      return {
+        kind: "blocked",
+        operation: known,
+        refusal: checkpointRefusal(
+          "reconciliation_failed",
+          "the repair did not complete; retry checkpoint reconcile",
+          known,
+        ),
+      };
+    }
+
+    async function prepareReadiness(
+      current: CheckpointOperation,
+    ): Promise<ConversationCheckpointReconcile | null> {
+      try {
+        await reconcileHostFailures(key, runtime, input.address.target);
+        maintenanceHost.project({ operationId: current.id, phase: "ready" });
+        await maintenanceHost.awaitDurable();
+      } catch (error) {
+        maintenanceHost.recordDurabilityFailure(error);
+        logger.error("checkpoint.reconcile.persistence_failed", {
+          ...logFields,
+          ...checkpointErrorFields(error),
+        });
+        if (current.phase === "needs_reconciliation") {
+          return blocked(
+            current,
+            "reconciliation_failed",
+            "row or snapshot receipts did not settle; retry checkpoint reconcile",
+          );
+        }
+        const held = await repo.recordOutcome({
+          key: scopeKey,
+          operationId: current.id,
+          expectedPhase: current.phase,
+          phase: "needs_reconciliation",
+          failure: {
+            code: "readiness_receipts_failed",
+            message:
+              "row or snapshot receipts did not settle before readiness; run checkpoint reconcile",
+          },
+          at: at(),
+        });
+        maintenanceHost.project({
+          operationId: current.id,
+          phase: "needs_reconciliation",
+        });
+        return blocked(
+          held.ok ? held.value : current,
+          "reconciliation_failed",
+          "row or snapshot receipts did not settle; retry checkpoint reconcile",
+        );
+      }
+      return null;
+    }
+
+    /** Close the retired runtime again and finish the clear-and-commit. */
+    async function finishRetirement(
+      current: CheckpointOperation,
+    ): Promise<ConversationCheckpointReconcile> {
+      try {
+        // The reconcile is the owner retrying the recorded close failure;
+        // without this the runtime would answer with the failure it recorded.
+        runtime.managed.reconcileClose();
+        await maintenanceHost.closeRuntime();
+      } catch (error) {
+        logger.error("checkpoint.reconcile.close_failed", {
+          ...logFields,
+          ...checkpointErrorFields(error),
+        });
+        return blocked(
+          current,
+          "reconciliation_failed",
+          "the retired runtime still did not close; retry checkpoint reconcile",
+        );
+      }
+      const receiptFailure = await prepareReadiness(current);
+      if (receiptFailure) return receiptFailure;
+      const committed = await repo.commitReady({
+        key: scopeKey,
+        operationId: current.id,
+        at: at(),
+      });
+      if (committed.ok) return repaired(committed.value);
+      // Refused under another writer: the projection follows the durable
+      // phase, never this call's expectation of it.
+      const durable =
+        (await repo.getOperation(scopeKey, current.id)) ?? current;
+      if (durable.phase === "ready") return repaired(durable);
+      return blocked(
+        durable,
+        "reconciliation_failed",
+        `readiness was refused: ${committed.refusal.code}`,
+      );
+    }
+
+    /** Retry the receipts a readiness commit left unsettled, then declare ready. */
+    async function finishReadiness(
+      current: CheckpointOperation,
+    ): Promise<ConversationCheckpointReconcile> {
+      const receiptFailure = await prepareReadiness(current);
+      if (receiptFailure) return receiptFailure;
+      let ready = current;
+      if (current.phase === "needs_reconciliation") {
+        const declared = await repo.recordOutcome({
+          key: scopeKey,
+          operationId: current.id,
+          expectedPhase: "needs_reconciliation",
+          phase: "ready",
+          at: at(),
+        });
+        if (!declared.ok)
+          return blocked(
+            current,
+            "reconciliation_failed",
+            declared.refusal.reason,
+          );
+        ready = declared.value;
+      }
+      return repaired(ready);
+    }
+
+    try {
+      if (existing?.outcome === "undurable") {
+        // The outcome write itself failed; the durable phase says what the
+        // build was doing when it did.
+        switch (operation.phase) {
+          case "building": {
+            const failed = await repo.recordOutcome({
+              key: scopeKey,
+              operationId: operation.id,
+              expectedPhase: "building",
+              phase: "failed",
+              failure: {
+                code: "outcome_unrecorded",
+                message:
+                  "the build ended but its outcome could not be recorded; recorded as failed by checkpoint reconcile",
+              },
+              at: at(),
+            });
+            if (!failed.ok)
+              return blocked(
+                operation,
+                "reconciliation_failed",
+                failed.refusal.reason,
+              );
+            const restored = restoredGateFor(failed.value);
+            if (restored) return await holdRestoredGate(failed.value, restored);
+            maintenanceHost.project(null);
+            return repaired(failed.value);
+          }
+          case "retiring":
+            return await finishRetirement(operation);
+          case "ready":
+            return await finishReadiness(operation);
+          default:
+            return await unchanged(operation);
+        }
+      }
+      // A hold this owner kept after a failed repair whose readiness had
+      // committed: only the receipts are outstanding.
+      if (!transient && operation.phase === "ready")
+        return await finishReadiness(operation);
+      if (operation.phase !== "needs_reconciliation")
+        return await unchanged(operation);
+      switch (operation.lastStablePhase) {
+        case "retiring":
+          return await finishRetirement(operation);
+        case "ready":
+          return await finishReadiness(operation);
+        case "delivering": {
+          const admissionState = await deps.readAdmissionState(identity);
+          return admissionState.requiresQueueReview
+            ? blocked(
+                operation,
+                "queue_review_required",
+                "the attempted delivery is unresolved; retry or discard the uncertain queued deliveries, then run compact-context --recover with this operation id",
+              )
+            : blocked(
+                operation,
+                "recovery_required",
+                "the attempted delivery is unresolved; run compact-context --recover with this operation id to build a fresh checkpoint",
+              );
+        }
+        case "applied":
+          return blocked(
+            operation,
+            "recovery_required",
+            "the applied continuation became unusable; run compact-context --recover with this operation id to build a fresh checkpoint from the recorded history",
+          );
+        default:
+          return blocked(
+            operation,
+            "recovery_required",
+            "this operation needs explicit recovery; run compact-context --recover with this operation id",
+          );
+      }
+    } catch (error) {
+      logger.error("checkpoint.reconcile.failed", {
+        ...logFields,
+        ...checkpointErrorFields(error),
+      });
+      return await retainAfterFailure();
+    }
+  }
+
   function getConversationRuntimeConfiguration(
     conversationId: string,
   ):
@@ -1384,6 +3343,7 @@ export function createConversationManager(
   }
   return {
     getConversationRuntimeConfiguration,
+    checkpointAcceptsQueuedInput,
     readDesiredConversationRuntimeConfiguration,
     stopAllConversationActors,
     restorePersistedConversations,
@@ -1400,6 +3360,10 @@ export function createConversationManager(
     clearConversationQuestion,
     requestConversationStop,
     stopConversationActor,
+    checkConversationCheckpoint,
+    startConversationCheckpoint,
+    cancelConversationCheckpoint,
+    reconcileConversationCheckpoint,
   };
 }
 export type ConversationManager = ReturnType<typeof createConversationManager>;
@@ -1415,6 +3379,18 @@ export function describeActiveTurn(
   address: ConversationAddress,
 ): ActiveConversationTurnDescription | null {
   return defaultManager().describeActiveTurn(address);
+}
+
+export function checkpointAcceptsQueuedInput(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): boolean {
+  return defaultManager().checkpointAcceptsQueuedInput(
+    projectPath,
+    sessionName,
+    conversationId,
+  );
 }
 
 export function getConversationTooling(
@@ -1559,4 +3535,31 @@ export function readDesiredConversationRuntimeConfiguration(
     conversationId,
     current,
   );
+}
+
+export function checkConversationCheckpoint(
+  address: ConversationAddress,
+  options?: { recover?: string | null },
+): Promise<ConversationCheckpointCheck> {
+  return defaultManager().checkConversationCheckpoint(address, options);
+}
+
+export function startConversationCheckpoint(
+  input: ConversationCheckpointRequest,
+): Promise<ConversationCheckpointStart> {
+  return defaultManager().startConversationCheckpoint(input);
+}
+
+export function reconcileConversationCheckpoint(input: {
+  address: ConversationAddress;
+  operationId: string;
+}): Promise<ConversationCheckpointReconcile> {
+  return defaultManager().reconcileConversationCheckpoint(input);
+}
+
+export function cancelConversationCheckpoint(input: {
+  address: ConversationAddress;
+  operationId: string;
+}): Promise<ConversationCheckpointCancel> {
+  return defaultManager().cancelConversationCheckpoint(input);
 }

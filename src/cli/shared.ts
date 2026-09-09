@@ -1379,6 +1379,22 @@ function coerceErrorDetails(
     }
   }
 
+  // A typed lifecycle refusal states more than its code: which operation it is
+  // about, the phase that operation actually holds, and — for a repair that
+  // could only finish half its work — the receipt carrying the correlated
+  // attempt. A command that had to re-read the raw body for those would be
+  // parsing a response the transport already classified, so they are folded in
+  // here as ordinary details rather than special-cased per command.
+  const refusal = isRecord(body.refusal) ? body.refusal : undefined;
+  const receipt = isRecord(body.receipt) ? body.receipt : undefined;
+  if (refusal !== undefined || receipt !== undefined) {
+    return {
+      ...(rawDetails ?? {}),
+      ...(refusal ? { refusal } : {}),
+      ...(receipt ? { receipt } : {}),
+    };
+  }
+
   return rawDetails;
 }
 
@@ -1601,6 +1617,68 @@ export async function cliRequestText(
     return { kind: "ok", status: response.status, text };
   }
 
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = undefined;
+  }
+  return classifySkewedErrorBody(response, body, params.method);
+}
+
+export type CliBytesRequestResult =
+  | {
+      kind: "ok";
+      status: number;
+      bytes: Uint8Array<ArrayBuffer>;
+      /** The response's own `content-type`, which names what the bytes are. */
+      mediaType: string;
+    }
+  | Exclude<CliRequestResult, { kind: "ok" }>;
+
+/**
+ * Like {@link cliRequest} for an endpoint whose success body is BINARY (an
+ * archived image). Decoding those bytes as UTF-8 to parse them as JSON would
+ * corrupt them, so the success arm keeps them as bytes; a non-2xx body is still
+ * read as text and classified exactly as the JSON path classifies it, so a
+ * refusal keeps its code, issues and exit class.
+ */
+export async function cliRequestBytes(
+  host: CliHost,
+  params: CliRequestParams,
+): Promise<CliBytesRequestResult> {
+  const url = new URL(params.path, params.server);
+  const init = buildRequestInit(params);
+
+  let response: Response;
+  try {
+    response = await host.fetch(url.toString(), init);
+  } catch (error) {
+    return { kind: "connection", detail: getErrorMessage(error) };
+  }
+
+  if (response.status === 401) {
+    return {
+      kind: "auth",
+      hadToken: params.token !== null,
+      tokenSource: params.tokenSource,
+    };
+  }
+
+  if (response.ok) {
+    const skew = readBuildMismatch(response, params.method);
+    if (skew !== null) return skew;
+    const buffer = await response.arrayBuffer();
+    return {
+      kind: "ok",
+      status: response.status,
+      bytes: new Uint8Array(buffer),
+      mediaType:
+        response.headers.get("content-type") ?? "application/octet-stream",
+    };
+  }
+
+  const text = await response.text();
   let body: unknown;
   try {
     body = JSON.parse(text);

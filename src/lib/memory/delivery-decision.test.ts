@@ -101,3 +101,35 @@ describe("isRuntimeCreatedWithoutResume", () => {
     },
   );
 });
+
+describe("isRuntimeCreatedWithoutResume with a pending checkpoint", () => {
+  it("treats the checkpoint's fresh-start intent as a context loss even when a handle is stored", () => {
+    expect(
+      isRuntimeCreatedWithoutResume({
+        willCreateRuntime: true,
+        promptCount: 4,
+        hasResumeHandle: true,
+        pendingCheckpoint: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("changes nothing for a continuing conversation without a pending checkpoint", () => {
+    expect(
+      isRuntimeCreatedWithoutResume({
+        willCreateRuntime: true,
+        promptCount: 4,
+        hasResumeHandle: true,
+        pendingCheckpoint: false,
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeCreatedWithoutResume({
+        willCreateRuntime: true,
+        promptCount: 4,
+        hasResumeHandle: false,
+        pendingCheckpoint: false,
+      }),
+    ).toBe(true);
+  });
+});

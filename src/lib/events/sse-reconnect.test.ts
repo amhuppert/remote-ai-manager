@@ -11,6 +11,7 @@ import { projectConversationKeys } from "../project-conversations-client/query-k
 import { normalizeTicketListFilters } from "../tickets/list-filters";
 import { beginTicketMutation } from "../tickets/mutation-coordinator";
 import { ticketKeys } from "../tickets/query-keys";
+import { checkpointKeys } from "../conversation-checkpoints/query-keys";
 
 type StampedMessage = {
   role: "user" | "assistant";
@@ -169,6 +170,46 @@ describe("reconnectReconcile", () => {
     expect(client.getQueryState(ticketSessionLinksKey)?.isInvalidated).toBe(
       true,
     );
+  });
+
+  // A checkpoint can reach ready, applied, cancelled, failed or a
+  // reconciliation gate entirely inside a stream interruption. The receipt
+  // frame that announced it is gone, so the only way a mounted panel learns
+  // the new phase is by re-reading the authoritative GET after reconnect.
+  it("marks checkpoint receipts and eligibility stale after reconciling", async () => {
+    const client = makeClient();
+    const sessionTarget = {
+      scope: "session" as const,
+      projectName: "proj",
+      sessionName: "sess-a",
+      conversationId: "conv-a",
+    };
+    const projectTarget = {
+      scope: "project" as const,
+      projectName: "proj",
+      conversationId: "plc-1",
+    };
+    const sessionList = checkpointKeys.list(sessionTarget, { limit: 5 });
+    const sessionEligibility = checkpointKeys.eligibility(sessionTarget);
+    const sessionDetail = checkpointKeys.detail(sessionTarget, "op-1");
+    const projectList = checkpointKeys.list(projectTarget, { limit: 5 });
+    client.setQueryData(sessionList, { receipts: [], nextBefore: null });
+    client.setQueryData(sessionEligibility, { eligible: true });
+    client.setQueryData(sessionDetail, { receipt: { operationId: "op-1" } });
+    client.setQueryData(projectList, { receipts: [], nextBefore: null });
+
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/jobs") return jsonResponse({ jobs: [] });
+      return jsonResponse([]);
+    });
+
+    await reconnectReconcile(client, vi.fn(), fetchFn);
+
+    expect(client.getQueryState(sessionList)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(sessionEligibility)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(sessionDetail)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(projectList)?.isInvalidated).toBe(true);
   });
 
   it("defers ticket refetches until a pending optimistic mutation settles", async () => {

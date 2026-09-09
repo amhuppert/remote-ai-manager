@@ -142,6 +142,7 @@ function makeDescriptor(
         contextWindowMetrics: true,
         nativeMidTurnAskUser: true,
         externalTurns: true,
+        checkpoint: false,
         capabilityKinds: [{ kind: "skills", applyTiming: "idle_live" }],
       },
       fsWriteRestriction: "unsupported",

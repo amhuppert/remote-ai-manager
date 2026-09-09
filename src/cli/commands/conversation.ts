@@ -1,28 +1,23 @@
 import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
-import { dispatchGroup } from "../dispatch";
+import { transcriptTruncationSchema } from "@/lib/conversations/transcript-render";
 import {
-  conversationTargetApiBase,
-  projectConversationTarget,
-  sessionConversationTarget,
-  type ConversationTarget,
-} from "@/lib/conversations/conversation-target";
+  checkpointBoundaryLines,
+  transcriptBoundariesSchema,
+} from "@/lib/conversations/history-recovery";
+import { dispatchGroup } from "../dispatch";
+import { omissionSummary, pagedOmission } from "../disclosure";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
-  EXIT_USAGE,
   checkFlags,
   cliRequest,
   cliRequestText,
   encodePathSegment,
   failure,
-  failureFromRequest,
   failureFromRequestNotFoundAsUsage,
   render,
-  readConversationScope,
-  readSessionEnv,
-  resolveProjectContext,
   structuredErrorFields,
   usageFailure,
   type CliEnv,
@@ -30,18 +25,33 @@ import {
   type CliRequestResult,
   type CliResult,
   type GlobalFlags,
-  type TokenSource,
 } from "../shared";
+import {
+  callerHeaders,
+  conversationBasePath,
+  isWrongScope404,
+  resolveConversationCommandTarget,
+  scopeMiss,
+  withScopeResolution,
+  type ConversationCommandTarget,
+  type ScopeMiss,
+} from "./conversation/target";
+import {
+  runConversationCheckpoint,
+  runConversationCompactContext,
+} from "./conversation/checkpoint";
+import {
+  runConversationEntry,
+  runConversationImage,
+} from "./conversation/evidence";
 
 /**
  * `cctl conversation read|compact|compaction get|list` — windowed transcript
  * reads and compaction artifacts (docs/design/conversation-compaction §5.2,
  * §10). The CLI never parses transcript files locally; everything goes
- * through the read/context-artifact endpoints.
+ * through the read/context-artifact endpoints. The checkpoint and evidence
+ * leaves live beside this module under `conversation/`, sharing its addressing.
  */
-
-/** Audit header the read endpoint stamps into `audit.conversation_read`. */
-const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
 
 const POLL_INTERVAL_MS = 1_000;
 const POLL_MAX_ATTEMPTS = 300;
@@ -63,6 +73,15 @@ const readResponseSchema = z.object({
   maxSeq: z.number().int(),
   units: z.array(readUnitSchema),
   truncated: z.boolean(),
+  /**
+   * What the window left out, by KIND of loss. Parsed rather than dropped
+   * because these are the only coordinates that recover the evidence: a
+   * generic "truncated" footer tells a reader something is missing and gives it
+   * no way to get it, and the entry-export and next-sequence commands live
+   * nowhere else.
+   */
+  truncation: transcriptTruncationSchema,
+  boundaries: transcriptBoundariesSchema,
 });
 
 const artifactSchema = z.object({
@@ -88,92 +107,8 @@ const artifactEnvelopeResponseSchema = z.object({
   hint: z.string().optional(),
 });
 
-interface ConversationCommandTarget {
-  server: string;
-  token: string | null;
-  tokenSource: TokenSource | null;
-  /** Scope-discriminated addressing; the only source of endpoint paths below. */
-  target: ConversationTarget;
-  /** The invoking conversation's own id (env identity), for audit provenance. */
-  callerConversationId: string | null;
-}
-
-/**
- * Resolve the target conversation: positional `<conversation-id>` first, then
- * `--conversation`, then `CC_CONVERSATION_ID` (reading your own history is
- * valid).
- *
- * Scope: an explicit `--session` wins, then an explicit `--project` alone means
- * project scope, then the environment's declared `CC_CONVERSATION_SCOPE`, then a
- * non-empty env session. The env session read is deliberately a falsy check —
- * `env["CC_SESSION"] ?? null` yields the neutralized `""` for a project
- * conversation and builds `/sessions//conversations/…`.
- */
-async function resolveConversationCommandTarget(
-  positional: string | undefined,
-  flags: GlobalFlags,
-  env: CliEnv,
-  host: CliHost,
-): Promise<
-  | { ok: true; target: ConversationCommandTarget }
-  | { ok: false; result: CliResult }
-> {
-  const base = await resolveProjectContext(flags, env, host);
-  if (!base.ok) return base;
-
-  const conversationId =
-    positional ?? flags.conversation ?? env["CC_CONVERSATION_ID"];
-  if (!conversationId) {
-    return {
-      ok: false,
-      result: failure({
-        exitCode: EXIT_USAGE,
-        message:
-          "no conversation — pass <conversation-id>, --conversation, or set CC_CONVERSATION_ID",
-        json: flags.json,
-      }),
-    };
-  }
-
-  const sessionName =
-    flags.session ??
-    (flags.project || readConversationScope(env) === "project"
-      ? null
-      : readSessionEnv(env));
-
-  return {
-    ok: true,
-    target: {
-      server: base.context.server,
-      token: base.context.token,
-      tokenSource: base.context.tokenSource,
-      target:
-        sessionName === null
-          ? projectConversationTarget(base.context.project, conversationId)
-          : sessionConversationTarget(
-              base.context.project,
-              sessionName,
-              conversationId,
-            ),
-      callerConversationId: env["CC_CONVERSATION_ID"] ?? null,
-    },
-  };
-}
-
-function conversationBasePath(target: ConversationCommandTarget): string {
-  return conversationTargetApiBase(target.target);
-}
-
 function artifactsPath(target: ConversationCommandTarget): string {
   return `${conversationBasePath(target)}/context-artifacts`;
-}
-
-function callerHeaders(
-  target: ConversationCommandTarget,
-): Record<string, string> | undefined {
-  return target.callerConversationId === null
-    ? undefined
-    : { [CALLER_CONVERSATION_HEADER]: target.callerConversationId };
 }
 
 function compactCommand(
@@ -212,158 +147,6 @@ function artifactRequestFailure(
   return failureFromRequestNotFoundAsUsage(result, json);
 }
 
-/**
- * A verb body that reached a scope miss: its first scoped request 404'd because
- * the conversation does not live in the target's project/session. `fallback` is
- * the CliResult to surface if scope resolution can't find a better home (so the
- * caller still sees the server's original "not found").
- */
-interface ScopeMiss {
-  readonly scopeMiss: true;
-  readonly fallback: CliResult;
-}
-
-function scopeMiss(fallback: CliResult): ScopeMiss {
-  return { scopeMiss: true, fallback };
-}
-
-function isScopeMiss(value: CliResult | ScopeMiss): value is ScopeMiss {
-  return "scopeMiss" in value && value.scopeMiss === true;
-}
-
-/**
- * A 404 that means "this conversation isn't in *this* scope" (as opposed to an
- * absent artifact or a bad request) — the signal to resolve the conversation's
- * real owning project/session by id and retry there.
- */
-function isWrongScope404(
-  result: Exclude<CliRequestResult, { kind: "ok" }>,
-): boolean {
-  return (
-    result.kind === "error" &&
-    result.status === 404 &&
-    (result.code === "conversation_not_found" ||
-      result.error === "Session not found" ||
-      result.error === "Project not found")
-  );
-}
-
-/**
- * Auto-resolution applies only when the caller left scope implicit: an explicit
- * `--project`/`--session` is an override to respect, and the caller's own
- * conversation was already tried in its own scope (re-resolving yields the same
- * scope).
- */
-function shouldAutoResolveScope(
-  target: ConversationCommandTarget,
-  flags: GlobalFlags,
-): boolean {
-  if (flags.session !== undefined || flags.project !== undefined) return false;
-  return target.target.conversationId !== target.callerConversationId;
-}
-
-/**
- * Subset of the global-lookup ConversationListItem the CLI needs to re-scope.
- * Scope-discriminated, mirroring the payload: a project conversation carries no
- * `sessionName`, so requiring one here would reject every project conversation
- * and strand the cross-scope read (R2.4).
- */
-const conversationScopeSchema = z.discriminatedUnion("scope", [
-  z.object({
-    scope: z.literal("session"),
-    projectName: z.string().min(1),
-    sessionName: z.string().min(1),
-  }),
-  z.object({
-    scope: z.literal("project"),
-    projectName: z.string().min(1),
-  }),
-]);
-
-type ScopeResolution =
-  | { kind: "resolved"; target: ConversationTarget }
-  | { kind: "not-found" }
-  | { kind: "error"; result: CliResult };
-
-/**
- * Resolve a conversation's owning project + session by id alone via the global
- * lookup endpoint (`GET /api/conversations/<id>`), so a cross-session/-project
- * reference can be read without the caller knowing where it lives.
- */
-async function resolveOwningScope(
-  host: CliHost,
-  target: ConversationCommandTarget,
-  json: boolean,
-): Promise<ScopeResolution> {
-  const result = await cliRequest(host, {
-    server: target.server,
-    token: target.token,
-    tokenSource: target.tokenSource,
-    method: "GET",
-    path: `/api/conversations/${encodePathSegment(target.target.conversationId)}`,
-  });
-  if (result.kind === "ok") {
-    const parsed = conversationScopeSchema.safeParse(result.body);
-    if (!parsed.success) {
-      return {
-        kind: "error",
-        result: failure({
-          exitCode: EXIT_OPERATION_FAILED,
-          message:
-            "could not resolve the conversation's project/session from the server",
-          json,
-        }),
-      };
-    }
-    return {
-      kind: "resolved",
-      target:
-        parsed.data.scope === "project"
-          ? projectConversationTarget(
-              parsed.data.projectName,
-              target.target.conversationId,
-            )
-          : sessionConversationTarget(
-              parsed.data.projectName,
-              parsed.data.sessionName,
-              target.target.conversationId,
-            ),
-    };
-  }
-  if (result.kind === "error" && result.status === 404) {
-    return { kind: "not-found" };
-  }
-  return { kind: "error", result: failureFromRequest(result, json) };
-}
-
-/**
- * Run a conversation verb's request body against the caller's own scope; on a
- * scope miss, resolve the conversation's real project/session by id and retry
- * once there. Own-history and explicitly-scoped calls skip resolution and keep
- * the original "not found". This is how `cctl conversation <verb> <id>` works on
- * any conversation-ref without `--project`/`--session`.
- */
-async function withScopeResolution(
-  host: CliHost,
-  target: ConversationCommandTarget,
-  flags: GlobalFlags,
-  json: boolean,
-  body: (t: ConversationCommandTarget) => Promise<CliResult | ScopeMiss>,
-): Promise<CliResult> {
-  const first = await body(target);
-  if (!isScopeMiss(first)) return first;
-  if (!shouldAutoResolveScope(target, flags)) return first.fallback;
-
-  const scope = await resolveOwningScope(host, target, json);
-  if (scope.kind === "not-found") return first.fallback;
-  if (scope.kind === "error") return scope.result;
-
-  // The lookup reports scope explicitly, so the retry addresses the project
-  // route for a project conversation rather than inferring scope from a name.
-  const retried = await body({ ...target, target: scope.target });
-  return isScopeMiss(retried) ? retried.fallback : retried;
-}
-
 export async function runConversation(
   rest: string[],
   flags: GlobalFlags,
@@ -378,6 +161,8 @@ export async function runConversation(
     handlers: {
       read: (r) => runConversationRead(r, flags, values, env, host),
       compact: (r) => runConversationCompact(r, flags, values, env, host),
+      "compact-context": (r) =>
+        runConversationCompactContext(r, flags, values, env, host),
       compaction: (r) =>
         dispatchGroup({
           group: ["conversation", "compaction"],
@@ -389,6 +174,9 @@ export async function runConversation(
             list: (rr) => runCompactionList(rr, flags, values, env, host),
           },
         }),
+      checkpoint: (r) => runConversationCheckpoint(r, flags, values, env, host),
+      entry: (r) => runConversationEntry(r, flags, values, env, host),
+      image: (r) => runConversationImage(r, flags, values, env, host),
     },
   });
 }
@@ -566,7 +354,13 @@ function renderTranscriptHuman(
 ): string {
   if (transcript.units.length === 0) {
     if (transcript.truncated) {
-      return "no transcript units fit within --max-bytes (truncated — raise --max-bytes or narrow the window)\n";
+      // The sentence below already says truncated, so the marker line is
+      // suppressed and only the recovery coordinates are appended.
+      const recovery = truncationLines(transcript.truncation, false);
+      return `${[
+        "no transcript units fit within --max-bytes (truncated — raise --max-bytes or narrow the window)",
+        ...recovery,
+      ].join("\n")}\n`;
     }
     // Teach the conversation's coordinate space: the observed failure mode is
     // windowing on [sN] seq markers with --message-range (or vice versa).
@@ -577,10 +371,65 @@ function renderTranscriptHuman(
     const header = `#${unit.ref.messageIndex} [seq ${unit.ref.seqStart}-${unit.ref.seqEnd}] ${unit.role} ${unit.timestamp}`;
     return [header, ...unit.lines].join("\n");
   });
-  const footer = transcript.truncated
-    ? "\n(truncated at --max-bytes — narrow the window to see more)"
-    : "";
-  return `${blocks.join("\n\n")}${footer}\n`;
+  const recovery = [
+    ...checkpointBoundaryLines(transcript.boundaries),
+    ...truncationLines(transcript.truncation, transcript.truncated),
+  ];
+  return `${blocks.join("\n\n")}${recovery.length === 0 ? "" : `\n\n${recovery.join("\n")}`}\n`;
+}
+
+/**
+ * What a bounded read left out, and the exact command that recovers each kind.
+ *
+ * Three different losses, three different recoveries: entries the byte budget
+ * never reached come back by reading their raw sequence range, while an entry
+ * the cut landed inside and an entry the renderer shortened come back only by
+ * exporting that entry complete — raising `--max-bytes` returns the same
+ * excerpt. Saying "truncated" without distinguishing them sends a reader to the
+ * wrong command.
+ */
+function truncationLines(
+  truncation: z.infer<typeof transcriptTruncationSchema>,
+  truncated: boolean,
+): string[] {
+  const lines: string[] = [];
+  if (truncated) {
+    lines.push("(truncated at --max-bytes)");
+  }
+
+  const omitted = truncation.omittedAfter;
+  if (omitted !== null) {
+    lines.push(
+      `omitted after seq ${omitted.nextSeq}: ${omitted.unitCount} message(s) through seq ${omitted.lastSeq} — ${omitted.command}`,
+    );
+  }
+
+  const partial = truncation.partialEntry;
+  if (partial !== null) {
+    lines.push(
+      `partial entry seq ${partial.seq} (#${partial.messageIndex}, ${partial.elidedBytes} bytes elided) — ${partial.command}`,
+    );
+  }
+
+  // The server's index is already capped, so its own overflow count and cursor
+  // are what the accounting states — never a second cap applied here.
+  const total =
+    truncation.excerptedEntries.length + truncation.excerptedEntriesOmitted;
+  if (total > 0) {
+    const omission = pagedOmission({
+      total,
+      returned: truncation.excerptedEntries.length,
+      reveal: truncation.excerptedEntriesNext?.command ?? null,
+    });
+    lines.push(
+      `excerpted entries: ${omissionSummary(omission)}`,
+      ...truncation.excerptedEntries.map(
+        (entry) =>
+          `  seq ${entry.seq} (#${entry.messageIndex}, ${entry.elidedBytes} bytes elided) — ${entry.command}`,
+      ),
+    );
+  }
+  return lines;
 }
 
 async function runConversationCompact(

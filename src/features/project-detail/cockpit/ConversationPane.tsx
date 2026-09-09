@@ -29,6 +29,11 @@ export interface ConversationPaneProps {
   canStop?: boolean;
   /** Stop the turn running in the conversation on screen. */
   onStop?: () => void;
+  /**
+   * Context-checkpoint slot rendered in the pane header — the project host's
+   * `ConversationCheckpointControls`. Absent when no conversation is open.
+   */
+  checkpoint?: ReactNode;
   /** ConversationTabs slot (rendered above the header). */
   tabs?: ReactNode;
   /** ProjectTranscriptHost slot. */
@@ -96,6 +101,7 @@ export default function ConversationPane({
   redactedProfileSnapshot,
   canStop = false,
   onStop,
+  checkpoint,
   tabs,
   transcript,
   composer,
@@ -144,6 +150,17 @@ export default function ConversationPane({
             state={deriveConversationProfileChipState(redactedProfileSnapshot)}
             className="ml-auto"
           />
+        )}
+        {checkpoint !== undefined && (
+          <span
+            className={
+              redactedProfileSnapshot === undefined
+                ? "ml-auto inline-flex items-center"
+                : "inline-flex items-center"
+            }
+          >
+            {checkpoint}
+          </span>
         )}
         {canStop && (
           <button

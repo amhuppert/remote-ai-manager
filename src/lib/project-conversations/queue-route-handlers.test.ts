@@ -117,6 +117,7 @@ function harness(overrides: Partial<ProjectQueueRouteDeps> = {}): Harness {
       }
       return { entry, deliveryTiming: "next_turn" };
     },
+    checkpointAcceptsQueuedInput: () => false,
     queueCapabilityForBackend: () => ({
       acceptsWhileRunning: true,
       deliveryTiming: "next_turn",
@@ -293,6 +294,7 @@ describe("project conversation queue routes", () => {
 
     it("refuses a backend that cannot accept a message while running", async () => {
       const h = harness({
+        checkpointAcceptsQueuedInput: () => false,
         queueCapabilityForBackend: () => ({
           acceptsWhileRunning: false,
           deliveryTiming: "next_turn",

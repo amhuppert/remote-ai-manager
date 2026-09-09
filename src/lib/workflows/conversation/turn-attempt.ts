@@ -28,12 +28,17 @@ export class TurnAttempt {
   private readonly work: Promise<unknown>[] = [];
   private readonly releases: (() => void)[] = [];
   private readonly receipts: (() => Promise<void>)[] = [];
+  /** Runs after every receipt has settled; see `ownFinalizer`. */
+  private readonly finalizers: (() => Promise<void>)[] = [];
   private readonly disposers: (() => void)[] = [];
   private readonly unfinished: {
     code: "runtime_close" | "delivery_receipt";
     run(): Promise<void>;
   }[] = [];
   private closePromise?: Promise<void>;
+  /** The requested close settlement has already examined; see `retainCloseFailure`. */
+  private retainedClose?: Promise<void>;
+  private readonly retryClose = (): Promise<void> => this.closeBackend();
   private settlement?: Promise<void>;
   private outcome?: TurnExecutionOutcome;
   private finished = false;
@@ -152,6 +157,16 @@ export class TurnAttempt {
     this.receipts.push(finish);
   }
 
+  /**
+   * Durable work that must read what the receipts wrote: it runs once every
+   * receipt has settled, before releases and disposers, and a failure is
+   * retained and reconciled exactly like a receipt's. The conversation manager
+   * uses it to settle checkpoint continuity after the delivery receipt landed.
+   */
+  ownFinalizer(finish: () => Promise<void>): void {
+    this.finalizers.push(finish);
+  }
+
   ownDisposer(dispose: () => void): void {
     this.disposers.push(dispose);
   }
@@ -189,16 +204,8 @@ export class TurnAttempt {
 
   private async settleOwnedWork(): Promise<void> {
     await Promise.allSettled(this.work);
-    try {
-      await this.closePromise;
-    } catch (error) {
-      this.unfinished.push({
-        code: "runtime_close",
-        run: () => this.closeBackend(),
-      });
-      this.failSettlement("runtime_close", error);
-    }
-    for (const finish of this.receipts) {
+    await this.retainCloseFailure();
+    for (const finish of [...this.receipts, ...this.finalizers]) {
       try {
         await finish();
       } catch (error) {
@@ -206,6 +213,12 @@ export class TurnAttempt {
         this.failSettlement("delivery_receipt", error);
       }
     }
+    // A receipt may itself request the close — a checkpoint delivery that
+    // never sent settles its runtime before it can release the seed — and a
+    // close that failed there is owned close work, not only a failed
+    // receipt: reconciliation must clear the runtime's cached rejection
+    // before the receipt can run again.
+    await this.retainCloseFailure();
     for (const dispose of [...this.releases.reverse(), ...this.disposers]) {
       try {
         dispose();
@@ -221,6 +234,20 @@ export class TurnAttempt {
     }
     this.releases.length = 0;
     this.disposers.length = 0;
+  }
+
+  /** Retain the latest requested close as owned close work if it failed; each close once. */
+  private async retainCloseFailure(): Promise<void> {
+    const close = this.closePromise;
+    if (!close || close === this.retainedClose) return;
+    this.retainedClose = close;
+    try {
+      await close;
+    } catch (error) {
+      if (!this.unfinished.some((work) => work.run === this.retryClose))
+        this.unfinished.push({ code: "runtime_close", run: this.retryClose });
+      this.failSettlement("runtime_close", error);
+    }
   }
 
   failSettlement(

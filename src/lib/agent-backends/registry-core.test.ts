@@ -301,6 +301,7 @@ describe("descriptor integrity schemas (runtime belt for values the type system 
     contextWindowMetrics: false,
     nativeMidTurnAskUser: false,
     externalTurns: false,
+    checkpoint: false,
     capabilityKinds: [{ kind: "agents", applyTiming: "next_turn" }],
   };
 

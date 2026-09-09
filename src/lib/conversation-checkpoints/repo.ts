@@ -1,0 +1,1526 @@
+/**
+ * The durable authority for a conversation's checkpoint phase.
+ *
+ * Standalone repository over the shared connection and write queue, in the
+ * `context_artifacts` / memory-telemetry shape rather than a member of
+ * `AllRepos`: nothing here belongs to a conversation row, and no ordinary row
+ * write may reach it.
+ *
+ * Two rules shape every method:
+ *
+ * 1. **Evidence, not intent.** A caller states the operation it believes it
+ *    holds and the phase it believes that operation is in; a write that does
+ *    not match is refused with the operation's actual phase rather than
+ *    applied. The lifecycle itself lives in `transitions.ts`, so no method
+ *    encodes its own copy.
+ * 2. **Refusals are values.** Every contested outcome is a typed
+ *    `CheckpointStorageRefusal` the caller can report; a thrown error here
+ *    means the database itself failed, not that the caller lost a race.
+ */
+
+import type Database from "better-sqlite3";
+import { z } from "zod";
+
+import { createLogger, type Logger } from "@/lib/logging";
+import {
+  parseTrusted,
+  registerTrustedSchema,
+} from "@/lib/shared/parse-trusted";
+import { PersistenceError } from "@/lib/shared/errors";
+import type { WriteQueue } from "@/lib/state-store/write-queue";
+
+import type { ConversationState } from "@/lib/conversations/schemas";
+
+import type { CheckpointConversationGateway } from "./continuation";
+import { checkpointReceipt, type CheckpointReceipt } from "./receipt";
+import type { CheckpointPayloadReceipt } from "./receipt";
+import {
+  ACTIVE_CHECKPOINT_PHASES,
+  checkpointOperationSchema,
+  checkpointPayloadSchema,
+  checkpointSeedBytesAgree,
+  type CheckpointAcceptance,
+  type CheckpointDeliveryBinding,
+  type CheckpointFailure,
+  type CheckpointOperation,
+  type CheckpointPayload,
+  type CheckpointPhase,
+  type CheckpointScopeKey,
+  type CheckpointSourceBasis,
+  type CheckpointStorageRefusal,
+  type CheckpointStorageRefusalCode,
+  type CheckpointUsage,
+} from "./schemas";
+import {
+  validateCheckpointOutcomeEdge,
+  validateCheckpointTransition,
+} from "./transitions";
+
+type Db = InstanceType<typeof Database>;
+
+const defaultLogger = createLogger("conversation-checkpoints.repo");
+
+export const DEFAULT_CHECKPOINT_LIST_LIMIT = 20;
+export const MAX_CHECKPOINT_LIST_LIMIT = 100;
+
+export type CheckpointResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; refusal: CheckpointStorageRefusal };
+
+export type CheckpointAdmissionOutcome = "admitted" | "reused";
+
+export interface AdmittedCheckpoint {
+  outcome: CheckpointAdmissionOutcome;
+  operation: CheckpointOperation;
+}
+
+export interface AdmitCheckpointInput {
+  key: CheckpointScopeKey;
+  /** Caller-generated UUID; becomes the operation and checkpoint id. */
+  requestId: string;
+  sourceBasis: CheckpointSourceBasis;
+  priorBackendRef: string | null;
+  requestedAt: string;
+}
+
+export interface AdmitCheckpointRecoveryInput extends AdmitCheckpointInput {
+  /** The recovery-required operation this build supersedes. */
+  recoversOperationId: string;
+}
+
+export interface FreezeCheckpointPayloadInput {
+  key: CheckpointScopeKey;
+  operationId: string;
+  payload: CheckpointPayload;
+  /**
+   * Measured cost of the generation that produced this payload. Recorded here
+   * because a successful build reaches no later outcome write; absent fields
+   * stay unavailable rather than becoming zero.
+   */
+  usage?: CheckpointUsage;
+  at: string;
+  /**
+   * Runs inside the write's critical section immediately before the insert,
+   * handed the addressed conversation row as it stands in that transaction.
+   * A returned failure refuses the freeze with `fence_refused` and writes
+   * nothing, so neither an in-process condition — a cancel, a provider turn,
+   * background work — nor a durable one — a claim, an archival — can land
+   * between an asynchronous observation and the commit that retires the
+   * runtime.
+   */
+  fence?(conversation: ConversationState | null): CheckpointFailure | null;
+}
+
+export interface CommitCheckpointReadyInput {
+  key: CheckpointScopeKey;
+  operationId: string;
+  at: string;
+}
+
+export interface BeginCheckpointDeliveryInput {
+  key: CheckpointScopeKey;
+  operationId: string;
+  binding: CheckpointDeliveryBinding;
+  at: string;
+}
+
+export interface RecordCheckpointAcceptanceInput {
+  key: CheckpointScopeKey;
+  operationId: string;
+  acceptance: CheckpointAcceptance;
+  acceptedBackendRef: string;
+}
+
+export interface RecordCheckpointOutcomeInput {
+  key: CheckpointScopeKey;
+  operationId: string;
+  expectedPhase: CheckpointPhase;
+  /**
+   * The delivery attempt this outcome is about. Required when the operation is
+   * `delivering`, because phase alone does not identify a delivery: a failed
+   * attempt returns the seed to `ready`, a later attempt re-enters
+   * `delivering`, and the first attempt's late outcome would otherwise land on
+   * the second one's work. Outcomes from every other phase are not
+   * attempt-scoped and leave this unset.
+   */
+  attemptId?: string;
+  phase: CheckpointPhase;
+  failure?: CheckpointFailure;
+  usage?: CheckpointUsage;
+  generationPassCount?: number;
+  at: string;
+}
+
+/**
+ * The accepted provenance of one conversation, selected by its recorded
+ * acceptance rather than by current phase — an operation that later needs
+ * recovery keeps the proof that this seed was once applied.
+ */
+export interface CheckpointAcceptedProvenance {
+  operationId: string;
+  ordinal: number;
+  currentPhase: CheckpointPhase;
+  acceptance: CheckpointAcceptance;
+  /**
+   * Protected: the reference that accepted the seed. The admission gate
+   * compares it against live continuation to detect loss; it is never
+   * published, so this projection is internal and has no receipt counterpart.
+   */
+  acceptedBackendRef: string;
+}
+
+export interface CheckpointAdmissionState {
+  active: CheckpointOperation | null;
+  latestAccepted: CheckpointAcceptedProvenance | null;
+}
+
+export interface ListCheckpointReceiptsOptions {
+  /** Exclusive upper bound: return ordinals strictly below this one. */
+  before?: number;
+  limit?: number;
+}
+
+export interface CheckpointReceiptPage {
+  receipts: CheckpointReceipt[];
+  /** Cursor for the next page, or null when this page is the last. */
+  nextBefore: number | null;
+}
+
+export interface ConversationCheckpointsRepo {
+  /**
+   * Admit an ordinary checkpoint. Idempotent on the request UUID for the same
+   * conversation; refused while any other operation holds the slot.
+   */
+  admitOperation(
+    input: AdmitCheckpointInput,
+  ): Promise<CheckpointResult<AdmittedCheckpoint>>;
+  /**
+   * Admit a recovery build against a named recovery-required operation,
+   * superseding it in the same transaction. Ordinary start cannot do this.
+   */
+  admitRecovery(
+    input: AdmitCheckpointRecoveryInput,
+  ): Promise<CheckpointResult<AdmittedCheckpoint>>;
+  /**
+   * Insert the immutable payload and advance `building → retiring` atomically.
+   * Runs after the source basis is compared, so a build over changed source
+   * cannot retire a runtime.
+   */
+  freezePayload(
+    input: FreezeCheckpointPayloadInput,
+  ): Promise<CheckpointResult<CheckpointOperation>>;
+  /**
+   * Advance to `ready` once the retired runtime is closed, clearing the target's
+   * stored provider reference in the same transaction. Also the repair for a
+   * reconciliation that interrupted that retirement, because finishing it is
+   * the same clear-and-commit.
+   */
+  commitReady(
+    input: CommitCheckpointReadyInput,
+  ): Promise<CheckpointResult<CheckpointOperation>>;
+  /** Bind the admitted attempt to this seed before the provider is called. */
+  beginDelivery(
+    input: BeginCheckpointDeliveryInput,
+  ): Promise<CheckpointResult<CheckpointOperation>>;
+  /**
+   * Record acceptance against matching attempt and seed-hash evidence. A repeat
+   * with identical evidence is idempotent; anything else is refused.
+   */
+  recordAcceptance(
+    input: RecordCheckpointAcceptanceInput,
+  ): Promise<CheckpointResult<CheckpointOperation>>;
+  /**
+   * Apply a validated failure, cancellation, return-to-ready, or reconciliation
+   * transition. A failing recovery build restores the gate it superseded in the
+   * same transaction. Reports work that finished, so it reaches only the edges
+   * no other method owns: a payload freeze, a retirement, a delivery binding
+   * and an acceptance each need their own evidence, and returning a blocked
+   * seed to `ready` needs the evidence for the block it repairs.
+   */
+  recordOutcome(
+    input: RecordCheckpointOutcomeInput,
+  ): Promise<CheckpointResult<CheckpointOperation>>;
+  /** What the admission gate needs, without reading any payload text. */
+  getStateForAdmission(
+    key: CheckpointScopeKey,
+  ): Promise<CheckpointAdmissionState>;
+  getOperation(
+    key: CheckpointScopeKey,
+    operationId: string,
+  ): Promise<CheckpointOperation | null>;
+  getReceipt(
+    key: CheckpointScopeKey,
+    operationId: string,
+  ): Promise<CheckpointReceipt | null>;
+  /** The explicit seed disclosure. Every other read omits payload bodies. */
+  getPayload(
+    key: CheckpointScopeKey,
+    operationId: string,
+  ): Promise<CheckpointPayload | null>;
+  listReceipts(
+    key: CheckpointScopeKey,
+    options?: ListCheckpointReceiptsOptions,
+  ): Promise<CheckpointReceiptPage>;
+}
+
+// ============================================================
+// Row contracts
+// ============================================================
+
+const operationRowSchema = registerTrustedSchema(
+  z.object({
+    id: z.string(),
+    scope: z.enum(["session", "project"]),
+    project_path: z.string(),
+    session_name: z.string().nullable(),
+    conversation_id: z.string(),
+    ordinal: z.number().int(),
+    phase: z.string(),
+    last_stable_phase: z.string().nullable(),
+    captured_through_seq: z.number().int(),
+    source_hash: z.string(),
+    prior_backend_ref: z.string().nullable(),
+    accepted_backend_ref: z.string().nullable(),
+    payload_id: z.string().nullable(),
+    delivery_attempt_id: z.string().nullable(),
+    delivery_input_fingerprint: z.string().nullable(),
+    delivery_submitted_input_fingerprint: z.string().nullable(),
+    queued_delivery_attempt_id: z.string().nullable(),
+    queued_delivery_message_id: z.string().nullable(),
+    accepted_attempt_id: z.string().nullable(),
+    accepted_seed_hash: z.string().nullable(),
+    accepted_at: z.string().nullable(),
+    failure_code: z.string().nullable(),
+    failure_message: z.string().nullable(),
+    recovers_operation_id: z.string().nullable(),
+    superseded_by_operation_id: z.string().nullable(),
+    generation_pass_count: z.number().int().nullable(),
+    usage_input_tokens: z.number().int().nullable(),
+    usage_cached_input_tokens: z.number().int().nullable(),
+    usage_output_tokens: z.number().int().nullable(),
+    usage_cost_usd: z.number().nullable(),
+    usage_duration_ms: z.number().int().nullable(),
+    requested_at: z.string(),
+    updated_at: z.string(),
+  }),
+  "conversation-checkpoint-operation-row",
+);
+
+const payloadRowSchema = registerTrustedSchema(
+  z.object({
+    id: z.string(),
+    schema_version: z.number().int(),
+    captured_through_seq: z.number().int(),
+    source_hash: z.string(),
+    source_artifact_id: z.string().nullable(),
+    source_artifact_hash: z.string().nullable(),
+    generator_version: z.string(),
+    builder_version: z.string(),
+    normalizer_version: z.string(),
+    model_selection_json: z.string(),
+    sections_json: z.string(),
+    seed_text: z.string(),
+    seed_sha256: z.string(),
+    section_bytes_json: z.string(),
+    omissions_json: z.string(),
+    generation_pass_count: z.number().int(),
+    created_at: z.string(),
+  }),
+  "conversation-checkpoint-payload-row",
+);
+
+/** The bounded payload columns a receipt may carry — never a body. */
+const payloadReceiptRowSchema = registerTrustedSchema(
+  z.object({
+    id: z.string(),
+    schema_version: z.number().int(),
+    seed_sha256: z.string(),
+    section_bytes_json: z.string(),
+    omissions_json: z.string(),
+    generator_version: z.string(),
+    builder_version: z.string(),
+    normalizer_version: z.string(),
+    source_artifact_id: z.string().nullable(),
+    source_artifact_hash: z.string().nullable(),
+    created_at: z.string(),
+  }),
+  "conversation-checkpoint-payload-receipt-row",
+);
+
+const PAYLOAD_RECEIPT_COLUMNS = `
+  p.id                   AS id,
+  p.schema_version       AS schema_version,
+  p.seed_sha256          AS seed_sha256,
+  p.section_bytes_json   AS section_bytes_json,
+  p.omissions_json       AS omissions_json,
+  p.generator_version    AS generator_version,
+  p.builder_version      AS builder_version,
+  p.normalizer_version   AS normalizer_version,
+  p.source_artifact_id   AS source_artifact_id,
+  p.source_artifact_hash AS source_artifact_hash,
+  p.created_at           AS created_at
+`;
+
+function jsonColumn(entity: string, id: string, raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (cause) {
+    throw new PersistenceError({
+      kind: "validation",
+      entity,
+      identifier: id,
+      issues: cause,
+    });
+  }
+}
+
+function rowToOperation(raw: unknown): CheckpointOperation {
+  const row = parseTrusted(operationRowSchema, raw);
+  return parseTrusted(checkpointOperationSchema, {
+    id: row.id,
+    scope: row.scope,
+    projectPath: row.project_path,
+    sessionName: row.session_name,
+    conversationId: row.conversation_id,
+    ordinal: row.ordinal,
+    phase: row.phase,
+    lastStablePhase: row.last_stable_phase,
+    sourceBasis: {
+      capturedThroughSeq: row.captured_through_seq,
+      sourceHash: row.source_hash,
+    },
+    protectedReferences: {
+      priorBackendRef: row.prior_backend_ref,
+      acceptedBackendRef: row.accepted_backend_ref,
+    },
+    payloadId: row.payload_id,
+    delivery:
+      row.delivery_attempt_id === null ||
+      row.delivery_input_fingerprint === null ||
+      row.delivery_submitted_input_fingerprint === null
+        ? null
+        : {
+            attemptId: row.delivery_attempt_id,
+            inputFingerprint: row.delivery_input_fingerprint,
+            submittedInputFingerprint: row.delivery_submitted_input_fingerprint,
+            queuedAttemptId: row.queued_delivery_attempt_id,
+            queuedMessageId: row.queued_delivery_message_id,
+          },
+    acceptance:
+      row.accepted_attempt_id === null ||
+      row.accepted_seed_hash === null ||
+      row.accepted_at === null
+        ? null
+        : {
+            attemptId: row.accepted_attempt_id,
+            seedHash: row.accepted_seed_hash,
+            acceptedAt: row.accepted_at,
+          },
+    failure:
+      row.failure_code === null || row.failure_message === null
+        ? null
+        : { code: row.failure_code, message: row.failure_message },
+    recoversOperationId: row.recovers_operation_id,
+    supersededByOperationId: row.superseded_by_operation_id,
+    generationPassCount: row.generation_pass_count,
+    usage: {
+      inputTokens: row.usage_input_tokens,
+      cachedInputTokens: row.usage_cached_input_tokens,
+      outputTokens: row.usage_output_tokens,
+      costUsd: row.usage_cost_usd,
+      durationMs: row.usage_duration_ms,
+    },
+    requestedAt: row.requested_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function rowToPayload(raw: unknown): CheckpointPayload {
+  const row = parseTrusted(payloadRowSchema, raw);
+  const entity = "conversation-checkpoint-payload";
+  return parseTrusted(checkpointPayloadSchema, {
+    id: row.id,
+    schemaVersion: row.schema_version,
+    sourceBasis: {
+      capturedThroughSeq: row.captured_through_seq,
+      sourceHash: row.source_hash,
+    },
+    artifactProvenance:
+      row.source_artifact_id === null || row.source_artifact_hash === null
+        ? null
+        : {
+            artifactId: row.source_artifact_id,
+            artifactSourceHash: row.source_artifact_hash,
+          },
+    versions: {
+      generatorVersion: row.generator_version,
+      builderVersion: row.builder_version,
+      normalizerVersion: row.normalizer_version,
+    },
+    modelSelection: jsonColumn(entity, row.id, row.model_selection_json),
+    sections: jsonColumn(entity, row.id, row.sections_json),
+    seedText: row.seed_text,
+    seedSha256: row.seed_sha256,
+    sectionBytes: jsonColumn(entity, row.id, row.section_bytes_json),
+    omissions: jsonColumn(entity, row.id, row.omissions_json),
+    generationPassCount: row.generation_pass_count,
+    createdAt: row.created_at,
+  });
+}
+
+function rowToPayloadReceipt(raw: unknown): CheckpointPayloadReceipt {
+  const row = parseTrusted(payloadReceiptRowSchema, raw);
+  const entity = "conversation-checkpoint-payload";
+  const sectionBytes = jsonColumn(entity, row.id, row.section_bytes_json);
+  const omissions = jsonColumn(entity, row.id, row.omissions_json);
+  if (!isSectionBytes(sectionBytes) || !isOmissionList(omissions)) {
+    throw new PersistenceError({
+      kind: "validation",
+      entity,
+      identifier: row.id,
+      issues: "payload receipt columns did not decode to their declared shape",
+    });
+  }
+  return {
+    checkpointId: row.id,
+    schemaVersion: row.schema_version,
+    seedSha256: row.seed_sha256,
+    sectionBytes,
+    omissions,
+    versions: {
+      generatorVersion: row.generator_version,
+      builderVersion: row.builder_version,
+      normalizerVersion: row.normalizer_version,
+    },
+    artifactProvenance:
+      row.source_artifact_id === null || row.source_artifact_hash === null
+        ? null
+        : {
+            artifactId: row.source_artifact_id,
+            artifactSourceHash: row.source_artifact_hash,
+          },
+    createdAt: row.created_at,
+  };
+}
+
+function isSectionBytes(
+  value: unknown,
+): value is CheckpointPayloadReceipt["sectionBytes"] {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "total" in value &&
+    typeof (value as { total: unknown }).total === "number"
+  );
+}
+
+function isOmissionList(
+  value: unknown,
+): value is CheckpointPayloadReceipt["omissions"] {
+  return Array.isArray(value);
+}
+
+// ============================================================
+// Refusals
+// ============================================================
+
+function refuse<T>(
+  code: CheckpointStorageRefusalCode,
+  reason: string,
+  operation: { id: string; phase: CheckpointPhase } | null,
+): CheckpointResult<T> {
+  return {
+    ok: false,
+    refusal: {
+      code,
+      reason,
+      operationId: operation?.id ?? null,
+      phase: operation?.phase ?? null,
+    },
+  };
+}
+
+function ok<T>(value: T): CheckpointResult<T> {
+  return { ok: true, value };
+}
+
+/**
+ * `lastStablePhase` names what a reconciliation interrupted: written on the way
+ * in, cleared on the way out. The rules for leaving `needs_reconciliation` ask
+ * this field what the block was about, so a value left behind after the repair
+ * would answer for an interruption that no longer exists.
+ */
+function nextLastStablePhase(
+  operation: CheckpointOperation,
+  to: CheckpointPhase,
+): CheckpointPhase | null {
+  if (to === "needs_reconciliation") return operation.phase;
+  if (operation.phase === "needs_reconciliation") return null;
+  return operation.lastStablePhase;
+}
+
+/**
+ * Refuse a write to an operation a recovery build has taken over.
+ *
+ * Supersession is a link rather than a phase (see `transitions.ts`), so the
+ * transition table cannot express it: a superseded operation keeps
+ * `needs_reconciliation` precisely so it still records why it was blocked, and
+ * that phase is otherwise a legal starting point for both `ready` and
+ * `applied`. Every mutation that accepts `needs_reconciliation` as a from-phase
+ * therefore has to ask the link, not the phase.
+ */
+function supersededRefusal<T>(
+  operation: CheckpointOperation,
+): CheckpointResult<T> | null {
+  if (operation.supersededByOperationId === null) return null;
+  return refuse(
+    "stale_operation",
+    `operation ${operation.id} is superseded by recovery ${operation.supersededByOperationId}`,
+    operation,
+  );
+}
+
+/** Log identity for one operation. Never carries a provider reference. */
+function operationLogFields(
+  key: CheckpointScopeKey,
+  operationId: string,
+): Record<string, string> {
+  return {
+    scope: key.scope,
+    conversationId: key.conversationId,
+    operationId,
+    ...(key.sessionName === null ? {} : { sessionName: key.sessionName }),
+  };
+}
+
+export function createConversationCheckpointsRepo(
+  db: Db,
+  writeQueue: WriteQueue,
+  continuation: CheckpointConversationGateway,
+  logger: Logger = defaultLogger,
+): ConversationCheckpointsRepo {
+  const activePhaseList = ACTIVE_CHECKPOINT_PHASES.map(
+    (phase) => `'${phase}'`,
+  ).join(", ");
+
+  /** Refuse when the conversation an admission would address is not there. */
+  function missingTargetRefusal<T>(
+    key: CheckpointScopeKey,
+  ): CheckpointResult<T> | null {
+    if (continuation.exists(key)) return null;
+    return refuse(
+      "target_conversation_missing",
+      "the addressed conversation does not exist in this scope",
+      null,
+    );
+  }
+
+  const findByIdStmt = db.prepare(
+    `SELECT * FROM conversation_checkpoint_operations WHERE id = ?`,
+  );
+  const findScopedStmt = db.prepare(
+    `SELECT * FROM conversation_checkpoint_operations
+      WHERE id = @id AND scope = @scope AND project_path = @project_path
+        AND session_name IS @session_name AND conversation_id = @conversation_id`,
+  );
+  const findActiveStmt = db.prepare(
+    `SELECT * FROM conversation_checkpoint_operations
+      WHERE scope = @scope AND project_path = @project_path
+        AND session_name IS @session_name AND conversation_id = @conversation_id
+        AND phase IN (${activePhaseList})
+        AND superseded_by_operation_id IS NULL
+      LIMIT 1`,
+  );
+  const findLatestAcceptedStmt = db.prepare(
+    `SELECT * FROM conversation_checkpoint_operations
+      WHERE scope = @scope AND project_path = @project_path
+        AND session_name IS @session_name AND conversation_id = @conversation_id
+        AND accepted_at IS NOT NULL
+      ORDER BY accepted_at DESC, ordinal DESC
+      LIMIT 1`,
+  );
+  const nextOrdinalStmt = db
+    .prepare(
+      `SELECT COALESCE(MAX(ordinal), 0) + 1 FROM conversation_checkpoint_operations
+        WHERE scope = @scope AND conversation_id = @conversation_id`,
+    )
+    .pluck();
+  const insertOperationStmt = db.prepare(
+    `INSERT INTO conversation_checkpoint_operations (
+       id, scope, project_path, session_name, conversation_id, ordinal, phase,
+       captured_through_seq, source_hash, prior_backend_ref,
+       recovers_operation_id, requested_at, updated_at
+     ) VALUES (
+       @id, @scope, @project_path, @session_name, @conversation_id, @ordinal,
+       'building', @captured_through_seq, @source_hash, @prior_backend_ref,
+       @recovers_operation_id, @requested_at, @updated_at
+     )`,
+  );
+  const setSupersededByStmt = db.prepare(
+    `UPDATE conversation_checkpoint_operations
+        SET superseded_by_operation_id = @superseded_by, updated_at = @updated_at
+      WHERE id = @id`,
+  );
+  const insertPayloadStmt = db.prepare(
+    `INSERT INTO conversation_checkpoints (
+       id, schema_version, captured_through_seq, source_hash,
+       source_artifact_id, source_artifact_hash, generator_version,
+       builder_version, normalizer_version, model_selection_json, sections_json,
+       seed_text, seed_sha256, section_bytes_json, omissions_json,
+       generation_pass_count, created_at
+     ) VALUES (
+       @id, @schema_version, @captured_through_seq, @source_hash,
+       @source_artifact_id, @source_artifact_hash, @generator_version,
+       @builder_version, @normalizer_version, @model_selection_json,
+       @sections_json, @seed_text, @seed_sha256, @section_bytes_json,
+       @omissions_json, @generation_pass_count, @created_at
+     )`,
+  );
+  const freezeOperationStmt = db.prepare(
+    `UPDATE conversation_checkpoint_operations
+        SET phase = 'retiring', payload_id = @id,
+            generation_pass_count = @generation_pass_count,
+            usage_input_tokens = COALESCE(@usage_input_tokens, usage_input_tokens),
+            usage_cached_input_tokens =
+              COALESCE(@usage_cached_input_tokens, usage_cached_input_tokens),
+            usage_output_tokens =
+              COALESCE(@usage_output_tokens, usage_output_tokens),
+            usage_cost_usd = COALESCE(@usage_cost_usd, usage_cost_usd),
+            usage_duration_ms = COALESCE(@usage_duration_ms, usage_duration_ms),
+            updated_at = @updated_at
+      WHERE id = @id AND phase = 'building'`,
+  );
+  const setPhaseStmt = db.prepare(
+    `UPDATE conversation_checkpoint_operations
+        SET phase = @phase, last_stable_phase = @last_stable_phase,
+            updated_at = @updated_at
+      WHERE id = @id AND phase = @expected_phase
+        AND superseded_by_operation_id IS NULL`,
+  );
+  const beginDeliveryStmt = db.prepare(
+    `UPDATE conversation_checkpoint_operations
+        SET phase = 'delivering', delivery_attempt_id = @attempt_id,
+            delivery_input_fingerprint = @input_fingerprint,
+            delivery_submitted_input_fingerprint = @submitted_input_fingerprint,
+            queued_delivery_attempt_id = @queued_attempt_id,
+            queued_delivery_message_id = @queued_message_id,
+            updated_at = @updated_at
+      WHERE id = @id AND phase = @expected_phase`,
+  );
+  const recordAcceptanceStmt = db.prepare(
+    `UPDATE conversation_checkpoint_operations
+        SET phase = 'applied', accepted_attempt_id = @attempt_id,
+            accepted_seed_hash = @seed_hash, accepted_at = @accepted_at,
+            accepted_backend_ref = @accepted_backend_ref,
+            last_stable_phase = NULL, updated_at = @accepted_at
+      WHERE id = @id AND phase = @expected_phase
+        AND superseded_by_operation_id IS NULL
+        AND accepted_attempt_id IS NULL`,
+  );
+  const recordOutcomeStmt = db.prepare(
+    `UPDATE conversation_checkpoint_operations
+        SET phase = @phase,
+            last_stable_phase = @last_stable_phase,
+            failure_code = COALESCE(@failure_code, failure_code),
+            failure_message = COALESCE(@failure_message, failure_message),
+            generation_pass_count =
+              COALESCE(@generation_pass_count, generation_pass_count),
+            usage_input_tokens = COALESCE(@usage_input_tokens, usage_input_tokens),
+            usage_cached_input_tokens =
+              COALESCE(@usage_cached_input_tokens, usage_cached_input_tokens),
+            usage_output_tokens =
+              COALESCE(@usage_output_tokens, usage_output_tokens),
+            usage_cost_usd = COALESCE(@usage_cost_usd, usage_cost_usd),
+            usage_duration_ms = COALESCE(@usage_duration_ms, usage_duration_ms),
+            updated_at = @updated_at
+      WHERE id = @id AND phase = @expected_phase
+        AND superseded_by_operation_id IS NULL
+        AND (@expected_attempt_id IS NULL
+             OR delivery_attempt_id = @expected_attempt_id)`,
+  );
+  const findPayloadStmt = db.prepare(
+    `SELECT p.* FROM conversation_checkpoints p
+       JOIN conversation_checkpoint_operations o ON o.id = p.id
+      WHERE p.id = @id AND o.scope = @scope AND o.project_path = @project_path
+        AND o.session_name IS @session_name
+        AND o.conversation_id = @conversation_id`,
+  );
+  const findPayloadReceiptStmt = db.prepare(
+    `SELECT ${PAYLOAD_RECEIPT_COLUMNS} FROM conversation_checkpoints p
+      WHERE p.id = ?`,
+  );
+  const listOperationsStmt = db.prepare(
+    `SELECT * FROM conversation_checkpoint_operations
+      WHERE scope = @scope AND project_path = @project_path
+        AND session_name IS @session_name AND conversation_id = @conversation_id
+        AND ordinal < @before
+      ORDER BY ordinal DESC
+      LIMIT @limit`,
+  );
+
+  function scopeBind(key: CheckpointScopeKey): {
+    scope: string;
+    project_path: string;
+    session_name: string | null;
+    conversation_id: string;
+  } {
+    return {
+      scope: key.scope,
+      project_path: key.projectPath,
+      session_name: key.sessionName,
+      conversation_id: key.conversationId,
+    };
+  }
+
+  function findScoped(
+    key: CheckpointScopeKey,
+    operationId: string,
+  ): CheckpointOperation | null {
+    const raw: unknown = findScopedStmt.get({
+      ...scopeBind(key),
+      id: operationId,
+    });
+    return raw === undefined ? null : rowToOperation(raw);
+  }
+
+  function findActive(key: CheckpointScopeKey): CheckpointOperation | null {
+    const raw: unknown = findActiveStmt.get(scopeBind(key));
+    return raw === undefined ? null : rowToOperation(raw);
+  }
+
+  function reload(operationId: string): CheckpointOperation {
+    const raw: unknown = findByIdStmt.get(operationId);
+    if (raw === undefined) {
+      throw new PersistenceError({
+        kind: "not_found",
+        entity: "conversation-checkpoint-operation",
+        identifier: operationId,
+      });
+    }
+    return rowToOperation(raw);
+  }
+
+  /**
+   * Shared prelude for admission: resolve a reused request id, or the operation
+   * that currently holds the slot. Returns `null` when the caller may proceed.
+   */
+  function admissionBlock(
+    key: CheckpointScopeKey,
+    requestId: string,
+    ignoreActiveId: string | null,
+  ): CheckpointResult<AdmittedCheckpoint> | null {
+    const raw: unknown = findByIdStmt.get(requestId);
+    if (raw !== undefined) {
+      const existing = rowToOperation(raw);
+      const sameTarget =
+        existing.scope === key.scope &&
+        existing.projectPath === key.projectPath &&
+        existing.sessionName === key.sessionName &&
+        existing.conversationId === key.conversationId;
+      if (sameTarget) {
+        return ok({ outcome: "reused", operation: existing });
+      }
+      // The colliding operation belongs to another conversation, so this caller
+      // learns that the id is taken and nothing else about it.
+      return refuse(
+        "request_id_conflict",
+        "this request id already addresses a different conversation",
+        null,
+      );
+    }
+
+    const active = findActive(key);
+    if (active !== null && active.id !== ignoreActiveId) {
+      return refuse(
+        "checkpoint_pending",
+        `checkpoint operation ${active.id} is already ${active.phase}`,
+        active,
+      );
+    }
+    return null;
+  }
+
+  function insertAdmitted(
+    input: AdmitCheckpointInput,
+    recoversOperationId: string | null,
+  ): CheckpointOperation {
+    const ordinal = nextOrdinalStmt.get({
+      scope: input.key.scope,
+      conversation_id: input.key.conversationId,
+    });
+    if (typeof ordinal !== "number") {
+      throw new PersistenceError({
+        kind: "io",
+        cause: "checkpoint ordinal allocation returned a non-numeric value",
+      });
+    }
+    insertOperationStmt.run({
+      ...scopeBind(input.key),
+      id: input.requestId,
+      ordinal,
+      captured_through_seq: input.sourceBasis.capturedThroughSeq,
+      source_hash: input.sourceBasis.sourceHash,
+      prior_backend_ref: input.priorBackendRef,
+      recovers_operation_id: recoversOperationId,
+      requested_at: input.requestedAt,
+      updated_at: input.requestedAt,
+    });
+    return reload(input.requestId);
+  }
+
+  return {
+    async admitOperation(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.admitOperation", () =>
+        db
+          .transaction((): CheckpointResult<AdmittedCheckpoint> => {
+            const blocked = admissionBlock(input.key, input.requestId, null);
+            if (blocked !== null) return blocked;
+            // After the reuse check, so a retransmitted request keeps its
+            // existing operation, and before the insert, so a lost race with
+            // deletion refuses rather than persisting an unreachable row.
+            const missing = missingTargetRefusal<AdmittedCheckpoint>(input.key);
+            if (missing !== null) return missing;
+            const operation = insertAdmitted(input, null);
+            logger.info("conversation-checkpoints.admitted", {
+              ...operationLogFields(input.key, operation.id),
+              ordinal: operation.ordinal,
+              capturedThroughSeq: operation.sourceBasis.capturedThroughSeq,
+            });
+            return ok({ outcome: "admitted", operation });
+          })
+          .immediate(),
+      );
+    },
+
+    async admitRecovery(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.admitRecovery", () =>
+        db
+          .transaction((): CheckpointResult<AdmittedCheckpoint> => {
+            const target = findScoped(input.key, input.recoversOperationId);
+            if (target === null) {
+              return refuse(
+                "checkpoint_not_found",
+                "the addressed recovery operation does not exist in this scope",
+                null,
+              );
+            }
+            // The addressed operation is expected to hold the slot; any OTHER
+            // active operation means a recovery already won this race.
+            const blocked = admissionBlock(
+              input.key,
+              input.requestId,
+              target.id,
+            );
+            if (blocked !== null) return blocked;
+            if (
+              target.phase !== "needs_reconciliation" ||
+              target.supersededByOperationId !== null
+            ) {
+              return refuse(
+                "recovery_target_mismatch",
+                `operation ${target.id} is ${target.phase} and does not require recovery`,
+                target,
+              );
+            }
+
+            const missing = missingTargetRefusal<AdmittedCheckpoint>(input.key);
+            if (missing !== null) return missing;
+
+            // Release the gate before inserting: the partial unique index
+            // permits one active operation, so the superseding link has to land
+            // first.
+            setSupersededByStmt.run({
+              id: target.id,
+              superseded_by: input.requestId,
+              updated_at: input.requestedAt,
+            });
+            const operation = insertAdmitted(input, target.id);
+            logger.info("conversation-checkpoints.recovery_admitted", {
+              ...operationLogFields(input.key, operation.id),
+              ordinal: operation.ordinal,
+              recoversOperationId: target.id,
+            });
+            return ok({ outcome: "admitted", operation });
+          })
+          .immediate(),
+      );
+    },
+
+    async freezePayload(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.freezePayload", () =>
+        db
+          .transaction((): CheckpointResult<CheckpointOperation> => {
+            const operation = findScoped(input.key, input.operationId);
+            if (operation === null) {
+              return refuse(
+                "checkpoint_not_found",
+                "no such checkpoint operation in this scope",
+                null,
+              );
+            }
+            const transition = validateCheckpointTransition({
+              from: operation.phase,
+              to: "retiring",
+            });
+            if (!transition.legal) {
+              return refuse("illegal_transition", transition.reason, operation);
+            }
+            if (input.payload.id !== operation.id) {
+              return refuse(
+                "invalid_payload",
+                "the payload id does not name this operation",
+                operation,
+              );
+            }
+            if (
+              input.payload.sourceBasis.capturedThroughSeq !==
+                operation.sourceBasis.capturedThroughSeq ||
+              input.payload.sourceBasis.sourceHash !==
+                operation.sourceBasis.sourceHash
+            ) {
+              return refuse(
+                "source_basis_mismatch",
+                "the payload was built over a different captured source",
+                operation,
+              );
+            }
+            const parsed = checkpointPayloadSchema.safeParse(input.payload);
+            if (!parsed.success || !checkpointSeedBytesAgree(input.payload)) {
+              return refuse(
+                "invalid_payload",
+                "the payload failed validation or its declared byte total does not match its seed",
+                operation,
+              );
+            }
+            const fenced = input.fence?.(continuation.find(input.key)) ?? null;
+            if (fenced !== null) {
+              return refuse("fence_refused", fenced.message, operation);
+            }
+
+            const payload = parsed.data;
+            insertPayloadStmt.run({
+              id: payload.id,
+              schema_version: payload.schemaVersion,
+              captured_through_seq: payload.sourceBasis.capturedThroughSeq,
+              source_hash: payload.sourceBasis.sourceHash,
+              source_artifact_id:
+                payload.artifactProvenance?.artifactId ?? null,
+              source_artifact_hash:
+                payload.artifactProvenance?.artifactSourceHash ?? null,
+              generator_version: payload.versions.generatorVersion,
+              builder_version: payload.versions.builderVersion,
+              normalizer_version: payload.versions.normalizerVersion,
+              model_selection_json: JSON.stringify(payload.modelSelection),
+              sections_json: JSON.stringify(payload.sections),
+              seed_text: payload.seedText,
+              seed_sha256: payload.seedSha256,
+              section_bytes_json: JSON.stringify(payload.sectionBytes),
+              omissions_json: JSON.stringify(payload.omissions),
+              generation_pass_count: payload.generationPassCount,
+              created_at: payload.createdAt,
+            });
+            freezeOperationStmt.run({
+              id: operation.id,
+              generation_pass_count: payload.generationPassCount,
+              usage_input_tokens: input.usage?.inputTokens ?? null,
+              usage_cached_input_tokens: input.usage?.cachedInputTokens ?? null,
+              usage_output_tokens: input.usage?.outputTokens ?? null,
+              usage_cost_usd: input.usage?.costUsd ?? null,
+              usage_duration_ms: input.usage?.durationMs ?? null,
+              updated_at: input.at,
+            });
+            logger.info("conversation-checkpoints.payload_frozen", {
+              ...operationLogFields(input.key, operation.id),
+              seedBytes: payload.sectionBytes.total,
+              seedSha256: payload.seedSha256,
+              generationPassCount: payload.generationPassCount,
+            });
+            return ok(reload(operation.id));
+          })
+          .immediate(),
+      );
+    },
+
+    async commitReady(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.commitReady", () =>
+        db
+          .transaction((): CheckpointResult<CheckpointOperation> => {
+            const operation = findScoped(input.key, input.operationId);
+            if (operation === null) {
+              return refuse(
+                "checkpoint_not_found",
+                "no such checkpoint operation in this scope",
+                null,
+              );
+            }
+            const transition = validateCheckpointTransition({
+              from: operation.phase,
+              to: "ready",
+            });
+            // Readiness is reachable from `retiring`, and from a reconciliation
+            // that interrupted exactly that retirement: `checkpoint reconcile`
+            // retries the deterministic close and persistence work, and
+            // repairing it means finishing the same clear-and-commit here. A
+            // reconciliation that interrupted anything else did not leave a
+            // retirement unfinished, so it has no repair to complete.
+            const repairsRetirement =
+              operation.phase === "needs_reconciliation" &&
+              operation.lastStablePhase === "retiring";
+            if (
+              !transition.legal ||
+              (operation.phase !== "retiring" && !repairsRetirement)
+            ) {
+              return refuse(
+                "illegal_transition",
+                `checkpoint readiness requires a retiring or retirement-blocked operation; ${operation.id} is ${operation.phase}`,
+                operation,
+              );
+            }
+            const superseded =
+              supersededRefusal<CheckpointOperation>(operation);
+            if (superseded !== null) return superseded;
+            // Clear first, and refuse before any checkpoint write if the
+            // conversation is not there: a `ready` operation whose target still
+            // names a live backend session describes a retirement that did not
+            // happen, and the next ordinary turn would resume the very runtime
+            // this checkpoint replaces. Both writes share this transaction, so
+            // there is no window in which one holds without the other. The
+            // clear is idempotent — an already-null column still matches its
+            // row — so a replay after an interrupted retirement completes.
+            if (!continuation.clearBackendRef(input.key)) {
+              return refuse(
+                "target_conversation_missing",
+                "the conversation this operation retires does not exist in this scope",
+                operation,
+              );
+            }
+            setPhaseStmt.run({
+              id: operation.id,
+              phase: "ready",
+              expected_phase: operation.phase,
+              last_stable_phase: nextLastStablePhase(operation, "ready"),
+              updated_at: input.at,
+            });
+            logger.info("conversation-checkpoints.ready", {
+              ...operationLogFields(input.key, operation.id),
+            });
+            return ok(reload(operation.id));
+          })
+          .immediate(),
+      );
+    },
+
+    async beginDelivery(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.beginDelivery", () =>
+        db
+          .transaction((): CheckpointResult<CheckpointOperation> => {
+            const operation = findScoped(input.key, input.operationId);
+            if (operation === null) {
+              return refuse(
+                "checkpoint_not_found",
+                "no such checkpoint operation in this scope",
+                null,
+              );
+            }
+            const transition = validateCheckpointTransition({
+              from: operation.phase,
+              to: "delivering",
+            });
+            if (!transition.legal) {
+              return refuse("illegal_transition", transition.reason, operation);
+            }
+            if (operation.payloadId === null) {
+              return refuse(
+                "invalid_payload",
+                "the operation has no frozen payload to deliver",
+                operation,
+              );
+            }
+            beginDeliveryStmt.run({
+              id: operation.id,
+              expected_phase: operation.phase,
+              attempt_id: input.binding.attemptId,
+              input_fingerprint: input.binding.inputFingerprint,
+              submitted_input_fingerprint:
+                input.binding.submittedInputFingerprint,
+              queued_attempt_id: input.binding.queuedAttemptId,
+              queued_message_id: input.binding.queuedMessageId,
+              updated_at: input.at,
+            });
+            logger.info("conversation-checkpoints.delivery_bound", {
+              ...operationLogFields(input.key, operation.id),
+              attemptId: input.binding.attemptId,
+            });
+            return ok(reload(operation.id));
+          })
+          .immediate(),
+      );
+    },
+
+    async recordAcceptance(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.recordAcceptance", () =>
+        db
+          .transaction((): CheckpointResult<CheckpointOperation> => {
+            const operation = findScoped(input.key, input.operationId);
+            if (operation === null) {
+              return refuse(
+                "checkpoint_not_found",
+                "no such checkpoint operation in this scope",
+                null,
+              );
+            }
+
+            const superseded =
+              supersededRefusal<CheckpointOperation>(operation);
+            if (superseded !== null) return superseded;
+
+            // Acceptance is recorded once. An operation that already carries it
+            // and has since left `applied` lost its accepted continuation, and
+            // R8 requires a fresh recovery checkpoint covering the history
+            // since — replaying the old evidence here would silently reopen the
+            // recovery gate and hand back continuity that no longer exists.
+            if (
+              operation.acceptance !== null &&
+              operation.phase !== "applied"
+            ) {
+              return refuse(
+                "stale_operation",
+                `acceptance is already recorded; the operation is ${operation.phase} and needs a fresh recovery checkpoint`,
+                operation,
+              );
+            }
+
+            const evidenceMatches =
+              operation.delivery?.attemptId === input.acceptance.attemptId;
+            if (operation.phase === "applied") {
+              // A retried receipt write is idempotent only when it repeats the
+              // SAME evidence; different evidence would silently rewrite which
+              // attempt this seed was accepted by.
+              const identical =
+                operation.acceptance !== null &&
+                operation.acceptance.attemptId === input.acceptance.attemptId &&
+                operation.acceptance.seedHash === input.acceptance.seedHash &&
+                operation.acceptance.acceptedAt ===
+                  input.acceptance.acceptedAt &&
+                operation.protectedReferences.acceptedBackendRef ===
+                  input.acceptedBackendRef;
+              return identical
+                ? ok(operation)
+                : refuse(
+                    "attempt_mismatch",
+                    "this operation is already applied under different acceptance evidence",
+                    operation,
+                  );
+            }
+
+            const transition = validateCheckpointTransition({
+              from: operation.phase,
+              to: "applied",
+            });
+            if (!transition.legal) {
+              return refuse("illegal_transition", transition.reason, operation);
+            }
+            if (!evidenceMatches) {
+              return refuse(
+                "attempt_mismatch",
+                "acceptance evidence names a different attempt than the bound delivery",
+                operation,
+              );
+            }
+
+            const payloadRaw: unknown = findPayloadReceiptStmt.get(
+              operation.id,
+            );
+            if (payloadRaw === undefined) {
+              return refuse(
+                "invalid_payload",
+                "the operation has no frozen payload to accept",
+                operation,
+              );
+            }
+            if (
+              rowToPayloadReceipt(payloadRaw).seedSha256 !==
+              input.acceptance.seedHash
+            ) {
+              return refuse(
+                "attempt_mismatch",
+                "acceptance evidence names a different seed than the frozen payload",
+                operation,
+              );
+            }
+
+            const accepted = recordAcceptanceStmt.run({
+              id: operation.id,
+              expected_phase: operation.phase,
+              attempt_id: input.acceptance.attemptId,
+              seed_hash: input.acceptance.seedHash,
+              accepted_at: input.acceptance.acceptedAt,
+              accepted_backend_ref: input.acceptedBackendRef,
+            });
+            if (accepted.changes !== 1) {
+              return refuse(
+                "stale_operation",
+                "the operation changed beneath this acceptance write",
+                operation,
+              );
+            }
+            logger.info("conversation-checkpoints.applied", {
+              ...operationLogFields(input.key, operation.id),
+              attemptId: input.acceptance.attemptId,
+              seedHash: input.acceptance.seedHash,
+            });
+            return ok(reload(operation.id));
+          })
+          .immediate(),
+      );
+    },
+
+    async recordOutcome(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.recordOutcome", () =>
+        db
+          .transaction((): CheckpointResult<CheckpointOperation> => {
+            const operation = findScoped(input.key, input.operationId);
+            if (operation === null) {
+              return refuse(
+                "checkpoint_not_found",
+                "no such checkpoint operation in this scope",
+                null,
+              );
+            }
+            if (operation.phase !== input.expectedPhase) {
+              return refuse(
+                "stale_operation",
+                `expected phase ${input.expectedPhase}, but the operation is ${operation.phase}`,
+                operation,
+              );
+            }
+            const superseded =
+              supersededRefusal<CheckpointOperation>(operation);
+            if (superseded !== null) return superseded;
+
+            // An outcome reports work that finished; it carries no payload, no
+            // reference clear, no attempt binding and no acceptance receipt. An
+            // edge whose meaning IS one of those belongs to the method that
+            // supplies it, however legal the edge is for the lifecycle.
+            const edge = validateCheckpointOutcomeEdge({
+              from: operation.phase,
+              to: input.phase,
+            });
+            if (!edge.owned) {
+              return refuse("illegal_transition", edge.reason, operation);
+            }
+            const transition = validateCheckpointTransition({
+              from: operation.phase,
+              to: input.phase,
+            });
+            if (!transition.legal) {
+              return refuse("illegal_transition", transition.reason, operation);
+            }
+
+            // Leaving `needs_reconciliation` for `ready` says the seed may be
+            // delivered again, so it needs the evidence for the block it
+            // claims to repair.
+            if (operation.phase === "needs_reconciliation") {
+              if (
+                operation.acceptance !== null ||
+                operation.lastStablePhase === "applied"
+              ) {
+                // R8/D5: a lost applied continuation keeps its accepted
+                // provenance and needs a fresh recovery checkpoint covering the
+                // history since. Handing this seed back would let a delivery
+                // bind it again and omit every turn the accepted runtime took.
+                return refuse(
+                  "stale_operation",
+                  "this operation was applied and needs a fresh recovery checkpoint, not its old seed returned to ready",
+                  operation,
+                );
+              }
+              // Only a block that landed after retirement completed is
+              // repaired by declaring the seed ready again; those two phases
+              // are also the ones that carry a frozen payload to be ready with.
+              if (
+                operation.lastStablePhase !== "ready" &&
+                operation.lastStablePhase !== "delivering"
+              ) {
+                return refuse(
+                  "illegal_transition",
+                  "readiness follows this reconciliation only once retirement completed; an interrupted retirement is repaired through commitReady, which clears the retired reference",
+                  operation,
+                );
+              }
+            }
+
+            // Phase is a slot a later attempt re-enters, so an outcome about a
+            // delivery has to name that delivery — both while it is delivering
+            // and while its reconciliation holds it. Without this, attempt A's
+            // late outcome lands on attempt B's work.
+            const ownsBlockedDelivery =
+              operation.phase === "delivering" ||
+              (operation.phase === "needs_reconciliation" &&
+                operation.lastStablePhase === "delivering");
+            if (ownsBlockedDelivery) {
+              if (input.attemptId === undefined) {
+                return refuse(
+                  "attempt_mismatch",
+                  "an outcome for a delivery must name the attempt bound to it",
+                  operation,
+                );
+              }
+              if (operation.delivery?.attemptId !== input.attemptId) {
+                return refuse(
+                  "attempt_mismatch",
+                  "the outcome names a different attempt than the bound delivery",
+                  operation,
+                );
+              }
+            } else if (
+              input.attemptId !== undefined &&
+              operation.delivery !== null &&
+              operation.delivery.attemptId !== input.attemptId
+            ) {
+              // A phase that does not own a delivery still must not accept an
+              // outcome from an attempt this operation never bound.
+              return refuse(
+                "attempt_mismatch",
+                "the outcome names an attempt this operation never bound",
+                operation,
+              );
+            }
+
+            const written = recordOutcomeStmt.run({
+              id: operation.id,
+              expected_phase: input.expectedPhase,
+              // Bound only where there is a delivery to correlate against, so
+              // this CAS backstop states exactly the rule the guard above
+              // enforces: an operation that never bound an attempt is not
+              // attempt-scoped, and a caller that passes one anyway must not be
+              // refused for a binding that does not exist.
+              expected_attempt_id:
+                operation.delivery === null ? null : (input.attemptId ?? null),
+              phase: input.phase,
+              last_stable_phase: nextLastStablePhase(operation, input.phase),
+              failure_code: input.failure?.code ?? null,
+              failure_message: input.failure?.message ?? null,
+              generation_pass_count: input.generationPassCount ?? null,
+              usage_input_tokens: input.usage?.inputTokens ?? null,
+              usage_cached_input_tokens: input.usage?.cachedInputTokens ?? null,
+              usage_output_tokens: input.usage?.outputTokens ?? null,
+              usage_cost_usd: input.usage?.costUsd ?? null,
+              usage_duration_ms: input.usage?.durationMs ?? null,
+              updated_at: input.at,
+            });
+            if (written.changes !== 1) {
+              return refuse(
+                "stale_operation",
+                "the operation changed beneath this outcome write",
+                operation,
+              );
+            }
+
+            // A recovery build that ends without producing a checkpoint hands
+            // the conversation back to the operation it superseded, rather than
+            // releasing the queue into uncertain continuity.
+            if (
+              operation.recoversOperationId !== null &&
+              (input.phase === "failed" || input.phase === "cancelled")
+            ) {
+              setSupersededByStmt.run({
+                id: operation.recoversOperationId,
+                superseded_by: null,
+                updated_at: input.at,
+              });
+              logger.info("conversation-checkpoints.recovery_gate_restored", {
+                ...operationLogFields(input.key, operation.id),
+                restoredOperationId: operation.recoversOperationId,
+              });
+            }
+
+            logger.info("conversation-checkpoints.outcome_recorded", {
+              ...operationLogFields(input.key, operation.id),
+              fromPhase: operation.phase,
+              toPhase: input.phase,
+              ...(input.failure === undefined
+                ? {}
+                : { errorCode: input.failure.code }),
+            });
+            return ok(reload(operation.id));
+          })
+          .immediate(),
+      );
+    },
+
+    async getStateForAdmission(key) {
+      const active = findActive(key);
+      const acceptedRaw: unknown = findLatestAcceptedStmt.get(scopeBind(key));
+      if (acceptedRaw === undefined) {
+        return { active, latestAccepted: null };
+      }
+      const accepted = rowToOperation(acceptedRaw);
+      if (
+        accepted.acceptance === null ||
+        accepted.protectedReferences.acceptedBackendRef === null
+      ) {
+        return { active, latestAccepted: null };
+      }
+      return {
+        active,
+        latestAccepted: {
+          operationId: accepted.id,
+          ordinal: accepted.ordinal,
+          currentPhase: accepted.phase,
+          acceptance: accepted.acceptance,
+          acceptedBackendRef: accepted.protectedReferences.acceptedBackendRef,
+        },
+      };
+    },
+
+    async getOperation(key, operationId) {
+      return findScoped(key, operationId);
+    },
+
+    async getReceipt(key, operationId) {
+      const operation = findScoped(key, operationId);
+      if (operation === null) return null;
+      const payloadRaw: unknown = findPayloadReceiptStmt.get(operation.id);
+      return checkpointReceipt(
+        operation,
+        payloadRaw === undefined ? null : rowToPayloadReceipt(payloadRaw),
+      );
+    },
+
+    async getPayload(key, operationId) {
+      const raw: unknown = findPayloadStmt.get({
+        ...scopeBind(key),
+        id: operationId,
+      });
+      return raw === undefined ? null : rowToPayload(raw);
+    },
+
+    async listReceipts(key, options) {
+      const limit = Math.min(
+        Math.max(options?.limit ?? DEFAULT_CHECKPOINT_LIST_LIMIT, 1),
+        MAX_CHECKPOINT_LIST_LIMIT,
+      );
+      const rows = listOperationsStmt.all({
+        ...scopeBind(key),
+        before: options?.before ?? Number.MAX_SAFE_INTEGER,
+        // One extra row answers "is there another page" without a second count.
+        limit: limit + 1,
+      }) as unknown[];
+      const page = rows.slice(0, limit).map(rowToOperation);
+      const receipts = page.map((operation) => {
+        const payloadRaw: unknown = findPayloadReceiptStmt.get(operation.id);
+        return checkpointReceipt(
+          operation,
+          payloadRaw === undefined ? null : rowToPayloadReceipt(payloadRaw),
+        );
+      });
+      const last = page.at(-1);
+      return {
+        receipts,
+        nextBefore:
+          rows.length > limit && last !== undefined ? last.ordinal : null,
+      };
+    },
+  };
+}

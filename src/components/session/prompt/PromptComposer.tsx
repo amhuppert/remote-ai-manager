@@ -63,6 +63,8 @@ import {
   conversationTargetApiBase,
   targetFromStoreSessionName,
 } from "@/lib/conversations/conversation-target";
+import { useCheckpointMaintenanceHold } from "@/lib/conversation-checkpoints/maintenance-hold";
+import { CHECKPOINT_RECENT_LIMIT } from "@/lib/conversation-checkpoints/queries";
 import {
   useCancelOptimisticQueueEntry,
   useComposerFocused,
@@ -385,11 +387,17 @@ export default function PromptComposer({
   const reviewRequired = queueEntries.some((entry) =>
     queuedMessageNeedsReview(entry.status),
   );
-  const queueReview = useReviewQueuedMessageMutation(
-    conversationId
-      ? targetFromStoreSessionName(projectName, sessionName, conversationId)
-      : null,
-  );
+  const composerTarget = conversationId
+    ? targetFromStoreSessionName(projectName, sessionName, conversationId)
+    : null;
+  const queueReview = useReviewQueuedMessageMutation(composerTarget);
+  // Checkpoint maintenance holds the conversation without running an ordinary
+  // turn, so the send button must offer to QUEUE during it exactly as it does
+  // for a running turn. Read from the cache the host's checkpoint surfaces
+  // already observe; a host without them simply reads no hold.
+  const checkpointHold = useCheckpointMaintenanceHold(composerTarget, {
+    limit: CHECKPOINT_RECENT_LIMIT,
+  });
   const sendBlockedReason = reviewRequired
     ? "Review queued deliveries before sending another prompt."
     : modelSelectionBlockedReason;
@@ -398,7 +406,8 @@ export default function PromptComposer({
     pendingImageCount: pendingImages.length,
     sending,
     conversationRunning:
-      queueTurnState?.running ?? activeConversation?.status === "running",
+      (queueTurnState?.running ?? activeConversation?.status === "running") ||
+      checkpointHold,
     conversationId,
     backend: selectedBackend,
     isReadOnly,

@@ -5,6 +5,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 
+import { createCheckpointConversationGateway } from "@/lib/conversation-checkpoints/continuation";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createAccessors } from "./accessors";
 import { diffChangedConversationColumns } from "./conversation-row-codec";
@@ -554,7 +555,19 @@ export function createStateStore(deps: StateStoreDeps = {}) {
   const accessors = createAccessors(core, storeLogger);
   const setters = createSetters(core, { mutateSession }, storeLogger);
 
+  /**
+   * The conversation-side half of checkpoint admission and readiness, composed
+   * over THESE repositories rather than fresh ones: the clear is a
+   * statement-level write whose caller runs it inside its own transaction, and
+   * only this instance's cache bumps are visible to the list reads the rest of
+   * CC serves. A checkpoint repository built over privately constructed
+   * conversation repos would clear the column and leave every cached list
+   * showing the retired reference.
+   */
+  const checkpointContinuation = createCheckpointConversationGateway(repos);
+
   return {
+    checkpointContinuation,
     mutateSession,
     mutateConversation,
     mutateProjectConversation,

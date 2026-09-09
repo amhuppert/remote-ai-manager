@@ -103,6 +103,7 @@ async function configurationFixture(focusPresent = false) {
             sessionName: "s",
             promptCount: 1,
             hasResumeHandle: false,
+            pendingCheckpoint: false,
           }),
           getRuntimeConfiguration:
             active.manager.getConversationRuntimeConfiguration,

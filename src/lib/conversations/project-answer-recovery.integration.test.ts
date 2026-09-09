@@ -265,6 +265,12 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
           getSession: store.getSession,
           getProjectConversation: store.getProjectConversation,
           getProjectDisplayName: () => "cc",
+          hydrateCheckpointAuthority: async () => ({
+            projection: null,
+            state: { active: null, latestAccepted: null },
+            outcome: { kind: "none" as const },
+            continuationRetired: false,
+          }),
         },
         projectPath,
         sessionName,

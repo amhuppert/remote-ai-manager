@@ -90,6 +90,10 @@ export const codexConversationCapabilities: BackendConversationCapabilities = {
   contextWindowMetrics: false,
   nativeMidTurnAskUser: false,
   externalTurns: false,
+  // D9 certification covers three fresh continuations and queued delivery,
+  // with all nine independent expectations satisfied in both scopes.
+  // See docs/reports/checkpoint-compaction/codex-enablement.md.
+  checkpoint: true,
   capabilityKinds: [
     { kind: "skills", applyTiming: "next_turn" },
     { kind: "plugins", applyTiming: "next_turn" },

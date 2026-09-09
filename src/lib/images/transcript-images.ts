@@ -1,4 +1,4 @@
-import { writeFile, readFile, mkdir } from "node:fs/promises";
+import { writeFile, readFile, mkdir, realpath, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -9,14 +9,22 @@ import type { MessageContentBlock } from "@/lib/conversations/schemas";
 // Path Helpers
 // ============================================================
 
+/**
+ * Root every externalized transcript image lives beneath.
+ *
+ * Exported because the archive — not a caller — owns where image bytes are:
+ * a recovery endpoint validates a resolved `imagePath` against this root so a
+ * tampered or copied transcript cannot address an arbitrary file. A FORKED
+ * conversation legitimately references its origin's directory, so containment
+ * is checked against the root, not against one conversation's subdirectory.
+ */
+export function transcriptImagesRoot(configDir?: string): string {
+  return path.join(configDir ?? getConfigDirPath(), "transcripts", "images");
+}
+
 /** Directory for externalized transcript images */
 function getImagesDir(conversationId: string, configDir?: string): string {
-  return path.join(
-    configDir ?? getConfigDirPath(),
-    "transcripts",
-    "images",
-    conversationId,
-  );
+  return path.join(transcriptImagesRoot(configDir), conversationId);
 }
 
 /** Ensure the per-conversation images directory exists */
@@ -106,9 +114,81 @@ export async function saveWorkflowTranscriptImage(
 export async function readTranscriptImage(
   imagePath: string,
 ): Promise<string | null> {
+  const buffer = await readTranscriptImageBytes(imagePath);
+  return buffer === null ? null : buffer.toString("base64");
+}
+
+/**
+ * The stored bytes themselves. Null when the asset is gone: preservation means
+ * keeping the bytes CC already stored, never recreating a file that was
+ * missing before.
+ *
+ * Deliberately not exported — a caller serving an archived path to a client
+ * must go through {@link readContainedTranscriptImageBytes}, which decides
+ * containment before opening anything.
+ */
+async function readTranscriptImageBytes(
+  imagePath: string,
+): Promise<Buffer | null> {
   if (!existsSync(imagePath)) return null;
-  const buffer = await readFile(imagePath);
-  return buffer.toString("base64");
+  return readFile(imagePath);
+}
+
+/**
+ * Why a recorded image path did not produce bytes. `outside_root` is a
+ * containment refusal, `missing` an asset CC no longer has.
+ */
+export type ContainedImageRead =
+  | { ok: true; bytes: Buffer }
+  | { ok: false; reason: "missing" | "outside_root" };
+
+/** Whether `candidate` is `root` or sits beneath it. */
+function isWithin(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(root + path.sep);
+}
+
+/**
+ * Read a recorded image path only when it truly resolves inside the archive's
+ * image root.
+ *
+ * Lexical containment is not enough: a symlink stored inside the root, or a
+ * symlinked ancestor directory, satisfies a string prefix check while pointing
+ * at an arbitrary file, and `readFile` follows both. Containment is therefore
+ * decided on REAL paths, and the bytes are read from the resolved path so the
+ * link cannot be swapped for a different target between the check and the
+ * read. Both sides are resolved because the root itself commonly sits under a
+ * symlink (`/tmp` on macOS, say).
+ *
+ * A path outside the root is refused before any filesystem access, so an
+ * arbitrary path in a request is never even opened.
+ */
+export async function readContainedTranscriptImageBytes(
+  imagePath: string,
+  root: string,
+): Promise<ContainedImageRead> {
+  const resolvedRoot = path.resolve(root);
+  if (!isWithin(path.resolve(imagePath), resolvedRoot)) {
+    return { ok: false, reason: "outside_root" };
+  }
+
+  let realRoot: string;
+  let realImage: string;
+  try {
+    realRoot = await realpath(resolvedRoot);
+    realImage = await realpath(imagePath);
+  } catch {
+    // A missing root or a broken/absent asset are both "no bytes here"; CC
+    // never recreates a file it did not store.
+    return { ok: false, reason: "missing" };
+  }
+
+  if (!isWithin(realImage, realRoot)) {
+    return { ok: false, reason: "outside_root" };
+  }
+  if (!(await stat(realImage)).isFile()) {
+    return { ok: false, reason: "missing" };
+  }
+  return { ok: true, bytes: await readFile(realImage) };
 }
 
 // ============================================================

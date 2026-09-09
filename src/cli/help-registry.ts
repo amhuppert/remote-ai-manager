@@ -18,6 +18,7 @@ import { askHelpEntries } from "./commands/ask.help";
 import { charterHelpEntries } from "./commands/charter.help";
 import { agentHelpEntries } from "./commands/agent.help";
 import { conversationHelpEntries } from "./commands/conversation.help";
+import { conversationCheckpointHelpEntries } from "./commands/conversation/checkpoint.help";
 import { decisionsHelpEntries } from "./commands/decisions.help";
 import { docsHelpEntries } from "./commands/docs.help";
 import { devHelpEntries } from "./commands/dev.help";
@@ -231,6 +232,7 @@ const ENTRIES: CommandHelpEntry[] = [
   ...agentHelpEntries,
   ...validateHelpEntries,
   ...conversationHelpEntries,
+  ...conversationCheckpointHelpEntries,
   ...ticketHelpEntries,
   ...memoryHelpEntries,
   ...notepadHelpEntries,

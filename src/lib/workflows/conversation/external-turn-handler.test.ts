@@ -101,6 +101,85 @@ describe("createExternalTurnHandler", () => {
     ]);
   });
 
+  it("exposes an active external turn and an activity epoch synchronously", () => {
+    const { deps } = makeDeps();
+    const handler = createExternalTurnHandler(
+      makeIdentity(),
+      { sendToMachine: vi.fn() },
+      deps,
+    );
+    expect(handler.activeTurn).toBe(false);
+    expect(handler.activity).toBe(0);
+
+    handler({ type: "external_turn_started" });
+    expect(handler.activeTurn).toBe(true);
+    expect(handler.activity).toBe(1);
+
+    handler(frameEnvelope(1, { type: "assistant", uuid: "a1" } as never));
+    expect(handler.activity).toBe(2);
+
+    handler({
+      type: "external_turn_completed",
+      result: {
+        backendRef: { backend: "claude", ref: "sess-1" },
+        costUsd: 0,
+        durationMs: 1,
+        numTurns: 1,
+        contextTokens: 1,
+        contextWindowMax: 1,
+        contentBlocks: [],
+        aborted: false,
+        compacted: false,
+        failure: null,
+        continuationDisposition: "retain",
+      },
+    });
+    expect(handler.activeTurn).toBe(false);
+    expect(handler.activity).toBe(3);
+  });
+
+  it("settles a promise when the external turn completes or the handler stops, and immediately when none is in flight", async () => {
+    const { deps } = makeDeps();
+    const handler = createExternalTurnHandler(
+      makeIdentity(),
+      { sendToMachine: vi.fn() },
+      deps,
+    );
+    await expect(handler.settled()).resolves.toBeUndefined();
+
+    handler({ type: "external_turn_started" });
+    let settled = false;
+    void handler.settled().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    handler({
+      type: "external_turn_completed",
+      result: {
+        backendRef: { backend: "claude", ref: "sess-1" },
+        costUsd: 0,
+        durationMs: 1,
+        numTurns: 1,
+        contextTokens: 1,
+        contextWindowMax: 1,
+        contentBlocks: [],
+        aborted: false,
+        compacted: false,
+        failure: null,
+        continuationDisposition: "retain",
+      },
+    });
+    await Promise.resolve();
+    expect(settled).toBe(true);
+
+    handler({ type: "external_turn_started" });
+    const stopped = handler.settled();
+    await handler.stopAndDrain();
+    await expect(stopped).resolves.toBeUndefined();
+    expect(handler.activeTurn).toBe(false);
+  });
+
   it("ignores content and backend_init events (not part of the external turn protocol)", () => {
     const sendToMachine = vi.fn();
     const { deps } = makeDeps();

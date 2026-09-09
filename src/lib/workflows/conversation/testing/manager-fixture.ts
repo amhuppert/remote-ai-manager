@@ -1,4 +1,5 @@
 import { readRuntimeInstructions } from "../runtime-instructions";
+import { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
 import { createConversationActors } from "../actors";
 import { createWorkflowTaskRunExecutor } from "../execute-workflow-task-run";
 import {
@@ -93,6 +94,64 @@ export function createConversationManagerFixture(
       async runConversationCommand() {
         throw new Error("Fixture has no conversation command runner");
       },
+    },
+    checkpoint: {
+      // Inert reads — no checkpoint holds or was ever accepted — so ordinary
+      // admission and settlement run unchanged; a write means a test reached
+      // checkpoint delivery without injecting a real repository.
+      async repo() {
+        const unavailable = async () => {
+          throw new Error("Fixture has no checkpoint repository");
+        };
+        return {
+          admitOperation: unavailable,
+          admitRecovery: unavailable,
+          freezePayload: unavailable,
+          commitReady: unavailable,
+          beginDelivery: unavailable,
+          recordAcceptance: unavailable,
+          recordOutcome: unavailable,
+          async getStateForAdmission() {
+            return { active: null, latestAccepted: null };
+          },
+          async getOperation() {
+            return null;
+          },
+          async getReceipt() {
+            return null;
+          },
+          async getPayload() {
+            return null;
+          },
+          async listReceipts() {
+            return { receipts: [], nextBefore: null };
+          },
+        };
+      },
+      async readConversation() {
+        return null;
+      },
+      async readEntries() {
+        return { entries: [], maxSeq: -1 };
+      },
+      async findArtifact() {
+        return null;
+      },
+      async resolveConfig() {
+        throw new Error("Fixture has no compaction configuration");
+      },
+      async executeTaskRun() {
+        throw new Error("Fixture has no checkpoint generation lane");
+      },
+      backendSupportsCheckpoint: () => false,
+      async appendUserEntryOnce() {},
+      async confirmQueuedDelivery() {
+        return 0;
+      },
+      getBackgroundActivity: () => null,
+      getBackgroundActivityEpoch: () => 0,
+      generate: generateCheckpoint,
+      now: () => new Date().toISOString(),
     },
     ...options.dependencies,
     createHost(callbacks) {

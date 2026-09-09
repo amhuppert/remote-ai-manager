@@ -28,7 +28,10 @@ import {
   messageQueueService,
 } from "@/lib/conversations/message-queue-service";
 import { clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches } from "@/lib/state-store";
-import { ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain } from "@/lib/workflows/conversation/manager";
+import {
+  checkpointAcceptsQueuedInput,
+  ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
+} from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { createProjectConversationService } from "./service";
@@ -48,6 +51,7 @@ export interface ProjectQueueRouteDeps extends QueueOperationDeps {
 function defaultDeps(): ProjectQueueRouteDeps {
   const service = createProjectConversationService();
   return {
+    checkpointAcceptsQueuedInput,
     admitModelSelection: admitConfiguredModelSelection,
     resolveProjectPath: defaultResolveProjectPath,
     getProjectDisplayName: defaultGetProjectDisplayName,

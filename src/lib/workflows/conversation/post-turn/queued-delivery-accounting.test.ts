@@ -23,7 +23,7 @@ const queuedDelivery = {
 
 function makeDeps() {
   return {
-    markQueuedDelivered: vi.fn(async () => {}),
+    confirmQueuedDelivery: vi.fn(async () => 2),
     markQueuedUncertain: vi.fn(async () => {}),
   };
 }
@@ -43,7 +43,7 @@ describe("createQueuedDeliveryAccounting — normal turns", () => {
     await accounting.settleAfterTurn();
 
     expect(appendUserEntry).toHaveBeenCalledTimes(1);
-    expect(deps.markQueuedDelivered).not.toHaveBeenCalled();
+    expect(deps.confirmQueuedDelivery).not.toHaveBeenCalled();
     expect(deps.markQueuedUncertain).not.toHaveBeenCalled();
   });
 });
@@ -60,8 +60,9 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
       order.push("append");
       await pending;
     });
-    deps.markQueuedDelivered.mockImplementation(async () => {
+    deps.confirmQueuedDelivery.mockImplementation(async () => {
       order.push("delivered");
+      return 2;
     });
     const accounting = createQueuedDeliveryAccounting(deps, {
       ...identity,
@@ -83,8 +84,9 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
     const appendUserEntry = vi.fn(async () => {
       order.push("append");
     });
-    deps.markQueuedDelivered.mockImplementation(async () => {
+    deps.confirmQueuedDelivery.mockImplementation(async () => {
       order.push("delivered");
+      return 2;
     });
     const accounting = createQueuedDeliveryAccounting(deps, {
       ...identity,
@@ -98,11 +100,51 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
     await accounting.handleInputAccepted();
 
     expect(order).toEqual(["append", "delivered"]);
-    expect(deps.markQueuedDelivered).toHaveBeenCalledWith({
+    expect(deps.confirmQueuedDelivery).toHaveBeenCalledWith({
       ...identity,
       ids: ["m1", "m2"],
       deliveryAttemptId: "attempt-1",
     });
+  });
+
+  it("archives the accepted input on request, then confirms the batch without appending again", async () => {
+    const deps = makeDeps();
+    const appendUserEntry = vi.fn(async () => {});
+    const accounting = createQueuedDeliveryAccounting(deps, {
+      ...identity,
+      queuedDelivery,
+      appendUserEntry,
+    });
+
+    // A checkpoint delivery archives the accepted input in event order but
+    // releases the rows only once its own acceptance is durable.
+    await accounting.appendAcceptedUserEntry();
+    await accounting.appendAcceptedUserEntry();
+    expect(appendUserEntry).toHaveBeenCalledTimes(1);
+    expect(deps.confirmQueuedDelivery).not.toHaveBeenCalled();
+
+    await accounting.handleInputAccepted();
+    expect(appendUserEntry).toHaveBeenCalledTimes(1);
+    expect(deps.confirmQueuedDelivery).toHaveBeenCalledWith({
+      ...identity,
+      ids: ["m1", "m2"],
+      deliveryAttemptId: "attempt-1",
+    });
+    await accounting.settleAfterTurn();
+    expect(deps.markQueuedUncertain).not.toHaveBeenCalled();
+  });
+
+  it("archives nothing extra for a normal turn, whose entry was appended at dispatch", async () => {
+    const deps = makeDeps();
+    const appendUserEntry = vi.fn(async () => {});
+    const accounting = createQueuedDeliveryAccounting(deps, {
+      ...identity,
+      queuedDelivery: undefined,
+      appendUserEntry,
+    });
+    await accounting.appendUserEntryAtDispatch();
+    await accounting.appendAcceptedUserEntry();
+    expect(appendUserEntry).toHaveBeenCalledTimes(1);
   });
 
   it("appends exactly once when input_accepted fires repeatedly", async () => {
@@ -118,13 +160,13 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
     await accounting.handleInputAccepted();
 
     expect(appendUserEntry).toHaveBeenCalledTimes(1);
-    expect(deps.markQueuedDelivered).toHaveBeenCalledTimes(1);
+    expect(deps.confirmQueuedDelivery).toHaveBeenCalledTimes(1);
   });
 
   it("does not re-append when marking delivered fails after the append", async () => {
     const deps = makeDeps();
     const appendUserEntry = vi.fn(async () => {});
-    deps.markQueuedDelivered.mockRejectedValueOnce(new Error("db down"));
+    deps.confirmQueuedDelivery.mockRejectedValueOnce(new Error("db down"));
     const accounting = createQueuedDeliveryAccounting(deps, {
       ...identity,
       queuedDelivery,

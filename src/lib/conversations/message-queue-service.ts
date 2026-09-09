@@ -448,6 +448,47 @@ export function markFailedTransform(
   );
 }
 
+/**
+ * Confirm rows an attempt delivered but never acknowledged: the rows named
+ * by `ids` that are still `delivering` or already held `uncertain` under
+ * `attemptId` become `delivered` and leave the queue. Reserved for a caller
+ * holding durable, attempt-correlated acceptance evidence for that input —
+ * a checkpoint delivery's recorded acceptance — because it is the one path
+ * that releases a row from review without the user's explicit retry or
+ * discard. Rows under another attempt, or already back at `pending`, are
+ * untouched. Pure.
+ */
+export function confirmDeliveryTransform(
+  queue: readonly PendingQueuedMessage[],
+  ids: readonly string[],
+  attemptId: string,
+  now: string,
+): { queue: PendingQueuedMessage[]; affected: PendingQueuedMessage[] } {
+  const idSet = new Set(ids);
+  const affected: PendingQueuedMessage[] = [];
+  const next: PendingQueuedMessage[] = [];
+  for (const entry of queue) {
+    if (
+      !idSet.has(entry.id) ||
+      entry.deliveryAttemptId !== attemptId ||
+      (entry.status !== "delivering" && entry.status !== "uncertain")
+    ) {
+      next.push(entry);
+      continue;
+    }
+    affected.push(
+      detachQueueRow({
+        ...entry,
+        status: "delivered",
+        deliveredAt: now,
+        error: null,
+        updatedAt: now,
+      }),
+    );
+  }
+  return { queue: next, affected };
+}
+
 /** Preserve an ambiguous attempt; only explicit review may release its rows. */
 export function markUncertainTransform(
   queue: readonly PendingQueuedMessage[],
@@ -602,6 +643,13 @@ export interface MessageQueueService {
       error: string;
     },
   ): Promise<void>;
+  /**
+   * Release rows from `delivering`/`uncertain` on durable acceptance evidence
+   * for their attempt; see `confirmDeliveryTransform`.
+   */
+  confirmDelivery(
+    input: ConversationKey & { ids: string[]; deliveryAttemptId: string },
+  ): Promise<number>;
   cancel(
     input: ConversationKey & { id: string },
   ): Promise<"cancelled" | "not_found" | "not_cancellable">;
@@ -1129,6 +1177,40 @@ export function createMessageQueueService(
     });
   }
 
+  async function confirmDelivery(
+    input: ConversationKey & { ids: string[]; deliveryAttemptId: string },
+  ): Promise<number> {
+    const affected = await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "confirmQueuedDelivery",
+      (conversation) => {
+        const result = confirmDeliveryTransform(
+          conversation.pendingQueue,
+          input.ids,
+          input.deliveryAttemptId,
+          deps.now(),
+        );
+        conversation.pendingQueue = result.queue;
+        return result.affected;
+      },
+    );
+    if (affected.length === 0) return 0;
+    broadcastUpdated(
+      input,
+      deps.getProjectDisplayName(input.projectPath),
+      affected,
+    );
+    logger.info("queue.delivery_confirmed", {
+      conversationId: input.conversationId,
+      messageIds: affected.map((row) => row.id),
+      deliveryAttemptId: input.deliveryAttemptId,
+      status: "delivered",
+    });
+    return affected.length;
+  }
+
   async function resolveDelivery(
     input: ConversationKey & { id: string; action: QueueReviewAction },
   ): Promise<"resolved" | "not_found" | "not_reviewable"> {
@@ -1215,6 +1297,7 @@ export function createMessageQueueService(
     markPending,
     markFailed,
     markUncertain,
+    confirmDelivery,
     cancel,
     resolveDelivery,
     recoverAbandonedDeliveries,

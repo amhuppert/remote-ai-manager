@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { ReactFlowProvider } from "@xyflow/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import {
   createWorkflowDefinition,
@@ -9,6 +15,11 @@ import {
 } from "@/lib/workflow-graph/test-fixtures";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import WorkflowBuilderCanvas from "./WorkflowBuilderCanvas";
+
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+Element.prototype.scrollIntoView = () => {};
 
 function loadDraft() {
   act(() => {
@@ -561,5 +572,59 @@ describe("WorkflowBuilderCanvas — touch re-placement", () => {
     expect(await screen.findByTestId("lane-move-picker")).toHaveTextContent(
       "Release notes",
     );
+  });
+});
+
+describe("WorkflowBuilderCanvas inline agent configuration", () => {
+  beforeEach(resetStore);
+
+  it("creates a context override from an inherited implementer and marks the draft dirty", () => {
+    const definition = createWorkflowDefinition();
+    const implementer = definition.executionContexts[0]!.implementer!;
+    definition.workflowConfig = { ...definition.workflowConfig, implementer };
+    delete definition.executionContexts[0]!.implementer;
+    _useGraphWorkflowBuilderStore
+      .getState()
+      .loadPersistedDraft({ definition, layout: createWorkflowLayout() });
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas isMobile />
+      </ReactFlowProvider>,
+    );
+    const card = screen.getAllByTestId("context-node")[0]!;
+    fireEvent.keyDown(
+      within(card).getByRole("combobox", { name: "Implementer level" }),
+      { key: "Enter" },
+    );
+    fireEvent.click(screen.getByRole("option", { name: "Low" }));
+    const state = _useGraphWorkflowBuilderStore.getState();
+    expect(state.draftDefinition?.executionContexts[0]?.implementer).toEqual({
+      ...implementer,
+      agent: {
+        ...implementer.agent,
+        modelSelection: {
+          ...implementer.agent.modelSelection,
+          parameters: { effort: "low" },
+        },
+      },
+    });
+    expect(state.draftDefinition?.workflowConfig?.implementer).toEqual(
+      implementer,
+    );
+    expect(state.dirty).toBe(true);
+    expect(state.selectedContextId).toBeNull();
+    expect(card.closest("button")).toBeNull();
+  });
+
+  it("keeps a read-only builder free of configuration controls", () => {
+    loadDraft();
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas isMobile readOnly />
+      </ReactFlowProvider>,
+    );
+    expect(
+      screen.queryByRole("combobox", { name: "Implementer level" }),
+    ).toBeNull();
   });
 });

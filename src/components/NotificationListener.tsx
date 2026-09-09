@@ -7,6 +7,7 @@ import { registerAgentCapabilitySseReactions } from "@/lib/agent-capabilities/ss
 import { registerAgentProfileSseReactions } from "@/lib/agent-profiles/sse-reactions";
 import { registerChatSpawningSseReactions } from "@/lib/chat-spawning/sse-reactions";
 import { registerContextArtifactSseReactions } from "@/lib/context-artifacts/sse-reactions";
+import { registerConversationCheckpointSseReactions } from "@/lib/conversation-checkpoints/sse-reactions";
 import { registerConversationSseReactions } from "@/lib/conversations/sse-reactions";
 import { registerDebugLogSseReactions } from "@/lib/debug-log/sse-reactions";
 import { registerDevServerSseReactions } from "@/lib/dev-server/sse-reactions";
@@ -120,6 +121,7 @@ export default function NotificationListener(): null {
     registerSpecSseReactions(es, { queryClient });
     registerTicketSseReactions(es, { queryClient });
     registerContextArtifactSseReactions(es, { queryClient });
+    registerConversationCheckpointSseReactions(es, { queryClient });
     registerValidationSseReactions(es, { queryClient });
     registerJobsReconnectReconciliation(es, {
       queryClient,

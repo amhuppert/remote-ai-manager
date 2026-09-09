@@ -677,8 +677,13 @@ const noGraphOwnershipViolation = {
           ? `/src/${spec.slice(2)}`
           : path.posix.resolve(path.posix.dirname(file), spec)
       ).replace(/\.[cm]?[jt]sx?$/, "");
+      const dedicatedLiveEditServiceEdge =
+        file.endsWith(
+          "/src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+        ) && target.endsWith("/src/lib/workflow-graph/live-edit-apply");
       if (
         commandAdapter &&
+        !dedicatedLiveEditServiceEdge &&
         /\/src\/lib\/workflow-graph\/(?:document-edit-mechanics|live-edit-apply)$/.test(
           target,
         )

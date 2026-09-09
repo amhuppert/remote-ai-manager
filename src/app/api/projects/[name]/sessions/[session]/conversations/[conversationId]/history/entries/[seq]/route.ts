@@ -1,0 +1,3 @@
+export { getSessionConversationHistoryEntry as GET } from "@/lib/conversations/history-route-handlers";
+
+export const dynamic = "force-dynamic";

@@ -75,10 +75,10 @@ describe("durable queue recovery", () => {
       if (!claim) throw new Error("missing claim");
       const accounting = createQueuedDeliveryAccounting(
         {
-          markQueuedDelivered: async (input) => {
+          confirmQueuedDelivery: async (input) => {
             if (failure === "queue acknowledgement failure")
               throw new Error("disk unavailable");
-            await queue.markDelivered(input);
+            return queue.confirmDelivery(input);
           },
           markQueuedUncertain: queue.markUncertain,
         },

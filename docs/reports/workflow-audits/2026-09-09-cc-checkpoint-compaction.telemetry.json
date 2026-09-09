@@ -1,0 +1,1559 @@
+{
+  "executionId": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+  "sourceLogs": "/Users/alex/Library/Application Support/cc/workflow-logs/66d46f3f-ee11-4c6a-82d6-7931886cc950",
+  "extractorRevision": "563c86480859620048457dec7d089f866f9651a6",
+  "contexts": [
+    {
+      "contextId": "checkpoint-storage",
+      "tasks": 3,
+      "iterations": 5,
+      "promptCycles": 7,
+      "noGo": 2,
+      "go": 1,
+      "correctedUsd": 55.74996999999999,
+      "recordedUsd": 77.41648249999997,
+      "conversations": [
+        {
+          "conversationId": "098704d0-b48f-4b1c-abc9-fc85302cadb4",
+          "contextId": "checkpoint-storage",
+          "recordedUsd": 11.8330415,
+          "correctedUsd": 11.8330415,
+          "toolCalls": 114,
+          "toolErrors": 3,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/098704d0-b48f-4b1c-abc9-fc85302cadb4.jsonl"
+        },
+        {
+          "conversationId": "3c9aa1bf-7c56-4550-b420-7ec57696c079",
+          "contextId": "checkpoint-storage",
+          "recordedUsd": 43.968527999999964,
+          "correctedUsd": 21.984263999999982,
+          "toolCalls": 187,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/3c9aa1bf-7c56-4550-b420-7ec57696c079.jsonl"
+        },
+        {
+          "conversationId": "a6ce381a-ee3f-4a34-b2e7-6f44776322ea",
+          "contextId": "checkpoint-storage",
+          "recordedUsd": 8.673605,
+          "correctedUsd": 8.9913565,
+          "toolCalls": 82,
+          "toolErrors": 3,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/a6ce381a-ee3f-4a34-b2e7-6f44776322ea.jsonl"
+        },
+        {
+          "conversationId": "a9799d82-bc59-494d-b600-63ae102e22fb",
+          "contextId": "checkpoint-storage",
+          "recordedUsd": 12.941308000000003,
+          "correctedUsd": 12.941308000000003,
+          "toolCalls": 124,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/a9799d82-bc59-494d-b600-63ae102e22fb.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-07T18:48:01.009Z",
+      "lastActivityAt": "2026-09-07T22:06:54.832Z",
+      "elapsedMs": 11933823,
+      "peakMeasurableImplementerTokens": 293071,
+      "peakMeasurableOccupancyPct": 29.307100000000002,
+      "seedPromptLengthRange": [34529, 50544]
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "tasks": 2,
+      "iterations": 2,
+      "promptCycles": 2,
+      "noGo": 1,
+      "go": 1,
+      "correctedUsd": 24.202682,
+      "recordedUsd": 24.202682,
+      "conversations": [
+        {
+          "conversationId": "000bd7c1-43f1-43ac-9d3e-d7fb0881bf73",
+          "contextId": "checkpoint-seed",
+          "recordedUsd": 9.400889499999998,
+          "correctedUsd": 9.400889499999998,
+          "toolCalls": 81,
+          "toolErrors": 4,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/000bd7c1-43f1-43ac-9d3e-d7fb0881bf73.jsonl"
+        },
+        {
+          "conversationId": "e4337d50-5113-4116-8d89-f3c156f70f5a",
+          "contextId": "checkpoint-seed",
+          "recordedUsd": 14.801792500000001,
+          "correctedUsd": 14.801792500000001,
+          "toolCalls": 111,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/e4337d50-5113-4116-8d89-f3c156f70f5a.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-07T22:06:55.810Z",
+      "lastActivityAt": "2026-09-07T23:52:49.051Z",
+      "elapsedMs": 6353241,
+      "peakMeasurableImplementerTokens": 272070,
+      "peakMeasurableOccupancyPct": 27.206999999999997,
+      "seedPromptLengthRange": [45404, 57553]
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "tasks": 3,
+      "iterations": 6,
+      "promptCycles": 9,
+      "noGo": 2,
+      "go": 1,
+      "correctedUsd": 76.80581924999998,
+      "recordedUsd": 75.08962324999999,
+      "conversations": [
+        {
+          "conversationId": "3addf5d3-975c-4f15-8444-999f094b35bc",
+          "contextId": "checkpoint-maintenance",
+          "recordedUsd": 34.176920249999995,
+          "correctedUsd": 34.176920249999995,
+          "toolCalls": 137,
+          "toolErrors": 2,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/3addf5d3-975c-4f15-8444-999f094b35bc.jsonl"
+        },
+        {
+          "conversationId": "750ef6f0-7c2d-4577-a4fc-489288d28d86",
+          "contextId": "checkpoint-maintenance",
+          "recordedUsd": 4.3716497500000004,
+          "correctedUsd": 4.3716497500000004,
+          "toolCalls": 29,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/750ef6f0-7c2d-4577-a4fc-489288d28d86.jsonl"
+        },
+        {
+          "conversationId": "a37301b2-6023-4ec7-8672-3b8a0740e2df",
+          "contextId": "checkpoint-maintenance",
+          "recordedUsd": 19.775404749999993,
+          "correctedUsd": 21.491600749999993,
+          "toolCalls": 81,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/a37301b2-6023-4ec7-8672-3b8a0740e2df.jsonl"
+        },
+        {
+          "conversationId": "d633563f-b5fc-4633-bc2b-d2b80af35cd5",
+          "contextId": "checkpoint-maintenance",
+          "recordedUsd": 16.7656485,
+          "correctedUsd": 16.7656485,
+          "toolCalls": 108,
+          "toolErrors": 2,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/d633563f-b5fc-4633-bc2b-d2b80af35cd5.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-07T23:52:50.065Z",
+      "lastActivityAt": "2026-09-08T03:14:32.031Z",
+      "elapsedMs": 12101966,
+      "peakMeasurableImplementerTokens": 593870,
+      "peakMeasurableOccupancyPct": 59.387,
+      "seedPromptLengthRange": [45516, 65237]
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "tasks": 2,
+      "iterations": 6,
+      "promptCycles": 6,
+      "noGo": 3,
+      "go": 1,
+      "correctedUsd": 51.99825775000001,
+      "recordedUsd": 51.99825775000001,
+      "conversations": [
+        {
+          "conversationId": "03f8eb59-33aa-4dcf-8add-123f75c43f9c",
+          "contextId": "checkpoint-restart",
+          "recordedUsd": 14.863013,
+          "correctedUsd": 14.863013,
+          "toolCalls": 83,
+          "toolErrors": 3,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/03f8eb59-33aa-4dcf-8add-123f75c43f9c.jsonl"
+        },
+        {
+          "conversationId": "683d01bb-55a1-419b-9c88-a5aeb7f66292",
+          "contextId": "checkpoint-restart",
+          "recordedUsd": 22.772887500000007,
+          "correctedUsd": 22.772887500000007,
+          "toolCalls": 127,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/683d01bb-55a1-419b-9c88-a5aeb7f66292.jsonl"
+        },
+        {
+          "conversationId": "daf20335-81fc-435b-abeb-b6b50b1f762f",
+          "contextId": "checkpoint-restart",
+          "recordedUsd": 14.36235725,
+          "correctedUsd": 14.36235725,
+          "toolCalls": 98,
+          "toolErrors": 2,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/daf20335-81fc-435b-abeb-b6b50b1f762f.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-08T03:14:33.063Z",
+      "lastActivityAt": "2026-09-08T06:01:46.277Z",
+      "elapsedMs": 10033214,
+      "peakMeasurableImplementerTokens": 476535,
+      "peakMeasurableOccupancyPct": 47.6535,
+      "seedPromptLengthRange": [36789, 56692]
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "tasks": 3,
+      "iterations": 5,
+      "promptCycles": 6,
+      "noGo": 2,
+      "go": 1,
+      "correctedUsd": 60.33536724999998,
+      "recordedUsd": 60.33536724999998,
+      "conversations": [
+        {
+          "conversationId": "4eba42e7-52c1-42b8-8d25-00dcabd9b5f5",
+          "contextId": "checkpoint-delivery",
+          "recordedUsd": 16.299737249999996,
+          "correctedUsd": 16.299737249999996,
+          "toolCalls": 92,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/4eba42e7-52c1-42b8-8d25-00dcabd9b5f5.jsonl"
+        },
+        {
+          "conversationId": "84eb2c85-33b0-48dc-b04e-9342a3e37ddd",
+          "contextId": "checkpoint-delivery",
+          "recordedUsd": 10.764454000000004,
+          "correctedUsd": 10.764454000000004,
+          "toolCalls": 67,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/84eb2c85-33b0-48dc-b04e-9342a3e37ddd.jsonl"
+        },
+        {
+          "conversationId": "acba21b8-6832-42c5-bacc-ae0748f9373f",
+          "contextId": "checkpoint-delivery",
+          "recordedUsd": 33.27117599999998,
+          "correctedUsd": 33.27117599999998,
+          "toolCalls": 198,
+          "toolErrors": 6,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/acba21b8-6832-42c5-bacc-ae0748f9373f.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-08T06:01:47.186Z",
+      "lastActivityAt": "2026-09-08T08:55:46.522Z",
+      "elapsedMs": 10439336,
+      "peakMeasurableImplementerTokens": 646394,
+      "peakMeasurableOccupancyPct": 64.63940000000001,
+      "seedPromptLengthRange": [42213, 59296]
+    },
+    {
+      "contextId": "checkpoint-history",
+      "tasks": 3,
+      "iterations": 3,
+      "promptCycles": 3,
+      "noGo": 2,
+      "go": 1,
+      "correctedUsd": 29.3229655,
+      "recordedUsd": 26.9522615,
+      "conversations": [
+        {
+          "conversationId": "157d93b8-3a76-4547-b8fc-5ba855d28927",
+          "contextId": "checkpoint-history",
+          "recordedUsd": 13.612726000000004,
+          "correctedUsd": 15.983430000000002,
+          "toolCalls": 128,
+          "toolErrors": 2,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/157d93b8-3a76-4547-b8fc-5ba855d28927.jsonl"
+        },
+        {
+          "conversationId": "f5cbaf16-e624-4916-aefb-4a6b56ab4476",
+          "contextId": "checkpoint-history",
+          "recordedUsd": 13.339535499999997,
+          "correctedUsd": 13.339535499999997,
+          "toolCalls": 108,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/f5cbaf16-e624-4916-aefb-4a6b56ab4476.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-08T08:55:47.600Z",
+      "lastActivityAt": "2026-09-08T11:24:54.460Z",
+      "elapsedMs": 8946860,
+      "peakMeasurableImplementerTokens": 257826,
+      "peakMeasurableOccupancyPct": 25.7826,
+      "seedPromptLengthRange": [37567, 60043]
+    },
+    {
+      "contextId": "checkpoint-http",
+      "tasks": 3,
+      "iterations": 4,
+      "promptCycles": 4,
+      "noGo": 2,
+      "go": 1,
+      "correctedUsd": 44.59956350000001,
+      "recordedUsd": 44.59956350000001,
+      "conversations": [
+        {
+          "conversationId": "41b3817a-ded3-4191-9339-50fb9471e4c6",
+          "contextId": "checkpoint-http",
+          "recordedUsd": 15.972404500000009,
+          "correctedUsd": 15.972404500000009,
+          "toolCalls": 132,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/41b3817a-ded3-4191-9339-50fb9471e4c6.jsonl"
+        },
+        {
+          "conversationId": "7dc5aa4f-3e2f-408a-95b8-ffb0285bdedb",
+          "contextId": "checkpoint-http",
+          "recordedUsd": 15.207103499999999,
+          "correctedUsd": 15.207103499999999,
+          "toolCalls": 132,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/7dc5aa4f-3e2f-408a-95b8-ffb0285bdedb.jsonl"
+        },
+        {
+          "conversationId": "ccaecc94-3e54-4ca4-a5f3-d55148b1e8b7",
+          "contextId": "checkpoint-http",
+          "recordedUsd": 13.420055500000002,
+          "correctedUsd": 13.420055500000002,
+          "toolCalls": 118,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/ccaecc94-3e54-4ca4-a5f3-d55148b1e8b7.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-08T11:24:55.549Z",
+      "lastActivityAt": "2026-09-08T13:14:48.257Z",
+      "elapsedMs": 6592708,
+      "peakMeasurableImplementerTokens": 272465,
+      "peakMeasurableOccupancyPct": 27.2465,
+      "seedPromptLengthRange": [35632, 53467]
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "tasks": 3,
+      "iterations": 6,
+      "promptCycles": 7,
+      "noGo": 2,
+      "go": 1,
+      "correctedUsd": 80.225934,
+      "recordedUsd": 101.04853550000001,
+      "conversations": [
+        {
+          "conversationId": "436d84fd-13cd-42ae-a539-9ab598f5d46d",
+          "contextId": "checkpoint-cli",
+          "recordedUsd": 14.53187149999999,
+          "correctedUsd": 15.216665499999992,
+          "toolCalls": 122,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/436d84fd-13cd-42ae-a539-9ab598f5d46d.jsonl"
+        },
+        {
+          "conversationId": "66aa3199-7e4e-4178-86f1-d9a0f8082dfe",
+          "contextId": "checkpoint-cli",
+          "recordedUsd": 20.563738,
+          "correctedUsd": 20.563738,
+          "toolCalls": 205,
+          "toolErrors": 4,
+          "backgroundKills": 1,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/66aa3199-7e4e-4178-86f1-d9a0f8082dfe.jsonl"
+        },
+        {
+          "conversationId": "9c880f04-55c2-4596-ace1-331d0be1e65b",
+          "contextId": "checkpoint-cli",
+          "recordedUsd": 21.678332000000005,
+          "correctedUsd": 21.678332000000005,
+          "toolCalls": 161,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/9c880f04-55c2-4596-ace1-331d0be1e65b.jsonl"
+        },
+        {
+          "conversationId": "b2a91b8f-d984-4ad1-88cc-ab1b7b3913c5",
+          "contextId": "checkpoint-cli",
+          "recordedUsd": 1.259803,
+          "correctedUsd": 1.259803,
+          "toolCalls": 19,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/b2a91b8f-d984-4ad1-88cc-ab1b7b3913c5.jsonl"
+        },
+        {
+          "conversationId": "c6e866e5-3e9a-43fd-b67f-3fc05887f240",
+          "contextId": "checkpoint-cli",
+          "recordedUsd": 43.01479100000001,
+          "correctedUsd": 21.507395500000005,
+          "toolCalls": 144,
+          "toolErrors": 6,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/c6e866e5-3e9a-43fd-b67f-3fc05887f240.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-08T13:14:49.416Z",
+      "lastActivityAt": "2026-09-08T17:11:51.572Z",
+      "elapsedMs": 14222156,
+      "peakMeasurableImplementerTokens": 352321,
+      "peakMeasurableOccupancyPct": 35.2321,
+      "seedPromptLengthRange": [42701, 65864]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "tasks": 3,
+      "iterations": 9,
+      "promptCycles": 12,
+      "noGo": 3,
+      "go": 1,
+      "correctedUsd": 134.104632,
+      "recordedUsd": 187.28398100000004,
+      "conversations": [
+        {
+          "conversationId": "00b1bac6-4735-4292-86c8-ad70de4fc8a4",
+          "contextId": "checkpoint-ui",
+          "recordedUsd": 78.995131,
+          "correctedUsd": 39.4975655,
+          "toolCalls": 254,
+          "toolErrors": 2,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/00b1bac6-4735-4292-86c8-ad70de4fc8a4.jsonl"
+        },
+        {
+          "conversationId": "488239b8-8a30-4df6-9be8-a95a0ef0ea6a",
+          "contextId": "checkpoint-ui",
+          "recordedUsd": 5.846539500000001,
+          "correctedUsd": 5.846539500000001,
+          "toolCalls": 81,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/488239b8-8a30-4df6-9be8-a95a0ef0ea6a.jsonl"
+        },
+        {
+          "conversationId": "4ba19c55-b549-4859-8c6d-b65d50d14871",
+          "contextId": "checkpoint-ui",
+          "recordedUsd": 40.53303700000002,
+          "correctedUsd": 41.43155250000001,
+          "toolCalls": 292,
+          "toolErrors": 1,
+          "backgroundKills": 2,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/4ba19c55-b549-4859-8c6d-b65d50d14871.jsonl"
+        },
+        {
+          "conversationId": "6ce952d3-a28c-41dd-868d-f1afcc08a9eb",
+          "contextId": "checkpoint-ui",
+          "recordedUsd": 20.092081999999998,
+          "correctedUsd": 20.490158499999996,
+          "toolCalls": 175,
+          "toolErrors": 3,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/6ce952d3-a28c-41dd-868d-f1afcc08a9eb.jsonl"
+        },
+        {
+          "conversationId": "95895d9a-de19-4d2b-992d-87281274bce2",
+          "contextId": "checkpoint-ui",
+          "recordedUsd": 41.81719150000001,
+          "correctedUsd": 26.838816000000005,
+          "toolCalls": 193,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/95895d9a-de19-4d2b-992d-87281274bce2.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-08T17:11:52.747Z",
+      "lastActivityAt": "2026-09-08T22:53:28.486Z",
+      "elapsedMs": 20495739,
+      "peakMeasurableImplementerTokens": 404318,
+      "peakMeasurableOccupancyPct": 40.4318,
+      "seedPromptLengthRange": [43270, 65312]
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "tasks": 3,
+      "iterations": 7,
+      "promptCycles": 9,
+      "noGo": 2,
+      "go": 1,
+      "correctedUsd": 66.4949525,
+      "recordedUsd": 65.702846,
+      "conversations": [
+        {
+          "conversationId": "08a31227-aa57-4e21-a0da-b5d225a4dc46",
+          "contextId": "backend-continuation-probes",
+          "recordedUsd": 15.782483499999996,
+          "correctedUsd": 15.782483499999996,
+          "toolCalls": 130,
+          "toolErrors": 1,
+          "backgroundKills": 2,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/08a31227-aa57-4e21-a0da-b5d225a4dc46.jsonl"
+        },
+        {
+          "conversationId": "36719c9c-80c8-42c6-bfdf-71e689118a33",
+          "contextId": "backend-continuation-probes",
+          "recordedUsd": 17.800340000000006,
+          "correctedUsd": 17.800340000000006,
+          "toolCalls": 160,
+          "toolErrors": 1,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/36719c9c-80c8-42c6-bfdf-71e689118a33.jsonl"
+        },
+        {
+          "conversationId": "76bf2273-f437-4562-90bb-f7baa9119c25",
+          "contextId": "backend-continuation-probes",
+          "recordedUsd": 7.725100500000002,
+          "correctedUsd": 8.517207000000003,
+          "toolCalls": 79,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/76bf2273-f437-4562-90bb-f7baa9119c25.jsonl"
+        },
+        {
+          "conversationId": "a372a138-578f-4659-b3ce-698880bcd637",
+          "contextId": "backend-continuation-probes",
+          "recordedUsd": 24.394921999999994,
+          "correctedUsd": 24.394921999999994,
+          "toolCalls": 190,
+          "toolErrors": 3,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/a372a138-578f-4659-b3ce-698880bcd637.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-08T22:53:29.547Z",
+      "lastActivityAt": "2026-09-09T04:10:35.943Z",
+      "elapsedMs": 19026396,
+      "peakMeasurableImplementerTokens": 345060,
+      "peakMeasurableOccupancyPct": 34.506,
+      "seedPromptLengthRange": [31356, 56979]
+    },
+    {
+      "contextId": "release-verification",
+      "tasks": 4,
+      "iterations": 1,
+      "promptCycles": 1,
+      "noGo": 0,
+      "go": 1,
+      "correctedUsd": 59.615198,
+      "recordedUsd": 59.615198,
+      "conversations": [
+        {
+          "conversationId": "2a503470-4c47-4e8e-bc17-ba40525e279d",
+          "contextId": "release-verification",
+          "recordedUsd": 59.615198,
+          "correctedUsd": 59.615198,
+          "toolCalls": 436,
+          "toolErrors": 0,
+          "backgroundKills": 0,
+          "source": "/Users/alex/Library/Application Support/cc/transcripts/2a503470-4c47-4e8e-bc17-ba40525e279d.jsonl"
+        }
+      ],
+      "firstActivityAt": "2026-09-09T04:10:37.033Z",
+      "lastActivityAt": "2026-09-09T06:57:10.080Z",
+      "elapsedMs": 9993047,
+      "peakMeasurableImplementerTokens": null,
+      "peakMeasurableOccupancyPct": null,
+      "seedPromptLengthRange": [48800, 48800]
+    }
+  ],
+  "cost": {
+    "recordedImplementerUsd": 774.2447982499999,
+    "correctedImplementerUsd": 683.4553417499999,
+    "validatorEstimatedUsd": 51.78092399999999,
+    "accountedWorkflowUsd": 735.2362657499999,
+    "validatorUsage": {
+      "estimatedUsd": 51.78092399999999,
+      "inputTokens": 26890175,
+      "cachedInputTokens": 24432384,
+      "outputTokens": 111984,
+      "usageEventCount": 32,
+      "unpricedEventCount": 0
+    }
+  },
+  "totals": {
+    "tasks": 32,
+    "iterations": 54,
+    "promptCycles": 66,
+    "noGo": 21,
+    "go": 11,
+    "blockingIssueAppearances": 75,
+    "conversations": 36,
+    "toolCalls": 4978,
+    "toolErrors": 55,
+    "backgroundKills": 5
+  },
+  "time": {
+    "wallClockMs": 132438744,
+    "implementerEnvelopesMs": 116958549,
+    "extractorHungMsDisputed": 37816666,
+    "backgroundWaitMs": 21779785,
+    "scriptGateMs": 4726459,
+    "validatorMs": 8170229,
+    "humanGateMs": 0,
+    "operatorPauseMs": 76022,
+    "finalJoinMs": 2264014,
+    "validatorInfraMs": 2606810,
+    "implementerEnvelopesLessExplicitBackgroundWaitMs": 95178764,
+    "unallocatedResidualMs": 243471
+  },
+  "backgroundWaits": [
+    {
+      "contextId": "checkpoint-storage",
+      "line": 13,
+      "startedAt": "2026-09-07T20:23:33.356Z",
+      "durationMs": 449186,
+      "taskIds": ["bt85lu9yz"]
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "line": 23,
+      "startedAt": "2026-09-07T20:36:25.601Z",
+      "durationMs": 415423,
+      "taskIds": ["byl4i4x7l"]
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "line": 35,
+      "startedAt": "2026-09-07T21:16:39.513Z",
+      "durationMs": 383787,
+      "taskIds": ["bh5eh8tbk"]
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "line": 49,
+      "startedAt": "2026-09-07T21:57:19.093Z",
+      "durationMs": 10374,
+      "taskIds": ["biyfm1uhe"]
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "line": 13,
+      "startedAt": "2026-09-08T01:16:12.792Z",
+      "durationMs": 714002,
+      "taskIds": ["br4nmzorp"]
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "line": 25,
+      "startedAt": "2026-09-08T01:56:53.325Z",
+      "durationMs": 117350,
+      "taskIds": ["b8rbnbbkz"]
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "line": 35,
+      "startedAt": "2026-09-08T02:08:01.181Z",
+      "durationMs": 694385,
+      "taskIds": ["bx1nazxmp"]
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "line": 47,
+      "startedAt": "2026-09-08T02:42:59.588Z",
+      "durationMs": 698725,
+      "taskIds": ["bop460f72"]
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "line": 57,
+      "startedAt": "2026-09-08T02:58:13.103Z",
+      "durationMs": 732091,
+      "taskIds": ["bnm84wmnu"]
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "line": 37,
+      "startedAt": "2026-09-08T08:41:00.608Z",
+      "durationMs": 716934,
+      "taskIds": ["b5z1j34yd"]
+    },
+    {
+      "contextId": "checkpoint-history",
+      "line": 13,
+      "startedAt": "2026-09-08T10:50:30.588Z",
+      "durationMs": 832074,
+      "taskIds": ["bl7hh76r1", "b411ec65h"]
+    },
+    {
+      "contextId": "checkpoint-history",
+      "line": 23,
+      "startedAt": "2026-09-08T11:10:41.200Z",
+      "durationMs": 787631,
+      "taskIds": ["b8jxpthok", "b3ywork7c"]
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "line": 5,
+      "startedAt": "2026-09-08T13:44:04.076Z",
+      "durationMs": 476846,
+      "taskIds": ["bob49xk3m"]
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "line": 15,
+      "startedAt": "2026-09-08T14:11:02.851Z",
+      "durationMs": 714476,
+      "taskIds": ["bxa3rpwep", "b9nzsi7ez"]
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "line": 41,
+      "startedAt": "2026-09-08T15:58:07.328Z",
+      "durationMs": 1800008,
+      "taskIds": ["bclwn4r1z", "bkii19w6g", "brrluxx2a"]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "line": 5,
+      "startedAt": "2026-09-08T17:55:26.577Z",
+      "durationMs": 1326182,
+      "taskIds": ["bdfavne6h"]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "line": 23,
+      "startedAt": "2026-09-08T19:09:12.474Z",
+      "durationMs": 1800037,
+      "taskIds": ["bi8gqxfxi", "b6yu2y5u5", "bnd42m40m"]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "line": 33,
+      "startedAt": "2026-09-08T19:54:39.384Z",
+      "durationMs": 1382953,
+      "taskIds": ["bzq9o27mk"]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "line": 37,
+      "startedAt": "2026-09-08T20:23:23.017Z",
+      "durationMs": 996818,
+      "taskIds": ["bz3fqu6x9"]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "line": 47,
+      "startedAt": "2026-09-08T21:15:13.225Z",
+      "durationMs": 1507789,
+      "taskIds": ["bn159sjj5"]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "line": 57,
+      "startedAt": "2026-09-08T21:50:30.792Z",
+      "durationMs": 1800044,
+      "taskIds": ["bw88vnwx2", "b9agd1vvk"]
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "line": 63,
+      "startedAt": "2026-09-08T22:22:34.479Z",
+      "durationMs": 19929,
+      "taskIds": ["bysrkl8rz"]
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "line": 13,
+      "startedAt": "2026-09-08T23:36:19.025Z",
+      "durationMs": 118797,
+      "taskIds": ["bzpz7a6fk"]
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "line": 17,
+      "startedAt": "2026-09-08T23:48:18.876Z",
+      "durationMs": 426640,
+      "taskIds": ["b3v27htw1"]
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "line": 21,
+      "startedAt": "2026-09-08T23:59:26.481Z",
+      "durationMs": 1057244,
+      "taskIds": ["b1yc2elx6"]
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "line": 62,
+      "startedAt": "2026-09-09T03:38:53.184Z",
+      "durationMs": 1800060,
+      "taskIds": ["b9mk71s68", "byjdyz2fw"]
+    }
+  ],
+  "scriptGates": [
+    {
+      "contextId": "checkpoint-storage",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-07T20:45:00.682Z",
+      "endedAt": "2026-09-07T20:53:36.406Z",
+      "durationMs": 515724,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-07T21:24:24.981Z",
+      "endedAt": "2026-09-07T21:27:33.719Z",
+      "durationMs": 188738,
+      "outcome": "script_validation.exception"
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "startLine": 16,
+      "endLine": 17,
+      "startedAt": "2026-09-07T21:28:51.504Z",
+      "endedAt": "2026-09-07T21:36:41.766Z",
+      "durationMs": 470262,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "startLine": 27,
+      "endLine": 28,
+      "startedAt": "2026-09-07T21:57:31.366Z",
+      "endedAt": "2026-09-07T22:05:55.519Z",
+      "durationMs": 504153,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-07T22:57:33.600Z",
+      "endedAt": "2026-09-07T23:05:37.823Z",
+      "durationMs": 484223,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-07T23:41:42.155Z",
+      "endedAt": "2026-09-07T23:51:13.609Z",
+      "durationMs": 571454,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-08T01:30:25.200Z",
+      "endedAt": "2026-09-08T01:30:41.742Z",
+      "durationMs": 16542,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-08T02:21:17.244Z",
+      "endedAt": "2026-09-08T02:21:33.338Z",
+      "durationMs": 16094,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "startLine": 24,
+      "endLine": 25,
+      "startedAt": "2026-09-08T03:12:12.857Z",
+      "endedAt": "2026-09-08T03:12:30.089Z",
+      "durationMs": 17232,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-08T03:53:39.842Z",
+      "endedAt": "2026-09-08T03:54:11.508Z",
+      "durationMs": 31666,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-08T04:54:35.077Z",
+      "endedAt": "2026-09-08T04:54:52.154Z",
+      "durationMs": 17077,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 24,
+      "endLine": 25,
+      "startedAt": "2026-09-08T05:36:50.901Z",
+      "endedAt": "2026-09-08T05:37:09.536Z",
+      "durationMs": 18635,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 35,
+      "endLine": 36,
+      "startedAt": "2026-09-08T06:00:39.543Z",
+      "endedAt": "2026-09-08T06:00:56.852Z",
+      "durationMs": 17309,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-08T07:35:14.525Z",
+      "endedAt": "2026-09-08T07:35:40.665Z",
+      "durationMs": 26140,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-08T08:24:58.217Z",
+      "endedAt": "2026-09-08T08:25:13.061Z",
+      "durationMs": 14844,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "startLine": 24,
+      "endLine": 25,
+      "startedAt": "2026-09-08T08:53:53.486Z",
+      "endedAt": "2026-09-08T08:54:10.289Z",
+      "durationMs": 16803,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-08T09:45:06.867Z",
+      "endedAt": "2026-09-08T09:45:36.424Z",
+      "durationMs": 29557,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 23,
+      "endLine": 24,
+      "startedAt": "2026-09-08T11:04:23.872Z",
+      "endedAt": "2026-09-08T11:04:40.037Z",
+      "durationMs": 16165,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 34,
+      "endLine": 35,
+      "startedAt": "2026-09-08T11:23:49.696Z",
+      "endedAt": "2026-09-08T11:24:05.567Z",
+      "durationMs": 15871,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-http",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-08T12:16:42.991Z",
+      "endedAt": "2026-09-08T12:16:57.721Z",
+      "durationMs": 14730,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-http",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-08T12:51:31.624Z",
+      "endedAt": "2026-09-08T12:51:48.140Z",
+      "durationMs": 16516,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-http",
+      "startLine": 24,
+      "endLine": 25,
+      "startedAt": "2026-09-08T13:13:46.319Z",
+      "endedAt": "2026-09-08T13:14:01.460Z",
+      "durationMs": 15141,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-08T14:22:58.452Z",
+      "endedAt": "2026-09-08T14:23:13.853Z",
+      "durationMs": 15401,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-08T15:42:51.968Z",
+      "endedAt": "2026-09-08T15:43:08.507Z",
+      "durationMs": 16539,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "startLine": 24,
+      "endLine": 25,
+      "startedAt": "2026-09-08T17:10:16.658Z",
+      "endedAt": "2026-09-08T17:10:33.768Z",
+      "durationMs": 17110,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-08T18:29:15.791Z",
+      "endedAt": "2026-09-08T18:29:34.723Z",
+      "durationMs": 18932,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-08T20:40:01.613Z",
+      "endedAt": "2026-09-08T20:40:21.322Z",
+      "durationMs": 19709,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 24,
+      "endLine": 25,
+      "startedAt": "2026-09-08T22:27:43.196Z",
+      "endedAt": "2026-09-08T22:28:05.592Z",
+      "durationMs": 22396,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 35,
+      "endLine": 36,
+      "startedAt": "2026-09-08T22:50:17.178Z",
+      "endedAt": "2026-09-08T22:50:33.299Z",
+      "durationMs": 16121,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-09T01:20:05.183Z",
+      "endedAt": "2026-09-09T01:20:21.662Z",
+      "durationMs": 16479,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "startLine": 13,
+      "endLine": 14,
+      "startedAt": "2026-09-09T03:02:11.354Z",
+      "endedAt": "2026-09-09T03:02:31.908Z",
+      "durationMs": 20554,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "startLine": 24,
+      "endLine": 25,
+      "startedAt": "2026-09-09T04:08:54.060Z",
+      "endedAt": "2026-09-09T04:09:11.111Z",
+      "durationMs": 17051,
+      "outcome": "script_validation.passed"
+    },
+    {
+      "contextId": "release-verification",
+      "startLine": 2,
+      "endLine": 3,
+      "startedAt": "2026-09-09T06:29:41.943Z",
+      "endedAt": "2026-09-09T06:54:53.234Z",
+      "durationMs": 1511291,
+      "outcome": "script_validation.passed"
+    }
+  ],
+  "validatorIntervals": [
+    {
+      "contextId": "checkpoint-storage",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-07T20:53:37.898Z",
+      "endedAt": "2026-09-07T21:04:41.171Z",
+      "durationMs": 663273,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "startLine": 19,
+      "endLine": 23,
+      "startedAt": "2026-09-07T21:36:43.826Z",
+      "endedAt": "2026-09-07T21:39:47.939Z",
+      "durationMs": 184113,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "startLine": 30,
+      "endLine": 34,
+      "startedAt": "2026-09-07T22:05:57.662Z",
+      "endedAt": "2026-09-07T22:06:53.017Z",
+      "durationMs": 55355,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-07T23:05:39.779Z",
+      "endedAt": "2026-09-07T23:09:51.887Z",
+      "durationMs": 252108,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-07T23:51:15.448Z",
+      "endedAt": "2026-09-07T23:52:39.197Z",
+      "durationMs": 83749,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-08T01:30:42.824Z",
+      "endedAt": "2026-09-08T01:35:03.645Z",
+      "durationMs": 260821,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-08T02:21:34.403Z",
+      "endedAt": "2026-09-08T02:24:26.463Z",
+      "durationMs": 172060,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "startLine": 27,
+      "endLine": 31,
+      "startedAt": "2026-09-08T03:12:31.306Z",
+      "endedAt": "2026-09-08T03:14:07.375Z",
+      "durationMs": 96069,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-08T03:54:13.390Z",
+      "endedAt": "2026-09-08T03:58:14.891Z",
+      "durationMs": 241501,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-08T04:54:53.392Z",
+      "endedAt": "2026-09-08T04:57:07.723Z",
+      "durationMs": 134331,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 27,
+      "endLine": 31,
+      "startedAt": "2026-09-08T05:37:10.794Z",
+      "endedAt": "2026-09-08T05:38:37.268Z",
+      "durationMs": 86474,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "startLine": 38,
+      "endLine": 42,
+      "startedAt": "2026-09-08T06:00:58.098Z",
+      "endedAt": "2026-09-08T06:01:44.699Z",
+      "durationMs": 46601,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-08T07:35:42.592Z",
+      "endedAt": "2026-09-08T07:42:13.353Z",
+      "durationMs": 390761,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-08T08:25:14.139Z",
+      "endedAt": "2026-09-08T08:28:49.264Z",
+      "durationMs": 215125,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "startLine": 27,
+      "endLine": 31,
+      "startedAt": "2026-09-08T08:54:11.407Z",
+      "endedAt": "2026-09-08T08:55:34.323Z",
+      "durationMs": 82916,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-08T09:45:37.504Z",
+      "endedAt": "2026-09-08T10:07:20.990Z",
+      "durationMs": 1303486,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 10,
+      "endLine": 14,
+      "startedAt": "2026-09-08T10:07:20.990Z",
+      "endedAt": "2026-09-08T10:29:04.314Z",
+      "durationMs": 1303324,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 15,
+      "endLine": 19,
+      "startedAt": "2026-09-08T10:29:04.315Z",
+      "endedAt": "2026-09-08T10:31:25.699Z",
+      "durationMs": 141384,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 26,
+      "endLine": 30,
+      "startedAt": "2026-09-08T11:04:41.134Z",
+      "endedAt": "2026-09-08T11:06:17.149Z",
+      "durationMs": 96015,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "startLine": 37,
+      "endLine": 41,
+      "startedAt": "2026-09-08T11:24:06.631Z",
+      "endedAt": "2026-09-08T11:24:53.067Z",
+      "durationMs": 46436,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-http",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-08T12:16:58.847Z",
+      "endedAt": "2026-09-08T12:20:29.845Z",
+      "durationMs": 210998,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-http",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-08T12:51:49.398Z",
+      "endedAt": "2026-09-08T12:53:13.604Z",
+      "durationMs": 84206,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-http",
+      "startLine": 27,
+      "endLine": 31,
+      "startedAt": "2026-09-08T13:14:02.538Z",
+      "endedAt": "2026-09-08T13:14:46.795Z",
+      "durationMs": 44257,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-08T14:23:14.982Z",
+      "endedAt": "2026-09-08T14:28:46.974Z",
+      "durationMs": 331992,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-08T15:43:09.720Z",
+      "endedAt": "2026-09-08T15:46:29.578Z",
+      "durationMs": 199858,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "startLine": 27,
+      "endLine": 31,
+      "startedAt": "2026-09-08T17:10:34.953Z",
+      "endedAt": "2026-09-08T17:11:50.038Z",
+      "durationMs": 75085,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-08T18:29:36.077Z",
+      "endedAt": "2026-09-08T18:33:43.590Z",
+      "durationMs": 247513,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-08T20:40:22.593Z",
+      "endedAt": "2026-09-08T20:43:31.124Z",
+      "durationMs": 188531,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 27,
+      "endLine": 31,
+      "startedAt": "2026-09-08T22:28:07.266Z",
+      "endedAt": "2026-09-08T22:30:15.837Z",
+      "durationMs": 128571,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "startLine": 38,
+      "endLine": 42,
+      "startedAt": "2026-09-08T22:50:34.846Z",
+      "endedAt": "2026-09-08T22:53:25.698Z",
+      "durationMs": 170852,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-09T01:20:22.704Z",
+      "endedAt": "2026-09-09T01:24:54.969Z",
+      "durationMs": 272265,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "startLine": 16,
+      "endLine": 20,
+      "startedAt": "2026-09-09T03:02:33.043Z",
+      "endedAt": "2026-09-09T03:04:59.286Z",
+      "durationMs": 146243,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "startLine": 27,
+      "endLine": 31,
+      "startedAt": "2026-09-09T04:09:12.028Z",
+      "endedAt": "2026-09-09T04:10:34.568Z",
+      "durationMs": 82540,
+      "outcome": "context_validation.completed"
+    },
+    {
+      "contextId": "release-verification",
+      "startLine": 5,
+      "endLine": 9,
+      "startedAt": "2026-09-09T06:54:56.512Z",
+      "endedAt": "2026-09-09T06:57:07.928Z",
+      "durationMs": 131416,
+      "outcome": "context_validation.completed"
+    }
+  ],
+  "hungFlagChecks": [
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "a9799d82-bc59-494d-b600-63ae102e22fb",
+      "startedAt": "2026-09-07T18:48:01.289Z",
+      "envelopeEndAt": "2026-09-07T19:55:02.766Z",
+      "envelopeMs": 4021477,
+      "transcriptEntriesDuringEnvelope": 1530,
+      "firstTranscriptLine": 1,
+      "lastTranscriptLine": 1530,
+      "maxAdjacentTranscriptGapMsAndLines": [140770, 1279, 1280],
+      "tailAfterLastTranscriptMs": 76
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "3addf5d3-975c-4f15-8444-999f094b35bc",
+      "startedAt": "2026-09-07T23:52:50.143Z",
+      "envelopeEndAt": "2026-09-08T01:08:18.660Z",
+      "envelopeMs": 4528517,
+      "transcriptEntriesDuringEnvelope": 5065,
+      "firstTranscriptLine": 1,
+      "lastTranscriptLine": 5065,
+      "maxAdjacentTranscriptGapMsAndLines": [129863, 4208, 4209],
+      "tailAfterLastTranscriptMs": 284
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "conversationId": "acba21b8-6832-42c5-bacc-ae0748f9373f",
+      "startedAt": "2026-09-08T06:01:47.287Z",
+      "envelopeEndAt": "2026-09-08T07:04:15.261Z",
+      "envelopeMs": 3747974,
+      "transcriptEntriesDuringEnvelope": 3326,
+      "firstTranscriptLine": 1,
+      "lastTranscriptLine": 3326,
+      "maxAdjacentTranscriptGapMsAndLines": [65089, 2260, 2261],
+      "tailAfterLastTranscriptMs": 1070
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "00b1bac6-4735-4292-86c8-ad70de4fc8a4",
+      "startedAt": "2026-09-08T17:11:52.852Z",
+      "envelopeEndAt": "2026-09-08T18:17:32.759Z",
+      "envelopeMs": 3939907,
+      "transcriptEntriesDuringEnvelope": 2069,
+      "firstTranscriptLine": 1,
+      "lastTranscriptLine": 2069,
+      "maxAdjacentTranscriptGapMsAndLines": [1326325, 2068, 2069],
+      "tailAfterLastTranscriptMs": 210
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "4ba19c55-b549-4859-8c6d-b65d50d14871",
+      "startedAt": "2026-09-08T18:33:45.284Z",
+      "envelopeEndAt": "2026-09-08T19:39:12.510Z",
+      "envelopeMs": 3927226,
+      "transcriptEntriesDuringEnvelope": 2400,
+      "firstTranscriptLine": 1149,
+      "lastTranscriptLine": 3548,
+      "maxAdjacentTranscriptGapMsAndLines": [854639, 3465, 3466],
+      "tailAfterLastTranscriptMs": 902770
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "36719c9c-80c8-42c6-bfdf-71e689118a33",
+      "startedAt": "2026-09-09T01:24:56.476Z",
+      "envelopeEndAt": "2026-09-09T02:56:11.590Z",
+      "envelopeMs": 5475114,
+      "transcriptEntriesDuringEnvelope": 2502,
+      "firstTranscriptLine": 530,
+      "lastTranscriptLine": 3031,
+      "maxAdjacentTranscriptGapMsAndLines": [48111, 2861, 2862],
+      "tailAfterLastTranscriptMs": 74
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "76bf2273-f437-4562-90bb-f7baa9119c25",
+      "startedAt": "2026-09-09T03:05:00.825Z",
+      "envelopeEndAt": "2026-09-09T04:08:53.243Z",
+      "envelopeMs": 3832418,
+      "transcriptEntriesDuringEnvelope": 1148,
+      "firstTranscriptLine": 607,
+      "lastTranscriptLine": 1754,
+      "maxAdjacentTranscriptGapMsAndLines": [1673674, 1557, 1558],
+      "tailAfterLastTranscriptMs": 29604
+    },
+    {
+      "contextId": "release-verification",
+      "conversationId": "2a503470-4c47-4e8e-bc17-ba40525e279d",
+      "startedAt": "2026-09-09T04:10:37.117Z",
+      "envelopeEndAt": "2026-09-09T06:29:41.150Z",
+      "envelopeMs": 8344033,
+      "transcriptEntriesDuringEnvelope": 1099,
+      "firstTranscriptLine": 1,
+      "lastTranscriptLine": 1099,
+      "maxAdjacentTranscriptGapMsAndLines": [251553, 271, 272],
+      "tailAfterLastTranscriptMs": 299
+    }
+  ],
+  "rotations": {
+    "events": {
+      "implementer.rotation": 36,
+      "rotation.scheduled_mid_turn": 21,
+      "rotation.caused_follow_up_skip": 20,
+      "rotation.scheduled": 6,
+      "validator.rotation": 14
+    },
+    "applicationReasons": {
+      "no_prior_lane": 12,
+      "rotation_scheduled": 24
+    }
+  },
+  "publish": {
+    "commitSha": "563c86480859620048457dec7d089f866f9651a6",
+    "fileCount": 268,
+    "totalAdditions": 52592,
+    "totalDeletions": 1287,
+    "scratchFiles": []
+  },
+  "diffCategories": {
+    "documentation": {
+      "files": 7,
+      "additions": 533,
+      "deletions": 11
+    },
+    "other production/config": {
+      "files": 143,
+      "additions": 22041,
+      "deletions": 1221
+    },
+    "stories/fixtures/probes": {
+      "files": 13,
+      "additions": 2925,
+      "deletions": 0
+    },
+    "tests": {
+      "files": 105,
+      "additions": 27093,
+      "deletions": 55
+    }
+  },
+  "validatorInfrastructureErrors": [
+    {
+      "contextId": "checkpoint-history",
+      "line": 9,
+      "timestamp": "2026-09-08T10:07:20.990Z",
+      "reason": "exception",
+      "message": "Task stalled: no backend activity for 1200000ms"
+    },
+    {
+      "contextId": "checkpoint-history",
+      "line": 14,
+      "timestamp": "2026-09-08T10:29:04.314Z",
+      "reason": "exception",
+      "message": "Task stalled: no backend activity for 1200000ms"
+    }
+  ],
+  "limits": [
+    "USD covers reachable workflow conversations plus usage-bearing validator verdicts. Separately launched isolated provider probes and failed validator attempts without usage are not included.",
+    "Durations come from workflow event envelopes and include in-turn tool/validation waits; they are not CPU or model inference time.",
+    "Extractor hung flags are contradicted by primary transcript activity and explicit background waits.",
+    "Cost and tokens for Codex are estimates where adapters report estimates. Claude window metrics are computed only from measurable implementer completion records.",
+    "Issue appearances and tool error flags are not unique defects or avoidable waste."
+  ]
+}

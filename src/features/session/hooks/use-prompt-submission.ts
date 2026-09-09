@@ -74,6 +74,13 @@ export interface UsePromptSubmissionArgs {
   messagesLength: number;
   selectedModelSelection: BackendModelSelection;
   selectedBackend: AgentBackendId;
+  /**
+   * Checkpoint maintenance owns the conversation right now. The manager builds
+   * and retires a checkpoint without running an ordinary turn, so `status`
+   * stays idle while a direct prompt would be refused as busy — this is the
+   * only signal that routes the submission to the durable queue instead.
+   */
+  checkpointMaintenanceHold?: boolean;
   sendPrompt: (
     prompt: string,
     messageCount: number,
@@ -146,6 +153,7 @@ export function usePromptSubmission({
   messagesLength,
   selectedModelSelection,
   selectedBackend,
+  checkpointMaintenanceHold = false,
   sendPrompt,
   queueMessage,
   queueCapabilityForBackend = defaultQueueCapabilityForBackend,
@@ -262,7 +270,9 @@ export function usePromptSubmission({
     // would dispatch a direct prompt into the busy conversation and 409.
     const turnActive =
       sending ||
-      conversations?.find((c) => c.id === conversationId)?.status === "running";
+      conversations?.find((c) => c.id === conversationId)?.status ===
+        "running" ||
+      checkpointMaintenanceHold;
 
     // Queue into running conversation instead of starting a new prompt
     if (turnActive && conversationId) {
@@ -323,6 +333,7 @@ export function usePromptSubmission({
     projectName,
     sessionName,
     conversations,
+    checkpointMaintenanceHold,
     dispatchPrompt,
     suppressPendingPromptAutosaveAfterSubmit,
     enqueuePromptErrorToast,

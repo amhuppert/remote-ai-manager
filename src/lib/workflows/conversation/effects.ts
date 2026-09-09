@@ -94,13 +94,19 @@ export interface ConversationDurableEffects {
     error: string;
   }): Promise<void>;
 
-  markQueuedDelivered(input: {
+  /**
+   * Release the rows this attempt delivered once the backend accepted the
+   * input: rows still claimed, and rows the same attempt's own settlement
+   * already held for review while a required receipt was being repaired.
+   * Returns the number released.
+   */
+  confirmQueuedDelivery(input: {
     projectPath: string;
     sessionName: string;
     conversationId: string;
     ids: string[];
     deliveryAttemptId: string;
-  }): Promise<void>;
+  }): Promise<number>;
 
   markQueuedPending(input: {
     projectPath: string;
@@ -124,7 +130,7 @@ export interface ConversationDurableEffects {
 export const ephemeralConversationEffects = {
   mutateConversation: async () => {},
   createReferenceDocument: async () => ({}),
-  markQueuedDelivered: async () => {},
+  confirmQueuedDelivery: async () => 0,
   markQueuedPending: async () => {},
   markQueuedFailed: async () => {},
   markQueuedUncertain: async () => {},

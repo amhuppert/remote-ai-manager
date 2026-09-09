@@ -1873,3 +1873,38 @@ describe("GraphWorkflowPanel lane canvas assembly", () => {
     );
   });
 });
+
+it("does not attribute an inspector save refusal to a previously edited node", async () => {
+  const client = createTestQueryClient();
+  const execution = createWorkflowExecution({ status: "paused" });
+  const panel = (error: string | null = null) => (
+    <QueryClientProvider client={client}>
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        {...noopCallbacks}
+        configEditError={error}
+      />
+    </QueryClientProvider>
+  );
+  const view = render(panel());
+  const plan = screen
+    .getAllByTestId("context-node")
+    .find((node) => node.textContent?.startsWith("Plan"))!;
+  fireEvent.keyDown(within(plan).getByLabelText("Implementer level"), {
+    key: "Enter",
+  });
+  fireEvent.click(screen.getByRole("option", { name: "Low" }));
+  fireEvent.click(screen.getByText("Implement").closest(".react-flow__node")!);
+  await userEvent.click(screen.getByRole("tab", { name: "Config" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: /Execution policy/ }),
+  );
+  fireEvent.change(screen.getByLabelText("Max iterations"), {
+    target: { value: "7" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  view.rerender(panel("Inspector edit refused"));
+  expect(plan.querySelector("[role=alert]")).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent("Inspector edit refused");
+});

@@ -1,3 +1,4 @@
+import { toAuthoredAssignment } from "@/lib/workflow-graph/authored-assignment";
 import { lintOutputSchemaText } from "@/components/workflow-config/OutputSchemaField";
 import type { ConfigPath } from "@/components/workflow-config-panel/config-cascade";
 import type { ConfigTier } from "@/components/workflow-config-panel/types";
@@ -65,22 +66,6 @@ export function serializeOutputSchemaText(
   schema: Record<string, unknown> | null | undefined,
 ): string {
   return schema ? JSON.stringify(schema, null, 2) : "";
-}
-
-/**
- * Drop the execution-seeded profile snapshot, leaving the authored assignment.
- *
- * The panel reads a WORKING definition, whose assignments carry the bytes the
- * run was seeded with, but it writes an `update-context` op, whose schema is
- * reference-bearing and strict. Echoing the snapshot back would be refused at
- * accept time — and would also be wrong: an edit names a profile, and the
- * live-edit boundary resolves it.
- */
-export function toAuthoredAssignment<T extends { profileSnapshot?: unknown }>(
-  assignment: T,
-): Omit<T, "profileSnapshot"> {
-  const { profileSnapshot: _seeded, ...authored } = assignment;
-  return authored;
 }
 
 /**

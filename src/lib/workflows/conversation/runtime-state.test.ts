@@ -27,6 +27,7 @@ describe("conversation runtime-state", () => {
       const state: ConversationRuntimeState = {
         managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
+        queueDrains: new Set(),
       };
       registerConversationRuntime(key, state);
       expect(getConversationRuntime(key)).toBe(state);

@@ -166,7 +166,7 @@ describe("contextNodeCrew", () => {
       backend: "claude",
       // The catalog's canonical long name, never the short selector id.
       modelLabel: "Opus 5",
-      parametersLabel: "effort=high",
+      parametersLabel: "high",
     });
     expect(crew.implementer?.modelLabel).not.toBe("opus");
   });
@@ -193,7 +193,7 @@ describe("contextNodeCrew", () => {
     );
 
     expect(crew.implementer?.parametersLabel).toBe(
-      "context=max, effort=high, thinking=enabled",
+      "context max, high, thinking enabled",
     );
   });
 
@@ -206,14 +206,14 @@ describe("contextNodeCrew", () => {
         authority: "blocking",
         backend: "claude",
         modelLabel: "Sonnet",
-        parametersLabel: "effort=high",
+        parametersLabel: "high",
       },
       {
         seatId: "style",
         authority: "advisory",
         backend: "codex",
         modelLabel: "GPT-5.6 Luna",
-        parametersLabel: "effort=medium",
+        parametersLabel: "medium",
       },
     ]);
   });
@@ -242,7 +242,7 @@ describe("contextNodeAriaLabel", () => {
 
   it("names status, lane, grade, paths, tasks and the implementer", () => {
     expect(contextNodeAriaLabel(base)).toBe(
-      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 effort=high, inherited",
+      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 high, inherited",
     );
   });
 
@@ -264,7 +264,7 @@ describe("contextNodeAriaLabel", () => {
     });
 
     expect(label).toBe(
-      "Implement checkout — Running, lane delivery, owning, implementer Opus 5 effort=high, inherited",
+      "Implement checkout — Running, lane delivery, owning, implementer Opus 5 high, inherited",
     );
   });
 });

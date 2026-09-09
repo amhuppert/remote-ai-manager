@@ -7,11 +7,16 @@ import {
   renderOptionsSchema,
   renderedTranscriptSchema,
   renderCompactTranscript,
+  renderCompleteEntryLines,
   renderedTranscriptToMarkdown,
   groupTranscriptEntries,
   segmentTranscript,
   type RenderOptions,
 } from "./transcript-render";
+import {
+  EMPTY_TRANSCRIPT_BOUNDARIES,
+  type CheckpointBoundaryInput,
+} from "./history-recovery";
 import type { MessageContentBlock } from "./schemas";
 import {
   readTranscriptEntriesWithSeq,
@@ -44,6 +49,10 @@ function text(value: string): MessageContentBlock {
   return { type: "text", text: value };
 }
 
+function thinking(value: string): MessageContentBlock {
+  return { type: "thinking", text: value };
+}
+
 function options(
   overrides: z.input<typeof renderOptionsSchema> = {},
 ): RenderOptions {
@@ -53,6 +62,7 @@ function options(
 function render(
   entries: TranscriptEntryWithSeq[],
   overrides: z.input<typeof renderOptionsSchema> = {},
+  boundaries?: CheckpointBoundaryInput[],
 ) {
   const last = entries[entries.length - 1];
   return renderCompactTranscript(
@@ -60,6 +70,7 @@ function render(
       conversationId: "conv-render",
       entries,
       maxSeq: last ? last.seq : -1,
+      ...(boundaries === undefined ? {} : { boundaries }),
     },
     options(overrides),
   );
@@ -695,6 +706,14 @@ describe("renderCompactTranscript empty input", () => {
         toolResultBytesElided: 0,
         unitsOutsideWindow: 0,
       },
+      boundaries: EMPTY_TRANSCRIPT_BOUNDARIES,
+      truncation: {
+        omittedAfter: null,
+        partialEntry: null,
+        excerptedEntries: [],
+        excerptedEntriesOmitted: 0,
+        excerptedEntriesNext: null,
+      },
     });
   });
 });
@@ -997,5 +1016,520 @@ describe("segmentTranscript", () => {
     expect(
       segment(alternatingUnits(1000), 1000, { seqRange: [99, 100] }),
     ).toEqual([]);
+  });
+});
+
+// ==========================================================================
+// Checkpoint boundary projection (metadata only — never a frame)
+// ==========================================================================
+
+describe("renderCompactTranscript checkpoint boundaries", () => {
+  const conversation = [
+    entry(0, "user", [text("a")]),
+    entry(1, "assistant", [text("b")]),
+    entry(2, "user", [text("c")]),
+  ];
+
+  it("projects a saved boundary without adding a message or a line", () => {
+    const plain = render(conversation);
+    const withBoundary = render(conversation, {}, [
+      { operationId: "op-1", ordinal: 1, capturedThroughSeq: 1 },
+    ]);
+
+    expect(withBoundary.totalMessages).toBe(plain.totalMessages);
+    expect(withBoundary.units).toEqual(plain.units);
+    expect(withBoundary.boundaries.entries).toEqual([
+      {
+        operationId: "op-1",
+        ordinal: 1,
+        capturedThroughSeq: 1,
+        afterMessageIndex: 1,
+        nextSeq: 2,
+      },
+    ]);
+  });
+
+  it("keeps three repeated checkpoints in ordinal order", () => {
+    const rendered = render(
+      [
+        ...conversation,
+        entry(3, "assistant", [text("d")]),
+        entry(4, "user", [text("e")]),
+      ],
+      {},
+      [
+        { operationId: "op-1", ordinal: 1, capturedThroughSeq: 0 },
+        { operationId: "op-2", ordinal: 2, capturedThroughSeq: 2 },
+        { operationId: "op-3", ordinal: 3, capturedThroughSeq: 3 },
+      ],
+    );
+    expect(rendered.totalMessages).toBe(5);
+    expect(
+      rendered.boundaries.entries.map((b) => [b.ordinal, b.nextSeq]),
+    ).toEqual([
+      [1, 1],
+      [2, 3],
+      [3, 4],
+    ]);
+  });
+
+  it("omits boundaries outside the selected seq window", () => {
+    const rendered = render(conversation, { seqRange: [2, 2] }, [
+      { operationId: "op-1", ordinal: 1, capturedThroughSeq: 0 },
+      { operationId: "op-2", ordinal: 2, capturedThroughSeq: 2 },
+    ]);
+    expect(rendered.boundaries.entries.map((b) => b.ordinal)).toEqual([2]);
+    expect(rendered.boundaries.totalInRange).toBe(1);
+  });
+
+  it("reports no boundaries when the caller supplies none", () => {
+    expect(render(conversation).boundaries).toEqual(
+      EMPTY_TRANSCRIPT_BOUNDARIES,
+    );
+  });
+});
+
+// ==========================================================================
+// Truncation metadata: omitted later entries vs a partially displayed one
+// ==========================================================================
+
+describe("renderCompactTranscript truncation metadata", () => {
+  it("reports nothing lost when the whole window fits", () => {
+    expect(render([entry(0, "user", [text("hi")])]).truncation).toEqual({
+      omittedAfter: null,
+      partialEntry: null,
+      excerptedEntries: [],
+      excerptedEntriesOmitted: 0,
+      excerptedEntriesNext: null,
+    });
+  });
+
+  it("names the next omitted raw sequence and a range-read command", () => {
+    const result = render(
+      [
+        entry(0, "user", [text("short")]),
+        entry(1, "assistant", [text("x".repeat(200))]),
+      ],
+      { maxBytes: 30 },
+    );
+    expect(result.truncation.omittedAfter).toEqual({
+      nextSeq: 1,
+      lastSeq: 1,
+      unitCount: 1,
+      command: "cctl conversation read conv-render --seq-range 1:1",
+    });
+    expect(result.truncation.partialEntry).toBeNull();
+  });
+
+  it("names the partially displayed entry and its complete-entry command", () => {
+    const result = render(
+      [
+        entry(0, "user", [text("short")]),
+        entry(1, "assistant", [text(`line one\n${"x".repeat(300)}`)]),
+      ],
+      { maxBytes: 40 },
+    );
+    expect(result.truncation.partialEntry).toEqual({
+      seq: 1,
+      messageIndex: 1,
+      elidedBytes: 306,
+      command: "cctl conversation entry get conv-render 1",
+    });
+    // Nothing follows the cut entry, so there is no omitted range to read.
+    expect(result.truncation.omittedAfter).toBeNull();
+  });
+
+  it("distinguishes the cut entry from the entries never reached", () => {
+    const result = render(
+      [
+        entry(0, "user", [text("short")]),
+        entry(1, "assistant", [text(`line one\n${"x".repeat(300)}`)]),
+        entry(2, "user", [text("u2")]),
+        entry(3, "assistant", [text("a3")]),
+      ],
+      { maxBytes: 40 },
+    );
+    expect(result.truncation.partialEntry?.seq).toBe(1);
+    expect(result.truncation.omittedAfter).toEqual({
+      nextSeq: 2,
+      lastSeq: 3,
+      unitCount: 2,
+      command: "cctl conversation read conv-render --seq-range 2:3",
+    });
+  });
+
+  it("names each excerpted tool result with its own recovery command", () => {
+    const result = render([
+      entry(0, "user", [text("go")]),
+      entry(1, "assistant", [
+        { type: "tool_result", tool_use_id: "t", content: "z".repeat(1000) },
+      ]),
+    ]);
+    expect(result.truncation.excerptedEntries).toEqual([
+      {
+        seq: 1,
+        messageIndex: 1,
+        elidedBytes: 400,
+        command: "cctl conversation entry get conv-render 1",
+      },
+    ]);
+    expect(result.truncation.excerptedEntriesOmitted).toBe(0);
+    // An excerpt is not a truncated read: the window itself was complete.
+    expect(result.truncation.omittedAfter).toBeNull();
+  });
+
+  it("caps the excerpted-entry index and counts the rest", () => {
+    const entries = [entry(0, "user", [text("go")])];
+    for (let seq = 1; seq <= 10; seq += 1) {
+      entries.push(
+        entry(seq, "assistant", [
+          {
+            type: "tool_result",
+            tool_use_id: `t${seq}`,
+            content: "z".repeat(1000),
+          },
+        ]),
+      );
+    }
+    const result = render(entries);
+    expect(result.truncation.excerptedEntries).toHaveLength(8);
+    expect(result.truncation.excerptedEntriesOmitted).toBe(2);
+  });
+
+  it("returns full tool content instead of an excerpt at includeTools=full", () => {
+    const result = render(
+      [
+        entry(0, "user", [text("go")]),
+        entry(1, "assistant", [
+          { type: "tool_result", tool_use_id: "t", content: "z".repeat(1000) },
+        ]),
+      ],
+      { includeTools: "full" },
+    );
+    expect(result.truncation.excerptedEntries).toEqual([]);
+  });
+
+  it("names the seq range holding the excerpted entries past the cap", () => {
+    const entries = [entry(0, "user", [text("go")])];
+    for (let seq = 1; seq <= 10; seq += 1) {
+      entries.push(
+        entry(seq, "assistant", [
+          {
+            type: "tool_result",
+            tool_use_id: `t${seq}`,
+            content: "z".repeat(1000),
+          },
+        ]),
+      );
+    }
+    const result = render(entries);
+    expect(result.truncation.excerptedEntriesOmitted).toBe(2);
+    // The cap drops coordinates, so the reader hands back the window that
+    // still holds them rather than losing them silently.
+    expect(result.truncation.excerptedEntriesNext).toEqual({
+      nextSeq: 9,
+      lastSeq: 10,
+      command: "cctl conversation read conv-render --seq-range 9:10",
+    });
+  });
+});
+
+// ==========================================================================
+// Every shortened kind, not just tool results, is recoverable
+// ==========================================================================
+
+describe("renderCompactTranscript excerpt accounting across block kinds", () => {
+  const longNote = "n".repeat(600);
+
+  it("names an entry whose requested thinking was shortened, keeping the opt-in", () => {
+    const result = render(
+      [entry(0, "assistant", [thinking("t".repeat(900))])],
+      {
+        includeThinking: true,
+      },
+    );
+    expect(result.truncation.excerptedEntries).toEqual([
+      {
+        seq: 0,
+        messageIndex: 0,
+        // 900 recorded characters against the 500 the excerpt kept.
+        elidedBytes: 400,
+        command: "cctl conversation entry get conv-render 0 --include-thinking",
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      "thinking",
+      [thinking("t".repeat(501))],
+      { includeThinking: true },
+      "cctl conversation entry get conv-render 0 --include-thinking",
+    ],
+    [
+      "an outline headline",
+      [text("z".repeat(121))],
+      { outline: true },
+      "cctl conversation entry get conv-render 0",
+    ],
+    [
+      "a feedback note",
+      [
+        {
+          type: "document_feedback" as const,
+          items: [
+            {
+              docPath: "docs/a.md",
+              path: "docs/a.md",
+              line: 3,
+              headingLabel: "H",
+              quote: "q",
+              note: "n".repeat(201),
+            },
+          ],
+        },
+      ],
+      {},
+      "cctl conversation entry get conv-render 0",
+    ],
+  ])(
+    "reports %s shortened by a single character, ellipsis notwithstanding",
+    (_kind, content, overrides, command) => {
+      // The replacement ellipsis is three UTF-8 bytes, so a one-character
+      // loss must not be measured against the marker's size.
+      const result = render(
+        [entry(0, "assistant", content as MessageContentBlock[])],
+        overrides,
+      );
+      expect(result.truncation.excerptedEntries).toEqual([
+        { seq: 0, messageIndex: 0, elidedBytes: 1, command },
+      ]);
+    },
+  );
+
+  it("keeps the reader's tool level out of an entry-export command", () => {
+    const excerpted = render(
+      [entry(0, "assistant", [thinking("t".repeat(900))])],
+      { includeThinking: true, includeTools: "none" },
+    );
+    expect(excerpted.truncation.excerptedEntries[0]?.command).toBe(
+      "cctl conversation entry get conv-render 0 --include-thinking",
+    );
+
+    const entries = [
+      entry(0, "user", [text("go")]),
+      entry(1, "assistant", [text("aaa\nbbb")]),
+    ];
+    const full = render(entries, { includeTools: "full" });
+    const firstUnitBytes = (full.units[0]?.lines ?? []).reduce(
+      (sum, line) => sum + Buffer.byteLength(line, "utf-8") + 1,
+      0,
+    );
+    const cut = render(entries, {
+      includeTools: "full",
+      maxBytes: firstUnitBytes + Buffer.byteLength("[s1] aaa", "utf-8") + 1,
+    });
+    expect(cut.truncation.partialEntry?.command).toBe(
+      "cctl conversation entry get conv-render 1",
+    );
+  });
+
+  it.each([
+    [
+      "tool input gist",
+      [
+        {
+          type: "tool_use" as const,
+          id: "u1",
+          name: "Bash",
+          input: { command: "echo ".repeat(90) },
+        },
+      ],
+      {},
+    ],
+    [
+      "debug payload",
+      [
+        {
+          type: "debug_structured" as const,
+          phase: "hypothesizing",
+          payload: { note: longNote },
+        },
+      ],
+      {},
+    ],
+    [
+      "document feedback note",
+      [
+        {
+          type: "document_feedback" as const,
+          items: [
+            {
+              docPath: "docs/a.md",
+              path: "docs/a.md",
+              line: 3,
+              headingLabel: "H",
+              quote: "q",
+              note: longNote,
+            },
+          ],
+        },
+      ],
+      {},
+    ],
+    [
+      "notepad feedback body",
+      [
+        {
+          type: "notepad_feedback" as const,
+          notepadId: "np-1",
+          notepadName: "Notes",
+          notepadRefXml: '<notepad-ref id="np-1" />',
+          items: [
+            { commentId: "c1", location: "L3", quote: "q", body: longNote },
+          ],
+        },
+      ],
+      {},
+    ],
+    [
+      "outline headline",
+      [text(`first line\n${"y".repeat(500)}`)],
+      { outline: true },
+    ],
+  ])("names an entry shortened by a %s", (_kind, content, overrides) => {
+    const result = render(
+      [entry(0, "assistant", content as MessageContentBlock[])],
+      overrides,
+    );
+    expect(result.truncation.excerptedEntries).toHaveLength(1);
+    const [reported] = result.truncation.excerptedEntries;
+    expect(reported?.seq).toBe(0);
+    expect(reported?.elidedBytes).toBeGreaterThan(0);
+    expect(reported?.command).toBe("cctl conversation entry get conv-render 0");
+  });
+
+  it("reports no excerpt when nothing was shortened", () => {
+    const result = render([entry(0, "assistant", [text("short enough")])]);
+    expect(result.truncation.excerptedEntries).toEqual([]);
+  });
+});
+
+// ==========================================================================
+// Byte-budget cuts attribute loss to the entry that actually lost it
+// ==========================================================================
+
+describe("renderCompactTranscript byte-budget attribution", () => {
+  /** Rendered cost of the lines one entry contributed, as the render counts it. */
+  function entryBytes(
+    rendered: ReturnType<typeof render>,
+    seq: number,
+  ): number {
+    return rendered.units
+      .flatMap((unit) => unit.lines)
+      .filter((line) => line.startsWith(`[s${seq}] `))
+      .reduce((sum, line) => sum + Buffer.byteLength(line, "utf-8") + 1, 0);
+  }
+
+  it("reports no partial entry when the cut falls between two entries", () => {
+    const entries = [
+      entry(0, "user", [text("go")]),
+      entry(1, "assistant", [text("aaa")]),
+      entry(2, "assistant", [text("bbb")]),
+    ];
+    const full = render(entries);
+    const result = render(entries, {
+      maxBytes: entryBytes(full, 0) + entryBytes(full, 1),
+    });
+    // Entry 1 is displayed complete: it is not partial, it is the last one read.
+    expect(result.truncation.partialEntry).toBeNull();
+    expect(result.truncation.omittedAfter).toEqual({
+      nextSeq: 2,
+      lastSeq: 2,
+      unitCount: 0,
+      command: "cctl conversation read conv-render --seq-range 2:2",
+    });
+  });
+
+  it("attributes only its own lost lines to the partially displayed entry", () => {
+    const entries = [
+      entry(0, "user", [text("go")]),
+      entry(1, "assistant", [text("aaa\nbbb")]),
+      entry(2, "assistant", [text("ccc")]),
+    ];
+    const full = render(entries);
+    const firstLineBytes = Buffer.byteLength("[s1] aaa", "utf-8") + 1;
+    const result = render(entries, {
+      maxBytes: entryBytes(full, 0) + firstLineBytes,
+    });
+    expect(result.truncation.partialEntry).toEqual({
+      seq: 1,
+      messageIndex: 1,
+      // Entry 2's bytes belong to the omitted range, not to this entry.
+      elidedBytes: entryBytes(full, 1) - firstLineBytes,
+      command: "cctl conversation entry get conv-render 1",
+    });
+    expect(result.truncation.omittedAfter?.nextSeq).toBe(2);
+  });
+
+  it("keeps the excerpt command of an entry inside the truncated unit", () => {
+    const entries = [
+      entry(0, "user", [text("go")]),
+      entry(1, "assistant", [
+        { type: "tool_result", tool_use_id: "t", content: "z".repeat(1000) },
+      ]),
+      entry(2, "assistant", [text("x".repeat(400))]),
+    ];
+    const full = render(entries);
+    const result = render(entries, {
+      maxBytes: entryBytes(full, 0) + entryBytes(full, 1),
+    });
+    expect(result.truncated).toBe(true);
+    // The budget stopped before entry 2, but entry 1 was still SUMMARIZED —
+    // that loss needs its own command, which the cut must not discard.
+    expect(result.truncation.excerptedEntries).toEqual([
+      {
+        seq: 1,
+        messageIndex: 1,
+        elidedBytes: 400,
+        command: "cctl conversation entry get conv-render 1",
+      },
+    ]);
+  });
+});
+
+// ==========================================================================
+// Complete-entry export: a manageable entry must not be lost to a line count
+// ==========================================================================
+
+describe("renderCompleteEntryLines", () => {
+  /** Past every engine's spread-argument limit, far under any byte bound. */
+  const ENORMOUS_LINE_COUNT = 1_200_000;
+
+  it("exports an entry with more lines than a spread call can carry", () => {
+    const content = "abc\n".repeat(ENORMOUS_LINE_COUNT);
+    const { lines } = renderCompleteEntryLines(
+      [{ type: "tool_result", tool_use_id: "t", content }],
+      { includeThinking: false },
+    );
+    // Header, every content line, and the empty line the trailing newline
+    // leaves behind — the whole entry, not a RangeError.
+    expect(lines).toHaveLength(ENORMOUS_LINE_COUNT + 2);
+    expect(lines[0]).toBe("→ ok");
+    expect(lines[1]).toBe("abc");
+    expect(lines[ENORMOUS_LINE_COUNT]).toBe("abc");
+  });
+
+  it("exports enormous requested thinking and text the same way", () => {
+    const { lines } = renderCompleteEntryLines(
+      [
+        { type: "thinking", text: "t\n".repeat(ENORMOUS_LINE_COUNT) },
+        { type: "text", text: "x\n".repeat(ENORMOUS_LINE_COUNT) },
+      ],
+      { includeThinking: true },
+    );
+    // "🧠 thinking:" + thinking lines + trailing empty, then the text lines.
+    expect(lines).toHaveLength(2 * (ENORMOUS_LINE_COUNT + 1) + 1);
+    expect(lines[0]).toBe("🧠 thinking:");
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
+import { checkpointPayloadSchema } from "@/lib/conversation-checkpoints/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { memoryNoteSchema } from "@/lib/memory/schemas";
 import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
@@ -409,6 +410,22 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: single model-generated envelope, rewritten whole per compaction run; ungraduated fields only, capped by the same output guards.",
       "extras.*":
         "tracked: opaque ungraduated envelope field values (z.unknown), capped by the same generation output guards as the typed fields; unschema'd until a field graduates to a typed top-level field.",
+    },
+  },
+  {
+    label: "conversation_checkpoints sections_json + omissions_json",
+    schema: checkpointPayloadSchema,
+    discharges: {
+      "sections.workingState":
+        "tracked: the seed builder owns the structured section shapes and validates them before offering a payload; storage stores the bytes it validated and the BEFORE UPDATE trigger forbids appending to them.",
+      "sections.recentDialogue":
+        "tracked: the seed builder owns the structured section shapes and validates them before offering a payload; storage stores the bytes it validated and the BEFORE UPDATE trigger forbids appending to them.",
+      "sections.recoveryMap":
+        "tracked: the seed builder owns the structured section shapes and validates them before offering a payload; storage stores the bytes it validated and the BEFORE UPDATE trigger forbids appending to them.",
+      "omissions.**":
+        "bounded: one immutable payload inserted once per operation, recording what a single bounded build dropped; the payload has no update API and the BEFORE UPDATE trigger aborts any write, so the list cannot grow after the freeze.",
+      "modelSelection.parameters":
+        "bounded: one backend's declared model parameters for a single resolved selection, keyed by the registered parameter ids that backend exposes; a selection carries at most one value per parameter.",
     },
   },
   {

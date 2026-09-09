@@ -12,6 +12,7 @@ import {
   conversationRuntimeKey,
 } from "../runtime-state";
 import type { Logger } from "@/lib/logging";
+import type { CheckpointDeliveryDependencies } from "../pre-turn/checkpoint-seed";
 /**
  * Actor dependency fixture for tests that drive the REAL conversation actor
  * implementations (`runTaskRunTurnForMachine`, `executePromptForMachine`).
@@ -127,6 +128,7 @@ export function createActorDependenciesFixture(
       contextWindowMetrics: true,
       nativeMidTurnAskUser: true,
       externalTurns: true,
+      checkpoint: false,
       capabilityKinds: [
         { kind: "skills" as const, applyTiming: "idle_live" as const },
         { kind: "plugins" as const, applyTiming: "idle_live" as const },
@@ -207,10 +209,31 @@ export function createActorDependenciesFixture(
         throw new Error("Fixture task runner is not configured");
       },
     }),
-    markQueuedDelivered: vi.fn(async () => {}),
+    confirmQueuedDelivery: vi.fn(async () => 0),
     markQueuedPending: vi.fn(async () => {}),
     markQueuedFailed: vi.fn(async () => {}),
     markQueuedUncertain: vi.fn(async () => {}),
+    // Inert like every other seam: reads answer "no checkpoint" so ordinary
+    // and fork turns run unchanged; only a delivery's writes need a real one.
+    checkpoint: {
+      async repo() {
+        const unavailable = async () => {
+          throw new Error("Fixture has no checkpoint repository");
+        };
+        return {
+          getPayload: async () => null,
+          getOperation: async () => null,
+          getStateForAdmission: async () => ({
+            active: null,
+            latestAccepted: null,
+          }),
+          beginDelivery: unavailable,
+          recordAcceptance: unavailable,
+          recordOutcome: unavailable,
+        };
+      },
+      now: () => new Date().toISOString(),
+    },
     log: createCapturingLogger(),
     ...overrides,
   } satisfies ActorFixtureDependencies;
@@ -224,7 +247,10 @@ export type ActorFixtureDependencies = Omit<
   Omit<ConversationActorDependencies["context"], "getRuntime"> &
   Omit<ConversationActorDependencies["transcript"], "getRuntime"> &
   Omit<ConversationActorDependencies["policy"], "state"> &
-  Omit<ConversationActorDependencies["debug"], "getRuntime"> & { log: Logger };
+  Omit<ConversationActorDependencies["debug"], "getRuntime"> & {
+    checkpoint: CheckpointDeliveryDependencies;
+    log: Logger;
+  };
 
 export function groupActorFixtureDependencies(
   deps: ActorFixtureDependencies,
@@ -262,7 +288,7 @@ export function groupActorFixtureDependencies(
       releaseWorkflowResults: deps.releaseWorkflowResults,
       createReferenceDocument: deps.createReferenceDocument,
       markQueuedUncertain: deps.markQueuedUncertain,
-      markQueuedDelivered: deps.markQueuedDelivered,
+      confirmQueuedDelivery: deps.confirmQueuedDelivery,
       markQueuedPending: deps.markQueuedPending,
       markQueuedFailed: deps.markQueuedFailed,
     },
@@ -303,6 +329,7 @@ export function groupActorFixtureDependencies(
     debug: {
       getDebugLogUrl: deps.getDebugLogUrl,
     },
+    checkpoint: deps.checkpoint,
     log: deps.log,
   };
 }

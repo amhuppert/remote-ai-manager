@@ -39,6 +39,7 @@ import {
   claimLiveDeliveryTransform,
   claimNextTurnBatchTransform,
   coalesceContent,
+  confirmDeliveryTransform,
   contentToText,
   createMessageQueueService,
   createPendingEntry,
@@ -1588,4 +1589,98 @@ it("does not let a concurrent drain overtake an outstanding delivery", () => {
   expect(first.claimed.map((row) => row.id)).toEqual(["first"]);
   expect(second.claimed).toEqual([]);
   expect(second.queue).toEqual(first.queue);
+});
+
+describe("confirmDeliveryTransform", () => {
+  function heldRow(
+    id: string,
+    attemptId: string,
+    status: "delivering" | "uncertain",
+  ): PendingQueuedMessage {
+    return makeEntry({
+      id,
+      status,
+      deliveryAttemptId: attemptId,
+      deliveryStartedAt: NOW,
+      attemptCount: 1,
+      error: status === "uncertain" ? "review" : null,
+    });
+  }
+
+  it("releases delivering and uncertain rows of the confirmed attempt and leaves every other row alone", () => {
+    const queue: PendingQueuedMessage[] = [
+      heldRow("m1", "attempt-A", "delivering"),
+      heldRow("m2", "attempt-A", "uncertain"),
+      heldRow("m3", "attempt-B", "uncertain"),
+      makeEntry({ id: "m4", status: "pending" }),
+    ];
+    const { queue: next, affected } = confirmDeliveryTransform(
+      queue,
+      ["m1", "m2", "m3", "m4"],
+      "attempt-A",
+      NOW,
+    );
+    expect(affected.map((e) => [e.id, e.status, e.error])).toEqual([
+      ["m1", "delivered", null],
+      ["m2", "delivered", null],
+    ]);
+    expect(next.map((e) => e.id)).toEqual(["m3", "m4"]);
+    expect(queue.map((e) => e.status)).toEqual([
+      "delivering",
+      "uncertain",
+      "uncertain",
+      "pending",
+    ]);
+  });
+
+  it("confirms nothing for rows the attempt never claimed", () => {
+    const { queue: next, affected } = confirmDeliveryTransform(
+      [heldRow("m1", "attempt-B", "uncertain")],
+      ["m1"],
+      "attempt-A",
+      NOW,
+    );
+    expect(affected).toEqual([]);
+    expect(next.map((e) => [e.id, e.status])).toEqual([["m1", "uncertain"]]);
+  });
+});
+
+describe("messageQueueService.confirmDelivery", () => {
+  it("releases an uncertain row under its attempt, broadcasts it, and reports the count", async () => {
+    const store: FakeStore = {
+      conversation: conversationWith([
+        makeEntry({
+          id: "u1",
+          status: "uncertain",
+          deliveryAttemptId: "attempt-A",
+          deliveryStartedAt: NOW,
+          attemptCount: 1,
+          error: "review",
+        }),
+      ]),
+    };
+    const { deps, broadcasts } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+
+    expect(
+      await service.confirmDelivery({
+        ...KEY,
+        ids: ["u1"],
+        deliveryAttemptId: "WRONG",
+      }),
+    ).toBe(0);
+    expect(store.conversation?.pendingQueue[0]?.status).toBe("uncertain");
+
+    expect(
+      await service.confirmDelivery({
+        ...KEY,
+        ids: ["u1"],
+        deliveryAttemptId: "attempt-A",
+      }),
+    ).toBe(1);
+    expect(store.conversation?.pendingQueue).toEqual([]);
+    expect(
+      broadcasts.filter((e) => e.type === "message-queue-updated"),
+    ).toHaveLength(1);
+  });
 });

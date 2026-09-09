@@ -566,9 +566,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    const planNode = (await screen.findByText("Plan")).closest(
-      ".react-flow__node",
-    );
+    const planNode = await screen.findByTestId("rf__node-context-plan");
     expect(planNode).not.toBeNull();
     fireEvent.click(planNode as HTMLElement);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
@@ -666,9 +664,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    const planNode = (await screen.findByText("Plan")).closest(
-      ".react-flow__node",
-    );
+    const planNode = await screen.findByTestId("rf__node-context-plan");
     expect(planNode).not.toBeNull();
     fireEvent.click(planNode as HTMLElement);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
@@ -762,9 +758,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    const planNode = (await screen.findByText("Plan")).closest(
-      ".react-flow__node",
-    );
+    const planNode = await screen.findByTestId("rf__node-context-plan");
     expect(planNode).not.toBeNull();
     fireEvent.click(planNode as HTMLElement);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
@@ -910,9 +904,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    const planNode = (await screen.findByText("Plan")).closest(
-      ".react-flow__node",
-    );
+    const planNode = await screen.findByTestId("rf__node-context-plan");
     expect(planNode).not.toBeNull();
     fireEvent.click(planNode as HTMLElement);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
@@ -931,10 +923,8 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
     });
     // Replacing the run's record clears the canvas selection, so the context is
     // opened again to read what its History says now.
-    const settledNode = (await screen.findByText("Plan")).closest(
-      ".react-flow__node",
-    );
-    fireEvent.click(settledNode as HTMLElement);
+    const settledNode = await screen.findByTestId("rf__node-context-plan");
+    fireEvent.click(settledNode);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
 
     await waitFor(() => {
@@ -1060,9 +1050,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    const planNode = (await screen.findByText("Plan")).closest(
-      ".react-flow__node",
-    );
+    const planNode = await screen.findByTestId("rf__node-context-plan");
     fireEvent.click(planNode as HTMLElement);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
     await waitFor(() => {
@@ -1080,11 +1068,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
 
     // Replacing the run's record clears the canvas selection, so the context is
     // opened again to read what its History says now.
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
     await waitFor(() => {
       expect(screen.getByTestId("history-evidence-pending")).toHaveTextContent(
@@ -1202,11 +1186,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
     await waitFor(() => {
       expect(screen.getByText(/round 1/)).toBeVisible();
@@ -1218,11 +1198,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
         afterReset,
       );
     });
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
 
     await act(async () => {
@@ -1349,11 +1325,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
 
     expect(screen.getByTestId("history-evidence-pending")).toHaveTextContent(
@@ -1490,11 +1462,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
     // The two reads agree so far, so the log is described.
     await waitFor(() => {
@@ -1661,11 +1629,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </Profiler>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
     // The two reads agree so far, so the round is on screen — without this the
     // test could pass on a panel that never renders a round at all.
@@ -1795,11 +1759,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
 
     await waitFor(() => {
@@ -1923,11 +1883,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
 
     // The appended page arrives and the walk is finished, which is the moment
@@ -2040,11 +1996,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
 
     await waitFor(() => {
@@ -2160,11 +2112,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
     await waitFor(() => {
       expect(screen.getByText(/round 1/)).toBeVisible();
@@ -2179,11 +2127,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       );
     });
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
     await waitFor(() => {
       expect(screen.getByTestId("history-evidence-pending")).toHaveTextContent(
@@ -2290,11 +2234,7 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(
-      (await screen.findByText("Plan")).closest(
-        ".react-flow__node",
-      ) as HTMLElement,
-    );
+    fireEvent.click(await screen.findByTestId("rf__node-context-plan"));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /History/ }));
 
     await waitFor(() => {
