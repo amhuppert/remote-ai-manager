@@ -43,6 +43,20 @@ export interface ExternalTurnHandlerDeps {
  */
 export interface ExternalTurnHandler {
   (event: ConversationBackendEvent): void;
+  /**
+   * True from an accepted turn start until its completion, set synchronously
+   * on receipt so an observer sees the turn before any frame reaches the
+   * archive or the machine.
+   */
+  readonly activeTurn: boolean;
+  /** Accepted events so far; two equal readings bracket a window with none. */
+  readonly activity: number;
+  /**
+   * Resolves once no external turn is in flight: immediately when none is,
+   * otherwise at that turn's completion or at this handler's stop. Ordinary
+   * admission waits on it rather than polling `activeTurn`.
+   */
+  settled(): Promise<void>;
   drain(): Promise<void>;
   stopAndDrain(): Promise<void>;
 }
@@ -59,7 +73,17 @@ export function createExternalTurnHandler(
   // slow appends. The handler itself cannot await, so it queues.
   let chain: Promise<void> = Promise.resolve();
   let stopped = false;
+  let activeTurn = false;
+  let activity = 0;
+  let turnSettled: { promise: Promise<void>; resolve: () => void } | null =
+    null;
   const effects = new Set<Promise<unknown>>();
+
+  function settleTurn(): void {
+    activeTurn = false;
+    turnSettled?.resolve();
+    turnSettled = null;
+  }
 
   const enqueue = (
     step: () => void | Promise<void>,
@@ -81,6 +105,15 @@ export function createExternalTurnHandler(
     if (stopped || runtime.isCurrent?.() === false) return;
     switch (event.type) {
       case "external_turn_started": {
+        activity += 1;
+        activeTurn = true;
+        if (turnSettled === null) {
+          let resolve!: () => void;
+          const promise = new Promise<void>((finish) => {
+            resolve = finish;
+          });
+          turnSettled = { promise, resolve };
+        }
         enqueue(
           () => runtime.sendToMachine({ type: "EXTERNAL_TURN_STARTED" }),
           "external_turn.machine_send_failed",
@@ -90,6 +123,7 @@ export function createExternalTurnHandler(
       }
 
       case "transcript_entry": {
+        activity += 1;
         const frame = conversationTranscriptFrame(event.entry);
         enqueue(
           () => deps.safeAppendTranscriptEntry(identity.conversationId, frame),
@@ -100,6 +134,8 @@ export function createExternalTurnHandler(
       }
 
       case "external_turn_completed": {
+        activity += 1;
+        settleTurn();
         const result: PromptActorResult = {
           backendRef: event.result.backendRef,
           costUsd: event.result.costUsd,
@@ -154,11 +190,22 @@ export function createExternalTurnHandler(
     await chain;
     await Promise.allSettled(effects);
   };
-  return Object.assign(handle, {
-    drain,
-    stopAndDrain: async () => {
-      stopped = true;
-      await drain();
+  const handler = handle as ExternalTurnHandler;
+  // Defined as accessors: `Object.assign` would copy the values once.
+  Object.defineProperties(handler, {
+    drain: { value: drain },
+    stopAndDrain: {
+      value: async () => {
+        stopped = true;
+        settleTurn();
+        await drain();
+      },
     },
+    settled: {
+      value: () => turnSettled?.promise ?? Promise.resolve(),
+    },
+    activeTurn: { get: () => activeTurn, enumerable: true },
+    activity: { get: () => activity, enumerable: true },
   });
+  return handler;
 }

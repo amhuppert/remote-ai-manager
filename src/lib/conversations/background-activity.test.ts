@@ -293,3 +293,28 @@ describe("background activity channel — publish argument", () => {
     expect(publish).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("background activity channel — epoch", () => {
+  it("advances once per recorded change and remembers a set that appeared and drained", () => {
+    const h = createHarness();
+    expect(h.channel.epoch("conv-1")).toBe(0);
+    h.channel.record(SESSION_IDENTITY, activity(["t1"], "a"));
+    const appeared = h.channel.epoch("conv-1");
+    expect(appeared).toBeGreaterThan(0);
+    h.channel.record(SESSION_IDENTITY, null);
+    expect(h.channel.get("conv-1")).toBe(null);
+    expect(h.channel.epoch("conv-1")).toBeGreaterThan(appeared);
+  });
+
+  it("does not advance for a clear that retracts nothing, and keeps conversations independent", () => {
+    const h = createHarness();
+    h.channel.record(SESSION_IDENTITY, null);
+    expect(h.channel.epoch("conv-1")).toBe(0);
+    h.channel.record(
+      { ...SESSION_IDENTITY, conversationId: "conv-2" },
+      activity(["t9"], "b"),
+    );
+    expect(h.channel.epoch("conv-1")).toBe(0);
+    expect(h.channel.epoch("conv-2")).toBeGreaterThan(0);
+  });
+});

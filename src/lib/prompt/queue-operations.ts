@@ -64,6 +64,11 @@ const logger = createLogger("message-queue");
  * conversation without a parallel implementation.
  */
 export interface QueueOperationDeps {
+  checkpointAcceptsQueuedInput(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): boolean;
   admitModelSelection(input: {
     backend: AgentBackendId;
     projectPath: string;
@@ -80,6 +85,7 @@ export interface QueueOperationDeps {
     notepadFeedback?: NotepadFeedbackPayload;
     modelSelection?: BackendModelSelection;
     backend: AgentBackendId;
+    deliveryPolicy?: "next_turn";
   }): Promise<{
     entry: PendingQueuedMessage;
     deliveryTiming: QueueDeliveryTiming;
@@ -158,7 +164,7 @@ export async function parseQueueEnqueueBody(
 }
 
 /**
- * Enqueue a follow-up into a running conversation.
+ * Enqueue a follow-up into a running conversation or checkpoint hold.
  *
  * The post-commit drain closes the race the `running` check opens: if the turn
  * finalized between that read and the enqueue commit, the idle-entry drain has
@@ -184,7 +190,13 @@ export async function enqueueQueuedMessage(
     );
   }
 
-  if (conversation.status !== "running") {
+  const storeSessionName = storeSessionNameFromScopeRef(scope);
+  const checkpointQueue = deps.checkpointAcceptsQueuedInput(
+    projectPath,
+    storeSessionName,
+    conversationId,
+  );
+  if (conversation.status !== "running" && !checkpointQueue) {
     return queueError(
       "Conversation is not running — use the prompt endpoint to send a new message",
       "NOT_RUNNING",
@@ -240,7 +252,13 @@ export async function enqueueQueuedMessage(
     });
   }
 
-  const storeSessionName = storeSessionNameFromScopeRef(scope);
+  if (checkpointQueue) {
+    logger.info("queue.checkpoint_deferred", {
+      projectPath,
+      ...scope,
+      conversationId,
+    });
+  }
   const result = await timed(
     logger,
     "queue.post.enqueue",
@@ -262,6 +280,7 @@ export async function enqueueQueuedMessage(
           ? { modelSelection: admittedModelSelection }
           : {}),
         backend: conversation.agentBackend,
+        ...(checkpointQueue ? { deliveryPolicy: "next_turn" as const } : {}),
       }),
     (r) => ({ deliveryTiming: r.deliveryTiming }),
   );

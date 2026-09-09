@@ -1,9 +1,13 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
+  checkpointScopeKeyForStoreIdentity,
   conversationTotals,
   toConversationDurableSeed,
   type ConversationDurableSeed,
 } from "./actor-input-loader";
+import type { CheckpointAuthorityHydration } from "./checkpoint-restart";
+import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostics";
+import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 /**
  * Conversation actor rehydration policy.
  *
@@ -13,6 +17,19 @@ import {
  * snapshots waiting on a permission answer resume, and each restored actor is
  * registered into the manager-owned actor registry with abandoned queue
  * deliveries recovered before its first drain.
+ *
+ * Checkpoint authority is hydrated for every candidate without a live host,
+ * resumable or not: the checkpoint repository, not a snapshot, says whether a
+ * conversation is held, and a checkpoint a crash interrupted is failed or
+ * finished at startup rather than the first time something happens to touch
+ * the conversation. Each candidate is handled inside the host's
+ * per-conversation section with the ownership check first, so a conversation
+ * an on-demand start already hosts — whose live work would otherwise read as
+ * interrupted — is left to that host. A restored snapshot is subordinate to
+ * the authority: it never carries the projection, and once a retirement has
+ * committed it does not carry the reference either. The seed itself is read
+ * from the row after the authority is applied, because the restart rules may
+ * have cleared the row's reference since the whole-state read.
  */
 
 import { type Snapshot } from "xstate";
@@ -81,6 +98,15 @@ interface RehydrateOneActorArgs {
   worktreePath: string;
   conversation: ConversationDurableSeed & { id: string };
   snapshot?: Snapshot<unknown>;
+  /**
+   * The checkpoint authority read — with the restart rules applied — before
+   * this actor is created. The projection is what the actor starts with; a
+   * retired continuation makes the row's reference override the snapshot's.
+   */
+  authority: Pick<
+    CheckpointAuthorityHydration,
+    "projection" | "continuationRetired"
+  >;
   /** Structured-log sink. Injected so a test can read what the restore emitted;
    *  log fields are a public identity surface (R1.3). */
   log?: Logger;
@@ -100,18 +126,23 @@ export async function rehydrateOneConversationActor(
     host: ConversationActorHost;
     queue: ConversationQueueDeps;
     mutateConversation: import("./effects").ConversationDurableEffects["mutateConversation"];
+    repairQueuedAcceptance?: RehydrateConversationActorsDeps["repairQueuedAcceptance"];
   },
 ): Promise<boolean> {
   const { key, projectPath, projectName, storeSessionName, worktreePath } =
     args;
-  const { conversation, snapshot } = args;
+  const { conversation, snapshot, authority } = args;
   const log = args.log ?? logger;
   const scopeRef = scopeRefFromStoreSessionName(storeSessionName);
 
   try {
     // XState v5 requires `input` even when restoring from snapshot.
     // Row-owned accounting overrides the debounced snapshot; control state
-    // and pending questions remain owned by the validated snapshot.
+    // and pending questions remain owned by the validated snapshot. The
+    // checkpoint projection is never the snapshot's, and once a checkpoint
+    // has retired the continuation the row owns the reference too: a token
+    // written before that commit would otherwise hand the retired reference
+    // back to the actor, whose next derived write would restore it.
     const restored = snapshot as
       | ReturnType<ConversationActorRef["getSnapshot"]>
       | undefined;
@@ -123,6 +154,10 @@ export async function rehydrateOneConversationActor(
             totals: conversationTotals(conversation),
             promptCount: conversation.promptCount,
             lastActivityAt: conversation.lastActivityAt,
+            checkpoint: authority.projection,
+            ...(authority.continuationRetired
+              ? { backendRef: conversation.backendRef }
+              : {}),
           },
         }
       : undefined;
@@ -139,6 +174,7 @@ export async function rehydrateOneConversationActor(
 
         ...conversation,
         persistence: "durable",
+        checkpoint: authority.projection,
       },
       overlaidSnapshot,
     );
@@ -148,6 +184,11 @@ export async function rehydrateOneConversationActor(
     // this actor can drain later messages.
     try {
       await deps.queue.recoverAbandonedDeliveries({
+        projectPath,
+        sessionName: storeSessionName,
+        conversationId: conversation.id,
+      });
+      await deps.repairQueuedAcceptance?.({
         projectPath,
         sessionName: storeSessionName,
         conversationId: conversation.id,
@@ -194,6 +235,7 @@ export async function rehydrateOneConversationActor(
       conversationId: conversation.id,
       ...scopeRef,
       projectName,
+      checkpointPhase: authority.projection?.phase ?? null,
     });
     return true;
   } catch (err) {
@@ -306,6 +348,35 @@ export interface RehydrateConversationActorsDeps {
     conversationId: string,
     expectedSchemaVersion: number,
   ): Snapshot<unknown> | null;
+  /**
+   * Point read of one conversation row, taken after the authority is
+   * hydrated for a candidate that starts an actor: the restart rules may
+   * have cleared the row's provider reference, and the whole-state read
+   * predates them.
+   */
+  readConversation(
+    projectPath: string,
+    storeSessionName: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+  /**
+   * The checkpoint repository's authority for one conversation with the
+   * restart rules applied; read for every unhosted candidate before anything
+   * starts or drains. See `hydrateCheckpointAuthority`.
+   */
+  hydrateCheckpointAuthority(
+    key: CheckpointScopeKey,
+  ): Promise<CheckpointAuthorityHydration>;
+  /**
+   * Confirm queued rows a durable checkpoint acceptance proves delivered, so
+   * a crash between the checkpoint's receipt and the queue's does not strand a
+   * delivered row in review; see `checkpoint-queue-repair`.
+   */
+  repairQueuedAcceptance?(identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): Promise<number>;
   recoverWorkflowResultClaims?(
     projectPath: string,
     sessionName: string,
@@ -324,6 +395,9 @@ export async function loadRehydrationInfrastructure(): Promise<
   const { validateRestoredSnapshot } = await import("./persistence");
   const { getGraphWorkflowResultDeliveryService } =
     await import("@/lib/workflow-graph/result-delivery-service");
+  const { getConversationCheckpointsRepo } =
+    await import("@/lib/conversation-checkpoints/service-factory");
+  const { hydrateCheckpointAuthority } = await import("./checkpoint-restart");
   return {
     mutateConversation: stateMod.mutateConversation,
     readAllForStartup: readAllForStartupFromDb,
@@ -331,6 +405,20 @@ export async function loadRehydrationInfrastructure(): Promise<
     getProjectDisplayName,
     getConversationMachineSnapshot: stateMod.getConversationMachineSnapshot,
     validateRestoredSnapshot,
+    readConversation: (projectPath, storeSessionName, conversationId) =>
+      isProjectSentinel(storeSessionName)
+        ? stateMod.getProjectConversation(projectPath, conversationId)
+        : stateMod.getConversation(
+            projectPath,
+            storeSessionName,
+            conversationId,
+          ),
+    hydrateCheckpointAuthority: (key) =>
+      hydrateCheckpointAuthority(key, {
+        repo: getConversationCheckpointsRepo(),
+        now: () => new Date().toISOString(),
+        log: logger,
+      }),
     recoverWorkflowResultClaims: stateMod.recoverGraphWorkflowResultDeliveries,
     reconcileWorkflowResultEffects: (projectPath, sessionName) =>
       getGraphWorkflowResultDeliveryService().reconcilePendingResults(
@@ -404,6 +492,7 @@ export async function rehydrateConversationActors(
 
   let count = 0;
   let skippedNonResumable = 0;
+  let checkpointsHeld = 0;
 
   for (const {
     projectPath,
@@ -411,67 +500,108 @@ export async function rehydrateConversationActors(
     worktreePath,
     conversation,
   } of candidates) {
-    const owner: ConversationSnapshotOwner = isProjectSentinel(storeSessionName)
-      ? "project"
-      : "session";
-    const persistedSnapshot = resolved.getConversationMachineSnapshot(
-      owner,
-      conversation.id,
-    );
-    const snapshot =
-      persistedSnapshot == null
-        ? null
-        : resolved.validateRestoredSnapshot(
-            persistedSnapshot,
-            conversation.id,
-            1, // expected schema version
-          );
-
-    const resumeSnapshot =
-      snapshot && shouldRehydrateSnapshot(snapshot) ? snapshot : undefined;
-    const hasOrdinaryQueue =
-      conversation.role === null &&
-      !conversation.archived &&
-      conversation.pendingQueue.some((row) =>
-        isActiveQueuedMessageStatus(row.status),
-      );
-    if (!resumeSnapshot && !hasOrdinaryQueue) {
-      skippedNonResumable++;
-      continue;
-    }
-
     const key = conversationRuntimeKey(
       projectPath,
       storeSessionName,
       conversation.id,
     );
+    const scopeRef = scopeRefFromStoreSessionName(storeSessionName);
+    // Inside the host's per-conversation section, ownership first: a live
+    // host applied the restart rules when it loaded, and applying them again
+    // would fail its running build, commit its retirement under it or hold
+    // its live delivery. An on-demand start for this conversation waits on
+    // the same section instead of racing this one.
+    await resolved.host.exclusive(key, async () => {
+      if (resolved.host.has(key)) return;
+      let authority: CheckpointAuthorityHydration;
+      try {
+        authority = await resolved.hydrateCheckpointAuthority(
+          checkpointScopeKeyForStoreIdentity({
+            projectPath,
+            sessionName: storeSessionName,
+            conversationId: conversation.id,
+          }),
+        );
+      } catch (err) {
+        // Without the authority nothing may start or drain for this
+        // conversation; the next ensure re-reads it and surfaces the failure.
+        logger.error("checkpoint.restart.hydration_failed", {
+          conversationId: conversation.id,
+          ...scopeRef,
+          ...checkpointErrorFields(err),
+        });
+        return;
+      }
+      if (authority.projection !== null) checkpointsHeld++;
 
-    // Skip if already running
-    if (resolved.host.has(key)) continue;
-
-    const started = await rehydrateOneConversationActor(
-      {
-        key,
-        projectPath,
-        projectName: resolved.getProjectDisplayName(projectPath),
+      const owner: ConversationSnapshotOwner = isProjectSentinel(
         storeSessionName,
-        worktreePath,
-        conversation: {
-          id: conversation.id,
-          ...toConversationDurableSeed(conversation),
-        },
-        snapshot: resumeSnapshot,
-      },
-      resolved,
-    );
+      )
+        ? "project"
+        : "session";
+      const persistedSnapshot = resolved.getConversationMachineSnapshot(
+        owner,
+        conversation.id,
+      );
+      const snapshot =
+        persistedSnapshot == null
+          ? null
+          : resolved.validateRestoredSnapshot(
+              persistedSnapshot,
+              conversation.id,
+              1, // expected schema version
+            );
 
-    if (started) count++;
+      const resumeSnapshot =
+        snapshot && shouldRehydrateSnapshot(snapshot) ? snapshot : undefined;
+      const hasOrdinaryQueue =
+        conversation.role === null &&
+        !conversation.archived &&
+        conversation.pendingQueue.some((row) =>
+          isActiveQueuedMessageStatus(row.status),
+        );
+      if (!resumeSnapshot && !hasOrdinaryQueue) {
+        skippedNonResumable++;
+        return;
+      }
+
+      const row = await resolved.readConversation(
+        projectPath,
+        storeSessionName,
+        conversation.id,
+      );
+      if (row === null) {
+        logger.warn("conversation-manager.rehydrate_candidate_missing", {
+          conversationId: conversation.id,
+          ...scopeRef,
+        });
+        return;
+      }
+      const started = await rehydrateOneConversationActor(
+        {
+          key,
+          projectPath,
+          projectName: resolved.getProjectDisplayName(projectPath),
+          storeSessionName,
+          worktreePath,
+          conversation: {
+            id: conversation.id,
+            ...toConversationDurableSeed(row),
+          },
+          snapshot: resumeSnapshot,
+          authority,
+        },
+        resolved,
+      );
+      if (started) count++;
+    });
   }
 
-  if (count > 0 || skippedNonResumable > 0) {
+  if (count > 0 || skippedNonResumable > 0 || checkpointsHeld > 0) {
     logger.info("conversation-manager.rehydration_complete", {
       count,
       skippedNonResumable,
+      checkpointsHeld,
     });
   }
 

@@ -76,6 +76,7 @@ function makeContext(
     },
     lastResult: null,
     lastError: null,
+    checkpoint: null,
     ...overrides,
   };
 }

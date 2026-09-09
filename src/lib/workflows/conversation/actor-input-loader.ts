@@ -16,6 +16,11 @@ import type {
   ConversationState,
 } from "@/lib/conversations/schemas";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import type {
+  CheckpointActorProjection,
+  CheckpointScopeKey,
+} from "@/lib/conversation-checkpoints/schemas";
+import type { CheckpointAuthorityHydration } from "./checkpoint-restart";
 import type { ConversationPersistenceMode } from "./types";
 
 export class ConversationBindingNotFoundError extends Error {
@@ -98,6 +103,19 @@ export interface EnsureActorInputData {
    */
   persistence: ConversationPersistenceMode;
   conversation: ConversationDurableSeed;
+  /**
+   * The active checkpoint operation after the restart rules were applied,
+   * read from the checkpoint repository at load time. Loaded here — before
+   * the actor starts and before its first idle-entry drain — so a host
+   * restored under an unfinished checkpoint holds ordinary admission from the
+   * outset, whatever any machine snapshot says, and a checkpoint a crash
+   * interrupted is failed or finished before the host can drain past it.
+   * The `conversation` seed is read only after those rules were applied: a
+   * retirement they finish clears the row's provider reference, and a seed
+   * read before that write would hand the retired reference to the actor,
+   * whose next derived write would put it back on the row.
+   */
+  checkpoint: CheckpointActorProjection | null;
 }
 
 /**
@@ -117,6 +135,33 @@ export interface ActorInputLoaderDeps {
     conversationId: string,
   ): Promise<ConversationState | null>;
   getProjectDisplayName(projectPath: string): string;
+  /**
+   * The checkpoint repository's authority for this conversation with the
+   * restart rules applied; see `hydrateCheckpointAuthority`.
+   */
+  hydrateCheckpointAuthority(
+    key: CheckpointScopeKey,
+  ): Promise<CheckpointAuthorityHydration>;
+}
+
+export function checkpointScopeKeyForStoreIdentity(identity: {
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+}): CheckpointScopeKey {
+  return isProjectSentinel(identity.sessionName)
+    ? {
+        scope: "project",
+        projectPath: identity.projectPath,
+        sessionName: null,
+        conversationId: identity.conversationId,
+      }
+    : {
+        scope: "session",
+        projectPath: identity.projectPath,
+        sessionName: identity.sessionName,
+        conversationId: identity.conversationId,
+      };
 }
 
 function actorInputFor(
@@ -125,6 +170,7 @@ function actorInputFor(
   projectPath: string,
   worktreePath: string,
   conversation: ConversationState,
+  authority: CheckpointAuthorityHydration,
 ): EnsureActorInputData {
   return {
     conversationScope: scope,
@@ -133,6 +179,7 @@ function actorInputFor(
     // Loaded from the state store, so a real ConversationState record exists.
     persistence: "durable",
     conversation: toConversationDurableSeed(conversation),
+    checkpoint: authority.projection,
   };
 }
 
@@ -142,6 +189,14 @@ export async function loadActorInput(
   storeSessionName: string,
   conversationId: string,
 ): Promise<EnsureActorInputData> {
+  // Authority before the seed: see `EnsureActorInputData.checkpoint`.
+  const authority = await deps.hydrateCheckpointAuthority(
+    checkpointScopeKeyForStoreIdentity({
+      projectPath,
+      sessionName: storeSessionName,
+      conversationId,
+    }),
+  );
   if (isProjectSentinel(storeSessionName)) {
     const conversation = await deps.getProjectConversation(
       projectPath,
@@ -161,6 +216,7 @@ export async function loadActorInput(
       projectPath,
       projectPath,
       conversation,
+      authority,
     );
   }
 
@@ -186,5 +242,6 @@ export async function loadActorInput(
     projectPath,
     session.worktreePath,
     conversation,
+    authority,
   );
 }

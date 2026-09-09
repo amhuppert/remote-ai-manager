@@ -869,6 +869,7 @@ describe("memory routes — index preview", () => {
               sessionName: SESSION_NAME,
               promptCount: 4,
               hasResumeHandle: false,
+              pendingCheckpoint: false,
             };
           },
           getRuntimeConfiguration() {

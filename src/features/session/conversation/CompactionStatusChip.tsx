@@ -9,7 +9,7 @@ import {
 import {
   compactionChipLabel,
   type CompactionChipState,
-} from "./compaction-chip-state";
+} from "@/components/conversation/compaction-chip-state";
 
 interface CompactionStatusChipProps {
   state: CompactionChipState;

@@ -85,6 +85,14 @@ export interface ProjectConversationsRepo {
     sessionNames: string[],
   ): boolean;
   /**
+   * Focused single-column clear of `backend_ref`, leaving the conversation's
+   * activity timestamp untouched: retiring a runtime is not conversation
+   * activity and must not reorder the list. Synchronous and statement-level so
+   * a caller that must clear the reference and record WHY in the same commit
+   * can run both inside one transaction. Returns whether a row matched.
+   */
+  clearBackendRef(projectPath: string, id: string): boolean;
+  /**
    * Invalidate the parsed-row cache after project-conversation rows were removed
    * out-of-band — an FK `ON DELETE CASCADE` from a project delete drops the rows
    * at the SQL layer without routing through this repo's own `delete`. Bumps the
@@ -440,6 +448,11 @@ export function createProjectConversationsRepo(
      SET pending_prompt_text = ?
      WHERE project_path = ? AND id = ?`,
   );
+  const clearBackendRefStmt = db.prepare(
+    `UPDATE project_conversations
+     SET backend_ref = NULL
+     WHERE project_path = ? AND id = ?`,
+  );
   const setArchivedStmt = db.prepare(
     `UPDATE project_conversations
      SET archived = ?
@@ -584,6 +597,14 @@ export function createProjectConversationsRepo(
           projectPath,
           id,
         );
+        const changed = info.changes > 0;
+        if (changed) cache.bump();
+        return changed;
+      });
+    },
+    clearBackendRef(projectPath, id) {
+      return timed("clearBackendRef", { id, projectPath }, () => {
+        const info = clearBackendRefStmt.run(projectPath, id);
         const changed = info.changes > 0;
         if (changed) cache.bump();
         return changed;

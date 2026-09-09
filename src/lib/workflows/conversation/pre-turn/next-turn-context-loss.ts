@@ -33,6 +33,8 @@ export interface NextTurnConversationFacts {
   readonly promptCount: number;
   /** Whether a stored backend handle lets a new runtime resume. */
   readonly hasResumeHandle: boolean;
+  /** A ready CC checkpoint will seed the next turn's fresh runtime. */
+  readonly pendingCheckpoint: boolean;
 }
 
 export interface NextTurnContextLossDeps {
@@ -115,6 +117,7 @@ export async function readNextTurnContextLoss(
       willCreateRuntime,
       promptCount: conversation.promptCount,
       hasResumeHandle: conversation.hasResumeHandle,
+      pendingCheckpoint: conversation.pendingCheckpoint,
     }),
     // Parity with the turn seam, which does not yet observe a backend's own
     // compaction report and passes this false too. When that seam starts

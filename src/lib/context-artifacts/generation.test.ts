@@ -3,6 +3,7 @@ import {
   renderedTranscriptToMarkdown,
   type RenderedTranscript,
 } from "@/lib/conversations/transcript-render";
+import { EMPTY_TRANSCRIPT_BOUNDARIES } from "@/lib/conversations/history-recovery";
 import type { SourceRef } from "@/lib/conversations/schemas";
 import { compactionEnvelopeSchema, type CompactionEnvelope } from "./schemas";
 import {
@@ -257,6 +258,14 @@ function makeRendered(
       thinkingOmitted: 0,
       toolResultBytesElided: 0,
       unitsOutsideWindow: 0,
+    },
+    boundaries: EMPTY_TRANSCRIPT_BOUNDARIES,
+    truncation: {
+      omittedAfter: null,
+      partialEntry: null,
+      excerptedEntries: [],
+      excerptedEntriesOmitted: 0,
+      excerptedEntriesNext: null,
     },
     ...overrides,
   };

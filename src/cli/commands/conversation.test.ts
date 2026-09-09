@@ -71,10 +71,23 @@ const sampleTranscript = {
     },
   ],
   truncated: false,
+  boundaries: {
+    entries: [],
+    totalInRange: 0,
+    nextBefore: null,
+    indexCommand: null,
+  },
   omissions: {
     thinkingOmitted: 0,
     toolResultBytesElided: 0,
     unitsOutsideWindow: 2,
+  },
+  truncation: {
+    omittedAfter: null,
+    partialEntry: null,
+    excerptedEntries: [],
+    excerptedEntriesOmitted: 0,
+    excerptedEntriesNext: null,
   },
 };
 
@@ -1096,4 +1109,38 @@ describe("cctl conversation (dispatch)", () => {
     );
     expect(result.exitCode).toBe(3);
   });
+});
+
+it("renders saved checkpoint coordinates and the omitted-boundary recovery command in text and JSON", async () => {
+  const boundaries = {
+    entries: [
+      {
+        operationId: "checkpoint-3",
+        ordinal: 3,
+        capturedThroughSeq: 2,
+        afterMessageIndex: 0,
+        nextSeq: 3,
+      },
+    ],
+    totalInRange: 3,
+    nextBefore: 3,
+    indexCommand: "cctl conversation checkpoint list conv-1 --before 3",
+  };
+  for (const json of [false, true]) {
+    const host = makeHost(() =>
+      jsonResponse({ ...sampleTranscript, boundaries }),
+    );
+    const result = await runCli(
+      ["conversation", "read", "conv-1", ...(json ? ["--json"] : [])],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("checkpoint-3");
+    expect(result.stdout).toContain(boundaries.indexCommand);
+    if (!json) {
+      expect(result.stdout).toContain("raw seq 2");
+      expect(result.stdout).toContain("2 omitted");
+    }
+  }
 });

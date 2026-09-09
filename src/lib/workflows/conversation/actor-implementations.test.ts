@@ -5345,8 +5345,9 @@ describe("executePromptForMachine", () => {
             appendOrder.push("append");
           }
         }),
-        markQueuedDelivered: vi.fn(async () => {
-          appendOrder.push("markDelivered");
+        confirmQueuedDelivery: vi.fn(async () => {
+          appendOrder.push("confirmDelivery");
+          return 2;
         }),
       });
       conversationActors = createTestActorImplementations(mockDeps);
@@ -5386,8 +5387,8 @@ describe("executePromptForMachine", () => {
         { type: "text", text: "queued follow-up" },
       ]);
 
-      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledTimes(1);
-      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledWith({
+      expect(mockDeps.confirmQueuedDelivery).toHaveBeenCalledTimes(1);
+      expect(mockDeps.confirmQueuedDelivery).toHaveBeenCalledWith({
         projectPath: input.projectPath,
         sessionName: conversationTargetStoreSessionName(input.target),
         conversationId: input.target.conversationId,
@@ -5397,8 +5398,8 @@ describe("executePromptForMachine", () => {
       expect(mockDeps.markQueuedPending).not.toHaveBeenCalled();
       expect(mockDeps.markQueuedFailed).not.toHaveBeenCalled();
 
-      // Append must happen before the rows are marked delivered.
-      expect(appendOrder).toEqual(["append", "markDelivered"]);
+      // Append must happen before the rows are released.
+      expect(appendOrder).toEqual(["append", "confirmDelivery"]);
     });
 
     it("appends nothing and holds rows for review when dispatch throws", async () => {
@@ -5426,7 +5427,7 @@ describe("executePromptForMachine", () => {
       await conversationActors.executePromptForMachine(input);
 
       expect(userAppendCalls()).toHaveLength(0);
-      expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
+      expect(mockDeps.confirmQueuedDelivery).not.toHaveBeenCalled();
       await conversationActors.finalizeQueuedDeliveryForMachine({
         projectPath: input.projectPath,
         target: input.target,

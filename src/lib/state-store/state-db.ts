@@ -153,8 +153,15 @@ const DB_FILE_NAME = "command-center.db";
  * graphs from delivery-plan blobs and pins candidates to immutable saved
  * workflow-definition revisions. Older writers cannot preserve that ownership
  * or candidate identity contract.
+ *
+ * Version 15 is the conversation-checkpoint cutover: migration
+ * `0044-add-conversation-checkpoints` makes a conversation's continuation
+ * authority durable outside its row. The tables are additive, but the contract
+ * is not: an older build sees no checkpoint obligation, so it would admit an
+ * ordinary turn against a conversation mid-retirement and establish a fresh
+ * provider reference the pending seed can never be delivered into.
  */
-export const KNOWN_SCHEMA_VERSION = 14;
+export const KNOWN_SCHEMA_VERSION = 15;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -2229,6 +2236,177 @@ export const MEMORY_TELEMETRY_SCHEMA_DDL = `
     ON memory_observation_counters (memory_id);
 `;
 
+/**
+ * Durable checkpoint operations and their immutable payloads.
+ *
+ * Two tables rather than one because they have different write rules: the
+ * operation row is mutated through validated transitions for the life of the
+ * conversation, while the payload is inserted exactly once and never updated.
+ * Splitting them lets the BEFORE UPDATE trigger below make immutability a
+ * property of the schema instead of a convention every future caller must keep.
+ *
+ * **No FK to a conversation.** Conversations live in two tables
+ * (`conversations` at session scope, `project_conversations` at project scope),
+ * so one FK target does not exist — the same two-parent shape as
+ * `conversation_machine_snapshots`, and cleanup uses that table's proven owner:
+ * AFTER DELETE triggers on both parents, which fire for direct deletes and FK
+ * cascade deletes alike.
+ *
+ * `session_name` is NULL at project scope rather than the internal sentinel, so
+ * no read of this table can hand a sentinel-valued session name to a log field
+ * or a projection.
+ *
+ * Exported so the ordered migration applies the identical DDL to pre-floor
+ * databases without a second hand-synced copy.
+ *
+ * Unlike the other additive tables here, this one DOES carry a
+ * KNOWN_SCHEMA_VERSION bump (15, migration
+ * `0044-add-conversation-checkpoints`). Ignoring a table it has no reader for
+ * is not harmless in this case: an older build sees a conversation mid-
+ * retirement as an ordinary idle one, admits a turn, and mints a provider
+ * reference the frozen seed can never be delivered into.
+ */
+export const CONVERSATION_CHECKPOINTS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS conversation_checkpoint_operations (
+    -- The caller's request UUID, the operation id, and the payload id are one
+    -- value: reusing a request id is therefore a primary-key hit, which is what
+    -- makes idempotent admission a property of the schema.
+    id                          TEXT PRIMARY KEY,
+    scope                       TEXT NOT NULL CHECK (scope IN ('session', 'project')),
+    project_path                TEXT NOT NULL,
+    session_name                TEXT,
+    conversation_id             TEXT NOT NULL,
+    ordinal                     INTEGER NOT NULL CHECK (ordinal > 0),
+    phase                       TEXT NOT NULL CHECK (phase IN (
+      'building', 'retiring', 'ready', 'delivering', 'applied',
+      'failed', 'cancelled', 'needs_reconciliation'
+    )),
+    last_stable_phase           TEXT,
+    -- The captured source boundary is written with the building row, so both
+    -- columns are load-bearing from the first insert.
+    captured_through_seq        INTEGER NOT NULL,
+    source_hash                 TEXT NOT NULL,
+    -- Protected provider references. Never selected into a receipt, a list
+    -- projection, or a log field.
+    prior_backend_ref           TEXT,
+    accepted_backend_ref        TEXT,
+    payload_id                  TEXT,
+    delivery_attempt_id         TEXT,
+    delivery_input_fingerprint  TEXT,
+    -- Added after the table shipped, so it also appears in ADDITIVE_COLUMNS.
+    delivery_submitted_input_fingerprint TEXT,
+    queued_delivery_attempt_id  TEXT,
+    queued_delivery_message_id  TEXT,
+    accepted_attempt_id         TEXT,
+    accepted_seed_hash          TEXT,
+    accepted_at                 TEXT,
+    failure_code                TEXT,
+    failure_message             TEXT,
+    recovers_operation_id       TEXT,
+    superseded_by_operation_id  TEXT,
+    generation_pass_count       INTEGER,
+    -- Measured usage stays nullable in every column: a backend that does not
+    -- report a counter leaves it unavailable, which is not zero.
+    usage_input_tokens          INTEGER,
+    -- Added after the table shipped, so it also appears in ADDITIVE_COLUMNS.
+    -- Kept beside fresh input rather than summed into it: the providers bill
+    -- them differently, so one column cannot honestly carry both.
+    usage_cached_input_tokens   INTEGER,
+    usage_output_tokens         INTEGER,
+    usage_cost_usd              REAL,
+    usage_duration_ms           INTEGER,
+    requested_at                TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL,
+    -- A session-scoped operation names its session; a project-scoped one has
+    -- no session to name.
+    CHECK (
+      (scope = 'session' AND session_name IS NOT NULL)
+      OR (scope = 'project' AND session_name IS NULL)
+    )
+    -- The two linkage columns name rows in this same table and are deliberately
+    -- FK-free. Superseding writes the link and the linked row in one
+    -- transaction, so a self-FK would only force an ordering that the partial
+    -- unique index below already forbids; and the cleanup triggers drop a
+    -- conversation's operations together, so a dangling link cannot outlive
+    -- its target.
+  );
+
+  -- One conversation holds at most one checkpoint slot. A superseded operation
+  -- is excluded rather than moved to a terminal phase: recovery needs to admit
+  -- its build while the blocked operation still records WHY it was blocked, and
+  -- restoring the gate after a failed recovery is then the removal of a link
+  -- rather than a backward edge out of a terminal phase.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_checkpoint_active
+    ON conversation_checkpoint_operations (scope, conversation_id)
+    WHERE phase IN ('building', 'retiring', 'ready', 'delivering', 'needs_reconciliation')
+      AND superseded_by_operation_id IS NULL;
+
+  -- Ordinals are allocated per conversation, so the uniqueness that makes
+  -- MAX(ordinal) + 1 safe has to be scoped the same way.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_checkpoint_ordinal
+    ON conversation_checkpoint_operations (scope, conversation_id, ordinal);
+
+  -- The list read: one conversation's receipts, newest first.
+  CREATE INDEX IF NOT EXISTS idx_conversation_checkpoint_operations_conversation
+    ON conversation_checkpoint_operations (scope, conversation_id, ordinal DESC);
+
+  CREATE TABLE IF NOT EXISTS conversation_checkpoints (
+    -- Equal to the owning operation's id.
+    id                     TEXT PRIMARY KEY,
+    schema_version         INTEGER NOT NULL,
+    captured_through_seq   INTEGER NOT NULL,
+    source_hash            TEXT NOT NULL,
+    source_artifact_id     TEXT,
+    source_artifact_hash   TEXT,
+    generator_version      TEXT NOT NULL,
+    builder_version        TEXT NOT NULL,
+    normalizer_version     TEXT NOT NULL,
+    model_selection_json   TEXT NOT NULL CHECK (json_valid(model_selection_json)),
+    sections_json          TEXT NOT NULL CHECK (json_valid(sections_json)),
+    -- The exact string injected into the next turn's prompt context.
+    seed_text              TEXT NOT NULL,
+    seed_sha256            TEXT NOT NULL,
+    section_bytes_json     TEXT NOT NULL CHECK (json_valid(section_bytes_json)),
+    omissions_json         TEXT NOT NULL CHECK (json_valid(omissions_json)),
+    generation_pass_count  INTEGER NOT NULL,
+    created_at             TEXT NOT NULL,
+    FOREIGN KEY (id) REFERENCES conversation_checkpoint_operations(id)
+      ON DELETE CASCADE
+  );
+
+  -- Immutability as a schema property. A frozen payload is the evidence a
+  -- retired runtime cannot be recovered from anywhere else, so "no update API"
+  -- is not enough: a later package, a migration, or an artifact refresh reaching
+  -- this table aborts instead of rewriting a byte.
+  CREATE TRIGGER IF NOT EXISTS conversation_checkpoints_immutable
+  BEFORE UPDATE ON conversation_checkpoints
+  BEGIN
+    SELECT RAISE(ABORT, 'conversation checkpoints are immutable');
+  END;
+
+  -- DB-enforced retention: a checkpoint record outlives compaction and
+  -- archiving (both are ordinary row updates) but never its owning
+  -- conversation. Four explicit deletion callers reach these rows: conversation
+  -- delete, session delete, fused session delete, and project delete. Only the
+  -- first removes a conversation row directly; the other three arrive by FK
+  -- CASCADE. AFTER DELETE triggers fire for both kinds, inside the deleting
+  -- transaction, so one owner covers every path and a fifth caller cannot
+  -- forget. The payload row follows by its own FK CASCADE.
+  CREATE TRIGGER IF NOT EXISTS trg_conversation_checkpoints_session_cleanup
+    AFTER DELETE ON conversations
+  BEGIN
+    DELETE FROM conversation_checkpoint_operations
+      WHERE scope = 'session' AND conversation_id = OLD.id;
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS trg_conversation_checkpoints_project_cleanup
+    AFTER DELETE ON project_conversations
+  BEGIN
+    DELETE FROM conversation_checkpoint_operations
+      WHERE scope = 'project' AND conversation_id = OLD.id;
+  END;
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -2800,6 +2978,8 @@ const SCHEMA_DDL = `
   ${MEMORY_SEARCH_SCHEMA_DDL}
 
   ${MEMORY_TELEMETRY_SCHEMA_DDL}
+
+  ${CONVERSATION_CHECKPOINTS_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {
@@ -2833,6 +3013,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   type: string;
 }> = [
   { table: "conversations", column: "pending_prompt_text", type: "TEXT" },
+  {
+    table: "conversation_checkpoint_operations",
+    column: "delivery_submitted_input_fingerprint",
+    type: "TEXT",
+  },
+  {
+    table: "conversation_checkpoint_operations",
+    column: "usage_cached_input_tokens",
+    type: "INTEGER",
+  },
   { table: "memory_links", column: "artifact_context_id", type: "TEXT" },
   { table: "projects", column: "agent_capability_overrides", type: "TEXT" },
   { table: "sessions", column: "agent_capability_overrides", type: "TEXT" },

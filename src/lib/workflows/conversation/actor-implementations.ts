@@ -65,7 +65,10 @@ import {
 } from "./failure-classification";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
-import { withRuntimeReplacementRetry } from "./with-runtime-replacement-retry";
+import {
+  withRuntimeReplacementRetry,
+  type RuntimeReplacementRetryDeps,
+} from "./with-runtime-replacement-retry";
 
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
@@ -79,6 +82,16 @@ import {
   type DesiredRuntimeConfiguration,
 } from "./pre-turn/runtime-recreate";
 import { isRuntimeCreatedWithoutResume } from "@/lib/memory/delivery-decision";
+import { resolveContinuationSeed } from "./pre-turn/continuation-seed";
+import {
+  prepareCheckpointSeed,
+  type PreparedCheckpointSeed,
+} from "./pre-turn/checkpoint-seed";
+import { checkpointScopeKeyForStoreIdentity } from "./actor-input-loader";
+import {
+  fingerprintAssembledInput,
+  fingerprintSubmittedInput,
+} from "@/lib/conversation-checkpoints/input-fingerprint";
 
 import { createExternalTurnHandler } from "./external-turn-handler";
 
@@ -188,6 +201,8 @@ interface DispatchTurnViaAgentCallInput {
   outputFormat: ConversationBackendTurnInput["outputFormat"];
   onEvent: ConversationBackendTurnInput["onEvent"];
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
+  /** Neutral send/failure facts for a checkpoint delivery; see the retry policy. */
+  observe: RuntimeReplacementRetryDeps["observe"];
   /**
    * The turn's write envelope, restated on the neutral request. The runtime
    * already carries it (it was established at session start), so this is what
@@ -221,6 +236,7 @@ async function dispatchTurnViaAgentCall(
       backend: input.backend,
     },
     log: input.log,
+    ...(input.observe !== undefined ? { observe: input.observe } : {}),
   });
 
   const request: AgentCallRequest = {
@@ -808,12 +824,82 @@ async function executePromptForMachine(
       autonomous: input.turn.autonomous,
     },
   } satisfies DesiredRuntimeConfiguration;
+  // One continuation decision for the whole turn: a ready checkpoint, the
+  // synthetic fork seed, or ordinary resume. Decided before the runtime is
+  // reused or created, because a checkpoint delivery resumes nothing.
+  const continuation = await resolveContinuationSeed(
+    {
+      readPayload: async (key, operationId) =>
+        (await deps.checkpoint.repo()).getPayload(key, operationId),
+      readContinuity: async (key) => ({
+        accepted:
+          (await (await deps.checkpoint.repo()).getStateForAdmission(key))
+            .latestAccepted !== null,
+      }),
+      transcript: deps.transcript,
+      log: deps.log,
+    },
+    {
+      key:
+        input.persistence === "ephemeral"
+          ? null
+          : checkpointScopeKeyForStoreIdentity(
+              conversationStoreIdentity(input),
+            ),
+      checkpoint: input.checkpoint ?? null,
+      sessionName: conversationTargetStoreSessionName(input.target),
+      agentBackend: input.agentBackend,
+      backendRef: input.backendRef,
+      forkedFrom: persistedConversation?.forkedFrom ?? input.forkedFrom,
+      transcriptPath: input.transcriptPath,
+    },
+  );
+  const deliversCheckpoint = continuation.kind === "checkpoint";
+  const resumeRef = deliversCheckpoint ? null : input.backendRef;
+  // A checkpoint delivery's receipt belongs to the attempt from here, before
+  // any runtime exists: whatever fails between the fresh runtime's install
+  // and the provider call — a state write, context preparation, the
+  // readiness check, the binding itself — settles through this receipt,
+  // which closes the runtime the attempt installed rather than leaving it to
+  // carry the seed later as a reused one.
+  const closeAttemptedRuntime = async (): Promise<void> => {
+    if (attempt) await attempt.closeBackend();
+    else await runtimeState.managed.close();
+  };
+  const checkpoint: PreparedCheckpointSeed | null =
+    continuation.kind === "checkpoint"
+      ? prepareCheckpointSeed(
+          { checkpoint: deps.checkpoint, log: deps.log },
+          {
+            key: checkpointScopeKeyForStoreIdentity(
+              conversationStoreIdentity(input),
+            ),
+            operationId: continuation.operationId,
+            payload: continuation.payload,
+            closeAttemptedRuntime,
+          },
+        )
+      : null;
+  if (checkpoint) attempt?.ownReceipt(checkpoint.finish);
+
   const changes = runtimeConfigurationChanges({
     current: runtimeState.managed.configurationSnapshot,
     desired: desiredConfiguration,
   });
   if (backendRuntime && changes.length > 0) {
     deps.log.info("prompt.runtime_recreate", { ...scopeRef, changes });
+    if (attempt) await attempt.closeBackend();
+    else await runtimeState.managed.close();
+    backendRuntime = undefined;
+  }
+  // Retirement closed the runtime a ready checkpoint replaces; a handle that
+  // somehow survived is the retired continuation and must not carry the seed.
+  if (backendRuntime && deliversCheckpoint) {
+    deps.log.warn("checkpoint.stale_runtime_closed", {
+      ...scopeRef,
+      conversationId: input.target.conversationId,
+      operationId: continuation.operationId,
+    });
     if (attempt) await attempt.closeBackend();
     else await runtimeState.managed.close();
     backendRuntime = undefined;
@@ -845,16 +931,27 @@ async function executePromptForMachine(
       ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.target.conversationId,
-      hasResumeRef: input.backendRef !== null,
+      hasResumeRef: resumeRef !== null,
       promptCount: input.promptCount,
       capabilityCascadeSeeded: capabilityCascadeSeed !== undefined,
     });
 
-    // A conversation with completed turns but no resume handle cannot restore
-    // the agent's context — the new backend session starts with no memory of
-    // the transcript. Reachable after a mid-turn server death that outran
-    // BACKEND_INIT persistence, or a Codex thread cleared by a failed turn.
-    if (input.promptCount > 0 && input.backendRef === null) {
+    if (continuation.kind === "checkpoint") {
+      // Planned: the checkpoint retired the prior continuation and this
+      // runtime is created fresh to receive its seed.
+      deps.log.info("checkpoint.fresh_runtime", {
+        ...scopeRef,
+        backend: input.agentBackend,
+        conversationId: input.target.conversationId,
+        operationId: continuation.operationId,
+        promptCount: input.promptCount,
+      });
+    } else if (input.promptCount > 0 && input.backendRef === null) {
+      // A conversation with completed turns but no resume handle cannot
+      // restore the agent's context — the new backend session starts with no
+      // memory of the transcript. Reachable after a mid-turn server death
+      // that outran BACKEND_INIT persistence, or a Codex thread cleared by a
+      // failed turn.
       deps.log.warn("prompt.resume_ref_missing", {
         ...scopeRef,
         backend: input.agentBackend,
@@ -982,7 +1079,7 @@ async function executePromptForMachine(
       conversationTarget: input.target,
       ...(conversationCapability !== null ? { conversationCapability } : {}),
       worktreePath: input.worktreePath,
-      persistedRef: input.backendRef,
+      persistedRef: resumeRef,
       modelSelection: effectiveModelSelection,
       outputFormat: input.turn.outputFormat,
       sessionInstructions,
@@ -1115,6 +1212,7 @@ async function executePromptForMachine(
           executionAttemptId: input.executionAttemptId,
           backendRef: event.backendRef,
         });
+        await preparedContext?.onBackendInit(event.backendRef);
         {
           const initEntry = transcriptProjection.projectBackendInit({
             timestamp: new Date().toISOString(),
@@ -1171,15 +1269,18 @@ async function executePromptForMachine(
     preparedContext = await prepareConversationTurnContext(deps, {
       execution: input,
       promptText: assembled.rewrittenPromptText,
-      forkedFrom: persistedConversation?.forkedFrom ?? input.forkedFrom,
+      continuation,
       workflowContext: runtimeState.workflowContext,
       runtimeCreatedWithoutResume: isRuntimeCreatedWithoutResume({
         willCreateRuntime: isNewRuntime,
         promptCount: input.promptCount,
-        hasResumeHandle: input.backendRef !== null,
+        hasResumeHandle: resumeRef !== null,
+        pendingCheckpoint: deliversCheckpoint,
       }),
+      checkpoint,
       resultAttemptId: workflowResultAttemptId,
       ownReceipt: (finish) => attempt?.ownReceipt(finish),
+      archiveQueuedInput: () => queuedAccounting.appendAcceptedUserEntry(),
       onQueueAccepted: () => queuedAccounting.handleInputAccepted(),
     });
     const { promptText, syntheticForkSeed } = preparedContext;
@@ -1276,6 +1377,34 @@ async function executePromptForMachine(
       }
     }
 
+    // A checkpoint delivery binds the admitted attempt to the seed BEFORE the
+    // provider is called: the fingerprint of the exact input dispatched
+    // below, the fingerprint of the input as submitted (what a queued batch
+    // can be reassembled into) and the queued rows it carries are durable
+    // first, so a crash after this point is an attempt whose outcome is
+    // unknown rather than one that never was.
+    if (checkpoint) {
+      if (input.executionAttemptId === undefined)
+        throw new Error(
+          "checkpoint delivery requires an admitted turn attempt to bind",
+        );
+      await checkpoint.bind({
+        attemptId: input.executionAttemptId,
+        inputFingerprint: fingerprintAssembledInput({
+          promptText,
+          images: imageRefs,
+        }),
+        submittedInputFingerprint: fingerprintSubmittedInput({
+          promptText: input.turn.promptText,
+          images: input.turn.images ?? [],
+          documentFeedback: input.turn.documentFeedback,
+          notepadFeedback: input.turn.notepadFeedback,
+        }),
+        queuedAttemptId: input.turn.queuedDelivery?.deliveryAttemptId ?? null,
+        queuedMessageId: input.turn.queuedDelivery?.messageIds[0] ?? null,
+      });
+    }
+
     // Route the turn through the shared AgentCall primitive. The runtime is
     // wrapped in the named `withRuntimeReplacementRetry` policy (single
     // reattempt on the neutral prompt-not-delivered fact) and the facade
@@ -1300,6 +1429,12 @@ async function executePromptForMachine(
       outputFormat: input.turn.outputFormat,
       onEvent,
       syntheticForkSeed,
+      observe: checkpoint
+        ? {
+            sending: () => checkpoint.markDispatched(),
+            failed: (error) => checkpoint.markDispatchFailure(error),
+          }
+        : undefined,
       fsWritePolicy: input.turn.fsWritePolicy,
     });
     runtimeState.attempt?.recordResult(
@@ -1436,7 +1571,10 @@ async function executePromptForMachine(
     abortWiring.cleanup();
     runtimeState.currentTurnAutonomous = undefined;
     runtimeState.currentTurnMessageId = undefined;
-    if (!attempt) await preparedContext?.finish();
+    if (!attempt) {
+      await preparedContext?.finish();
+      await checkpoint?.finish();
+    }
   }
 
   // Every turnless-failure path returned inside the try (or the catch); a

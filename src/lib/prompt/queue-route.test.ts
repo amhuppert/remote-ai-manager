@@ -118,6 +118,7 @@ function createTestDeps(
     queueMessage: vi
       .fn()
       .mockResolvedValue({ entry, deliveryTiming: "in_turn" as const }),
+    checkpointAcceptsQueuedInput: () => false,
     queueCapabilityForBackend: vi.fn().mockReturnValue(inTurnCapability),
     toQueuedMessageView: vi.fn((e: PendingQueuedMessage) => makeView(e)),
     clearConversationPendingPromptTextIfMatches: vi

@@ -81,6 +81,7 @@ import {
   type ResolvedClaudeModelSelection,
 } from "./model-selection";
 import { modelSelectionKey } from "../model-selection";
+import { providerRefDigest } from "../provider-ref-digest";
 
 const logger = createLogger("claude:conversation-runtime");
 
@@ -458,7 +459,7 @@ class ClaudeConversationRuntime
         conversationId: this.querySession.conversationId,
         error: errorMsg,
         aborted: wasAborted,
-        sessionId: lastKnownSessionId,
+        sessionIdDigest: providerRefDigest(lastKnownSessionId),
         failureKind: classification?.kind ?? null,
       });
 

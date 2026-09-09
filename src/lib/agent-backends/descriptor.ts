@@ -104,6 +104,15 @@ export interface BackendConversationCapabilities {
   contextWindowMetrics: boolean;
   nativeMidTurnAskUser: boolean;
   externalTurns: boolean;
+  /**
+   * Whether Command Center may retire this backend's runtime through a manual
+   * CC checkpoint and continue the same CC conversation in a fresh provider
+   * session seeded from the frozen checkpoint. A claim about the ADAPTER's
+   * proven continuation behaviour, not the provider's: it stays `false` until
+   * the backend-continuation probes hold real evidence for the adapter, and
+   * consumers read it here rather than branching on backend identity.
+   */
+  checkpoint: boolean;
   capabilityKinds: readonly BackendCapabilityKindSupport[];
 }
 

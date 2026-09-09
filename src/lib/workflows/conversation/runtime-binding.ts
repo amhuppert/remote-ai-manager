@@ -25,6 +25,9 @@ export class ManagedConversationRuntime {
   private index?: BackendRuntimeIndex;
   private external?: ExternalTurnHandler;
   private readonly work = new Set<Promise<void>>();
+  /** Activity of handlers already retired, so the epoch never runs backwards. */
+  private retiredActivity = 0;
+  private trackedRegistrations = 0;
 
   constructor(private readonly conversationId: string) {}
 
@@ -68,10 +71,52 @@ export class ManagedConversationRuntime {
     index.register(this.conversationId, backend);
   }
 
+  /** True while the installed handler has an external turn in flight. */
+  get externalTurnActive(): boolean {
+    return this.external?.activeTurn ?? false;
+  }
+
+  /** Resolves once no external turn is in flight; see `ExternalTurnHandler.settled`. */
+  externalTurnSettled(): Promise<void> {
+    return this.external?.settled() ?? Promise.resolve();
+  }
+
+  /**
+   * Monotonic count of owned activity: every accepted external event and
+   * every tracked-work registration. Checkpoint maintenance snapshots it after
+   * capture and refuses to freeze if it moved, which is how a provider
+   * auto-continuation that emitted nothing to the archive still invalidates a
+   * build.
+   */
+  get activityEpoch(): number {
+    return (
+      this.retiredActivity +
+      (this.external?.activity ?? 0) +
+      this.trackedRegistrations
+    );
+  }
+
   track(work: Promise<void>): Promise<void> {
+    this.trackedRegistrations += 1;
     this.work.add(work);
     void work.finally(() => this.work.delete(work)).catch(() => {});
     return work;
+  }
+
+  /** Owned asynchronous work (notices, background-loss handling) still pending. */
+  get hasTrackedWork(): boolean {
+    return this.work.size > 0;
+  }
+
+  /**
+   * Let every queued external-turn frame reach the archive and every tracked
+   * effect settle, without stopping the handler. Checkpoint maintenance calls
+   * this before it captures or rechecks the source, so an auto-continuation
+   * whose frames were still in flight is seen rather than frozen past.
+   */
+  async settleOwnedWork(): Promise<void> {
+    await this.external?.drain();
+    while (this.work.size > 0) await Promise.allSettled([...this.work]);
   }
 
   close(): Promise<void> {
@@ -84,6 +129,7 @@ export class ManagedConversationRuntime {
         await this.external?.stopAndDrain();
         while (this.work.size > 0) await Promise.allSettled([...this.work]);
         if (backend) this.index?.unregister(this.conversationId, backend);
+        this.retiredActivity += this.external?.activity ?? 0;
         this.handle = undefined;
         this.configuration = undefined;
         this.external = undefined;

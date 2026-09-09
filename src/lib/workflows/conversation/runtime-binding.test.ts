@@ -1,6 +1,7 @@
 import { runtimeConfigurationFixture } from "./testing/runtime-configuration-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { ManagedConversationRuntime } from "./runtime-binding";
+import { createExternalTurnHandler } from "./external-turn-handler";
 import { createMockBackendRuntime } from "./testing/actor-deps-fixture";
 
 function deferred() {
@@ -67,6 +68,59 @@ describe("managed conversation backend lifetime", () => {
       f.owner.configurationSnapshot?.modelSelection.parameters["effort"],
     ).toBe("high");
     await f.owner.close();
+  });
+
+  it("reports external turn activity and an activity epoch from the installed handler", () => {
+    const owner = new ManagedConversationRuntime("conv-1");
+    const handler = createExternalTurnHandler(
+      { conversationId: "conv-1" },
+      { sendToMachine: () => {} },
+      { safeAppendTranscriptEntry: async () => {} },
+    );
+    owner.install(
+      owner.beginCreation(),
+      createMockBackendRuntime(),
+      runtimeConfigurationFixture({ alignmentVersion: 1 }),
+      { register() {}, unregister() {} },
+      handler,
+    );
+    expect(owner.externalTurnActive).toBe(false);
+    const before = owner.activityEpoch;
+
+    handler({ type: "external_turn_started" });
+    expect(owner.externalTurnActive).toBe(true);
+    expect(owner.activityEpoch).toBe(before + 1);
+
+    void owner.track(Promise.resolve());
+    expect(owner.activityEpoch).toBe(before + 2);
+  });
+
+  it("settles the external turn promise through the installed handler, and immediately without one", async () => {
+    const owner = new ManagedConversationRuntime("conv-1");
+    await expect(owner.externalTurnSettled()).resolves.toBeUndefined();
+    const handler = createExternalTurnHandler(
+      { conversationId: "conv-1" },
+      { sendToMachine: () => {} },
+      { safeAppendTranscriptEntry: async () => {} },
+    );
+    owner.install(
+      owner.beginCreation(),
+      createMockBackendRuntime(),
+      runtimeConfigurationFixture({ alignmentVersion: 1 }),
+      { register() {}, unregister() {} },
+      handler,
+    );
+    handler({ type: "external_turn_started" });
+    let settled = false;
+    void owner.externalTurnSettled().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await owner.close();
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    expect(owner.externalTurnActive).toBe(false);
   });
 
   it("retains a failed close and retries only through reconciliation", async () => {

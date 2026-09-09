@@ -89,6 +89,10 @@ export const CONVERSATION_CONTEXT_DISPOSITION = {
   totals: "persist",
   lastResult: "persist",
   lastError: "persist",
+  // The checkpoint repository is the authority for checkpoint phase; a resume
+  // token that carried it could restore a stale hold or, worse, drop one.
+  // Hydration reads the repository before the actor accepts work.
+  checkpoint: "derive-on-rehydrate",
 } satisfies Record<keyof ConversationContext, ConversationContextDisposition>;
 
 /**
@@ -326,6 +330,17 @@ export function restorePersistedSnapshotEnvelope(snapshot: unknown): void {
   if (!isRecord(snapshot.children)) snapshot.children = {};
   if (!isRecord(snapshot.context)) return;
   const context = snapshot.context;
+  // A derive-on-rehydrate field is reconstructed by whoever restores the
+  // token, never read from it: a raw row that carries one anyway — a
+  // checkpoint projection, say — would otherwise restore a hold the
+  // repository no longer records, or drop one it does. `target` is rebuilt
+  // below from the flat identity fields.
+  for (const [key, disposition] of Object.entries(
+    CONVERSATION_CONTEXT_DISPOSITION,
+  )) {
+    if (disposition === "derive-on-rehydrate" && key !== "target")
+      delete context[key];
+  }
   const identity = z
     .object({
       projectName: z.string(),

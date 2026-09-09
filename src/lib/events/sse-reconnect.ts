@@ -3,6 +3,7 @@ import { z } from "zod";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
 import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
+import { checkpointKeys } from "@/lib/conversation-checkpoints/query-keys";
 import { collaborationKeys } from "@/lib/workflows/query-keys";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
@@ -92,6 +93,11 @@ export async function reconnectReconcile(
   void queryClient.invalidateQueries({ queryKey: mcpConfigKeys.all });
   void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });
   void queryClient.invalidateQueries({ queryKey: agentCapabilityKeys.all });
+  // A checkpoint's durable phase can move entirely inside the interruption —
+  // ready, applied, cancelled, failed, or a reconciliation gate — and the
+  // receipt frame that announced it is gone. Both scopes live under this one
+  // prefix, so re-reading it is how a mounted panel recovers the real phase.
+  void queryClient.invalidateQueries({ queryKey: checkpointKeys.all });
   const ticketDetails = queryClient
     .getQueriesData({ queryKey: ticketKeys.details() })
     .flatMap(([queryKey]) => {

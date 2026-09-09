@@ -10,10 +10,15 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from "@/components/ui/DropdownMenu";
+import CheckpointMenuItems from "@/components/conversation/CheckpointMenuItems";
+import type {
+  CheckpointActionState,
+  CheckpointChipState,
+} from "@/components/conversation/checkpoint-action-state";
 import { cn } from "@/lib/ui/cn";
 import type { LayoutMode } from "@/lib/sessions/schemas";
 import { LAYOUT_OPTIONS } from "./LayoutSwitcher";
-import type { CompactionChipState } from "./compaction-chip-state";
+import type { CompactionChipState } from "@/components/conversation/compaction-chip-state";
 
 // Rich item content (colored glyph square + label + description) rendered inside
 // the canonical DropdownMenu items; the menu behaviour/appearance is the
@@ -50,6 +55,16 @@ export interface SessionActionsMenuProps {
   onViewArtifact?: () => void;
   onRefreshArtifact?: () => void;
   onCopyReference?: () => void;
+  /**
+   * Context-checkpoint state (design §8). A separate action from the
+   * compaction artifact above: it retires the provider context, where the
+   * artifact only writes a reading document. Omitted where no conversation is
+   * in scope, which hides the checkpoint items entirely.
+   */
+  checkpointChip?: CheckpointChipState;
+  checkpointAction?: CheckpointActionState;
+  onCompactContextNow?: () => void;
+  onViewCheckpoint?: () => void;
 }
 
 export default function SessionActionsMenu({
@@ -64,6 +79,10 @@ export default function SessionActionsMenu({
   onViewArtifact,
   onRefreshArtifact,
   onCopyReference,
+  checkpointChip,
+  checkpointAction,
+  onCompactContextNow,
+  onViewCheckpoint,
 }: SessionActionsMenuProps): React.JSX.Element {
   const showCompact =
     compaction?.kind === "none" || compaction?.kind === "failed";
@@ -150,11 +169,13 @@ export default function SessionActionsMenu({
                   {"⇊"}
                 </span>
                 <span className={BODY_CLASS}>
-                  <span className={LABEL_CLASS}>Compact conversation</span>
+                  <span className={LABEL_CLASS}>
+                    Generate compaction artifact
+                  </span>
                   <span className={DESC_CLASS}>
                     {compaction.kind === "failed"
                       ? "Previous run failed — run again"
-                      : "Generate a context artifact"}
+                      : "Write a reading artifact; continuity is unchanged"}
                   </span>
                 </span>
               </DropdownMenuItem>
@@ -212,6 +233,18 @@ export default function SessionActionsMenu({
                   </span>
                 </span>
               </DropdownMenuItem>
+            )}
+            {checkpointChip !== undefined && checkpointAction !== undefined && (
+              <>
+                <DropdownMenuSeparator />
+                <CheckpointMenuItems
+                  chip={checkpointChip}
+                  action={checkpointAction}
+                  {...(onCompactContextNow ? { onCompactContextNow } : {})}
+                  {...(onViewCheckpoint ? { onViewCheckpoint } : {})}
+                />
+                <DropdownMenuSeparator />
+              </>
             )}
             <DropdownMenuItem
               onSelect={onCopyReference}

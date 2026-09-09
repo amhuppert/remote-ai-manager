@@ -15,6 +15,7 @@ describe("assembleTurnPrompt", () => {
       workflowResultsBlock: null,
       notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
+      checkpointSeedBlock: null,
     });
     expect(result).toBe(`${block}\n\nhello`);
   });
@@ -46,6 +47,7 @@ describe("assembleTurnPrompt", () => {
       workflowResultsBlock: null,
       notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
+      checkpointSeedBlock: null,
     });
     expect(typeof result).toBe("string");
     expect((result as string).startsWith(block)).toBe(true);
@@ -79,6 +81,7 @@ describe("assembleTurnPrompt", () => {
       workflowResultsBlock: null,
       notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
+      checkpointSeedBlock: null,
     });
     expect(typeof result).toBe("string");
     expect(result as string).toContain("<debug-mode>");
@@ -113,6 +116,7 @@ describe("assembleTurnPrompt", () => {
       workflowResultsBlock: null,
       notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
+      checkpointSeedBlock: null,
     });
     expect(typeof result).toBe("string");
     expect(result as string).toContain("<debug-phase>");
@@ -133,6 +137,7 @@ describe("assembleTurnPrompt", () => {
       workflowResultsBlock: null,
       notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
+      checkpointSeedBlock: null,
     });
     expect(result).toBe("hello");
   });
@@ -145,10 +150,44 @@ it("orders every transient contribution ahead of expanded user text", () => {
       workflowResultsBlock: "workflow",
       activeTicketBlock: "ticket",
       memoryIndexBlock: "memory",
+      checkpointSeedBlock: null,
       debugContext: "debug",
       userText: "original [Image #1]",
     }),
   ).toBe(
     "notepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\noriginal [Image #1]",
   );
+});
+
+describe("checkpoint seed placement", () => {
+  it("places the exact frozen checkpoint bytes ahead of every other block and the user text", () => {
+    const seed = "<cc-checkpoint>\nobjective: déployer ✓\n</cc-checkpoint>";
+    expect(
+      assembleTurnPrompt({
+        checkpointSeedBlock: seed,
+        notepadChangeNoticeBlock: "notepads",
+        workflowResultsBlock: "workflow",
+        activeTicketBlock: "ticket",
+        memoryIndexBlock: "memory",
+        debugContext: "debug",
+        userText: "the actual user message",
+      }),
+    ).toBe(
+      `${seed}\n\nnotepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\nthe actual user message`,
+    );
+  });
+
+  it("adds nothing when no checkpoint is pending", () => {
+    expect(
+      assembleTurnPrompt({
+        checkpointSeedBlock: null,
+        notepadChangeNoticeBlock: null,
+        workflowResultsBlock: null,
+        activeTicketBlock: null,
+        memoryIndexBlock: null,
+        debugContext: null,
+        userText: "hello",
+      }),
+    ).toBe("hello");
+  });
 });

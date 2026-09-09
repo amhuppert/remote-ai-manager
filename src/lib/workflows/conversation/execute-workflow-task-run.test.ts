@@ -200,6 +200,7 @@ function makeActorInputData(
 ): EnsureActorInputData {
   return {
     conversationScope: "session",
+    checkpoint: null,
     projectName: "project",
     sessionWorktreePath: "/test/project/.worktrees/test-session",
     persistence: "durable",
@@ -1271,6 +1272,7 @@ describe("executeWorkflowTaskRun", () => {
       actorInputLoader = async () =>
         makeActorInputData({
           conversationScope: "project",
+          checkpoint: null,
           sessionWorktreePath: PROJECT_PATH,
         });
 

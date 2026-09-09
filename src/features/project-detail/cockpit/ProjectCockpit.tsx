@@ -54,6 +54,10 @@ import {
 } from "@/lib/hotkeys/prompt-focus";
 import type { FilterToken } from "../components/filter-tokens";
 import ConversationTabs, { type ConversationTabItem } from "./ConversationTabs";
+import ConversationCheckpointControls from "@/components/conversation/ConversationCheckpointControls";
+import { useCheckpointMaintenanceHold } from "@/lib/conversation-checkpoints/maintenance-hold";
+import { CHECKPOINT_RECENT_LIMIT } from "@/lib/conversation-checkpoints/queries";
+import { useRequestMessageNav } from "@/stores/session-detail.store";
 import ConversationPane from "./ConversationPane";
 import ProjectQuestionSlot from "./ProjectQuestionSlot";
 import ProjectTranscriptHost from "./ProjectTranscriptHost";
@@ -540,9 +544,36 @@ export default function ProjectCockpit({
   // Both halves are read from THIS conversation, never the project: a sibling
   // conversation running is not a reason to queue here, and treating it as one
   // would reintroduce the cross-conversation block the cockpit removed.
+  //
+  // Checkpoint maintenance counts as busy too. While the manager builds and
+  // retires a checkpoint it owns the conversation without running an ordinary
+  // turn, so `status` stays idle while a direct prompt would be refused; the
+  // message must queue like any other submission into a busy conversation.
+  const checkpointHold = useCheckpointMaintenanceHold(
+    activeTabId === null
+      ? null
+      : {
+          scope: "project",
+          projectName,
+          conversationId: activeTabId,
+        },
+    { limit: CHECKPOINT_RECENT_LIMIT },
+  );
+  // Saved-checkpoint evidence drills through to the transcript exactly as the
+  // session host does; the cockpit's transcript consumes the same store
+  // request, so a boundary resolved in the panel lands on the real message.
+  const requestMessageNav = useRequestMessageNav();
+  const navigateToCheckpointMessage = useCallback(
+    (messageIndex: number) => {
+      if (activeTabId !== null) requestMessageNav(activeTabId, messageIndex);
+    },
+    [requestMessageNav, activeTabId],
+  );
+
   const turnActive =
     sender.isSending(composerTurnKey) ||
-    activeConversation?.status === "running";
+    activeConversation?.status === "running" ||
+    checkpointHold;
 
   const queueTurnState = useMemo(
     () => ({
@@ -706,6 +737,18 @@ export default function ProjectCockpit({
               status: activeConversation.status,
               redactedProfileSnapshot:
                 activeConversation.redactedProfileSnapshot,
+              // Project conversations address their checkpoint through the
+              // project target — no session path is fabricated for them.
+              checkpoint: (
+                <ConversationCheckpointControls
+                  target={{
+                    scope: "project",
+                    projectName,
+                    conversationId: activeConversation.id,
+                  }}
+                  onNavigateToMessage={navigateToCheckpointMessage}
+                />
+              ),
             }
           : {})}
         tabs={

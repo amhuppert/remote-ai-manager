@@ -334,6 +334,7 @@ describe("conversation manager", () => {
       actorInputLoader = async () => ({
         projectName: "test-project",
         conversationScope: "session",
+        checkpoint: null,
         persistence: "durable",
         sessionWorktreePath: "/test/project",
         conversation: toConversationDurableSeed(makeConversationState()),
@@ -753,6 +754,7 @@ describe("conversation manager", () => {
         },
         lastResult: null,
         lastError: null,
+        checkpoint: null,
       };
 
       const conv = {
@@ -868,6 +870,7 @@ describe("conversation manager", () => {
     ): EnsureActorInputData {
       return {
         conversationScope: "session",
+        checkpoint: null,
         projectName: "test-project",
         sessionWorktreePath: "/test/project/.worktrees/test-session",
         persistence: "durable",
@@ -1304,6 +1307,7 @@ describe("conversation manager", () => {
         async () =>
           ({
             conversationScope: "session",
+            checkpoint: null,
             projectName: DEFAULT_INPUT.target.projectName,
             sessionWorktreePath: DEFAULT_INPUT.worktreePath,
             persistence: "durable",

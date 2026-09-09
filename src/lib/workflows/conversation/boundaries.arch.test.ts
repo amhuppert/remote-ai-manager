@@ -15,6 +15,9 @@ const privateModules = new Set([
   "runtime-binding",
   "turn-attempt",
   "production",
+  "checkpoint-maintenance",
+  "checkpoint-restart",
+  "checkpoint-queue-repair",
 ]);
 
 function forbiddenImports(source: string, file: string): string[] {
@@ -91,6 +94,37 @@ function forbiddenImports(source: string, file: string): string[] {
   return violations;
 }
 
+/**
+ * Only the manager sends the checkpoint projection to an actor; the machine
+ * handles it and the event union names it. Any other sender would be a second
+ * lifecycle owner able to fake, drop or release a hold, so the event name may
+ * not appear as a string literal anywhere else.
+ */
+const checkpointEventOwners = new Set(
+  ["manager", "machine", "types"].map((name) => conversationRoot + name),
+);
+const CHECKPOINT_EVENT = "CHECKPOINT_PHASE";
+
+function forbiddenCheckpointEvents(source: string, file: string): string[] {
+  if (checkpointEventOwners.has(file.replace(/\.[cm]?[jt]sx?$/, ""))) return [];
+  const parsed = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const violations: string[] = [];
+  function visit(node: ts.Node) {
+    if (ts.isStringLiteralLike(node) && node.text === CHECKPOINT_EVENT)
+      violations.push(
+        `${file}:${parsed.getLineAndCharacterOfPosition(node.getStart()).line + 1} checkpoint actor events belong to the conversation manager: ${CHECKPOINT_EVENT}`,
+      );
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  return violations;
+}
+
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(directory, entry.name);
@@ -111,6 +145,9 @@ describe("conversation lifecycle import boundaries", () => {
       'const implementation = import("@/lib/workflows/conversation/actor-implementations");',
       'const state = require("@/lib/workflows/conversation/runtime-binding");',
       'type Event = import("@/lib/workflows/conversation/types").ConversationEvent;',
+      'import { runCheckpointMaintenance } from "@/lib/workflows/conversation/checkpoint-maintenance";',
+      'import { hydrateCheckpointAuthority } from "@/lib/workflows/conversation/checkpoint-restart";',
+      'import { repairQueuedAcceptanceFromCheckpoint } from "@/lib/workflows/conversation/checkpoint-queue-repair";',
     ];
     for (const source of samples)
       expect(
@@ -159,12 +196,46 @@ describe("conversation lifecycle import boundaries", () => {
     ).toEqual([]);
   });
   it("audits every production source file", () => {
-    const violations = sourceFiles(sourceRoot).flatMap((file) =>
-      forbiddenImports(
-        readFileSync(file, "utf8"),
-        path.relative(sourceRoot, file),
-      ),
-    );
+    const violations = sourceFiles(sourceRoot).flatMap((file) => {
+      const source = readFileSync(file, "utf8");
+      const relative = path.relative(sourceRoot, file);
+      return [
+        ...forbiddenImports(source, relative),
+        ...forbiddenCheckpointEvents(source, relative),
+      ];
+    });
     expect(violations, violations.join("\n")).toEqual([]);
+  }, 30_000);
+});
+
+describe("checkpoint actor event ownership", () => {
+  const send = 'actor.send({ type: "CHECKPOINT_PHASE", checkpoint: null });';
+  it("refuses the projection event outside the manager, machine and event union", () => {
+    for (const file of [
+      "lib/conversations/consumer.ts",
+      "lib/workflows/conversation/checkpoint-maintenance.ts",
+      "lib/workflows/conversation/actor-host.ts",
+    ])
+      expect(forbiddenCheckpointEvents(send, file), file).toHaveLength(1);
+    expect(
+      forbiddenCheckpointEvents(
+        'type Projection = { type: "CHECKPOINT_PHASE" }; const name = `CHECKPOINT_PHASE`;',
+        "lib/workflows/conversation/rehydration.ts",
+      ),
+    ).toHaveLength(2);
+  });
+  it("allows its owners, and identifiers that merely contain the name", () => {
+    for (const file of [
+      "lib/workflows/conversation/manager.ts",
+      "lib/workflows/conversation/machine.ts",
+      "lib/workflows/conversation/types.ts",
+    ])
+      expect(forbiddenCheckpointEvents(send, file), file).toEqual([]);
+    expect(
+      forbiddenCheckpointEvents(
+        'import { ACTIVE_CHECKPOINT_PHASES } from "@/lib/conversation-checkpoints/schemas"; const phases = ACTIVE_CHECKPOINT_PHASES;',
+        "lib/conversations/consumer.ts",
+      ),
+    ).toEqual([]);
   });
 });

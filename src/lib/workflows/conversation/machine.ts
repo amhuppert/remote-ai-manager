@@ -42,7 +42,18 @@ import { conversationTotals } from "./actor-input-loader";
  */
 
 import { randomUUID } from "node:crypto";
-import { setup, assign, enqueueActions, type ActorRefFrom } from "xstate";
+import {
+  setup,
+  assign,
+  enqueueActions,
+  and,
+  not,
+  type ActorRefFrom,
+} from "xstate";
+import {
+  checkpointHoldsExternalAdmission,
+  checkpointHoldsOrdinaryAdmission,
+} from "@/lib/conversation-checkpoints/admission";
 import type {
   ConversationContext,
   ConversationEvent,
@@ -217,6 +228,22 @@ export const conversationMachine = setup({
   guards: {
     isActiveTurnTaskRun: ({ context }) =>
       context.activeTurn?.kind === "task_run",
+    /**
+     * Ordinary admission is held while a checkpoint operation owns this
+     * conversation: building, retiring, delivering or awaiting reconciliation.
+     * A `ready` checkpoint releases it — the next ordinary turn is what
+     * delivers the seed.
+     */
+    checkpointHoldsAdmission: ({ context }) =>
+      checkpointHoldsOrdinaryAdmission(context.checkpoint),
+    /**
+     * A provider-initiated turn is admitted while a checkpoint is still
+     * building — the provider already started it, and the build yields to it
+     * at its freeze fence — and refused once the runtime is being retired or
+     * replaced.
+     */
+    checkpointHoldsExternalAdmission: ({ context }) =>
+      checkpointHoldsExternalAdmission(context.checkpoint),
   },
 
   actions: {
@@ -372,6 +399,16 @@ export const conversationMachine = setup({
     }),
 
     startDebugCleanupVerification: () => {},
+
+    /** The manager's checkpoint projection; `ready` retires the continuation. */
+    applyCheckpointPhase: assign(({ context, event }) => {
+      if (event.type !== "CHECKPOINT_PHASE") return {};
+      return {
+        checkpoint: event.checkpoint,
+        backendRef:
+          event.checkpoint?.phase === "ready" ? null : context.backendRef,
+      };
+    }),
   },
 }).createMachine({
   id: "conversation",
@@ -422,6 +459,7 @@ export const conversationMachine = setup({
     totals: conversationTotals(input),
     lastResult: null,
     lastError: null,
+    checkpoint: input.checkpoint ?? null,
   }),
 
   initial: "idle",
@@ -429,6 +467,11 @@ export const conversationMachine = setup({
   on: {
     MODEL_SELECTION_RESOLVED: {
       actions: "rejectInactiveModelSelectionResolution",
+    },
+    // Targetless on purpose: a projection change must not re-enter the
+    // resting state, whose entry action drains the queue.
+    CHECKPOINT_PHASE: {
+      actions: ["applyCheckpointPhase", "syncDerivedFields", "persistSnapshot"],
     },
   },
 
@@ -453,10 +496,12 @@ export const conversationMachine = setup({
       ],
       on: {
         SUBMIT_PROMPT: {
+          guard: not("checkpointHoldsAdmission"),
           target: "acquiringResources",
           actions: "claimConversationTurn",
         },
         SUBMIT_TASK_RUN: {
+          guard: not("checkpointHoldsAdmission"),
           target: "acquiringResources",
           actions: "claimTaskRun",
         },
@@ -464,11 +509,17 @@ export const conversationMachine = setup({
         // while debug mode is inactive); the always-transition above then
         // routes into the debug state.
         DEBUG_COMMAND: {
-          guard: ({ context, event }) =>
-            isApplicableDebugCommand(context, event),
+          guard: and([
+            not("checkpointHoldsAdmission"),
+            ({ context, event }) => isApplicableDebugCommand(context, event),
+          ]),
           actions: "applyDebugCommandEffect",
         },
+        // A backend auto-continuation during a checkpoint build is admitted
+        // and the build yields to it; once the runtime is being retired or
+        // replaced the start is refused, since no live runtime remains for it.
         EXTERNAL_TURN_STARTED: {
+          guard: not("checkpointHoldsExternalAdmission"),
           target: "externalExecuting",
         },
         // Stop with nothing to stop. The machine is already settled, so this is
@@ -751,6 +802,7 @@ export const conversationMachine = setup({
                 forkedFrom: context.forkedFrom,
                 role: context.role,
                 streamId: activeTurn.streamId,
+                checkpoint: context.checkpoint ?? null,
                 onModelSelectionResolved:
                   createModelSelectionResolutionReporter(
                     (event) => self.send(event),
@@ -925,10 +977,12 @@ export const conversationMachine = setup({
       entry: [{ type: "drainPendingQueue" }],
       on: {
         SUBMIT_PROMPT: {
+          guard: not("checkpointHoldsAdmission"),
           target: "acquiringResources",
           actions: "claimConversationTurn",
         },
         SUBMIT_TASK_RUN: {
+          guard: not("checkpointHoldsAdmission"),
           target: "acquiringResources",
           actions: "claimTaskRun",
         },
@@ -990,6 +1044,7 @@ export const conversationMachine = setup({
       ],
       on: {
         SUBMIT_PROMPT: {
+          guard: not("checkpointHoldsAdmission"),
           target: "acquiringResources",
           actions: "claimConversationTurn",
         },

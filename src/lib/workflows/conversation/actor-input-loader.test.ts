@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import type {
+  CheckpointActorProjection,
+  CheckpointScopeKey,
+} from "@/lib/conversation-checkpoints/schemas";
 import {
   loadActorInput,
   conversationAggregateFields,
@@ -38,11 +42,24 @@ describe("loadActorInput (R4.3 / D5)", () => {
     fixture.close();
   });
 
+  let checkpointKeys: CheckpointScopeKey[] = [];
+  let checkpointProjection: CheckpointActorProjection | null = null;
+
   function deps() {
+    checkpointKeys = [];
     return {
       getSession: fixture.store.getSession,
       getProjectConversation: fixture.store.getProjectConversation,
       getProjectDisplayName: () => "cc",
+      async hydrateCheckpointAuthority(key: CheckpointScopeKey) {
+        checkpointKeys.push(key);
+        return {
+          projection: checkpointProjection,
+          state: { active: null, latestAccepted: null },
+          outcome: { kind: "none" as const },
+          continuationRetired: false,
+        };
+      },
     };
   }
 
@@ -168,6 +185,65 @@ describe("loadActorInput (R4.3 / D5)", () => {
       actor.stop();
     },
   );
+
+  describe("checkpoint authority", () => {
+    it.each(["session", "project"] as const)(
+      "reads the %s conversation's active checkpoint by its storage scope before the actor exists",
+      async (scope) => {
+        const stored = conversation({ scope, promptCount: 3 });
+        const sessionName =
+          scope === "project"
+            ? PROJECT_CONVERSATION_SESSION_SENTINEL
+            : "csm/feature";
+        if (scope === "project") {
+          await fixture.seedProjectConversation(PROJECT_PATH, stored);
+        } else {
+          fixture.seedSession(PROJECT_PATH, sessionName);
+          await fixture.seedConversation(PROJECT_PATH, sessionName, stored);
+        }
+        checkpointProjection = { operationId: "op-7", phase: "retiring" };
+        const loaded = await loadActorInput(
+          deps(),
+          PROJECT_PATH,
+          sessionName,
+          stored.id,
+        );
+        expect(loaded.checkpoint).toEqual({
+          operationId: "op-7",
+          phase: "retiring",
+        });
+        expect(checkpointKeys).toEqual([
+          scope === "project"
+            ? {
+                scope: "project",
+                projectPath: PROJECT_PATH,
+                sessionName: null,
+                conversationId: stored.id,
+              }
+            : {
+                scope: "session",
+                projectPath: PROJECT_PATH,
+                sessionName: "csm/feature",
+                conversationId: stored.id,
+              },
+        ]);
+        checkpointProjection = null;
+      },
+    );
+
+    it("loads a null projection when no checkpoint owns the conversation", async () => {
+      const stored = conversation({ scope: "session" });
+      fixture.seedSession(PROJECT_PATH, "csm/feature");
+      await fixture.seedConversation(PROJECT_PATH, "csm/feature", stored);
+      const loaded = await loadActorInput(
+        deps(),
+        PROJECT_PATH,
+        "csm/feature",
+        stored.id,
+      );
+      expect(loaded.checkpoint).toBeNull();
+    });
+  });
 
   describe("session scope", () => {
     beforeEach(async () => {

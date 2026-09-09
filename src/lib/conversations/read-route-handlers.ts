@@ -42,6 +42,16 @@ import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import {
+  MAX_CHECKPOINT_LIST_LIMIT,
+  type CheckpointReceiptPage,
+  type ListCheckpointReceiptsOptions,
+} from "@/lib/conversation-checkpoints/repo";
+import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
+import {
+  savedCheckpointBoundaries,
+  type CheckpointBoundaryInput,
+} from "./history-recovery";
 
 const auditLogger = createLogger("context-artifacts.audit");
 const readLogger = createLogger("context-artifacts.read");
@@ -62,6 +72,10 @@ export interface ReadRouteDeps {
   readTranscriptEntries(
     transcriptPath: string | null,
   ): Promise<TranscriptEntriesResult>;
+  listCheckpointReceipts(
+    key: CheckpointScopeKey,
+    options?: ListCheckpointReceiptsOptions,
+  ): Promise<CheckpointReceiptPage>;
   auth: AgentAuth;
 }
 
@@ -71,6 +85,11 @@ function defaultDeps(): ReadRouteDeps {
     getSession: defaultGetSession,
     getProjectConversation: defaultGetProjectConversation,
     readTranscriptEntries: defaultReadTranscriptEntriesWithSeq,
+    async listCheckpointReceipts(key, options) {
+      const { getConversationCheckpointsRepo } =
+        await import("@/lib/conversation-checkpoints/service-factory");
+      return getConversationCheckpointsRepo().listReceipts(key, options);
+    },
     auth: createAgentAuth(),
   };
 }
@@ -228,6 +247,29 @@ interface ReadTarget {
 }
 
 export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
+  async function readBoundaries(
+    target: ReadTarget,
+  ): Promise<CheckpointBoundaryInput[]> {
+    const key: CheckpointScopeKey = {
+      scope: target.target.scope,
+      projectPath: target.projectPath,
+      sessionName:
+        target.target.scope === "session" ? target.target.sessionName : null,
+      conversationId: target.target.conversationId,
+    };
+    const boundaries: CheckpointBoundaryInput[] = [];
+    let before: number | undefined;
+    do {
+      const page = await deps.listCheckpointReceipts(key, {
+        limit: MAX_CHECKPOINT_LIST_LIMIT,
+        ...(before === undefined ? {} : { before }),
+      });
+      boundaries.push(...savedCheckpointBoundaries(page.receipts));
+      before = page.nextBefore ?? undefined;
+    } while (before !== undefined);
+    return boundaries;
+  }
+
   async function serveRead(
     request: Request,
     target: ReadTarget,
@@ -237,10 +279,12 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
     const options = query.options;
 
     let result: TranscriptEntriesResult;
+    let boundaries: CheckpointBoundaryInput[];
     try {
-      result = await deps.readTranscriptEntries(
-        target.conversation.transcriptPath,
-      );
+      [result, boundaries] = await Promise.all([
+        deps.readTranscriptEntries(target.conversation.transcriptPath),
+        readBoundaries(target),
+      ]);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to read transcript";
@@ -258,6 +302,7 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
         conversationId: target.target.conversationId,
         entries: result.entries,
         maxSeq: result.maxSeq,
+        boundaries,
       },
       options,
     );
@@ -288,6 +333,8 @@ export function createReadRouteHandlers(deps: ReadRouteDeps = defaultDeps()) {
       truncated: rendered.truncated,
       totalMessages: rendered.totalMessages,
       unitCount: rendered.units.length,
+      boundaryCount: rendered.boundaries.entries.length,
+      boundariesInRange: rendered.boundaries.totalInRange,
     });
 
     if (options.format === "markdown") {

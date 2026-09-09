@@ -57,6 +57,7 @@ describe("notifyProjectConversationStatusFromContext", () => {
       },
       lastResult: null,
       lastError: null,
+      checkpoint: null,
       ...overrides,
     };
   }

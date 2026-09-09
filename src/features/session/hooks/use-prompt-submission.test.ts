@@ -461,6 +461,7 @@ describe("usePromptSubmission", () => {
       selectedBackend: AgentBackendId;
       serialized: { prompt: string; images: ImagePayload[] };
       conversations?: ConversationState[];
+      checkpointMaintenanceHold?: boolean;
       queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
     }) {
       const sendPrompt = vi.fn(async (..._args: unknown[]) => {});
@@ -496,6 +497,7 @@ describe("usePromptSubmission", () => {
           messagesLength: 0,
           selectedModelSelection: selectionForBackend(args.selectedBackend),
           selectedBackend: args.selectedBackend,
+          checkpointMaintenanceHold: args.checkpointMaintenanceHold ?? false,
           sendPrompt,
           queueMessage,
           ...(args.queueCapabilityForBackend
@@ -608,6 +610,27 @@ describe("usePromptSubmission", () => {
       expect(h.queueMessage).not.toHaveBeenCalled();
       expect(h.sendPrompt).not.toHaveBeenCalled();
       expect(h.editorClear).not.toHaveBeenCalled();
+    });
+
+    // Checkpoint maintenance holds the conversation without running an
+    // ordinary turn, so status stays idle while a direct prompt would be
+    // refused as busy. Routing on status alone loses the message.
+    it("queues into an idle conversation that checkpoint maintenance is holding", async () => {
+      const h = renderQueueHook({
+        sending: false,
+        selectedBackend: "claude",
+        serialized: { prompt: "during maintenance", images: [] },
+        conversations: [makeConversation({ id: "c", status: "awaiting" })],
+        checkpointMaintenanceHold: true,
+      });
+
+      await act(async () => {
+        await h.result.current.handleSendPrompt();
+      });
+
+      expect(h.queueMessage).toHaveBeenCalledTimes(1);
+      expect(h.queueMessage.mock.calls[0]?.[0]).toBe("during maintenance");
+      expect(h.sendPrompt).not.toHaveBeenCalled();
     });
 
     it("uses the normal prompt path when the active conversation is not running", async () => {

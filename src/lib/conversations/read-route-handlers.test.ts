@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
+import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
+import { _createTestDb } from "@/lib/state-store/state-db";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 const logSpies = vi.hoisted(() => ({
   info: vi.fn(),
@@ -111,6 +115,9 @@ function createTestDeps(overrides: Partial<ReadRouteDeps> = {}): ReadRouteDeps {
       .fn()
       .mockResolvedValue(makeConvo({ id: "proj-convo-1", scope: "project" })),
     readTranscriptEntries: vi.fn().mockResolvedValue(ENTRIES),
+    async listCheckpointReceipts() {
+      return { receipts: [], nextBefore: null };
+    },
     auth: fakeAuth({ kind: "absent" }),
     ...overrides,
   };
@@ -486,3 +493,178 @@ describe("GET …/projects/[name]/conversations/[conversationId]/read", () => {
     ).toBe(true);
   });
 });
+
+describe.each(["session", "project"] as const)(
+  "%s saved boundaries",
+  (scope) => {
+    it("reads frozen boundaries across receipt pages, scopes them, and caps the rendered range", async () => {
+      const db = _createTestDb({ inMemory: true });
+      const repo = createConversationCheckpointsRepo(db, createWriteQueue(), {
+        exists: () => true,
+        find: () => null,
+        clearBackendRef: () => true,
+      });
+      const key: CheckpointScopeKey = {
+        scope,
+        projectPath: "/home/projects/test-proj",
+        sessionName: scope === "session" ? "test" : null,
+        conversationId: scope === "session" ? "convo-1" : "proj-convo-1",
+      };
+      const at = "2026-09-09T00:00:00.000Z";
+      try {
+        for (let ordinal = 1; ordinal <= 111; ordinal++) {
+          const operationId = `saved-${scope}-${ordinal}`;
+          const sourceBasis = {
+            capturedThroughSeq: ordinal <= 10 ? 2 : 3,
+            sourceHash: "source",
+          };
+          expect(
+            (
+              await repo.admitOperation({
+                key,
+                requestId: operationId,
+                sourceBasis,
+                priorBackendRef: null,
+                requestedAt: at,
+              })
+            ).ok,
+          ).toBe(true);
+          if (ordinal > 10) {
+            expect(
+              (
+                await repo.recordOutcome({
+                  key,
+                  operationId,
+                  expectedPhase: "building",
+                  phase: "cancelled",
+                  at,
+                })
+              ).ok,
+            ).toBe(true);
+            continue;
+          }
+          expect(
+            (
+              await repo.freezePayload({
+                key,
+                operationId,
+                at,
+                payload: {
+                  id: operationId,
+                  schemaVersion: 1,
+                  sourceBasis,
+                  artifactProvenance: null,
+                  versions: {
+                    generatorVersion: "g1",
+                    builderVersion: "b1",
+                    normalizerVersion: "n1",
+                  },
+                  modelSelection: { modelId: "test-model", parameters: {} },
+                  sections: {
+                    workingState: {},
+                    recentDialogue: [],
+                    recoveryMap: {},
+                  },
+                  seedText: "private frozen seed",
+                  seedSha256: "seed-hash",
+                  sectionBytes: {
+                    total: 19,
+                    workingState: 19,
+                    recentDialogue: 0,
+                    recoveryFraming: 0,
+                  },
+                  omissions: [],
+                  generationPassCount: 1,
+                  createdAt: at,
+                },
+              })
+            ).ok,
+          ).toBe(true);
+          expect((await repo.commitReady({ key, operationId, at })).ok).toBe(
+            true,
+          );
+          expect(
+            (
+              await repo.beginDelivery({
+                key,
+                operationId,
+                at,
+                binding: {
+                  attemptId: operationId,
+                  inputFingerprint: "input",
+                  submittedInputFingerprint: "submitted",
+                  queuedAttemptId: null,
+                  queuedMessageId: null,
+                },
+              })
+            ).ok,
+          ).toBe(true);
+          expect(
+            (
+              await repo.recordAcceptance({
+                key,
+                operationId,
+                acceptedBackendRef: `private-ref-${ordinal}`,
+                acceptance: {
+                  attemptId: operationId,
+                  seedHash: "seed-hash",
+                  acceptedAt: at,
+                },
+              })
+            ).ok,
+          ).toBe(true);
+        }
+        const handlers = createReadRouteHandlers(
+          createTestDeps({ listCheckpointReceipts: repo.listReceipts }),
+        );
+        const get =
+          scope === "session" ? handlers.sessionGET : handlers.projectGET;
+        const request = scope === "session" ? sessionRequest : projectRequest;
+        const params = scope === "session" ? sessionParams() : projectParams();
+        const response = await get(request("?outline=true"), params);
+        const rendered = renderedTranscriptSchema.parse(await response.json());
+        expect(rendered.boundaries.totalInRange).toBe(10);
+        expect(
+          rendered.boundaries.entries.map((entry) => entry.ordinal),
+        ).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
+        expect(rendered.boundaries.nextBefore).toBe(3);
+        expect(rendered.boundaries.indexCommand).toContain(
+          `checkpoint list ${key.conversationId} --before 3`,
+        );
+        expect(rendered.totalMessages).toBe(4);
+        const markdown = await (
+          await get(request("?format=markdown"), params)
+        ).text();
+        expect(markdown).toContain(`saved-${scope}-3`);
+        expect(markdown).toContain("2 omitted");
+        expect(JSON.stringify(rendered)).not.toMatch(
+          /private frozen seed|private-ref/,
+        );
+        const narrow = renderedTranscriptSchema.parse(
+          await (await get(request("?seqRange=0:1"), params)).json(),
+        );
+        expect(narrow.boundaries.entries).toEqual([]);
+        const wrongScope =
+          scope === "session"
+            ? await handlers.projectGET(
+                projectRequest(),
+                projectParams("test-proj", "convo-1"),
+              )
+            : await handlers.sessionGET(
+                sessionRequest(),
+                sessionParams("test-proj", "test", "proj-convo-1"),
+              );
+        if (wrongScope.status === 200) {
+          expect(
+            renderedTranscriptSchema.parse(await wrongScope.json()).boundaries
+              .entries,
+          ).toEqual([]);
+        } else {
+          expect(wrongScope.status).toBe(404);
+        }
+      } finally {
+        db.close();
+      }
+    });
+  },
+);

@@ -14,11 +14,11 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import {
-  COMPACTION_MODEL_BUDGET_BYTES,
   createCompactionService,
   type CompactionService,
   type TriggerCompactionInput,
 } from "./service";
+import { COMPACTION_MODEL_BUDGET_BYTES } from "./envelope-generation";
 import { createContextArtifactsRepo, type ContextArtifactsRepo } from "./repo";
 import {
   compactionEnvelopeSchema,

@@ -53,7 +53,12 @@ export interface JobWaitSpec<S> {
    * outlives the budget the caller asked for.
    */
   poll(remainingBudgetMs: number): Promise<JobPollResult<S>>;
-  classify(status: S): JobClassification;
+  /**
+   * May be async: a terminal result whose rendering itself needs the host —
+   * spilling an oversized receipt to a file, for one — is authored here rather
+   * than after the loop, where the reason it terminated is no longer known.
+   */
+  classify(status: S): JobClassification | Promise<JobClassification>;
   /** Client-side budget; the job itself is unbounded by it. */
   timeoutMs: number;
   /** MUST name the continuation command that recovers the still-running job. */
@@ -134,7 +139,7 @@ export async function awaitJob<S>(
       if (polled.ok) {
         consecutiveParseFailures = 0;
         lastStatus = polled.status;
-        const classified = spec.classify(polled.status);
+        const classified = await spec.classify(polled.status);
         if (classified.terminal) return classified.result;
       } else {
         consecutiveParseFailures += 1;

@@ -79,6 +79,12 @@ export const claudeConversationCapabilities: BackendConversationCapabilities = {
   contextWindowMetrics: true,
   nativeMidTurnAskUser: true,
   externalTurns: true,
+  // Enabled on this adapter's own passing continuation evidence (D9): three
+  // checkpoint cycles with a queued delivery, in both scopes, clearing both
+  // halves of the bar — no structural failure and every independently authored
+  // expectation satisfied (9/9 in each scope).
+  // scripts/probes/run-checkpoint-continuation.sh.
+  checkpoint: true,
   capabilityKinds: [
     { kind: "skills", applyTiming: "idle_live" },
     { kind: "plugins", applyTiming: "idle_live" },

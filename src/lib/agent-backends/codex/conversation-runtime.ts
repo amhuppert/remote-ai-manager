@@ -94,6 +94,7 @@ import {
   ModelSelectionPolicyError,
   modelSelectionKey,
 } from "../model-selection";
+import { providerRefDigest } from "../provider-ref-digest";
 
 const logger = createLogger("codex:conversation-runtime");
 
@@ -353,7 +354,7 @@ export class CodexConversationRuntime
       logger.info("codex-runtime.turn_start", {
         conversationId: this.conversationId,
         isResume,
-        threadId: this.threadId,
+        threadIdDigest: providerRefDigest(this.threadId),
         threadOptions,
         modelId: this.modelSelection.modelId,
         reasoningEffort: this.resolvedModelSelection.reasoningEffort,
@@ -393,7 +394,7 @@ export class CodexConversationRuntime
           logger.debug("codex-runtime.input_accepted", {
             conversationId: this.conversationId,
             isResume,
-            threadId: this.threadId,
+            threadIdDigest: providerRefDigest(this.threadId),
           });
         }
 
@@ -496,7 +497,7 @@ export class CodexConversationRuntime
           };
           logger.warn("codex-runtime.stale_resume_ref", {
             conversationId: this.conversationId,
-            threadId: this.threadId,
+            threadIdDigest: providerRefDigest(this.threadId),
             error: acc.failure.message,
           });
         } else {
@@ -510,7 +511,7 @@ export class CodexConversationRuntime
             conversationId: this.conversationId,
             error: acc.errorMessage ?? classification.message,
             rawError: classification.message,
-            threadId: acc.knownThreadId,
+            threadIdDigest: providerRefDigest(acc.knownThreadId),
             modelId: this.modelSelection.modelId,
             reasoningEffort: this.resolvedModelSelection.reasoningEffort,
             wasFirstTurn,
@@ -599,7 +600,7 @@ export class CodexConversationRuntime
 
     logger.info("codex-runtime.turn_end", {
       conversationId: this.conversationId,
-      threadId: acc.knownThreadId,
+      threadIdDigest: providerRefDigest(acc.knownThreadId),
       aborted: acc.aborted,
       hasError: failure != null,
       failureKind: result.failure?.kind ?? null,
@@ -651,7 +652,7 @@ export class CodexConversationRuntime
       } catch (err) {
         logger.warn("codex-runtime.cost_baseline_unavailable", {
           conversationId: this.conversationId,
-          threadId,
+          threadIdDigest: providerRefDigest(threadId),
           error: getErrorMessage(err),
         });
       }

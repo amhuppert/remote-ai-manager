@@ -93,6 +93,7 @@ function context() {
 
 function handlers(onQueue?: () => Promise<void>) {
   return createQueueRouteHandlers({
+    checkpointAcceptsQueuedInput: () => false,
     admitModelSelection: async ({ modelSelection }) => ({
       ok: true,
       modelSelection: modelSelection ?? {

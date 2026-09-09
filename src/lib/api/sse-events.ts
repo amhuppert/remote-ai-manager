@@ -16,6 +16,7 @@ import type {
   ConversationOpenEvent,
   MessageQueueUpdatedEvent,
 } from "@/lib/conversations/schemas";
+import type { ConversationCheckpointUpdatedEvent } from "@/lib/conversation-checkpoints/events";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
 import type {
   NotificationCreatedEvent,
@@ -289,6 +290,7 @@ export type SSEEvent =
   | SpawnResultEvent
   | SessionAlignmentUpdatedEvent
   | ContextArtifactStatusEvent
+  | ConversationCheckpointUpdatedEvent
   | TicketChangedEvent
   | BundleTransferEvent
   | NotepadChangedEvent

@@ -41,6 +41,7 @@ const CONTINUING: NextTurnConversationFacts = {
   sessionName: "feature-x",
   promptCount: 3,
   hasResumeHandle: false,
+  pendingCheckpoint: false,
 };
 
 function makeDeps(overrides: {
@@ -151,6 +152,17 @@ describe("readNextTurnContextLoss", () => {
     // would promise a delta the turn will not deliver.
     const loss = await readNextTurnContextLoss(
       makeDeps({ runtime: aliveRuntime(2), activeAlignmentVersion: 3 }),
+      CONVERSATION,
+    );
+    expect(loss.runtimeCreatedWithoutResume).toBe(true);
+  });
+
+  it("reports a loss for a pending checkpoint, whose fresh runtime resumes nothing by design", async () => {
+    const loss = await readNextTurnContextLoss(
+      makeDeps({
+        conversation: { ...CONTINUING, pendingCheckpoint: true },
+        runtime: undefined,
+      }),
       CONVERSATION,
     );
     expect(loss.runtimeCreatedWithoutResume).toBe(true);

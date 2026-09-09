@@ -64,6 +64,7 @@ export const backendConversationCapabilitiesIntegritySchema = z.object({
   contextWindowMetrics: z.boolean(),
   nativeMidTurnAskUser: z.boolean(),
   externalTurns: z.boolean(),
+  checkpoint: z.boolean(),
   capabilityKinds: z.array(
     z.object({
       kind: capabilityKindSchema,

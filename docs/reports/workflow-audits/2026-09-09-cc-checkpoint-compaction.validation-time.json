@@ -1,0 +1,1200 @@
+{
+  "executionId": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+  "source": "command-center.db validation_runs WHERE workflow_execution_id matches executionId, joined to workflow iteration logs",
+  "allRuns": {
+    "runs": 988,
+    "executionSumMs": 74464660,
+    "executionUnionMs": 71141327,
+    "queueSumMs": 3883,
+    "queueMaxMs": 115,
+    "executionMedianMs": 6736.0,
+    "executionMeanMs": 75369.08906882591,
+    "executionMaxMs": 2601259,
+    "statusCounts": {
+      "passed": 736,
+      "failed": 243,
+      "cancelled": 8,
+      "interrupted": 1
+    }
+  },
+  "bySource": {
+    "agent_cli": {
+      "runs": 907,
+      "executionSumMs": 67592711,
+      "executionUnionMs": 64269378,
+      "queueSumMs": 3725,
+      "queueMaxMs": 115,
+      "executionMedianMs": 6653,
+      "executionMeanMs": 74523.38588754134,
+      "executionMaxMs": 2601259,
+      "statusCounts": {
+        "passed": 657,
+        "failed": 242,
+        "cancelled": 7,
+        "interrupted": 1
+      }
+    },
+    "graph_lane_merge": {
+      "runs": 6,
+      "executionSumMs": 2160658,
+      "executionUnionMs": 2160658,
+      "queueSumMs": 17,
+      "queueMaxMs": 6,
+      "executionMedianMs": 16230.5,
+      "executionMeanMs": 360109.6666666667,
+      "executionMaxMs": 1347341,
+      "statusCounts": {
+        "passed": 5,
+        "failed": 1
+      }
+    },
+    "graph_script_validator": {
+      "runs": 75,
+      "executionSumMs": 4711291,
+      "executionUnionMs": 4711291,
+      "queueSumMs": 141,
+      "queueMaxMs": 4,
+      "executionMedianMs": 11232,
+      "executionMeanMs": 62817.21333333333,
+      "executionMaxMs": 1481677,
+      "statusCounts": {
+        "passed": 74,
+        "cancelled": 1
+      }
+    }
+  },
+  "byCommand": {
+    "agent_cli": {
+      "format": {
+        "runs": 66,
+        "executionSumMs": 672569,
+        "executionUnionMs": 672569,
+        "queueSumMs": 328,
+        "queueMaxMs": 74,
+        "executionMedianMs": 4728.5,
+        "executionMeanMs": 10190.439393939394,
+        "executionMaxMs": 127080,
+        "statusCounts": {
+          "passed": 66
+        }
+      },
+      "lint": {
+        "runs": 77,
+        "executionSumMs": 1222291,
+        "executionUnionMs": 1222291,
+        "queueSumMs": 333,
+        "queueMaxMs": 56,
+        "executionMedianMs": 6233,
+        "executionMeanMs": 15873.90909090909,
+        "executionMaxMs": 582725,
+        "statusCounts": {
+          "passed": 76,
+          "failed": 1
+        }
+      },
+      "seams": {
+        "runs": 75,
+        "executionSumMs": 407713,
+        "executionUnionMs": 407713,
+        "queueSumMs": 297,
+        "queueMaxMs": 37,
+        "executionMedianMs": 4654,
+        "executionMeanMs": 5436.173333333333,
+        "executionMaxMs": 15556,
+        "statusCounts": {
+          "passed": 75
+        }
+      },
+      "test": {
+        "runs": 546,
+        "executionSumMs": 60675021,
+        "executionUnionMs": 60221865,
+        "queueSumMs": 2026,
+        "queueMaxMs": 86,
+        "executionMedianMs": 6166.0,
+        "executionMeanMs": 111126.41208791209,
+        "executionMaxMs": 2601259,
+        "statusCounts": {
+          "failed": 211,
+          "passed": 327,
+          "cancelled": 7,
+          "interrupted": 1
+        }
+      },
+      "typecheck": {
+        "runs": 143,
+        "executionSumMs": 4615117,
+        "executionUnionMs": 4615117,
+        "queueSumMs": 741,
+        "queueMaxMs": 115,
+        "executionMedianMs": 19622,
+        "executionMeanMs": 32273.545454545456,
+        "executionMaxMs": 470922,
+        "statusCounts": {
+          "passed": 113,
+          "failed": 30
+        }
+      }
+    },
+    "graph_lane_merge": {
+      "seams": {
+        "runs": 2,
+        "executionSumMs": 8885,
+        "executionUnionMs": 8885,
+        "queueSumMs": 5,
+        "queueMaxMs": 3,
+        "executionMedianMs": 4442.5,
+        "executionMeanMs": 4442.5,
+        "executionMaxMs": 5247,
+        "statusCounts": {
+          "passed": 2
+        }
+      },
+      "test": {
+        "runs": 2,
+        "executionSumMs": 2119312,
+        "executionUnionMs": 2119312,
+        "queueSumMs": 4,
+        "queueMaxMs": 2,
+        "executionMedianMs": 1059656.0,
+        "executionMeanMs": 1059656,
+        "executionMaxMs": 1347341,
+        "statusCounts": {
+          "failed": 1,
+          "passed": 1
+        }
+      },
+      "typecheck": {
+        "runs": 2,
+        "executionSumMs": 32461,
+        "executionUnionMs": 32461,
+        "queueSumMs": 8,
+        "queueMaxMs": 6,
+        "executionMedianMs": 16230.5,
+        "executionMeanMs": 16230.5,
+        "executionMaxMs": 19379,
+        "statusCounts": {
+          "passed": 2
+        }
+      }
+    },
+    "graph_script_validator": {
+      "format": {
+        "runs": 1,
+        "executionSumMs": 8006,
+        "executionUnionMs": 8006,
+        "queueSumMs": 3,
+        "queueMaxMs": 3,
+        "executionMedianMs": 8006,
+        "executionMeanMs": 8006,
+        "executionMaxMs": 8006,
+        "statusCounts": {
+          "passed": 1
+        }
+      },
+      "lint": {
+        "runs": 1,
+        "executionSumMs": 3951,
+        "executionUnionMs": 3951,
+        "queueSumMs": 2,
+        "queueMaxMs": 2,
+        "executionMedianMs": 3951,
+        "executionMeanMs": 3951,
+        "executionMaxMs": 3951,
+        "statusCounts": {
+          "passed": 1
+        }
+      },
+      "seams": {
+        "runs": 33,
+        "executionSumMs": 134222,
+        "executionUnionMs": 134222,
+        "queueSumMs": 56,
+        "queueMaxMs": 3,
+        "executionMedianMs": 3976,
+        "executionMeanMs": 4067.3333333333335,
+        "executionMaxMs": 5519,
+        "statusCounts": {
+          "passed": 33
+        }
+      },
+      "test": {
+        "runs": 7,
+        "executionSumMs": 4030795,
+        "executionUnionMs": 4030795,
+        "queueSumMs": 13,
+        "queueMaxMs": 3,
+        "executionMedianMs": 484926,
+        "executionMeanMs": 575827.8571428572,
+        "executionMaxMs": 1481677,
+        "statusCounts": {
+          "passed": 6,
+          "cancelled": 1
+        }
+      },
+      "typecheck": {
+        "runs": 33,
+        "executionSumMs": 534317,
+        "executionUnionMs": 534317,
+        "queueSumMs": 67,
+        "queueMaxMs": 4,
+        "executionMedianMs": 12804,
+        "executionMeanMs": 16191.424242424242,
+        "executionMaxMs": 81246,
+        "statusCounts": {
+          "passed": 33
+        }
+      }
+    }
+  },
+  "byContext": [
+    {
+      "contextId": "checkpoint-storage",
+      "runs": 112,
+      "executionSumMs": 7114049,
+      "executionUnionMs": 5776678,
+      "queueSumMs": 659,
+      "queueMaxMs": 56,
+      "executionMedianMs": 4817.5,
+      "executionMeanMs": 63518.294642857145,
+      "executionMaxMs": 2332542,
+      "statusCounts": {
+        "passed": 78,
+        "failed": 31,
+        "cancelled": 3
+      },
+      "implementerEnvelopeMs": 9256961,
+      "ownValidationOverlapMs": 5776678,
+      "ownValidationOverlapPct": 62.40361172527356,
+      "explicitBackgroundWaitMs": 1258770,
+      "backgroundWaitWithOwnValidationRunningMs": 1247906,
+      "broadTestRuns": 9
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "runs": 60,
+      "executionSumMs": 2557021,
+      "executionUnionMs": 2557021,
+      "queueSumMs": 162,
+      "queueMaxMs": 14,
+      "executionMedianMs": 5923.0,
+      "executionMeanMs": 42617.01666666667,
+      "executionMaxMs": 776274,
+      "statusCounts": {
+        "failed": 14,
+        "passed": 46
+      },
+      "implementerEnvelopeMs": 4942925,
+      "ownValidationOverlapMs": 2557021,
+      "ownValidationOverlapPct": 51.7309285493913,
+      "explicitBackgroundWaitMs": 0,
+      "backgroundWaitWithOwnValidationRunningMs": 0,
+      "broadTestRuns": 4
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "runs": 68,
+      "executionSumMs": 5640853,
+      "executionUnionMs": 5417245,
+      "queueSumMs": 133,
+      "queueMaxMs": 16,
+      "executionMedianMs": 7491.0,
+      "executionMeanMs": 82953.7205882353,
+      "executionMaxMs": 828483,
+      "statusCounts": {
+        "passed": 45,
+        "failed": 21,
+        "cancelled": 2
+      },
+      "implementerEnvelopeMs": 11483465,
+      "ownValidationOverlapMs": 5413767,
+      "ownValidationOverlapPct": 47.144019683954276,
+      "explicitBackgroundWaitMs": 2956553,
+      "backgroundWaitWithOwnValidationRunningMs": 2928634,
+      "broadTestRuns": 8
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "runs": 60,
+      "executionSumMs": 4585712,
+      "executionUnionMs": 4528431,
+      "queueSumMs": 209,
+      "queueMaxMs": 22,
+      "executionMedianMs": 10991.5,
+      "executionMeanMs": 76428.53333333334,
+      "executionMaxMs": 1218712,
+      "statusCounts": {
+        "passed": 45,
+        "failed": 15
+      },
+      "implementerEnvelopeMs": 9420005,
+      "ownValidationOverlapMs": 4528431,
+      "ownValidationOverlapPct": 48.07249040738301,
+      "explicitBackgroundWaitMs": 0,
+      "backgroundWaitWithOwnValidationRunningMs": 0,
+      "broadTestRuns": 4
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "runs": 60,
+      "executionSumMs": 5028834,
+      "executionUnionMs": 4890155,
+      "queueSumMs": 226,
+      "queueMaxMs": 86,
+      "executionMedianMs": 8626.0,
+      "executionMeanMs": 83813.9,
+      "executionMaxMs": 1654406,
+      "statusCounts": {
+        "passed": 39,
+        "failed": 21
+      },
+      "implementerEnvelopeMs": 9667775,
+      "ownValidationOverlapMs": 4890155,
+      "ownValidationOverlapPct": 50.582010855651895,
+      "explicitBackgroundWaitMs": 716934,
+      "backgroundWaitWithOwnValidationRunningMs": 716775,
+      "broadTestRuns": 5
+    },
+    {
+      "contextId": "checkpoint-history",
+      "runs": 74,
+      "executionSumMs": 3674892,
+      "executionUnionMs": 3669914,
+      "queueSumMs": 140,
+      "queueMaxMs": 3,
+      "executionMedianMs": 4790.0,
+      "executionMeanMs": 49660.7027027027,
+      "executionMaxMs": 766102,
+      "statusCounts": {
+        "passed": 56,
+        "failed": 18
+      },
+      "implementerEnvelopeMs": 5983736,
+      "ownValidationOverlapMs": 3669914,
+      "ownValidationOverlapPct": 61.33148253866815,
+      "explicitBackgroundWaitMs": 1619705,
+      "backgroundWaitWithOwnValidationRunningMs": 1460121,
+      "broadTestRuns": 4
+    },
+    {
+      "contextId": "checkpoint-http",
+      "runs": 86,
+      "executionSumMs": 2960978,
+      "executionUnionMs": 2960978,
+      "queueSumMs": 146,
+      "queueMaxMs": 3,
+      "executionMedianMs": 4446.5,
+      "executionMeanMs": 34429.976744186046,
+      "executionMaxMs": 776581,
+      "statusCounts": {
+        "failed": 24,
+        "passed": 62
+      },
+      "implementerEnvelopeMs": 6194656,
+      "ownValidationOverlapMs": 2960978,
+      "ownValidationOverlapPct": 47.79890925339519,
+      "explicitBackgroundWaitMs": 0,
+      "backgroundWaitWithOwnValidationRunningMs": 0,
+      "broadTestRuns": 3
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "runs": 105,
+      "executionSumMs": 9109620,
+      "executionUnionMs": 8960274,
+      "queueSumMs": 349,
+      "queueMaxMs": 69,
+      "executionMedianMs": 6099,
+      "executionMeanMs": 86758.28571428571,
+      "executionMaxMs": 1572295,
+      "statusCounts": {
+        "passed": 84,
+        "failed": 21
+      },
+      "implementerEnvelopeMs": 13551416,
+      "ownValidationOverlapMs": 8960225,
+      "ownValidationOverlapPct": 66.1202120870616,
+      "explicitBackgroundWaitMs": 2991330,
+      "backgroundWaitWithOwnValidationRunningMs": 2904928,
+      "broadTestRuns": 8
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "runs": 148,
+      "executionSumMs": 14996813,
+      "executionUnionMs": 13948715,
+      "queueSumMs": 865,
+      "queueMaxMs": 88,
+      "executionMedianMs": 15282.0,
+      "executionMeanMs": 101329.81756756757,
+      "executionMaxMs": 2601259,
+      "statusCounts": {
+        "passed": 101,
+        "failed": 44,
+        "interrupted": 1,
+        "cancelled": 2
+      },
+      "implementerEnvelopeMs": 19657449,
+      "ownValidationOverlapMs": 13945630,
+      "ownValidationOverlapPct": 70.94323378379362,
+      "explicitBackgroundWaitMs": 8833752,
+      "backgroundWaitWithOwnValidationRunningMs": 8827691,
+      "broadTestRuns": 10
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "runs": 78,
+      "executionSumMs": 8617593,
+      "executionUnionMs": 8555197,
+      "queueSumMs": 479,
+      "queueMaxMs": 74,
+      "executionMedianMs": 9056.0,
+      "executionMeanMs": 110481.96153846153,
+      "executionMaxMs": 1861091,
+      "statusCounts": {
+        "failed": 16,
+        "passed": 62
+      },
+      "implementerEnvelopeMs": 18456128,
+      "ownValidationOverlapMs": 8555197,
+      "ownValidationOverlapPct": 46.3542352978913,
+      "explicitBackgroundWaitMs": 3402741,
+      "backgroundWaitWithOwnValidationRunningMs": 1683355,
+      "broadTestRuns": 5
+    },
+    {
+      "contextId": "release-verification",
+      "runs": 56,
+      "executionSumMs": 3306346,
+      "executionUnionMs": 3004770,
+      "queueSumMs": 357,
+      "queueMaxMs": 115,
+      "executionMedianMs": 8868.0,
+      "executionMeanMs": 59041.892857142855,
+      "executionMaxMs": 1283249,
+      "statusCounts": {
+        "failed": 17,
+        "passed": 39
+      },
+      "implementerEnvelopeMs": 8344033,
+      "ownValidationOverlapMs": 3004770,
+      "ownValidationOverlapPct": 36.011003312187285,
+      "explicitBackgroundWaitMs": 0,
+      "backgroundWaitWithOwnValidationRunningMs": 0,
+      "broadTestRuns": 2
+    }
+  ],
+  "timeOverlap": {
+    "implementerEnvelopeMs": 116958549,
+    "agentValidationRunningMs": 64269378,
+    "agentValidationDuringImplementerEnvelopesMs": 64262766,
+    "agentValidationDuringImplementerEnvelopesPct": 54.94490702000758,
+    "explicitBackgroundWaitMs": 21779785,
+    "explicitBackgroundWaitDuringAgentValidationMs": 19769410,
+    "anyValidationDuringRunMs": 71141327
+  },
+  "testScope": {
+    "agent_targeted": {
+      "runs": 484,
+      "executionSumMs": 3862905,
+      "executionUnionMs": 3846306,
+      "queueSumMs": 1761,
+      "queueMaxMs": 86,
+      "executionMedianMs": 5693.0,
+      "executionMeanMs": 7981.2086776859505,
+      "executionMaxMs": 52232,
+      "statusCounts": {
+        "passed": 287,
+        "failed": 197
+      }
+    },
+    "agent_changed_broad": {
+      "runs": 57,
+      "executionSumMs": 48447450,
+      "executionUnionMs": 48447450,
+      "queueSumMs": 238,
+      "queueMaxMs": 55,
+      "executionMedianMs": 769863,
+      "executionMeanMs": 849955.2631578947,
+      "executionMaxMs": 2601259,
+      "statusCounts": {
+        "passed": 39,
+        "failed": 10,
+        "cancelled": 7,
+        "interrupted": 1
+      }
+    },
+    "agent_full": {
+      "runs": 5,
+      "executionSumMs": 8364666,
+      "executionUnionMs": 8364666,
+      "queueSumMs": 27,
+      "queueMaxMs": 8,
+      "executionMedianMs": 1813942,
+      "executionMeanMs": 1672933.2,
+      "executionMaxMs": 2332542,
+      "statusCounts": {
+        "failed": 4,
+        "passed": 1
+      }
+    }
+  },
+  "implementerIntervals": [
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "a9799d82-bc59-494d-b600-63ae102e22fb",
+      "startMs": 1788806881289,
+      "endMs": 1788810902766
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "3c9aa1bf-7c56-4550-b420-7ec57696c079",
+      "startMs": 1788810903982,
+      "endMs": 1788813062542
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "098704d0-b48f-4b1c-abc9-fc85302cadb4",
+      "startMs": 1788813063893,
+      "endMs": 1788813801023
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "098704d0-b48f-4b1c-abc9-fc85302cadb4",
+      "startMs": 1788813801043,
+      "endMs": 1788813899403
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "098704d0-b48f-4b1c-abc9-fc85302cadb4",
+      "startMs": 1788815082540,
+      "endMs": 1788816183299
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "098704d0-b48f-4b1c-abc9-fc85302cadb4",
+      "startMs": 1788816183313,
+      "endMs": 1788816264028
+    },
+    {
+      "contextId": "checkpoint-storage",
+      "conversationId": "a6ce381a-ee3f-4a34-b2e7-6f44776322ea",
+      "startMs": 1788817189506,
+      "endMs": 1788818249466
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "conversationId": "e4337d50-5113-4116-8d89-f3c156f70f5a",
+      "startMs": 1788818815888,
+      "endMs": 1788821851905
+    },
+    {
+      "contextId": "checkpoint-seed",
+      "conversationId": "000bd7c1-43f1-43ac-9d3e-d7fb0881bf73",
+      "startMs": 1788822593701,
+      "endMs": 1788824500609
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "3addf5d3-975c-4f15-8444-999f094b35bc",
+      "startMs": 1788825170143,
+      "endMs": 1788829698660
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "a37301b2-6023-4ec7-8672-3b8a0740e2df",
+      "startMs": 1788829699519,
+      "endMs": 1788830886794
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "a37301b2-6023-4ec7-8672-3b8a0740e2df",
+      "startMs": 1788830886807,
+      "endMs": 1788831023983
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "a37301b2-6023-4ec7-8672-3b8a0740e2df",
+      "startMs": 1788831305090,
+      "endMs": 1788832730674
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "d633563f-b5fc-4633-bc2b-d2b80af35cd5",
+      "startMs": 1788832734152,
+      "endMs": 1788833975565
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "d633563f-b5fc-4633-bc2b-d2b80af35cd5",
+      "startMs": 1788833975580,
+      "endMs": 1788834076166
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "d633563f-b5fc-4633-bc2b-d2b80af35cd5",
+      "startMs": 1788834267930,
+      "endMs": 1788836078312
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "750ef6f0-7c2d-4577-a4fc-489288d28d86",
+      "startMs": 1788836079219,
+      "endMs": 1788837025193
+    },
+    {
+      "contextId": "checkpoint-maintenance",
+      "conversationId": "750ef6f0-7c2d-4577-a4fc-489288d28d86",
+      "startMs": 1788837025208,
+      "endMs": 1788837131766
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "conversationId": "683d01bb-55a1-419b-9c88-a5aeb7f66292",
+      "startMs": 1788837273155,
+      "endMs": 1788839505039
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "conversationId": "03f8eb59-33aa-4dcf-8add-123f75c43f9c",
+      "startMs": 1788839506227,
+      "endMs": 1788839618083
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "conversationId": "03f8eb59-33aa-4dcf-8add-123f75c43f9c",
+      "startMs": 1788839896761,
+      "endMs": 1788843138956
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "conversationId": "daf20335-81fc-435b-abeb-b6b50b1f762f",
+      "startMs": 1788843139876,
+      "endMs": 1788843274106
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "conversationId": "daf20335-81fc-435b-abeb-b6b50b1f762f",
+      "startMs": 1788843429256,
+      "endMs": 1788845809376
+    },
+    {
+      "contextId": "checkpoint-restart",
+      "conversationId": "daf20335-81fc-435b-abeb-b6b50b1f762f",
+      "startMs": 1788845918680,
+      "endMs": 1788847238400
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "conversationId": "acba21b8-6832-42c5-bacc-ae0748f9373f",
+      "startMs": 1788847307287,
+      "endMs": 1788851055261
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "conversationId": "4eba42e7-52c1-42b8-8d25-00dcabd9b5f5",
+      "startMs": 1788851056318,
+      "endMs": 1788852913129
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "conversationId": "4eba42e7-52c1-42b8-8d25-00dcabd9b5f5",
+      "startMs": 1788853334834,
+      "endMs": 1788855765225
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "conversationId": "84eb2c85-33b0-48dc-b04e-9342a3e37ddd",
+      "startMs": 1788855766270,
+      "endMs": 1788855897148
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "conversationId": "84eb2c85-33b0-48dc-b04e-9342a3e37ddd",
+      "startMs": 1788856130628,
+      "endMs": 1788857577541
+    },
+    {
+      "contextId": "checkpoint-delivery",
+      "conversationId": "84eb2c85-33b0-48dc-b04e-9342a3e37ddd",
+      "startMs": 1788857577557,
+      "endMs": 1788857632365
+    },
+    {
+      "contextId": "checkpoint-history",
+      "conversationId": "f5cbaf16-e624-4916-aefb-4a6b56ab4476",
+      "startMs": 1788857747690,
+      "endMs": 1788860705818
+    },
+    {
+      "contextId": "checkpoint-history",
+      "conversationId": "157d93b8-3a76-4547-b8fc-5ba855d28927",
+      "startMs": 1788863487304,
+      "endMs": 1788865462661
+    },
+    {
+      "contextId": "checkpoint-history",
+      "conversationId": "157d93b8-3a76-4547-b8fc-5ba855d28927",
+      "startMs": 1788865578579,
+      "endMs": 1788866628830
+    },
+    {
+      "contextId": "checkpoint-http",
+      "conversationId": "ccaecc94-3e54-4ca4-a5f3-d55148b1e8b7",
+      "startMs": 1788866695628,
+      "endMs": 1788867802597
+    },
+    {
+      "contextId": "checkpoint-http",
+      "conversationId": "7dc5aa4f-3e2f-408a-95b8-ffb0285bdedb",
+      "startMs": 1788867803561,
+      "endMs": 1788869801838
+    },
+    {
+      "contextId": "checkpoint-http",
+      "conversationId": "41b3817a-ded3-4191-9339-50fb9471e4c6",
+      "startMs": 1788870031386,
+      "endMs": 1788871890542
+    },
+    {
+      "contextId": "checkpoint-http",
+      "conversationId": "41b3817a-ded3-4191-9339-50fb9471e4c6",
+      "startMs": 1788871995018,
+      "endMs": 1788873225272
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "conversationId": "c6e866e5-3e9a-43fd-b67f-3fc05887f240",
+      "startMs": 1788873289500,
+      "endMs": 1788875520922
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "conversationId": "436d84fd-13cd-42ae-a539-9ab598f5d46d",
+      "startMs": 1788875522195,
+      "endMs": 1788877377326
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "conversationId": "9c880f04-55c2-4596-ace1-331d0be1e65b",
+      "startMs": 1788877728502,
+      "endMs": 1788880684457
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "conversationId": "66aa3199-7e4e-4178-86f1-d9a0f8082dfe",
+      "startMs": 1788880685384,
+      "endMs": 1788882170813
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "conversationId": "66aa3199-7e4e-4178-86f1-d9a0f8082dfe",
+      "startMs": 1788882391100,
+      "endMs": 1788884887334
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "conversationId": "66aa3199-7e4e-4178-86f1-d9a0f8082dfe",
+      "startMs": 1788884887383,
+      "endMs": 1788887263069
+    },
+    {
+      "contextId": "checkpoint-cli",
+      "conversationId": "b2a91b8f-d984-4ad1-88cc-ab1b7b3913c5",
+      "startMs": 1788887264011,
+      "endMs": 1788887415570
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "00b1bac6-4735-4292-86c8-ad70de4fc8a4",
+      "startMs": 1788887512852,
+      "endMs": 1788891452759
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "4ba19c55-b549-4859-8c6d-b65d50d14871",
+      "startMs": 1788891453845,
+      "endMs": 1788892154636
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "4ba19c55-b549-4859-8c6d-b65d50d14871",
+      "startMs": 1788892425284,
+      "endMs": 1788896352510
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "95895d9a-de19-4d2b-992d-87281274bce2",
+      "startMs": 1788896353989,
+      "endMs": 1788898662335
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "95895d9a-de19-4d2b-992d-87281274bce2",
+      "startMs": 1788898662409,
+      "endMs": 1788899999834
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "95895d9a-de19-4d2b-992d-87281274bce2",
+      "startMs": 1788900212705,
+      "endMs": 1788903621013
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "6ce952d3-a28c-41dd-868d-f1afcc08a9eb",
+      "startMs": 1788903622429,
+      "endMs": 1788906030834
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "6ce952d3-a28c-41dd-868d-f1afcc08a9eb",
+      "startMs": 1788906030997,
+      "endMs": 1788906071930
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "6ce952d3-a28c-41dd-868d-f1afcc08a9eb",
+      "startMs": 1788906071992,
+      "endMs": 1788906174407
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "6ce952d3-a28c-41dd-868d-f1afcc08a9eb",
+      "startMs": 1788906175788,
+      "endMs": 1788906462009
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "6ce952d3-a28c-41dd-868d-f1afcc08a9eb",
+      "startMs": 1788906617515,
+      "endMs": 1788907198876
+    },
+    {
+      "contextId": "checkpoint-ui",
+      "conversationId": "488239b8-8a30-4df6-9be8-a95a0ef0ea6a",
+      "startMs": 1788907199905,
+      "endMs": 1788907816016
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "a372a138-578f-4659-b3ce-698880bcd637",
+      "startMs": 1788908010029,
+      "endMs": 1788910430071
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "08a31227-aa57-4e21-a0da-b5d225a4dc46",
+      "startMs": 1788910431537,
+      "endMs": 1788910697822
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "08a31227-aa57-4e21-a0da-b5d225a4dc46",
+      "startMs": 1788910697840,
+      "endMs": 1788911725516
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "08a31227-aa57-4e21-a0da-b5d225a4dc46",
+      "startMs": 1788911725540,
+      "endMs": 1788913023724
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "08a31227-aa57-4e21-a0da-b5d225a4dc46",
+      "startMs": 1788913024673,
+      "endMs": 1788916548424
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "36719c9c-80c8-42c6-bfdf-71e689118a33",
+      "startMs": 1788916549350,
+      "endMs": 1788916804394
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "36719c9c-80c8-42c6-bfdf-71e689118a33",
+      "startMs": 1788917096476,
+      "endMs": 1788922571590
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "76bf2273-f437-4562-90bb-f7baa9119c25",
+      "startMs": 1788922572757,
+      "endMs": 1788922930371
+    },
+    {
+      "contextId": "backend-continuation-probes",
+      "conversationId": "76bf2273-f437-4562-90bb-f7baa9119c25",
+      "startMs": 1788923100825,
+      "endMs": 1788926933243
+    },
+    {
+      "contextId": "release-verification",
+      "conversationId": "2a503470-4c47-4e8e-bc17-ba40525e279d",
+      "startMs": 1788927037117,
+      "endMs": 1788935381150
+    }
+  ],
+  "limits": [
+    "A running validation job is not proof that its implementer is idle; agents may work concurrently or launch background jobs.",
+    "Sum of per-run execution durations measures workload and can double-count overlaps; interval-union and overlap metrics avoid that.",
+    "QueueMs measures scheduler submitted-to-start admission delay; OS scheduling/resource contention during execution is included in execMs.",
+    "Failed test runs include intended TDD RED cases; failure count is not a count of wasted runs."
+  ],
+  "sourceQuery": "SELECT run_id, source, command_name, workflow_context_id, conversation_id, status, submitted_at, started_at, finished_at, queue_ms, exec_ms, requested_scope, effective_scope, scoped_path_count FROM validation_runs WHERE workflow_execution_id = '66d46f3f-ee11-4c6a-82d6-7931886cc950' ORDER BY submitted_at;",
+  "rawRowsArtifact": ".cc/temp/checkpoint-audit/validation-runs.json",
+  "slowestRuns": [
+    {
+      "run_id": "vrun-95cd564b-cfb2-4ea6-9d88-b2b1228c6aa7",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18389,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "6ce952d3-a28c-41dd-868d-f1afcc08a9eb",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "checkpoint-ui",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-08T21:41:23.810Z",
+      "started_at": "2026-09-08T21:41:23.865Z",
+      "finished_at": "2026-09-08T22:24:45.124Z",
+      "queue_ms": 55,
+      "exec_ms": 2601259,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "changed",
+      "effective_scope": "changed"
+    },
+    {
+      "run_id": "vrun-292c4e94-2e6d-4e95-b18a-ca67456e017a",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 17475,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "a9799d82-bc59-494d-b600-63ae102e22fb",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "checkpoint-storage",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-07T18:48:54.381Z",
+      "started_at": "2026-09-07T18:48:54.386Z",
+      "finished_at": "2026-09-07T19:27:46.928Z",
+      "queue_ms": 5,
+      "exec_ms": 2332542,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "full",
+      "effective_scope": "full"
+    },
+    {
+      "run_id": "vrun-a173192a-979a-4328-9ec9-eca11c2f8f03",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18540,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "76bf2273-f437-4562-90bb-f7baa9119c25",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "backend-continuation-probes",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-09T03:35:45.571Z",
+      "started_at": "2026-09-09T03:35:45.575Z",
+      "finished_at": "2026-09-09T04:06:46.666Z",
+      "queue_ms": 4,
+      "exec_ms": 1861091,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "full",
+      "effective_scope": "full"
+    },
+    {
+      "run_id": "vrun-6df2d30a-79f1-4083-a203-c76d58dcba27",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18489,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "08a31227-aa57-4e21-a0da-b5d225a4dc46",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "backend-continuation-probes",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-09T00:40:16.801Z",
+      "started_at": "2026-09-09T00:40:16.809Z",
+      "finished_at": "2026-09-09T01:10:30.751Z",
+      "queue_ms": 8,
+      "exec_ms": 1813942,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "full",
+      "effective_scope": "full"
+    },
+    {
+      "run_id": "vrun-6593b793-d00b-4486-8f47-505863d1ef06",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18349,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "95895d9a-de19-4d2b-992d-87281274bce2",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "checkpoint-ui",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-08T21:10:19.101Z",
+      "started_at": "2026-09-08T21:10:19.105Z",
+      "finished_at": "2026-09-08T21:40:18.971Z",
+      "queue_ms": 4,
+      "exec_ms": 1799866,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "changed",
+      "effective_scope": "changed"
+    },
+    {
+      "run_id": "vrun-b1cc5073-19ec-4bde-8758-3bb7e4d2d1ec",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 17889,
+      "status": "passed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "4eba42e7-52c1-42b8-8d25-00dcabd9b5f5",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "checkpoint-delivery",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-08T07:05:32.012Z",
+      "started_at": "2026-09-08T07:05:32.016Z",
+      "finished_at": "2026-09-08T07:33:06.422Z",
+      "queue_ms": 4,
+      "exec_ms": 1654406,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 0,
+      "timed_out": 0,
+      "requested_scope": "changed",
+      "effective_scope": "changed"
+    },
+    {
+      "run_id": "vrun-a1ca55a1-c078-4590-8703-07b5bb1f3e31",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18199,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "66aa3199-7e4e-4178-86f1-d9a0f8082dfe",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "checkpoint-cli",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-08T16:14:26.386Z",
+      "started_at": "2026-09-08T16:14:26.389Z",
+      "finished_at": "2026-09-08T16:40:38.684Z",
+      "queue_ms": 3,
+      "exec_ms": 1572295,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "changed",
+      "effective_scope": "changed"
+    },
+    {
+      "run_id": "vrun-c57ef930-233d-4da3-8633-264dd46815cc",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18316,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "95895d9a-de19-4d2b-992d-87281274bce2",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "checkpoint-ui",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-08T19:51:39.735Z",
+      "started_at": "2026-09-08T19:51:39.737Z",
+      "finished_at": "2026-09-08T20:17:41.539Z",
+      "queue_ms": 2,
+      "exec_ms": 1561802,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "changed",
+      "effective_scope": "changed"
+    },
+    {
+      "run_id": "vrun-53bae5bc-857f-4763-a7c0-d75296fd43ee",
+      "source": "agent_cli",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18236,
+      "status": "failed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": "00b1bac6-4735-4292-86c8-ad70de4fc8a4",
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "checkpoint-ui",
+      "workflow_role": "implementer",
+      "submitted_at": "2026-09-08T17:52:45.388Z",
+      "started_at": "2026-09-08T17:52:45.391Z",
+      "finished_at": "2026-09-08T18:17:32.367Z",
+      "queue_ms": 3,
+      "exec_ms": 1486976,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 1,
+      "timed_out": 0,
+      "requested_scope": "changed",
+      "effective_scope": "changed"
+    },
+    {
+      "run_id": "vrun-f0bfd2e4-9ac6-48b1-ae77-a6300da0d3c5",
+      "source": "graph_script_validator",
+      "command_name": "test",
+      "cost": 5,
+      "queue_order": 18608,
+      "status": "passed",
+      "project_path": "/Users/alex/github/command-center",
+      "worktree_path": "/Users/alex/github/command-center/.worktrees/compaction-f29f1a.checkpoint-delivery",
+      "conversation_id": null,
+      "workflow_execution_id": "66d46f3f-ee11-4c6a-82d6-7931886cc950",
+      "workflow_context_id": "release-verification",
+      "workflow_role": null,
+      "submitted_at": "2026-09-09T06:30:11.343Z",
+      "started_at": "2026-09-09T06:30:11.345Z",
+      "finished_at": "2026-09-09T06:54:53.022Z",
+      "queue_ms": 2,
+      "exec_ms": 1481677,
+      "scoped": 0,
+      "scoped_path_count": 0,
+      "exit_code": 0,
+      "timed_out": 0,
+      "requested_scope": "changed",
+      "effective_scope": "changed"
+    }
+  ]
+}

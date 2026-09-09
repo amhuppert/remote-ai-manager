@@ -1206,8 +1206,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 14 after the managed-definition cutover", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(14);
+  it("this build understands schema version 15 after the conversation-checkpoint cutover", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(15);
   });
 
   it("refuses a version-12 binary after ticket relationships stamp version 13", () => {
@@ -1256,6 +1256,32 @@ describe("state-db breaking-cutover versions", () => {
       expect(() =>
         enforceCurrentSchemaCompatibility(oldBinaryConnection, dbPath, 13),
       ).toThrow(/recorded schema version 14.*known build version 13/i);
+    } finally {
+      oldBinaryConnection.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a version-14 binary after conversation checkpoints stamp version 15", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const current = new Database(dbPath);
+    current.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO schema_migrations (version, description)
+      VALUES (15, 'durable conversation checkpoint operations');
+    `);
+    current.close();
+
+    const oldBinaryConnection = new Database(dbPath);
+    try {
+      expect(() =>
+        enforceCurrentSchemaCompatibility(oldBinaryConnection, dbPath, 14),
+      ).toThrow(/recorded schema version 15.*known build version 14/i);
     } finally {
       oldBinaryConnection.close();
       rmSync(dir, { recursive: true, force: true });

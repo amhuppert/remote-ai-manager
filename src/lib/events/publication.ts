@@ -145,6 +145,14 @@ export interface PublishEventBestEffortOptions {
   failureEvent: string;
   /** Context fields merged into the failure warn. */
   context: Record<string, unknown>;
+  /**
+   * Projects the failure into log fields. Defaults to `{ error: <message> }`.
+   * A caller whose logs may not carry free text — checkpoint diagnostics may
+   * not repeat seed or source material, or a provider reference — supplies its
+   * own structural projection so this shared helper cannot reintroduce the
+   * message behind its back.
+   */
+  describeError?(error: unknown): Record<string, unknown>;
   /** Injectable publish fn for DI; defaults to {@link publishEvent}. */
   publish?: PublishFn;
 }
@@ -160,10 +168,13 @@ export function publishEventBestEffort(
   options: PublishEventBestEffortOptions,
 ): void {
   const publish = options.publish ?? publishEvent;
+  const describe =
+    options.describeError ??
+    ((error: unknown) => ({ error: getErrorMessage(error) }));
   const warnFailure = (error: unknown): void => {
     options.logger.warn(options.failureEvent, {
       ...options.context,
-      error: getErrorMessage(error),
+      ...describe(error),
     });
   };
   try {

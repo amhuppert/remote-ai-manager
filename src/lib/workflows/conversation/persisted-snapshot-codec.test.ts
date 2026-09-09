@@ -5,6 +5,7 @@ import type { ConversationContext } from "./types";
 import {
   CONVERSATION_CONTEXT_DISPOSITION,
   persistedConversationSnapshotSchema,
+  restorePersistedSnapshotEnvelope,
   toPersistedConversationSnapshot,
 } from "./persisted-snapshot-codec";
 
@@ -85,6 +86,7 @@ function makeFullSnapshot(): Snapshot<unknown> {
       continuationDisposition: "retain",
     },
     lastError: null,
+    checkpoint: null,
   };
 
   return {
@@ -217,5 +219,32 @@ describe("CONVERSATION_CONTEXT_DISPOSITION", () => {
     expect(
       Object.keys(CONVERSATION_CONTEXT_DISPOSITION).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe("restorePersistedSnapshotEnvelope", () => {
+  it("never restores a checkpoint projection from the token: the repository is the authority", () => {
+    const persisted = toPersistedConversationSnapshot(makeFullSnapshot());
+    const raw = JSON.parse(JSON.stringify(persisted)) as {
+      context: Record<string, unknown>;
+      children?: unknown;
+    };
+    expect("checkpoint" in raw.context).toBe(false);
+    // An adversarial row: a projection written by some other build.
+    raw.context.checkpoint = { operationId: "op-stale", phase: "ready" };
+
+    restorePersistedSnapshotEnvelope(raw);
+
+    expect("checkpoint" in raw.context).toBe(false);
+    expect(raw.context.target).toEqual(
+      targetFromStoreSessionName("proj", "sess", "conv-1"),
+    );
+    expect(raw.children).toEqual({});
+    // The persisted fields the machine resumes from are untouched.
+    expect(raw.context.backendRef).toEqual({
+      backend: "claude",
+      ref: "sess-abc",
+    });
+    expect(raw.context.pendingQuestion).toMatchObject({ questionId: "q1" });
   });
 });

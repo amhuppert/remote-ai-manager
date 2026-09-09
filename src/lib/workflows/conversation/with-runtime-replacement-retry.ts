@@ -61,6 +61,17 @@ export interface RuntimeReplacementRetryDeps {
    * sink has no seam, which is how the sentinel survived here (R1.3).
    */
   log: Logger;
+  /**
+   * Neutral delivery facts for the caller: whether the provider's send was
+   * actually invoked, and the raw failure each invocation threw before it was
+   * classified. A checkpoint delivery classifies its own outcome from these
+   * rather than from the normalized result, which has lost the adapter's
+   * prompt-not-delivered mark.
+   */
+  observe?: {
+    sending(): void;
+    failed(error: unknown): void;
+  };
 }
 
 /** Flat identity fields for one log line: scope leads, session name only at session scope. */
@@ -138,11 +149,13 @@ export function withRuntimeReplacementRetry(
     let current = deps.getRuntime();
     while (true) {
       try {
+        deps.observe?.sending();
         return enforceContinuationConsistency(
           await current.sendTurn(turnInput),
           deps,
         );
       } catch (err) {
+        deps.observe?.failed(err);
         const classification = deps.classify(err);
         if (
           !shouldReplaceRuntimeAndRetry({

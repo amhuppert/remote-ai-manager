@@ -222,7 +222,8 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
           attemptId,
         ),
       createReferenceDocument: stateMod.createReferenceDocument,
-      markQueuedDelivered: messageQueueMod.messageQueueService.markDelivered,
+      confirmQueuedDelivery:
+        messageQueueMod.messageQueueService.confirmDelivery,
       markQueuedPending: messageQueueMod.messageQueueService.markPending,
       markQueuedFailed: messageQueueMod.messageQueueService.markFailed,
       markQueuedUncertain: messageQueueMod.messageQueueService.markUncertain,
@@ -261,6 +262,14 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     debug: {
       getDebugLogUrl: debugLogMod.getDebugLogUrl,
     },
+    checkpoint: {
+      async repo() {
+        const { getConversationCheckpointsRepo } =
+          await import("@/lib/conversation-checkpoints/service-factory");
+        return getConversationCheckpointsRepo();
+      },
+      now: () => new Date().toISOString(),
+    },
     log: logger,
   } satisfies ProductionActorDependencies;
 }
@@ -287,6 +296,11 @@ import {
 } from "@/lib/conversations/abort-registry";
 import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
 import { ephemeralConversationEffects } from "./effects";
+import { conversationCapabilitiesForBackend } from "@/lib/agent-backends/catalog";
+import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
+import { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
+import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
+import type { CheckpointAuthorityHydration } from "./checkpoint-restart";
 
 const ACTOR_REGISTRY_KEY = "__cc_conversation_actors";
 function productionActorRegistry(): Map<string, ConversationActorRef> {
@@ -294,6 +308,26 @@ function productionActorRegistry(): Map<string, ConversationActorRef> {
     [ACTOR_REGISTRY_KEY]?: Map<string, ConversationActorRef>;
   };
   return (host[ACTOR_REGISTRY_KEY] ??= new Map());
+}
+
+/**
+ * The checkpoint repository's authority with the restart rules applied, over
+ * the production singleton repository. Shared by the actor input loader and
+ * startup rehydration so both read the same authority the same way.
+ */
+async function hydrateProductionCheckpointAuthority(
+  key: CheckpointScopeKey,
+): Promise<CheckpointAuthorityHydration> {
+  const [{ getConversationCheckpointsRepo }, { hydrateCheckpointAuthority }] =
+    await Promise.all([
+      import("@/lib/conversation-checkpoints/service-factory"),
+      import("./checkpoint-restart"),
+    ]);
+  return hydrateCheckpointAuthority(key, {
+    repo: getConversationCheckpointsRepo(),
+    now: () => new Date().toISOString(),
+    log: createLogger("conversation-manager"),
+  });
 }
 
 /** Assembles infrastructure without resolving the default manager instance. */
@@ -308,12 +342,45 @@ export function createProductionConversationManagerDependencies(): ConversationM
       );
     },
     async rehydrate(host) {
-      const { loadRehydrationInfrastructure, rehydrateConversationActors } =
-        await import("./rehydration");
+      const [
+        { loadRehydrationInfrastructure, rehydrateConversationActors },
+        { repairQueuedAcceptanceFromCheckpoint },
+        { getConversationCheckpointsRepo },
+        stateMod,
+        { appendTranscriptEntryOnce },
+        { messageQueueService },
+      ] = await Promise.all([
+        import("./rehydration"),
+        import("./checkpoint-queue-repair"),
+        import("@/lib/conversation-checkpoints/service-factory"),
+        import("@/lib/state-store"),
+        import("@/lib/prompt/transcript"),
+        import("@/lib/conversations/message-queue-service"),
+      ]);
+      const queue = getConversationQueueDeps();
       return rehydrateConversationActors({
         ...(await loadRehydrationInfrastructure()),
+        hydrateCheckpointAuthority: hydrateProductionCheckpointAuthority,
         host,
-        queue: getConversationQueueDeps(),
+        queue,
+        repairQueuedAcceptance: (identity) =>
+          repairQueuedAcceptanceFromCheckpoint(identity, {
+            repo: getConversationCheckpointsRepo(),
+            readQueue: async (target) =>
+              (
+                await stateMod.getConversation(
+                  target.projectPath,
+                  target.sessionName,
+                  target.conversationId,
+                )
+              )?.pendingQueue ?? null,
+            confirmDelivery: (input) =>
+              messageQueueService.confirmDelivery(input),
+            appendUserEntryOnce: (conversationId, entry) =>
+              appendTranscriptEntryOnce(conversationId, entry),
+            now: () => new Date().toISOString(),
+            log: createLogger("conversation-manager"),
+          }),
       });
     },
     createHost(callbacks) {
@@ -385,7 +452,13 @@ export function createProductionConversationManagerDependencies(): ConversationM
         import("@/lib/projects/resolver"),
       ]);
       return loadActorInput(
-        { getSession, getProjectConversation, getProjectDisplayName },
+        {
+          getSession,
+          getProjectConversation,
+          getProjectDisplayName,
+          hydrateCheckpointAuthority: (key) =>
+            hydrateProductionCheckpointAuthority(key),
+        },
         projectPath,
         sessionName,
         conversationId,
@@ -413,6 +486,73 @@ export function createProductionConversationManagerDependencies(): ConversationM
     abortIndex: {
       register: registerAbortController,
       unregister: unregisterAbortController,
+    },
+    checkpoint: {
+      async repo() {
+        const { getConversationCheckpointsRepo } =
+          await import("@/lib/conversation-checkpoints/service-factory");
+        return getConversationCheckpointsRepo();
+      },
+      async readConversation(identity) {
+        const { getConversation } = await import("@/lib/state-store");
+        return getConversation(
+          identity.projectPath,
+          identity.sessionName,
+          identity.conversationId,
+        );
+      },
+      async readEntries(transcriptPath) {
+        const { readTranscriptEntriesWithSeq } =
+          await import("@/lib/prompt/transcript");
+        return readTranscriptEntriesWithSeq(transcriptPath);
+      },
+      async findArtifact(conversationId) {
+        const { getContextArtifactsRepo } =
+          await import("@/lib/context-artifacts/route-handlers");
+        return (
+          getContextArtifactsRepo()
+            .findByConversation(conversationId)
+            .find((row) => row.kind === "conversation_compaction") ?? null
+        );
+      },
+      async resolveConfig(projectPath) {
+        const [
+          { readConfig },
+          { resolveCompactionConfig },
+          { readRepoConfig },
+        ] = await Promise.all([
+          import("@/lib/config/loader"),
+          import("@/lib/config/cascade"),
+          import("@/lib/projects/repo-config"),
+        ]);
+        return resolveCompactionConfig(
+          await readConfig(),
+          await readRepoConfig(projectPath),
+        );
+      },
+      async executeTaskRun(input) {
+        const { executeWorkflowTaskRun } =
+          await import("./execute-workflow-task-run");
+        return executeWorkflowTaskRun(input);
+      },
+      backendSupportsCheckpoint: (backend) =>
+        conversationCapabilitiesForBackend(backend).checkpoint,
+      async appendUserEntryOnce(conversationId, entry) {
+        const { appendTranscriptEntryOnce } =
+          await import("@/lib/prompt/transcript");
+        await appendTranscriptEntryOnce(conversationId, entry);
+      },
+      async confirmQueuedDelivery(input) {
+        const { messageQueueService } =
+          await import("@/lib/conversations/message-queue-service");
+        return messageQueueService.confirmDelivery(input);
+      },
+      getBackgroundActivity: (conversationId) =>
+        getBackgroundActivityChannel().get(conversationId),
+      getBackgroundActivityEpoch: (conversationId) =>
+        getBackgroundActivityChannel().epoch(conversationId),
+      generate: (input, deps) => generateCheckpoint(input, deps),
+      now: () => new Date().toISOString(),
     },
   };
 }
