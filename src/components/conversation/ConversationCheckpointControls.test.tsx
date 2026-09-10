@@ -213,6 +213,14 @@ describe("ConversationCheckpointControls", () => {
     await openPanel();
 
     const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/continued using this saved handoff/),
+    ).toBeVisible();
+    await userEvent
+      .setup()
+      .click(
+        within(dialog).getByRole("button", { name: /Checkpoint details/ }),
+      );
     expect(within(dialog).getByText(/Accepted by attempt/)).toBeInTheDocument();
     expect(
       within(dialog).queryByText(/has not been delivered to a turn yet/),
@@ -634,14 +642,28 @@ describe("ConversationCheckpointControls", () => {
     await openPanel();
 
     const dialog = await screen.findByRole("dialog");
+    await userEvent
+      .setup()
+      .click(within(dialog).getByRole("button", { name: /Original archive/ }));
     expect(
       within(dialog).getByText(/captured through raw seq 300/),
     ).toBeInTheDocument();
 
     await userEvent
       .setup()
+      .click(
+        within(dialog).getByRole("button", { name: /Checkpoint history/ }),
+      );
+    await userEvent
+      .setup()
       .click(within(dialog).getByRole("button", { name: /#2/ }));
 
+    await userEvent
+      .setup()
+      .click(within(dialog).getByRole("button", { name: /Original archive/ }));
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Checkpoint applied",
+    );
     expect(
       await within(dialog).findByText(/captured through raw seq 200/),
     ).toBeInTheDocument();
@@ -698,6 +720,11 @@ describe("ConversationCheckpointControls", () => {
     const dialog = await screen.findByRole("dialog");
     await userEvent
       .setup()
+      .click(
+        within(dialog).getByRole("button", { name: /Checkpoint history/ }),
+      );
+    await userEvent
+      .setup()
       .click(await within(dialog).findByRole("button", { name: /older/i }));
 
     expect(
@@ -739,5 +766,55 @@ describe("ConversationCheckpointControls", () => {
         String(call[0]).includes("detail=seed"),
       ),
     ).toBe(false);
+  });
+
+  it("keeps technical receipt details behind an explicit disclosure", async () => {
+    stubApi({
+      receipts: [
+        checkpointReceiptFixture({ operationId: "op-1", phase: "ready" }),
+      ],
+      eligible: true,
+      refusals: [],
+      active: null,
+    });
+    renderControls();
+    await openPanel();
+
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByText("Seed sha256")).not.toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(dialog.getByRole("button", { name: /Checkpoint details/ }));
+    expect(dialog.getByText("Seed sha256")).toBeVisible();
+    expect(dialog.getByText("op-1")).toBeVisible();
+    expect(
+      fetchSpy.mock.calls.some(
+        ([input, init]) =>
+          String(input).includes("detail=seed") || init?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("starts an eligible checkpoint from the dialog and shows its pending state", async () => {
+    stubApi({
+      receipts: [
+        checkpointReceiptFixture({ operationId: "op-1", phase: "ready" }),
+      ],
+      eligible: true,
+      refusals: [],
+      active: null,
+    });
+    renderControls();
+    await openPanel();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Create checkpoint" }));
+    await screen.findByText("Building the checkpoint");
+    const posts = fetchSpy.mock.calls.filter(
+      ([, init]) => init?.method === "POST",
+    );
+    expect(posts).toHaveLength(1);
+    expect(String(posts[0]?.[0])).toBe(SESSION_BASE);
   });
 });

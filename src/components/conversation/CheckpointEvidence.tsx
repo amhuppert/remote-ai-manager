@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ArchiveIcon, ChatIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { StatusChip } from "@/components/ui/StatusChip";
@@ -18,6 +19,8 @@ import {
   useHistoryImage,
 } from "@/lib/conversations/history-queries";
 import type { HistoryImageHandle } from "@/lib/conversations/history-recovery";
+
+import CheckpointDisclosure from "./CheckpointDisclosure";
 
 export interface CheckpointEvidenceProps {
   target: CheckpointTarget;
@@ -43,13 +46,13 @@ export interface CheckpointEvidenceProps {
 }
 
 const LABEL_CLASS =
-  "font-mono text-[10px] font-bold tracking-[0.16em] text-text-tertiary uppercase";
+  "font-mono text-[0.7rem] font-medium tracking-[0.1em] text-text-secondary uppercase";
 const ROW_CLASS =
-  "flex flex-wrap items-center gap-x-sm gap-y-2xs font-mono text-[0.72rem] text-text-secondary";
+  "flex flex-wrap items-center gap-x-sm gap-y-xs font-mono text-[0.72rem] leading-[1.6] text-text-secondary [overflow-wrap:anywhere]";
 const LINK_CLASS =
-  "inline-flex items-center gap-2xs rounded-sm border border-solid border-border-default bg-bg-raised px-[6px] py-[2px] font-mono text-[0.7rem] text-text-primary no-underline transition-[border-color,background] duration-150 ease-[ease] hover:border-cyan hover:bg-bg-hover";
+  "inline-flex min-h-[32px] items-center gap-xs rounded-sm px-xs py-xs font-mono text-[0.72rem] text-cyan underline-offset-4 hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]";
 const BODY_CLASS =
-  "m-0 max-h-[320px] overflow-auto rounded-sm border border-solid border-border-subtle bg-bg-base px-sm py-xs font-mono text-[0.72rem] whitespace-pre-wrap text-text-primary";
+  "m-0 max-h-[320px] overflow-auto rounded-md border border-solid border-border-subtle bg-bg-surface p-md font-mono text-[0.78rem] leading-[1.7] whitespace-pre-wrap text-text-primary [overflow-wrap:anywhere]";
 
 /**
  * One image handle, recovered through the scoped endpoint and shown in place.
@@ -127,12 +130,16 @@ function EntryEvidence({
   const completeQuery = useHistoryEntry(target, seq, { enabled: open });
 
   return (
-    <div className="flex flex-col gap-2xs" data-checkpoint-entry-seq={seq}>
+    <div
+      className="flex min-w-0 flex-col gap-sm"
+      data-checkpoint-entry-seq={seq}
+    >
       <p className={ROW_CLASS}>
         {/* Opening it in place keeps the reader in the conversation the
             evidence belongs to; the raw export stays one link away for
             anything a panel cannot usefully render. */}
         <Button
+          touch
           size="sm"
           variant="default"
           aria-expanded={open}
@@ -150,12 +157,12 @@ function EntryEvidence({
         >
           Raw export for seq {seq}
         </a>
-        {entry !== null && (
-          <span>
-            {entry.bytes} bytes · sha256 {entry.sha256}
-          </span>
-        )}
       </p>
+      {entry !== null && (
+        <p className={ROW_CLASS}>
+          {entry.bytes} bytes · sha256 {entry.sha256}
+        </p>
+      )}
       {open && (
         <div data-checkpoint-entry="">
           {completeQuery.isLoading && (
@@ -239,6 +246,7 @@ function ArchiveRange({
     <section className="flex flex-col gap-2xs" data-checkpoint-archive="">
       <p className={ROW_CLASS}>
         <Button
+          touch
           size="sm"
           variant="default"
           aria-expanded={shown}
@@ -289,7 +297,7 @@ function ArchiveRange({
                     <span className={ROW_CLASS}>
                       <button
                         type="button"
-                        className="flex-1 cursor-pointer rounded-sm border border-solid border-transparent bg-transparent px-xs py-2xs text-left font-mono text-[0.72rem] text-text-primary hover:border-border-default hover:bg-bg-hover"
+                        className="min-h-[44px] min-w-0 flex-1 cursor-pointer rounded-sm border border-solid border-transparent bg-transparent px-sm py-sm text-left font-mono text-[0.78rem] text-text-primary hover:border-border-default hover:bg-bg-surface focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px]"
                         onClick={() => onOpenEntry(primary)}
                       >
                         <Badge tier="count">{`s${primary}`}</Badge>{" "}
@@ -297,6 +305,7 @@ function ArchiveRange({
                       </button>
                       {onNavigateToMessage !== undefined && (
                         <Button
+                          touch
                           size="sm"
                           variant="ghost"
                           onClick={() =>
@@ -311,6 +320,7 @@ function ArchiveRange({
                       <span className={ROW_CLASS}>
                         {inRange.map((seq) => (
                           <Button
+                            touch
                             key={seq}
                             size="sm"
                             variant="ghost"
@@ -338,6 +348,7 @@ function ArchiveRange({
                 } in this range were not reached by the outline.`}
               </span>
               <Button
+                touch
                 size="sm"
                 variant="default"
                 onClick={() =>
@@ -408,56 +419,111 @@ export default function CheckpointEvidence({
 
   return (
     <section className="flex flex-col gap-sm" data-checkpoint-evidence="">
-      <h3 className={LABEL_CLASS}>Original evidence</h3>
-
-      <p className={ROW_CLASS} data-checkpoint-boundary="">
-        <span>Derived boundary: captured through raw seq {boundarySeq}</span>
-        {boundaryEntry !== null && (
-          <span>· message #{boundaryEntry.messageIndex}</span>
-        )}
-        {boundaryEntry !== null && onNavigateToMessage !== undefined && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onNavigateToMessage(boundaryEntry.messageIndex)}
-          >
-            {`Go to message #${boundaryEntry.messageIndex}`}
-          </Button>
-        )}
-      </p>
-      {/* The divider is metadata: it adds no message and changes no index. */}
-      <p className="m-0 text-[0.78rem] text-text-tertiary">
-        The boundary is read metadata over the retained archive — no message was
-        added, removed, or renumbered by this checkpoint.
-      </p>
-
-      <EntryEvidence
-        target={target}
-        seq={boundarySeq}
-        open={openEntrySeq === boundarySeq}
-        onToggle={() =>
-          setOpenEntrySeq((current) =>
-            current === boundarySeq ? null : boundarySeq,
-          )
-        }
-      />
-
-      <ArchiveRange
-        target={target}
-        fromSeq={rangeFrom}
-        toSeq={boundarySeq}
-        onOpenEntry={setOpenEntrySeq}
-        {...(onNavigateToMessage === undefined ? {} : { onNavigateToMessage })}
-      />
-
-      {openEntrySeq !== null && openEntrySeq !== boundarySeq && (
-        <EntryEvidence
-          target={target}
-          seq={openEntrySeq}
-          open
-          onToggle={() => setOpenEntrySeq(null)}
-        />
+      {receipt.checkpoint !== null && (
+        <CheckpointDisclosure
+          title="Saved handoff"
+          description="The exact summary saved for fresh context"
+          icon={<ChatIcon size={20} />}
+          operationId={receipt.operationId}
+          open={seedShown}
+          onOpenChange={setSeedShown}
+        >
+          <div className="flex flex-col gap-md">
+            {seedQuery.isLoading && (
+              <p className="text-[0.78rem] text-text-secondary">
+                Reading the saved handoff…
+              </p>
+            )}
+            {(seedQuery.isError || seedQuery.data?.seed === null) && (
+              <div className="flex flex-col items-start gap-md">
+                <p
+                  role="alert"
+                  className="text-[0.78rem] leading-[1.6] text-amber"
+                >
+                  The saved handoff could not be read. The checkpoint is still
+                  saved.
+                </p>
+                <Button
+                  touch
+                  size="sm"
+                  onClick={() => void seedQuery.refetch()}
+                  loading={seedQuery.isFetching}
+                >
+                  Retry handoff
+                </Button>
+              </div>
+            )}
+            {seedQuery.data?.seed != null && (
+              // The exact frozen bytes, never a re-render of them: the seed
+              // is the string the next turn actually received.
+              <pre className={BODY_CLASS}>{seedQuery.data.seed.seedText}</pre>
+            )}
+          </div>
+        </CheckpointDisclosure>
       )}
+
+      <CheckpointDisclosure
+        title="Original archive"
+        description="Messages, tool results and images at this checkpoint"
+        icon={<ArchiveIcon size={20} />}
+        operationId={receipt.operationId}
+      >
+        <div className="flex min-w-0 flex-col gap-lg">
+          <p className={ROW_CLASS} data-checkpoint-boundary="">
+            <span>
+              Derived boundary: captured through raw seq {boundarySeq}
+            </span>
+            {boundaryEntry !== null && (
+              <span>· message #{boundaryEntry.messageIndex}</span>
+            )}
+            {boundaryEntry !== null && onNavigateToMessage !== undefined && (
+              <Button
+                touch
+                size="sm"
+                variant="ghost"
+                onClick={() => onNavigateToMessage(boundaryEntry.messageIndex)}
+              >
+                {`Go to message #${boundaryEntry.messageIndex}`}
+              </Button>
+            )}
+          </p>
+          {/* The divider is metadata: it adds no message and changes no index. */}
+          <p className="m-0 text-[0.78rem] leading-[1.65] text-text-secondary">
+            The checkpoint marks a boundary in the retained archive. No message
+            was added, removed, or renumbered.
+          </p>
+
+          <EntryEvidence
+            target={target}
+            seq={boundarySeq}
+            open={openEntrySeq === boundarySeq}
+            onToggle={() =>
+              setOpenEntrySeq((current) =>
+                current === boundarySeq ? null : boundarySeq,
+              )
+            }
+          />
+
+          <ArchiveRange
+            target={target}
+            fromSeq={rangeFrom}
+            toSeq={boundarySeq}
+            onOpenEntry={setOpenEntrySeq}
+            {...(onNavigateToMessage === undefined
+              ? {}
+              : { onNavigateToMessage })}
+          />
+
+          {openEntrySeq !== null && openEntrySeq !== boundarySeq && (
+            <EntryEvidence
+              target={target}
+              seq={openEntrySeq}
+              open
+              onToggle={() => setOpenEntrySeq(null)}
+            />
+          )}
+        </div>
+      </CheckpointDisclosure>
 
       {artifactIsNewer && (
         <p
@@ -473,35 +539,6 @@ export default function CheckpointEvidence({
             {artifact.updatedAt}). Neither view replaces the other.
           </span>
         </p>
-      )}
-
-      {receipt.checkpoint !== null && (
-        <div className="flex flex-col gap-xs">
-          <Button
-            size="sm"
-            variant="default"
-            onClick={() => setSeedShown((shown) => !shown)}
-            aria-expanded={seedShown}
-          >
-            {seedShown
-              ? "Hide saved handoff"
-              : `Show saved handoff (${receipt.checkpoint.sectionBytes.total} bytes)`}
-          </Button>
-          {seedShown && (
-            <div className="flex flex-col gap-2xs">
-              {seedQuery.isLoading && (
-                <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
-                  Reading the saved handoff…
-                </p>
-              )}
-              {seedQuery.data?.seed != null && (
-                // The exact frozen bytes, never a re-render of them: the seed
-                // is the string the next turn actually received.
-                <pre className={BODY_CLASS}>{seedQuery.data.seed.seedText}</pre>
-              )}
-            </div>
-          )}
-        </div>
       )}
     </section>
   );

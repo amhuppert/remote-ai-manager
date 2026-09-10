@@ -49,6 +49,8 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const Default = {} satisfies Story;
+
 /** No checkpoint has ever been taken for this conversation. */
 export const Empty = {
   args: { surface: checkpointSurfaceFixture({ receipts: [] }) },
@@ -120,6 +122,54 @@ export const Applied = {
         }),
       ],
     }),
+  },
+} satisfies Story;
+
+export const AppliedWhileRunning = {
+  args: {
+    surface: checkpointSurfaceFixture({
+      receipts: [
+        checkpointReceiptFixture({
+          operationId: "66df53e1-1f90-47f5-8b90-b2794bb59f9c",
+          phase: "applied",
+          hasAcceptedContinuation: true,
+          capturedThroughSeq: 755,
+          omissions: [
+            {
+              category: "recent_dialogue_units_omitted",
+              detail:
+                "4 older exchanges outside the recent-dialogue budget; read the archive by seq range",
+            },
+          ],
+        }),
+      ],
+      action: {
+        kind: "disabled",
+        code: "turn_active",
+        reason: "A turn is running. The checkpoint can start once it settles.",
+      },
+    }),
+  },
+} satisfies Story;
+
+export const SavedHandoffOpened = {
+  play: async ({ userEvent }) => {
+    const modal = within(document.body);
+    await userEvent.click(
+      await modal.findByRole("button", { name: "Saved handoff" }),
+    );
+    await modal.findByText(/Objective: land the checkpoint UI/);
+  },
+} satisfies Story;
+
+export const DetailsOpened = {
+  args: AppliedWhileRunning.args,
+  play: async ({ userEvent }) => {
+    const modal = within(document.body);
+    await userEvent.click(
+      await modal.findByRole("button", { name: "Checkpoint details" }),
+    );
+    await modal.findByText("Seed sha256");
   },
 } satisfies Story;
 
@@ -312,6 +362,9 @@ export const EvidenceOpened = {
   play: async ({ userEvent }) => {
     const modal = within(document.body);
     await userEvent.click(
+      await modal.findByRole("button", { name: /Original archive/ }),
+    );
+    await userEvent.click(
       await modal.findByRole("button", { name: /open complete entry/i }),
     );
     await modal.findByText(/complete recorded tool result/i);
@@ -345,7 +398,13 @@ export const EarlierCheckpointSelected = {
   },
   play: async ({ userEvent }) => {
     const modal = within(document.body);
+    await userEvent.click(
+      await modal.findByRole("button", { name: /Checkpoint history/ }),
+    );
     await userEvent.click(await modal.findByRole("button", { name: /#2/ }));
+    await userEvent.click(
+      await modal.findByRole("button", { name: /Original archive/ }),
+    );
     await modal.findByText(/captured through raw seq 96/);
   },
 } satisfies Story;

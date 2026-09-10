@@ -479,6 +479,9 @@ describe("project cockpit checkpoint wiring", () => {
     await userEvent.setup().click(chip);
 
     const dialog = await screen.findByRole("dialog");
+    await userEvent
+      .setup()
+      .click(within(dialog).getByRole("button", { name: "Original archive" }));
     expect(
       within(dialog).getByRole("link", { name: /raw export for seq 148/i }),
     ).toHaveAttribute(
