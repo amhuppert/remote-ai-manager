@@ -1,97 +1,107 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { cleanup, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { renderWithQuery, createTestQueryClient } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import ConversationLinkChip from "./ConversationLinkChip";
 import type { ConversationRefAttrs } from "@/lib/conversations/schemas";
 
-type SessionRefAttrs = Extract<ConversationRefAttrs, { scope: "session" }>;
-
-function makeAttrs(
-  overrides: Partial<SessionRefAttrs> = {},
-): ConversationRefAttrs {
-  return {
-    "project-name": "my-app",
-    "project-path": "/repos/my-app",
-    scope: "session",
-    "session-name": "main",
-    "worktree-path": "/repos/my-app/.worktrees/main",
-    "conversation-id": "conv-123",
-    "conversation-name": "Refactor parser",
-    backend: "claude",
-    "backend-ref": "claude-sess-abc",
-    "debug-log-path": "",
-    status: "running",
-    "last-activity-at": "2024-06-01T12:00:00Z",
-    ...overrides,
-  };
-}
+const attrs: ConversationRefAttrs = {
+  "project-name": "my-app",
+  "project-path": "/repos/my-app",
+  scope: "session",
+  "session-name": "main",
+  "worktree-path": "/repos/my-app/.worktrees/main",
+  "conversation-id": "conv-123",
+  "conversation-name": "Refactor parser",
+  backend: "claude",
+  "backend-ref": "claude-sess-abc",
+  "debug-log-path": "",
+  status: "running",
+  "last-activity-at": "2024-06-01T12:00:00Z",
+};
+let api: FetchFixture;
+let client: ReturnType<typeof createTestQueryClient>;
+beforeEach(() => {
+  client = createTestQueryClient();
+  api = installFetchFixture();
+  api.reply("POST", "/api/live-references", (req) => {
+    const { targets } = req.jsonBody as { targets: unknown[] };
+    return {
+      json: {
+        results: targets.map((target) => ({
+          target,
+          checkedAt: "2026-09-10T04:00:00Z",
+          unavailableReason: null,
+          summary: {
+            title: "Current conversation",
+            identity: "conv-123",
+            status: "Waiting for input",
+            tone: "amber",
+            href: "/conversations?c=conv-123",
+            readCommand: "cctl conversation read conv-123",
+            attentionCount: 0,
+            details: [
+              { label: "Agent", value: "codex" },
+              { label: "Scope", value: "Project conversation" },
+            ],
+          },
+        })),
+      },
+    };
+  });
+});
+afterEach(() => {
+  cleanup();
+  client.clear();
+  api.restore();
+});
 
 describe("ConversationLinkChip", () => {
-  it("renders an anchor pointing at the conversation URL", () => {
-    render(<ConversationLinkChip attrs={makeAttrs()} />);
-
-    const anchor = screen.getByRole("link");
-    expect(anchor).toHaveAttribute("href", "/conversations?c=conv-123");
-  });
-
-  it("URL-encodes a conversation id containing special characters", () => {
-    render(
-      <ConversationLinkChip
-        attrs={makeAttrs({ "conversation-id": "conv 1" })}
-      />,
-    );
-
-    const anchor = screen.getByRole("link");
-    expect(anchor).toHaveAttribute("href", "/conversations?c=conv%201");
-  });
-
-  it("renders the conversation name when present", () => {
-    render(<ConversationLinkChip attrs={makeAttrs()} />);
+  it("shows the captured name while current state is loading", () => {
+    renderWithQuery(<ConversationLinkChip attrs={attrs} />, client);
     expect(screen.getByText("Refactor parser")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
-
-  it("falls back to conversation-id when conversation-name is empty", () => {
-    render(
-      <ConversationLinkChip attrs={makeAttrs({ "conversation-name": "" })} />,
+  it("falls back to the stable id when the captured name is empty", () => {
+    renderWithQuery(
+      <ConversationLinkChip attrs={{ ...attrs, "conversation-name": "" }} />,
+      client,
     );
     expect(screen.getByText("conv-123")).toBeInTheDocument();
   });
-
-  it("applies data-backend reflecting the backend attribute", () => {
-    render(<ConversationLinkChip attrs={makeAttrs({ backend: "codex" })} />);
-    expect(screen.getByRole("link")).toHaveAttribute("data-backend", "codex");
-  });
-
-  it("sets a tooltip showing project · session", () => {
-    render(<ConversationLinkChip attrs={makeAttrs()} />);
-    expect(screen.getByRole("link")).toHaveAttribute("title", "my-app · main");
-  });
-
-  it("labels a project conversation by scope, not by an absent session name", () => {
-    // The project variant carries no `session-name`, so reading the attribute
-    // unconditionally would render "my-app · undefined" (R1.3: user-visible
-    // labels).
-    render(
-      <ConversationLinkChip
-        attrs={{
-          "project-name": "my-app",
-          "project-path": "/repos/my-app",
-          scope: "project",
-          "worktree-path": "/repos/my-app",
-          "conversation-id": "conv-p1",
-          "conversation-name": "Project chat",
-          backend: "claude",
-          "backend-ref": "",
-          "debug-log-path": "",
-          status: "running",
-          "last-activity-at": "2024-06-01T12:00:00Z",
-        }}
-      />,
+  it("previews current activity and backend before opening the conversation", async () => {
+    renderWithQuery(<ConversationLinkChip attrs={attrs} />, client);
+    await userEvent
+      .setup()
+      .click(
+        await screen.findByRole("button", { name: /Current conversation/ }),
+      );
+    expect(screen.getByText("codex")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      "/conversations?c=conv-123",
     );
-
-    expect(screen.getByRole("link")).toHaveAttribute(
-      "title",
-      "my-app · project",
+  });
+  it("resolves a project conversation without requiring a session name", async () => {
+    const { "session-name": _session, ...projectAttrs } = attrs;
+    renderWithQuery(
+      <ConversationLinkChip attrs={{ ...projectAttrs, scope: "project" }} />,
+      client,
+    );
+    await userEvent
+      .setup()
+      .click(
+        await screen.findByRole("button", { name: /Current conversation/ }),
+      );
+    expect(screen.getByText("Project conversation")).toBeInTheDocument();
+    expect(api.requestsTo("POST", "/api/live-references")[0]?.jsonBody).toEqual(
+      {
+        targets: [
+          { kind: "conversation", projectName: "my-app", id: "conv-123" },
+        ],
+      },
     );
   });
 });

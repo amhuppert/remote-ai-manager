@@ -7,7 +7,7 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import {
   countExecutionGates,
   deriveExecutionStatusSummary,
-} from "./execution-status-summary";
+} from "@/lib/workflow-graph/execution-status-summary";
 
 function contextState(
   base: GraphWorkflowExecution,

@@ -240,6 +240,12 @@ export interface TurnContextDependencies {
   // Reads one notepad for the agent-facing expansion pass (D5). Null means the
   // notepad is gone, so the pass reports a dangling reference instead of
   // failing delivery. Ids are global, so no project scope is threaded.
+  readLiveReference(
+    target: import("@/lib/live-references/schemas").LiveReferenceTarget,
+  ): Promise<
+    import("@/lib/live-references/schemas").LiveReferenceSummary | null
+  >;
+
   readNotepadForInjection(
     notepadId: string,
   ): Promise<NotepadInjectionSource | null>;

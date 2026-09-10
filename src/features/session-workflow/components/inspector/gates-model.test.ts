@@ -6,7 +6,7 @@ import type {
   GraphWorkflowHaltReason,
   GraphWorkflowPendingUserInput,
 } from "@/lib/workflow-graph/schemas";
-import { deriveExecutionGates } from "./gates-model";
+import { deriveExecutionGates } from "@/lib/workflow-graph/execution-gates";
 
 function pendingInput(
   questions: string[],

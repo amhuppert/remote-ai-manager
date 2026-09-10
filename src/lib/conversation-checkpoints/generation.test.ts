@@ -1,3 +1,8 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
+import { createConfigReader } from "@/lib/config/loader";
+import { createConfigRouteHandlers } from "@/lib/config/route-handlers";
+import { resolveCompactionConfig } from "@/lib/config/cascade";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const logSpies = vi.hoisted(() => ({
@@ -9,7 +14,8 @@ const logSpies = vi.hoisted(() => ({
 
 // Infrastructure-only mock (module-level createLogger side effect); every
 // generation dependency is injected.
-vi.mock("@/lib/logging", () => ({
+vi.mock("@/lib/logging", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/logging")>()),
   createLogger: () => logSpies,
 }));
 
@@ -271,6 +277,57 @@ function modelDouble(workingState: unknown = WORKING_STATE) {
 }
 
 describe("generateCheckpoint — payload", () => {
+  it("uses the saved global backend, model, and reasoning for every checkpoint generation pass", async () => {
+    const tempRoot = path.join(process.cwd(), ".cc/temp");
+    await mkdir(tempRoot, { recursive: true });
+    const configDir = await mkdtemp(path.join(tempRoot, "checkpoint-config-"));
+    try {
+      const reader = createConfigReader(configDir);
+      const handlers = createConfigRouteHandlers({
+        readConfig: () => reader.readConfig(),
+        readRawConfig: () => reader.readRawConfig(),
+        writeRawConfig: (config) => reader.writeRawConfig(config),
+      });
+      const selection = {
+        modelId: "gpt-5.4-mini",
+        parameters: { reasoning: "low", fast: "false" },
+      };
+      const response = await handlers.PUT(
+        new Request("http://localhost/api/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            compaction: {
+              backend: "codex",
+              conversationModelSelection: selection,
+              messageModelSelection: selection,
+            },
+          }),
+        }),
+      );
+      expect(response.status).toBe(200);
+      const reloaded = createConfigReader(configDir);
+      const config = resolveCompactionConfig(await reloaded.readConfig());
+      expect(config.backend).toBe("codex");
+      expect(config.conversationModelSelection).toEqual(selection);
+      const input = await makeInput({ config });
+      input.lane.backend = config.backend;
+      const result = await generateCheckpoint(input, {
+        executeTaskRun: modelDouble(),
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.payload.modelSelection).toEqual(selection);
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      for (const call of calls) {
+        expect(call.modelSelection).toEqual(selection);
+        expect(call.binding).toMatchObject({ backend: "codex" });
+      }
+    } finally {
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   it("freezes the built seed with its boundary, versions, and exact byte counts", async () => {
     const input = await makeInput();
     const result = await generateCheckpoint(input, {

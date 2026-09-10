@@ -20,6 +20,7 @@ import { cn } from "@/lib/ui/cn";
 // Kind identity is carried by the leading glyph's colour: files read as neutral
 // chrome, conversations cyan, specs violet, tickets amber, notepads blue.
 const GLYPH_PATHS: Record<PickerGlyph, string> = {
+  execution: "M3 4h6v6H3zM15 14h6v6h-6zM9 7h9v7",
   file: "M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9l-6-6ZM13 3v6h6",
   conversation: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z",
   spec: "M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01",
@@ -30,6 +31,7 @@ const GLYPH_PATHS: Record<PickerGlyph, string> = {
 };
 
 const GLYPH_COLOR_CLASS: Record<PickerGlyph, string> = {
+  execution: "text-cyan",
   file: "text-text-secondary",
   conversation: "text-cyan",
   spec: "text-violet",

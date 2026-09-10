@@ -520,6 +520,7 @@ function makeFakeBackendActorDeps(
     getActiveAlignmentVersion: async () => null,
     getLiveTicketBlock: async () => null,
     getMemoryIndexBlock: async () => null,
+    readLiveReference: async () => null,
     readNotepadForInjection: async () => null,
     recordNotepadDeliveries: async () => {},
     recordMemoryIndexDeliveries: async () => {},

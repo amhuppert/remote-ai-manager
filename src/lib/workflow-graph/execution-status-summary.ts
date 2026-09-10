@@ -3,7 +3,7 @@ import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activity";
 import { laneDisplayName } from "@/lib/workflow-graph/lane-bands";
 import { awaitsDefinitionApproval } from "@/lib/workflow-graph/lifecycle-classifier";
-import { deriveExecutionGates } from "./inspector/gates-model";
+import { deriveExecutionGates } from "@/lib/workflow-graph/execution-gates";
 
 /**
  * The status bar's contextual sentence and its gate count (design E1).

@@ -9,6 +9,7 @@ import {
   SectionLabel,
   SectionCount,
 } from "@/components/ui/SectionHeader";
+import { alignmentDraftPhase } from "@/lib/session-alignment/draft-phase";
 import type {
   AlignmentDecision,
   AlignmentDiff,
@@ -417,10 +418,19 @@ export default function AlignmentPanelView({
     );
   }
 
+  // An unfilled draft has nothing to render, so it must not count as content
+  // here either — otherwise the first `/align` replaces the "run /align" prompt
+  // with an empty panel for as long as the agent takes to author.
+  const draftPhase = alignmentDraftPhase(state?.draft);
+  const showableDraft =
+    draftPhase === "awaiting_approval" || draftPhase === "incorporating"
+      ? state?.draft
+      : null;
+
   if (
     !state ||
     (!state.active &&
-      !state.draft &&
+      !showableDraft &&
       state.history.length === 0 &&
       state.decisions.length === 0)
   ) {
@@ -442,7 +452,7 @@ export default function AlignmentPanelView({
         </section>
       )}
 
-      {state.draft && <DraftSection draft={state.draft} />}
+      {showableDraft && <DraftSection draft={showableDraft} />}
 
       {state.history.length > 0 && (
         <HistorySection

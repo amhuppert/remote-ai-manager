@@ -77,6 +77,7 @@ const deps: QueueMessageDeps = {
   getNextImageIndex: getNextImageIndexMock,
   getProjectDisplayName: getProjectDisplayNameMock,
   queueCapabilityForBackend: queueCapabilityForBackendMock,
+  readLiveReference: async () => null,
   readNotepadForInjection: readNotepadForInjectionMock,
   recordNotepadDeliveries: recordNotepadDeliveriesMock,
   prepareNotepadChangeNotice: prepareNotepadChangeNoticeMock,
@@ -763,6 +764,38 @@ describe("queueMessage notepad injection", () => {
     claimLiveDeliveryMock.mockResolvedValue(
       makePendingEntry({ status: "delivering", deliveryAttemptId: "att-9" }),
     );
+  });
+
+  it("captures current entity state only at claimed live delivery and leaves queued text unchanged", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+    const ref =
+      '<ticket-ref project-name="cc" ticket-number="90" identifier="cc#90" title="Captured" read-command="cctl ticket get cc#90" />';
+    await queueMessage({
+      ...baseParams,
+      text: ref,
+      backend: "claude",
+      deps: {
+        ...deps,
+        async readLiveReference() {
+          return {
+            title: "Current",
+            identity: "cc#90",
+            status: "Done",
+            tone: "green",
+            href: "/tickets/cc/90",
+            readCommand: "read",
+            details: [],
+            attentionCount: 0,
+          };
+        },
+      },
+    });
+    expect(deliveredText(queueUserInputMock)).toContain('status="Done"');
+    const enqueued = enqueueMock.mock.calls.at(-1)![0] as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(blockText(enqueued.content)).toBe(ref);
   });
 
   it("delivers full notepad content while the durable row and transcript keep the reference", async () => {

@@ -9,6 +9,7 @@ import { conversationTargetApiBase } from "@/lib/conversations/conversation-targ
 import {
   deriveCheckpointActionState,
   deriveCheckpointChipState,
+  checkpointChipIsBusy,
   type CheckpointActionState,
 } from "./checkpoint-action-state";
 import type { ConversationCheckpointSurface } from "./use-conversation-checkpoint";
@@ -354,18 +355,31 @@ export function checkpointSurfaceFixture(
     }),
   ];
   const latest = recent[0] ?? null;
+  const chip = deriveCheckpointChipState(latest);
+  const active = checkpointChipIsBusy(chip) ? latest : null;
   return {
     target,
     latest,
     recent,
-    chip: deriveCheckpointChipState(latest),
+    chip,
     action:
       input.action ??
       deriveCheckpointActionState({
         eligibility: {
-          eligible: true,
-          refusals: [],
-          active: null,
+          eligible: active === null,
+          refusals:
+            active === null
+              ? []
+              : [
+                  {
+                    code: "checkpoint_pending",
+                    reason:
+                      "A checkpoint is already running for this conversation.",
+                    operationId: active.operationId,
+                    phase: active.phase,
+                  },
+                ],
+          active,
           hosted: true,
         },
       }),

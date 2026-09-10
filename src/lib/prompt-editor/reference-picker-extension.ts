@@ -5,7 +5,11 @@ import Suggestion, {
   type SuggestionOptions,
   type SuggestionProps,
 } from "@tiptap/suggestion";
-import type { PickerSelection, PickerTrigger } from "./reference-picker";
+import {
+  parseScopeQuery,
+  type PickerSelection,
+  type PickerTrigger,
+} from "./reference-picker";
 import { getReferenceByType } from "./reference-registry";
 
 const PLUGIN_KEYS: Record<PickerTrigger, PluginKey> = {
@@ -94,7 +98,9 @@ export const ReferencePicker =
           items: () => [],
           shouldShow: ({ query }) =>
             !LATER_TRIGGER.test(query) &&
-            (!/\s/.test(query) || hasAnyMatch(query)),
+            (!/\s/.test(query) ||
+              parseScopeQuery(query).scope !== null ||
+              hasAnyMatch(query)),
           render: () => ({
             onStart: (props) =>
               renderer.onStart?.(toSuggestion(trigger, props)),

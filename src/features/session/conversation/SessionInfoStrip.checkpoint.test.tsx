@@ -230,6 +230,11 @@ describe("session host checkpoint wiring", () => {
       await userEvent.setup().click(chip);
 
       const dialog = await screen.findByRole("dialog");
+      await userEvent
+        .setup()
+        .click(
+          within(dialog).getByRole("button", { name: "Original archive" }),
+        );
       expect(
         within(dialog).getByText(/captured through raw seq 148/),
       ).toBeInTheDocument();

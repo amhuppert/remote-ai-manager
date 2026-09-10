@@ -22,7 +22,7 @@ import {
   formatInspectorTimestamp,
   inspectorMetaTextClass,
 } from "./chrome";
-import { deriveExecutionGates } from "./gates-model";
+import { deriveExecutionGates } from "@/lib/workflow-graph/execution-gates";
 import GatesList from "./GatesList";
 import { useInspectorNavigation } from "./InspectorNavigationContext";
 import { GATE_CONTEXT, LANE_RUNTIME } from "./navigation";

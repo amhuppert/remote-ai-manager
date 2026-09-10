@@ -339,6 +339,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     getTaskRunner: (backend) => getTaskRunner(backend),
     getLiveTicketBlock: async () => null,
     getMemoryIndexBlock: async () => null,
+    readLiveReference: async () => null,
     readNotepadForInjection: async () => null,
     recordNotepadDeliveries: async () => {},
     recordMemoryIndexDeliveries: async () => {},

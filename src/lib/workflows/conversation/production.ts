@@ -241,6 +241,10 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         memoryServiceFactoryMod
           .getMemoryIndexContextProvider()
           .getForConversation(request),
+      readLiveReference: async (target) =>
+        (await import("@/lib/live-references/reader")).liveReferenceReader.read(
+          target,
+        ),
       readNotepadForInjection: (notepadId: string) =>
         notepadServiceFactoryMod
           .getNotepadInjectionReader()

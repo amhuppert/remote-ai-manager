@@ -1,3 +1,4 @@
+import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
 /**
  * Durably enqueue a user message into a conversation and, for backends that
  * accept input during an in-progress turn, attempt live delivery within the
@@ -157,6 +158,12 @@ export interface QueueMessageDeps {
   queueCapabilityForBackend(
     backend: AgentBackendId,
   ): ReturnType<typeof defaultQueueCapabilityForBackend>;
+  readLiveReference(
+    target: import("@/lib/live-references/schemas").LiveReferenceTarget,
+  ): Promise<
+    import("@/lib/live-references/schemas").LiveReferenceSummary | null
+  >;
+
   /**
    * Reads one notepad for the agent-facing expansion pass (D5). Null means the
    * notepad is gone, so the pass reports a dangling reference rather than
@@ -197,6 +204,10 @@ const defaultDeps: QueueMessageDeps = {
   getNextImageIndex: defaultGetNextImageIndex,
   getProjectDisplayName: defaultGetProjectDisplayName,
   queueCapabilityForBackend: defaultQueueCapabilityForBackend,
+  readLiveReference: async (target) =>
+    (await import("@/lib/live-references/reader")).liveReferenceReader.read(
+      target,
+    ),
   readNotepadForInjection: (notepadId) =>
     getNotepadInjectionReader().readForInjection(notepadId),
   recordNotepadDeliveries: (input) =>
@@ -566,8 +577,19 @@ export async function queueMessage(
         expandedLength: agentFacingText?.length ?? 0,
       });
     }
+    const sourceText = deliveryContent
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n\n");
+    const summarizedText = await appendLiveReferenceSummaries(sourceText, {
+      read: (target) => deps.readLiveReference(target),
+    });
+    const summary = summarizedText.slice(sourceText.length);
+    const summarizedContent: MessageContentBlock[] = summary
+      ? [...deliveryContent, { type: "text", text: summary }]
+      : deliveryContent;
     await runtime.queueUserInput({
-      content: withNotepadChangeNotice(deliveryContent, notepadChangeNotice),
+      content: withNotepadChangeNotice(summarizedContent, notepadChangeNotice),
     });
   } catch (err) {
     const error = getErrorMessage(err);

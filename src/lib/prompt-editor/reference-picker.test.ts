@@ -126,6 +126,7 @@ function context(
     tickets: [],
     specs: [],
     notepads: [],
+    executions: [],
     selectedSpec: null,
     includeFinishedTickets: false,
     includeArchivedConversations: false,

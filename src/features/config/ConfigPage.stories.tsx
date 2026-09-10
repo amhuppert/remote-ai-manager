@@ -469,3 +469,41 @@ export const ClaudeHaikuNoEffort = {
   ],
   play: async ({ canvas }) => openAgentBackends(canvas),
 } satisfies Story;
+
+export const CheckpointCompaction = {
+  decorators: Default.decorators,
+  play: async ({ canvas }) => {
+    await userEvent.click(
+      await canvas.findByRole("tab", { name: "Compaction" }),
+    );
+  },
+} satisfies Story;
+
+const checkpointCodexConfig: GlobalConfig = {
+  ...defaultConfig,
+  compaction: {
+    backend: "codex",
+    conversationModelSelection: {
+      modelId: "gpt-5.4-mini",
+      parameters: { reasoning: "low", fast: "false" },
+    },
+    messageModelSelection: {
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    },
+  },
+};
+
+export const CheckpointCompactionCodex = {
+  decorators: [
+    (Story) => (
+      <WithMockData
+        config={checkpointCodexConfig}
+        raw={{ ...minimalRaw, compaction: checkpointCodexConfig.compaction }}
+      >
+        <Story />
+      </WithMockData>
+    ),
+  ],
+  play: CheckpointCompaction.play,
+} satisfies Story;

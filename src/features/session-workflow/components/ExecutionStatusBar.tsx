@@ -36,7 +36,7 @@ import {
 import {
   countExecutionGates,
   deriveExecutionStatusSummary,
-} from "./execution-status-summary";
+} from "@/lib/workflow-graph/execution-status-summary";
 
 /** The four mutations the page can have in flight for a control. */
 export type ExecutionControlAction = "pause" | "resume" | "abort" | "abandon";
@@ -553,6 +553,9 @@ export default function ExecutionStatusBar({
           </div>
         )}
 
+        {!sheetOpenable && trailingControls && (
+          <div className="px-md pb-sm">{trailingControls}</div>
+        )}
         {sheetOpenable && (
           <Dialog
             open={executionsSheetOpen}
@@ -562,6 +565,7 @@ export default function ExecutionStatusBar({
               <DialogTitle>Executions</DialogTitle>
               <div className="flex min-h-0 flex-col gap-lg">
                 {renderExecutionsSheet(() => setExecutionsSheetOpen(false))}
+                {trailingControls}
                 {sheetControls.length > 0 && (
                   <section
                     aria-label="Execution actions"

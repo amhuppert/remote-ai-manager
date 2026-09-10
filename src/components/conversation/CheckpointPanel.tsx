@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
+import {
+  ArchiveIcon,
+  CheckIcon,
+  CloseIcon,
+  GearIcon,
+  AlertTriangleIcon,
+} from "@/components/icons";
 import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
 import {
   Dialog,
   DialogActions,
@@ -18,16 +26,20 @@ import {
 } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { StatusChip } from "@/components/ui/StatusChip";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
 import { cn } from "@/lib/ui/cn";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import { scheduleActivePromptFocus } from "@/lib/hotkeys/prompt-focus";
 import type { CheckpointReceipt } from "@/lib/conversation-checkpoints/receipt";
 
 import CheckpointEvidence from "./CheckpointEvidence";
+import CheckpointDisclosure from "./CheckpointDisclosure";
 import {
   checkpointChipIsBusy,
   checkpointChipLabel,
   checkpointPhaseHeadline,
+  deriveCheckpointChipState,
   type CheckpointActionState,
   type CheckpointChipState,
 } from "./checkpoint-action-state";
@@ -54,10 +66,42 @@ export interface CheckpointPanelProps {
 }
 
 const LABEL_CLASS =
-  "font-mono text-[10px] font-bold tracking-[0.16em] text-text-tertiary uppercase";
+  "font-mono text-[0.7rem] font-medium tracking-[0.1em] text-text-secondary uppercase";
 const FACT_ROW_CLASS =
-  "flex flex-wrap items-baseline gap-x-sm gap-y-2xs font-mono text-[0.72rem] text-text-secondary";
+  "grid grid-cols-[140px_minmax(0,1fr)] items-baseline gap-x-md gap-y-sm font-mono text-[0.72rem] leading-[1.6] text-text-secondary max-640:grid-cols-1 max-640:gap-y-xs";
 const VALUE_CLASS = "text-text-primary [overflow-wrap:anywhere]";
+const logger = createClientLogger("checkpoint-panel");
+const checkpointDate = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function checkpointSummary(receipt: CheckpointReceipt): string {
+  if (receipt.acceptance !== null) {
+    return "The conversation continued using this saved handoff.";
+  }
+  if (receipt.delivery !== null) {
+    return "Delivery was attempted, but acceptance is unconfirmed. Whether the input reached the provider is unresolved.";
+  }
+  switch (receipt.phase) {
+    case "building":
+      return "Preparing a saved handoff from the recorded conversation. You can cancel while it is building.";
+    case "retiring":
+      return "The handoff is saved. Retiring the current provider context before the next message.";
+    case "ready":
+      return "Your next message will carry the saved handoff into a fresh provider context.";
+    case "cancelled":
+      return "The checkpoint was cancelled before the provider context was retired.";
+    case "failed":
+      return "The checkpoint could not be completed. Review the failure below.";
+    case "needs_reconciliation":
+      return "The checkpoint was interrupted. Reconcile its state before continuing.";
+    default:
+      return "No acceptance has been recorded for this checkpoint.";
+  }
+}
 
 function unavailable(value: number | null): string {
   return value === null ? "unavailable" : String(value);
@@ -80,7 +124,7 @@ function ReceiptFacts({
   const seed = receipt.checkpoint;
   const usage = receipt.compactionUsage;
   return (
-    <div className="flex flex-col gap-xs">
+    <div className="flex flex-col gap-md">
       <p className={FACT_ROW_CLASS}>
         <span className={LABEL_CLASS}>Operation</span>
         <span className={VALUE_CLASS}>{receipt.operationId}</span>
@@ -161,14 +205,6 @@ function ReceiptFacts({
           {receipt.hasAcceptedContinuation ? "yes" : "no"}
         </span>
       </p>
-      {receipt.failure !== null && (
-        <p
-          className="rounded-sm border border-solid border-red-dim bg-red-glow px-sm py-xs font-mono text-[0.72rem] text-red"
-          data-checkpoint-failure=""
-        >
-          {receipt.failure.code} — {receipt.failure.message}
-        </p>
-      )}
     </div>
   );
 }
@@ -221,10 +257,13 @@ function RecoveryControls({
   const latest = surface.latest;
   if (action.kind === "queue_review") {
     return (
-      <div className="flex flex-col gap-xs" data-checkpoint-recovery="queue">
+      <div
+        className="flex flex-col gap-md rounded-md border border-solid border-border-default bg-bg-base p-lg"
+        data-checkpoint-recovery="queue"
+      >
         <p className="m-0 text-[0.8rem] text-text-secondary">{action.reason}</p>
         <DialogActions>
-          <Button variant="default" onClick={onReviewQueue}>
+          <Button touch variant="default" onClick={onReviewQueue}>
             Review queued messages
           </Button>
         </DialogActions>
@@ -235,7 +274,10 @@ function RecoveryControls({
 
   const operationId = action.operationId;
   return (
-    <div className="flex flex-col gap-xs" data-checkpoint-recovery="explicit">
+    <div
+      className="flex flex-col gap-md rounded-md border border-solid border-border-default bg-bg-base p-lg"
+      data-checkpoint-recovery="explicit"
+    >
       <p className="m-0 text-[0.8rem] text-text-secondary">{action.reason}</p>
       {/* Stated where the user chooses the action, not in a tooltip: a
           recovery checkpoint restores CONTEXT continuity and nothing else. */}
@@ -244,9 +286,10 @@ function RecoveryControls({
         earlier turn already did. It builds a fresh checkpoint from the complete
         recorded history.
       </p>
-      <DialogActions>
+      <div className="flex flex-wrap justify-end gap-sm">
         {action.code === "reconciliation_failed" || latest !== null ? (
           <Button
+            touch
             variant="default"
             onClick={() => {
               if (operationId !== null) surface.reconcile(operationId);
@@ -258,18 +301,28 @@ function RecoveryControls({
           </Button>
         ) : null}
         <Button
+          touch
           variant="primary"
+          aria-label={
+            operationId === null
+              ? "Recovery checkpoint"
+              : `Recovery checkpoint for ${operationId}`
+          }
           onClick={() => {
             if (operationId !== null) surface.startRecovery(operationId);
           }}
           disabled={operationId === null}
           loading={surface.isStarting}
         >
-          {operationId === null
-            ? "Recovery checkpoint"
-            : `Recovery checkpoint for ${operationId}`}
+          Recovery checkpoint
         </Button>
-      </DialogActions>
+      </div>
+      {operationId !== null && (
+        <p className="font-mono text-[0.72rem] leading-[1.6] [overflow-wrap:anywhere] text-text-secondary">
+          Recovery supersedes operation{" "}
+          <span className="text-text-primary">{operationId}</span>.
+        </p>
+      )}
     </div>
   );
 }
@@ -295,10 +348,12 @@ export default function CheckpointPanel({
   // newest and follows it, so a panel left open during a new operation keeps
   // showing the current one rather than pinning a stale selection.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const selected =
     surface.recent.find((receipt) => receipt.operationId === selectedId) ??
     latest;
-  const busy = checkpointChipIsBusy(chip);
+  const selectedChip = deriveCheckpointChipState(selected);
+  const busy = checkpointChipIsBusy(selectedChip);
   // The review lives in the composer, which is behind this modal. Closing
   // first and then focusing the prompt is what actually puts the retained
   // messages in front of the user; leaving the dialog open would hide them.
@@ -318,175 +373,297 @@ export default function CheckpointPanel({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        size="wide"
+        unstyled
+        contentClassName="relative mx-lg flex max-h-[calc(100dvh-2*var(--spacing-lg))] w-full max-w-[680px] flex-col overflow-hidden rounded-lg border border-solid border-border-default bg-bg-surface font-mono text-text-primary shadow-dropdown max-768:mx-sm max-768:max-h-[calc(100dvh-2*var(--spacing-sm))]"
         aria-labelledby="checkpoint-panel-title"
         onOpenAutoFocus={captureOpener}
         onCloseAutoFocus={restoreOpener}
       >
-        <DialogTitle id="checkpoint-panel-title">
-          Context checkpoint
-        </DialogTitle>
-        <DialogDescription>
-          A checkpoint retires this conversation&apos;s provider context and
-          hands the next message a frozen summary. It never sends a message on
-          its own.
-        </DialogDescription>
+        <div className="shrink-0 border-x-0 border-t-0 border-b border-solid border-border-subtle px-xl pt-xl pb-lg max-768:px-lg max-768:pt-lg">
+          <div className="flex items-start justify-between gap-lg">
+            <DialogTitle id="checkpoint-panel-title">
+              Context checkpoint
+            </DialogTitle>
+            <WithTooltip label="Close checkpoint dialog">
+              <DialogClose asChild>
+                <IconButton
+                  variant="square"
+                  aria-label="Close checkpoint dialog"
+                >
+                  <CloseIcon size={18} />
+                </IconButton>
+              </DialogClose>
+            </WithTooltip>
+          </div>
+          <DialogDescription layoutClassName="mb-0">
+            A saved handoff lets the next message start with fresh context. Your
+            conversation history stays available.
+          </DialogDescription>
+        </div>
 
-        {/* One polite live region carrying one sentence. It changes only when
+        <div
+          ref={bodyRef}
+          className="flex min-h-0 flex-col gap-lg overflow-y-auto overscroll-contain p-xl max-768:p-lg"
+        >
+          {/* One polite live region carrying one sentence. It changes only when
             the durable phase changes, so a build does not narrate progress it
             cannot measure. */}
-        <p
-          role="status"
-          aria-live="polite"
-          className="m-0 flex items-center gap-sm text-[0.85rem] text-text-primary"
-          data-checkpoint-headline=""
-        >
-          {busy ? <Spinner size="sm" tone="inherit" /> : null}
-          {checkpointPhaseHeadline(chip)}
-        </p>
+          {selected !== null && (
+            <div className="flex flex-col gap-lg">
+              <div className="flex items-start gap-md">
+                <span
+                  aria-hidden="true"
+                  data-phase={selectedChip.kind.replaceAll("_", "-")}
+                  className="flex size-[36px] shrink-0 items-center justify-center rounded-full bg-bg-raised text-text-secondary data-[phase=applied]:bg-green-glow data-[phase=applied]:text-green data-[phase=building]:text-cyan data-[phase=delivering]:text-cyan data-[phase=failed]:bg-red-glow data-[phase=failed]:text-red data-[phase=needs-reconciliation]:bg-amber-glow data-[phase=needs-reconciliation]:text-amber data-[phase=ready]:bg-green-glow data-[phase=ready]:text-green data-[phase=retiring]:text-cyan"
+                >
+                  {busy ? (
+                    <Spinner size="sm" tone="inherit" />
+                  ) : selectedChip.kind === "applied" ||
+                    selectedChip.kind === "ready" ? (
+                    <CheckIcon size={20} />
+                  ) : selectedChip.kind === "failed" ||
+                    selectedChip.kind === "needs_reconciliation" ? (
+                    <AlertTriangleIcon size={20} />
+                  ) : (
+                    <ArchiveIcon size={20} />
+                  )}
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col gap-xs">
+                  <p
+                    role="status"
+                    aria-live="polite"
+                    className="text-[0.9rem] leading-[1.5] font-medium"
+                    data-checkpoint-headline=""
+                  >
+                    {checkpointPhaseHeadline(selectedChip)}
+                  </p>
+                  <p className="text-[0.78rem] leading-[1.65] text-text-secondary">
+                    {checkpointSummary(selected)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
-        {surface.isLoading && latest === null ? (
-          <EmptyState>
-            <EmptyStateTitle>Reading checkpoint state…</EmptyStateTitle>
-          </EmptyState>
-        ) : latest === null ? (
-          <EmptyState>
-            <EmptyStateTitle>No checkpoint yet</EmptyStateTitle>
-            <EmptyStateDesc>
-              Compacting context now freezes a summary of this conversation and
-              starts a fresh provider session under the same conversation.
-            </EmptyStateDesc>
-          </EmptyState>
-        ) : (
-          <div className="flex min-h-0 flex-col gap-md overflow-y-auto">
-            <ReceiptFacts receipt={selected ?? latest} />
-            <p className="m-0 text-[0.8rem] text-text-secondary">
-              {acceptanceSentence(selected ?? latest)}
+          {surface.requestError !== null && (
+            <p
+              className="m-0 rounded-sm border border-solid border-red-dim bg-red-glow px-sm py-xs font-mono text-[0.75rem] text-red"
+              data-checkpoint-error=""
+            >
+              {surface.requestError}
             </p>
-            <CheckpointEvidence
-              // Keyed by operation so selecting a different checkpoint starts
-              // from its own boundary rather than keeping an entry opened from
-              // the window of the one before it.
-              key={(selected ?? latest).operationId}
-              target={surface.target}
-              receipt={selected ?? latest}
-              previousBoundarySeq={previousBoundarySeq(
-                surface.recent,
-                (selected ?? latest).operationId,
+          )}
+
+          <RecoveryControls
+            action={action}
+            surface={surface}
+            onReviewQueue={reviewQueue}
+          />
+
+          {surface.isLoading && selected === null ? (
+            <EmptyState>
+              <EmptyStateTitle>Reading checkpoint state…</EmptyStateTitle>
+            </EmptyState>
+          ) : selected === null ? (
+            <EmptyState>
+              <EmptyStateTitle>No checkpoint yet</EmptyStateTitle>
+              <EmptyStateDesc>
+                Compacting context now freezes a summary of this conversation
+                and starts a fresh provider session under the same conversation.
+              </EmptyStateDesc>
+            </EmptyState>
+          ) : (
+            <div className="flex min-w-0 flex-col gap-sm">
+              <div className="mb-sm grid grid-cols-3 gap-md rounded-md border border-solid border-border-subtle bg-bg-base p-lg max-768:gap-sm max-768:p-md">
+                <div className="flex flex-col gap-sm">
+                  <span className="text-[1.1rem] font-medium tabular-nums">
+                    #{selected.ordinal}
+                  </span>
+                  <span className={LABEL_CLASS}>Checkpoint</span>
+                </div>
+                <div className="flex flex-col gap-sm">
+                  <span className="text-[1.1rem] font-medium tabular-nums">
+                    {selected.checkpoint?.sectionBytes.total.toLocaleString() ??
+                      "—"}
+                  </span>
+                  <span className={LABEL_CLASS}>Handoff bytes</span>
+                </div>
+                <div className="flex flex-col gap-sm">
+                  <span className="text-[1.1rem] font-medium tabular-nums">
+                    {selected.generationPassCount ?? "—"}
+                  </span>
+                  <span className={LABEL_CLASS}>Build passes</span>
+                </div>
+              </div>
+              {selected.acceptance !== null && (
+                <p className="mb-sm text-[0.72rem] text-text-secondary">
+                  Accepted{" "}
+                  <time dateTime={selected.acceptance.acceptedAt}>
+                    {checkpointDate.format(
+                      new Date(selected.acceptance.acceptedAt),
+                    )}
+                  </time>
+                </p>
               )}
-              artifact={artifact}
-              {...(onNavigateToMessage === undefined
-                ? {}
-                : { onNavigateToMessage })}
-            />
-            {(surface.recent.length > 1 || surface.hasOlder) && (
-              <div className="flex flex-col gap-2xs">
-                <span className={LABEL_CLASS}>Checkpoint history</span>
-                {/* Every saved operation is selectable: a conversation
+              {selected.failure !== null && (
+                <p
+                  className="mb-sm rounded-md border border-solid border-red-dim bg-red-glow p-md text-[0.78rem] leading-[1.6] [overflow-wrap:anywhere] text-red"
+                  data-checkpoint-failure=""
+                >
+                  {selected.failure.code} — {selected.failure.message}
+                </p>
+              )}
+              <CheckpointEvidence
+                // Keyed by operation so selecting a different checkpoint starts
+                // from its own boundary rather than keeping an entry opened from
+                // the window of the one before it.
+                key={selected.operationId}
+                target={surface.target}
+                receipt={selected}
+                previousBoundarySeq={previousBoundarySeq(
+                  surface.recent,
+                  selected.operationId,
+                )}
+                artifact={artifact}
+                {...(onNavigateToMessage === undefined
+                  ? {}
+                  : { onNavigateToMessage })}
+              />
+              <CheckpointDisclosure
+                title="Checkpoint details"
+                description="Usage, integrity and delivery receipt"
+                icon={<GearIcon size={20} />}
+                operationId={selected.operationId}
+              >
+                <ReceiptFacts receipt={selected} />
+                <p className="mt-lg text-[0.72rem] leading-[1.65] [overflow-wrap:anywhere] text-text-secondary">
+                  {acceptanceSentence(selected)}
+                </p>
+              </CheckpointDisclosure>
+              {(surface.recent.length > 1 || surface.hasOlder) && (
+                <CheckpointDisclosure
+                  title="Checkpoint history"
+                  description="Inspect earlier handoffs and their archives"
+                  icon={<ArchiveIcon size={20} />}
+                  operationId={selected.operationId}
+                >
+                  {/* Every saved operation is selectable: a conversation
                     compacted repeatedly keeps its earlier boundaries, entry
                     exports and images, and this is the only route to them. */}
-                <ul className="m-0 flex list-none flex-col gap-2xs p-0">
-                  {surface.recent.map((receipt) => {
-                    const isSelected =
-                      receipt.operationId === (selected ?? latest).operationId;
-                    return (
-                      <li key={receipt.operationId}>
-                        <button
-                          type="button"
-                          className={cn(
-                            FACT_ROW_CLASS,
-                            "w-full cursor-pointer rounded-sm border border-solid bg-transparent px-xs py-2xs text-left",
-                            isSelected
-                              ? "border-cyan bg-bg-hover"
-                              : "border-transparent hover:border-border-default",
-                          )}
-                          aria-current={isSelected}
-                          onClick={() => setSelectedId(receipt.operationId)}
-                        >
-                          <StatusChip tone="neutral" appearance="solid">
-                            {`#${receipt.ordinal}`}
-                          </StatusChip>
-                          <span className={VALUE_CLASS}>
-                            {receipt.operationId}
-                          </span>
-                          <span>{receipt.phase}</span>
-                          <span>seq {receipt.boundary.capturedThroughSeq}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {surface.hasOlder && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={surface.loadOlder}
-                    loading={surface.isLoadingOlder}
-                  >
-                    Load older checkpoints
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {surface.requestError !== null && (
-          <p
-            className="m-0 rounded-sm border border-solid border-red-dim bg-red-glow px-sm py-xs font-mono text-[0.75rem] text-red"
-            data-checkpoint-error=""
-          >
-            {surface.requestError}
-          </p>
-        )}
-
-        <RecoveryControls
-          action={action}
-          surface={surface}
-          onReviewQueue={reviewQueue}
-        />
-
-        <DialogActions>
-          {latest !== null && isCancellable(chip) && (
-            <Button
-              variant="default"
-              onClick={() => surface.cancel(latest.operationId)}
-              loading={surface.isCancelling}
-            >
-              Cancel checkpoint
-            </Button>
+                  <ul className="m-0 flex list-none flex-col gap-2xs p-0">
+                    {surface.recent.map((receipt) => {
+                      const isSelected =
+                        receipt.operationId === selected.operationId;
+                      return (
+                        <li key={receipt.operationId}>
+                          <button
+                            type="button"
+                            className={cn(
+                              "flex min-h-[44px] w-full cursor-pointer items-center gap-md rounded-sm border border-solid px-md py-sm text-left font-mono text-[0.78rem] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px]",
+                              isSelected
+                                ? "border-cyan bg-bg-surface"
+                                : "border-transparent bg-transparent hover:border-border-default hover:bg-bg-surface",
+                            )}
+                            aria-current={isSelected}
+                            onClick={() => {
+                              logger.debug("checkpoint_panel.selected", {
+                                operationId: receipt.operationId,
+                              });
+                              setSelectedId(receipt.operationId);
+                              if (bodyRef.current !== null)
+                                bodyRef.current.scrollTop = 0;
+                            }}
+                          >
+                            <StatusChip tone="neutral" appearance="solid">
+                              {`#${receipt.ordinal}`}
+                            </StatusChip>
+                            <span className="min-w-0 flex-1 text-text-primary">
+                              {checkpointChipLabel(
+                                deriveCheckpointChipState(receipt),
+                              )}
+                            </span>
+                            <span className="text-[0.72rem] text-text-secondary">
+                              seq {receipt.boundary.capturedThroughSeq}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {surface.hasOlder && (
+                    <Button
+                      touch
+                      size="sm"
+                      variant="ghost"
+                      onClick={surface.loadOlder}
+                      loading={surface.isLoadingOlder}
+                    >
+                      Load older checkpoints
+                    </Button>
+                  )}
+                </CheckpointDisclosure>
+              )}
+            </div>
           )}
-          {chip.kind === "needs_reconciliation" &&
-            latest !== null &&
-            action.kind !== "recovery" &&
-            action.kind !== "queue_review" && (
+        </div>
+
+        <div className="flex shrink-0 items-center gap-lg border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-xl py-lg max-768:flex-wrap max-768:gap-md max-768:px-lg">
+          <div className="min-w-0 flex-1 text-[0.72rem] leading-[1.6] text-text-secondary max-768:basis-full">
+            <p>No message is sent automatically.</p>
+            {selected !== null &&
+              latest !== null &&
+              selected.operationId !== latest.operationId && (
+                <p className="mt-xs">
+                  Latest: #{latest.ordinal} · {checkpointChipLabel(chip)}
+                </p>
+              )}
+            {action.kind === "unsupported" || action.kind === "disabled" ? (
+              <p className="mt-xs" data-checkpoint-disabled-reason="">
+                {action.reason}
+              </p>
+            ) : null}
+          </div>
+          <DialogActions layoutClassName="max-768:ml-auto">
+            {latest !== null && isCancellable(chip) && (
               <Button
+                touch
                 variant="default"
-                onClick={() => surface.reconcile(latest.operationId)}
-                loading={surface.isReconciling}
+                onClick={() => surface.cancel(latest.operationId)}
+                loading={surface.isCancelling}
               >
-                Reconcile
+                Cancel checkpoint
               </Button>
             )}
-          <DialogClose asChild>
-            <Button variant="default">Close</Button>
-          </DialogClose>
-        </DialogActions>
-
-        {action.kind === "unsupported" || action.kind === "disabled" ? (
-          <p
-            className="m-0 text-[0.8rem] text-text-tertiary"
-            data-checkpoint-disabled-reason=""
-          >
-            {action.reason}
-          </p>
-        ) : null}
-
-        {action.kind === "available" && (
-          <p className="m-0 text-[0.8rem] text-text-tertiary">
-            {`Status: ${checkpointChipLabel(chip)}. A new checkpoint can start now.`}
-          </p>
-        )}
+            {chip.kind === "needs_reconciliation" &&
+              latest !== null &&
+              action.kind !== "recovery" &&
+              action.kind !== "queue_review" && (
+                <Button
+                  touch
+                  variant="default"
+                  onClick={() => surface.reconcile(latest.operationId)}
+                  loading={surface.isReconciling}
+                >
+                  Reconcile
+                </Button>
+              )}
+            <DialogClose asChild>
+              <Button touch variant="default">
+                Close
+              </Button>
+            </DialogClose>
+            {action.kind === "available" && (
+              <Button
+                touch
+                variant="primary"
+                onClick={surface.start}
+                loading={surface.isStarting}
+              >
+                Create checkpoint
+              </Button>
+            )}
+          </DialogActions>
+        </div>
       </DialogContent>
     </Dialog>
   );

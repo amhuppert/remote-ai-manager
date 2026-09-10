@@ -210,6 +210,31 @@ describe("AlignmentPanelView", () => {
     });
   });
 
+  it("omits the draft section while an /align draft is still unfilled", () => {
+    const active = makeVersion({ version: 1 });
+    const unfilled = makeVersion({
+      id: "draft-1",
+      version: null,
+      status: "draft",
+      source: "align_rerun",
+      content: "",
+      contentHash: "",
+    });
+    render(
+      <AlignmentPanelView
+        state={makeState({ active, draft: unfilled, history: [active] })}
+        isLoading={false}
+        onSelectDiff={noop}
+        onRollback={noop}
+      />,
+    );
+
+    // An empty row is the agent still authoring; calling it "pending approval"
+    // states something the user cannot act on anywhere.
+    expect(screen.queryByTestId("alignment-draft")).not.toBeInTheDocument();
+    expect(screen.queryByText("pending approval")).not.toBeInTheDocument();
+  });
+
   it("labels a decision draft as automatic incorporation, not pending approval", () => {
     const active = makeVersion({ version: 1 });
     const draft = makeVersion({

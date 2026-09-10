@@ -6,7 +6,7 @@ import type {
 import { deriveExecutionLaneBands } from "@/lib/workflow-graph/lane-bands";
 import { deriveLoopLedger } from "@/lib/workflow-graph/loop-ledger";
 import { deriveApprovalHistory } from "../approval-history";
-import { deriveExecutionGates } from "./gates-model";
+import { deriveExecutionGates } from "@/lib/workflow-graph/execution-gates";
 
 /**
  * The Overview surface's vocabulary (design README §11, screen E3).

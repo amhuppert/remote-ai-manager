@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { screen, cleanup } from "@testing-library/react";
+import { renderWithQuery as render } from "@/test/component-mocks";
 import {
   coerceMentionAttrs,
   ConversationMentionChipBody,

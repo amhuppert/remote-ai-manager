@@ -2,6 +2,7 @@
 
 import ApproveCharterBanner from "@/features/session/conversation/ApproveCharterBanner";
 import DecisionApprovalPanel from "@/features/session/conversation/DecisionApprovalPanel";
+import { alignmentDraftPhase } from "@/lib/session-alignment/draft-phase";
 import { useAlignmentStateQuery } from "@/lib/session-alignment/queries";
 
 interface AlignmentGateProps {
@@ -28,9 +29,7 @@ export default function AlignmentGate({
 
   const batch = state.pendingProposals[0];
   const approvableDraft =
-    state.draft &&
-    !state.draft.autoActivate &&
-    state.draft.content.trim().length > 0
+    alignmentDraftPhase(state.draft) === "awaiting_approval"
       ? state.draft
       : null;
   if (!approvableDraft && !batch) return null;

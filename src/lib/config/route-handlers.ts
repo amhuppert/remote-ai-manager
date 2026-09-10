@@ -176,6 +176,7 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
       await deps.writeRawConfig(canonical);
       log.info("config.updated", {
         fieldCount: Object.keys(canonical).length,
+        ...(canonical.compaction ? { compaction: canonical.compaction } : {}),
       });
 
       const [config, raw] = await Promise.all([

@@ -12,10 +12,7 @@ import type {
 } from "@/lib/agent-backends/schemas";
 import { compactionConfigSchema } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import {
-  CatalogModelSelect,
-  ModelOptionsEditor,
-} from "@/components/session/prompt/ModelSelectionControls";
+import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigNumericInput } from "../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
@@ -54,18 +51,11 @@ function CompactionModelSelectionField({
       isDefault={isDefault(fieldPath)}
       isModified={isModified(fieldPath)}
     >
-      <CatalogModelSelect
+      <DesktopModelSelectionControls
         catalog={catalog}
         selection={selection}
         onSelectionChange={apply}
       />
-      <div className="mt-md max-w-[420px]">
-        <ModelOptionsEditor
-          catalog={catalog}
-          selection={selection}
-          onApply={apply}
-        />
-      </div>
     </ConfigField>
   );
 }
@@ -116,11 +106,11 @@ export function CompactionSection({
     <SettingsPage
       title="Conversation"
       accent="compaction"
-      sub="The backend and complete model selections used to summarize conversations and oversized messages into compaction artifacts."
+      sub="Choose the backend, model, and reasoning level used to create conversation checkpoints and compaction artifacts."
     >
       <SettingsSubSection
         title="Compaction backend"
-        hint="Determines which model and effort options apply below."
+        hint="Used for checkpoint creation and artifact generation. Model and reasoning options depend on the backend."
       >
         <ConfigField
           label="Backend"
@@ -177,16 +167,21 @@ export function CompactionSection({
         </ConfigField>
       </SettingsSubSection>
       <SettingsSubSection
-        title="Model selections"
-        hint="Conversation selection summarizes a whole conversation; message selection condenses a single oversized message."
+        title="Checkpoints and conversation artifacts"
+        hint="Compact context now and Generate compaction artifact share this model and reasoning level. Project compaction settings override these global defaults."
       >
         <CompactionModelSelectionField
           controller={controller}
-          label="Conversation model selection"
+          label="Checkpoint and conversation model"
           fieldPath="compaction.conversationModelSelection"
           catalog={conversationCatalog}
           selection={conversationModelSelection}
         />
+      </SettingsSubSection>
+      <SettingsSubSection
+        title="Oversized messages"
+        hint="Summarizes individual messages when building compaction artifacts."
+      >
         <CompactionModelSelectionField
           controller={controller}
           label="Message model selection"
@@ -194,6 +189,8 @@ export function CompactionSection({
           catalog={messageCatalog}
           selection={messageModelSelection}
         />
+      </SettingsSubSection>
+      <SettingsSubSection title="Generation timeout">
         <ConfigField
           label="Timeout"
           fieldPath="compaction.timeoutMs"

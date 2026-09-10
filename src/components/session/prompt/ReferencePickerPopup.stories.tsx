@@ -214,6 +214,7 @@ const Popup = createReferencePickerPopup({
   useTickets: () => ({ data: tickets, ...idle }),
   useSpecs: () => ({ data: specs, ...idle }),
   useFiles: () => ({ data: { items: files }, ...idle }),
+  useExecutions: () => ({ data: [], ...idle }),
   useNotepads: () => ({ data: notepads, ...idle }),
 });
 

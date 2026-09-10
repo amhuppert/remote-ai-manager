@@ -183,13 +183,13 @@ function stubApi(options: { seedText?: string } = {}) {
   });
 }
 
-function renderEvidence(
+async function renderEvidence(
   props: Partial<React.ComponentProps<typeof CheckpointEvidence>> = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <CheckpointEvidence
         target={sessionTarget}
@@ -198,6 +198,10 @@ function renderEvidence(
       />
     </QueryClientProvider>,
   );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: /Original archive/ }));
+  return view;
 }
 
 describe("CheckpointEvidence", () => {
@@ -213,7 +217,7 @@ describe("CheckpointEvidence", () => {
   it("resolves the saved boundary to a message index and offers navigation", async () => {
     stubApi();
     const onNavigateToMessage = vi.fn();
-    renderEvidence({ onNavigateToMessage });
+    await renderEvidence({ onNavigateToMessage });
 
     const goto = await screen.findByRole("button", {
       name: /Go to message #42/,
@@ -225,7 +229,7 @@ describe("CheckpointEvidence", () => {
 
   it("links the complete entry export and each image at the session scope", async () => {
     stubApi();
-    renderEvidence();
+    await renderEvidence();
 
     const entryLink = await screen.findByRole("link", {
       name: /raw export/i,
@@ -246,7 +250,7 @@ describe("CheckpointEvidence", () => {
 
   it("addresses a project conversation without a fabricated session path", async () => {
     stubApi();
-    renderEvidence({ target: projectTarget });
+    await renderEvidence({ target: projectTarget });
 
     const entryLink = await screen.findByRole("link", {
       name: /raw export/i,
@@ -264,7 +268,7 @@ describe("CheckpointEvidence", () => {
 
   it("discloses the exact saved handoff only when asked", async () => {
     stubApi({ seedText: "OBJECTIVE: ship the checkpoint" });
-    renderEvidence();
+    await renderEvidence();
 
     await screen.findByText(/raw seq 148/);
     expect(
@@ -282,9 +286,33 @@ describe("CheckpointEvidence", () => {
     ).toBeInTheDocument();
   });
 
+  it("explains a failed handoff read and lets the reader retry", async () => {
+    stubApi();
+    const transport = fetchSpy.getMockImplementation();
+    if (transport === undefined) throw new Error("Missing fixture transport");
+    let seedReads = 0;
+    fetchSpy.mockImplementation((input, init) => {
+      if (String(input).includes("detail=seed") && ++seedReads === 1) {
+        return Promise.resolve(jsonResponse({ error: "Read failed" }, 500));
+      }
+      return transport(input, init);
+    });
+    await renderEvidence();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /saved handoff/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The saved handoff could not be read",
+    );
+    await user.click(screen.getByRole("button", { name: "Retry handoff" }));
+    expect(
+      await screen.findByText("OBJECTIVE: ship the checkpoint"),
+    ).toBeVisible();
+    expect(seedReads).toBe(2);
+  });
+
   it("marks a rolling artifact that covers later history than the checkpoint", async () => {
     stubApi();
-    renderEvidence({
+    await renderEvidence({
       artifact: { coveredEndSeq: 400, updatedAt: "2026-09-02T00:00:00.000Z" },
     });
 
@@ -297,7 +325,7 @@ describe("CheckpointEvidence", () => {
 
   it("does not mark an artifact that is older than the checkpoint", async () => {
     stubApi();
-    renderEvidence({
+    await renderEvidence({
       artifact: { coveredEndSeq: 100, updatedAt: "2026-08-01T00:00:00.000Z" },
     });
 
@@ -313,7 +341,7 @@ describe("CheckpointEvidence", () => {
   // actually reachable — and it is still a read.
   it("opens the complete entry in place, with its full tool detail", async () => {
     stubApi();
-    renderEvidence();
+    await renderEvidence();
     await screen.findByText(/message #42/);
 
     await userEvent
@@ -330,7 +358,7 @@ describe("CheckpointEvidence", () => {
   // range, so the panel indexes that window instead of stopping at one entry.
   it("outlines the archive range this checkpoint closed", async () => {
     stubApi();
-    renderEvidence({ previousBoundarySeq: 96 });
+    await renderEvidence({ previousBoundarySeq: 96 });
     await screen.findByText(/message #42/);
 
     await userEvent
@@ -351,7 +379,7 @@ describe("CheckpointEvidence", () => {
 
   it("opens an outlined entry's own complete export, not the boundary's", async () => {
     stubApi();
-    renderEvidence({ previousBoundarySeq: 96 });
+    await renderEvidence({ previousBoundarySeq: 96 });
     await screen.findByText(/message #42/);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /archive outline/i }));
@@ -370,7 +398,7 @@ describe("CheckpointEvidence", () => {
 
   it("renders the recovered image bytes for each handle", async () => {
     stubApi();
-    renderEvidence();
+    await renderEvidence();
 
     const image = await screen.findByRole("img", {
       name: /image at block 3/i,
@@ -382,7 +410,7 @@ describe("CheckpointEvidence", () => {
 
   it("submits nothing — viewing evidence issues no write at all", async () => {
     stubApi();
-    renderEvidence();
+    await renderEvidence();
     await screen.findByText(/raw seq 148/);
     await userEvent
       .setup()
@@ -423,7 +451,7 @@ describe("CheckpointEvidence merged units", () => {
   it("exposes every raw entry a merged unit covers", async () => {
     stubApi();
     const user = userEvent.setup();
-    renderEvidence();
+    await renderEvidence();
     await user.click(screen.getByRole("button", { name: /archive outline/i }));
 
     // Both coordinates of the merged unit are offered, not just its start.
@@ -493,7 +521,7 @@ describe("CheckpointEvidence merged units", () => {
     });
 
     const user = userEvent.setup();
-    renderEvidence();
+    await renderEvidence();
     await user.click(screen.getByRole("button", { name: /archive outline/i }));
 
     // The reader is told what was left out and given the way to reach it.
@@ -548,7 +576,7 @@ describe("CheckpointEvidence merged units", () => {
     });
 
     const user = userEvent.setup();
-    renderEvidence();
+    await renderEvidence();
     await user.click(screen.getByRole("button", { name: /archive outline/i }));
     await user.click(
       await screen.findByRole("button", { name: /show seq 101–148/i }),

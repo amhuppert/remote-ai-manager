@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
@@ -571,6 +571,49 @@ describe("ConfigPage — Workflow Defaults", () => {
           },
         }),
       }),
+    });
+  });
+
+  it("saves the checkpoint backend, model, and reasoning directly from the controls", async () => {
+    const naming = {
+      enabled: true,
+      backend: "claude" as const,
+      modelSelection: { modelId: "haiku", parameters: {} },
+    };
+    seedConfigRoutes({
+      config: { ...fullConfigData.config, conversationNaming: naming },
+      raw: { ...fullConfigData.raw, conversationNaming: naming },
+    });
+    const user = userEvent.setup();
+    const { container } = await renderConfigPage();
+    selectSettingsTab(/Compaction/i);
+    const backend = container.querySelector(
+      '[data-field="compaction.backend"]',
+    ) as HTMLElement;
+    await user.click(
+      await within(backend).findByRole("button", { name: "codex" }),
+    );
+    const selection = container.querySelector(
+      '[data-field="compaction.conversationModelSelection"]',
+    ) as HTMLElement;
+    await pickModel(user, selection, "GPT-5.4 Mini");
+    await user.click(
+      within(selection).getByRole("combobox", { name: "Reasoning" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Low" }));
+    await user.click(screen.getByRole("button", { name: /Save Changes/i }));
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    expect(savedConfig().conversationNaming?.modelSelection).toEqual(
+      naming.modelSelection,
+    );
+    expect(savedConfig().compaction).toMatchObject({
+      backend: "codex",
+      conversationModelSelection: {
+        modelId: "gpt-5.4-mini",
+        parameters: { reasoning: "low", fast: "false" },
+      },
     });
   });
 

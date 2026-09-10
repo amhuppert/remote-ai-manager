@@ -3473,6 +3473,39 @@ describe("executePromptForMachine", () => {
       return content.map((block) => block.text ?? "").join("");
     }
 
+    it("adds one current entity summary from direct and injected references while preserving the transcript", async () => {
+      const ref =
+        '<ticket-ref project-name="cc" ticket-number="90" identifier="cc#90" title="Captured" read-command="cctl ticket get cc#90" />';
+      const fixture = createMockDeps({
+        readLiveReference: async () => ({
+          title: "Current",
+          identity: "cc#90",
+          status: "Done",
+          tone: "green",
+          href: "/tickets/cc/90",
+          readCommand: "read",
+          details: [],
+          attentionCount: 0,
+        }),
+        readNotepadForInjection: async () => ({
+          id: "np-1",
+          name: "Design Notes",
+          revision: 4,
+          openComments: { count: 0, latestCreatedAt: null },
+          writeMode: "full-edit",
+          content: ref,
+        }),
+      });
+      conversationActors = createTestActorImplementations(fixture);
+      const raw = `${ref} ${NOTEPAD_REF}`;
+      const input = makeExecutePromptInput({ turn: { promptText: raw } });
+      registerRuntime(input);
+      await conversationActors.executePromptForMachine(input);
+      expect(deliveredPromptText()).toContain('status="Done"');
+      expect(deliveredPromptText().match(/<entity-state /g)).toHaveLength(1);
+      expect(userTranscriptText(fixture)).toBe(raw);
+    });
+
     it("delivers full notepad content to the agent while the transcript keeps the un-expanded reference", async () => {
       const nested =
         '<notepad-ref notepad-id="np-2" name="Nested" scope="global" read-command="cctl notepad get \'np-2\'" />';
