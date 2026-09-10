@@ -1912,7 +1912,9 @@ async function runTaskRunTurnForMachine(
       workingDirectory: input.worktreePath,
       ...(input.persistence === "durable" &&
       input.target.scope === "session" &&
-      input.role === "validator"
+      input.turn.executionProfile !== "isolated-one-shot" &&
+      (input.role === "validator" ||
+        input.turn.executionClass === "governed-execution")
         ? {
             ccSessionScope: {
               project: input.target.projectName,
@@ -1946,6 +1948,8 @@ async function runTaskRunTurnForMachine(
     conversationId: input.target.conversationId,
     hasOutputSchema: request.outputSchema !== undefined,
     hasCcSessionScope: facadeDeps.taskExecution?.ccSessionScope !== undefined,
+    executionClass: request.executionClass,
+    executionProfile: request.executionProfile,
     structuredOutputTextField: input.turn.structuredOutputTextField,
   });
 
