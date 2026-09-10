@@ -3,10 +3,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
 import type { GitClient } from "./client";
 import { createCommitsOperations } from "./commits";
 import { buildChildEnv } from "../shared/child-env";
+import {
+  createGitRepoTemplate,
+  type GitRepoTemplate,
+} from "../shared/testing/git-repo-template";
 
 const execFileAsync = promisify(execFile);
 
@@ -216,6 +229,7 @@ describe("commitContainsPath", () => {
 });
 
 describe("commitContainsPath (real git repo)", () => {
+  let template: GitRepoTemplate;
   let repoPath: string;
 
   async function gitIn(args: string[]): Promise<string> {
@@ -226,18 +240,33 @@ describe("commitContainsPath (real git repo)", () => {
     return stdout;
   }
 
+  beforeAll(async () => {
+    // `gitIn` binds to `repoPath`; point it at the template while building.
+    template = await createGitRepoTemplate(
+      "cc-committed-source-",
+      async (repo) => {
+        repoPath = repo;
+        await gitIn(["init", "-b", "main"]);
+        await gitIn(["config", "user.email", "test@example.com"]);
+        await gitIn(["config", "user.name", "Test"]);
+        await mkdir(join(repoPath, "docs"));
+        await writeFile(join(repoPath, "docs", "design.md"), "# design\n");
+        await writeFile(join(repoPath, "docs", "[draft].md"), "# draft\n");
+        await symlink("design.md", join(repoPath, "docs", "latest.md"));
+        await gitIn(["add", "-A"]);
+        await gitIn(["commit", "-m", "source fixtures", "--no-verify"]);
+        await writeFile(
+          join(repoPath, "docs", "untracked.md"),
+          "# local only\n",
+        );
+      },
+    );
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
-    repoPath = await mkdtemp(join(tmpdir(), "cc-committed-source-"));
-    await gitIn(["init", "-b", "main"]);
-    await gitIn(["config", "user.email", "test@example.com"]);
-    await gitIn(["config", "user.name", "Test"]);
-    await mkdir(join(repoPath, "docs"));
-    await writeFile(join(repoPath, "docs", "design.md"), "# design\n");
-    await writeFile(join(repoPath, "docs", "[draft].md"), "# draft\n");
-    await symlink("design.md", join(repoPath, "docs", "latest.md"));
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "source fixtures", "--no-verify"]);
-    await writeFile(join(repoPath, "docs", "untracked.md"), "# local only\n");
+    repoPath = await template.fresh();
   });
 
   afterEach(async () => {
@@ -634,6 +663,7 @@ describe("collectChangeSummary", () => {
 });
 
 describe("collectChangeSummary (real git repo)", () => {
+  let template: GitRepoTemplate;
   let repoPath: string;
 
   async function gitIn(args: string[]): Promise<void> {
@@ -643,14 +673,22 @@ describe("collectChangeSummary (real git repo)", () => {
     await execFileAsync("git", args, { cwd: repoPath, env: buildChildEnv() });
   }
 
+  beforeAll(async () => {
+    template = await createGitRepoTemplate("cc-change-summary-", async (repo) => {
+      repoPath = repo;
+      await gitIn(["init"]);
+      await gitIn(["config", "user.email", "test@example.com"]);
+      await gitIn(["config", "user.name", "Test"]);
+      await writeFile(join(repoPath, "tracked.ts"), "export const a = 1;\n");
+      await gitIn(["add", "-A"]);
+      await gitIn(["commit", "-m", "initial", "--no-verify"]);
+    });
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
-    repoPath = await mkdtemp(join(tmpdir(), "cc-change-summary-"));
-    await gitIn(["init"]);
-    await gitIn(["config", "user.email", "test@example.com"]);
-    await gitIn(["config", "user.name", "Test"]);
-    await writeFile(join(repoPath, "tracked.ts"), "export const a = 1;\n");
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "initial", "--no-verify"]);
+    repoPath = await template.fresh();
   });
 
   afterEach(async () => {
@@ -678,6 +716,7 @@ describe("collectChangeSummary (real git repo)", () => {
 });
 
 describe("commitChanges concludes an in-progress merge (real git repo)", () => {
+  let template: GitRepoTemplate;
   let repoPath: string;
 
   async function gitIn(args: string[]): Promise<string> {
@@ -688,24 +727,35 @@ describe("commitChanges concludes an in-progress merge (real git repo)", () => {
     return stdout;
   }
 
+  beforeAll(async () => {
+    template = await createGitRepoTemplate("cc-conclude-merge-", async (repo) => {
+      repoPath = repo;
+      await gitIn(["init", "-b", "main"]);
+      await gitIn(["config", "user.email", "test@example.com"]);
+      await gitIn(["config", "user.name", "Test"]);
+      await writeFile(join(repoPath, "file.ts"), "export const v = 'base';\n");
+      await gitIn(["add", "-A"]);
+      await gitIn(["commit", "-m", "base", "--no-verify"]);
+      // Divergent edits to the same line on main and feature.
+      await gitIn(["checkout", "-b", "feature"]);
+      await writeFile(join(repoPath, "file.ts"), "export const v = 'ours';\n");
+      await gitIn(["add", "-A"]);
+      await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
+      await gitIn(["checkout", "main"]);
+      await writeFile(
+        join(repoPath, "file.ts"),
+        "export const v = 'theirs';\n",
+      );
+      await gitIn(["add", "-A"]);
+      await gitIn(["commit", "-m", "main edit", "--no-verify"]);
+      await gitIn(["checkout", "feature"]);
+    });
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
-    repoPath = await mkdtemp(join(tmpdir(), "cc-conclude-merge-"));
-    await gitIn(["init", "-b", "main"]);
-    await gitIn(["config", "user.email", "test@example.com"]);
-    await gitIn(["config", "user.name", "Test"]);
-    await writeFile(join(repoPath, "file.ts"), "export const v = 'base';\n");
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "base", "--no-verify"]);
-    // Divergent edits to the same line on main and feature.
-    await gitIn(["checkout", "-b", "feature"]);
-    await writeFile(join(repoPath, "file.ts"), "export const v = 'ours';\n");
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
-    await gitIn(["checkout", "main"]);
-    await writeFile(join(repoPath, "file.ts"), "export const v = 'theirs';\n");
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "main edit", "--no-verify"]);
-    await gitIn(["checkout", "feature"]);
+    repoPath = await template.fresh();
   });
 
   afterEach(async () => {
@@ -744,6 +794,7 @@ describe("commitChanges concludes an in-progress merge (real git repo)", () => {
 });
 
 describe("commitChanges refuses conflict artifacts (real git repo)", () => {
+  let template: GitRepoTemplate;
   let repoPath: string;
 
   async function gitIn(args: string[]): Promise<string> {
@@ -763,23 +814,34 @@ describe("commitChanges refuses conflict artifacts (real git repo)", () => {
     return (await gitIn(["rev-parse", "HEAD"])).trim();
   }
 
+  beforeAll(async () => {
+    template = await createGitRepoTemplate("cc-marker-guard-", async (repo) => {
+      repoPath = repo;
+      await gitIn(["init", "-b", "main"]);
+      await gitIn(["config", "user.email", "test@example.com"]);
+      await gitIn(["config", "user.name", "Test"]);
+      await writeFile(join(repoPath, "file.ts"), "export const v = 'base';\n");
+      await gitIn(["add", "-A"]);
+      await gitIn(["commit", "-m", "base", "--no-verify"]);
+      await gitIn(["checkout", "-b", "feature"]);
+      await writeFile(join(repoPath, "file.ts"), "export const v = 'ours';\n");
+      await gitIn(["add", "-A"]);
+      await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
+      await gitIn(["checkout", "main"]);
+      await writeFile(
+        join(repoPath, "file.ts"),
+        "export const v = 'theirs';\n",
+      );
+      await gitIn(["add", "-A"]);
+      await gitIn(["commit", "-m", "main edit", "--no-verify"]);
+      await gitIn(["checkout", "feature"]);
+    });
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
-    repoPath = await mkdtemp(join(tmpdir(), "cc-marker-guard-"));
-    await gitIn(["init", "-b", "main"]);
-    await gitIn(["config", "user.email", "test@example.com"]);
-    await gitIn(["config", "user.name", "Test"]);
-    await writeFile(join(repoPath, "file.ts"), "export const v = 'base';\n");
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "base", "--no-verify"]);
-    await gitIn(["checkout", "-b", "feature"]);
-    await writeFile(join(repoPath, "file.ts"), "export const v = 'ours';\n");
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
-    await gitIn(["checkout", "main"]);
-    await writeFile(join(repoPath, "file.ts"), "export const v = 'theirs';\n");
-    await gitIn(["add", "-A"]);
-    await gitIn(["commit", "-m", "main edit", "--no-verify"]);
-    await gitIn(["checkout", "feature"]);
+    repoPath = await template.fresh();
   });
 
   afterEach(async () => {

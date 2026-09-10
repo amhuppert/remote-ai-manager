@@ -1,3 +1,5 @@
+// @vitest-inputs src/features/_root/styles/theme.css
+// @vitest-inputs src/features/_root/styles/tokens.css
 /**
  * Design-system accessibility & legibility guarantees, re-homed onto the
  * Tailwind `@theme` token surface (Tailwind migration task 3.1; requirements

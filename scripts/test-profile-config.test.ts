@@ -1,3 +1,5 @@
+// @vitest-inputs src/**/*.test.{ts,tsx,mjs} scripts/**/*.test.{ts,tsx,mjs}
+// @vitest-inputs eslint-rules/**/*.test.{ts,tsx,mjs}
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { UserConfig } from "vitest/config";
@@ -61,6 +63,7 @@ describe("Vitest execution profiles", () => {
     ]);
     expect(testConfigFor("unit-architecture")["setupFiles"]).toEqual([
       "vitest.node.setup.ts",
+      "vitest.architecture.setup.ts",
     ]);
   });
 });

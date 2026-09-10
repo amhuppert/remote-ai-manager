@@ -11,7 +11,7 @@ export declare function resolveWorkerBudget(input: {
 }): number;
 
 export declare function resolveScopedWorkerRequest(input: {
-  mode: "full" | "changed" | "paths";
+  mode: "full" | "changed" | "related" | "paths";
   pathTokenCount: number;
   configuredWorkers: number;
 }): number;

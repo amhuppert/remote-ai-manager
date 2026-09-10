@@ -798,6 +798,15 @@ describe("ConversationSidebar", () => {
             forkMode: "native",
           });
         }
+        // The fork's success path refetches the session detail. Answering it
+        // with a not-found ends that query at once; any other failure enters
+        // its retry backoff and holds the mutation for seven seconds.
+        if (/\/sessions\/[^/]+$/.test(target)) {
+          return new Response(JSON.stringify({ error: "not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         if (target.includes("/agent-profiles")) {
           return jsonResponse({ profiles: [], diagnostics: [] });
         }

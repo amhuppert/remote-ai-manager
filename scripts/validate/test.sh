@@ -8,6 +8,21 @@ source "$SCRIPT_DIR/vitest-env.sh"
 
 resolve_validation_diff
 
+# Architecture tests read repository paths outside Vitest's import graph and
+# declare them with `// @vitest-inputs`. Vitest's `related` list is the branch
+# diff plus the tests those declarations select, so a test runs when it imports
+# a changed module, is itself changed, or declares a changed path as an input.
+run_architecture_affected() {
+  local related_paths="$CC_VALIDATION_SCRATCH_CONFIG_DIR/related-paths.txt"
+  {
+    if [ "${#diff_paths[@]}" -gt 0 ]; then
+      printf '%s\n' "${diff_paths[@]}"
+      printf '%s\n' "${diff_paths[@]}" | bun scripts/test-profiles.ts --affected
+    fi
+  } > "$related_paths"
+  run_vitest related architecture "$related_paths"
+}
+
 if [ "$#" -gt 0 ]; then
   run_vitest paths both "$@"
 elif [ -z "$merge_base" ]; then
@@ -24,12 +39,14 @@ elif [ "$node_test_setup_changed" = true ]; then
   run_vitest changed pure-dom "$merge_base"
 elif [ "$jsdom_test_setup_changed" = true ]; then
   run_vitest full jsdom
-  run_vitest full architecture
+  run_architecture_affected
   run_vitest changed pure-node "$merge_base"
-else
-  # Architecture tests read source and configuration by path, outside Vitest's
-  # import graph. Until those inputs are declared, full selection is the only
-  # sound changed-scope behavior for this profile.
+elif [ "$architecture_test_setup_changed" = true ]; then
+  # The read tracer is the gate that keeps declared inputs honest; a change to
+  # it or its setup is verified against the whole cohort.
   run_vitest full architecture
+  run_vitest changed runtime "$merge_base"
+else
+  run_architecture_affected
   run_vitest changed runtime "$merge_base"
 fi

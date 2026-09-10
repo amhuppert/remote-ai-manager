@@ -1,3 +1,5 @@
+// @vitest-inputs src/lib/state-store/reset-installed-state-db.ts
+// @vitest-inputs vitest.setup.ts
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";

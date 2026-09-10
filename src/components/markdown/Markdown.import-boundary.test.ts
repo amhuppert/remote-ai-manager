@@ -1,3 +1,5 @@
+// @vitest-inputs src/components/markdown/** src/lib/logging/client-logger.ts
+// @vitest-inputs src/lib/ui/cn.ts
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";

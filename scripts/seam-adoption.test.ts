@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.{ts,tsx}
 import { describe, expect, it } from "vitest";
 
 import {

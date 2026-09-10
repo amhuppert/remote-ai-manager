@@ -1,3 +1,6 @@
+// @vitest-inputs src/lib/specs/**/*.ts src/features/spec-studio/**/*.{ts,tsx}
+// @vitest-inputs src/cli/commands/spec/**/*.ts
+// @vitest-inputs src/lib/workflow-graph/spec-bridge.ts
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";

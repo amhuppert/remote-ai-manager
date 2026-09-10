@@ -1,5 +1,6 @@
+// @vitest-inputs src/**/*.{ts,tsx}
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
@@ -103,10 +104,17 @@ function read(relPath: string): string {
   return readFileSync(path.join(REPO_ROOT, relPath), "utf-8");
 }
 
-function readsAuthoredEdgeSource(relPath: string): boolean {
+const AUTHORED_SOURCE_FIELD = "sourceContextId";
+
+/**
+ * A read of the authored field has to name it, so a source without the text
+ * is never parsed: the whole-tree parse was most of this file's cost.
+ */
+function readsAuthoredEdgeSourceText(relPath: string, text: string): boolean {
+  if (!text.includes(AUTHORED_SOURCE_FIELD)) return false;
   const source = ts.createSourceFile(
     relPath,
-    read(relPath),
+    text,
     ts.ScriptTarget.Latest,
     true,
   );
@@ -114,7 +122,7 @@ function readsAuthoredEdgeSource(relPath: string): boolean {
   function visit(node: ts.Node): void {
     if (
       ts.isPropertyAccessExpression(node) &&
-      node.name.text === "sourceContextId"
+      node.name.text === AUTHORED_SOURCE_FIELD
     ) {
       const receiver = ts.isPropertyAccessExpression(node.expression)
         ? node.expression.name.text
@@ -127,18 +135,22 @@ function readsAuthoredEdgeSource(relPath: string): boolean {
   return found;
 }
 
+function readsAuthoredEdgeSource(relPath: string): boolean {
+  return readsAuthoredEdgeSourceText(relPath, read(relPath));
+}
+
 function collectSourceFiles(relRoot: string): string[] {
   const absRoot = path.join(REPO_ROOT, relRoot);
   const found: string[] = [];
   const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const abs = path.join(dir, entry);
-      if (statSync(abs).isDirectory()) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
         walk(abs);
         continue;
       }
-      if (!/\.tsx?$/.test(entry)) continue;
-      if (/\.(test|stories)\.tsx?$/.test(entry)) continue;
+      if (!/\.tsx?$/.test(entry.name)) continue;
+      if (/\.(test|stories)\.tsx?$/.test(entry.name)) continue;
       if (/testing|test-fixtures/.test(abs)) continue;
       found.push(path.relative(REPO_ROOT, abs));
     }
@@ -148,6 +160,27 @@ function collectSourceFiles(relRoot: string): string[] {
 }
 
 describe("projection-resolved edges (D4 decision D1)", () => {
+  it("flags a planted read of the authored field and ignores declarations and non-edge receivers", () => {
+    expect(
+      readsAuthoredEdgeSourceText(
+        "planted.ts",
+        "const from = edge.sourceContextId;",
+      ),
+    ).toBe(true);
+    expect(
+      readsAuthoredEdgeSourceText(
+        "planted.ts",
+        "const schema = z.object({ sourceContextId: z.string() }); const s = settlement.sourceContextId;",
+      ),
+    ).toBe(false);
+    expect(
+      readsAuthoredEdgeSourceText(
+        "planted.ts",
+        "const upstream = routeUpstreamContextIds(execution, contextId);",
+      ),
+    ).toBe(false);
+  });
+
   it.each(RUNTIME_CONSUMERS)(
     "%s resolves edges through the projection rather than reading the authored source",
     (relPath) => {

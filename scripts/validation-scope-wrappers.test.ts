@@ -1,3 +1,4 @@
+// @vitest-inputs scripts/pre-merge-validate-full.sh scripts/validate/**
 import { execFileSync } from "node:child_process";
 import {
   accessSync,

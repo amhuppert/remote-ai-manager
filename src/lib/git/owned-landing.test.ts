@@ -1,8 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { defaultGitClient } from "./client";
+import {
+  createGitRepoTemplate,
+  type GitRepoTemplate,
+} from "../shared/testing/git-repo-template";
 import {
   commitOwnedPaths,
   createOwnedLandingOperations,
@@ -25,25 +36,32 @@ async function write(
 }
 
 /** Repo with two disjoint ownership islands already committed. */
-async function makeRepo(): Promise<string> {
-  const repo = await mkdtemp(path.join(tmpdir(), "cc-owned-landing-"));
-  await git(repo, ["init", "--initial-branch=lane", "."]);
-  await git(repo, ["config", "user.email", "engine@command-center.test"]);
-  await git(repo, ["config", "user.name", "Command Center"]);
-  await write(repo, "src/api/handler.ts", "export const a = 1;\n");
-  await write(repo, "src/api/legacy.ts", "export const legacy = true;\n");
-  await write(repo, "src/ui/panel.tsx", "export const Panel = null;\n");
-  await write(repo, "README.md", "root\n");
-  await git(repo, ["add", "-A"]);
-  await git(repo, ["commit", "-m", "base"]);
-  return repo;
+function makeRepoTemplate(): Promise<GitRepoTemplate> {
+  return createGitRepoTemplate("cc-owned-landing-", async (repo) => {
+    await git(repo, ["init", "--initial-branch=lane", "."]);
+    await git(repo, ["config", "user.email", "engine@command-center.test"]);
+    await git(repo, ["config", "user.name", "Command Center"]);
+    await write(repo, "src/api/handler.ts", "export const a = 1;\n");
+    await write(repo, "src/api/legacy.ts", "export const legacy = true;\n");
+    await write(repo, "src/ui/panel.tsx", "export const Panel = null;\n");
+    await write(repo, "README.md", "root\n");
+    await git(repo, ["add", "-A"]);
+    await git(repo, ["commit", "-m", "base"]);
+  });
 }
 
 describe("commitOwnedPaths", () => {
+  let template: GitRepoTemplate;
   let repo: string;
 
+  beforeAll(async () => {
+    template = await makeRepoTemplate();
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
-    repo = await makeRepo();
+    repo = await template.fresh();
   });
 
   afterEach(async () => {

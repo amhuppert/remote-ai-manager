@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.{ts,tsx}
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";

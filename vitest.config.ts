@@ -192,7 +192,7 @@ export default async function resolveConfig(_env: ConfigEnv) {
             name: "unit-architecture",
             environment: "node",
             include: architectureToolchainTestFiles,
-            setupFiles: ["vitest.node.setup.ts"],
+            setupFiles: ["vitest.node.setup.ts", "vitest.architecture.setup.ts"],
             testTimeout: 15000,
             env: {
               CC_LOG_SILENT: "1",

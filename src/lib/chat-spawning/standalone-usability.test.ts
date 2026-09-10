@@ -1,3 +1,5 @@
+// @vitest-inputs src/lib/chat-spawning/*.ts
+// @vitest-inputs src/lib/prompt/first-turn-dispatch.ts
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

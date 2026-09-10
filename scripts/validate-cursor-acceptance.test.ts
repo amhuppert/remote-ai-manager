@@ -1,3 +1,6 @@
+// @vitest-inputs src/**/*.test.{ts,tsx,mjs} scripts/**/*.test.{ts,tsx,mjs}
+// @vitest-inputs eslint-rules/**/*.test.{ts,tsx,mjs} CommandCenter.json
+// @vitest-inputs scripts/validate/**
 import { execFileSync } from "node:child_process";
 import {
   accessSync,

@@ -1,3 +1,6 @@
+// @vitest-inputs CommandCenter.json scripts/pre-merge-validate.sh
+// @vitest-inputs scripts/pre-merge-validate-full.sh
+// @vitest-inputs scripts/validate/typecheck.sh
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -1,3 +1,11 @@
+// @vitest-inputs src/cli/commands/spec/spec.help.ts
+// @vitest-inputs src/cli/commands/workflow.help.ts
+// @vitest-inputs src/cli/commands/workflow.ts
+// @vitest-inputs src/lib/specs/{abandon-coordinator,execution-service,export,schemas,workflow-cleanup-port}.ts
+// @vitest-inputs src/lib/state-store/state-db.ts
+// @vitest-inputs src/lib/workflow-graph/execution-route-handlers.ts
+// @vitest-inputs src/lib/workflows/mutations.ts
+// @vitest-inputs src/app/api/projects/*/sessions/*/graph-workflow/*/route.ts
 import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import os from "node:os";
 import path from "node:path";

@@ -50,9 +50,13 @@ resolve_validation_diff() {
 
   changed_files=()
   lint_files=()
+  # Every path whose working-tree content differs from the merge base, deleted
+  # paths included: a scanner's inventory changes when a file disappears.
+  diff_paths=()
   shared_test_setup_changed=false
   node_test_setup_changed=false
   jsdom_test_setup_changed=false
+  architecture_test_setup_changed=false
   test_profile_config_changed=false
 
   if [ -z "$merge_base" ]; then
@@ -66,8 +70,10 @@ resolve_validation_diff() {
       vitest.setup.ts) shared_test_setup_changed=true ;;
       vitest.node.setup.ts) node_test_setup_changed=true ;;
       vitest.jsdom.setup.ts) jsdom_test_setup_changed=true ;;
-      vitest.config.ts | scripts/test-profiles.ts) test_profile_config_changed=true ;;
+      vitest.architecture.setup.ts | scripts/test-input-tracer.ts) architecture_test_setup_changed=true ;;
+      vitest.config.ts | scripts/test-profiles.ts | scripts/test-inputs.ts) test_profile_config_changed=true ;;
     esac
+    diff_paths+=("$file")
     [ -f "$file" ] || continue
     changed_files+=("$file")
     case "$file" in
@@ -75,9 +81,9 @@ resolve_validation_diff() {
     esac
   done < <(
     {
-      git diff --name-only --diff-filter=ACMR "$merge_base" --
-      git diff --name-only --diff-filter=ACMR --cached --
-      git diff --name-only --diff-filter=ACMR --
+      git diff --name-only --no-renames --diff-filter=ACMRD "$merge_base" --
+      git diff --name-only --no-renames --diff-filter=ACMRD --cached --
+      git diff --name-only --no-renames --diff-filter=ACMRD --
       git ls-files --others --exclude-standard
     } | sort -u
   )

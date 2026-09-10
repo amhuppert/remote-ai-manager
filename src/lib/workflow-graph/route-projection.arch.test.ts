@@ -1,3 +1,5 @@
+// @vitest-inputs src/lib/workflow-graph/output-lookup.ts
+// @vitest-inputs src/lib/workflow-graph/route-projection.ts
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";

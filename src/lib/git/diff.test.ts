@@ -10,7 +10,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
 import {
   parseDiff,
   computeDiff,
@@ -22,6 +31,10 @@ import {
 import type { CandidateScope, ComputeDiffDeps } from "./diff";
 import { defaultGitClient } from "./client";
 import { buildChildEnv } from "../shared/child-env";
+import {
+  createGitRepoTemplate,
+  type GitRepoTemplate,
+} from "../shared/testing/git-repo-template";
 
 const execFileAsync = promisify(execFile);
 
@@ -465,6 +478,7 @@ index abc..def 100644
 // ===========================================================================
 
 describe("computeDiff golden (real repo)", () => {
+  let template: GitRepoTemplate;
   let repoDir: string;
 
   async function git(...args: string[]): Promise<string> {
@@ -478,16 +492,25 @@ describe("computeDiff golden (real repo)", () => {
     return stdout;
   }
 
+  beforeAll(async () => {
+    // `git` binds to `repoDir`; point it at the template while building.
+    template = await createGitRepoTemplate("cc-diff-golden-", async (repo) => {
+      repoDir = repo;
+      await git("init");
+      await git("config", "user.email", "test@example.com");
+      await git("config", "user.name", "Test");
+      await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
+      await writeFile(join(repoDir, "b.txt"), "one\ntwo\n");
+      await git("add", "-A");
+      await git("commit", "-m", "baseline");
+    });
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
     _resetDiffCacheForTesting();
-    repoDir = await mkdtemp(join(tmpdir(), "cc-diff-golden-"));
-    await git("init");
-    await git("config", "user.email", "test@example.com");
-    await git("config", "user.name", "Test");
-    await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
-    await writeFile(join(repoDir, "b.txt"), "one\ntwo\n");
-    await git("add", "-A");
-    await git("commit", "-m", "baseline");
+    repoDir = await template.fresh();
   });
 
   afterEach(async () => {
@@ -603,6 +626,7 @@ describe("computeDiff golden (real repo)", () => {
 });
 
 describe("computeCandidateTreeHash (real repo)", () => {
+  let template: GitRepoTemplate;
   let repoDir: string;
 
   async function git(...args: string[]): Promise<string> {
@@ -613,17 +637,25 @@ describe("computeCandidateTreeHash (real repo)", () => {
     return stdout;
   }
 
+  beforeAll(async () => {
+    template = await createGitRepoTemplate("cc-tree-hash-", async (repo) => {
+      repoDir = repo;
+      await git("init");
+      await git("config", "user.email", "test@example.com");
+      await git("config", "user.name", "Test");
+      await git("config", "core.fileMode", "true");
+      await writeFile(join(repoDir, ".gitignore"), ".cc/\ndist/\n");
+      await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
+      await git("add", "-A");
+      await git("commit", "-m", "baseline");
+    });
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
     _resetDiffCacheForTesting();
-    repoDir = await mkdtemp(join(tmpdir(), "cc-tree-hash-"));
-    await git("init");
-    await git("config", "user.email", "test@example.com");
-    await git("config", "user.name", "Test");
-    await git("config", "core.fileMode", "true");
-    await writeFile(join(repoDir, ".gitignore"), ".cc/\ndist/\n");
-    await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
-    await git("add", "-A");
-    await git("commit", "-m", "baseline");
+    repoDir = await template.fresh();
   });
 
   afterEach(async () => {
@@ -700,6 +732,7 @@ describe("computeCandidateTreeHash (real repo)", () => {
 });
 
 describe("computeCandidateSnapshot (real repo)", () => {
+  let template: GitRepoTemplate;
   let repoDir: string;
 
   async function git(...args: string[]): Promise<string> {
@@ -710,15 +743,26 @@ describe("computeCandidateSnapshot (real repo)", () => {
     return stdout;
   }
 
+  beforeAll(async () => {
+    template = await createGitRepoTemplate(
+      "cc-candidate-snapshot-",
+      async (repo) => {
+        repoDir = repo;
+        await git("init");
+        await git("config", "user.email", "test@example.com");
+        await git("config", "user.name", "Test");
+        await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
+        await git("add", "-A");
+        await git("commit", "-m", "baseline");
+      },
+    );
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
     _resetDiffCacheForTesting();
-    repoDir = await mkdtemp(join(tmpdir(), "cc-candidate-snapshot-"));
-    await git("init");
-    await git("config", "user.email", "test@example.com");
-    await git("config", "user.name", "Test");
-    await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
-    await git("add", "-A");
-    await git("commit", "-m", "baseline");
+    repoDir = await template.fresh();
   });
 
   afterEach(async () => {

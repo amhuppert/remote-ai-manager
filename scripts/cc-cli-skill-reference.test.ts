@@ -1,3 +1,4 @@
+// @vitest-inputs plugins/command-center/command-center/skills/cc-cli/SKILL.md
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { EXIT_TAXONOMY } from "../src/cli/exit-taxonomy";

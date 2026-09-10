@@ -120,6 +120,14 @@ function stubDefaultList(rows: NotepadListItem[] = DEFAULT_ROWS) {
   });
 }
 
+
+/**
+ * Shorter autosave windows than production, so an idle flush is observed in a
+ * fraction of a second while a click sequence still completes inside the
+ * window under fork contention.
+ */
+const TEST_AUTOSAVE_TIMING = { idleMs: 250, maxWaitMs: 1000, retryMs: 1000 };
+
 function renderPanel(active = true, queryClient = createTestQueryClient()) {
   return renderWithQuery(
     <NotepadPanel
@@ -127,6 +135,7 @@ function renderPanel(active = true, queryClient = createTestQueryClient()) {
       sessionName="s1"
       conversationId="c1"
       active={active}
+      autosaveTiming={TEST_AUTOSAVE_TIMING}
     />,
     queryClient,
   );
@@ -449,6 +458,33 @@ async function openNotepadRowRead(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("NotepadPanel — autosave", () => {
+  it("flushes after the injected idle window", async () => {
+    stubDefaultList();
+    stubEditableNotepad("base text");
+    const user = userEvent.setup();
+    renderWithQuery(
+      <NotepadPanel
+        projectName="p1"
+        sessionName="s1"
+        conversationId="c1"
+        active
+        autosaveTiming={{ idleMs: 50, maxWaitMs: 500, retryMs: 500 }}
+      />,
+    );
+    await openNotepadRow(user);
+
+    pasteIntoEditor("quick ");
+    // Well inside the production 1.5 s window: only the injected timing can
+    // land the flush this fast.
+    await waitFor(
+      () =>
+        expect(
+          api.requestsTo("POST", "/api/notepads/np-a/content").length,
+        ).toBe(1),
+      { timeout: 700 },
+    );
+  });
+
   it("flushes the edit when the notepad closes and shows it on reopen", async () => {
     stubDefaultList();
     stubEditableNotepad("# checklist\n\n- [ ] tag the release");
