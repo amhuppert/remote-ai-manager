@@ -117,7 +117,12 @@ describe("undeclared reads", () => {
     expect(
       findUndeclaredReads(
         [
-          { path: "src", kind: "directory", via: "readdirSync", recursive: true },
+          {
+            path: "src",
+            kind: "directory",
+            via: "readdirSync",
+            recursive: true,
+          },
           read("src/features/styles/theme.css", "file", "statSync"),
         ],
         ["src/**/*.tsx"],
@@ -193,7 +198,10 @@ describe("selection from declared inputs", () => {
         "src/app/api/sessions/route.ts",
         "src/features/_root/styles/theme.css",
       ]),
-    ).toEqual(["src/lib/routes.arch.test.ts", "src/lib/shared/tailwind.test.ts"]);
+    ).toEqual([
+      "src/lib/routes.arch.test.ts",
+      "src/lib/shared/tailwind.test.ts",
+    ]);
   });
 
   it("selects nothing for changes outside every declaration", () => {
@@ -219,12 +227,17 @@ describe("stale declarations", () => {
     expect(
       findStaleDeclaredInputs(
         {
-          "src/lib/routes.arch.test.ts": ["src/app/**/route.ts", "docs/gone/**"],
+          "src/lib/routes.arch.test.ts": [
+            "src/app/**/route.ts",
+            "docs/gone/**",
+          ],
           "scripts/wrappers.test.ts": ["scripts/validate/**"],
         },
         ["src/app/api/route.ts", "scripts/validate/test.sh"],
       ),
-    ).toEqual([{ testFile: "src/lib/routes.arch.test.ts", glob: "docs/gone/**" }]);
+    ).toEqual([
+      { testFile: "src/lib/routes.arch.test.ts", glob: "docs/gone/**" },
+    ]);
   });
 
   it("exempts literal paths, which may declare an existence probe", () => {

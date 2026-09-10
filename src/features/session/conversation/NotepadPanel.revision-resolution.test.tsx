@@ -294,7 +294,6 @@ function oldestRevisionRow(): HTMLElement {
   return last;
 }
 
-
 /**
  * Shorter autosave windows than production, so an idle flush is observed in a
  * fraction of a second while a click sequence still completes inside the

@@ -77,7 +77,10 @@ function toAbsolutePath(target: unknown, cwd: string): string | undefined {
   return undefined;
 }
 
-function relativeToRoot(root: string, absolutePath: string): string | undefined {
+function relativeToRoot(
+  root: string,
+  absolutePath: string,
+): string | undefined {
   const relative = path.relative(root, absolutePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
   return relative.split(path.sep).join("/");
@@ -85,7 +88,8 @@ function relativeToRoot(root: string, absolutePath: string): string | undefined 
 
 function isIgnored(relativePath: string): boolean {
   return IGNORED_PREFIXES.some(
-    (prefix) => relativePath === prefix || relativePath.startsWith(`${prefix}/`),
+    (prefix) =>
+      relativePath === prefix || relativePath.startsWith(`${prefix}/`),
   );
 }
 
@@ -169,7 +173,9 @@ function isRecursiveListing(options: unknown): boolean {
 
 /** `open` with a write-only flag creates or truncates; it reads nothing. */
 function opensForReading(flags: unknown): boolean {
-  return flags === undefined || (typeof flags === "string" && flags.startsWith("r"));
+  return (
+    flags === undefined || (typeof flags === "string" && flags.startsWith("r"))
+  );
 }
 
 const FS_READERS: ReadonlyArray<readonly [name: string, kind: RecordedKind]> = [
@@ -191,7 +197,9 @@ const FS_READERS: ReadonlyArray<readonly [name: string, kind: RecordedKind]> = [
   ["access", "on-disk"],
 ];
 
-const FS_PROMISE_READERS: ReadonlyArray<readonly [name: string, kind: RecordedKind]> = [
+const FS_PROMISE_READERS: ReadonlyArray<
+  readonly [name: string, kind: RecordedKind]
+> = [
   ["readFile", "file"],
   ["open", "file"],
   ["readdir", "directory"],
@@ -209,7 +217,13 @@ const FS_PROMISE_READERS: ReadonlyArray<readonly [name: string, kind: RecordedKi
  * the spawn wrapper itself so the promisified path is traced too.
  */
 function inheritOwnProperties(wrapped: object, original: object): void {
-  const intrinsic = new Set(["length", "name", "prototype", "arguments", "caller"]);
+  const intrinsic = new Set([
+    "length",
+    "name",
+    "prototype",
+    "arguments",
+    "caller",
+  ]);
   for (const key of Reflect.ownKeys(original)) {
     if (typeof key === "string" && intrinsic.has(key)) continue;
     if (key === promisify.custom) continue;
@@ -254,7 +268,8 @@ function recordSpawn(name: string, args: readonly unknown[]): void {
   const tokens = shellCommand
     ? first.split(/\s+/).filter(Boolean)
     : [first, ...(Array.isArray(second) ? second.filter(isString) : [])];
-  const options: unknown = shellCommand || !Array.isArray(second) ? second : third;
+  const options: unknown =
+    shellCommand || !Array.isArray(second) ? second : third;
   const cwd = spawnCwd(options);
   const command = path.basename(tokens[0] ?? first);
   for (const token of tokens) {

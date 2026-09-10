@@ -45,19 +45,11 @@ async function createConflictedRepo(): Promise<string> {
       await git(repo, ["commit", "-m", "base"]);
 
       await git(repo, ["checkout", "-b", "sibling"]);
-      await writeFile(
-        path.join(repo, "shared.txt"),
-        "sibling side\n",
-        "utf-8",
-      );
+      await writeFile(path.join(repo, "shared.txt"), "sibling side\n", "utf-8");
       await git(repo, ["commit", "-am", "sibling change"]);
 
       await git(repo, ["checkout", "feature"]);
-      await writeFile(
-        path.join(repo, "shared.txt"),
-        "feature side\n",
-        "utf-8",
-      );
+      await writeFile(path.join(repo, "shared.txt"), "feature side\n", "utf-8");
       await git(repo, ["commit", "-am", "feature change"]);
     },
   );

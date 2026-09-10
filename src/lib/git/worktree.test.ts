@@ -1141,7 +1141,10 @@ describe("readWorktreeStatusV2 (real git)", () => {
     template = await createGitRepoTemplate(
       "cc-worktree-status-",
       async (repo) => {
-        await defaultGitClient.git(["init", "--initial-branch=lane", "."], repo);
+        await defaultGitClient.git(
+          ["init", "--initial-branch=lane", "."],
+          repo,
+        );
         await defaultGitClient.git(
           ["config", "user.email", "engine@command-center.test"],
           repo,

@@ -78,7 +78,10 @@ function fileMatcher(globs: readonly string[]): (filePath: string) => boolean {
  * directory: the glob is anchored inside it, or the directory sits inside the
  * glob's base. A glob with no literal base (`**‌/*.ts`) covers every directory.
  */
-function directoryCovered(directory: string, globs: readonly string[]): boolean {
+function directoryCovered(
+  directory: string,
+  globs: readonly string[],
+): boolean {
   if (directory === "") return globs.length > 0;
   return globs.some((glob) => {
     const { base } = picomatch.scan(glob);
@@ -120,7 +123,9 @@ export function findUndeclaredReads(
     if (matchesFile(read.path)) return true;
     if (!isProbeRead(read.via)) return false;
     const listedParent = listedParentOf(read.path);
-    return listedParent !== undefined && directoryCovered(listedParent, declared);
+    return (
+      listedParent !== undefined && directoryCovered(listedParent, declared)
+    );
   };
   return reads.filter((read) => !isCovered(read));
 }
@@ -158,7 +163,8 @@ export function describeUndeclaredReads(
     else groups.set(key, { key, count: 1, example: read });
   }
   const ranked = [...groups.values()].sort(
-    (left, right) => right.count - left.count || left.key.localeCompare(right.key),
+    (left, right) =>
+      right.count - left.count || left.key.localeCompare(right.key),
   );
   const lines = ranked.slice(0, MAX_DESCRIBED_GROUPS).map((group) => {
     const { example } = group;

@@ -161,6 +161,7 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}conversation${path.sep}BackgroundActivityIndicator.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}BackgroundActivityIndicator.stories.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}ArtifactMenuItems.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}CheckpointDisclosure.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointEvidence.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointMenuItems.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointMenuItems.stories.tsx`,

@@ -120,7 +120,9 @@ describe("test profile inventory", () => {
           "src/default.test.ts": "// @vitest-inputs src/app/**\n",
         },
       }),
-    ).toThrow(/src\/default\.test\.ts.*node-integration.*architecture-toolchain/);
+    ).toThrow(
+      /src\/default\.test\.ts.*node-integration.*architecture-toolchain/,
+    );
   });
 
   it("names the file when a declared input is malformed", () => {

@@ -33,9 +33,7 @@ import {
   useOpenNotepadId,
   useSetNotepadSort,
 } from "@/stores/session-detail.store";
-import NotepadOpenView, {
-  type NotepadAutosaveTiming,
-} from "./NotepadOpenView";
+import NotepadOpenView, { type NotepadAutosaveTiming } from "./NotepadOpenView";
 
 export interface NotepadPanelProps {
   projectName: string;

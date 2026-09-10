@@ -102,7 +102,9 @@ describe("changed-scope selection of source-scanning contracts", () => {
   });
 
   it("selects nothing for changes no contract scans", () => {
-    expect(select(["PERFORMANCE.md", "docs/reports/2026-07-15.md"])).toEqual([]);
+    expect(select(["PERFORMANCE.md", "docs/reports/2026-07-15.md"])).toEqual(
+      [],
+    );
   });
 
   it("only ever selects architecture/toolchain tests", () => {

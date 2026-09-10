@@ -674,15 +674,18 @@ describe("collectChangeSummary (real git repo)", () => {
   }
 
   beforeAll(async () => {
-    template = await createGitRepoTemplate("cc-change-summary-", async (repo) => {
-      repoPath = repo;
-      await gitIn(["init"]);
-      await gitIn(["config", "user.email", "test@example.com"]);
-      await gitIn(["config", "user.name", "Test"]);
-      await writeFile(join(repoPath, "tracked.ts"), "export const a = 1;\n");
-      await gitIn(["add", "-A"]);
-      await gitIn(["commit", "-m", "initial", "--no-verify"]);
-    });
+    template = await createGitRepoTemplate(
+      "cc-change-summary-",
+      async (repo) => {
+        repoPath = repo;
+        await gitIn(["init"]);
+        await gitIn(["config", "user.email", "test@example.com"]);
+        await gitIn(["config", "user.name", "Test"]);
+        await writeFile(join(repoPath, "tracked.ts"), "export const a = 1;\n");
+        await gitIn(["add", "-A"]);
+        await gitIn(["commit", "-m", "initial", "--no-verify"]);
+      },
+    );
   });
 
   afterAll(() => template.dispose());
@@ -728,28 +731,37 @@ describe("commitChanges concludes an in-progress merge (real git repo)", () => {
   }
 
   beforeAll(async () => {
-    template = await createGitRepoTemplate("cc-conclude-merge-", async (repo) => {
-      repoPath = repo;
-      await gitIn(["init", "-b", "main"]);
-      await gitIn(["config", "user.email", "test@example.com"]);
-      await gitIn(["config", "user.name", "Test"]);
-      await writeFile(join(repoPath, "file.ts"), "export const v = 'base';\n");
-      await gitIn(["add", "-A"]);
-      await gitIn(["commit", "-m", "base", "--no-verify"]);
-      // Divergent edits to the same line on main and feature.
-      await gitIn(["checkout", "-b", "feature"]);
-      await writeFile(join(repoPath, "file.ts"), "export const v = 'ours';\n");
-      await gitIn(["add", "-A"]);
-      await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
-      await gitIn(["checkout", "main"]);
-      await writeFile(
-        join(repoPath, "file.ts"),
-        "export const v = 'theirs';\n",
-      );
-      await gitIn(["add", "-A"]);
-      await gitIn(["commit", "-m", "main edit", "--no-verify"]);
-      await gitIn(["checkout", "feature"]);
-    });
+    template = await createGitRepoTemplate(
+      "cc-conclude-merge-",
+      async (repo) => {
+        repoPath = repo;
+        await gitIn(["init", "-b", "main"]);
+        await gitIn(["config", "user.email", "test@example.com"]);
+        await gitIn(["config", "user.name", "Test"]);
+        await writeFile(
+          join(repoPath, "file.ts"),
+          "export const v = 'base';\n",
+        );
+        await gitIn(["add", "-A"]);
+        await gitIn(["commit", "-m", "base", "--no-verify"]);
+        // Divergent edits to the same line on main and feature.
+        await gitIn(["checkout", "-b", "feature"]);
+        await writeFile(
+          join(repoPath, "file.ts"),
+          "export const v = 'ours';\n",
+        );
+        await gitIn(["add", "-A"]);
+        await gitIn(["commit", "-m", "feature edit", "--no-verify"]);
+        await gitIn(["checkout", "main"]);
+        await writeFile(
+          join(repoPath, "file.ts"),
+          "export const v = 'theirs';\n",
+        );
+        await gitIn(["add", "-A"]);
+        await gitIn(["commit", "-m", "main edit", "--no-verify"]);
+        await gitIn(["checkout", "feature"]);
+      },
+    );
   });
 
   afterAll(() => template.dispose());
