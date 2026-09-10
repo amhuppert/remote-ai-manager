@@ -50,7 +50,7 @@ describe("CompactionSection", () => {
     const { controller } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
-    expect(screen.getByText("Conversation model selection")).toBeVisible();
+    expect(screen.getByText("Checkpoint and conversation model")).toBeVisible();
     expect(screen.getByText("Message model selection")).toBeVisible();
     expect(
       document.querySelector(

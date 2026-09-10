@@ -188,6 +188,15 @@ describe("ALL_FIELD_PATHS", () => {
 });
 
 describe("stripUndefinedDeep", () => {
+  it("preserves an explicit empty parameter map for a model without options", () => {
+    const config = {
+      conversationNaming: {
+        modelSelection: { modelId: "haiku", parameters: {} },
+      },
+    };
+    expect(stripUndefinedDeep(config)).toEqual(config);
+  });
+
   it("removes undefined keys and empty nested objects", () => {
     expect(
       stripUndefinedDeep({ a: 1, b: undefined, c: { d: undefined } }),

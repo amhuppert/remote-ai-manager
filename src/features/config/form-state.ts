@@ -70,7 +70,8 @@ export function stripUndefinedDeep(value: unknown): unknown {
       stripped &&
       typeof stripped === "object" &&
       !Array.isArray(stripped) &&
-      Object.keys(stripped).length === 0
+      Object.keys(stripped).length === 0 &&
+      Object.keys(entry).length > 0
     ) {
       continue;
     }
