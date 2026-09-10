@@ -1,3 +1,4 @@
+// @vitest-inputs src/lib/conversations/*.ts
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";

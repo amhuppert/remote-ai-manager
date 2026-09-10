@@ -1,3 +1,5 @@
+// @vitest-inputs src/**/*.test.{ts,tsx,mjs} scripts/**/*.test.{ts,tsx,mjs}
+// @vitest-inputs eslint-rules/**/*.test.{ts,tsx,mjs}
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -96,6 +98,41 @@ describe("test profile inventory", () => {
     ).toThrow(
       /src\/provider\.acceptance\.test\.ts.*browser-live-acceptance.*dom-integration/,
     );
+  });
+
+  it("exposes the inputs an architecture test declares outside its import graph", () => {
+    const inventory = build({
+      sources: {
+        "src/boundary.arch.test.ts":
+          "// @vitest-inputs src/app/**/route.ts\n// @vitest-inputs eslint.config.mjs\n",
+      },
+    });
+
+    expect(inventory.declaredInputsByTestFile).toEqual({
+      "src/boundary.arch.test.ts": ["eslint.config.mjs", "src/app/**/route.ts"],
+    });
+  });
+
+  it("rejects declared inputs on a test outside the architecture profile", () => {
+    expect(() =>
+      build({
+        sources: {
+          "src/default.test.ts": "// @vitest-inputs src/app/**\n",
+        },
+      }),
+    ).toThrow(
+      /src\/default\.test\.ts.*node-integration.*architecture-toolchain/,
+    );
+  });
+
+  it("names the file when a declared input is malformed", () => {
+    expect(() =>
+      build({
+        sources: {
+          "src/boundary.arch.test.ts": "// @vitest-inputs ../other/**\n",
+        },
+      }),
+    ).toThrow(/src\/boundary\.arch\.test\.ts.*@vitest-inputs \.\.\/other/);
   });
 
   it("covers the repository corpus once and keeps the pure cohort explicit", () => {

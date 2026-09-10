@@ -1,3 +1,5 @@
+// @vitest-inputs .claude/commands/spec.md
+// @vitest-inputs plugins/command-center/command-center/skills/native-sdd-authoring/SKILL.md
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

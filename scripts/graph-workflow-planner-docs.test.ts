@@ -1,3 +1,6 @@
+// @vitest-inputs plugins/command-center/command-center/skills/**
+// @vitest-inputs .kiro/steering/workflows.md .agents/skills/**
+// @vitest-inputs .claude/skills/**
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

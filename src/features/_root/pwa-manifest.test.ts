@@ -1,3 +1,4 @@
+// @vitest-inputs public/**
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";

@@ -1,3 +1,9 @@
+// @vitest-inputs src/components/workflow-config/OutputSchemaField.tsx
+// @vitest-inputs src/features/workflows-builder/components/WorkflowBuilderEditor.tsx
+// @vitest-inputs src/lib/workflow-graph/definition-validation.ts
+// @vitest-inputs src/lib/workflow-graph/output-schema-validation.ts
+// @vitest-inputs src/lib/workflows/primitives/output-schema-subset.ts
+// @vitest-inputs src/lib/workflows/primitives/structured-output-gate.ts
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";

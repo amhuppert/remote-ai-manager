@@ -1,3 +1,4 @@
+// @vitest-inputs src/lib/**/*.ts .kiro/steering/logs.md
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";

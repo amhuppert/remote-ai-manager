@@ -1,3 +1,4 @@
+// @vitest-inputs plugins/command-center/** .kiro/steering/**/*.md
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";

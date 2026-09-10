@@ -1,3 +1,4 @@
+// @vitest-inputs src/cli/**/*.ts src/lib/**/*.ts
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import {

@@ -1,3 +1,4 @@
+// @vitest-inputs src/lib/**/*.{ts,tsx}
 /**
  * Shrink-only ratchet on the async `withWriteQueue` entry point.
  *

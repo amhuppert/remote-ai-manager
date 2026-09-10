@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.{ts,tsx,css,json} .storybook/**
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

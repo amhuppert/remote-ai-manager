@@ -1,3 +1,4 @@
+// @vitest-inputs src/components/workflow-graph/workflow-graph.css
 /**
  * Design-system guarantees that live in the graph stylesheet rather than in a
  * component, and so cannot be asserted by rendering: jsdom applies no external

@@ -1,3 +1,4 @@
+// @vitest-inputs src/lib/agent-capabilities/apply-planner.ts
 import { readFileSync } from "node:fs";
 import path from "node:path";
 

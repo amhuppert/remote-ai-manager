@@ -1,3 +1,4 @@
+// @vitest-inputs scripts/validate/** CommandCenter.json
 import { execFileSync } from "node:child_process";
 import {
   accessSync,
@@ -38,12 +39,17 @@ interface Invocation {
   heapMb: string;
   /** Vitest's own pool override, which must never reach the launcher. */
   maxForks: string;
+  /** The paths handed to `related` mode, comma-joined; empty for other modes. */
+  relatedPaths: string;
 }
 
 let invocations: Invocation[] = [];
 let changedInvocations: Invocation[] = [];
 let pathInvocations: Invocation[] = [];
 let configInvocations: Invocation[] = [];
+let architectureSetupInvocations: Invocation[] = [];
+let jsdomSetupInvocations: Invocation[] = [];
+let selectorStdin = "";
 let workdir: string;
 let exitCode: number | null = null;
 let changedExitCode: number | null = null;
@@ -61,7 +67,28 @@ function writeNodeStub(binDir: string): void {
     stub,
     [
       "#!/usr/bin/env bash",
-      `printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$*" "\${CC_TEST_BAIL:-<unset>}" "\${CC_TEST_WORKERS:-<unset>}" "\${CC_TEST_HEAP_MB:-<unset>}" "\${VITEST_MAX_FORKS:-<unset>}" >> "$FULL_SUITE_TEST_LOG"`,
+      'related=""',
+      'if [ "$2" = related ] && [ -f "$4" ]; then related="$(tr \'\\n\' , < "$4")"; fi',
+      `printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$*" "\${CC_TEST_BAIL:-<unset>}" "\${CC_TEST_WORKERS:-<unset>}" "\${CC_TEST_HEAP_MB:-<unset>}" "\${VITEST_MAX_FORKS:-<unset>}" "$related" >> "$FULL_SUITE_TEST_LOG"`,
+      "exit 0",
+    ].join("\n"),
+    "utf8",
+  );
+  chmodSync(stub, 0o755);
+}
+
+/**
+ * Stands in for the declared-input selector (`bun scripts/test-profiles.ts
+ * --affected`): records the changed paths it was fed and selects nothing.
+ */
+function writeBunStub(binDir: string): void {
+  const stub = join(binDir, "bun");
+  writeFileSync(
+    stub,
+    [
+      "#!/usr/bin/env bash",
+      'printf \'%s\\n\' "$*" >> "$FULL_SUITE_TEST_LOG.bun"',
+      'cat >> "$FULL_SUITE_TEST_LOG.bun-stdin"',
       "exit 0",
     ].join("\n"),
     "utf8",
@@ -74,14 +101,21 @@ function readInvocations(logPath: string): Invocation[] {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [args = "", bail = "", workers = "", heapMb = "", maxForks = ""] =
-        line.split("\t");
+      const [
+        args = "",
+        bail = "",
+        workers = "",
+        heapMb = "",
+        maxForks = "",
+        relatedPaths = "",
+      ] = line.split("\t");
       return {
         args: args.split(" ").filter(Boolean),
         bail,
         workers,
         heapMb,
         maxForks,
+        relatedPaths,
       };
     });
 }
@@ -95,6 +129,7 @@ beforeAll(() => {
   mkdirSync(binDir);
   writeFileSync(logPath, "", "utf8");
   writeNodeStub(binDir);
+  writeBunStub(binDir);
 
   git(repo, "init", "--initial-branch=main");
   git(repo, "config", "user.email", "test@example.com");
@@ -169,6 +204,7 @@ beforeAll(() => {
   }
 
   changedInvocations = readInvocations(logPath);
+  selectorStdin = readFileSync(`${logPath}.bun-stdin`, "utf8");
 
   writeFileSync(logPath, "", "utf8");
   execFileSync("bash", [changedScriptPath, "src/example.test.ts"], {
@@ -184,20 +220,32 @@ beforeAll(() => {
   });
   pathInvocations = readInvocations(logPath);
 
+  const runChanged = (): Invocation[] => {
+    writeFileSync(logPath, "", "utf8");
+    execFileSync("bash", [changedScriptPath], {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        FULL_SUITE_TEST_LOG: logPath,
+        TARGET_BRANCH: "main",
+      },
+    });
+    return readInvocations(logPath);
+  };
+
+  writeFileSync(join(repo, "vitest.architecture.setup.ts"), "", "utf8");
+  architectureSetupInvocations = runChanged();
+  rmSync(join(repo, "vitest.architecture.setup.ts"));
+
+  writeFileSync(join(repo, "vitest.jsdom.setup.ts"), "", "utf8");
+  jsdomSetupInvocations = runChanged();
+  rmSync(join(repo, "vitest.jsdom.setup.ts"));
+
   writeFileSync(join(repo, "vitest.config.ts"), "export default {};\n", "utf8");
-  writeFileSync(logPath, "", "utf8");
-  execFileSync("bash", [changedScriptPath], {
-    cwd: repo,
-    encoding: "utf8",
-    stdio: "pipe",
-    env: {
-      ...process.env,
-      PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      FULL_SUITE_TEST_LOG: logPath,
-      TARGET_BRANCH: "main",
-    },
-  });
-  configInvocations = readInvocations(logPath);
+  configInvocations = runChanged();
 });
 
 afterAll(() => {
@@ -214,14 +262,39 @@ describe("test-full-suite validation command", () => {
     expect(invocation?.args.slice(1)).toEqual(["full", "both"]);
   });
 
-  it("runs architecture fully before using affected-file mode for runtime profiles", () => {
+  it("selects architecture tests from the diff and declared inputs, then runtime profiles by import graph", () => {
     expect(changedExitCode, `script failed:\n${changedOutput}`).toBe(0);
     expect(changedInvocations).toHaveLength(2);
     expect(
       changedInvocations.map((invocation) => invocation.args.slice(1)),
     ).toEqual([
+      ["related", "architecture", expect.any(String)],
+      ["changed", "runtime", expect.any(String)],
+    ]);
+    // The related list is the branch diff plus whatever the selector chose; the
+    // stub selects nothing, so the diff alone must reach Vitest.
+    expect(changedInvocations[0]?.relatedPaths).toBe("changed.ts,");
+    expect(selectorStdin).toBe("changed.ts\n");
+  });
+
+  it("runs architecture fully when its own setup or tracer changes", () => {
+    expect(
+      architectureSetupInvocations.map((invocation) =>
+        invocation.args.slice(1),
+      ),
+    ).toEqual([
       ["full", "architecture"],
       ["changed", "runtime", expect.any(String)],
+    ]);
+  });
+
+  it("keeps architecture on declared-input selection when only the jsdom setup changes", () => {
+    expect(
+      jsdomSetupInvocations.map((invocation) => invocation.args.slice(1)),
+    ).toEqual([
+      ["full", "jsdom"],
+      ["related", "architecture", expect.any(String)],
+      ["changed", "pure-node", expect.any(String)],
     ]);
   });
 

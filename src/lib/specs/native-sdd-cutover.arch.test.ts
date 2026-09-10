@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.{ts,tsx,cts,mts,json,md}
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -440,6 +441,25 @@ const EXEMPT_FILES = new Set([
   ...RETIREMENT_NEGATIVE_ASSERTIONS,
 ]);
 
+/**
+ * Retired symbols named by a source, in inventory order. Word-bounded:
+ * `FinalizedDeliveryPlanApproval` is the surviving name, not a surviving
+ * mention of the retired one.
+ */
+const RETIRED_SYMBOL_PATTERNS = RETIRED_SYMBOLS.map(
+  (symbol) => [symbol, new RegExp(`\\b${symbol}\\b`)] as const,
+);
+const ANY_RETIRED_SYMBOL = new RegExp(`\\b(?:${RETIRED_SYMBOLS.join("|")})\\b`);
+
+function retiredSymbolMentions(source: string): string[] {
+  // One alternation decides whether a source needs the per-symbol pass at
+  // all; compiling a pattern per file per symbol was most of this audit's cost.
+  if (!ANY_RETIRED_SYMBOL.test(source)) return [];
+  return RETIRED_SYMBOL_PATTERNS.filter(([, pattern]) =>
+    pattern.test(source),
+  ).map(([symbol]) => symbol);
+}
+
 function auditedFiles(): string[] {
   return repositoryFiles("src").filter(
     (relativePath) => !EXEMPT_FILES.has(relativePath),
@@ -457,6 +477,19 @@ describe("native SDD legacy retirement", () => {
     ).toEqual([]);
   });
 
+  it("flags a planted retired mention rather than trusting the current tree", () => {
+    expect(
+      retiredSymbolMentions(
+        "const hash = deliveryPlanHash(plan); ingestExecutionEvidenceBestEffort();",
+      ),
+    ).toEqual(["deliveryPlanHash", "ingestExecutionEvidenceBestEffort"]);
+    expect(
+      retiredSymbolMentions(
+        "type T = FinalizedDeliveryPlanApproval; const n = planHashes;",
+      ),
+    ).toEqual([]);
+  });
+
   it("leaves no retired symbol reachable outside the applied migration", () => {
     const offenders: string[] = [];
     for (const relativePath of auditedFiles()) {
@@ -464,10 +497,7 @@ describe("native SDD legacy retirement", () => {
         path.join(REPOSITORY_ROOT, relativePath),
         "utf8",
       );
-      for (const symbol of RETIRED_SYMBOLS) {
-        // Word-bounded: `FinalizedDeliveryPlanApproval` is the surviving
-        // name, not a surviving mention of the retired one.
-        if (!new RegExp(`\\b${symbol}\\b`).test(source)) continue;
+      for (const symbol of retiredSymbolMentions(source)) {
         offenders.push(`${relativePath} names ${symbol}`);
       }
     }

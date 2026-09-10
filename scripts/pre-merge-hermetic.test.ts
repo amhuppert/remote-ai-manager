@@ -1,3 +1,4 @@
+// @vitest-inputs scripts/pre-merge-validate.sh scripts/validate/**
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,

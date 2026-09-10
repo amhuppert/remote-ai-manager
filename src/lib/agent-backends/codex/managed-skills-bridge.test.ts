@@ -1,3 +1,5 @@
+// @vitest-inputs plugins/command-center/**
+// @vitest-inputs src/lib/agent-backends/codex/managed-skills-bridge.ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";

@@ -1,3 +1,6 @@
+// @vitest-inputs src/** package.json
+// Tailwind's native content scan reads every file under src to generate
+// utilities; the read tracer cannot see it, so the declaration stays whole.
 /**
  * Visual-inertness guard for the Tailwind integration (requirement 1.3).
  *

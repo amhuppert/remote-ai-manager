@@ -294,6 +294,19 @@ function oldestRevisionRow(): HTMLElement {
   return last;
 }
 
+/**
+ * Shorter autosave windows than production, so an idle flush is observed in a
+ * fraction of a second while a click sequence still completes inside the
+ * window under fork contention.
+ */
+const TEST_AUTOSAVE_TIMING = { idleMs: 250, maxWaitMs: 1000, retryMs: 1000 };
+
+/**
+ * The restore-race test must click through history and restore before the
+ * idle window elapses, so it gets a wider one than the flush-observing tests.
+ */
+const RESTORE_RACE_TIMING = { idleMs: 800, maxWaitMs: 2000, retryMs: 1000 };
+
 describe("id-addressed revision resolution against real persistence", () => {
   it("diffs the oldest listed revision against its real out-of-page predecessor", async () => {
     await seedNotepad("deep notes", 55);
@@ -305,6 +318,7 @@ describe("id-addressed revision resolution against real persistence", () => {
         sessionName="s1"
         conversationId="c1"
         active
+        autosaveTiming={TEST_AUTOSAVE_TIMING}
       />,
       queryClient,
     );
@@ -332,6 +346,7 @@ describe("id-addressed revision resolution against real persistence", () => {
         sessionName="s1"
         conversationId="c1"
         active
+        autosaveTiming={TEST_AUTOSAVE_TIMING}
       />,
       queryClient,
     );
@@ -471,6 +486,7 @@ describe("restore echo adjudication against real persistence", () => {
         sessionName="s1"
         conversationId="c1"
         active
+        autosaveTiming={RESTORE_RACE_TIMING}
       />,
       queryClient,
     );
@@ -492,7 +508,9 @@ describe("restore echo adjudication against real persistence", () => {
       ).toBe(4),
     );
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2200));
+      await new Promise((resolve) =>
+        setTimeout(resolve, RESTORE_RACE_TIMING.idleMs + 700),
+      );
     });
     releaseRestore();
 
@@ -529,6 +547,7 @@ describe("restore echo adjudication against real persistence", () => {
         sessionName="s1"
         conversationId="c1"
         active
+        autosaveTiming={TEST_AUTOSAVE_TIMING}
       />,
       queryClient,
     );
@@ -585,6 +604,7 @@ describe("restore echo adjudication against real persistence", () => {
         sessionName="s1"
         conversationId="c1"
         active
+        autosaveTiming={TEST_AUTOSAVE_TIMING}
       />,
       queryClient,
     );
@@ -621,7 +641,9 @@ describe("restore echo adjudication against real persistence", () => {
     // …and an edit typed after landing autosaves on top of the restore.
     pasteIntoEditor("after-restore-note ");
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1600));
+      await new Promise((resolve) =>
+        setTimeout(resolve, TEST_AUTOSAVE_TIMING.idleMs + 100),
+      );
     });
     await waitFor(async () => {
       const head = await service.get(notepadId);
@@ -650,6 +672,7 @@ describe("restore echo adjudication against real persistence", () => {
         sessionName="s1"
         conversationId="c1"
         active
+        autosaveTiming={TEST_AUTOSAVE_TIMING}
       />,
       queryClient,
     );
@@ -659,7 +682,9 @@ describe("restore echo adjudication against real persistence", () => {
     // before it reaches the service — the slow-request shape.
     pasteIntoEditor("draft-inflight ");
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1600));
+      await new Promise((resolve) =>
+        setTimeout(resolve, TEST_AUTOSAVE_TIMING.idleMs + 100),
+      );
     });
     expect(api.requestsTo("POST", /\/content$/).length).toBe(1);
 

@@ -61,6 +61,20 @@ export interface NotepadOpenViewProps {
   sessionName: string;
   conversationId: string;
   active: boolean;
+  /**
+   * Autosave windows. Production keeps the defaults; tests inject shorter
+   * ones so an idle flush is observed without waiting 1.5 s of wall clock.
+   */
+  autosaveTiming?: Partial<NotepadAutosaveTiming>;
+}
+
+export interface NotepadAutosaveTiming {
+  /** Quiet time after the last edit before the burst flushes. */
+  idleMs: number;
+  /** Longest a burst may keep extending itself before it flushes anyway. */
+  maxWaitMs: number;
+  /** A failed flush retries after this instead of hammering the route. */
+  retryMs: number;
 }
 
 /** Breadcrumb chrome: one clickable ancestor, one inert separator. */
@@ -77,10 +91,11 @@ const WRITE_MODE_LABEL: Record<NotepadWriteMode, string> = {
 };
 
 /** One editing burst persists as one revision: idle flush with a max-wait. */
-const AUTOSAVE_IDLE_MS = 1500;
-const AUTOSAVE_MAX_WAIT_MS = 5000;
-/** A failed flush retries after a beat instead of hammering the route. */
-const AUTOSAVE_RETRY_MS = 5000;
+export const DEFAULT_NOTEPAD_AUTOSAVE_TIMING: NotepadAutosaveTiming = {
+  idleMs: 1500,
+  maxWaitMs: 5000,
+  retryMs: 5000,
+};
 /**
  * Failed-flush retries are bounded so a closed view cannot keep retrying
  * forever from its detached autosave state; a fresh keystroke re-arms them.
@@ -174,8 +189,15 @@ export default function NotepadOpenView({
   sessionName,
   conversationId,
   active,
+  autosaveTiming,
 }: NotepadOpenViewProps): React.JSX.Element {
   const closeNotepad = useCloseNotepad();
+  // Read through a ref so the flush callbacks keep one identity: the unmount
+  // effect below flushes on cleanup, and a dependency change would flush early.
+  const timingRef = useRef<NotepadAutosaveTiming>(
+    DEFAULT_NOTEPAD_AUTOSAVE_TIMING,
+  );
+  timingRef.current = { ...DEFAULT_NOTEPAD_AUTOSAVE_TIMING, ...autosaveTiming };
   const detailQuery = useNotepadDetailQuery(notepadId, { enabled: active });
   const updateMutation = useUpdateNotepadMutation();
   const writeContentMutation = useWriteNotepadContentMutation();
@@ -385,7 +407,7 @@ export default function NotepadOpenView({
         setFlushEpoch((epoch) => epoch + 1);
         if (willRetry) {
           state.retriesLeft -= 1;
-          state.idleTimer = setTimeout(flush, AUTOSAVE_RETRY_MS);
+          state.idleTimer = setTimeout(flush, timingRef.current.retryMs);
         }
       });
   }, [
@@ -402,8 +424,8 @@ export default function NotepadOpenView({
       state.retriesLeft = AUTOSAVE_MAX_RETRIES;
       setDraft(text);
       if (state.idleTimer) clearTimeout(state.idleTimer);
-      state.idleTimer = setTimeout(flush, AUTOSAVE_IDLE_MS);
-      state.maxTimer ??= setTimeout(flush, AUTOSAVE_MAX_WAIT_MS);
+      state.idleTimer = setTimeout(flush, timingRef.current.idleMs);
+      state.maxTimer ??= setTimeout(flush, timingRef.current.maxWaitMs);
     },
     [flush],
   );

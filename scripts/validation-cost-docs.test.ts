@@ -1,3 +1,7 @@
+// @vitest-inputs .kiro/steering/project-configuration.md
+// @vitest-inputs docs/ai-validation-output.md docs/project-configuration.md
+// @vitest-inputs plugins/command-center/command-center/skills/*/references/commandcenter-json.md
+// @vitest-inputs src/cli/commands/validate.help.ts
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

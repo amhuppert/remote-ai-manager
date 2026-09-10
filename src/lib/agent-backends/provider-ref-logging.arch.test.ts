@@ -1,3 +1,4 @@
+// @vitest-inputs src/lib/agent-backends/**/*.{ts,tsx}
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";

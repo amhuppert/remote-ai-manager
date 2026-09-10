@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.css
 /**
  * Theme-surface namespace contract (Tailwind migration tasks 2.2–2.5;
  * requirements 2.1, 2.4, 2.5, 5.1).

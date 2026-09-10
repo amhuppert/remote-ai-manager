@@ -1,3 +1,5 @@
+// @vitest-inputs .claude/skills/*/SKILL.md
+// @vitest-inputs plugins/command-center/command-center/skills/*/SKILL.md
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

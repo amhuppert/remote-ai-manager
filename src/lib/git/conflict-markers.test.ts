@@ -1,8 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, it, expect } from "vitest";
+import { afterAll, afterEach, describe, it, expect } from "vitest";
 import { defaultGitClient } from "./client";
+import {
+  createGitRepoTemplate,
+  type GitRepoTemplate,
+} from "../shared/testing/git-repo-template";
 import {
   containsConflictMarkers,
   inspectInProgressMerge,
@@ -12,11 +15,16 @@ import {
 } from "./conflict-markers";
 
 const cleanupPaths: string[] = [];
+let conflictedTemplate: GitRepoTemplate | undefined;
 
 afterEach(async () => {
   await Promise.all(
     cleanupPaths.splice(0).map((p) => rm(p, { recursive: true, force: true })),
   );
+});
+
+afterAll(async () => {
+  await conflictedTemplate?.dispose();
 });
 
 async function git(repo: string, args: string[]): Promise<string> {
@@ -26,22 +34,27 @@ async function git(repo: string, args: string[]): Promise<string> {
 
 /** A repo whose checked-out branch conflicts with `sibling` on `shared.txt`. */
 async function createConflictedRepo(): Promise<string> {
-  const repo = await mkdtemp(path.join(tmpdir(), "cc-conflict-markers-"));
+  conflictedTemplate ??= await createGitRepoTemplate(
+    "cc-conflict-markers-",
+    async (repo) => {
+      await git(repo, ["init", "--initial-branch=feature", "."]);
+      await git(repo, ["config", "user.email", "engine@command-center.test"]);
+      await git(repo, ["config", "user.name", "Command Center"]);
+      await writeFile(path.join(repo, "shared.txt"), "base\n", "utf-8");
+      await git(repo, ["add", "shared.txt"]);
+      await git(repo, ["commit", "-m", "base"]);
+
+      await git(repo, ["checkout", "-b", "sibling"]);
+      await writeFile(path.join(repo, "shared.txt"), "sibling side\n", "utf-8");
+      await git(repo, ["commit", "-am", "sibling change"]);
+
+      await git(repo, ["checkout", "feature"]);
+      await writeFile(path.join(repo, "shared.txt"), "feature side\n", "utf-8");
+      await git(repo, ["commit", "-am", "feature change"]);
+    },
+  );
+  const repo = await conflictedTemplate.fresh();
   cleanupPaths.push(repo);
-  await git(repo, ["init", "--initial-branch=feature", "."]);
-  await git(repo, ["config", "user.email", "engine@command-center.test"]);
-  await git(repo, ["config", "user.name", "Command Center"]);
-  await writeFile(path.join(repo, "shared.txt"), "base\n", "utf-8");
-  await git(repo, ["add", "shared.txt"]);
-  await git(repo, ["commit", "-m", "base"]);
-
-  await git(repo, ["checkout", "-b", "sibling"]);
-  await writeFile(path.join(repo, "shared.txt"), "sibling side\n", "utf-8");
-  await git(repo, ["commit", "-am", "sibling change"]);
-
-  await git(repo, ["checkout", "feature"]);
-  await writeFile(path.join(repo, "shared.txt"), "feature side\n", "utf-8");
-  await git(repo, ["commit", "-am", "feature change"]);
   return repo;
 }
 

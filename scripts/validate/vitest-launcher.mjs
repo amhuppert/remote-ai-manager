@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { startVitest } from "vitest/node";
 import {
   resolveScopedWorkerRequest,
@@ -50,12 +52,23 @@ if (!projects) {
 
 let filters = [];
 let changed;
+let related;
 if (mode === "paths" && modeArgs.length > 0) {
   filters = modeArgs;
 } else if (mode === "changed" && modeArgs.length === 1) {
   changed = modeArgs[0];
+} else if (mode === "related" && modeArgs.length === 1) {
+  // One repository-relative path per line: the files whose change should run
+  // every test that imports them, plus test files to run outright.
+  related = readFileSync(modeArgs[0], "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((file) => path.resolve(process.cwd(), file));
 } else if (mode !== "full" || modeArgs.length > 0) {
-  throw new Error("expected full, changed <merge-base>, or paths <path...>");
+  throw new Error(
+    "expected full, changed <merge-base>, related <path-list-file>, or paths <path...>",
+  );
 }
 
 // The requested worker count is a ceiling request, not an instruction. Two
@@ -90,6 +103,7 @@ await startVitest("test", filters, {
   bail: testBail,
   passWithNoTests: mode !== "full",
   ...(changed ? { changed } : {}),
+  ...(related ? { related } : {}),
   project: projects,
   pool: "forks",
   maxWorkers: workers,

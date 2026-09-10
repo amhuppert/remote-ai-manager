@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.{ts,tsx,css}
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -200,6 +201,45 @@ const MESSAGE_CONTENT_DESCENDANT = new RegExp(
   String.raw`\.message-content(?![\w-])[^,{}]*[\s>+~]${GENERATED_ELEMENT}(?![\w-])`,
 );
 
+/**
+ * Every guard matches a specific token — a library or module name, an
+ * identifier, a style hook, a selector fragment — so a source whose text
+ * contains none of them cannot violate the boundary, and parsing it only
+ * spends the whole-tree budget. Built from the guard tables so a token added
+ * to a guard is admitted here without a second list; the regression fixtures
+ * prove every crafted violation passes.
+ */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const INSPECTION_PATTERN = new RegExp(
+  [
+    // An import that reaches the canonical directory names it, and the
+    // Markdown-lite pattern is a substring of it.
+    "markdown",
+    ...FORBIDDEN_LIBRARIES,
+    ...FORBIDDEN_MODULE_BASENAMES,
+    ...FORBIDDEN_IDENTIFIERS,
+    ...LEGACY_MARKDOWN_HOOK_TOKENS,
+    "message-content",
+    // ANNOTATION_PRESENTATION_PATTERN's alternatives.
+    "r6o-",
+    "cc-annotation",
+    "annotation-",
+  ]
+    .map(escapeRegExp)
+    .join("|"),
+  "i",
+);
+
+function needsInspection(text: string): boolean {
+  return INSPECTION_PATTERN.test(text);
+}
+
+/** An asset import (`../../package.json`, `./x.css`) never resolves to a TypeScript module. */
+const ASSET_SPECIFIER = /\.(?!(?:[cm]?[jt]sx?)$)[a-z0-9]+$/i;
+
 function resolveProjectImport(
   fromFile: string,
   specifier: string,
@@ -211,6 +251,7 @@ function resolveProjectImport(
   ) {
     return null;
   }
+  if (ASSET_SPECIFIER.test(specifier)) return null;
 
   const baseDirectory = specifier.startsWith("@/")
     ? SRC_ROOT
@@ -572,8 +613,10 @@ function componentStyleViolations(
 }
 
 function analyzeProductionSources() {
-  const sources = walkFiles(SRC_ROOT, isProductionSource).map((file) => {
-    const source = parseSource(file);
+  const sources = walkFiles(SRC_ROOT, isProductionSource).flatMap((file) => {
+    const text = readFileSync(file, "utf8");
+    if (!needsInspection(text)) return [];
+    const source = parseSource(file, text);
     return {
       file,
       imports: fileImports(source),
@@ -644,6 +687,43 @@ describe("canonical Markdown boundary — regression fixtures", () => {
     );
   const styleOf = (file: string, classString: string) =>
     componentStyleViolations(file, source(`const c = "${classString}";`));
+
+  it("admits every crafted regression to the whole-tree parse", () => {
+    // One text per guard table, so a filter that drops a table stops here
+    // rather than silently skipping the files that table would flag.
+    const regressions = [
+      `import remarkGfm from "remark-gfm";`,
+      `import { Prism } from "react-syntax-highlighter/dist/esm/prism";`,
+      `import mermaid from "mermaid";`,
+      `import Mermaid from "../../MermaidDiagram";`,
+      `import { slugifyHeading } from "@/components/markdown/markdown-source-map";`,
+      `import { render } from "../../components/markdown/MarkdownRenderer";`,
+      `function parseInline(src: string) { return src; }`,
+      `const x: InlineSpan[] = parseContext(md);`,
+      `const t = THINKING_MARKDOWN;`,
+      `const lite = new MarkdownLiteParser();`,
+      `const c = "[.message-content_h1]:text-lg";`,
+      `const c = "[[data-cc-annotation]_&]:ring";`,
+      `const c = "[&_.cc-annotation]:ring";`,
+      `const c = "[&_.r6o-annotation]:hidden";`,
+      `const c = "[&_.annotation-highlight]:bg-amber";`,
+      `const c = "command-indicator__body";`,
+      `const c = "wb-markdown-inline";`,
+    ];
+    for (const text of regressions) {
+      const flagged =
+        importsOf(text).length > 0 ||
+        forbiddenIdentifiers(source(text)).length > 0 ||
+        componentStyleViolations(OUTSIDE, source(text)).length > 0;
+      expect(flagged, `guards do not flag: ${text}`).toBe(true);
+      expect(needsInspection(text), `filter drops: ${text}`).toBe(true);
+    }
+    expect(
+      needsInspection(
+        `import { Button } from "@/components/ui/Button";\nconst c = "[&_svg]:size-4 [&>a]:underline";`,
+      ),
+    ).toBe(false);
+  });
 
   it("flags direct renderer-stack imports, including mermaid", () => {
     expect(

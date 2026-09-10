@@ -1,8 +1,14 @@
 #!/usr/bin/env bun
 
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  findStaleDeclaredInputs,
+  parseDeclaredInputs,
+  selectTestsForChangedPaths,
+} from "./test-inputs";
 
 export const TEST_PROFILE_NAMES = [
   "pure-node",
@@ -24,6 +30,15 @@ export interface TestProfileInventory {
   readonly allTestFiles: readonly string[];
   readonly unitTestFiles: readonly string[];
   readonly byProfile: Readonly<Record<TestProfile, readonly string[]>>;
+  /**
+   * The `// @vitest-inputs` globs of every architecture/toolchain test that
+   * reads repository paths outside its import graph. Changed validation selects
+   * such a test when a changed path matches one of its globs; the architecture
+   * setup fails the test when it reads a path none of them cover.
+   */
+  readonly declaredInputsByTestFile: Readonly<
+    Record<string, readonly string[]>
+  >;
 }
 
 const TEST_DIRECTORIES = ["src", "scripts", "eslint-rules"] as const;
@@ -122,6 +137,15 @@ function explicitProfiles(filePath: string, source: string): TestProfile[] {
   return sortedUnique(profiles, `${filePath} directive`) as TestProfile[];
 }
 
+function declaredInputs(filePath: string, source: string): string[] {
+  try {
+    return parseDeclaredInputs(source);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${filePath}: ${message}`);
+  }
+}
+
 export function buildTestProfileInventory({
   sources,
   pureNodeTestFiles,
@@ -148,6 +172,7 @@ export function buildTestProfileInventory({
     "architecture-toolchain": [],
     "browser-live-acceptance": [],
   };
+  const declaredInputsByTestFile: Record<string, readonly string[]> = {};
 
   for (const filePath of allTestFiles) {
     const source = sources[filePath] ?? "";
@@ -184,6 +209,16 @@ export function buildTestProfileInventory({
       throw new Error(`${filePath}: no test profile owner`);
     }
     byProfile[owner].push(filePath);
+
+    const inputs = declaredInputs(filePath, source);
+    if (inputs.length > 0) {
+      if (owner !== "architecture-toolchain") {
+        throw new Error(
+          `${filePath}: declares \`// @vitest-inputs\` but belongs to ${owner}; a test that reads repository paths outside its import graph belongs to architecture-toolchain`,
+        );
+      }
+      declaredInputsByTestFile[filePath] = inputs;
+    }
   }
 
   const unitTestFiles = TEST_PROFILE_NAMES.filter(
@@ -194,6 +229,7 @@ export function buildTestProfileInventory({
     allTestFiles,
     unitTestFiles: unitTestFiles.sort(),
     byProfile,
+    declaredInputsByTestFile,
   };
 }
 
@@ -236,6 +272,24 @@ export function buildRepositoryTestProfileInventory(
   });
 }
 
+/** Tracked and untracked repository files, for proving declared globs still match something. */
+function listRepositoryFiles(repoRoot: string): string[] {
+  return execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  )
+    .split("\0")
+    .filter(Boolean);
+}
+
+function readChangedPathsFromStdin(): string[] {
+  return readFileSync(0, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 if (import.meta.main) {
   try {
     const repoRoot = path.resolve(
@@ -243,12 +297,34 @@ if (import.meta.main) {
       "..",
     );
     const inventory = buildRepositoryTestProfileInventory(repoRoot);
-    const counts = TEST_PROFILE_NAMES.map(
-      (profile) => `${profile}=${inventory.byProfile[profile].length}`,
-    ).join(" ");
-    process.stdout.write(
-      `test-profiles: ${inventory.allTestFiles.length} files ${counts}\n`,
-    );
+    if (process.argv.includes("--affected")) {
+      // Changed paths arrive on stdin, one per line, relative to the repo root.
+      const selected = selectTestsForChangedPaths(
+        inventory.declaredInputsByTestFile,
+        readChangedPathsFromStdin(),
+      );
+      for (const testFile of selected) process.stdout.write(`${testFile}\n`);
+    } else {
+      if (process.argv.includes("--check")) {
+        const stale = findStaleDeclaredInputs(
+          inventory.declaredInputsByTestFile,
+          listRepositoryFiles(repoRoot),
+        );
+        if (stale.length > 0) {
+          throw new Error(
+            `declared inputs match no repository file: ${stale
+              .map(({ testFile, glob }) => `${testFile} → ${glob}`)
+              .join(", ")}`,
+          );
+        }
+      }
+      const counts = TEST_PROFILE_NAMES.map(
+        (profile) => `${profile}=${inventory.byProfile[profile].length}`,
+      ).join(" ");
+      process.stdout.write(
+        `test-profiles: ${inventory.allTestFiles.length} files ${counts} declared-inputs=${Object.keys(inventory.declaredInputsByTestFile).length}\n`,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`test-profiles: ${message}\n`);

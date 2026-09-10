@@ -1,3 +1,12 @@
+// @vitest-inputs src/features/session/conversation/GraphWorkflowCard.tsx
+// @vitest-inputs src/features/session/hooks/use-approval-gate.ts
+// @vitest-inputs src/hooks/use-user-input-gate.ts
+// @vitest-inputs src/lib/active-conversations/route-handlers.ts
+// @vitest-inputs src/lib/prompt/route-handlers.ts
+// @vitest-inputs src/lib/state-store/sessions-repo.ts
+// @vitest-inputs src/lib/state-store/setters.ts
+// @vitest-inputs src/lib/validation/singleton.ts
+// @vitest-inputs src/lib/workflow-graph/{approval-gate,execution-repository,execution-route-handlers,lifecycle-classifier,workflow-manager}.ts
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";

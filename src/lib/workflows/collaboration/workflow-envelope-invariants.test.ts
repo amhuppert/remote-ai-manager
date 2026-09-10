@@ -1,3 +1,4 @@
+// @vitest-inputs src/lib/**/*.{ts,tsx}
 /**
  * Cross-boundary invariants for the workflow-scoped collaboration envelope
  * (Task 5.3).

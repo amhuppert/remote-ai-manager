@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.{ts,tsx,mjs}
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -81,6 +82,9 @@ const CHECKPOINT_EVENT = "CHECKPOINT_PHASE";
 
 function forbiddenCheckpointEvents(source: string, file: string): string[] {
   if (checkpointEventOwners.has(file.replace(/\.[cm]?[jt]sx?$/, ""))) return [];
+  // A literal spelling the event has to contain its text; skipping the parse
+  // for every other source is most of this file's saving.
+  if (!source.includes(CHECKPOINT_EVENT)) return [];
   const parsed = ts.createSourceFile(
     file,
     source,

@@ -1,3 +1,4 @@
+// @vitest-inputs src/lib/**/*.ts
 /**
  * Consumer-locality static half (design Blocker 4, D-B4.4).
  *

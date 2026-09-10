@@ -1,3 +1,4 @@
+// @vitest-inputs package.json
 import { constants } from "node:fs";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";

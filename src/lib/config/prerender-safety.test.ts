@@ -1,3 +1,4 @@
+// @vitest-inputs src/app/**/{page,layout}.tsx
 /**
  * Build-time guard: a page that reads the global config must not prerender.
  *

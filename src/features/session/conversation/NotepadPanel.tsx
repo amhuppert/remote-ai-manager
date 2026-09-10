@@ -33,7 +33,7 @@ import {
   useOpenNotepadId,
   useSetNotepadSort,
 } from "@/stores/session-detail.store";
-import NotepadOpenView from "./NotepadOpenView";
+import NotepadOpenView, { type NotepadAutosaveTiming } from "./NotepadOpenView";
 
 export interface NotepadPanelProps {
   projectName: string;
@@ -42,6 +42,8 @@ export interface NotepadPanelProps {
   conversationId: string;
   /** Queries are gated on the Notepad tab being the active right-pane tab. */
   active: boolean;
+  /** Forwarded to the open view; see `NotepadOpenViewProps.autosaveTiming`. */
+  autosaveTiming?: Partial<NotepadAutosaveTiming>;
 }
 
 const PANEL_CLASS =
@@ -60,6 +62,7 @@ export default function NotepadPanel({
   sessionName,
   conversationId,
   active,
+  autosaveTiming,
 }: NotepadPanelProps): React.JSX.Element {
   const openNotepadId = useOpenNotepadId();
 
@@ -73,6 +76,7 @@ export default function NotepadPanel({
           sessionName={sessionName}
           conversationId={conversationId}
           active={active}
+          {...(autosaveTiming === undefined ? {} : { autosaveTiming })}
         />
       ) : (
         <NotepadBrowseView projectName={projectName} active={active} />

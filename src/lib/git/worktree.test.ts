@@ -1,8 +1,21 @@
-import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
+import {
+  createGitRepoTemplate,
+  type GitRepoTemplate,
+} from "../shared/testing/git-repo-template";
 import {
   createWorktreeOperations,
   parseDirtyPaths,
@@ -518,6 +531,7 @@ describe("prepareSquashMerge auto-detect path", () => {
 
 describe("prepareSquashMerge on an already-merged branch (real git)", () => {
   const realOps = createWorktreeOperations(defaultGitClient);
+  let template: GitRepoTemplate;
   let repo: string;
   let targetSha: string;
   let featureSha: string;
@@ -527,28 +541,46 @@ describe("prepareSquashMerge on an already-merged branch (real git)", () => {
     return stdout.trim();
   }
 
-  beforeEach(async () => {
-    repo = await mkdtemp(path.join(tmpdir(), "cc-prepare-uptodate-"));
-    await realGit(["init", "--initial-branch=main", "."]);
-    await realGit(["config", "user.email", "engine@command-center.test"]);
-    await realGit(["config", "user.name", "Command Center"]);
-    await writeFile(path.join(repo, "a.txt"), "base\n", "utf-8");
-    await realGit(["add", "-A"]);
-    await realGit(["commit", "-m", "base"]);
+  beforeAll(async () => {
+    // `realGit` defaults to `repo`; point it at the template while building.
+    template = await createGitRepoTemplate(
+      "cc-prepare-uptodate-",
+      async (dir) => {
+        repo = dir;
+        await realGit(["init", "--initial-branch=main", "."]);
+        await realGit(["config", "user.email", "engine@command-center.test"]);
+        await realGit(["config", "user.name", "Command Center"]);
+        await writeFile(path.join(repo, "a.txt"), "base\n", "utf-8");
+        await realGit(["add", "-A"]);
+        await realGit(["commit", "-m", "base"]);
 
-    // The feature lands on the target, which then moves on: the branch is
-    // strictly behind its target yet fully contained in it.
-    await realGit(["checkout", "-b", "csm/feature"]);
-    await writeFile(path.join(repo, "feature.txt"), "feature\n", "utf-8");
-    await realGit(["add", "-A"]);
-    await realGit(["commit", "-m", "feature work"]);
-    featureSha = await realGit(["rev-parse", "HEAD"]);
-    await realGit(["checkout", "main"]);
-    await realGit(["merge", "--no-ff", "-m", "land feature", "csm/feature"]);
-    await writeFile(path.join(repo, "b.txt"), "later\n", "utf-8");
-    await realGit(["add", "-A"]);
-    await realGit(["commit", "-m", "later work on target"]);
-    targetSha = await realGit(["rev-parse", "HEAD"]);
+        // The feature lands on the target, which then moves on: the branch is
+        // strictly behind its target yet fully contained in it.
+        await realGit(["checkout", "-b", "csm/feature"]);
+        await writeFile(path.join(repo, "feature.txt"), "feature\n", "utf-8");
+        await realGit(["add", "-A"]);
+        await realGit(["commit", "-m", "feature work"]);
+        featureSha = await realGit(["rev-parse", "HEAD"]);
+        await realGit(["checkout", "main"]);
+        await realGit([
+          "merge",
+          "--no-ff",
+          "-m",
+          "land feature",
+          "csm/feature",
+        ]);
+        await writeFile(path.join(repo, "b.txt"), "later\n", "utf-8");
+        await realGit(["add", "-A"]);
+        await realGit(["commit", "-m", "later work on target"]);
+        targetSha = await realGit(["rev-parse", "HEAD"]);
+      },
+    );
+  });
+
+  afterAll(() => template.dispose());
+
+  beforeEach(async () => {
+    repo = await template.fresh();
   });
 
   afterEach(async () => {
@@ -722,6 +754,7 @@ describe("publishPreparedMerge", () => {
 describe("publishPreparedMerge (real git)", () => {
   const realOps = createWorktreeOperations(defaultGitClient);
   const parkedRef = "refs/cc-merges/job-real";
+  let template: GitRepoTemplate;
   let repo: string;
   let baseSha: string;
   let preparedSha: string;
@@ -731,25 +764,37 @@ describe("publishPreparedMerge (real git)", () => {
     return stdout.trim();
   }
 
-  beforeEach(async () => {
-    repo = await mkdtemp(path.join(tmpdir(), "cc-publish-prepared-"));
-    await realGit(["init", "--initial-branch=main", "."]);
-    await realGit(["config", "user.email", "engine@command-center.test"]);
-    await realGit(["config", "user.name", "Command Center"]);
-    await writeFile(path.join(repo, "a.txt"), "base\n", "utf-8");
-    await realGit(["add", "-A"]);
-    await realGit(["commit", "-m", "base"]);
-    baseSha = await realGit(["rev-parse", "HEAD"]);
+  beforeAll(async () => {
+    template = await createGitRepoTemplate(
+      "cc-publish-prepared-",
+      async (dir) => {
+        repo = dir;
+        await realGit(["init", "--initial-branch=main", "."]);
+        await realGit(["config", "user.email", "engine@command-center.test"]);
+        await realGit(["config", "user.name", "Command Center"]);
+        await writeFile(path.join(repo, "a.txt"), "base\n", "utf-8");
+        await realGit(["add", "-A"]);
+        await realGit(["commit", "-m", "base"]);
+        baseSha = await realGit(["rev-parse", "HEAD"]);
 
-    // Park a commit whose tree differs from main's, so a stray reset --hard
-    // into the target checkout would be visible in the working file.
-    await realGit(["checkout", "-b", "prep"]);
-    await writeFile(path.join(repo, "a.txt"), "prepared\n", "utf-8");
-    await realGit(["commit", "-am", "prepared"]);
-    preparedSha = await realGit(["rev-parse", "HEAD"]);
-    await realGit(["update-ref", parkedRef, preparedSha]);
-    await realGit(["checkout", "main"]);
-    await realGit(["branch", "-D", "prep"]);
+        // Park a commit whose tree differs from main's, so a stray reset
+        // --hard into the target checkout would be visible in the working
+        // file.
+        await realGit(["checkout", "-b", "prep"]);
+        await writeFile(path.join(repo, "a.txt"), "prepared\n", "utf-8");
+        await realGit(["commit", "-am", "prepared"]);
+        preparedSha = await realGit(["rev-parse", "HEAD"]);
+        await realGit(["update-ref", parkedRef, preparedSha]);
+        await realGit(["checkout", "main"]);
+        await realGit(["branch", "-D", "prep"]);
+      },
+    );
+  });
+
+  afterAll(() => template.dispose());
+
+  beforeEach(async () => {
+    repo = await template.fresh();
   });
 
   afterEach(async () => {
@@ -1089,27 +1134,38 @@ describe("parseWorktreeStatusV2", () => {
 });
 
 describe("readWorktreeStatusV2 (real git)", () => {
+  let template: GitRepoTemplate;
   let statusRepo: string;
 
+  beforeAll(async () => {
+    template = await createGitRepoTemplate(
+      "cc-worktree-status-",
+      async (repo) => {
+        await defaultGitClient.git(
+          ["init", "--initial-branch=lane", "."],
+          repo,
+        );
+        await defaultGitClient.git(
+          ["config", "user.email", "engine@command-center.test"],
+          repo,
+        );
+        await defaultGitClient.git(
+          ["config", "user.name", "Command Center"],
+          repo,
+        );
+        await writeStatusFile(repo, ".gitignore", "build/\n*.log\n");
+        await writeStatusFile(repo, "src/one.txt", "one\n");
+        await writeStatusFile(repo, "src/moveme.txt", "move\n");
+        await defaultGitClient.git(["add", "-A"], repo);
+        await defaultGitClient.git(["commit", "-m", "base"], repo);
+      },
+    );
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
-    statusRepo = await mkdtemp(path.join(tmpdir(), "cc-worktree-status-"));
-    await defaultGitClient.git(
-      ["init", "--initial-branch=lane", "."],
-      statusRepo,
-    );
-    await defaultGitClient.git(
-      ["config", "user.email", "engine@command-center.test"],
-      statusRepo,
-    );
-    await defaultGitClient.git(
-      ["config", "user.name", "Command Center"],
-      statusRepo,
-    );
-    await writeStatusFile(statusRepo, ".gitignore", "build/\n*.log\n");
-    await writeStatusFile(statusRepo, "src/one.txt", "one\n");
-    await writeStatusFile(statusRepo, "src/moveme.txt", "move\n");
-    await defaultGitClient.git(["add", "-A"], statusRepo);
-    await defaultGitClient.git(["commit", "-m", "base"], statusRepo);
+    statusRepo = await template.fresh();
   });
 
   afterEach(async () => {
@@ -1179,6 +1235,7 @@ describe("readWorktreeStatusV2 (real git)", () => {
 
 describe("parked merge refs (real git)", () => {
   const realOps = createWorktreeOperations(defaultGitClient);
+  let template: GitRepoTemplate;
   let refRepo: string;
   let firstSha: string;
 
@@ -1187,15 +1244,24 @@ describe("parked merge refs (real git)", () => {
     return stdout.trim();
   }
 
+  beforeAll(async () => {
+    // `refGit` binds to `refRepo`; point it at the template while building.
+    template = await createGitRepoTemplate("cc-parked-refs-", async (repo) => {
+      refRepo = repo;
+      await refGit(["init", "--initial-branch=main", "."]);
+      await refGit(["config", "user.email", "engine@command-center.test"]);
+      await refGit(["config", "user.name", "Command Center"]);
+      await writeFile(path.join(refRepo, "a.txt"), "base\n", "utf-8");
+      await refGit(["add", "-A"]);
+      await refGit(["commit", "-m", "base"]);
+      firstSha = await refGit(["rev-parse", "HEAD"]);
+    });
+  });
+
+  afterAll(() => template.dispose());
+
   beforeEach(async () => {
-    refRepo = await mkdtemp(path.join(tmpdir(), "cc-parked-refs-"));
-    await refGit(["init", "--initial-branch=main", "."]);
-    await refGit(["config", "user.email", "engine@command-center.test"]);
-    await refGit(["config", "user.name", "Command Center"]);
-    await writeFile(path.join(refRepo, "a.txt"), "base\n", "utf-8");
-    await refGit(["add", "-A"]);
-    await refGit(["commit", "-m", "base"]);
-    firstSha = await refGit(["rev-parse", "HEAD"]);
+    refRepo = await template.fresh();
   });
 
   afterEach(async () => {

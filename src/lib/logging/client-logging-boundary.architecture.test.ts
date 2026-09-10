@@ -1,3 +1,4 @@
+// @vitest-inputs src/**/*.{ts,tsx}
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
