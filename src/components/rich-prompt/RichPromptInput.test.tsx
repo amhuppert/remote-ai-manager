@@ -1,12 +1,7 @@
 // @vitest-environment jsdom
 import { createRef, useState } from "react";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQuery as render } from "@/test/component-mocks";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { RichPromptInput, type RichPromptInputHandle } from "./RichPromptInput";

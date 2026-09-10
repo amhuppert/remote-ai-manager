@@ -4,7 +4,7 @@ import { cn } from "@/lib/ui/cn";
 import { ChevronRightIcon } from "@/components/workflow-config-panel/icons";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { inspectorFocusRingClass } from "./chrome";
-import type { ExecutionGate } from "./gates-model";
+import type { ExecutionGate } from "@/lib/workflow-graph/execution-gates";
 
 /**
  * Everything waiting on the human on this run, as one list (E2, README §10).

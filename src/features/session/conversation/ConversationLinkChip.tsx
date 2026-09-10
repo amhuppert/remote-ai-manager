@@ -1,56 +1,27 @@
 "use client";
 
-import Link from "next/link";
 import type { ConversationRefAttrs } from "@/lib/conversations/schemas";
-import { conversationsPageHref } from "@/lib/conversations/hrefs";
-
-interface ConversationLinkChipProps {
-  attrs: ConversationRefAttrs;
-}
+import { buildConversationRefXml } from "@/lib/conversations/conversation-ref";
+import { conversationRefAttrsToMentionAttrs } from "@/lib/prompt-editor/conversation-mention-node";
+import { LiveReferenceChip } from "@/components/references/LiveReferenceChip";
 
 export default function ConversationLinkChip({
   attrs,
-}: ConversationLinkChipProps): React.JSX.Element {
-  const projectName = attrs["project-name"];
-  // The scope's user-visible name: the session name, or "project" for a
-  // session-less project conversation — the project variant has no session-name
-  // attribute to render (R1.3).
-  const scopeLabel =
-    attrs.scope === "session" ? attrs["session-name"] : "project";
-  const conversationId = attrs["conversation-id"];
-  const conversationName = attrs["conversation-name"];
-  const backend = attrs["backend"];
-
-  const href = conversationsPageHref({ conversationId });
-
-  const displayLabel =
-    conversationName.length > 0 ? conversationName : conversationId;
-
+}: {
+  attrs: ConversationRefAttrs;
+}): React.JSX.Element {
   return (
-    <Link
-      href={href}
-      className="inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised px-[6px] py-[2px] align-baseline font-mono text-[0.78rem] leading-none text-inherit no-underline transition-[border-color,background,box-shadow] duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:shadow-[0_0_0_2px_var(--cyan-glow)] data-[backend=codex]:border-violet-dim"
-      title={`${projectName} · ${scopeLabel}`}
-      data-backend={backend}
-    >
-      <span className="font-semibold text-cyan">#</span>
-      <span className="text-text-primary">{displayLabel}</span>
-      <span
-        className="inline-flex items-center text-text-tertiary"
-        aria-hidden="true"
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-        >
-          <path d="M3 9 L9 3" />
-          <path d="M4 3 L9 3 L9 8" />
-        </svg>
-      </span>
-    </Link>
+    <LiveReferenceChip
+      target={{
+        kind: "conversation",
+        projectName: attrs["project-name"],
+        id: attrs["conversation-id"],
+      }}
+      title={attrs["conversation-name"]}
+      identity={attrs["conversation-id"]}
+      reference={buildConversationRefXml(
+        conversationRefAttrsToMentionAttrs(attrs),
+      )}
+    />
   );
 }

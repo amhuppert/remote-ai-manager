@@ -56,6 +56,28 @@ const noopCallbacks = {
 };
 
 describe("GraphWorkflowPanel", () => {
+  it("copies the displayed execution identity while the inspector controls are present", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={createWorkflowExecution({
+          id: "archived-run",
+          status: "completed",
+        })}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+        actionCapability="read-only"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Copy reference" }));
+    expect(await navigator.clipboard.readText()).toContain(
+      'execution-id="archived-run"',
+    );
+    expect(await navigator.clipboard.readText()).toContain(
+      'session-name="test-session"',
+    );
+  });
   it("exposes the active execution identity for contextual diagnostics", () => {
     const execution = createWorkflowExecution({ id: "workflow-observed" });
     const view = renderWithQuery(

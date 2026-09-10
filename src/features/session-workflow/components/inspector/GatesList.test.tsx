@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import GatesList from "./GatesList";
-import type { ExecutionGate } from "./gates-model";
+import type { ExecutionGate } from "@/lib/workflow-graph/execution-gates";
 
 const APPROVAL: ExecutionGate = {
   kind: "approval",

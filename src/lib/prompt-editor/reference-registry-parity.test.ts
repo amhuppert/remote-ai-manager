@@ -2,6 +2,7 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vitest";
+import { ExecutionMentionNode } from "./execution-mention-node";
 import { ConversationMentionNode } from "./conversation-mention-node";
 import { deserializePromptDoc } from "./deserializer";
 import { MessageMentionNode } from "./message-mention-node";
@@ -24,6 +25,11 @@ import {
 import { TicketMentionNode } from "./ticket-mention-node";
 
 const REFERENCE_FIXTURES = [
+  {
+    type: "execution",
+    nodeName: "executionMention",
+    xml: '<execution-ref project-name="my-app" session-name="main" execution-id="exec-123" title="Ship capture" read-command="cctl workflow status &apos;exec-123&apos; --project &apos;my-app&apos; --session &apos;main&apos;" />',
+  },
   {
     type: "conversation",
     nodeName: "conversationMention",
@@ -95,6 +101,7 @@ const PICKER_CONTEXT: ReferencePickerContext = {
   tickets: [],
   specs: [],
   notepads: [],
+  executions: [],
   selectedSpec: null,
   includeFinishedTickets: false,
   includeArchivedConversations: false,
@@ -108,6 +115,7 @@ function roundTrip(xml: string): {
     extensions: [
       StarterKit,
       ConversationMentionNode,
+      ExecutionMentionNode,
       MessageMentionNode,
       TicketMentionNode,
       SpecMentionNode,
@@ -155,6 +163,17 @@ describe("existing reference serialization/parser parity", () => {
         hasPickerSource: entry.pickerSource !== undefined,
       })),
     ).toEqual([
+      {
+        type: "execution",
+        nodeName: "executionMention",
+        xmlTag: "execution-ref",
+        hasAttrsSchema: true,
+        hasBuildXml: true,
+        hasParseAttrs: true,
+        hasEditorChip: true,
+        hasTranscriptChip: true,
+        hasPickerSource: true,
+      },
       {
         type: "conversation",
         nodeName: "conversationMention",

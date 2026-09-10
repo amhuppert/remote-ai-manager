@@ -7,6 +7,8 @@ import type { ReferenceType } from "@/lib/prompt-editor";
  * itself — a kind cannot silently fall out of parity.
  */
 export const REFERENCE_XML_FIXTURES: Record<ReferenceType, string> = {
+  execution:
+    '<execution-ref project-name="cc" session-name="capture" execution-id="run-1" title="Delivery" read-command="cctl workflow status run-1 --project cc --session capture" />',
   conversation:
     '<conversation-ref project-name="my-app" project-path="/repos/my-app" scope="session" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" read-command="cctl conversation read conv-123 --outline" />',
   message:

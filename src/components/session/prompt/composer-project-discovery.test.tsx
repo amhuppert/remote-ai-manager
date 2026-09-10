@@ -33,6 +33,12 @@ const FilesPicker = createReferencePickerPopup({
         ? { projectName }
         : { projectName, sessionName: scopeRef.sessionName },
     ),
+  useExecutions: () => ({
+    data: [],
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
   useNotepads: () => ({ data: [], ...idle }),
 });
 

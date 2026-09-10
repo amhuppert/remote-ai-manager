@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, act, waitFor } from "@testing-library/react";
+import {
+  render as testingLibraryRender,
+  fireEvent,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import { createRef } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createTestQueryClient } from "@/test/component-mocks";
 import {
   PromptEditor,
   shouldOpenSlashPopup,
@@ -23,6 +29,15 @@ const {
   mockUseProjectCommandsQuery: vi.fn(),
   mockUseAgentCapabilityViewQuery: vi.fn(),
 }));
+
+function render(ui: React.ReactElement) {
+  const client = createTestQueryClient();
+  return testingLibraryRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
 
 vi.mock("@/lib/commands/queries", () => ({
   useCommandsQuery: mockUseCommandsQuery,
@@ -1158,7 +1173,7 @@ describe("ticket-ref paste handling", () => {
 
     fireEvent.click(
       container.querySelector(
-        'button[aria-label="Remove ticket command-center#12"]',
+        'button[aria-label="Remove ticket reference Harden ticket context"]',
       ) as HTMLElement,
     );
     expect(onChange).toHaveBeenLastCalledWith("");
@@ -1213,7 +1228,9 @@ describe("conversation-ref paste handling", () => {
 
     // The chip NodeView mounts a remove button unique to the conversation chip.
     expect(
-      container.querySelector('button[aria-label="Remove #Refactor parser"]'),
+      container.querySelector(
+        'button[aria-label="Remove conversation reference Refactor parser"]',
+      ),
     ).not.toBeNull();
 
     const serialized = ref.current!.serialize([]);
@@ -1232,7 +1249,9 @@ describe("conversation-ref paste handling", () => {
     pasteText(pm, '<conversation-ref project-name="x" conversation-id="y" />');
 
     expect(
-      container.querySelector('button[aria-label^="Remove #"]'),
+      container.querySelector(
+        'button[aria-label^="Remove conversation reference"]',
+      ),
     ).toBeNull();
   });
 
@@ -1248,7 +1267,9 @@ describe("conversation-ref paste handling", () => {
     pasteText(pm, `${CONVERSATION_REF} and ${messageRef}`);
 
     expect(
-      container.querySelector('button[aria-label="Remove #Refactor parser"]'),
+      container.querySelector(
+        'button[aria-label="Remove conversation reference Refactor parser"]',
+      ),
     ).not.toBeNull();
     expect(
       container.querySelector("[data-message-mention-chip]"),

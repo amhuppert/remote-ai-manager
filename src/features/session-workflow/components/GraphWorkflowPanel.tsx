@@ -22,6 +22,8 @@ import { useWorkflowRailCollapse } from "@/components/workflow-graph/useWorkflow
 import { MobilePanelVisibility } from "@/components/workflow-graph/mobile-panel-visibility";
 import { cn } from "@/lib/ui/cn";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
+import { CopyExecutionReferenceButton } from "@/components/references/CopyExecutionReferenceButton";
+import { originFallbackName } from "@/lib/workflow-graph/execution-origin";
 import ExecutionStatusBar, {
   type ExecutionControlAction,
 } from "./ExecutionStatusBar";
@@ -431,6 +433,32 @@ export default function GraphWorkflowPanel({
           data-workflow-execution-id={execution.id}
         >
           <ExecutionStatusBar
+            trailingControls={
+              <>
+                <CopyExecutionReferenceButton
+                  projectName={projectName}
+                  sessionName={sessionName}
+                  executionId={execution.id}
+                  title={
+                    execution.launchDocument?.name ??
+                    originFallbackName(execution.origin)
+                  }
+                />
+                {/* Expanding is the strip's job once the rail is collapsed —
+                    two controls with the same name would be two ways to say
+                    the same thing in the same view. */}
+                {!isMobile && !inspectorCollapsed && (
+                  <IconButton
+                    variant="square"
+                    aria-label="Collapse inspector"
+                    title="Collapse inspector"
+                    onClick={() => setInspectorCollapsed(true)}
+                  >
+                    <PanelRightIcon />
+                  </IconButton>
+                )}
+              </>
+            }
             // Remounted per execution so a confirmation opened for one run can
             // never be accepted against the run that replaced it.
             key={execution.id}
@@ -468,23 +496,6 @@ export default function GraphWorkflowPanel({
             {...(renderExecutionsSheet === undefined
               ? {}
               : { renderExecutionsSheet })}
-            {...(isMobile || inspectorCollapsed
-              ? {}
-              : {
-                  // Expanding is the strip's job once the rail is collapsed —
-                  // two controls with the same name would be two ways to say
-                  // the same thing in the same view.
-                  trailingControls: (
-                    <IconButton
-                      variant="square"
-                      aria-label="Collapse inspector"
-                      title="Collapse inspector"
-                      onClick={() => setInspectorCollapsed(true)}
-                    >
-                      <PanelRightIcon />
-                    </IconButton>
-                  ),
-                })}
           />
           <div className="relative flex min-h-0 flex-1 max-768:flex-col">
             {isMobile ? (

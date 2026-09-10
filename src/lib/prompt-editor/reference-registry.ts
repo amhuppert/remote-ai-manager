@@ -1,3 +1,12 @@
+import {
+  ExecutionRefChip,
+  ExecutionRefEditorChip,
+} from "@/components/references/ExecutionRefChips";
+import {
+  executionRefAttrsSchema,
+  buildExecutionRefXml,
+  type ExecutionReferenceItem,
+} from "@/lib/workflow-graph/references";
 import { conversationTargetScopeLabel } from "@/lib/conversations/conversation-target";
 import { conversationListItemTarget } from "@/lib/conversations/schemas";
 import { createElement, type ComponentType } from "react";
@@ -65,6 +74,7 @@ import {
 } from "./spec-mention-nodes";
 
 export type ReferenceType =
+  | "execution"
   | "conversation"
   | "ticket"
   | "message"
@@ -77,6 +87,7 @@ export type ReferenceType =
   | "section"
   | "notepad";
 export type ReferenceNodeName =
+  | "executionMention"
   | "conversationMention"
   | "ticketMention"
   | "messageMention"
@@ -89,6 +100,7 @@ export type ReferenceNodeName =
   | "sectionMention"
   | "notepadMention";
 export type ReferenceXmlTag =
+  | "execution-ref"
   | "conversation-ref"
   | "ticket-ref"
   | "message-ref"
@@ -118,6 +130,7 @@ export interface ReferencePickerContext {
   specs: readonly SpecPickerSpec[];
   /** Everything reachable from here: global notepads plus this project's. */
   notepads: readonly NotepadListItem[];
+  executions: readonly ExecutionReferenceItem[];
   selectedSpec: SpecPickerSpec | null;
   /** Offer tickets that are `done` or `closed` (the Alt+D filter). */
   includeFinishedTickets: boolean;
@@ -566,6 +579,72 @@ function matchingIndices(value: string, normalizedQuery: string): number[] {
 }
 
 export const REFERENCE_REGISTRY = [
+  {
+    type: "execution",
+    nodeName: "executionMention",
+    xmlTag: "execution-ref",
+    attrsSchema: executionRefAttrsSchema,
+    buildXml: (attrs: Record<string, unknown>) => {
+      const parsed = executionRefAttrsSchema.parse(attrs);
+      return buildExecutionRefXml({
+        projectName: parsed["project-name"],
+        sessionName: parsed["session-name"],
+        executionId: parsed["execution-id"],
+        title: parsed.title,
+      });
+    },
+    parseAttrs: (attrs: unknown) => ({
+      ...executionRefAttrsSchema.parse(attrs),
+    }),
+    EditorChip: ExecutionRefEditorChip,
+    TranscriptChip: transcriptChip(executionRefAttrsSchema, ExecutionRefChip),
+    pickerSource: {
+      groupLabel: "Executions",
+      queryAliases: ["execution", "executions", "workflow", "workflows"],
+      getItems: (
+        query: string,
+        context: ReferencePickerContext,
+      ): ReferencePickerItem[] =>
+        context.executions
+          .filter((item) =>
+            `${item.title} ${item.executionId} ${item.projectName} ${item.sessionName}`
+              .toLowerCase()
+              .includes(query.toLowerCase()),
+          )
+          .map((item) => ({
+            type: "execution",
+            id: `execution:${item.executionId}`,
+            label: item.title,
+            description: `${item.projectName} · ${item.sessionName}`,
+            matchIndices: matchingIndices(item.title, query.toLowerCase()),
+            attrs: {
+              "project-name": item.projectName,
+              "session-name": item.sessionName,
+              "execution-id": item.executionId,
+              title: item.title,
+            },
+            presentation: {
+              idLabel: item.executionId.slice(0, 8),
+              meta: { kind: "relative-time", iso: item.startedAt },
+              status: {
+                label: item.status,
+                tone:
+                  item.status === "running"
+                    ? "cyan"
+                    : item.status === "completed"
+                      ? "green"
+                      : item.status === "halted"
+                        ? "red"
+                        : "neutral",
+              },
+              facts: [],
+              muted: false,
+              dimPrefixLength: 0,
+              completion: item.title,
+            },
+          })),
+    },
+  },
   {
     type: "conversation",
     nodeName: "conversationMention",

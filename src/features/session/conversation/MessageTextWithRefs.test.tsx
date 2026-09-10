@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import { renderWithQuery as render } from "@/test/component-mocks";
 import type {
   ConversationRefAttrs,
   MessageRefAttrs,
@@ -279,10 +280,8 @@ describe("MessageTextWithRefs — canonical message adapter", () => {
       <MessageTextWithRefs text={`before ${ref} after`} />,
     );
 
-    // The chip stays an interactive link even though the surrounding prose is
-    // now canonical Markdown.
-    const chip = await screen.findByRole("link", { name: /Refactor/ });
-    expect(chip).toHaveAttribute("href");
+    const chip = await screen.findByRole("button", { name: /Refactor/ });
+    expect(chip).toHaveAttribute("aria-haspopup", "dialog");
 
     await waitFor(() => {
       expect(markdownRoots(container)).toHaveLength(2);

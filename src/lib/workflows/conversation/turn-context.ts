@@ -1,3 +1,4 @@
+import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
 import { buildDebugPromptContext } from "@/lib/workflows/debug/prompt-policy";
 
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -218,8 +219,11 @@ export async function prepareConversationTurnContext(
       conversationId: target.conversationId,
       promptText: expanded,
     });
+    const summarizedText = await appendLiveReferenceSummaries(notepad.text, {
+      read: (target) => deps.context.readLiveReference(target),
+    });
     const promptText = assembleTurnPrompt({
-      userText: notepad.text,
+      userText: summarizedText,
       checkpointSeedBlock: checkpoint?.block ?? null,
       activeTicketBlock,
       workflowResultsBlock: workflow.block,

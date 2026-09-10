@@ -37,6 +37,7 @@ export const PICKER_KIND_ORDER = [
   "spec",
   "ticket",
   "notepad",
+  "execution",
 ] as const;
 export type PickerKind = (typeof PICKER_KIND_ORDER)[number];
 
@@ -75,6 +76,7 @@ const KIND_LABELS: Record<PickerKind, string> = {
   spec: "Specs",
   ticket: "Tickets",
   notepad: "Notepads",
+  execution: "Executions",
 };
 
 /** What selecting a row inserts into the document. */
@@ -185,6 +187,7 @@ const GLYPH_BY_ITEM_KIND: Record<PickerItemKind, PickerGlyph> = {
   assumption: "spec",
   section: "spec",
   notepad: "notepad",
+  execution: "execution",
 };
 
 /** A row before it knows its position in the flat list. */
@@ -233,6 +236,7 @@ function buildScopeView(input: PickerViewInput): PickerView {
     spec: referenceRows("spec", searchQuery, context),
     ticket: tickets.shown,
     notepad: referenceRows("notepad", searchQuery, context),
+    execution: referenceRows("execution", searchQuery, context),
   };
 
   const kinds =
@@ -492,7 +496,7 @@ function fileRows(
  * spaces allowed in a query, a space-separated `task list` would otherwise be
  * read as a scope filter rather than the text the user is searching for.
  */
-function parseScopeQuery(query: string): {
+export function parseScopeQuery(query: string): {
   scope: PickerKind | null;
   searchQuery: string;
 } {

@@ -138,6 +138,13 @@ describe("ReferencePicker extension", () => {
     expect(app.open("#")).toBeNull();
   });
 
+  it("keeps an explicit execution search open while remote results have not arrived", async () => {
+    const app = harness({ hasAnyMatch: () => false });
+    await type(app.editor, "#exec: Capture delivery");
+    expect(app.open("#")?.query).toBe("exec: Capture delivery");
+    app.editor.destroy();
+  });
+
   it("keeps a spaceless query open even when nothing matches", async () => {
     const app = harness({ hasAnyMatch: () => false });
 

@@ -379,12 +379,15 @@ describe("SpawnCard", () => {
 
   it("submits every row's current canonical reference document from the card action", async () => {
     const captured: { body?: string } = {};
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init?: RequestInit) => {
-        captured.body = init?.body as string;
-        return Response.json({ created: [], failed: [] });
-      }),
+    fetchFixture = installFetchFixture();
+    fetchFixture.json("POST", "/api/live-references", { results: [] });
+    fetchFixture.reply(
+      "POST",
+      "/api/projects/repo/conversations/plc-1/spawn",
+      (request) => {
+        captured.body = JSON.stringify(request.jsonBody);
+        return { json: { created: [], failed: [] } };
+      },
     );
     const conversationRef =
       '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +

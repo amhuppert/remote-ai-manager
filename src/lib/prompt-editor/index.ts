@@ -1,3 +1,4 @@
+export { ExecutionMentionNode } from "./execution-mention-node";
 export { ImageMarker } from "./image-marker-node";
 export type { ImageMarkerAttrs, ImageMarkerStorage } from "./image-marker-node";
 export { SlashCommandMarker } from "./slash-command-marker-node";
