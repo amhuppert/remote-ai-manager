@@ -103,6 +103,38 @@ afterEach(() => {
 });
 
 describe("alignment chip approval transition", () => {
+  it("keeps showing the active charter while an /align draft is still unfilled", () => {
+    // `/align` inserts the draft row when the command runs, minutes before the
+    // agent submits content. The chip must not promise an update the user can
+    // act on until the Approve-Charter gate can actually offer one.
+    const activeV1 = makeVersion({ id: "v1", version: 1, status: "active" });
+    const unfilled = makeVersion({
+      id: "d1",
+      version: null,
+      status: "draft",
+      source: "align_rerun",
+      content: "",
+      contentHash: "",
+    });
+
+    const state = makeState({
+      active: activeV1,
+      draft: unfilled,
+      history: [activeV1],
+    });
+    const chipState = deriveAlignmentChipState(state, 1);
+    expect(chipState).toBe("active");
+
+    render(
+      <AlignmentChip
+        state={chipState}
+        activeVersion={state.active?.version ?? null}
+      />,
+    );
+    expect(screen.queryByText(/update pending/i)).toBeNull();
+    expect(screen.getByText("v1")).toBeInTheDocument();
+  });
+
   it("transitions from update-pending to active vN once the draft is approved (R9.1)", () => {
     const activeV1 = makeVersion({ id: "v1", version: 1, status: "active" });
     const draft = makeVersion({ id: "d1", version: null, status: "draft" });
