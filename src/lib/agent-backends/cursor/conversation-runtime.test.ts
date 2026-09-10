@@ -9,6 +9,7 @@ import type {
 } from "../conversation";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import { turnContinuationSchema } from "../errors";
+import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import type { PortableMcpConfig } from "../portable-mcp";
 import {
   CursorConversationRuntime,
@@ -953,18 +954,53 @@ describe("inline MCP configuration", () => {
           id: "remote",
           transport: "streamable-http",
           url: "https://x.test/mcp",
+          toolTimeoutSec: -1,
         },
       ],
     });
     expect(applied.disposition).toBe("rejected");
     expect(applied.droppedServerIds).toEqual(["remote"]);
-    expect(applied.errors.remote).toContain("streamable-http");
+    expect(applied.errors.remote).toContain("control");
 
     await harness.send();
     expect(
       elementAt(elementAt(harness.transport.workers, 0).turns, 1).input
         .mcpServers,
     ).toEqual(EXPECTED_FIXTURE_MAP);
+  });
+
+  it("refuses a partially invalid replacement without emitting the remaining servers", async () => {
+    const harness = createHarness({
+      create: { tooling: { portableMcp: FIXTURE_MCP } },
+    });
+    const result = await harness.runtime.applyPortableMcpConfig({
+      servers: [
+        { id: "valid", transport: "stdio", command: "valid" },
+        {
+          id: "invalid",
+          transport: "stdio",
+          command: "invalid",
+          toolTimeoutSec: -1,
+        },
+      ],
+    });
+    expect(result.disposition).toBe("rejected");
+    await harness.send();
+    expect(
+      elementAt(elementAt(harness.transport.workers, 0).turns, 0).input
+        .mcpServers,
+    ).toEqual(EXPECTED_FIXTURE_MAP);
+  });
+
+  it("reports the dispatched configuration on input acceptance", async () => {
+    const harness = createHarness({
+      create: { tooling: { portableMcp: FIXTURE_MCP } },
+    });
+    await harness.send();
+    expect(harness.events).toContainEqual({
+      type: "input_accepted",
+      mcpConfigHash: computeEffectiveConfigHash(FIXTURE_MCP),
+    });
   });
 
   it("refuses to stage a config once the runtime is closed", async () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { McpTransportCompatibility } from "@/components/mcp/McpTransportCompatibility";
 
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 import {
@@ -325,6 +326,7 @@ function McpCapabilityRow({
 
       {expanded ? (
         <div className="col-[1/-1] -mx-md mt-sm -mb-sm border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-lg pt-sm pb-md">
+          <McpTransportCompatibility compatibility={server.compatibility} />
           <div className="grid grid-cols-[1fr_auto] items-center gap-md py-[6px] font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
             <span>Tools</span>
             <Button

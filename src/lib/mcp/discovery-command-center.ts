@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -260,6 +261,7 @@ function parseServerEntry(
     config: canonical.config,
     sourceRefs: [sourceRef],
     configSignature: signatureFor(canonical.config),
+    ...(canonical.native ? { native: canonical.native } : {}),
     reserved: false,
     diagnostics: [],
   };
@@ -268,14 +270,59 @@ function parseServerEntry(
 }
 
 type CanonicalOutcome =
-  | { config: McpCanonicalServerConfig }
+  | {
+      config: McpCanonicalServerConfig;
+      native?: {
+        enabled?: boolean;
+        enabledTools?: string[];
+        disabledTools?: string[];
+      };
+    }
   | { error: string; code: string };
+
+const authoredControlsSchema = z.object({
+  enabled: z.boolean().optional(),
+  enabledTools: z.array(z.string().min(1)).optional(),
+  disabledTools: z.array(z.string().min(1)).optional(),
+  startupTimeoutSec: z.number().positive().optional(),
+  toolTimeoutSec: z.number().positive().optional(),
+  bearerTokenEnvVar: z.string().min(1).optional(),
+});
 
 function toCanonicalConfig(
   entry: Record<string, unknown>,
   typeField: string | undefined,
 ): CanonicalOutcome {
   const transport = typeField ?? "stdio";
+  if (entry.auth !== undefined)
+    return {
+      code: "mcp.source.invalid-entry",
+      error:
+        "MCP auth configuration is unsupported; use headers or bearerTokenEnvVar",
+    };
+  const controls = authoredControlsSchema.safeParse(entry);
+  if (!controls.success)
+    return {
+      code: "mcp.source.invalid-entry",
+      error: "Invalid MCP control fields",
+    };
+  const {
+    enabled,
+    enabledTools,
+    disabledTools,
+    startupTimeoutSec,
+    toolTimeoutSec,
+    bearerTokenEnvVar,
+  } = controls.data;
+  const native = {
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(enabledTools !== undefined ? { enabledTools } : {}),
+    ...(disabledTools !== undefined ? { disabledTools } : {}),
+  };
+  const deadlines = {
+    ...(startupTimeoutSec !== undefined ? { startupTimeoutSec } : {}),
+    ...(toolTimeoutSec !== undefined ? { toolTimeoutSec } : {}),
+  };
 
   if (transport === "stdio") {
     if (typeof entry["command"] !== "string") {
@@ -286,6 +333,7 @@ function toCanonicalConfig(
     }
     const config: McpCanonicalServerConfig = {
       transport: "stdio",
+      ...deadlines,
       command: entry["command"],
       ...(Array.isArray(entry["args"])
         ? {
@@ -297,7 +345,7 @@ function toCanonicalConfig(
       ...(typeof entry["cwd"] === "string" ? { cwd: entry["cwd"] } : {}),
       ...(isStringRecord(entry["env"]) ? { env: entry["env"] } : {}),
     };
-    return { config };
+    return { config, ...(Object.keys(native).length ? { native } : {}) };
   }
 
   if (transport === "http" || transport === "streamable-http") {
@@ -309,12 +357,14 @@ function toCanonicalConfig(
     }
     const config: McpCanonicalServerConfig = {
       transport: "streamable-http",
+      ...deadlines,
+      ...(bearerTokenEnvVar !== undefined ? { bearerTokenEnvVar } : {}),
       url: entry["url"],
       ...(isStringRecord(entry["headers"])
         ? { headers: entry["headers"] }
         : {}),
     };
-    return { config };
+    return { config, ...(Object.keys(native).length ? { native } : {}) };
   }
 
   if (transport === "sse") {
@@ -326,12 +376,14 @@ function toCanonicalConfig(
     }
     const config: McpCanonicalServerConfig = {
       transport: "sse",
+      ...deadlines,
+      ...(bearerTokenEnvVar !== undefined ? { bearerTokenEnvVar } : {}),
       url: entry["url"],
       ...(isStringRecord(entry["headers"])
         ? { headers: entry["headers"] }
         : {}),
     };
-    return { config };
+    return { config, ...(Object.keys(native).length ? { native } : {}) };
   }
 
   // Do NOT echo the raw `type` value: a malformed entry can put a

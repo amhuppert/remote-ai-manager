@@ -4,8 +4,11 @@
  * Maps canonical server configs to the appropriate transport, opens a short
  * lived MCP Client, and exposes it through the `DirectToolProbeClient`
  * interface expected by `createDirectToolProbe`. Tests supply their own
- * factory and never import this module.
+ * factory to isolate failure scenarios.
  */
+import { resolveMcpHeaders } from "./remote-headers";
+import { createLogger } from "@/lib/logging";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -17,6 +20,8 @@ import type {
   DirectToolProbeClient,
   DirectToolProbeClientFactoryInput,
 } from "./tool-discovery-probe";
+
+const logger = createLogger("mcp.tool-discovery");
 
 const CLIENT_INFO = {
   name: "command-center-mcp-probe",
@@ -84,7 +89,10 @@ function createTransportFor(
       ...(requestInit !== undefined ? { requestInit } : {}),
     });
   }
-  const requestInit = buildRequestInit(server.headers);
+  const requestInit = buildRequestInit(
+    server.headers,
+    server.bearerTokenEnvVar,
+  );
   return new SSEClientTransport(new URL(server.url), {
     ...(requestInit !== undefined ? { requestInit } : {}),
   });
@@ -94,20 +102,12 @@ function buildRequestInit(
   headers?: Readonly<Record<string, string>>,
   bearerTokenEnvVar?: string,
 ): RequestInit | undefined {
-  const resolvedHeaders: Record<string, string> = {};
-  if (headers) {
-    for (const [key, value] of Object.entries(headers)) {
-      resolvedHeaders[key] = value;
-    }
+  const resolved = resolveMcpHeaders(headers, bearerTokenEnvVar);
+  if (resolved.missingBearer !== undefined) {
+    logger.warn("probe.bearer_missing", { variable: resolved.missingBearer });
+    throw new Error("MCP bearer environment variable is missing");
   }
-  if (bearerTokenEnvVar) {
-    const token = process.env[bearerTokenEnvVar];
-    if (token && !("Authorization" in resolvedHeaders)) {
-      resolvedHeaders.Authorization = `Bearer ${token}`;
-    }
-  }
-  if (Object.keys(resolvedHeaders).length === 0) {
-    return undefined;
-  }
-  return { headers: resolvedHeaders };
+  return Object.keys(resolved.headers).length
+    ? { headers: resolved.headers }
+    : undefined;
 }

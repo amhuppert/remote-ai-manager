@@ -183,7 +183,10 @@ export function createLiveHarness(options: LiveHarnessOptions): LiveHarness {
         }
       : cursorWorkerScriptPath,
     workerExecArgv: () => [],
-    buildChildEnv,
+    buildChildEnv: () => ({
+      ...buildChildEnv(),
+      CURSOR_DATA_DIR: path.join(options.evidenceRoot, "cursor-data"),
+    }),
     // No server reachable from the suite: the worker's cctl environment is
     // built the same way, it just points at nothing. Nothing in the matrix
     // asks the worker to call back into Command Center.

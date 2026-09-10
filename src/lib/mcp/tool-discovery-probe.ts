@@ -91,7 +91,7 @@ export function createDirectToolProbe(
       });
       return errorResult(
         "mcp.probe.factory_failed",
-        "failed to initialize probe",
+        "failed to initialize probe; check transport and authentication configuration",
         {
           serverKey: input.serverKey,
         },
@@ -118,13 +118,28 @@ export function createDirectToolProbe(
             { serverKey: input.serverKey },
           );
         }
+        const status =
+          typeof err === "object" && err !== null && "code" in err
+            ? err.code
+            : undefined;
+        const authFailed =
+          status === 401 ||
+          status === 403 ||
+          (err instanceof Error &&
+            (err.name === "UnauthorizedError" ||
+              /(?:\b401\b|\b403\b|unauthorized)/i.test(err.message)));
         logger.warn("probe.connect_failed", {
           serverKey: input.serverKey,
           transport: input.server.transport,
+          reason: authFailed ? "authentication" : "connection",
         });
-        return errorResult("mcp.probe.connect_failed", "connection failed", {
-          serverKey: input.serverKey,
-        });
+        return errorResult(
+          authFailed ? "mcp.probe.auth_failed" : "mcp.probe.connect_failed",
+          authFailed
+            ? "authentication failed; check headers or bearer credentials"
+            : "connection failed; check server availability",
+          { serverKey: input.serverKey },
+        );
       }
 
       try {

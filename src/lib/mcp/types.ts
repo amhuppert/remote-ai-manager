@@ -31,10 +31,11 @@ interface McpCanonicalHttpServerConfig {
   toolTimeoutSec?: number;
 }
 
-interface McpCanonicalSseServerConfig {
+interface McpCanonicalSseServerConfig extends Omit<
+  McpCanonicalHttpServerConfig,
+  "transport"
+> {
   transport: "sse";
-  url: string;
-  headers?: Readonly<Record<string, string>>;
 }
 
 export type McpCanonicalServerConfig =

@@ -16,7 +16,7 @@
  *   conversation runtime's current turn state. A running turn is never
  *   interrupted — configuration changes are recorded as pending and the
  *   next-turn apply picks them up.
- * - `applyAtTurnStart` is the sole writer of `lastAppliedConfigHash`.
+ * - Receipt-based runtimes keep configuration pending until dispatch is acknowledged.
  * - `applyAfterOverrideChange` writes only pending fields
  *   (`pendingConfigHash`, `pendingServerKeys`, `lastApplyDisposition`,
  *   `lastApplyError`). Live Claude applies still flow through the runtime so
@@ -27,12 +27,13 @@
  *   apply result for diagnostics.
  */
 
-import { createHash } from "node:crypto";
+import { computeEffectiveConfigHash } from "./config-hash";
+import { publishEvent } from "@/lib/events/publication";
+import type { McpConfigUpdatedEvent } from "./schemas";
 
 import type {
   McpApplyResult,
   PortableMcpConfig,
-  PortableMcpServerConfig,
 } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
@@ -52,66 +53,6 @@ type StateManager = ReturnType<typeof createStateManager>;
 // ===========================================================================
 // Task 10.1 — deterministic hash over the full emitted portable config
 // ===========================================================================
-
-/**
- * Compute a stable SHA-256 digest over the full emitted portable MCP config
- * (user-resolved servers + protected gateway servers). The hash is order-
- * insensitive w.r.t. server list and tool filter list order — semantically
- * equivalent configs must collide so that a no-op reorder doesn't invalidate
- * `lastAppliedConfigHash`. Used for change detection only; never exposed in
- * the UI.
- */
-export function computeEffectiveConfigHash(
-  portable: PortableMcpConfig,
-): string {
-  const canonical = canonicalizePortable(portable);
-  const json = JSON.stringify(canonical);
-  return createHash("sha256").update(json).digest("hex");
-}
-
-interface CanonicalPortableServer {
-  id: string;
-  transport: string;
-  fields: Array<[string, unknown]>;
-}
-
-function canonicalizePortable(portable: PortableMcpConfig): {
-  servers: readonly CanonicalPortableServer[];
-} {
-  const servers = portable.servers.map((s) => canonicalizeServer(s));
-  servers.sort((a, b) => a.id.localeCompare(b.id));
-  return { servers };
-}
-
-function canonicalizeServer(
-  server: PortableMcpServerConfig,
-): CanonicalPortableServer {
-  const fields: Array<[string, unknown]> = [];
-  for (const key of Object.keys(server).sort()) {
-    if (key === "id" || key === "transport") continue;
-    const value = (server as unknown as Record<string, unknown>)[key];
-    fields.push([key, normalizeField(key, value)]);
-  }
-  return { id: server.id, transport: server.transport, fields };
-}
-
-function normalizeField(key: string, value: unknown): unknown {
-  if (key === "enabledTools" || key === "disabledTools") {
-    if (Array.isArray(value)) {
-      return [...value].sort();
-    }
-  }
-  if (
-    (key === "env" || key === "headers") &&
-    value &&
-    typeof value === "object"
-  ) {
-    const entries = Object.entries(value as Record<string, unknown>);
-    entries.sort(([a], [b]) => a.localeCompare(b));
-    return Object.fromEntries(entries);
-  }
-  return value;
-}
 
 // ===========================================================================
 // Service contract
@@ -523,6 +464,25 @@ export function createMcpRuntimeApplyService(
       };
     }
 
+    if (runtime.mcpConfigDelivery === "input-accepted") {
+      await writeConversationRuntime(
+        applicationState,
+        input,
+        "mcp.awaitDispatchReceipt",
+        (existing) => ({
+          ...existing,
+          pendingConfigHash: phase1.hash,
+          lastApplyDisposition: "deferred_to_next_turn",
+        }),
+      );
+      return {
+        conversationId: input.conversationId,
+        backend: input.backend,
+        disposition: "deferred_to_next_turn",
+        effectiveConfigHash: phase1.hash,
+      };
+    }
+
     // Success: turn-start path is the single writer of lastAppliedConfigHash.
     // Clear pending only if the applied hash equals the stored pending hash —
     // otherwise a newer PATCH landed after our resolve and its pending hash
@@ -747,4 +707,44 @@ function redactSecrets(text: string): string {
   return text
     .replace(/Bearer\s+\S+/gi, "[redacted]")
     .replace(/\b(?:TOKEN|KEY|SECRET|PASSWORD|PASS)=\S+/gi, "[redacted]");
+}
+
+export async function recordMcpConfigReceipt(
+  applicationState: McpRuntimeApplicationStore,
+  identity: McpRuntimeIdentity & { projectName: string },
+  hash: string,
+  emit: (event: McpConfigUpdatedEvent) => void = publishEvent,
+): Promise<void> {
+  let effectiveConfigHash = hash;
+  let changedServerKeys: string[] = [];
+  await writeConversationRuntime(
+    applicationState,
+    identity,
+    "mcp.dispatchReceipt",
+    (state) => {
+      effectiveConfigHash = state?.pendingConfigHash ?? hash;
+      changedServerKeys = [...(state?.pendingServerKeys ?? [])];
+      const next = { ...state, lastAppliedConfigHash: hash };
+      if (next.pendingConfigHash && next.pendingConfigHash !== hash)
+        return next;
+      delete next.pendingConfigHash;
+      delete next.pendingServerKeys;
+      delete next.lastApplyError;
+      next.lastApplyDisposition = "applied_now";
+      return next;
+    },
+  );
+  emit({
+    type: "mcp-config-updated",
+    level: "conversation",
+    projectName: identity.projectName,
+    sessionName: identity.sessionName,
+    conversationId: identity.conversationId,
+    changedServerKeys,
+    effectiveConfigHash,
+  });
+  logger.info("mcp.dispatch_receipt", {
+    conversationId: identity.conversationId,
+    configHash: hash,
+  });
 }

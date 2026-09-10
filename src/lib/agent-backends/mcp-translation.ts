@@ -74,12 +74,17 @@ export function translatePortableMcpToCodex(
 ): PortableMcpToCodexResult {
   const capabilities = options.capabilities ?? codexMcpCapabilities;
   const mcpServers: Record<string, unknown> = {};
+  const droppedFields: string[] = [];
 
   for (const server of config.servers) {
     if (server.enabled === false && capabilities.serverDisable === "omit") {
       continue;
     }
 
+    if (!capabilities.transports[server.transport]) {
+      droppedFields.push(server.id + ".transport");
+      continue;
+    }
     const entry: Record<string, unknown> = {};
 
     if (server.transport === "stdio") {
@@ -123,7 +128,7 @@ export function translatePortableMcpToCodex(
     mcpServers[server.id] = entry;
   }
 
-  return { mcpServers, droppedFields: [] };
+  return { mcpServers, droppedFields };
 }
 
 /**
@@ -192,10 +197,10 @@ export function translatePortableMcpToClaude(
       continue;
     }
 
-    if (server.transport === "streamable-http") {
+    if (server.transport === "streamable-http" || server.transport === "sse") {
       const tools = buildNativeToolPolicies(server, filteringForTransport);
       servers[server.id] = {
-        type: "http",
+        type: server.transport === "sse" ? "sse" : "http",
         url: server.url,
         ...(server.headers !== undefined ? { headers: server.headers } : {}),
         ...(tools ? { tools } : {}),

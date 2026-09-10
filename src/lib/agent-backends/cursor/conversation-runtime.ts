@@ -1,6 +1,7 @@
 import type { CursorCapabilityDelivery } from "./capability-delivery";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
+import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type {
@@ -81,8 +82,8 @@ export interface CursorConversationRuntimeDeps {
     | { ok: false; message: string }
   >;
   /**
-   * Translates the conversation's portable MCP config into the SDK's inline
-   * stdio map, passed on attach and on every send (D18). Injected so the
+   * Translates the conversation's portable MCP config into the worker's
+   * transport and control map, passed on attach and on every send (D18). Injected so the
    * runtime's staging and reapplication logic is drivable without the
    * translator's own field rules being in the way.
    */
@@ -116,6 +117,7 @@ type TurnOutcome =
 type AttachOutcome = { ok: true } | { ok: false; error: unknown };
 
 interface ActiveTurn {
+  mcpConfigHash: string;
   runId: string;
   settlement: Deferred<TurnOutcome>;
   settled: boolean;
@@ -138,6 +140,7 @@ interface ActiveTurn {
 
 export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly backend = CURSOR_BACKEND_ID;
+  readonly mcpConfigDelivery = "input-accepted" as const;
   readonly modelSelection: BackendModelSelection;
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
@@ -213,7 +216,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       input.persistedRef?.backend === CURSOR_BACKEND_ID
         ? input.persistedRef.ref
         : null;
-    this.stagedPortableMcp = input.tooling.portableMcp ?? null;
+    this.stagedPortableMcp = input.tooling.portableMcp
+      ? structuredClone(input.tooling.portableMcp)
+      : null;
     this.isFirstTurn = this.backendRef === null;
     this.deps = deps;
   }
@@ -320,6 +325,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     },
   ): Promise<{ state: ActiveTurn; outcome: TurnOutcome }> {
     const turn: ActiveTurn = {
+      mcpConfigHash: computeEffectiveConfigHash(
+        this.stagedPortableMcp ?? { servers: [] },
+      ),
       runId: this.deps.newRunId(),
       settlement: deferred<TurnOutcome>(),
       settled: false,
@@ -491,13 +499,17 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   // ============================================================
 
   /**
-   * The inline stdio map for the next attach or send. Derived on demand from
+   * The bridge input map for the next attach or send. Derived on demand from
    * the staged config so a between-turn apply needs no second delivery path.
    */
   private mcpServerMap(): Record<string, CursorWorkerMcpServer> {
     if (this.stagedPortableMcp === null) return {};
-    return this.deps.translatePortableMcpToCursor(this.stagedPortableMcp)
-      .servers;
+    const translated = this.deps.translatePortableMcpToCursor(
+      this.stagedPortableMcp,
+    );
+    if (translated.rejectedServers.length)
+      throw new Error(Object.values(translated.errorsByServer).join("; "));
+    return translated.servers;
   }
 
   /**
@@ -525,10 +537,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     const { servers, rejectedServers, rejectedFields, errorsByServer } =
       this.deps.translatePortableMcpToCursor(config);
 
-    if (
-      Object.keys(errorsByServer).length > 0 &&
-      Object.keys(servers).length === 0
-    ) {
+    if (Object.keys(errorsByServer).length > 0) {
       logger.warn("cursor-runtime.mcp_rejected", {
         conversationId: this.conversationId,
         rejectedCount: rejectedServers.length,
@@ -541,7 +550,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       };
     }
 
-    this.stagedPortableMcp = config;
+    this.stagedPortableMcp = structuredClone(config);
     logger.info("cursor-runtime.mcp_staged", {
       conversationId: this.conversationId,
       serverCount: Object.keys(servers).length,
@@ -665,7 +674,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
           this.touch(turn);
           if (this.acceptedThisPrompt) return;
           this.acceptedThisPrompt = true;
-          this.emit({ type: "input_accepted" });
+          this.emit({
+            type: "input_accepted",
+            mcpConfigHash: turn.mcpConfigHash,
+          });
         });
         return;
       case "nativeEvent":

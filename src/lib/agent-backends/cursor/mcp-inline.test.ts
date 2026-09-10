@@ -165,6 +165,7 @@ async function openMcpClients(
 ): Promise<Map<string, Client>> {
   const clients = new Map<string, Client>();
   for (const [serverId, server] of Object.entries(options.mcpServers)) {
+    if (!("command" in server)) throw new Error("expected stdio server");
     const client = new Client(
       { name: "cursor-inline-test-host", version: "1.0.0" },
       { capabilities: {} },

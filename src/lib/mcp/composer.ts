@@ -1,3 +1,4 @@
+import { resolveEnabled, resolveToolFilters } from "./policy-resolution";
 /**
  * MCP runtime composer.
  *
@@ -19,9 +20,7 @@
  * 5. Appending CC-injected gateway server definitions last and protecting
  *    their identifiers on collision with user-configured servers.
  *
- * Transports that are not representable in the portable shape (SSE today) are
- * dropped with diagnostics; the portable type only supports stdio and
- * streamable-http.
+ * Transport identity is preserved through composition for backend validation.
  */
 
 import { createLogger } from "@/lib/logging";
@@ -31,11 +30,7 @@ import type {
 } from "@/lib/agent-backends/portable-mcp";
 
 import type { McpEffectiveServerResolution } from "./resolver";
-import type {
-  McpCanonicalServerConfig,
-  McpNativeFilterFields,
-  McpServerDefinition,
-} from "./types";
+import type { McpCanonicalServerConfig, McpServerDefinition } from "./types";
 
 const logger = createLogger("mcp.composer");
 
@@ -67,7 +62,7 @@ export interface McpComposeResult {
   /** Gateway ids — surfaced so view models can mark them reserved. */
   reservedServerIds: readonly string[];
   /** Discovered server keys skipped because their transport is not
-   * representable in the portable shape (e.g. `sse`). */
+   * representable in the portable shape. */
   droppedServerKeys: readonly string[];
 }
 
@@ -196,40 +191,10 @@ function canonicalToPortable(
     };
   }
 
-  // SSE has no portable representation today.
-  return null;
-}
-
-function resolveEnabled(
-  resolution: McpEffectiveServerResolution | undefined,
-  native: McpNativeFilterFields | undefined,
-): boolean | undefined {
-  if (resolution?.enabledOriginLevel !== undefined) {
-    return resolution.enabled;
-  }
-  if (native?.enabled !== undefined) {
-    return native.enabled;
-  }
-  return undefined;
-}
-
-function resolveToolFilters(
-  resolution: McpEffectiveServerResolution | undefined,
-  native: McpNativeFilterFields | undefined,
-): {
-  enabledTools?: readonly string[];
-  disabledTools?: readonly string[];
-} {
-  const overrideEnabled = resolution?.enabledTools ?? [];
-  const overrideDisabled = resolution?.disabledTools ?? [];
-
-  const enabledTools =
-    overrideEnabled.length > 0 ? overrideEnabled : native?.enabledTools;
-  const disabledTools =
-    overrideDisabled.length > 0 ? overrideDisabled : native?.disabledTools;
-
   return {
-    ...(enabledTools !== undefined ? { enabledTools } : {}),
-    ...(disabledTools !== undefined ? { disabledTools } : {}),
+    id,
+    ...config,
+    transport: "sse",
+    headers: config.headers ? { ...config.headers } : undefined,
   };
 }

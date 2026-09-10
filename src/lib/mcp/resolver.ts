@@ -1,3 +1,8 @@
+import { resolveEnabled, resolveToolFilters } from "./policy-resolution";
+import {
+  buildCompatibilityLookup,
+  defaultMcpCapabilityRegistry,
+} from "./backend-capabilities";
 /**
  * MCP cascade resolver.
  *
@@ -205,6 +210,7 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
   for (const key of discoveredByKey.keys()) allKeys.add(key);
   for (const key of effective.keys()) allKeys.add(key);
 
+  const compatibility = buildCompatibilityLookup(defaultMcpCapabilityRegistry);
   const rows: McpServerView[] = [];
   for (const serverKey of allKeys) {
     const def = discoveredByKey.get(serverKey) ?? orphanDefinition(serverKey);
@@ -219,6 +225,13 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
         toolOriginLevels: {},
       } satisfies McpEffectiveServerResolution);
 
+    const policy = resolveToolFilters(effective.get(serverKey), def.native);
+    const resolved = {
+      ...eff,
+      enabled: resolveEnabled(effective.get(serverKey), def.native) ?? true,
+      enabledTools: policy.enabledTools ?? [],
+      disabledTools: policy.disabledTools ?? [],
+    };
     const inventory = toolInventories[serverKey];
     const reserved = def.reserved || reservedSet.has(serverKey);
 
@@ -227,10 +240,11 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
       displayName: serverKey,
       nativeId: def.nativeId,
       transport: def.transport,
-      enabled: eff.enabled,
+      enabled: resolved.enabled,
+      compatibility: compatibility(def),
       inheritanceStatus: determineInheritanceStatus({
         viewLevel: level,
-        effective: eff,
+        effective: resolved,
         definition: def,
         orphaned,
       }),
@@ -238,7 +252,7 @@ export function resolveView(input: McpResolveViewInput): McpConfigViewResponse {
       reserved,
       orphaned,
       pending: pendingSet.has(serverKey),
-      tools: buildToolListView(eff, inventory, level),
+      tools: buildToolListView(resolved, inventory, level),
       diagnostics: [...def.diagnostics],
     });
   }
@@ -338,7 +352,9 @@ function buildToolListView(
   for (const name of resolvedToolNames) {
     const overriddenAnywhere = overrideToolNames.has(name);
     const originLevel = eff.toolOriginLevels[name];
-    const disabled = eff.disabledTools.includes(name);
+    const disabled =
+      eff.disabledTools.includes(name) ||
+      (eff.enabledTools.length > 0 && !eff.enabledTools.includes(name));
     const setAtViewLevel = originLevel === viewLevel;
     const inherited = !setAtViewLevel;
     const discoveredTool = discoveredToolsByName.get(name);

@@ -164,7 +164,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
     expect(result.omittedOrphanServerKeys).toEqual(["orphan"]);
   });
 
-  it("emits overridden enabledTools/disabledTools verbatim on the portable entry", () => {
+  it("applies per-tool overrides without restricting unrelated tools", () => {
     const result = composeRuntimeMcpConfig({
       discovered: [mkDefinition({ serverKey: "fs", nativeId: "fs" })],
       effective: new Map([
@@ -181,7 +181,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       reservedGatewayIds: [],
     });
 
-    expect(result.portable.servers[0]!.enabledTools).toEqual(["read"]);
+    expect(result.portable.servers[0]!.enabledTools).toBeUndefined();
     expect(result.portable.servers[0]!.disabledTools).toEqual([
       "delete",
       "chmod",
@@ -245,7 +245,7 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
     ]);
   });
 
-  it("skips discovered servers whose transport is not representable in the portable shape (sse)", () => {
+  it("preserves discovered SSE servers through portable composition", () => {
     const result = composeRuntimeMcpConfig({
       discovered: [
         mkDefinition({
@@ -260,8 +260,10 @@ describe("composeRuntimeMcpConfig (task 7.1)", () => {
       reservedGatewayIds: [],
     });
 
-    expect(result.portable.servers).toHaveLength(0);
-    expect(result.droppedServerKeys).toEqual(["sse-server"]);
+    expect(result.portable.servers).toMatchObject([
+      { id: "sse-server", transport: "sse", url: "https://example.com/sse" },
+    ]);
+    expect(result.droppedServerKeys).toEqual([]);
   });
 });
 
@@ -361,4 +363,32 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
     expect(result.portable.servers.map((s) => s.id)).toEqual(["keeper"]);
     expect(result.collidedGatewayIds).toEqual(["gateway-alpha"]);
   });
+});
+
+it("enabling a tool removes its authored deny without narrowing unrelated tools", () => {
+  const result = composeRuntimeMcpConfig({
+    discovered: [
+      mkDefinition({
+        serverKey: "fixture",
+        native: { disabledTools: ["denied"] },
+      }),
+    ],
+    effective: new Map([
+      [
+        "fixture",
+        {
+          serverKey: "fixture",
+          enabled: true,
+          enabledTools: ["denied"],
+          disabledTools: [],
+          toolOriginLevels: { denied: "global" },
+        },
+      ],
+    ]),
+    gatewayServers: [],
+    reservedGatewayIds: [],
+  });
+  const server = result.portable.servers[0];
+  expect(server?.disabledTools).toEqual([]);
+  expect(server?.enabledTools ?? []).toEqual([]);
 });

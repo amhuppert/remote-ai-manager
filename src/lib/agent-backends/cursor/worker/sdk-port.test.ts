@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   toCursorModelSelection,
+  wrapCursorSdkAgent,
   resumeWithAbandonedRunRecovery,
 } from "./sdk-port";
 
@@ -110,5 +111,96 @@ describe("abandoned local run recovery", () => {
       ),
     ).rejects.toBe(busy);
     expect(attempts).toBe(1);
+  });
+});
+
+describe("SDK port MCP replacement lifecycle", () => {
+  it("replaces authenticated endpoints and removes them on an explicit empty send", async () => {
+    const { startMcpRemoteFixture } =
+      await import("../testing/mcp-remote-fixture");
+    const { openCursorMcpBridge } = await import("./mcp-bridge");
+    const { Client } =
+      await import("@modelcontextprotocol/sdk/client/index.js");
+    const { StreamableHTTPClientTransport } =
+      await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const upstream = await startMcpRemoteFixture("http", { auth: true });
+    const config = {
+      fixture: {
+        type: "http" as const,
+        url: upstream.url,
+        headers: { Authorization: "Bearer fixture-secret" },
+      },
+    };
+    const bridge = await openCursorMcpBridge(config);
+    const inventories: string[][] = [];
+    const received = new Error("dispatch inspected");
+    let disposed = false;
+    const wrapped = wrapCursorSdkAgent(
+      {
+        agentId: "fixture-agent",
+        async send(_message, options) {
+          const servers = options?.mcpServers ?? {};
+          const endpoint = servers.fixture;
+          if (!endpoint || !("url" in endpoint)) {
+            inventories.push([]);
+            throw received;
+          }
+          const client = new Client({ name: "sdk-consumer", version: "1" });
+          try {
+            await client.connect(
+              new StreamableHTTPClientTransport(new URL(endpoint.url), {
+                requestInit: { headers: endpoint.headers },
+              }),
+            );
+            inventories.push(
+              (await client.listTools()).tools.map((tool) => tool.name),
+            );
+            await client.callTool({ name: "allowed" });
+          } finally {
+            await client.close();
+          }
+          throw received;
+        },
+        async [Symbol.asyncDispose]() {
+          disposed = true;
+        },
+      },
+      bridge,
+      { mcpServers: config },
+    );
+    const send = (
+      mcpServers: import("./entry").CursorWorkerSendOptions["mcpServers"],
+    ) =>
+      wrapped.send(
+        { text: "fixture", images: [] },
+        {
+          modelSelection: { modelId: "default", parameters: {} },
+          mcpServers,
+          forceExpirePersistedRun: false,
+        },
+      );
+    try {
+      await expect(send(config)).rejects.toBe(received);
+      await expect(
+        send({ fixture: { ...config.fixture, enabledTools: ["allowed"] } }),
+      ).rejects.toBe(received);
+      await expect(send({})).rejects.toBe(received);
+      expect(inventories).toEqual([
+        ["allowed", "denied", "slow"],
+        ["allowed"],
+        [],
+      ]);
+      expect(upstream.calls).toEqual(["allowed", "allowed"]);
+      const endpoint = bridge.servers.fixture;
+      if (!endpoint || !("url" in endpoint))
+        throw new Error("missing initial endpoint");
+      await expect(
+        fetch(endpoint.url, { headers: endpoint.headers }),
+      ).rejects.toThrow();
+    } finally {
+      await wrapped.dispose();
+      await upstream.close();
+    }
+    expect(disposed).toBe(true);
   });
 });

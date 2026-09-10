@@ -465,8 +465,8 @@ describe("translatePortableMcpToAnthropic", () => {
       servers: [
         {
           id: "unknown-transport",
-          transport: "sse",
-          url: "https://example.com/sse",
+          transport: "websocket",
+          url: "https://example.com/socket",
         },
       ],
     } as unknown as PortableMcpConfig;
