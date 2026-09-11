@@ -32,8 +32,8 @@ function git(...args: string[]): void {
   execFileSync("git", args, { cwd: repo, stdio: "pipe" });
 }
 
-function writeStub(name: string): void {
-  const stub = join(binDir, name);
+function writeStub(name: string, dir = binDir): void {
+  const stub = join(dir, name);
   writeFileSync(
     stub,
     [
@@ -70,6 +70,11 @@ beforeAll(() => {
   mkdirSync(binDir);
   writeFileSync(logPath, "", "utf8");
   for (const tool of ["bun", "node", "npx"]) writeStub(tool);
+  // The typecheck wrapper runs the native compiler from the checkout under
+  // validation rather than from PATH, so the sandbox repo carries that stub.
+  const nativeTscDir = join(repo, "node_modules", "typescript-native", "bin");
+  mkdirSync(nativeTscDir, { recursive: true });
+  writeStub("tsc", nativeTscDir);
 
   git("init", "--initial-branch=main");
   git("config", "user.email", "test@example.com");
@@ -116,7 +121,9 @@ describe("scope-specific validation wrappers", () => {
       expect.arrayContaining([
         "npx prettier --write --no-color .",
         "npx eslint . --cache --cache-location node_modules/.cache/eslint/ --fix --quiet --no-color --no-warn-ignored",
-        "npx tsc --noEmit --pretty false",
+        expect.stringMatching(
+          /^tsc --noEmit --pretty false --tsBuildInfoFile .*\/node_modules\/\.cache\/typescript-native\/tsconfig\.tsbuildinfo$/,
+        ),
         expect.stringMatching(
           /^node .*scripts\/validate\/vitest-launcher\.mjs full both$/,
         ),

@@ -84,6 +84,11 @@ beforeAll(() => {
   // phase moved behind `scripts/validate/vitest-launcher.mjs`: unstubbed, it
   // runs a real vitest against this throwaway repo and fails the run.
   for (const tool of ["bun", "npx", "node"]) writeStub(binDir, tool);
+  // The typecheck wrapper runs the native compiler from the checkout under
+  // validation rather than from PATH, so the sandbox repo carries that stub.
+  const nativeTscDir = join(repo, "node_modules", "typescript-native", "bin");
+  mkdirSync(nativeTscDir, { recursive: true });
+  writeStub(nativeTscDir, "tsc");
 
   git(repo, "init", "--initial-branch=main");
   git(repo, "config", "user.email", "test@example.com");

@@ -189,12 +189,12 @@ export function collectLandingProbeTargets(
 
     // The lane record wins where there is one: it is where the branch lives
     // NOW, while the intent's copy is where it lived at dispatch.
+    const lane =
+      intent.laneId !== null
+        ? execution.executionLanes[intent.laneId]
+        : undefined;
     const worktreePath =
-      (intent.laneId !== null
-        ? (execution.executionLanes[intent.laneId]?.worktreePath ?? null)
-        : null) ??
-      intent.worktreePath ??
-      state.worktreePath;
+      lane?.worktreePath ?? intent.worktreePath ?? state.worktreePath;
     if (worktreePath === null) continue;
 
     targets.push({

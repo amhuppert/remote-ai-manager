@@ -68,7 +68,7 @@
         },
         "cost": 2,
         "timeoutMs": 600000,
-        "description": "Full-project TypeScript check (tsc --noEmit)",
+        "description": "Full-project TypeScript check (native TypeScript 7, --noEmit)",
         "pathArgs": "forbid"
       },
       "seams": {

@@ -40,17 +40,19 @@ describe("validation gate composition", () => {
 
   it("keeps the in-loop typecheck free of the build and the seam ratchet", () => {
     const script = read("scripts/validate/typecheck.sh");
-    expect(script).toMatch(/tsc --noEmit/);
+    expect(script).toMatch(/--noEmit --pretty false/);
     expect(script).not.toMatch(/bun run build(?!:info)/);
     expect(script).not.toMatch(/seams:check/);
   });
 
-  it("pins enough Node heap for the full-project typecheck", () => {
+  it("runs the native checker installed in the checkout under validation, on its own build-info file", () => {
     const script = read("scripts/validate/typecheck.sh");
-    expect(script).toMatch(/readonly TYPECHECK_HEAP_MB=8192/);
-    expect(script).toMatch(
-      /export NODE_OPTIONS="--max-old-space-size=\$\{TYPECHECK_HEAP_MB\}"/,
-    );
+    // The `typescript` package stays on 5.x for the JS API the architecture
+    // scanners use; the native compiler is the `typescript-native` alias, and
+    // its build info must not share a file with tsc's incompatible format.
+    expect(script).toMatch(/\$PWD\/node_modules\/typescript-native\/bin\/tsc/);
+    expect(script).toMatch(/--tsBuildInfoFile/);
+    expect(script).not.toMatch(/npx tsc/);
   });
 
   it("keeps typecheck, seams, and test on every merge gate", () => {

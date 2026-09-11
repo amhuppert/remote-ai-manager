@@ -6,7 +6,7 @@ Server-rendered Next.js + API routes as backend. **Persistence**: a single SQLit
 
 ## Stack
 
-- **TypeScript** — `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`, `allowJs: false`
+- **TypeScript** — `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`, `allowJs: false`. The registered `typecheck` runs the native TypeScript 7 compiler through the `typescript-native` npm alias (`node_modules/typescript-native/bin/tsc`, own build-info file under `node_modules/.cache/typescript-native/`); the `typescript` package stays on 5.x because the architecture scanners and lint rules import its compiler JS API, which the native package does not ship. `bun run typecheck` still runs tsc 5.9 and can differ on newer diagnostics (TS2871 is one); the registered command is the gate.
 - **Next.js 16** (App Router) + **React 19** + **Node.js**
 - **Tailwind CSS v4** (`@tailwindcss/postcss`, CSS-first `@theme`) — the styling system: utility-first classNames + React primitives in `src/components/ui/` + the `cn()` helper (`src/lib/ui/cn.ts`). Custom tokens are defined in `src/features/_root/styles/theme.css` (`@theme`) — the single source of truth for which utilities exist. Which built-ins may/may not be used: `docs/tailwind-conventions.md`. Preflight is intentionally OFF (`reset.css` is the canonical base reset).
 - **Zod v4** — schema-first; types derived via `z.infer`; `safeParse` external/untrusted, `parse` internal/trusted. Backend structured-output transport is adapter-owned; see `agent-backends.md`.
