@@ -643,7 +643,7 @@ describe("cursor worker attach and turn framing", () => {
     expect(attaches[0]?.recoverAbandonedRun).toBeUndefined();
     expect(attaches[1]?.recoverAbandonedRun).toBe(true);
     expect(attaches[1]?.ref).toBe("agent-ref-1");
-    expect(attaches[1]?.mcpServers.fixture?.command).toBe("node");
+    expect(attaches[1]?.mcpServers.fixture).toMatchObject({ command: "node" });
   });
 
   it("fuels each attach with a freshly read credential", async () => {

@@ -78,7 +78,7 @@ import type {
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
 import { makeUndeliveredPromptFailure } from "@/lib/agent-backends/testing/undelivered-prompt-fixture";
-import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
+import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
 import {
   ASK_QUESTION_INSTRUCTIONS,

@@ -360,8 +360,8 @@ describe("cursor IPC frames", () => {
     forceExpirePersistedRun: false,
   };
 
-  it("uses protocol version 3 for selected agent definitions", () => {
-    expect(CURSOR_IPC_CODEC_VERSION).toBe(3);
+  it("uses protocol version 4 for MCP transport and control fields", () => {
+    expect(CURSOR_IPC_CODEC_VERSION).toBe(4);
   });
 
   it("accepts every parent frame in the contract", () => {

@@ -146,6 +146,7 @@ const mcpServerViewSchema = z.object({
   displayName: z.string(),
   nativeId: z.string(),
   transport: mcpTransportSchema,
+  compatibility: mcpServerCompatibilityViewSchema.optional(),
   enabled: z.boolean(),
   inheritanceStatus: mcpInheritanceStatusSchema,
   sourceRefs: z.array(mcpSourceRefSchema),

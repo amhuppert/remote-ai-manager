@@ -38,6 +38,55 @@ describe("mcp/discovery-command-center", () => {
     );
   }
 
+  it.each(["stdio", "http", "sse"])(
+    "preserves %s controls instead of silently discarding them",
+    async (type) => {
+      await writeGlobal({
+        controlled: {
+          type,
+          ...(type === "stdio"
+            ? { command: "node" }
+            : {
+                url: "https://example.test/mcp",
+                bearerTokenEnvVar: "MCP_TOKEN",
+              }),
+          startupTimeoutSec: 5,
+          toolTimeoutSec: 15,
+          enabled: false,
+          enabledTools: ["read"],
+          disabledTools: ["write"],
+        },
+      });
+      const result = await discoverCommandCenterSources({ globalConfigPath });
+      expect(result.servers[0]?.config).toMatchObject({
+        startupTimeoutSec: 5,
+        toolTimeoutSec: 15,
+      });
+      expect(result.servers[0]?.native).toEqual({
+        enabled: false,
+        enabledTools: ["read"],
+        disabledTools: ["write"],
+      });
+      if (type !== "stdio")
+        expect(result.servers[0]?.config).toMatchObject({
+          bearerTokenEnvVar: "MCP_TOKEN",
+        });
+    },
+  );
+  it("reports unsupported OAuth controls without echoing credentials", async () => {
+    await writeGlobal({
+      oauth: {
+        type: "http",
+        url: "https://example.test/mcp",
+        auth: { CLIENT_SECRET: "fixture-secret" },
+      },
+    });
+    const result = await discoverCommandCenterSources({ globalConfigPath });
+    expect(result.servers).toEqual([]);
+    expect(JSON.stringify(result.diagnostics)).toMatch(/auth.*unsupported/i);
+    expect(JSON.stringify(result.diagnostics)).not.toContain("fixture-secret");
+  });
+
   it("(a) reads <configDir>/.mcp.json as servers with sourceRefs scope 'global'", async () => {
     await writeGlobal({
       "global-server": {

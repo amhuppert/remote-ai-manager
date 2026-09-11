@@ -1,14 +1,8 @@
-import type {
-  AgentOptions,
-  McpServerConfig,
-  ModelSelection,
-  SettingSource,
-} from "@cursor/sdk";
+import type { AgentOptions, ModelSelection, SettingSource } from "@cursor/sdk";
 import type { BackendModelSelection } from "../../schemas";
 import type {
   CursorWorkerAgent,
   CursorWorkerAttachOptions,
-  CursorWorkerMcpServer,
   CursorWorkerRun,
   CursorWorkerRunResult,
   CursorWorkerSdk,
@@ -16,6 +10,8 @@ import type {
   CursorWorkerSendOptions,
 } from "./entry";
 import { createLogger } from "@/lib/logging";
+
+import { openCursorMcpBridge, type CursorMcpBridge } from "./mcp-bridge";
 
 const logger = createLogger("cursor-worker");
 
@@ -54,22 +50,6 @@ export function toCursorModelSelection(
 
 function isSettingSource(value: string): value is SettingSource {
   return SETTING_SOURCES.some((source) => source === value);
-}
-
-function toMcpServerConfig(
-  servers: Record<string, CursorWorkerMcpServer>,
-): Record<string, McpServerConfig> {
-  const mapped: Record<string, McpServerConfig> = {};
-  for (const [name, server] of Object.entries(servers)) {
-    mapped[name] = {
-      type: "stdio",
-      command: server.command,
-      args: server.args,
-      env: server.env,
-      ...(server.cwd !== undefined ? { cwd: server.cwd } : {}),
-    };
-  }
-  return mapped;
 }
 
 async function loadSdkModule(): Promise<typeof import("@cursor/sdk")> {
@@ -114,19 +94,19 @@ export async function resumeWithAbandonedRunRecovery<T>(
 function toAgentOptions(
   sdk: SdkModule,
   options: CursorWorkerAttachOptions,
+  bridge: CursorMcpBridge,
 ): AgentOptions {
   return {
     model: toCursorModelSelection(options.modelSelection),
     apiKey: options.apiKey,
     disallowedTools: [...options.disallowedTools],
-    mcpServers: toMcpServerConfig(options.mcpServers),
+    mcpServers: bridge.servers,
     agents: options.agents,
     local: {
       cwd: options.cwd,
       // The caller-owned store: agent rows, run events, and checkpoints land
       // under a Command Center state path instead of the SDK's default root
-      // under the user's home, so nothing this conversation writes escapes
-      // Command Center's ownership.
+      // under the user's home. SDK auxiliary state has separate storage rules.
       store: new sdk.JsonlLocalAgentStore(options.storePath),
       settingSources: options.settingSources.filter(isSettingSource),
       sandboxOptions: { enabled: options.sandboxEnabled },
@@ -163,13 +143,26 @@ function wrapRun(run: SdkRun): CursorWorkerRun {
   };
 }
 
-function wrapAgent(agent: SdkAgent): CursorWorkerAgent {
+export function wrapCursorSdkAgent(
+  agent: Pick<SdkAgent, "agentId" | "send" | typeof Symbol.asyncDispose>,
+  initialBridge: CursorMcpBridge,
+  options: Pick<CursorWorkerAttachOptions, "mcpServers">,
+): CursorWorkerAgent {
+  let bridge = initialBridge;
+  let configKey: string | null = JSON.stringify(options.mcpServers);
   return {
     agentId: agent.agentId,
     async send(
       message: CursorWorkerSendMessage,
       options: CursorWorkerSendOptions,
     ) {
+      const nextKey = JSON.stringify(options.mcpServers);
+      if (nextKey !== configKey) {
+        configKey = null;
+        await bridge.close();
+        bridge = await openCursorMcpBridge(options.mcpServers);
+        configKey = nextKey;
+      }
       const run = await agent.send(
         {
           text: message.text,
@@ -177,7 +170,7 @@ function wrapAgent(agent: SdkAgent): CursorWorkerAgent {
         },
         {
           model: toCursorModelSelection(options.modelSelection),
-          mcpServers: toMcpServerConfig(options.mcpServers),
+          mcpServers: bridge.servers,
           ...(options.forceExpirePersistedRun
             ? { local: { force: true } }
             : {}),
@@ -187,7 +180,13 @@ function wrapAgent(agent: SdkAgent): CursorWorkerAgent {
     },
     // Async disposal rather than `close()`: teardown must be awaitable, since
     // the parent's close only resolves once disposal has actually finished.
-    dispose: () => agent[Symbol.asyncDispose](),
+    async dispose() {
+      try {
+        await agent[Symbol.asyncDispose]();
+      } finally {
+        await bridge.close();
+      }
+    },
   };
 }
 
@@ -198,25 +197,44 @@ export async function loadCursorWorkerSdk(): Promise<CursorWorkerSdk> {
       await sdk.Cursor.me({ apiKey });
     },
     async create(options) {
-      return wrapAgent(await sdk.Agent.create(toAgentOptions(sdk, options)));
+      const bridge = await openCursorMcpBridge(options.mcpServers);
+      try {
+        return wrapCursorSdkAgent(
+          await sdk.Agent.create(toAgentOptions(sdk, options, bridge)),
+          bridge,
+          options,
+        );
+      } catch (error) {
+        await bridge.close();
+        throw error;
+      }
     },
     async resume(ref, options) {
-      const agentOptions = toAgentOptions(sdk, options);
+      const bridge = await openCursorMcpBridge(options.mcpServers);
+      const agentOptions = toAgentOptions(sdk, options, bridge);
       const local = {
         runtime: "local" as const,
         cwd: options.cwd,
         store: agentOptions.local?.store,
       };
-      return wrapAgent(
-        await resumeWithAbandonedRunRecovery(
-          {
-            resume: () => sdk.Agent.resume(ref, agentOptions),
-            listRuns: (cursor) => sdk.Agent.listRuns(ref, { ...local, cursor }),
-            cancelRun: (id) => sdk.Agent.cancelRun(id, local),
-          },
-          options.recoverAbandonedRun === true,
-        ),
-      );
+      try {
+        return wrapCursorSdkAgent(
+          await resumeWithAbandonedRunRecovery(
+            {
+              resume: () => sdk.Agent.resume(ref, agentOptions),
+              listRuns: (cursor) =>
+                sdk.Agent.listRuns(ref, { ...local, cursor }),
+              cancelRun: (id) => sdk.Agent.cancelRun(id, local),
+            },
+            options.recoverAbandonedRun === true,
+          ),
+          bridge,
+          options,
+        );
+      } catch (error) {
+        await bridge.close();
+        throw error;
+      }
     },
   };
 }

@@ -120,6 +120,7 @@ export function adaptServerViewsForLevel(
       enabled: server.enabled,
       status: toStatus(server.inheritanceStatus, viewLevel),
       pending: server.pending,
+      compatibility: server.compatibility,
       toolDiscovery: toToolDiscovery(server.tools, viewLevel),
     });
   }

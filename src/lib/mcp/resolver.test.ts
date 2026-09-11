@@ -881,3 +881,71 @@ describe("resolveView — response-level fields", () => {
     expect(view.diagnostics).toHaveLength(1);
   });
 });
+
+it("uses authored enable and tool policy defaults in the view", () => {
+  const view = resolveView({
+    level: "global",
+    overrides: { global: { servers: {} } },
+    discovered: [
+      {
+        serverKey: "fixture",
+        nativeId: "fixture",
+        transport: "stdio",
+        config: { transport: "stdio", command: "node" },
+        configSignature: "sig",
+        sourceRefs: [],
+        reserved: false,
+        diagnostics: [],
+        native: {
+          enabled: false,
+          enabledTools: ["allowed"],
+          disabledTools: ["denied"],
+        },
+      },
+    ],
+    discoveryDiagnostics: [],
+    gatewayServerKeys: [],
+    reservedGatewayServerKeys: [],
+    pendingServerKeys: [],
+    toolInventories: {
+      fixture: {
+        state: "ready",
+        diagnostics: [],
+        tools: ["allowed", "denied", "unlisted"].map((name) => ({ name })),
+      },
+    },
+  });
+  expect(view.servers[0]?.enabled).toBe(false);
+  expect(
+    view.servers[0]?.tools.tools.map((tool) => [tool.name, tool.enabled]),
+  ).toEqual([
+    ["allowed", true],
+    ["denied", false],
+    ["unlisted", false],
+  ]);
+});
+
+it("includes backend transport compatibility in server views", () => {
+  const view = resolveView({
+    level: "global",
+    overrides: chain(),
+    discovered: [
+      mkDefinition({
+        serverKey: "sse",
+        transport: "sse",
+        config: { transport: "sse", url: "https://example.test/sse" },
+      }),
+    ],
+    discoveryDiagnostics: [],
+    gatewayServerKeys: [],
+    reservedGatewayServerKeys: [],
+    pendingServerKeys: [],
+    toolInventories: {},
+  });
+  expect(view.servers[0]?.compatibility?.backends).toEqual(
+    expect.arrayContaining([
+      { backend: "cursor", supported: true },
+      expect.objectContaining({ backend: "codex", supported: false }),
+    ]),
+  );
+});

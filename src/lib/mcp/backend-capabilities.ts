@@ -39,6 +39,7 @@ type McpBetweenTurnApplyMode = "live-when-idle" | "next-turn" | "unsupported";
 export type McpToolFilteringMode =
   | "native"
   | "permission-layer"
+  | "bridge"
   | "unsupported";
 
 interface McpToolFilteringCapability {
@@ -159,36 +160,22 @@ export const codexMcpCapabilities: McpBackendCapabilities = {
 };
 
 /**
- * Cursor (spec D18). The inline stdio path is implemented and proven, and every
- * value here is bounded by what that path actually supports:
- *
- * - `strictAuthoritativeConfig: false` — the ordinary inline call works, but
- *   the authority matrix (ambient merge, duplicate names, empty-inline, per-run
- *   replacement, disable/filter, permission, environment, resume-apply) is a
- *   separate gate. One passing call is not authority.
- * - `serverDisable: "omit"` — the SDK's inline entry carries no disabled flag,
- *   so the translator drops a disabled server rather than flagging it.
- * - `betweenTurnApply: "next-turn"` — the map is an attach/per-send option, so
- *   a change staged mid-turn lands on the next one.
- * - `transports` — stdio only; the inline entry is a command/args/env spawn.
- * - `toolFiltering` — none, on any transport. Phase 1 registers no permission
- *   handler that could enforce a filter at call time, so the translator refuses
- *   a server carrying one instead of passing it through unfiltered.
- * - `toolDiscovery` — probe: the runtime exposes no MCP server status, so
- *   nothing above the seam can ask a live agent what a server advertises.
+ * Cursor's worker bridge enforces transport, filters, and deadlines before
+ * exposing its inline endpoints. Provider admin controls remain outside CC's
+ * resolved settings, so strict configuration authority is not declared.
  */
 export const cursorMcpCapabilities: McpBackendCapabilities = {
   backend: "cursor",
   strictAuthoritativeConfig: false,
   serverDisable: "omit",
   betweenTurnApply: "next-turn",
-  transports: { stdio: true, "streamable-http": false, sse: false },
+  transports: { stdio: true, "streamable-http": true, sse: true },
   toolFiltering: {
-    mode: "unsupported",
+    mode: "bridge",
     byTransport: {
-      stdio: "unsupported",
-      "streamable-http": "unsupported",
-      sse: "unsupported",
+      stdio: "bridge",
+      "streamable-http": "bridge",
+      sse: "bridge",
     },
   },
   toolDiscovery: {

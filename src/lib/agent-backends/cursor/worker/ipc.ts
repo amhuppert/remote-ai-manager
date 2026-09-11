@@ -15,7 +15,7 @@ import { backendModelSelectionSchema } from "../../schemas";
  * the channel already destroyed.
  */
 
-export const CURSOR_IPC_CODEC_VERSION = 3;
+export const CURSOR_IPC_CODEC_VERSION = 4;
 
 /**
  * Reserved wrapper key. An application object that already owns this key is
@@ -509,14 +509,43 @@ function malformed(eventType: string, tagged: unknown): NativeCodecFailure {
   };
 }
 
+const mcpControls = {
+  enabledTools: z.array(z.string().min(1)).optional(),
+  disabledTools: z.array(z.string().min(1)).optional(),
+  startupTimeoutSec: z.number().positive().max(300).optional(),
+  toolTimeoutSec: z.number().positive().max(3600).optional(),
+};
+
+export const cursorWorkerMcpServerSchema = z.union([
+  z
+    .object({
+      command: z.string().min(1),
+      args: z.array(z.string()),
+      env: z.record(z.string().min(1), z.string()),
+      cwd: z.string().min(1).optional(),
+      ...mcpControls,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.enum(["http", "sse"]),
+      url: z.url().refine((value) => {
+        const url = new URL(value);
+        return (
+          ["http:", "https:"].includes(url.protocol) &&
+          !url.username &&
+          !url.password
+        );
+      }),
+      headers: z.record(z.string().min(1), z.string()).optional(),
+      ...mcpControls,
+    })
+    .strict(),
+]);
+export type CursorWorkerMcpServer = z.infer<typeof cursorWorkerMcpServerSchema>;
 const mcpServerMapSchema = z.record(
   z.string().min(1),
-  z.object({
-    command: z.string().min(1),
-    args: z.array(z.string()),
-    env: z.record(z.string().min(1), z.string()),
-    cwd: z.string().min(1).optional(),
-  }),
+  cursorWorkerMcpServerSchema,
 );
 
 const versionSchema = z.literal(CURSOR_IPC_CODEC_VERSION);

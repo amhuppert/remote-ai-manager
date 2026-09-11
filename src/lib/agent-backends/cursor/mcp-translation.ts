@@ -1,30 +1,12 @@
-import type {
-  PortableMcpConfig,
-  PortableMcpServerConfig,
-} from "../portable-mcp";
+import { resolveMcpHeaders } from "@/lib/mcp/remote-headers";
+import type { PortableMcpConfig } from "../portable-mcp";
 import type { CursorWorkerMcpServer } from "./worker/entry";
 
-/**
- * Portable MCP input to the SDK's inline stdio server map (spec D18).
- *
- * The map this returns is the ENTIRE MCP surface a Cursor turn sees: the worker
- * attaches under `settingSources: []`, so no ambient user, project, team, or
- * MDM server joins it, and nothing here reads or writes Cursor's own
- * configuration files. What the cascade emits is what the SDK gets.
- *
- * The Phase 1 inline path is narrower than the portable shape, and the gap is
- * closed by refusing rather than by degrading: a server carrying a field this
- * path cannot express is left out of the map with a bounded error naming the
- * field. A tool filter is the case that matters — the SDK's inline entry has no
- * per-tool allow/deny list and Phase 1 registers no permission handler to
- * enforce one at call time, so passing such a server anyway would hand the
- * model exactly the tool the cascade denied. Dropping the server is the only
- * reading of the cascade the mechanism can honor (the Claude translator refuses
- * unsupported fields the same way).
- */
+import { cursorWorkerMcpServerSchema } from "./worker/ipc";
 
+/** The worker bridge owns transport, filtering, and deadline enforcement. */
 export interface PortableMcpToCursorResult {
-  /** The SDK inline stdio map, keyed by portable server id. */
+  /** The bridge input map, keyed by portable server id. */
   servers: Record<string, CursorWorkerMcpServer>;
   /** Ids left out because the inline path cannot express them faithfully. */
   rejectedServers: string[];
@@ -47,29 +29,6 @@ export interface PortableMcpToCursorResult {
 export const CURSOR_MCP_MAX_ENV_ENTRIES = 64;
 export const CURSOR_MCP_MAX_ENV_VALUE_LENGTH = 4096;
 
-type PortableStdioServer = Extract<
-  PortableMcpServerConfig,
-  { transport: "stdio" }
->;
-
-/** A filter with no members expresses no restriction, so it is not one. */
-function isRestricting(tools: readonly string[] | undefined): boolean {
-  return tools !== undefined && tools.length > 0;
-}
-
-/**
- * Fields the SDK's inline stdio entry has no representation for, named per
- * server. Empty when the entry translates faithfully.
- */
-function unsupportedFields(server: PortableStdioServer): string[] {
-  const fields: string[] = [];
-  if (isRestricting(server.enabledTools)) fields.push("enabledTools");
-  if (isRestricting(server.disabledTools)) fields.push("disabledTools");
-  if (server.startupTimeoutSec !== undefined) fields.push("startupTimeoutSec");
-  if (server.toolTimeoutSec !== undefined) fields.push("toolTimeoutSec");
-  return fields;
-}
-
 /**
  * The first environment entry that breaches a bound, described without its
  * value. Names are safe to report — they are what the operator has to fix —
@@ -90,6 +49,7 @@ function envBoundBreach(env: Record<string, string>): string | null {
 
 export function translatePortableMcpToCursor(
   config: PortableMcpConfig,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): PortableMcpToCursorResult {
   const servers: Record<string, CursorWorkerMcpServer> = {};
   const rejectedServers: string[] = [];
@@ -99,30 +59,77 @@ export function translatePortableMcpToCursor(
   function reject(id: string, message: string, fields: string[] = []): void {
     rejectedServers.push(id);
     rejectedFields.push(...fields.map((field) => `${id}.${field}`));
-    errorsByServer[id] = message;
+    Object.defineProperty(errorsByServer, id, {
+      value: message,
+      enumerable: true,
+      configurable: true,
+    });
   }
 
+  const counts = new Map<string, number>();
+  for (const server of config.servers)
+    counts.set(server.id, (counts.get(server.id) ?? 0) + 1);
   for (const server of config.servers) {
-    // The cascade's own decision, and the only mechanism the SDK offers for it:
-    // a disabled server is absent, not present-and-flagged. Absence here is the
-    // intended outcome, so it is not reported as a rejection.
-    if (server.enabled === false) continue;
-
-    if (server.transport !== "stdio") {
-      reject(
-        server.id,
-        `Unsupported MCP transport for Cursor: ${server.transport}`,
-      );
+    if ((counts.get(server.id) ?? 0) > 1) {
+      if (!rejectedServers.includes(server.id))
+        reject(server.id, `Duplicate MCP server id for Cursor: ${server.id}`);
       continue;
     }
+    if (server.enabled === false) continue;
 
-    const unsupported = unsupportedFields(server);
-    if (unsupported.length > 0) {
-      reject(
-        server.id,
-        `Unsupported portable MCP fields for Cursor: ${unsupported.join(", ")}`,
-        unsupported,
+    const controls = {
+      ...(server.enabledTools !== undefined
+        ? { enabledTools: [...server.enabledTools] }
+        : {}),
+      ...(server.disabledTools !== undefined
+        ? { disabledTools: [...server.disabledTools] }
+        : {}),
+      ...(server.startupTimeoutSec !== undefined
+        ? { startupTimeoutSec: server.startupTimeoutSec }
+        : {}),
+      ...(server.toolTimeoutSec !== undefined
+        ? { toolTimeoutSec: server.toolTimeoutSec }
+        : {}),
+    };
+    if (server.transport !== "stdio") {
+      const resolved = resolveMcpHeaders(
+        server.headers,
+        server.bearerTokenEnvVar,
+        environment,
       );
+      if (resolved.missingBearer !== undefined) {
+        reject(
+          server.id,
+          "Missing MCP bearer environment variable: " + resolved.missingBearer,
+          ["bearerTokenEnvVar"],
+        );
+        continue;
+      }
+      const headers = resolved.headers;
+      const breach = envBoundBreach(headers);
+      if (breach) {
+        reject(server.id, "MCP headers exceed supported bounds", ["headers"]);
+        continue;
+      }
+      const candidate = {
+        type: server.transport === "sse" ? "sse" : "http",
+        url: server.url,
+        ...controls,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      };
+      const parsed = cursorWorkerMcpServerSchema.safeParse(candidate);
+      if (!parsed.success) {
+        reject(
+          server.id,
+          "Invalid MCP transport or control fields",
+          parsed.error.issues.map((issue) => String(issue.path[0] ?? "config")),
+        );
+        continue;
+      }
+      Object.defineProperty(servers, server.id, {
+        value: parsed.data,
+        enumerable: true,
+      });
       continue;
     }
 
@@ -135,27 +142,26 @@ export function translatePortableMcpToCursor(
       continue;
     }
 
-    // The SDK map is keyed by id, so a second entry under a live key would
-    // silently replace the first. Keeping the first and refusing the collision
-    // makes the emitted map a function of the cascade rather than of iteration
-    // order.
-    if (Object.hasOwn(servers, server.id)) {
+    const candidate = {
+      command: server.command,
+      args: server.args !== undefined ? [...server.args] : [],
+      env: { ...env },
+      ...controls,
+      ...(server.cwd !== undefined ? { cwd: server.cwd } : {}),
+    };
+    const parsed = cursorWorkerMcpServerSchema.safeParse(candidate);
+    if (!parsed.success) {
       reject(
         server.id,
-        `Ignored a duplicate MCP server id for Cursor: ${server.id}`,
+        "Invalid MCP transport or control fields",
+        parsed.error.issues.map((issue) => String(issue.path[0] ?? "config")),
       );
       continue;
     }
-
-    servers[server.id] = {
-      command: server.command,
-      // Stated rather than omitted: the worker's wire contract requires both,
-      // and an explicit empty map is the claim that this child inherits no
-      // environment Command Center did not choose for it.
-      args: server.args !== undefined ? [...server.args] : [],
-      env: { ...env },
-      ...(server.cwd !== undefined ? { cwd: server.cwd } : {}),
-    };
+    Object.defineProperty(servers, server.id, {
+      value: parsed.data,
+      enumerable: true,
+    });
   }
 
   return { servers, rejectedServers, rejectedFields, errorsByServer };

@@ -36,6 +36,8 @@ import type { McpServerDefinition } from "@/lib/mcp/types";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { McpRuntimeApplicationState } from "@/lib/mcp/schemas";
+import { createMcpRuntimeApplyService } from "./runtime-apply";
 import {
   createConversationMcpConfigHandlers,
   createGlobalMcpConfigHandlers,
@@ -1286,6 +1288,77 @@ describe("createConversationMcpConfigHandlers", () => {
     expect(body.apply.disposition).toBe("applied_now");
     expect(deps.applyMock).toHaveBeenCalledTimes(1);
   });
+
+  it.each([false, true])(
+    "PATCH stages Cursor config with its recorded backend while turn active=%s",
+    async (isTurnActive) => {
+      let state: McpRuntimeApplicationState | undefined;
+      let staged = false;
+      const service = createMcpRuntimeApplyService({
+        applicationState: {
+          async read() {
+            return { found: true, state };
+          },
+          async update(_identity, _label, updater) {
+            state = updater(state);
+          },
+        },
+        resolvePortableForConversation: async () => ({
+          portable: { servers: [] },
+        }),
+        getRuntime: () => ({
+          backend: "cursor",
+          modelSelection: { modelId: "default", parameters: {} },
+          outputFormat: undefined,
+          status: "alive",
+          isTurnActive,
+          async sendTurn() {
+            throw new Error("unused");
+          },
+          async close() {},
+          async applyPortableMcpConfig() {
+            staged = true;
+            return {
+              disposition: "deferred_to_next_turn",
+              droppedServerIds: [],
+              droppedFields: [],
+              errors: {},
+            };
+          },
+        }),
+      });
+      const deps = baseDeps({
+        getSession: async () =>
+          mkSession("sess", {
+            conversations: [
+              makeConversationState({ id: "conv-1", agentBackend: "cursor" }),
+            ],
+          }),
+        applyAfterOverrideChange: service.applyAfterOverrideChange,
+      });
+      const response = await createConversationMcpConfigHandlers(deps).PATCH(
+        makeRequest({
+          operations: [
+            { type: "set-server-enabled", serverKey: "calc", enabled: false },
+          ],
+        }),
+        {
+          params: Promise.resolve({
+            name: "proj",
+            session: "sess",
+            conversationId: "conv-1",
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.apply.backend).toBe("cursor");
+      expect(body.apply.disposition).toBe("deferred_to_next_turn");
+      expect(staged).toBe(true);
+      expect(state?.pendingConfigHash).toBe(body.apply.effectiveConfigHash);
+      expect(state?.lastAppliedConfigHash).toBeUndefined();
+    },
+  );
 
   it("GET includes project overrides in the cascade so a project-disabled server reads as inherited (disabled) at conversation level", async () => {
     const deps = baseDeps({

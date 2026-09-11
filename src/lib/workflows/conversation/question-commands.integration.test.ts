@@ -34,13 +34,62 @@ afterEach(async () => {
   fixture = undefined;
 });
 
-it.each([
-  { persistence: "durable", role: "validator", canAsk: true },
-  { persistence: "durable", role: null, canAsk: false },
-  { persistence: "ephemeral", role: "validator", canAsk: false },
-] as const)(
-  "grants task questioning only to a durable validator: %j",
-  async ({ persistence, role, canAsk }) => {
+it.each<{
+  persistence: "durable" | "ephemeral";
+  role: "validator" | null;
+  canAsk: boolean;
+  hasSessionScope: boolean;
+  executionClass?: AgentTaskRequest["executionClass"];
+  executionProfile?: AgentTaskRequest["executionProfile"];
+}>([
+  {
+    persistence: "durable",
+    role: "validator",
+    canAsk: true,
+    hasSessionScope: true,
+  },
+  {
+    persistence: "durable",
+    role: null,
+    canAsk: false,
+    hasSessionScope: true,
+  },
+  {
+    persistence: "ephemeral",
+    role: "validator",
+    canAsk: false,
+    hasSessionScope: false,
+  },
+  {
+    persistence: "ephemeral",
+    role: null,
+    canAsk: false,
+    hasSessionScope: false,
+  },
+  {
+    persistence: "durable",
+    role: null,
+    canAsk: false,
+    hasSessionScope: false,
+    executionClass: "nongoverned-task",
+  },
+  {
+    persistence: "durable",
+    role: null,
+    canAsk: false,
+    hasSessionScope: false,
+    executionProfile: "isolated-one-shot",
+  },
+])(
+  "supplies task session scope independently of question permission: %j",
+  async ({
+    persistence,
+    role,
+    canAsk,
+    hasSessionScope,
+    executionClass = "governed-execution",
+    executionProfile = "standard",
+  }) => {
     const started = Promise.withResolvers<AgentTaskRequest>();
     const release = Promise.withResolvers<void>();
     fixture = await createLifecycleFixture({
@@ -87,14 +136,15 @@ it.each([
       binding: hosted.binding,
       turn: {
         kind: "task_run",
-        executionClass: "governed-execution",
+        executionClass,
+        executionProfile,
         promptText: "Review after asking",
       },
     });
     if (admission.kind !== "accepted") throw new Error(admission.message);
     try {
       expect((await started.promise).ccSessionScope).toEqual(
-        canAsk
+        hasSessionScope
           ? {
               project: "lifecycle-fixture",
               session: "s",

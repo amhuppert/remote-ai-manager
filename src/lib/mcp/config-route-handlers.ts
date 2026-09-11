@@ -804,9 +804,7 @@ function selectBackend(
   conversation: ConversationState,
   fallback: AgentBackendId | undefined,
 ): AgentBackendId {
-  const recorded = (conversation as { backend?: AgentBackendId }).backend;
-  if (recorded === "claude" || recorded === "codex") return recorded;
-  return fallback ?? "claude";
+  return conversation.agentBackend ?? fallback ?? "claude";
 }
 
 // ===========================================================================

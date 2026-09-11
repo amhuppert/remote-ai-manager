@@ -1,3 +1,5 @@
+import { recordMcpConfigReceipt } from "./runtime-apply";
+import { computeEffectiveConfigHash } from "./config-hash";
 import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -31,7 +33,6 @@ import {
 } from "@/lib/state-store/write-queue";
 
 import {
-  computeEffectiveConfigHash,
   createMcpRuntimeApplyService,
   type McpRuntimeApplyDeps,
   type ResolvedPortableForConversation,
@@ -128,7 +129,8 @@ function createTestHarness() {
 }
 
 function makeFakeRuntime(options: {
-  backend: "claude" | "codex";
+  backend: "claude" | "codex" | "cursor";
+  mcpConfigDelivery?: "input-accepted";
   isTurnActive?: boolean;
   applyResult?: McpApplyResult;
   applyThrows?: Error;
@@ -139,6 +141,7 @@ function makeFakeRuntime(options: {
   const applyCalls: PortableMcpConfig[] = [];
   const runtime = {
     backend: options.backend,
+    mcpConfigDelivery: options.mcpConfigDelivery,
     status: "alive" as const,
     modelId: undefined,
     reasoningEffort: undefined,
@@ -1110,3 +1113,99 @@ describe("applyAfterOverrideChange — apply failure preserves lastAppliedConfig
     expect(conv.mcpRuntime?.lastApplyError).not.toContain("abc123");
   });
 });
+
+it("keeps Cursor configuration pending until a dispatch receipt, even at turn start", async () => {
+  const { stateManager } = createTestHarness();
+  const portable = portableWith([{ id: "s1" }]);
+  const hash = computeEffectiveConfigHash(portable);
+  seedWholeState(
+    getStateDb(),
+    stateWith({
+      agentBackend: "cursor",
+      mcpRuntime: {
+        lastAppliedConfigHash: "previous",
+        pendingConfigHash: hash,
+        pendingServerKeys: ["s1"],
+        lastApplyDisposition: "deferred_to_next_turn",
+      },
+    }),
+  );
+  const runtime = makeFakeRuntime({
+    backend: "cursor",
+    mcpConfigDelivery: "input-accepted",
+    applyResult: {
+      disposition: "deferred_to_next_turn",
+      droppedServerIds: [],
+      droppedFields: [],
+      errors: {},
+    },
+  });
+  const service = createMcpRuntimeApplyService(
+    createDeps(stateManager, runtime, { portable }),
+  );
+  await service.applyAtTurnStart({
+    projectPath: PROJECT_PATH,
+    sessionName: SESSION_NAME,
+    conversationId: CONVERSATION_ID,
+    backend: "cursor",
+  });
+  const persisted = await stateManager.getConversation(
+    PROJECT_PATH,
+    SESSION_NAME,
+    CONVERSATION_ID,
+  );
+  expect(persisted?.mcpRuntime?.lastAppliedConfigHash).toBe("previous");
+  expect(persisted?.mcpRuntime?.pendingConfigHash).toBe(hash);
+});
+
+it.each([false, true])(
+  "persists a dispatch receipt while preserving a newer pending change=%s",
+  async (newer) => {
+    const { stateManager } = createTestHarness();
+    const hash = "dispatched";
+    seedWholeState(
+      getStateDb(),
+      stateWith({
+        agentBackend: "cursor",
+        mcpRuntime: {
+          lastAppliedConfigHash: "previous",
+          pendingConfigHash: newer ? "next" : hash,
+          pendingServerKeys: ["s1"],
+          lastApplyDisposition: "deferred_to_next_turn",
+        },
+      }),
+    );
+    const events: unknown[] = [];
+    await recordMcpConfigReceipt(
+      createMcpRuntimeApplicationStore(stateManager),
+      {
+        projectName: "project",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+      },
+      hash,
+      (event: unknown) => events.push(event),
+    );
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "mcp-config-updated",
+        level: "conversation",
+        conversationId: CONVERSATION_ID,
+        effectiveConfigHash: newer ? "next" : hash,
+      }),
+    ]);
+    const saved = await stateManager.getConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    expect(saved?.mcpRuntime?.lastAppliedConfigHash).toBe(hash);
+    expect(saved?.mcpRuntime?.pendingConfigHash).toBe(
+      newer ? "next" : undefined,
+    );
+    expect(saved?.mcpRuntime?.lastApplyDisposition).toBe(
+      newer ? "deferred_to_next_turn" : "applied_now",
+    );
+  },
+);

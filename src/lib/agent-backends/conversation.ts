@@ -69,7 +69,7 @@ export type ConversationBackendEvent =
   | { type: "content"; block: MessageContentBlock }
   | { type: "transcript_entry"; entry: AgentTranscriptEntry }
   | { type: "error"; message: string }
-  | { type: "input_accepted" }
+  | { type: "input_accepted"; mcpConfigHash?: string }
   | { type: "external_turn_started" }
   | {
       type: "external_turn_completed";
@@ -204,6 +204,8 @@ export interface ConversationBackendRuntime {
    * callers treat `undefined` as not-active.
    */
   readonly isTurnActive?: boolean;
+  /** Configuration is prepared at dispatch and acknowledged with its exact hash. */
+  readonly mcpConfigDelivery?: "input-accepted";
   readonly modelSelection: BackendModelSelection;
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }

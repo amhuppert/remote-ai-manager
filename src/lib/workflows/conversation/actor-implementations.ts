@@ -49,7 +49,8 @@ import type {
 } from "@/lib/prompt/transcript";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
-import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
+import { recordMcpConfigReceipt } from "@/lib/mcp/runtime-apply";
+import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import {
   conversationRuntimeKey,
   getConversationRuntime,
@@ -768,12 +769,21 @@ async function executePromptForMachine(
   // only be armed once a turn has completed).
   backendRuntime?.notifyTurnStarting?.();
 
-  async function seedRuntimeMcpState(portableMcp: PortableMcpConfig) {
+  async function seedRuntimeMcpState(
+    portableMcp: PortableMcpConfig,
+    delivery: ConversationBackendRuntime["mcpConfigDelivery"],
+  ) {
     const hash = computeEffectiveConfigHash(portableMcp);
     await deps.policy.state.mcp.update(
       conversationStoreIdentity(input),
       "prompt.seedMcpRuntime",
       (state) => {
+        if (delivery === "input-accepted")
+          return {
+            ...state,
+            pendingConfigHash: hash,
+            lastApplyDisposition: "deferred_to_next_turn" as const,
+          };
         const next = {
           ...(state ?? {}),
           lastAppliedConfigHash: hash,
@@ -1141,7 +1151,7 @@ async function executePromptForMachine(
       else await runtimeState.managed.close();
       signal.throwIfAborted();
     }
-    await seedRuntimeMcpState(portableMcp);
+    await seedRuntimeMcpState(portableMcp, newRuntime.mcpConfigDelivery);
     if (capabilityRuntimeStateSeed) {
       await seedRuntimeCapabilityState(
         deps.policy,
@@ -1201,6 +1211,15 @@ async function executePromptForMachine(
     abortWiring.notifyActivity();
     switch (event.type) {
       case "input_accepted": {
+        if (event.mcpConfigHash)
+          await recordMcpConfigReceipt(
+            deps.policy.state.mcp,
+            {
+              ...conversationStoreIdentity(input),
+              projectName: input.target.projectName,
+            },
+            event.mcpConfigHash,
+          );
         await preparedContext?.onInputAccepted(seedBackendRef);
         break;
       }
@@ -1912,7 +1931,9 @@ async function runTaskRunTurnForMachine(
       workingDirectory: input.worktreePath,
       ...(input.persistence === "durable" &&
       input.target.scope === "session" &&
-      input.role === "validator"
+      input.turn.executionProfile !== "isolated-one-shot" &&
+      (input.role === "validator" ||
+        input.turn.executionClass === "governed-execution")
         ? {
             ccSessionScope: {
               project: input.target.projectName,
@@ -1946,6 +1967,8 @@ async function runTaskRunTurnForMachine(
     conversationId: input.target.conversationId,
     hasOutputSchema: request.outputSchema !== undefined,
     hasCcSessionScope: facadeDeps.taskExecution?.ccSessionScope !== undefined,
+    executionClass: request.executionClass,
+    executionProfile: request.executionProfile,
     structuredOutputTextField: input.turn.structuredOutputTextField,
   });
 

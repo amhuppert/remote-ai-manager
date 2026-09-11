@@ -59,12 +59,8 @@ export interface CursorWorkerProcessControl {
   exit(code: number): void;
 }
 
-export interface CursorWorkerMcpServer {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  cwd?: string;
-}
+export type { CursorWorkerMcpServer } from "./ipc";
+import type { CursorWorkerMcpServer } from "./ipc";
 
 /**
  * The create/resume option set the SDK does not persist (D11), passed in full on

@@ -130,21 +130,17 @@ describe("defaultMcpCapabilityRegistry — Cursor capabilities", () => {
     expect(cursor.betweenTurnApply).toBe("next-turn");
   });
 
-  it("supports the stdio transport only", () => {
+  it("supports all three transports through the enforcing bridge", () => {
     expect(cursor.transports.stdio).toBe(true);
-    expect(cursor.transports["streamable-http"]).toBe(false);
-    expect(cursor.transports.sse).toBe(false);
+    expect(cursor.transports["streamable-http"]).toBe(true);
+    expect(cursor.transports.sse).toBe(true);
   });
 
-  // Distinct from the transport question above: Cursor DOES support stdio and
-  // supports no per-tool allow/deny filtering on it.
-  it("declares no per-tool filtering mechanism on any transport", () => {
-    expect(cursor.toolFiltering.mode).toBe("unsupported");
-    expect(cursor.toolFiltering.byTransport.stdio).toBe("unsupported");
-    expect(cursor.toolFiltering.byTransport["streamable-http"]).toBe(
-      "unsupported",
-    );
-    expect(cursor.toolFiltering.byTransport.sse).toBe("unsupported");
+  it("declares bridge enforcement for each transport", () => {
+    expect(cursor.toolFiltering.mode).toBe("bridge");
+    expect(cursor.toolFiltering.byTransport.stdio).toBe("bridge");
+    expect(cursor.toolFiltering.byTransport["streamable-http"]).toBe("bridge");
+    expect(cursor.toolFiltering.byTransport.sse).toBe("bridge");
   });
 
   it("prefers a direct probe — the runtime exposes no MCP server status", () => {
@@ -185,14 +181,14 @@ describe("transport support vs tool filtering", () => {
     expect(cursor?.reason).toBeUndefined();
   });
 
-  it("marks a non-stdio server unsupported by Cursor with a transport reason", () => {
+  it("marks a remote server compatible with Cursor", () => {
     const lookup = buildCompatibilityLookup(defaultMcpCapabilityRegistry);
     const view = lookup(
       definition({ serverKey: "remote", transport: "streamable-http" }),
     );
     const cursor = view.backends.find((b) => b.backend === "cursor");
-    expect(cursor?.supported).toBe(false);
-    expect(cursor?.reason).toMatch(/streamable-http/);
+    expect(cursor?.supported).toBe(true);
+    expect(cursor?.reason).toBeUndefined();
   });
 });
 
@@ -505,4 +501,17 @@ describe("createClaudeRuntimeToolSource — capability-driven backend filter", (
     });
     expect(result).toEqual([{ name: "via-codex" }]);
   });
+});
+
+it("preserves SSE identity for Claude and refuses it for Codex", () => {
+  const portable: PortableMcpConfig = {
+    servers: [{ id: "sse", transport: "sse", url: "https://example.test/sse" }],
+  };
+  expect(translatePortableMcpToClaude(portable).servers.sse).toMatchObject({
+    type: "sse",
+    url: "https://example.test/sse",
+  });
+  const codex = translatePortableMcpToCodex(portable);
+  expect(codex.mcpServers).toEqual({});
+  expect(codex.droppedFields).toContain("sse.transport");
 });

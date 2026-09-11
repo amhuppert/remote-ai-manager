@@ -12,18 +12,21 @@ export type PortableMcpServerConfig =
       startupTimeoutSec?: number;
       toolTimeoutSec?: number;
     }
-  | {
-      id: string;
-      transport: "streamable-http";
-      url: string;
-      headers?: Record<string, string>;
-      bearerTokenEnvVar?: string;
-      enabled?: boolean;
-      enabledTools?: string[];
-      disabledTools?: string[];
-      startupTimeoutSec?: number;
-      toolTimeoutSec?: number;
-    };
+  | PortableMcpRemoteServer<"streamable-http">
+  | PortableMcpRemoteServer<"sse">;
+
+interface PortableMcpRemoteServer<T extends "streamable-http" | "sse"> {
+  id: string;
+  transport: T;
+  url: string;
+  headers?: Record<string, string>;
+  bearerTokenEnvVar?: string;
+  enabled?: boolean;
+  enabledTools?: string[];
+  disabledTools?: string[];
+  startupTimeoutSec?: number;
+  toolTimeoutSec?: number;
+}
 
 export interface PortableMcpConfig {
   servers: PortableMcpServerConfig[];

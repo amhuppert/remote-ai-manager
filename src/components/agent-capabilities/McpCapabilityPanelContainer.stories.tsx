@@ -56,6 +56,17 @@ function apiServer(
     nativeId: partial.nativeId ?? partial.serverKey,
     transport: partial.transport ?? "stdio",
     enabled: partial.enabled ?? true,
+    compatibility: partial.compatibility ?? {
+      backends: [
+        { backend: "claude", supported: true },
+        {
+          backend: "codex",
+          supported: false,
+          reason: "Codex does not support SSE",
+        },
+        { backend: "cursor", supported: true },
+      ],
+    },
     inheritanceStatus,
     sourceRefs: partial.sourceRefs ?? [
       { scope: "global", filePath: CC_GLOBAL_MCP },

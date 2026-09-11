@@ -7,6 +7,8 @@
  * card is purely presentational and does not know where its data came from.
  */
 
+import type { McpServerCompatibilityView } from "@/lib/mcp/schemas";
+
 export type McpViewLevel = "global" | "project" | "session" | "conversation";
 
 export type McpSourceLevel = "global" | "project" | "session" | "conversation";
@@ -64,6 +66,7 @@ export interface McpServerView {
   pending?: boolean;
   /** Optional runtime diagnostic (e.g. connection error). */
   runtimeError?: string;
+  compatibility?: McpServerCompatibilityView;
   /** Tool list + discovery state. */
   toolDiscovery: McpToolDiscoveryState;
 }

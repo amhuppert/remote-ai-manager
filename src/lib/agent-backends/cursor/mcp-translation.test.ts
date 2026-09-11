@@ -103,7 +103,7 @@ describe("translatePortableMcpToCursor — enable/disable cascade", () => {
 });
 
 describe("translatePortableMcpToCursor — fields the inline path cannot express", () => {
-  it("refuses a server carrying a tool allow or deny filter instead of passing it unfiltered", () => {
+  it("carries allow and deny filters to the enforcing worker bridge", () => {
     const result = translatePortableMcpToCursor({
       servers: [
         stdio({ id: "filtered", disabledTools: ["dangerous"] }),
@@ -111,13 +111,13 @@ describe("translatePortableMcpToCursor — fields the inline path cannot express
       ],
     });
 
-    expect(result.servers).toEqual({});
-    expect(result.rejectedServers).toEqual(["filtered", "allowlisted"]);
-    expect(result.rejectedFields).toEqual([
-      "filtered.disabledTools",
-      "allowlisted.enabledTools",
-    ]);
-    expect(result.errorsByServer.filtered).toContain("disabledTools");
+    expect(result.servers.filtered).toMatchObject({
+      disabledTools: ["dangerous"],
+    });
+    expect(result.servers.allowlisted).toMatchObject({
+      enabledTools: ["safe"],
+    });
+    expect(result.rejectedServers).toEqual([]);
   });
 
   it("treats an empty tool filter as no restriction", () => {
@@ -131,34 +131,40 @@ describe("translatePortableMcpToCursor — fields the inline path cannot express
     expect(result.rejectedFields).toEqual([]);
   });
 
-  it("refuses a server declaring startup or tool timeouts the SDK has no option for", () => {
+  it("carries startup and tool deadlines to the worker bridge", () => {
     const result = translatePortableMcpToCursor({
       servers: [
         stdio({ id: "timed", startupTimeoutSec: 30, toolTimeoutSec: 60 }),
       ],
     });
 
-    expect(result.servers).toEqual({});
-    expect(result.rejectedFields).toEqual([
-      "timed.startupTimeoutSec",
-      "timed.toolTimeoutSec",
-    ]);
+    expect(result.servers.timed).toMatchObject({
+      startupTimeoutSec: 30,
+      toolTimeoutSec: 60,
+    });
+    expect(result.rejectedFields).toEqual([]);
   });
 
-  it("refuses a non-stdio transport with a bounded error naming the transport", () => {
+  it("translates remote HTTP headers without dropping restrictions", () => {
     const result = translatePortableMcpToCursor({
       servers: [
         {
           id: "remote",
           transport: "streamable-http",
           url: "https://example.test/mcp",
+          headers: { Authorization: "Bearer fixture-secret" },
+          disabledTools: ["write"],
         },
       ],
     });
 
-    expect(result.servers).toEqual({});
-    expect(result.rejectedServers).toEqual(["remote"]);
-    expect(result.errorsByServer.remote).toContain("streamable-http");
+    expect(result.servers.remote).toEqual({
+      type: "http",
+      url: "https://example.test/mcp",
+      headers: { Authorization: "Bearer fixture-secret" },
+      disabledTools: ["write"],
+    });
+    expect(result.rejectedServers).toEqual([]);
   });
 });
 
@@ -205,7 +211,7 @@ describe("translatePortableMcpToCursor — bounded environment values", () => {
 });
 
 describe("translatePortableMcpToCursor — duplicate ids", () => {
-  it("keeps the first entry and refuses the colliding one rather than silently overwriting", () => {
+  it("refuses all entries sharing an id so duplicate order cannot choose permissions", () => {
     const result = translatePortableMcpToCursor({
       servers: [
         stdio({ id: "same", command: "first" }),
@@ -213,8 +219,46 @@ describe("translatePortableMcpToCursor — duplicate ids", () => {
       ],
     });
 
-    expect(result.servers.same?.command).toBe("first");
+    expect(result.servers).toEqual({});
     expect(result.rejectedServers).toEqual(["same"]);
-    expect(result.errorsByServer.same).toContain("duplicate");
+    expect(result.errorsByServer.same).toMatch(/duplicate/i);
+  });
+});
+
+describe("Cursor MCP authentication", () => {
+  it("resolves bearer credentials before the worker environment is scrubbed", () => {
+    const result = translatePortableMcpToCursor(
+      {
+        servers: [
+          {
+            id: "remote",
+            transport: "streamable-http",
+            url: "https://example.test/mcp",
+            bearerTokenEnvVar: "MCP_TOKEN",
+          },
+        ],
+      },
+      { MCP_TOKEN: "fixture-secret" },
+    );
+    expect(result.servers.remote).toMatchObject({
+      headers: { authorization: "Bearer fixture-secret" },
+    });
+  });
+  it("refuses a missing bearer credential instead of connecting anonymously", () => {
+    const result = translatePortableMcpToCursor(
+      {
+        servers: [
+          {
+            id: "remote",
+            transport: "streamable-http",
+            url: "https://example.test/mcp",
+            bearerTokenEnvVar: "MCP_TOKEN",
+          },
+        ],
+      },
+      {},
+    );
+    expect(result.servers).toEqual({});
+    expect(result.errorsByServer.remote).toContain("MCP_TOKEN");
   });
 });

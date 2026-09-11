@@ -5,6 +5,7 @@ import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
 import McpInheritBadge from "./McpInheritBadge";
 import McpToolRow from "./McpToolRow";
+import { McpTransportCompatibility } from "./McpTransportCompatibility";
 import { pendingDot } from "./styles";
 import type {
   McpInheritanceStatus,
@@ -238,6 +239,7 @@ export default function McpServerCard({
           </span>
         </div>
 
+        <McpTransportCompatibility compatibility={server.compatibility} />
         {server.runtimeError ? (
           <div
             className="flex items-center gap-sm rounded-sm bg-red-glow p-sm font-mono text-[0.72rem] text-red-text"
