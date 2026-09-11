@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRepositoryTestProfileInventory } from "./scripts/test-profiles";
-import { resolveWorkerBudget } from "./scripts/validate/worker-budget.mjs";
+import {
+  COORDINATOR_FOOTPRINT_MB,
+  TEST_WORKERS,
+  WORKER_FOOTPRINT_MB,
+  resolveWorkerBudget,
+} from "./scripts/validate/worker-budget.mjs";
 
 const dirname =
   typeof __dirname !== "undefined"
@@ -36,15 +41,16 @@ const architectureToolchainTestFiles = [
   ...testProfileInventory.byProfile["architecture-toolchain"],
 ];
 
-// Worker parallelism is bounded by RAM, not just core count — see
-// `scripts/validate/worker-budget.mjs`, which owns that policy for this config
-// and for the validation launcher alike. The unit projects use Node or jsdom,
-// so ~1.5 GB per worker is ample.
+// Fork count and the resident budget it is sized against are owned by
+// `scripts/validate/worker-budget.mjs` for this config and the validation
+// launcher alike. The heap caps below are per-process runaway guards, not the
+// sizing input: the unit projects use Node or jsdom, so ~1.5 GB per worker is
+// ample.
 const WORKER_HEAP_MB = 1536;
-const COORDINATOR_HEAP_MB = 3072;
 const maxForks = resolveWorkerBudget({
-  coordinatorHeapMb: COORDINATOR_HEAP_MB,
-  workerHeapMb: WORKER_HEAP_MB,
+  requestedWorkers: TEST_WORKERS,
+  coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+  workerFootprintMb: WORKER_FOOTPRINT_MB,
   totalMemoryBytes: os.totalmem(),
   availableParallelism: os.availableParallelism(),
 });

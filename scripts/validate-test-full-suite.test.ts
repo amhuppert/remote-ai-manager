@@ -317,13 +317,13 @@ describe("test-full-suite validation command", () => {
   });
 
   it("keeps changed and full variants on one worker and heap profile", () => {
-    expect(invocations[0]).toMatchObject({ workers: "8", heapMb: "1536" });
+    expect(invocations[0]).toMatchObject({ workers: "4", heapMb: "1536" });
     expect(changedInvocations[0]).toMatchObject({
-      workers: "8",
+      workers: "4",
       heapMb: "1536",
     });
     expect(changedInvocations[1]).toMatchObject({
-      workers: "8",
+      workers: "4",
       heapMb: "1536",
     });
   });

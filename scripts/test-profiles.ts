@@ -88,6 +88,7 @@ export const ARCHITECTURE_TOOLCHAIN_TEST_FILES = [
   "src/lib/conversations/project-route-equivalent.test.ts",
   "src/lib/memory/delivery-policy.test.ts",
   "src/lib/memory/telemetry-outside-ranking.test.ts",
+  "src/lib/projects/repo-config.test.ts",
   "src/lib/shared/design-system-guarantees.test.ts",
   "src/lib/shared/tailwind-utility-collisions.test.ts",
   "src/lib/shared/theme-surface.test.ts",

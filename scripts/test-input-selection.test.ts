@@ -101,6 +101,15 @@ describe("changed-scope selection of source-scanning contracts", () => {
     );
   });
 
+  it("selects the checked-in project configuration contract when CommandCenter.json changes", () => {
+    // The 2026-09-10 typecheck description change reached main with this
+    // contract red: it reads CommandCenter.json by path, so the import graph
+    // never selected it.
+    expect(select(["CommandCenter.json"])).toContain(
+      "src/lib/projects/repo-config.test.ts",
+    );
+  });
+
   it("selects nothing for changes no contract scans", () => {
     expect(select(["PERFORMANCE.md", "docs/reports/2026-07-15.md"])).toEqual(
       [],

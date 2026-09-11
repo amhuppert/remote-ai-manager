@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { startVitest } from "vitest/node";
 import {
+  COORDINATOR_FOOTPRINT_MB,
+  WORKER_FOOTPRINT_MB,
   resolveScopedWorkerRequest,
   resolveWorkerBudget,
 } from "./worker-budget.mjs";
@@ -10,10 +12,6 @@ import {
 const [mode, projectSelection, ...modeArgs] = process.argv.slice(2);
 const testWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
 const testHeapMb = Number.parseInt(process.env.CC_TEST_HEAP_MB ?? "", 10);
-const coordinatorHeapMb = Number.parseInt(
-  process.env.CC_TEST_COORDINATOR_HEAP_MB ?? "",
-  10,
-);
 // 0 disables bail. Scoped runs keep the low threshold so a broken branch fails
 // fast; the full-suite command raises it to report every failure at once.
 const testBail = Number.parseInt(process.env.CC_TEST_BAIL ?? "3", 10);
@@ -23,9 +21,6 @@ if (!Number.isInteger(testWorkers) || testWorkers < 1) {
 }
 if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
   throw new Error("CC_TEST_HEAP_MB must be a positive integer");
-}
-if (!Number.isInteger(coordinatorHeapMb) || coordinatorHeapMb < 1) {
-  throw new Error("CC_TEST_COORDINATOR_HEAP_MB must be a positive integer");
 }
 if (!Number.isInteger(testBail) || testBail < 0) {
   throw new Error("CC_TEST_BAIL must be a non-negative integer");
@@ -90,8 +85,8 @@ const workers = resolveWorkerBudget({
     pathTokenCount: filters.length,
     configuredWorkers: testWorkers,
   }),
-  coordinatorHeapMb,
-  workerHeapMb: testHeapMb,
+  coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+  workerFootprintMb: WORKER_FOOTPRINT_MB,
   totalMemoryBytes: os.totalmem(),
   availableParallelism: os.availableParallelism(),
 });

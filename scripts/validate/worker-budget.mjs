@@ -13,7 +13,26 @@
  * a caller can now ask for less than the ceiling but never for more.
  */
 
-/** Fraction of total RAM the Vitest process fleet may budget for its heaps. */
+/**
+ * Forks the `test` wrapper and the vitest config ask for on any machine. The
+ * 2026-09-11 full-suite benchmarks on the 8-physical-core reference host put
+ * four forks 18% under three and found no gain at six, while every fork adds
+ * about 0.67 GB of resident memory; the request is clamped below this only by
+ * the RAM budget of a smaller machine.
+ */
+export const TEST_WORKERS = 4;
+
+/**
+ * Measured resident footprints the budget sizes against, with headroom: a fork
+ * peaked at 0.67 GB and the coordinator at 1.1 GB over the full suite. These
+ * are deliberately not the heap caps the processes run under — sizing by the
+ * caps (1.5 GB and 3 GB) reserved three times the memory the fleet uses and
+ * clamped the reference host to three forks.
+ */
+export const WORKER_FOOTPRINT_MB = 768;
+export const COORDINATOR_FOOTPRINT_MB = 1280;
+
+/** Fraction of total RAM the Vitest process fleet may occupy. */
 const RAM_BUDGET_FRACTION = 0.55;
 
 /**
@@ -23,14 +42,6 @@ const RAM_BUDGET_FRACTION = 0.55;
  */
 const MIN_WORKERS = 2;
 
-/**
- * Full-suite validation keeps the whole corpus collected and reporting through
- * one Vitest coordinator. Leaving headroom below the changed-scope pool keeps
- * the coordinator responsive under machine contention instead of relying only
- * on per-file timeouts.
- */
-const FULL_SUITE_WORKERS = 4;
-
 const BYTES_PER_GB = 1024 ** 3;
 
 /**
@@ -38,23 +49,23 @@ const BYTES_PER_GB = 1024 ** 3;
  * @param {number} [input.requestedWorkers] Worker count the caller asked for.
  *   Treated as a request, not an instruction: it is clamped DOWN to the
  *   machine's ceiling and never raised up to it.
- * @param {number} input.coordinatorHeapMb Coordinator heap cap, in MB.
- * @param {number} input.workerHeapMb Per-worker heap cap, in MB.
+ * @param {number} input.coordinatorFootprintMb Coordinator resident budget, in MB.
+ * @param {number} input.workerFootprintMb Per-worker resident budget, in MB.
  * @param {number} input.totalMemoryBytes Total machine RAM, `os.totalmem()`.
  * @param {number} input.availableParallelism `os.availableParallelism()`.
  * @returns {number} Workers to run.
  */
 export function resolveWorkerBudget({
   requestedWorkers,
-  coordinatorHeapMb,
-  workerHeapMb,
+  coordinatorFootprintMb,
+  workerFootprintMb,
   totalMemoryBytes,
   availableParallelism,
 }) {
   const workerBudgetMb =
     (totalMemoryBytes / BYTES_PER_GB) * 1024 * RAM_BUDGET_FRACTION -
-    coordinatorHeapMb;
-  const affordableWorkers = Math.floor(workerBudgetMb / workerHeapMb);
+    coordinatorFootprintMb;
+  const affordableWorkers = Math.floor(workerBudgetMb / workerFootprintMb);
   const ceiling = Math.max(
     MIN_WORKERS,
     Math.min(availableParallelism, affordableWorkers),
@@ -75,7 +86,7 @@ export function resolveWorkerBudget({
  * slower on fewer forks instead of exceeding what it paid for.
  *
  * @param {object} input
- * @param {"full" | "changed" | "paths"} input.mode Scope the launcher runs.
+ * @param {"full" | "changed" | "related" | "paths"} input.mode Scope the launcher runs.
  * @param {number} input.pathTokenCount Path tokens forwarded in `paths` mode.
  * @param {number} input.configuredWorkers Wrapper-owned pool size.
  * @returns {number} Workers to request from the machine budget.
@@ -85,9 +96,6 @@ export function resolveScopedWorkerRequest({
   pathTokenCount,
   configuredWorkers,
 }) {
-  if (mode === "full") {
-    return Math.max(1, Math.min(configuredWorkers, FULL_SUITE_WORKERS));
-  }
   if (mode !== "paths") return configuredWorkers;
   return Math.max(1, Math.min(pathTokenCount, configuredWorkers));
 }

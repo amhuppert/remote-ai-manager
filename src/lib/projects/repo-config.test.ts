@@ -1,3 +1,4 @@
+// @vitest-inputs CommandCenter.json
 import { describe, expect, it, vi } from "vitest";
 import {
   createRepoConfig,
@@ -23,7 +24,7 @@ describe("readRepoConfig", () => {
             full: "scripts/validate/format-full.sh",
             changed: "scripts/validate/format.sh",
           },
-          cost: 1,
+          cost: 2,
           description: "Format project files",
           pathArgs: "forbid",
         },
@@ -32,15 +33,16 @@ describe("readRepoConfig", () => {
             full: "scripts/validate/lint-full.sh",
             changed: "scripts/validate/lint.sh",
           },
-          cost: 2,
+          cost: 3,
           description: "Lint project files",
           pathArgs: "forbid",
         },
         typecheck: {
           command: { full: "scripts/validate/typecheck.sh" },
-          cost: 2,
+          cost: 4,
           timeoutMs: 600_000,
-          description: "Full-project TypeScript check (tsc --noEmit)",
+          description:
+            "Full-project TypeScript check (native TypeScript 7, --noEmit)",
           pathArgs: "forbid",
         },
         seams: {
@@ -55,7 +57,7 @@ describe("readRepoConfig", () => {
             full: "scripts/validate/test-full-suite.sh",
             changed: "scripts/validate/test.sh",
           },
-          cost: { full: 5, changed: 5, paths: { base: 2, perPath: 1 } },
+          cost: { full: 7, changed: 7, paths: { base: 3, perPath: 1 } },
           timeoutMs: 3_600_000,
           description:
             "Run unit tests in a worker pool clamped to the machine's memory budget",

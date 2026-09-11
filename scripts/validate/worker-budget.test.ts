@@ -6,29 +6,35 @@ import {
 
 const GB = 1024 ** 3;
 
-/** The heap both the vitest config and the validation launcher size against. */
-const WORKER_HEAP_MB = 1536;
-const COORDINATOR_HEAP_MB = 3072;
+/**
+ * The measured resident footprints both the vitest config and the validation
+ * launcher size against (2026-09-11 full-suite samples with headroom): a fork
+ * peaks near 0.67 GB and the coordinator near 1.1 GB. Heap caps stay separate
+ * as per-process runaway guards and no longer drive the count.
+ */
+const WORKER_FOOTPRINT_MB = 768;
+const COORDINATOR_FOOTPRINT_MB = 1280;
 
 describe("resolveWorkerBudget", () => {
-  it("budgets the coordinator heap separately from worker heaps", () => {
-    // The coordinator retains the full task graph and needs more heap than an
-    // individual worker. The remaining 55% RAM budget holds three workers.
+  it("budgets the coordinator footprint separately from worker footprints", () => {
+    // The coordinator retains the full task graph and is larger than a fork.
+    // The remaining 55% RAM budget on a 16 GB host holds ten forks, so the
+    // measured four-fork request is never clamped there.
     expect(
       resolveWorkerBudget({
-        coordinatorHeapMb: COORDINATOR_HEAP_MB,
-        workerHeapMb: WORKER_HEAP_MB,
+        coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+        workerFootprintMb: WORKER_FOOTPRINT_MB,
         totalMemoryBytes: 16 * GB,
         availableParallelism: 16,
       }),
-    ).toBe(3);
+    ).toBe(10);
   });
 
   it("bounds parallelism by core count when RAM is plentiful", () => {
     expect(
       resolveWorkerBudget({
-        coordinatorHeapMb: COORDINATOR_HEAP_MB,
-        workerHeapMb: WORKER_HEAP_MB,
+        coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+        workerFootprintMb: WORKER_FOOTPRINT_MB,
         totalMemoryBytes: 128 * GB,
         availableParallelism: 8,
       }),
@@ -38,8 +44,8 @@ describe("resolveWorkerBudget", () => {
   it("keeps a two-worker floor on a machine whose RAM affords fewer", () => {
     expect(
       resolveWorkerBudget({
-        coordinatorHeapMb: COORDINATOR_HEAP_MB,
-        workerHeapMb: WORKER_HEAP_MB,
+        coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+        workerFootprintMb: WORKER_FOOTPRINT_MB,
         totalMemoryBytes: 4 * GB,
         availableParallelism: 8,
       }),
@@ -53,12 +59,12 @@ describe("resolveWorkerBudget", () => {
     expect(
       resolveWorkerBudget({
         requestedWorkers: 8,
-        coordinatorHeapMb: COORDINATOR_HEAP_MB,
-        workerHeapMb: WORKER_HEAP_MB,
-        totalMemoryBytes: 16 * GB,
+        coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+        workerFootprintMb: WORKER_FOOTPRINT_MB,
+        totalMemoryBytes: 8 * GB,
         availableParallelism: 16,
       }),
-    ).toBe(3);
+    ).toBe(4);
   });
 
   it("honours a caller that asks for fewer workers than the budget allows", () => {
@@ -67,8 +73,8 @@ describe("resolveWorkerBudget", () => {
     expect(
       resolveWorkerBudget({
         requestedWorkers: 3,
-        coordinatorHeapMb: COORDINATOR_HEAP_MB,
-        workerHeapMb: WORKER_HEAP_MB,
+        coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+        workerFootprintMb: WORKER_FOOTPRINT_MB,
         totalMemoryBytes: 128 * GB,
         availableParallelism: 16,
       }),
@@ -79,29 +85,29 @@ describe("resolveWorkerBudget", () => {
     expect(
       resolveWorkerBudget({
         requestedWorkers: 0,
-        coordinatorHeapMb: COORDINATOR_HEAP_MB,
-        workerHeapMb: WORKER_HEAP_MB,
+        coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+        workerFootprintMb: WORKER_FOOTPRINT_MB,
         totalMemoryBytes: 128 * GB,
         availableParallelism: 16,
       }),
     ).toBe(1);
   });
 
-  it("shrinks the ceiling as the per-worker heap grows", () => {
-    // Same machine, twice the heap per worker, so half the workers fit.
+  it("shrinks the ceiling as the per-worker footprint grows", () => {
+    // Same machine, twice the footprint per worker, so half the workers fit.
     expect(
       resolveWorkerBudget({
-        coordinatorHeapMb: COORDINATOR_HEAP_MB,
-        workerHeapMb: WORKER_HEAP_MB * 2,
+        coordinatorFootprintMb: COORDINATOR_FOOTPRINT_MB,
+        workerFootprintMb: WORKER_FOOTPRINT_MB * 2,
         totalMemoryBytes: 16 * GB,
         availableParallelism: 16,
       }),
-    ).toBe(2);
+    ).toBe(5);
   });
 });
 
 /** Worker count the `test` wrapper asks for on this machine. */
-const CONFIGURED_WORKERS = 8;
+const CONFIGURED_WORKERS = 4;
 
 describe("resolveScopedWorkerRequest", () => {
   it("asks for one worker per forwarded path token", () => {
@@ -119,10 +125,10 @@ describe("resolveScopedWorkerRequest", () => {
     expect(
       resolveScopedWorkerRequest({
         mode: "paths",
-        pathTokenCount: 5,
+        pathTokenCount: 3,
         configuredWorkers: CONFIGURED_WORKERS,
       }),
-    ).toBe(5);
+    ).toBe(3);
   });
 
   it("never asks for more than the wrapper's configured pool", () => {
@@ -148,27 +154,17 @@ describe("resolveScopedWorkerRequest", () => {
     ).toBe(CONFIGURED_WORKERS);
   });
 
-  it("caps full-suite runs below the wrapper pool so the coordinator stays responsive", () => {
-    // Full-scope validation keeps every project collected and reporting at
-    // once. Keeping the request below the normal changed-scope pool leaves CPU
-    // and event-loop headroom for Vitest's coordinator RPCs.
+  it("leaves full runs at the configured pool", () => {
+    // Full scope measured fastest at the same four forks the wrapper configures
+    // (2026-09-11: 12.6 min at four against 15.4 min at three, no gain at six),
+    // so nothing below the configured pool is reserved for the coordinator.
     expect(
       resolveScopedWorkerRequest({
         mode: "full",
         pathTokenCount: 0,
         configuredWorkers: CONFIGURED_WORKERS,
       }),
-    ).toBe(4);
-  });
-
-  it("does not raise a deliberately smaller full-suite request", () => {
-    expect(
-      resolveScopedWorkerRequest({
-        mode: "full",
-        pathTokenCount: 0,
-        configuredWorkers: 3,
-      }),
-    ).toBe(3);
+    ).toBe(CONFIGURED_WORKERS);
   });
 
   it("keeps at least one worker when no token survives", () => {
