@@ -3,16 +3,14 @@ import { z } from "zod";
 import {
   DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
   type DeliveryPlanBindingLintIssueCode,
-} from "./delivery-plan-binding-lint";
-import {
   DELIVERY_PLAN_GATE_RULE_IDS,
+  EVERGREEN_LINT_RULES,
   LAUNCH_ADVISORY_RULE_ID,
   LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
   LAUNCH_NOT_ADMISSIBLE_RULE_ID,
   PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID,
   PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID,
-} from "./delivery-plan-health";
-import { EVERGREEN_LINT_RULES } from "./lint";
+} from "./lint-rules";
 
 const lintRuleDefinitionSchema = z.object({
   ruleId: z.string().min(1),

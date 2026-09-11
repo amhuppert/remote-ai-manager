@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { UserConfig } from "vitest/config";
 import vitestConfig from "../vitest.config";
+import { TEST_PATH_FILTERS_ENV } from "./test-path-filters";
 import { buildRepositoryTestProfileInventory } from "./test-profiles";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
@@ -48,6 +49,42 @@ describe("Vitest execution profiles", () => {
     const includes = includesFor(project);
     expect(includes).toHaveLength(inventory.byProfile[profile].length);
     expect(new Set(includes)).toEqual(new Set(inventory.byProfile[profile]));
+  });
+
+  it("narrows the unit include lists to the launcher's path filters", async () => {
+    const previous = process.env[TEST_PATH_FILTERS_ENV];
+    process.env[TEST_PATH_FILTERS_ENV] = JSON.stringify([
+      "scripts/test-profile-config.test.ts",
+      "src/components/ui/JsonTree.test",
+    ]);
+    try {
+      const narrowed: UserConfig = await vitestConfig({
+        command: "serve",
+        mode: "test",
+      });
+      const projects: unknown = narrowed.test?.projects;
+      const includesOf = (name: string): unknown => {
+        if (!Array.isArray(projects)) throw new Error("no projects");
+        const project: unknown = projects.find(
+          (candidate: unknown) =>
+            typeof candidate === "object" &&
+            candidate !== null &&
+            Reflect.get(Reflect.get(candidate, "test") ?? {}, "name") === name,
+        );
+        return Reflect.get(Reflect.get(project ?? {}, "test") ?? {}, "include");
+      };
+      expect(includesOf("unit-architecture")).toEqual([
+        "scripts/test-profile-config.test.ts",
+      ]);
+      expect(includesOf("unit-jsdom")).toEqual([
+        "src/components/ui/JsonTree.test.tsx",
+      ]);
+      expect(includesOf("unit-node")).toEqual([]);
+      expect(includesOf("unit-pure")).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env[TEST_PATH_FILTERS_ENV];
+      else process.env[TEST_PATH_FILTERS_ENV] = previous;
+    }
   });
 
   it("gives the pure cohort no setup file", () => {

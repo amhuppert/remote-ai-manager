@@ -1,3 +1,18 @@
+import {
+  LAUNCH_NOT_ADMISSIBLE_RULE_ID,
+  LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+  LAUNCH_ADVISORY_RULE_ID,
+  type DeliveryPlanGateRuleId,
+} from "./lint-rules";
+export {
+  LAUNCH_NOT_ADMISSIBLE_RULE_ID,
+  LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+  PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID,
+  PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID,
+  LAUNCH_ADVISORY_RULE_ID,
+  DELIVERY_PLAN_GATE_RULE_IDS,
+  type DeliveryPlanGateRuleId,
+} from "./lint-rules";
 import { type WorkflowSemanticDefinition } from "@/lib/workflow-graph/spec-bridge";
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
 import type { ManagedDefinitionPreflightSummary } from "@/lib/workflows/managed-definition-preflight-contract";
@@ -65,53 +80,6 @@ export interface DeliveryPlanDraftHealthInput {
   /** The definition the charter remedy names. */
   readonly workflowDefinitionId: string;
 }
-
-/** The rule id a refused graph launch reports under. */
-export const LAUNCH_NOT_ADMISSIBLE_RULE_ID = "launch/not-admissible";
-
-/** The rule id an unauthored charter refuses proposal under. */
-export const LAUNCH_CHARTER_UNAUTHORED_RULE_ID = "launch/charter-unauthored";
-
-/** The rule id a draft whose pinned revision cannot be read refuses under. */
-export const PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID =
-  "plan/pinned-revision-unavailable";
-
-/** The rule id a draft whose managed definition is missing refuses under. */
-export const PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID =
-  "plan/workflow-definition-unavailable";
-
-/**
- * The rule id an admitted launch's graph advisories report under.
- *
- * The shared admission service answers with both halves — `issues` refuse,
- * `warnings` do not — and the ordinary `workflow validate` surface prints both.
- * Reading only the refusing half here would make the same launch bytes read
- * clean through a spec proposal and warned through an ordinary validate, which
- * is the dialect divergence the one-graph-dialect boundary exists to prevent.
- * The advisory is forwarded verbatim rather than re-derived: the graph owns the
- * finding, this projection only carries it.
- */
-export const LAUNCH_ADVISORY_RULE_ID = "launch/advisory";
-
-/**
- * The gate rules that are not binding lint: launch admission, the charter
- * check, and the two readability findings the service's `healthOf` raises.
- * Listed as a value so the published taxonomy derives from it — a rule this
- * array does not carry cannot be reported, because {@link
- * DeliveryPlanGateRuleId} is what a finding's `ruleId` has to be.
- */
-export const DELIVERY_PLAN_GATE_RULE_IDS = [
-  "plan/coverage-upgrade-required",
-  LAUNCH_NOT_ADMISSIBLE_RULE_ID,
-  LAUNCH_ADVISORY_RULE_ID,
-  LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
-  PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID,
-  PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID,
-] as const;
-
-export type DeliveryPlanGateRuleId =
-  | DeliveryPlanBindingLintIssueCode
-  | (typeof DELIVERY_PLAN_GATE_RULE_IDS)[number];
 
 /** A draft-health finding, narrowed to the rules the propose gate publishes. */
 export interface DeliveryPlanGateFinding extends LintFinding {

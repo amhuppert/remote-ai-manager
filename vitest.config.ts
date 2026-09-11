@@ -4,6 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRepositoryTestProfileInventory } from "./scripts/test-profiles";
 import {
+  narrowTestFilesToFilters,
+  readTestPathFilters,
+} from "./scripts/test-path-filters";
+import {
   COORDINATOR_FOOTPRINT_MB,
   TEST_WORKERS,
   WORKER_FOOTPRINT_MB,
@@ -30,16 +34,6 @@ const acceptanceTestFiles = [
     path.basename(filePath).startsWith("final-") ? 1 : 0;
   return rank(left) - rank(right) || left.localeCompare(right);
 });
-const pureNodeTestFiles = [...testProfileInventory.byProfile["pure-node"]];
-const nodeIntegrationTestFiles = [
-  ...testProfileInventory.byProfile["node-integration"],
-];
-const domIntegrationTestFiles = [
-  ...testProfileInventory.byProfile["dom-integration"],
-];
-const architectureToolchainTestFiles = [
-  ...testProfileInventory.byProfile["architecture-toolchain"],
-];
 
 // Fork count and the resident budget it is sized against are owned by
 // `scripts/validate/worker-budget.mjs` for this config and the validation
@@ -99,6 +93,26 @@ async function resolveStorybookProjects() {
 
 export default async function resolveConfig(_env: ConfigEnv) {
   const storybookProjects = await resolveStorybookProjects();
+  // An explicit-path validation run narrows each unit include list to the
+  // requested paths before Vitest globs it; Vitest applies the same filter
+  // again to the result, so the selection is unchanged and only the crawl
+  // shrinks. Read per resolution so the launcher's environment is what counts.
+  const testPathFilters = readTestPathFilters(process.env);
+  const unitTestFiles = (files: readonly string[]): string[] => [
+    ...narrowTestFilesToFilters(files, testPathFilters, dirname),
+  ];
+  const pureNodeTestFiles = unitTestFiles(
+    testProfileInventory.byProfile["pure-node"],
+  );
+  const nodeIntegrationTestFiles = unitTestFiles(
+    testProfileInventory.byProfile["node-integration"],
+  );
+  const domIntegrationTestFiles = unitTestFiles(
+    testProfileInventory.byProfile["dom-integration"],
+  );
+  const architectureToolchainTestFiles = unitTestFiles(
+    testProfileInventory.byProfile["architecture-toolchain"],
+  );
   return defineConfig({
     resolve: {
       alias: {

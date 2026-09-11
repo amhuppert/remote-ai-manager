@@ -1,22 +1,4 @@
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
-import { runAgent } from "./commands/agent";
-import { runAsk } from "./commands/ask";
-import { runCharter } from "./commands/charter";
-import { runConversation } from "./commands/conversation";
-import { runDecisions } from "./commands/decisions";
-import { runDev } from "./commands/dev";
-import { runDoctor } from "./commands/doctor";
-import { runDocs } from "./commands/docs";
-import { runExitCodes } from "./commands/exit-codes";
-import { runFixture } from "./commands/fixture";
-import { runLogs } from "./commands/logs";
-import { runMemory } from "./commands/memory";
-import { runNotepad } from "./commands/notepad";
-import { runNotify } from "./commands/notify";
-import { runSpec } from "./commands/spec";
-import { runTicket } from "./commands/ticket";
-import { runValidate } from "./commands/validate";
-import { runWorkflow } from "./commands/workflow";
 import { dispatchGroup } from "./dispatch";
 import { fetchHelpContext } from "./help-context";
 import {
@@ -294,25 +276,78 @@ async function dispatchCli(
     rest: positionals,
     json: flags.json,
     handlers: {
-      ask: (rest) => runAsk(rest, flags, values, lists, env, host),
-      notify: (rest) => runNotify(rest, flags, values, env, host),
-      docs: (rest) => runDocs(rest, flags, values, env, host),
-      dev: (rest) => runDev(rest, flags, values, env, host),
-      fixture: (rest) => runFixture(rest, flags, values, env, host),
-      workflow: (rest) => runWorkflow(rest, flags, values, env, host),
-      charter: (rest) => runCharter(rest, flags, values, env, host),
-      decisions: (rest) => runDecisions(rest, flags, values, env, host),
-      agent: (rest) => runAgent(rest, flags, values, env, host),
-      validate: (rest) =>
-        runValidate(rest, passthrough, flags, values, env, host),
-      conversation: (rest) => runConversation(rest, flags, values, env, host),
-      ticket: (rest) => runTicket(rest, flags, values, lists, env, host),
-      memory: (rest) => runMemory(rest, flags, values, lists, env, host),
-      notepad: (rest) => runNotepad(rest, flags, values, env, host),
-      spec: (rest) => runSpec(rest, flags, values, lists, env, host),
-      logs: (rest) => runLogs(rest, flags, values, env, host),
-      doctor: () => runDoctor(flags, values, env, host),
-      "exit-codes": async () => runExitCodes(flags, values),
+      ask: async (rest) => {
+        const { runAsk } = await import("./commands/ask");
+        return runAsk(rest, flags, values, lists, env, host);
+      },
+      notify: async (rest) => {
+        const { runNotify } = await import("./commands/notify");
+        return runNotify(rest, flags, values, env, host);
+      },
+      docs: async (rest) => {
+        const { runDocs } = await import("./commands/docs");
+        return runDocs(rest, flags, values, env, host);
+      },
+      dev: async (rest) => {
+        const { runDev } = await import("./commands/dev");
+        return runDev(rest, flags, values, env, host);
+      },
+      fixture: async (rest) => {
+        const { runFixture } = await import("./commands/fixture");
+        return runFixture(rest, flags, values, env, host);
+      },
+      workflow: async (rest) => {
+        const { runWorkflow } = await import("./commands/workflow");
+        return runWorkflow(rest, flags, values, env, host);
+      },
+      charter: async (rest) => {
+        const { runCharter } = await import("./commands/charter");
+        return runCharter(rest, flags, values, env, host);
+      },
+      decisions: async (rest) => {
+        const { runDecisions } = await import("./commands/decisions");
+        return runDecisions(rest, flags, values, env, host);
+      },
+      agent: async (rest) => {
+        const { runAgent } = await import("./commands/agent");
+        return runAgent(rest, flags, values, env, host);
+      },
+      validate: async (rest) => {
+        const { runValidate } = await import("./commands/validate");
+        return runValidate(rest, passthrough, flags, values, env, host);
+      },
+      conversation: async (rest) => {
+        const { runConversation } = await import("./commands/conversation");
+        return runConversation(rest, flags, values, env, host);
+      },
+      ticket: async (rest) => {
+        const { runTicket } = await import("./commands/ticket");
+        return runTicket(rest, flags, values, lists, env, host);
+      },
+      memory: async (rest) => {
+        const { runMemory } = await import("./commands/memory");
+        return runMemory(rest, flags, values, lists, env, host);
+      },
+      notepad: async (rest) => {
+        const { runNotepad } = await import("./commands/notepad");
+        return runNotepad(rest, flags, values, env, host);
+      },
+      spec: async (rest) => {
+        const { runSpec } = await import("./commands/spec");
+        return runSpec(rest, flags, values, lists, env, host);
+      },
+      logs: async (rest) => {
+        const { runLogs } = await import("./commands/logs");
+        return runLogs(rest, flags, values, env, host);
+      },
+      doctor: async () => {
+        const { runDoctor } = await import("./commands/doctor");
+        return runDoctor(flags, values, env, host);
+      },
+      "exit-codes": async () => {
+        const { runExitCodes } = await import("./commands/exit-codes");
+        return runExitCodes(flags, values);
+      },
       version: async () => runVersion(flags, values),
     },
   });

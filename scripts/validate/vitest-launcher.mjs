@@ -50,6 +50,9 @@ let changed;
 let related;
 if (mode === "paths" && modeArgs.length > 0) {
   filters = modeArgs;
+  // Read by vitest.config.ts to narrow each project's include list to these
+  // filters before the glob; see scripts/test-path-filters.ts.
+  process.env.CC_TEST_PATH_FILTERS = JSON.stringify(filters);
 } else if (mode === "changed" && modeArgs.length === 1) {
   changed = modeArgs[0];
 } else if (mode === "related" && modeArgs.length === 1) {

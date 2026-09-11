@@ -1,3 +1,8 @@
+import type { DeliveryPlanBindingLintIssueCode } from "./lint-rules";
+export {
+  DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
+  type DeliveryPlanBindingLintIssueCode,
+} from "./lint-rules";
 import {
   collectStableAccountabilityContextIds,
   criterionRecordsOf,
@@ -8,27 +13,6 @@ import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph
 
 import type { DeliveryPlanBinding, DeliveryPlanClaim } from "./delivery-plan";
 import type { SpecRevisionSnapshot } from "./schemas";
-
-/**
- * Every code this lint can emit, as a value rather than a union alone: the
- * published taxonomy derives its rows from this list, so a code that cannot be
- * added without appearing here cannot be emitted unpublished.
- */
-export const DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES = [
-  "binding/disposition-missing",
-  "binding/disposition-duplicate",
-  "binding/disposition-criterion-unknown",
-  "coverage/selected-criterion-uncovered",
-  "coverage/not-must-run",
-  "coverage/unstable-context",
-  "coverage/unknown-id",
-  "coverage/unselected",
-  "binding/pending-reaffirmation",
-  "binding/reaffirmed-without-delivery",
-] as const;
-
-export type DeliveryPlanBindingLintIssueCode =
-  (typeof DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES)[number];
 
 export interface DeliveryPlanBindingLintIssue {
   readonly code: DeliveryPlanBindingLintIssueCode;

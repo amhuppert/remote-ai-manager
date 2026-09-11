@@ -54,9 +54,10 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import os from "node:os";
 import { getTraceContext, type TraceContext } from "./context";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
-import { resolveConfigDir } from "../config/loader";
+import { resolveConfigDirFrom } from "../config/config-dir";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -160,7 +161,13 @@ function ensureInitialized(): void {
   scopedRoutingEnabled = process.env["CC_LOG_SCOPED"] !== "0";
   maxBytes = parseNonNegativeInt("CC_LOG_MAX_BYTES", DEFAULT_MAX_BYTES);
   maxFiles = parseNonNegativeInt("CC_LOG_MAX_FILES", DEFAULT_MAX_FILES);
-  logsRoot = path.join(resolveConfigDir(), "logs");
+  logsRoot = path.join(
+    resolveConfigDirFrom(process.env, {
+      platform: os.platform(),
+      homedir: os.homedir(),
+    }),
+    "logs",
+  );
 }
 
 function ensureDir(dir: string): void {
