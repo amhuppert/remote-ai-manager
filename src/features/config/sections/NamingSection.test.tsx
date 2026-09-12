@@ -10,11 +10,19 @@ import {
 import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 
-function renderWithQuery(ui: React.ReactElement) {
+function renderWithQuery(ui: React.ReactElement, taskless = false) {
   const client = createTestQueryClient();
   client.setQueryData(
     backendCatalogKeys.catalog(),
-    listBackendCatalogEntries(),
+    listBackendCatalogEntries().map((entry) =>
+      taskless && entry.id === "cursor"
+        ? {
+            ...entry,
+            facets: { ...entry.facets, tasks: false },
+            execution: { ...entry.execution, tasks: null },
+          }
+        : entry,
+    ),
   );
   return renderQuery(ui, client);
 }
@@ -83,7 +91,7 @@ describe("NamingSection", () => {
 
   it("refuses a backend with no task facet and keeps the configured one", () => {
     const { controller, getState } = makeController();
-    renderWithQuery(<NamingSection controller={controller} />);
+    renderWithQuery(<NamingSection controller={controller} />, true);
 
     const cursor = pillIn("conversationNaming.backend", "cursor");
     expect(cursor).toHaveAttribute("aria-disabled", "true");

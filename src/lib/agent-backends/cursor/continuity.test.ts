@@ -70,6 +70,50 @@ function createAdapter(worker: Parameters<typeof createScriptedTransport>[0]) {
 }
 
 describe("cursor continuity start", () => {
+  it("classifies malformed task envelopes without opening a worker", async () => {
+    const { adapter, transport } = createAdapter({});
+    expect(await adapter.validate(ref("{broken"), CONTEXT)).toEqual({
+      status: "stale",
+      reason: "cursor_ref_corrupt",
+    });
+    await expect(
+      adapter.resumeOrRecover(ref("{broken"), CONTEXT),
+    ).rejects.toMatchObject({
+      classification: "corrupt",
+    });
+    expect(transport.workers).toHaveLength(0);
+  });
+  it("bounds a silent probe and closes its worker", async () => {
+    const transport = createScriptedTransport({ onAttach() {} });
+    const adapter = createCursorContinuityAdapter({
+      transport,
+      resolveBinding: async () => BINDING,
+      attachTimeoutMs: 10,
+    });
+    await expect(adapter.start(CONTEXT)).rejects.toMatchObject({
+      classification: "unavailable",
+    });
+    expect(transport.workers[0]?.closeCount).toBe(1);
+  }, 500);
+  it("refuses a live conversation slot without attaching or closing its worker", async () => {
+    const transport = createScriptedTransport();
+    await transport.start({
+      ...BINDING,
+      target: null,
+      ownerToken: {},
+      onFrame() {},
+      onExit() {},
+    });
+    const adapter = createCursorContinuityAdapter({
+      transport,
+      resolveBinding: async () => BINDING,
+    });
+    await expect(adapter.start(CONTEXT)).rejects.toMatchObject({
+      classification: "already_active",
+    });
+    expect(transport.workers[0]?.closeCount).toBe(0);
+    await transport.closeAll();
+  });
   it("creates a real agent through a worker and returns its owned ref", async () => {
     const { adapter, transport } = createAdapter({ ref: "agent-new" });
     const created = await adapter.start(CONTEXT);

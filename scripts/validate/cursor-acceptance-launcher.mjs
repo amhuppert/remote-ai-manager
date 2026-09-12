@@ -50,7 +50,7 @@ process.stdout.write(`${formatCursorAcceptanceVerdict(gate)}\n`);
 // a concurrent acceptance file's processes would be indistinguishable from a
 // leak. `passWithNoTests` stays false so an empty include list is a failure
 // rather than the vacuous pass this command exists to prevent.
-await startVitest("test", [], {
+await startVitest("test", process.argv.slice(2), {
   run: true,
   color: false,
   reporters: ["dot"],

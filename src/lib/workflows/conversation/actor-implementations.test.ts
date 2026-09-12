@@ -8034,6 +8034,7 @@ describe("runTaskRunTurnForMachine", () => {
     const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
         turn: {
+          executionClass: "governed-execution",
           modelSelection: {
             modelId: "composer-2.5",
             parameters: { fast: "true" },
@@ -8044,7 +8045,7 @@ describe("runTaskRunTurnForMachine", () => {
     );
     expect(result.failure).toMatchObject({
       kind: "capability_unavailable",
-      code: "backend-facet-unsupported",
+      code: "backend-role-unsupported",
       retryable: false,
     });
     expect(result.continuationDisposition).toBe("retain");

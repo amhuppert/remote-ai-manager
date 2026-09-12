@@ -1,4 +1,7 @@
-import type { ConversationExecutionPolicy } from "../execution-admission";
+import type {
+  ConversationExecutionPolicy,
+  TaskExecutionPolicy,
+} from "../execution-admission";
 import type {
   AgentBackendDescriptor,
   AgentBackendMetadata,
@@ -10,6 +13,7 @@ import type { ConversationBackendFactory } from "../conversation";
 import type { BackendContinuityAdapter } from "../continuity";
 import type { BackendRuntimeConfigAdapter } from "../runtime-config";
 import type { AgentFailureClassifier } from "../errors";
+import type { AgentTaskRunner } from "../task";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
 import type { BackendNativeMemory } from "../native-memory";
 import { CURSOR_BACKEND_ID } from "./backend-id";
@@ -29,6 +33,12 @@ import { CURSOR_TURN_STALL_TIMEOUT_MS } from "./worker/bounds";
 
 export const cursorConversationExecution: ConversationExecutionPolicy = {
   classes: ["ordinary-conversation"],
+  instructionDelivery: "user-message",
+};
+
+export const cursorTaskExecution: TaskExecutionPolicy = {
+  classes: ["nongoverned-task"],
+  profiles: ["standard", "isolated-one-shot"],
   instructionDelivery: "user-message",
 };
 
@@ -139,6 +149,7 @@ export const cursorNativeMemory: BackendNativeMemory = {
 };
 
 export interface CursorDescriptorDeps {
+  taskRunner: AgentTaskRunner;
   conversationFactory: ConversationBackendFactory;
   modelCatalog: BackendModelCatalogFacet;
   /** `createCursorContinuityAdapter(...)` in production; injected so the
@@ -167,7 +178,17 @@ export function createCursorBackendDescriptor(
       runtimeConfig: deps.runtimeConfig,
       transcript: cursorConversationTranscriptProjection,
     },
-    managedSkills: { conversations: "bundled", tasks: "hermetic" },
+    tasks: {
+      runner: deps.taskRunner,
+      execution: cursorTaskExecution,
+      structuredOutput: "post_validation",
+      fsWriteRestriction: "unsupported",
+      transcript: {
+        projectAssistantMetadata: (backendRef) =>
+          backendRef ? { backendRef } : undefined,
+      },
+    },
+    managedSkills: { conversations: "bundled", tasks: "bundled" },
     nativeMemory: cursorNativeMemory,
     mcp: deps.mcp,
     errors: deps.failureClassifier,

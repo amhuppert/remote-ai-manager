@@ -2,7 +2,7 @@
  * R2.2 — the Cursor descriptor's declarations are the honest ones.
  *
  * Every assertion here is a NEGATIVE claim the rest of Command Center reads
- * instead of branching on backend identity: no task facet, no native mid-turn
+ * instead of branching on backend identity: nongoverned tasks, no native mid-turn
  * ask, no external turns, no context-window metrics, no managed skills, no
  * strict MCP authority, no write confinement, no native fork. A descriptor is
  * the only place those can be stated, so this suite is where an over-claim gets
@@ -80,6 +80,12 @@ const modelCatalog: BackendModelCatalogFacet = {
 
 function descriptor(): AgentBackendDescriptor {
   return createCursorBackendDescriptor({
+    taskRunner: {
+      backend: "cursor",
+      async run() {
+        throw new Error("descriptor test does not execute tasks");
+      },
+    },
     conversationFactory: inertFactory(),
     continuity: inertContinuity(),
     modelCatalog,
@@ -90,11 +96,15 @@ function descriptor(): AgentBackendDescriptor {
 }
 
 describe("cursor descriptor — facets", () => {
-  it("declares a conversation facet and no task facet", () => {
+  it("declares nongoverned standard and isolated task execution", () => {
     const cursor = descriptor();
     expect(cursor.id).toBe("cursor");
     expect(cursor.conversation).toBeDefined();
-    expect(cursor.tasks).toBeUndefined();
+    expect(cursor.tasks?.execution).toEqual({
+      classes: ["nongoverned-task"],
+      profiles: ["standard", "isolated-one-shot"],
+      instructionDelivery: "user-message",
+    });
   });
 
   it("publishes the injected generated model catalog facet", async () => {
@@ -112,10 +122,10 @@ describe("cursor descriptor — facets", () => {
     expect(descriptor().conversation?.fsWriteRestriction).toBe("unsupported");
   });
 
-  it("declares managed skills hermetic for both facets — nothing is bundled", () => {
+  it("declares managed skills bundled for normal launches", () => {
     const { managedSkills } = descriptor();
     expect(managedSkills.conversations).toBe("bundled");
-    expect(managedSkills.tasks).toBe("hermetic");
+    expect(managedSkills.tasks).toBe("bundled");
     expect(managedSkills.prepareCheckout).toBeUndefined();
   });
 });

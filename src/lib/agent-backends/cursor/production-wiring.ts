@@ -1,5 +1,10 @@
 import { cursorAgentStorePath } from "./store-path";
+import { createCursorTaskRunner } from "./task-runner";
+import type { AgentTaskRunner } from "../task";
+import { createCursorContinuityBindingResolver } from "./continuity-binding";
+import { getConversation, getSession } from "@/lib/state-store";
 import os from "node:os";
+import { rm } from "node:fs/promises";
 import { getPublishedManagedSkillBundle } from "@/lib/managed-skills/service";
 import { prepareCursorCapabilityDelivery } from "./capability-delivery";
 /**
@@ -29,10 +34,7 @@ import {
   type BackendModelSelection,
 } from "../schemas";
 import { CURSOR_BACKEND_ID } from "./backend-id";
-import {
-  createCursorContinuityAdapter,
-  type CursorContinuityBinding,
-} from "./continuity";
+import { createCursorContinuityAdapter } from "./continuity";
 import {
   CursorConversationRuntime,
   CURSOR_RUNTIME_DEFAULT_BOUNDS,
@@ -193,30 +195,51 @@ export const cursorConversationBackendFactory: ConversationBackendFactory = {
   },
 };
 
-/**
- * A continuity probe needs the cwd, agent store, and model the ref was minted
- * under; the neutral `ContinuityContext` carries only a project path and
- * session name. In Phase 1 no production caller needs that binding: an ordinary
- * conversation resumes through its own runtime's persisted ref, synthetic forks
- * read only the CC transcript, and the
- * workflow and collaboration surfaces that call `start`/`validate`/
- * `resumeOrRecover` are refused for Cursor by facet gating.
- *
- * So this fails closed rather than guessing a store: a probe run against the
- * wrong store would report a perfectly valid ref as missing, and a wrong
- * "not_found" is worse than a bounded refusal that names the gap.
- */
 export function createProductionCursorContinuityAdapter(): BackendContinuityAdapter {
   return createCursorContinuityAdapter({
     transport: productionTransport(),
-    resolveBinding: (): Promise<CursorContinuityBinding> =>
-      Promise.reject(
-        new Error(
-          "Cursor continuity probes need a conversation-scoped cwd and agent store; no Phase 1 caller supplies one.",
-        ),
-      ),
+    resolveBinding: createCursorContinuityBindingResolver({
+      getConversation,
+      getSession,
+      storePath: cursorAgentStorePath,
+      resolveModel: (selection, projectPath) =>
+        resolveCursorModelForProduction(projectPath, selection),
+    }),
   });
 }
+
+export const cursorTaskRunner: AgentTaskRunner = {
+  backend: "cursor",
+  run(input) {
+    return createCursorTaskRunner({
+      removeStore: (id) =>
+        rm(cursorAgentStorePath(id), { recursive: true, force: true }),
+      transport: productionTransport(),
+      storePath: cursorAgentStorePath,
+      resolveModel: (selection, cwd) =>
+        resolveCursorModelForProduction(cwd, selection),
+      translatePortableMcpToCursor,
+      newRunId: randomUUID,
+      now: Date.now,
+      ...CURSOR_RUNTIME_DEFAULT_BOUNDS,
+      prepareCapabilities: (request, storePath) =>
+        prepareCursorCapabilityDelivery({
+          worktreePath: request.workingDirectory,
+          home: os.homedir(),
+          storePath,
+          bundle: getPublishedManagedSkillBundle(),
+          resumed:
+            request.resumeRef != null &&
+            request.executionProfile !== "isolated-one-shot",
+          hermetic: request.executionProfile === "isolated-one-shot",
+          resolved: request.tooling?.capabilities ?? {
+            backend: "cursor",
+            kinds: [],
+          },
+        }),
+    }).run(input);
+  },
+};
 
 /** Test seam: drop the memoized supervisor so a suite starts from no workers. */
 export function _resetCursorProductionTransportForTesting(): void {

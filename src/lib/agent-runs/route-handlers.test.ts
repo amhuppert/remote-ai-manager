@@ -1,3 +1,4 @@
+import { withTasklessBackend } from "@/lib/agent-backends/testing/taskless-backend";
 import { NextResponse } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 import type { GlobalConfig } from "@/lib/config/schemas";
@@ -139,21 +140,23 @@ describe("POST /agent-runs", () => {
   // facet has to be refused before anything is started — not discovered when
   // the registry throws looking for a runner it does not have (spec R15.2).
   it("refuses a backend with no task facet with a bounded 4xx naming the facet and starts nothing", async () => {
-    const startRun = vi.fn(() => ({ runId: "never" }));
-    const handlers = createAgentRunHandlers(makeDeps({ startRun }));
+    await withTasklessBackend("cursor", async () => {
+      const startRun = vi.fn(() => ({ runId: "never" }));
+      const handlers = createAgentRunHandlers(makeDeps({ startRun }));
 
-    const res = await handlers.POST(
-      req({ backend: "cursor", prompt: "analyze the code" }),
-      params(),
-    );
+      const res = await handlers.POST(
+        req({ backend: "cursor", prompt: "analyze the code" }),
+        params(),
+      );
 
-    expect(res.status).toBe(400);
-    const body: unknown = await res.json();
-    expect(body).toMatchObject({
-      code: "backend-facet-unsupported",
-      error: expect.stringContaining("task"),
+      expect(res.status).toBe(400);
+      const body: unknown = await res.json();
+      expect(body).toMatchObject({
+        code: "backend-facet-unsupported",
+        error: expect.stringContaining("task"),
+      });
+      expect(startRun).not.toHaveBeenCalled();
     });
-    expect(startRun).not.toHaveBeenCalled();
   });
 
   it("runs a claude-backed job with the configured Claude profile", async () => {

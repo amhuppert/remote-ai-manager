@@ -75,6 +75,7 @@ export interface CursorWorkerAttachOptions {
   cwd: string;
   storePath: string;
   disallowedTools: readonly string[];
+  tools?: readonly never[];
   sandboxEnabled: false;
   autoReview: false;
   settingSources: readonly string[];
@@ -539,6 +540,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       cwd: current.cwd,
       storePath: current.storePath,
       disallowedTools: frame.disallowedTools,
+      ...(frame.tools !== undefined ? { tools: frame.tools } : {}),
       sandboxEnabled: frame.sandboxEnabled,
       autoReview: frame.autoReview,
       settingSources: frame.settingSources,

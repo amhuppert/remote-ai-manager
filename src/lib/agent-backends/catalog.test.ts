@@ -77,13 +77,11 @@ describe("catalog facet-presence flags", () => {
     },
   );
 
-  // The flag is what facet-gated pickers and routes read instead of branching
-  // on backend identity, so it has to be wrong-proof for the one backend that
-  // actually lacks a facet.
-  it("reports cursor as conversation-only and claude/codex as both", () => {
+  // Pickers and routes gate on these flags without provider-specific branches.
+  it("reports conversation and task facets for production backends", () => {
     expect(getBackendCatalogEntry("cursor").facets).toEqual({
       conversation: true,
-      tasks: false,
+      tasks: true,
     });
     expect(getBackendCatalogEntry("claude").facets).toEqual({
       conversation: true,

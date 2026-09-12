@@ -100,6 +100,7 @@ function toAgentOptions(
     model: toCursorModelSelection(options.modelSelection),
     apiKey: options.apiKey,
     disallowedTools: [...options.disallowedTools],
+    ...(options.tools !== undefined ? { tools: [...options.tools] } : {}),
     mcpServers: bridge.servers,
     agents: options.agents,
     local: {

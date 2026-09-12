@@ -45,4 +45,4 @@ run_quiet bun run build:worker
 
 # Not run through `run_quiet`: the verdict line is the point of this command and
 # must be visible on a pass as well as on a refusal.
-env NODE_ENV=test node "$SCRIPT_DIR/cursor-acceptance-launcher.mjs"
+env NODE_ENV=test node "$SCRIPT_DIR/cursor-acceptance-launcher.mjs" "$@"

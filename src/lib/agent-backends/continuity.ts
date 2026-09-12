@@ -9,15 +9,18 @@
  */
 
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "./schemas";
 
-export interface ContinuityStartInput {
-  projectPath: string;
-  sessionName: string;
-}
+export type ContinuityStartInput = ContinuityContext;
 
 export interface ContinuityContext {
   projectPath: string;
   sessionName: string;
+  /** Explicit identity for backends with a per-conversation local store. */
+  conversationId?: string;
+  modelSelection?: BackendModelSelection;
+  /** Task cwd when it differs from the project root. */
+  workingDirectory?: string;
 }
 
 export interface ForkInput {

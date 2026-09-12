@@ -24,7 +24,10 @@ describe("collaborationBackendRefusal", () => {
 
   it("refuses a backend with no task facet, naming the facet and the surface", () => {
     const reason = collaborationBackendRefusal(
-      getBackendCatalogEntry("cursor"),
+      entryWithFacets(getBackendCatalogEntry("cursor"), {
+        conversation: true,
+        tasks: false,
+      }),
     );
 
     expect(reason).not.toBeNull();

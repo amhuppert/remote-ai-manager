@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
-import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
+import {
+  buildSessionEnvContract,
+  neutralizeAmbientCcEnv,
+} from "@/lib/agent-gateway/session-env";
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
@@ -351,6 +354,9 @@ class SupervisedWorker implements CursorWorkerSession {
         ? { recoverAbandonedRun: input.recoverAbandonedRun }
         : {}),
       modelSelection: input.modelSelection,
+      ...(this.input.executionProfile === "isolated-one-shot"
+        ? { tools: [] }
+        : {}),
       disallowedTools: [...CURSOR_PHASE1_POLICY.disallowedTools],
       sandboxEnabled: false,
       autoReview: false,
@@ -551,25 +557,27 @@ export function createCursorWorkerSupervisor(
       });
     }
     const env = toStringEnv(
-      buildSessionEnvContract({
-        baseEnv,
-        serverUrl: deps.getServerUrl(),
-        apiToken: deps.getApiToken(),
-        target: input.target,
-        configDir: deps.getConfigDir(),
-        ...(input.workflowExecutionId !== undefined
-          ? { workflowExecutionId: input.workflowExecutionId }
-          : {}),
-        ...(input.workflowContextId !== undefined
-          ? { workflowContextId: input.workflowContextId }
-          : {}),
-        ...(input.workflowLaneCapability !== undefined
-          ? { workflowLaneCapability: input.workflowLaneCapability }
-          : {}),
-        ...(input.conversationCapability !== undefined
-          ? { conversationCapability: input.conversationCapability }
-          : {}),
-      }),
+      input.target === null || input.executionProfile === "isolated-one-shot"
+        ? neutralizeAmbientCcEnv(baseEnv)
+        : buildSessionEnvContract({
+            baseEnv,
+            serverUrl: deps.getServerUrl(),
+            apiToken: deps.getApiToken(),
+            target: input.target,
+            configDir: deps.getConfigDir(),
+            ...(input.workflowExecutionId !== undefined
+              ? { workflowExecutionId: input.workflowExecutionId }
+              : {}),
+            ...(input.workflowContextId !== undefined
+              ? { workflowContextId: input.workflowContextId }
+              : {}),
+            ...(input.workflowLaneCapability !== undefined
+              ? { workflowLaneCapability: input.workflowLaneCapability }
+              : {}),
+            ...(input.conversationCapability !== undefined
+              ? { conversationCapability: input.conversationCapability }
+              : {}),
+          }),
     );
     delete env.CURSOR_API_KEY;
     env.CC_LOG_FILE = path.join(

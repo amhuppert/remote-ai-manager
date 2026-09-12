@@ -22,13 +22,24 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
 };
 const MODEL_CATALOGS = { claude: CLAUDE_CATALOG, codex: CODEX_CATALOG };
 
-function renderRow(overrides: Partial<CollabConfigRowProps> = {}) {
+function renderRow(
+  overrides: Partial<CollabConfigRowProps> = {},
+  taskless = false,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   queryClient.setQueryData(
     backendCatalogKeys.catalog(),
-    listBackendCatalogEntries(),
+    listBackendCatalogEntries().map((entry) =>
+      taskless && entry.id === "cursor"
+        ? {
+            ...entry,
+            facets: { ...entry.facets, tasks: false },
+            execution: { ...entry.execution, tasks: null },
+          }
+        : entry,
+    ),
   );
   return render(
     <QueryClientProvider client={queryClient}>
@@ -107,7 +118,7 @@ describe("CollabConfigRow", () => {
   // (spec D13, R15.1).
   it("refuses a backend with no task facet and says why, naming the facet and the surface", () => {
     const onChange = vi.fn();
-    renderRow({ onChange });
+    renderRow({ onChange }, true);
 
     const cursor = screen.getByRole("button", { name: /Cursor/ });
     expect(cursor).toHaveAttribute("aria-disabled", "true");

@@ -282,11 +282,8 @@ describe("collaboration route handlers — START", () => {
 
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string; code?: string };
-    // The same catalog-derived reason the picker shows: a non-Claude lane is a
-    // task run, so the missing task facet is the refusal, named as such.
-    expect(body.error).toMatch(/task/i);
     expect(body.error).toMatch(/collaboration/i);
-    expect(body.code).toBe("backend-facet-unsupported");
+    expect(body.code).toBe("COLLABORATION_BACKEND_NOT_ELIGIBLE");
     expect(setConversationBackend).not.toHaveBeenCalled();
     expect(startCalls).toHaveLength(0);
   });

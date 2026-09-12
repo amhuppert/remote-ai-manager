@@ -1,3 +1,4 @@
+import { withTasklessBackend } from "@/lib/agent-backends/testing/taskless-backend";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -477,45 +478,49 @@ describe("PUT /api/config", () => {
   it.each(["conversationNaming", "compaction"])(
     "refuses an unsupported %s selection before saving",
     async (field) => {
-      const selection = {
-        modelId: "composer-2.5",
-        parameters: { fast: "true" },
-      };
-      const block =
-        field === "conversationNaming"
-          ? { backend: "cursor", enabled: true, modelSelection: selection }
-          : {
-              backend: "cursor",
-              conversationModelSelection: selection,
-              messageModelSelection: selection,
-            };
-      const response = await handlers.PUT(makePutRequest({ [field]: block }));
+      await withTasklessBackend("cursor", async () => {
+        const selection = {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        };
+        const block =
+          field === "conversationNaming"
+            ? { backend: "cursor", enabled: true, modelSelection: selection }
+            : {
+                backend: "cursor",
+                conversationModelSelection: selection,
+                messageModelSelection: selection,
+              };
+        const response = await handlers.PUT(makePutRequest({ [field]: block }));
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({
+          code: "backend-facet-unsupported",
+        });
+        expect(deps.writeRawConfig).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it("refuses a new unsupported naming selection even when naming is disabled", async () => {
+    await withTasklessBackend("cursor", async () => {
+      const response = await handlers.PUT(
+        makePutRequest({
+          conversationNaming: {
+            enabled: false,
+            backend: "cursor",
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+          },
+        }),
+      );
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({
         code: "backend-facet-unsupported",
       });
       expect(deps.writeRawConfig).not.toHaveBeenCalled();
-    },
-  );
-
-  it("refuses a new unsupported naming selection even when naming is disabled", async () => {
-    const response = await handlers.PUT(
-      makePutRequest({
-        conversationNaming: {
-          enabled: false,
-          backend: "cursor",
-          modelSelection: {
-            modelId: "composer-2.5",
-            parameters: { fast: "true" },
-          },
-        },
-      }),
-    );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      code: "backend-facet-unsupported",
     });
-    expect(deps.writeRawConfig).not.toHaveBeenCalled();
   });
 
   it("allows unrelated edits and disabling unsupported stored naming", async () => {

@@ -45,6 +45,8 @@ import { CodexTaskRunner } from "./codex/task-runner";
 import { createCodexFailureClassifier } from "./codex/failure-classifier";
 import { createCursorBackendDescriptor } from "./cursor/descriptor";
 import { CursorConversationRuntime } from "./cursor/conversation-runtime";
+import { createCursorTaskRunner } from "./cursor/task-runner";
+import { translatePortableMcpToCursor } from "./cursor/mcp-translation";
 import { createCursorContinuityAdapter } from "./cursor/continuity";
 import { createCursorRuntimeConfigAdapter } from "./cursor/runtime-config";
 import { createCursorFailureClassifier } from "./cursor/failure-classifier";
@@ -289,11 +291,46 @@ const cursorTransport = createScriptedTransport({
     worker.sendInputAccepted(turn.runId);
     // The hanging prompt never settles on its own — cancellation has to.
     if (turn.input.promptText.includes(CURSOR_HANGING_PROMPT)) return;
+    if (turn.input.promptText.includes("conformance: cursor failure")) {
+      worker.settle(turn.runId, "failed", {
+        name: "AgentNotFoundError",
+        code: "agent_not_found",
+        status: 404,
+        message: "agent missing",
+      });
+      return;
+    }
+    worker.sendNativeEvent(turn.runId, 0, {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: JSON.stringify(STRUCTURED_OUTPUT_VALUE) },
+        ],
+      },
+    });
+    worker.sendUsage(turn.runId, {
+      inputTokens: 10,
+      outputTokens: 2,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 12,
+    });
     worker.settle(turn.runId, "completed");
   },
 });
 
 const cursorDescriptor = createCursorBackendDescriptor({
+  taskRunner: createCursorTaskRunner({
+    transport: cursorTransport,
+    storePath: (id) => `/state/cursor/${id}`,
+    resolveModel: async (selection) => ({ ok: true, selection }),
+    translatePortableMcpToCursor,
+    newRunId: () => `conformance-cursor-run-${++cursorRunCounter}`,
+    now: Date.now,
+    stallTimeoutMs: 5_000,
+    cancelSettleTimeoutMs: 10,
+  }),
   modelCatalog: createCursorModelCatalogFacet({
     loadCatalog: loadGeneratedCursorModelCatalog,
     supportedModels: async () => null,
@@ -343,6 +380,19 @@ function lastCursorTurnPrompt(): string | undefined {
 
 describeBackendConformance(cursorDescriptor, {
   continuity: continuityHarness,
+  task: {
+    buildRequest: () => buildTaskRequest(true, CURSOR_MODEL_SELECTION),
+    hangingPromptText: CURSOR_HANGING_PROMPT,
+    failurePromptText: "conformance: cursor failure",
+    structuredOutput: {
+      schema: STRUCTURED_OUTPUT_SCHEMA,
+      expected: STRUCTURED_OUTPUT_VALUE,
+      readForwardedSchema: () =>
+        cursorTransport.workers.at(-1)?.turns.at(-1)?.input
+          .structuredOutputInstruction ?? undefined,
+      readDispatchedPrompt: () => lastCursorTurnPrompt() ?? "",
+    },
+  },
   conversationTurn: {
     buildCreateInput: () =>
       buildCreateInput("conformance-cursor-conv", CURSOR_MODEL_SELECTION),
@@ -437,7 +487,9 @@ describe("conformance behavior checks reject lying descriptors", () => {
           structuredOutput: {
             schema: STRUCTURED_OUTPUT_SCHEMA,
             expected: STRUCTURED_OUTPUT_VALUE,
-            readForwardedSchema: () => undefined,
+            readForwardedSchema: () =>
+              cursorTransport.workers.at(-1)?.turns.at(-1)?.input
+                .structuredOutputInstruction ?? undefined,
           },
         },
       ),
@@ -477,7 +529,9 @@ describe("conformance behavior checks reject lying descriptors", () => {
           structuredOutput: {
             schema: STRUCTURED_OUTPUT_SCHEMA,
             expected: STRUCTURED_OUTPUT_VALUE,
-            readForwardedSchema: () => undefined,
+            readForwardedSchema: () =>
+              cursorTransport.workers.at(-1)?.turns.at(-1)?.input
+                .structuredOutputInstruction ?? undefined,
             readDispatchedPrompt: () => "plain prompt without a contract",
           },
         },

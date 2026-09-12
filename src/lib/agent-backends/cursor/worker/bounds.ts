@@ -69,6 +69,8 @@ export const CURSOR_WORKER_HANDSHAKE_TIMEOUT_MS = 30_000;
  */
 export const CURSOR_SUPERVISOR_READY_TIMEOUT_MS = 45_000;
 
+export const CURSOR_ATTACH_TIMEOUT_MS = 45_000;
+
 /**
  * Teardown ladder rungs (D9). Native cancellation first, then disposal and an
  * orderly exit, then the ownership-guarded process-group escalation.

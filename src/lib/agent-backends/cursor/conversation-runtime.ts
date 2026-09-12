@@ -31,6 +31,7 @@ import type { PortableMcpToCursorResult } from "./mcp-translation";
 import { projectCursorNativeEvent } from "./transcript-projections";
 import {
   CURSOR_CANCEL_SETTLE_TIMEOUT_MS,
+  CURSOR_ATTACH_TIMEOUT_MS,
   CURSOR_TURN_STALL_TIMEOUT_MS,
 } from "./worker/bounds";
 import type { CursorWorkerMcpServer } from "./worker/entry";
@@ -66,6 +67,7 @@ const failureClassifier = createCursorFailureClassifier();
 const MAX_SEEN_EVENT_KEYS = 20_000;
 
 export interface CursorConversationRuntimeDeps {
+  attachTimeoutMs?: number;
   capabilityDelivery?: CursorCapabilityDelivery;
   transport: CursorWorkerTransport;
   /** Command Center-owned root for this conversation's SDK agent store. */
@@ -191,6 +193,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
    */
   private discarding: Promise<void> | null = null;
   private closing: Promise<void> | null = null;
+  cleanupFailure: string | null = null;
   /** Run-scoped event keys already projected, for the resume quarantine. */
   private readonly seenEventKeys = new Set<string>();
   private readonly seenEventOrder: string[] = [];
@@ -256,7 +259,18 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       return this.refuse(images.message, startedAt);
     }
 
-    const attached = await this.ensureAttached(model.selection);
+    if (input.signal.aborted) return this.cancelledBeforeDispatch(startedAt);
+    const onAttachAbort = () => {
+      void this.close();
+    };
+    input.signal.addEventListener("abort", onAttachAbort, { once: true });
+    let attached: AttachOutcome;
+    try {
+      attached = await this.ensureAttached(model.selection);
+    } finally {
+      input.signal.removeEventListener("abort", onAttachAbort);
+    }
+    if (input.signal.aborted) return this.cancelledBeforeDispatch(startedAt);
     if (!attached.ok) {
       return this.settleWithFailure(attached.error, startedAt);
     }
@@ -377,6 +391,13 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     const session = this.session;
     this.session = null;
     this.attaching = null;
+    this.pendingAttach?.resolve({
+      ok: false,
+      error: new CursorLocalFailure(
+        "worker_exit",
+        "the runtime closed during attach",
+      ),
+    });
     this.pendingAttach = null;
 
     // A worker discarded earlier (a stall or a fatal fault) may still be in
@@ -391,6 +412,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     if (session !== null) {
       const outcome = await session.close();
       if (outcome.kind === "cleanup_failed") {
+        this.cleanupFailure = `Cursor worker cleanup failed: ${outcome.reason}`;
         logger.error("cursor-runtime.close_unverified", {
           conversationId: this.conversationId,
           reason: outcome.reason,
@@ -469,6 +491,24 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       return { ok: false, error: startFailure(started) };
     }
 
+    if (this._status === "dead") {
+      const outcome = await started.session.close();
+      if (outcome.kind === "cleanup_failed") {
+        this.cleanupFailure = `Cursor worker cleanup failed: ${outcome.reason}`;
+        logger.error("cursor-runtime.startup_close_unverified", {
+          conversationId: this.conversationId,
+          reason: outcome.reason,
+        });
+      }
+      return {
+        ok: false,
+        error: new CursorLocalFailure(
+          "worker_exit",
+          "the runtime closed during worker startup",
+        ),
+      };
+    }
+
     this.session = started.session;
     const settlement = deferred<AttachOutcome>();
     this.pendingAttach = settlement;
@@ -491,7 +531,19 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       mcpServers: this.mcpServerMap(),
       agents: this.deps.capabilityDelivery?.snapshot.agents ?? {},
     });
-    return settlement.promise;
+    const timer = setTimeout(() => {
+      settlement.resolve({
+        ok: false,
+        error: new Error("Cursor agent attachment timed out"),
+      });
+      this.discardSession("attach_timeout");
+    }, this.deps.attachTimeoutMs ?? CURSOR_ATTACH_TIMEOUT_MS);
+    timer.unref?.();
+    try {
+      return await settlement.promise;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ============================================================
@@ -594,6 +646,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.discarding = session.close().then(
       (outcome) => {
         if (outcome.kind === "cleanup_failed") {
+          this.cleanupFailure = `Cursor worker cleanup failed: ${outcome.reason}`;
           logger.error("cursor-runtime.discard_unverified", {
             conversationId: this.conversationId,
             workerId: session.workerId,
@@ -602,6 +655,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
         }
       },
       (error: unknown) => {
+        this.cleanupFailure = "Cursor worker cleanup failed";
         // Swallowed deliberately: a failed teardown is recorded, but the next
         // prompt must still be free to start a fresh worker rather than
         // inheriting a rejection.
@@ -863,6 +917,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   // ============================================================
 
   private armStallTimer(turn: ActiveTurn): void {
+    if (this.deps.stallTimeoutMs <= 0) return;
     turn.stallTimer = setTimeout(() => {
       logger.warn("cursor-runtime.turn_stalled", {
         conversationId: this.conversationId,
@@ -938,6 +993,25 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   // ============================================================
   // Result assembly
   // ============================================================
+
+  private cancelledBeforeDispatch(
+    startedAt: number,
+  ): ConversationBackendTurnResult {
+    return {
+      backendRef: this.currentRef(),
+      costUsd: null,
+      durationMs: this.deps.now() - startedAt,
+      numTurns: 0,
+      contextTokens: null,
+      contextWindowMax: null,
+      contentBlocks: [],
+      aborted: true,
+      compacted: false,
+      failure: null,
+      continuationDisposition: "retain",
+      tokenUsage: null,
+    };
+  }
 
   private buildResult(
     turn: ActiveTurn,

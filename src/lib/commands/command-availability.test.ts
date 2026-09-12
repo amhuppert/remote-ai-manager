@@ -8,10 +8,15 @@ import { BUILT_IN_COMMANDS } from "./built-in-commands";
 
 describe("built-in command execution availability", () => {
   const cursor = getBackendCatalogEntry("cursor");
+  const taskless = {
+    ...cursor,
+    facets: { ...cursor.facets, tasks: false },
+    execution: { ...cursor.execution, tasks: null },
+  };
   it.each(["/ticket", "/collab"])(
     "refuses %s when its task dependency is absent",
     (command) => {
-      expect(commandAvailability(cursor, command)).toMatchObject({
+      expect(commandAvailability(taskless, command)).toMatchObject({
         status: "unavailable",
         refusal: { code: "backend-facet-unsupported" },
       });
@@ -76,7 +81,7 @@ describe("built-in command execution availability", () => {
       source: "project" as const,
     };
     expect(
-      applyCommandAvailability([item], [cursor], "cursor")[0]?.availability,
+      applyCommandAvailability([item], [taskless], "cursor")[0]?.availability,
     ).toMatchObject({
       status: "unavailable",
       refusal: { code: "backend-facet-unsupported" },

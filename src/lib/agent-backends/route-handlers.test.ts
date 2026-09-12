@@ -51,7 +51,7 @@ describe("GET /api/agent-backends", () => {
     });
     // Facet presence is what the facet-gated pickers read; the wire has to
     // carry it or they would have to guess.
-    expect(cursor.facets).toEqual({ conversation: true, tasks: false });
+    expect(cursor.facets).toEqual({ conversation: true, tasks: true });
     expect(claude.facets).toEqual({ conversation: true, tasks: true });
   });
 

@@ -24,7 +24,8 @@ import type { CursorWorkerMcpServer } from "./worker/entry";
 export interface CursorWorkerStartInput {
   conversationId: string;
   /** Identity the spawned worker's cctl environment is built from. */
-  target: ConversationTarget;
+  target: ConversationTarget | null;
+  executionProfile?: "standard" | "isolated-one-shot";
   /** The conversation's Command Center worktree; the worker's cwd. */
   cwd: string;
   /** Command Center-owned root for the SDK's local agent store. */

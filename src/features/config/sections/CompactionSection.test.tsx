@@ -10,11 +10,19 @@ import {
 import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 
-function renderWithQuery(ui: React.ReactElement) {
+function renderWithQuery(ui: React.ReactElement, taskless = false) {
   const client = createTestQueryClient();
   client.setQueryData(
     backendCatalogKeys.catalog(),
-    listBackendCatalogEntries(),
+    listBackendCatalogEntries().map((entry) =>
+      taskless && entry.id === "cursor"
+        ? {
+            ...entry,
+            facets: { ...entry.facets, tasks: false },
+            execution: { ...entry.execution, tasks: null },
+          }
+        : entry,
+    ),
   );
   return renderQuery(ui, client);
 }
@@ -67,7 +75,7 @@ describe("CompactionSection", () => {
 
   it("refuses a backend with no task facet", () => {
     const { controller, getState } = makeController();
-    renderWithQuery(<CompactionSection controller={controller} />);
+    renderWithQuery(<CompactionSection controller={controller} />, true);
 
     const cursor = pillIn("compaction.backend", "cursor");
     expect(cursor).toHaveAttribute("aria-disabled", "true");

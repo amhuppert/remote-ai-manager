@@ -106,6 +106,8 @@ export interface ConversationTurnConformanceHarness {
 /** Drives the real task runner through a fake provider port. */
 export interface TaskConformanceHarness {
   buildRequest(): AgentTaskRequest;
+  hangingPromptText?: string;
+  failurePromptText?: string;
   /** Drives native forwarding or prompted post-validation when supplied; the
    * built request must carry `structuredOutput.schema` as its outputSchema. */
   structuredOutput?: StructuredOutputConformanceDrive;
@@ -787,6 +789,33 @@ export function describeBackendConformance(
     }
 
     const taskHarness = harness.task;
+    if (taskHarness?.hangingPromptText && descriptor.tasks) {
+      it("task cancellation settles through the real runner", async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30);
+        try {
+          const result = await descriptor.tasks?.runner.run({
+            ...taskHarness.buildRequest(),
+            prompt: taskHarness.hangingPromptText ?? "",
+            signal: controller.signal,
+          });
+          expect(result?.timedOut).toBe(true);
+          expect(result?.error).toBeTruthy();
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+    }
+    if (taskHarness?.failurePromptText && descriptor.tasks) {
+      it("task provider failures carry a normalized verdict", async () => {
+        const result = await descriptor.tasks?.runner.run({
+          ...taskHarness.buildRequest(),
+          prompt: taskHarness.failurePromptText ?? "",
+        });
+        expect(result?.error).toBeTruthy();
+        expect(result?.failure).not.toBeNull();
+      });
+    }
     if (descriptor.tasks && taskHarness) {
       it("task facet behavior: the runner completes a scripted run consistent with its declarations", () =>
         checkTaskFacetBehavior(descriptor, taskHarness));

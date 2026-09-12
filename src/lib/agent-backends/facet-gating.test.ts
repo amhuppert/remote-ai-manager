@@ -16,7 +16,10 @@ function entryWithFacets(
 describe("backendFacetRefusal", () => {
   it("refuses a backend that registers no task facet, naming the backend and the facet", () => {
     const reason = backendFacetRefusal(
-      getBackendCatalogEntry("cursor"),
+      entryWithFacets(getBackendCatalogEntry("cursor"), {
+        conversation: true,
+        tasks: false,
+      }),
       "tasks",
     );
 

@@ -1,3 +1,4 @@
+import { withTasklessBackend } from "@/lib/agent-backends/testing/taskless-backend";
 import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
 import { describe, it, expect } from "vitest";
 import {
@@ -502,16 +503,18 @@ describe("executeProjectPromptStream", () => {
 });
 describe("project command admission", () => {
   it("refuses Cursor ticket creation before creating a conversation", async () => {
-    const h = harness();
-    await expect(
-      h.executeProjectPromptStream({
-        projectPath: "/repo",
-        promptText: "/ticket capture this",
-        backend: "cursor",
-        emit() {},
-      }),
-    ).rejects.toMatchObject({ code: "backend-facet-unsupported" });
-    expect(h.store.size).toBe(0);
-    expect(h.calls).toEqual([]);
+    await withTasklessBackend("cursor", async () => {
+      const h = harness();
+      await expect(
+        h.executeProjectPromptStream({
+          projectPath: "/repo",
+          promptText: "/ticket capture this",
+          backend: "cursor",
+          emit() {},
+        }),
+      ).rejects.toMatchObject({ code: "backend-facet-unsupported" });
+      expect(h.store.size).toBe(0);
+      expect(h.calls).toEqual([]);
+    });
   });
 });

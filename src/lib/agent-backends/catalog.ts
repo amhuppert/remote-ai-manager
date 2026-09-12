@@ -57,6 +57,7 @@ import {
 import {
   cursorBackendMetadata,
   cursorConversationExecution,
+  cursorTaskExecution,
   cursorConversationCapabilities,
   cursorConversationFsWriteRestriction,
   cursorNativeMemory,
@@ -242,15 +243,14 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
     "cursor",
     cursorBackendMetadata,
     cursorConversationCapabilities,
-    // Conversation only: Cursor registers no task facet in Phase 1.
-    { conversation: true, tasks: false },
+    { conversation: true, tasks: true },
     cursorNativeMemory,
     {
       conversation: {
         ...cursorConversationExecution,
         fsWriteRestriction: cursorConversationFsWriteRestriction,
       },
-      tasks: null,
+      tasks: { ...cursorTaskExecution, fsWriteRestriction: "unsupported" },
     },
   ),
 };

@@ -297,6 +297,32 @@ async function startReady(harness: Harness): Promise<CursorWorkerSession> {
   return result.session;
 }
 
+it("withholds CC identity from generic tasks and disables every isolated tool on the wire", async () => {
+  const harness = createHarness();
+  const pending = harness.transport.start({
+    ...startInput(harness),
+    target: null,
+    executionProfile: "isolated-one-shot",
+  });
+  await settle();
+  expect(harness.host.requests).toHaveLength(1);
+  const child = harness.host.last();
+  child.emit(readyFrame(child.pid));
+  const result = await pending;
+  expect(result.kind).toBe("ready");
+  if (result.kind !== "ready") return;
+  expect(harness.host.requests[0]?.env.CC_SESSION ?? "").toBe("");
+  expect(harness.host.requests[0]?.env.CC_API_TOKEN ?? "").toBe("");
+  result.session.attach({
+    mode: "create",
+    ref: null,
+    modelSelection: MODEL_SELECTION,
+    mcpServers: {},
+  });
+  expect(child.ofType("attachAgent")[0]).toHaveProperty("tools", []);
+  await result.session.close();
+});
+
 beforeEach(() => {
   vi.useFakeTimers();
 });

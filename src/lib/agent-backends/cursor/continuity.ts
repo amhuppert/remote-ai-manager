@@ -1,5 +1,7 @@
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
+import { decodeCursorTaskRef } from "./task-ref";
+import { CURSOR_ATTACH_TIMEOUT_MS } from "./worker/bounds";
 import type { BackendModelSelection } from "../schemas";
 import {
   assertRefOwnedBy,
@@ -15,6 +17,7 @@ import type {
   CursorWorkerSession,
   CursorWorkerStartResult,
   CursorWorkerTransport,
+  CursorWorkerCloseOutcome,
 } from "./worker-port";
 
 /**
@@ -64,8 +67,12 @@ export interface CursorContinuityBinding {
 }
 
 export interface CursorContinuityDeps {
+  attachTimeoutMs?: number;
   transport: CursorWorkerTransport;
-  resolveBinding(input: ContinuityContext): Promise<CursorContinuityBinding>;
+  resolveBinding(
+    input: ContinuityContext,
+    ref?: AgentSessionRef,
+  ): Promise<CursorContinuityBinding>;
   buildSyntheticForkSeed?(
     transcriptPath: string,
     messageIndex: number,
@@ -97,6 +104,15 @@ function classifyRefShape(ref: string): CursorRefClassification | null {
   if (ref.length > MAX_REF_LENGTH) return "corrupt";
   if (CONTROL_CHARACTERS.test(ref)) return "corrupt";
   return null;
+}
+
+function providerHandle(ref: AgentSessionRef): string {
+  if (!ref.ref.startsWith("{")) return ref.ref;
+  try {
+    return decodeCursorTaskRef(ref).agentId ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -166,7 +182,15 @@ async function probeAttach(
   deps: CursorContinuityDeps,
   binding: CursorContinuityBinding,
   ref: string | null,
+  recoverAbandonedRun = false,
 ): Promise<AttachProbe> {
+  if (deps.transport.find(binding.conversationId)) {
+    return {
+      ok: false,
+      classification: "already_active",
+      message: "A live Cursor worker owns this conversation",
+    };
+  }
   let settle: ((probe: AttachProbe) => void) | null = null;
   const settlement = new Promise<AttachProbe>((resolve) => {
     settle = resolve;
@@ -179,11 +203,7 @@ async function probeAttach(
 
   const started = await deps.transport.start({
     conversationId: binding.conversationId,
-    target: {
-      scope: "project",
-      projectName: binding.conversationId,
-      conversationId: binding.conversationId,
-    },
+    target: null,
     cwd: binding.cwd,
     storePath: binding.storePath,
     modelSelection: binding.modelSelection,
@@ -218,17 +238,38 @@ async function probeAttach(
   }
 
   const session: CursorWorkerSession = started.session;
+  const timer = setTimeout(
+    () =>
+      resolveOnce({
+        ok: false,
+        classification: "unavailable",
+        message: "Cursor continuity attachment timed out",
+      }),
+    deps.attachTimeoutMs ?? CURSOR_ATTACH_TIMEOUT_MS,
+  );
+  timer.unref?.();
+  let probe: AttachProbe;
+  let cleanup: CursorWorkerCloseOutcome;
   try {
     session.attach({
       mode: ref === null ? "create" : "resume",
       ref,
       modelSelection: binding.modelSelection,
       mcpServers: binding.mcpServers,
+      recoverAbandonedRun,
     });
-    return await settlement;
+    probe = await settlement;
   } finally {
-    await session.close();
+    clearTimeout(timer);
+    cleanup = await session.close();
   }
+  if (cleanup.kind === "cleanup_failed")
+    return {
+      ok: false,
+      classification: "unavailable",
+      message: "Cursor continuity worker cleanup could not be verified",
+    };
+  return probe;
 }
 
 /**
@@ -272,13 +313,14 @@ export function createCursorContinuityAdapter(
 
     async validate(ref, input): Promise<ContinuityValidation> {
       assertRefOwnedBy(CURSOR_BACKEND_ID, ref);
-      const shape = classifyRefShape(ref.ref);
+      const providerRef = providerHandle(ref);
+      const shape = classifyRefShape(providerRef);
       if (shape !== null) {
         return { status: "stale", reason: `cursor_ref_${shape}` };
       }
 
-      const binding = await deps.resolveBinding(input);
-      const probe = await probeAttach(deps, binding, ref.ref);
+      const binding = await deps.resolveBinding(input, ref);
+      const probe = await probeAttach(deps, binding, providerRef);
       if (probe.ok) return { status: "valid" };
 
       logger.info("continuity.validate.rejected", {
@@ -299,7 +341,8 @@ export function createCursorContinuityAdapter(
      */
     async resumeOrRecover(ref, input) {
       assertRefOwnedBy(CURSOR_BACKEND_ID, ref);
-      const shape = classifyRefShape(ref.ref);
+      const providerRef = providerHandle(ref);
+      const shape = classifyRefShape(providerRef);
       if (shape !== null) {
         throw new CursorContinuityError(
           shape,
@@ -307,8 +350,8 @@ export function createCursorContinuityAdapter(
         );
       }
 
-      const binding = await deps.resolveBinding(input);
-      const probe = await probeAttach(deps, binding, ref.ref);
+      const binding = await deps.resolveBinding(input, ref);
+      const probe = await probeAttach(deps, binding, providerRef, true);
       if (!probe.ok) {
         logger.warn("continuity.resume.failed", {
           projectPath: input.projectPath,

@@ -594,6 +594,7 @@ const attachAgentFrameSchema = z
     ref: z.string().min(1).nullable(),
     modelSelection: backendModelSelectionSchema,
     disallowedTools: z.array(z.string().min(1)),
+    tools: z.array(z.never()).max(0).optional(),
     sandboxEnabled: z.literal(false),
     autoReview: z.literal(false),
     settingSources: z.array(z.string()).max(0),
