@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
-import DevServerDrawer from "./DevServerDrawer";
+import DevServerDrawer, { DevServerPanel } from "./DevServerDrawer";
 
 // ── Test data ──────────────────────────────────────────────────
 
@@ -264,6 +264,17 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+export const SessionDialog: Story = {
+  args: { open: true, servers: [runningNextDev, stoppedStorybook] },
+  render: (args) => (
+    <DevServerPanel
+      {...args}
+      presentation="dialog"
+      anchorRef={{ current: null }}
+    />
+  ),
+};
 
 // ── Stories: Trigger states (in topbar context) ────────────────
 

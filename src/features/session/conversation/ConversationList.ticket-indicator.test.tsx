@@ -133,6 +133,14 @@ describe("ConversationList ticket indicator", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(projectName)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: projectName }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Review changes" }),
+    ).toHaveAttribute(
+      "href",
+      `/projects/${encodeURIComponent(projectName)}/${sessionName}/diff`,
+    );
   });
 });

@@ -196,12 +196,8 @@ function tierBadge(tier: TemplateTier): React.JSX.Element {
   );
 }
 
-// Secondary actions read as buttons (bordered chip, not dim text): they rest at
-// text-secondary \u2014 never text-tertiary for interactive text \u2014 and promote to
-// text-primary on hover. The Button primitive has no anchor form yet, so this
-// mirrors its bordered recipe on a Link that must navigate.
 const secondaryActionClass =
-  "inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-transparent px-sm py-[6px] font-mono text-[0.72rem] text-text-secondary no-underline transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary!";
+  "inline-flex items-center gap-xs rounded-sm py-xs font-mono text-[0.72rem] text-text-primary underline decoration-border-default underline-offset-4 transition-colors hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]";
 
 // Rotates via the Radix Select trigger's `data-state=open` on the enclosing
 // `group` button (the trigger is a `SelectTrigger asChild`).
@@ -228,10 +224,15 @@ function LauncherShell({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-sm rounded-md border border-solid border-border-dim bg-bg-surface p-md">
-      <span className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary uppercase">
-        Graph Workflow
-      </span>
+    <div className="flex flex-col gap-md rounded-lg border border-solid border-border-default bg-bg-surface p-lg">
+      <div>
+        <h2 className="font-mono text-[0.82rem] font-semibold text-text-primary">
+          Graph workflow
+        </h2>
+        <p className="mt-sm font-mono text-[0.72rem] leading-relaxed text-text-secondary">
+          Run a repeatable plan across agents.
+        </p>
+      </div>
       {children}
     </div>
   );
@@ -319,7 +320,7 @@ export function GraphWorkflowLauncher({
         <SelectTrigger asChild aria-label="Select a workflow">
           <button
             type="button"
-            className="group flex w-full items-center gap-sm rounded-md border border-solid border-border-default bg-bg-base px-sm py-[8px] text-left font-mono text-[0.8rem] transition-[border-color,box-shadow] duration-150 ease-[ease] outline-none hover:border-border-strong focus-visible:border-cyan focus-visible:shadow-[0_0_0_1px_var(--color-cyan-glow)]"
+            className="group flex w-full items-center gap-sm rounded-md border border-solid border-border-default bg-bg-base px-sm py-sm text-left font-mono text-[0.8rem] transition-[border-color,box-shadow] duration-150 ease-[ease] hover:border-border-strong focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
           >
             {selected ? (
               <>
@@ -353,29 +354,34 @@ export function GraphWorkflowLauncher({
         </SelectContent>
       </Select>
 
-      <div className="flex flex-wrap items-center gap-sm">
+      <Button
+        size="sm"
+        touch
+        layoutClassName="w-full"
+        loading={starting}
+        disabled={selected === null || starting}
+        onClick={() =>
+          selected && onRun?.({ id: selected.id, tier: selected.tier })
+        }
+        type="button"
+      >
+        {starting ? "Starting\u2026" : "Run workflow"}
+      </Button>
+      <div className="flex flex-wrap items-center justify-between gap-sm">
         <Link href={workflowsHref} className={secondaryActionClass}>
           Edit definitions
         </Link>
         <Link href={templatesHref} className={secondaryActionClass}>
-          Template library {"\u2192"}
+          Template library
         </Link>
-        <Button
-          variant="primary"
-          size="sm"
-          touch
-          layoutClassName="ml-auto"
-          disabled={selected === null || starting}
-          onClick={() =>
-            selected && onRun?.({ id: selected.id, tier: selected.tier })
-          }
-          type="button"
-        >
-          {starting ? "Starting\u2026" : "Run Workflow"}
-        </Button>
       </div>
       {error && (
-        <div className="mt-xs font-mono text-[0.72rem] text-red">{error}</div>
+        <div
+          role="alert"
+          className="mt-xs font-mono text-[0.72rem] text-red-text"
+        >
+          {error}
+        </div>
       )}
       {awaitingApproval && (
         <div

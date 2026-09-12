@@ -247,6 +247,7 @@ export interface DevServerPanelProps extends Omit<
 > {
   /** Position the panel below this element. */
   anchorRef: RefObject<HTMLElement | null>;
+  presentation?: "anchored" | "dialog";
 }
 
 function UnmanagedConflictDialog({
@@ -330,6 +331,7 @@ export function DevServerPanel({
   onStartAll,
   onStopAll,
   anchorRef,
+  presentation = "anchored",
   unmanagedConflict,
   onDismissUnmanagedConflict,
   onStopUnmanagedAndRetry,
@@ -341,7 +343,7 @@ export function DevServerPanel({
   });
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || presentation === "dialog") return;
     const el = anchorRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -349,7 +351,7 @@ export function DevServerPanel({
       top: rect.bottom + 4,
       right: window.innerWidth - rect.right,
     });
-  }, [open, anchorRef]);
+  }, [open, anchorRef, presentation]);
 
   const hasStoppable = servers.some(
     (s) => s.status === "running" || s.status === "starting",
@@ -358,22 +360,22 @@ export function DevServerPanel({
     (s) => s.status === "stopped" || s.status === "error",
   );
 
-  // The panel is anchored to the status trigger by its measured rect on desktop
-  // and docks as a bottom sheet below 768px, so it self-positions via the
-  // `ui/Dialog` unstyled/edge-anchored variant rather than the centred card. The
-  // dev-server drawer already closed on any outside click (its full-viewport
-  // backdrop), so adopting the modal scrim keeps that behaviour while Radix now
-  // owns the focus trap and Escape/outside-press dismissal. The scrim is
-  // transparent on desktop and dims the page below 768px.
+  // Topbar triggers anchor the panel below the control; controls inside a
+  // scrolling page use a centered dialog so the panel stays in the viewport.
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
-        unstyled
-        anchor="stretch"
-        scrimClassName={BACKDROP}
+        unstyled={presentation === "anchored"}
+        anchor={presentation === "anchored" ? "stretch" : "center"}
+        mobileSheet
+        scrimClassName={presentation === "anchored" ? BACKDROP : undefined}
         aria-label="Dev servers"
-        contentClassName={PANEL}
-        positionStyle={{ top: panelPos.top, right: panelPos.right }}
+        contentClassName={presentation === "anchored" ? PANEL : undefined}
+        positionStyle={
+          presentation === "anchored"
+            ? { top: panelPos.top, right: panelPos.right }
+            : undefined
+        }
       >
         <div className={HEADER}>
           <span className={TITLE}>Dev Servers</span>
