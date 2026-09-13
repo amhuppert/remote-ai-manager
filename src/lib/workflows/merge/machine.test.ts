@@ -682,6 +682,7 @@ describe("mergeMachine", () => {
       expect(publishInputs).toEqual([
         {
           projectPath: defaultInput.projectPath,
+          worktreePath: defaultInput.worktreePath,
           sessionName: defaultInput.sessionName,
           targetBranch: "main",
           // Nothing was parked, and the candidate is the target tip itself.
@@ -689,6 +690,7 @@ describe("mergeMachine", () => {
           expectedTargetSha: "target-tip",
           parkedRef: "",
           finalizeSession: true,
+          skipMarkMerged: false,
           upToDate: true,
         },
       ]);

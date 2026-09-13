@@ -150,6 +150,10 @@ export const sessionArchiveRequestSchema = z.object({
   archived: z.boolean(),
 });
 
+export const sessionMergeStatusRequestSchema = z
+  .object({ merged: z.boolean() })
+  .strict();
+
 export const sessionTddRequestSchema = z.object({
   tddEnabled: z.boolean(),
 });

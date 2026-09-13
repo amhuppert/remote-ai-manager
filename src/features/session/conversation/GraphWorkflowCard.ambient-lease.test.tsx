@@ -46,7 +46,6 @@ function renderCard(execution: GraphWorkflowExecution): void {
         projectName="proj-1"
         sessionName="sess-1"
         execution={execution}
-        isFinished={false}
       />
     </QueryClientProvider>,
   );

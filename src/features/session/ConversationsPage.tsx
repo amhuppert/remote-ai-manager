@@ -130,7 +130,7 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
 
   const lookupQuery = useConversationLookupQuery(params.conversationId);
   const { openConversation, autoOpen, openTabs } =
-    useConversationsPageSelection(params);
+    useConversationsPageSelection(params, lookupQuery.data);
   const renderState = resolveConversationsRenderState({
     conversationId: params.conversationId,
     lookup: {

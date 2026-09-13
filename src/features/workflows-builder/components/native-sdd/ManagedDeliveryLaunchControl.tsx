@@ -51,10 +51,7 @@ export default function ManagedDeliveryLaunchControl({
   const sessions = useMemo(
     () =>
       (sessionsQuery.data ?? []).filter(
-        (session) =>
-          !session.archived &&
-          !session.finished &&
-          !session.hasActiveGraphWorkflow,
+        (session) => !session.archived && !session.hasActiveGraphWorkflow,
       ),
     [sessionsQuery.data],
   );

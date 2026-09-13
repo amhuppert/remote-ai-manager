@@ -426,6 +426,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0043-close-policy-admitted-approval-requests",
       "0044-add-conversation-checkpoints",
       "0045-add-checkpoint-forks",
+      "0046-merge-completion-option",
     ]);
   });
 

@@ -163,8 +163,8 @@ const BUILT_IN_CLAUDE_COMMANDS: readonly BuiltInCommand[] = [
     item: {
       name: "/merge",
       description:
-        "Smart-merge the session into its target with an agent-written squash message.",
-      argumentHint: "[message guidance]",
+        "Smart-merge the session into its target. Use /merge --no-mark-merged to skip marking and completion cleanup.",
+      argumentHint: "[--no-mark-merged] [message guidance]",
       type: "command",
       source: "built-in",
     },

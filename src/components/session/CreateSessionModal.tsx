@@ -103,7 +103,7 @@ export default function CreateSessionModal({
   const branchOptions = useMemo(() => {
     if (!sessionsQuery.data) return [];
     return sessionsQuery.data
-      .filter((s) => !s.finished && !s.archived)
+      .filter((s) => !s.archived)
       .map((s) => ({
         sessionName: s.sessionName,
         branchName: s.branchName,

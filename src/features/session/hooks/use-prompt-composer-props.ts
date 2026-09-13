@@ -53,7 +53,6 @@ export interface UsePromptComposerPropsArgs {
   showPlaceholder: (text: string) => void;
   promptPlaceholder: string | null;
   isReadOnly: boolean;
-  isFinished: boolean;
   isWorkflowManagedConversation: boolean;
   sending: boolean;
   hasActiveCollab: boolean;
@@ -118,7 +117,6 @@ export function usePromptComposerProps(
     showPlaceholder,
     promptPlaceholder,
     isReadOnly,
-    isFinished,
     isWorkflowManagedConversation,
     sending,
     hasActiveCollab,
@@ -166,7 +164,6 @@ export function usePromptComposerProps(
       showPlaceholder,
       promptPlaceholder,
       isReadOnly,
-      isFinished,
       isWorkflowManagedConversation,
       sending,
       hasActiveCollab,
@@ -221,7 +218,6 @@ export function usePromptComposerProps(
       showPlaceholder,
       promptPlaceholder,
       isReadOnly,
-      isFinished,
       isWorkflowManagedConversation,
       sending,
       hasActiveCollab,

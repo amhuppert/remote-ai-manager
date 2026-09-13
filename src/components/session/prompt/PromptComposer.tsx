@@ -220,7 +220,6 @@ interface PromptComposerProps {
   showPlaceholder: (text: string) => void;
   promptPlaceholder: string | null;
   isReadOnly: boolean;
-  isFinished: boolean;
   /** Graph-workflow lane conversation — hides lane-ineligible slash commands. */
   isWorkflowManagedConversation?: boolean;
   sending: boolean;
@@ -276,7 +275,6 @@ export default function PromptComposer({
   showPlaceholder,
   promptPlaceholder,
   isReadOnly,
-  isFinished,
   isWorkflowManagedConversation = false,
   sending,
   hasActiveCollab,
@@ -349,11 +347,9 @@ export default function PromptComposer({
   const selectedBackendLabel = backendLabel(selectedBackend);
   const collapsedPlaceholder = hasActiveCollab
     ? COLLAB_RUNNING_TOOLTIP
-    : isFinished
-      ? "Session is merged and read-only"
-      : isReadOnly
-        ? "Session is read-only"
-        : (promptPlaceholder ?? `Message ${selectedBackendLabel}…`);
+    : isReadOnly
+      ? "Session is read-only"
+      : (promptPlaceholder ?? `Message ${selectedBackendLabel}…`);
   // Portaled controls (model/parameter dropdowns, capabilities drawer) render
   // outside this region and move focus away from the editor; they report their
   // open-state so the focus hook holds `composerFocused` true while open. Each
@@ -545,10 +541,8 @@ export default function PromptComposer({
               readOnly={hasActiveCollab}
               title={hasActiveCollab ? COLLAB_RUNNING_TOOLTIP : undefined}
               placeholder={
-                isFinished
-                  ? "Session is merged and read-only"
-                  : (promptPlaceholder ??
-                    `Send a prompt to ${selectedBackendLabel}...`)
+                promptPlaceholder ??
+                `Send a prompt to ${selectedBackendLabel}...`
               }
             />
           </Suspense>

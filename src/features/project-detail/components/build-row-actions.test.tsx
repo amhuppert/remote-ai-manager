@@ -30,6 +30,7 @@ function makeHandlers(): RowHandlers {
     onBranch: vi.fn(),
     onCopyBranch: vi.fn(),
     onArchive: vi.fn(),
+    onToggleMerged: vi.fn(),
     onDelete: vi.fn(),
   };
 }
@@ -46,19 +47,23 @@ describe("buildRowActions", () => {
       "divider",
       "Copy branch",
       "divider",
+      "Mark as merged",
       "Archive",
       "Delete session",
     ]);
   });
 
-  it("omits Branch and the first divider for finished sessions", () => {
+  it("offers branching and clearing the merged label for merged sessions", () => {
     const items = buildRowActions(
       makeSession({ finished: true }),
       makeHandlers(),
     );
     expect(labels(items)).toEqual([
+      "Branch from here",
+      "divider",
       "Copy branch",
       "divider",
+      "Unmark as merged",
       "Archive",
       "Delete session",
     ]);

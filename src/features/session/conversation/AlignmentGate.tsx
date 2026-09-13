@@ -8,7 +8,7 @@ import { useAlignmentStateQuery } from "@/lib/session-alignment/queries";
 interface AlignmentGateProps {
   projectName: string;
   sessionName: string;
-  /** Read-only / finished sessions suppress the approval affordances. */
+  /** Read-only conversations suppress the approval affordances. */
   disabled?: boolean;
 }
 

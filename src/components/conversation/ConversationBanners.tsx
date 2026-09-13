@@ -11,7 +11,8 @@ export const FinishedBanner = memo(function FinishedBanner({
 }: FinishedBannerProps): React.JSX.Element {
   return (
     <div className="finished-banner">
-      This session has been merged into {targetBranch} and is read-only.
+      Marked as merged into {targetBranch}. You can continue working in this
+      session.
     </div>
   );
 });

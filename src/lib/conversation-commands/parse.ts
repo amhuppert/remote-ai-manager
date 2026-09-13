@@ -45,7 +45,16 @@ export function parseConversationCommand(
 ): ParsedConversationCommand | null {
   for (const command of COMMANDS) {
     const match = matchSlashCommand(text, command);
-    if (match) return { command, hint: match.rest.trim() };
+    if (!match) continue;
+    const hint = match.rest.trim();
+    if (command === "merge" && /^--no-mark-merged(?:\s|$)/.test(hint)) {
+      return {
+        command,
+        hint: hint.slice("--no-mark-merged".length).trim(),
+        skipMarkMerged: true,
+      };
+    }
+    return { command, hint };
   }
   return null;
 }

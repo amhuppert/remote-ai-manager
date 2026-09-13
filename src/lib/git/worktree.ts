@@ -576,6 +576,36 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
     }
   }
 
+  async function recordPublishedMerge(
+    worktreePath: string,
+    mergeHash: string,
+  ): Promise<void> {
+    const { stdout: status } = await git(worktreePath, [
+      "status",
+      "--porcelain",
+    ]);
+    if (status.trim()) {
+      throw new Error(
+        "Session worktree has uncommitted changes; published merge ancestry was not recorded.",
+      );
+    }
+    const { stdout: trees } = await git(worktreePath, [
+      "rev-parse",
+      "HEAD^{tree}",
+      `${mergeHash}^{tree}`,
+    ]);
+    const [sessionTree, publishedTree] = trees.trim().split("\n");
+    if (sessionTree !== publishedTree) {
+      throw new Error(
+        "Session changes differ from the published merge; published merge ancestry was not recorded.",
+      );
+    }
+    // Squash publishing does not connect the histories. Recording the published
+    // commit as a parent keeps subsequent merges from replaying delivered edits.
+    await git(worktreePath, ["merge", "--no-ff", "--no-edit", mergeHash]);
+    logger.info("git.published_merge.recorded", { worktreePath, mergeHash });
+  }
+
   async function prepareSquashMergePlumbing(
     input: PrepareSquashMergeInput,
   ): Promise<PrepareResult> {
@@ -907,6 +937,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
     listParkedMergeRefs,
     deleteParkedMergeRef,
     mergeTargetIntoFeature,
+    recordPublishedMerge,
     discoverTargetCheckout,
     prepareSquashMerge,
     publishPreparedMerge,
@@ -924,6 +955,7 @@ export const listUnmergedFiles = defaultOps.listUnmergedFiles;
 export const listParkedMergeRefs = defaultOps.listParkedMergeRefs;
 export const deleteParkedMergeRef = defaultOps.deleteParkedMergeRef;
 export const mergeTargetIntoFeature = defaultOps.mergeTargetIntoFeature;
+export const recordPublishedMerge = defaultOps.recordPublishedMerge;
 export const discoverTargetCheckout = defaultOps.discoverTargetCheckout;
 export const prepareSquashMerge = defaultOps.prepareSquashMerge;
 export const publishPreparedMerge = defaultOps.publishPreparedMerge;

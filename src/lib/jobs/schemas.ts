@@ -163,6 +163,7 @@ export const backgroundJobSchema = registerTrustedSchema(
      * work. Absent on commit and rebase jobs, which publish nothing.
      */
     finalizeSessionOnPublish: z.boolean().optional(),
+    skipMarkMerged: z.boolean().optional(),
     /**
      * Which surface dispatched this merge, stamped at dispatch. The intent
      * brief a completed merge attaches to its landed commit is attributed from
@@ -207,6 +208,7 @@ export const jobRecordSchema = registerTrustedSchema(
       preparedSha: true,
       expectedTargetSha: true,
       finalizeSessionOnPublish: true,
+      skipMarkMerged: true,
       resolutionContext: true,
       candidateValidation: true,
     })

@@ -190,8 +190,6 @@ export const MergedSession: Story = {
       ...conversation,
       status: "awaiting",
     })),
-    createAction: <Button disabled>New conversation</Button>,
-    workflow: null,
   },
 };
 export const ArchivedConversations: Story = { args: { showArchived: true } };

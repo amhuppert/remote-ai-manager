@@ -2645,6 +2645,7 @@ describe("background-jobs", () => {
         parkedRef: "refs/cc-merges/land",
         executionId: "workflow-execution-land",
         candidateValidation,
+        skipMarkMerged: true,
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -2654,9 +2655,16 @@ describe("background-jobs", () => {
       ).toMatchObject({
         executionId: "workflow-execution-land",
         candidateValidation,
+        skipMarkMerged: true,
       });
 
       await waitForJobCompletions();
+      expect(mockPublishActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skipMarkMerged: true,
+          finalizeSession: true,
+        }),
+      );
 
       expect(mockDeliveryGateActor).toHaveBeenCalledWith({
         workflowExecutionId: "workflow-execution-land",

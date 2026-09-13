@@ -64,6 +64,7 @@ const jobRecordRowSchema = registerTrustedSchema(
     expected_target_sha: z.string().nullish(),
     finalize_session_on_publish: z.number().int().nullish(),
     resolution_context: z.string().nullish(),
+    skip_mark_merged: z.number().int().nullable(),
   }),
   "jobRecordRowSchema",
 );
@@ -272,6 +273,8 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
     candidate.expectedTargetSha = row.expected_target_sha;
   if (row.finalize_session_on_publish != null)
     candidate.finalizeSessionOnPublish = row.finalize_session_on_publish === 1;
+  if (row.skip_mark_merged !== null)
+    candidate.skipMarkMerged = row.skip_mark_merged === 1;
   if (row.resolution_context != null)
     candidate.resolutionContext = row.resolution_context;
   if (candidateValidationResult.value !== undefined) {
@@ -318,6 +321,8 @@ function rowToJobRecord(rawRow: unknown): JobRecord {
     durable.expectedTargetSha = job.expectedTargetSha;
   if (job.finalizeSessionOnPublish !== undefined)
     durable.finalizeSessionOnPublish = job.finalizeSessionOnPublish;
+  if (job.skipMarkMerged !== undefined)
+    durable.skipMarkMerged = job.skipMarkMerged;
   if (job.resolutionContext !== undefined)
     durable.resolutionContext = job.resolutionContext;
   if (job.candidateValidation !== undefined) {
@@ -491,8 +496,8 @@ export function createJobsRepo(db: Db): JobsRepo {
         // for the job, so they are written once here and left alone by the
         // terminal update.
         db.prepare(
-          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, execution_id, spec_execution_id, final_publish, candidate_validation, finalize_session_on_publish, resolution_context)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, execution_id, spec_execution_id, final_publish, candidate_validation, finalize_session_on_publish, resolution_context, skip_mark_merged)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           validated.jobId,
           validated.jobType,
@@ -514,6 +519,9 @@ export function createJobsRepo(db: Db): JobsRepo {
               ? 1
               : 0,
           validated.resolutionContext ?? null,
+          validated.skipMarkMerged === undefined
+            ? null
+            : Number(validated.skipMarkMerged),
         );
       },
     );

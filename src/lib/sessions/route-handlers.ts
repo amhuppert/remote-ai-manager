@@ -159,12 +159,6 @@ export function createSessionRouteHandlers(
           { status: 400 },
         );
       }
-      if (parent.finished) {
-        return NextResponse.json(
-          { error: "Parent session is finished" } satisfies ApiError,
-          { status: 400 },
-        );
-      }
       if (parent.archived) {
         return NextResponse.json(
           { error: "Parent session is archived" } satisfies ApiError,

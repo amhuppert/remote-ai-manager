@@ -355,6 +355,7 @@ export const mergeMachine = setup({
     casAttempt: 1,
     maxCasAttempts: input.maxCasAttempts ?? 3,
     finalizeSessionOnPublish: input.finalizeSessionOnPublish ?? true,
+    skipMarkMerged: input.skipMarkMerged ?? false,
     executionId: input.executionId ?? null,
     specExecutionId: input.specExecutionId ?? null,
     validationWorkflow: input.validationWorkflow ?? null,
@@ -833,12 +834,14 @@ export const mergeMachine = setup({
         src: "publish",
         input: ({ context }) => ({
           projectPath: context.projectPath,
+          worktreePath: context.worktreePath,
           sessionName: context.sessionName,
           targetBranch: context.targetBranch,
           preparedSha: context.preparedSha ?? "",
           expectedTargetSha: context.expectedTargetSha ?? "",
           parkedRef: context.parkedRef ?? "",
           finalizeSession: context.finalizeSessionOnPublish,
+          skipMarkMerged: context.skipMarkMerged,
           upToDate: context.upToDate,
         }),
         onDone: [

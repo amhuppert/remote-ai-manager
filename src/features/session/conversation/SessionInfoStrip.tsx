@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useMemo, useState } from "react";
+import { useSessionMergeStatusMutation } from "@/lib/sessions/mutations";
 import { cn } from "@/lib/ui/cn";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
@@ -129,6 +130,7 @@ function SessionInfoStrip({
   onRebase,
   onActivateAlignment,
 }: SessionInfoStripProps): React.JSX.Element {
+  const mergeStatus = useSessionMergeStatusMutation(projectName, sessionName);
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const statusKey = statusDotClass.replace("status-dot-", "");
 
@@ -313,6 +315,9 @@ function SessionInfoStrip({
             />
           </div>
           <SessionActionsMenu
+            merged={session.finished}
+            onToggleMerged={() => mergeStatus.mutate(!session.finished)}
+            mergeStatusPending={mergeStatus.isPending}
             targetBranch={targetBranch}
             activeLayout={layout}
             onLayoutChange={onLayoutChange}

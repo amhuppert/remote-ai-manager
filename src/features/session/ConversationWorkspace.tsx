@@ -164,9 +164,7 @@ export default function ConversationWorkspace({
     conversationBusy: activeConversation?.status === "running",
   });
   const isReadOnly =
-    isFinished ||
-    (isWorkflowManagedConversation && approvalGate === null) ||
-    hasActiveCollab;
+    (isWorkflowManagedConversation && approvalGate === null) || hasActiveCollab;
 
   const {
     send: sendPrompt,

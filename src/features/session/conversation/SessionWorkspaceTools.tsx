@@ -99,7 +99,7 @@ export default function SessionWorkspaceTools({
           <Switch
             tone="green"
             checked={enabled}
-            disabled={tdd.isPending || session.finished}
+            disabled={tdd.isPending}
             aria-label="Red-green TDD"
             onCheckedChange={(tddEnabled) => {
               log.info("session_overview.tdd_changed", {

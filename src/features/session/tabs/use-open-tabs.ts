@@ -39,6 +39,7 @@ export interface OpenTabsApi {
 interface UseOpenTabsInput {
   activeConversationId: string;
   activeConversations: SessionActiveConversation[];
+  resolvedConversation?: SessionActiveConversation;
   /**
    * Whether the active-conversations query has resolved. `activeConversations`
    * alone cannot distinguish "empty because the query is still loading" from
@@ -95,6 +96,7 @@ export function useOpenTabs(input: UseOpenTabsInput): OpenTabsApi {
   const {
     activeConversationId,
     activeConversations,
+    resolvedConversation,
     activeConversationsLoaded,
     onOpenConversation,
   } = input;
@@ -204,10 +206,16 @@ export function useOpenTabs(input: UseOpenTabsInput): OpenTabsApi {
     commit,
   ]);
 
-  const byId = useMemo(
-    () => new Map(activeConversations.map((c) => [c.id, c])),
-    [activeConversations],
-  );
+  const byId = useMemo(() => {
+    const rows = new Map(activeConversations.map((c) => [c.id, c]));
+    if (
+      resolvedConversation?.id === activeConversationId &&
+      !rows.has(activeConversationId)
+    ) {
+      rows.set(activeConversationId, resolvedConversation);
+    }
+    return rows;
+  }, [activeConversations, activeConversationId, resolvedConversation]);
 
   const workingSet = useMemo(
     () =>
@@ -226,8 +234,8 @@ export function useOpenTabs(input: UseOpenTabsInput): OpenTabsApi {
   // persisted least→most-recent ordering (stale ids are dropped). `[]` before
   // hydration because `model` is `emptyModel()` until `value` lands.
   const persistedLruLive = useMemo(
-    () => model.lru.filter((id) => byId.has(id)),
-    [model.lru, byId],
+    () => model.lru.filter((id) => liveIds.has(id)),
+    [model.lru, liveIds],
   );
 
   const isAtCap = workingSet.length >= MAX_OPEN_TABS;

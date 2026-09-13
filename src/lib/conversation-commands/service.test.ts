@@ -161,25 +161,14 @@ describe("createConversationCommandService eligibility matrix", () => {
       expectNoAgentOrDispatch(deps);
     });
 
-    it("rejects with session-finished for a finished session", async () => {
-      const deps = makeDeps({
-        getSession: vi.fn(async () => makeSession({ finished: true })),
-      });
-      const service = createConversationCommandService(deps);
-
-      const outcome = await service.run(
+    it("allows work in a session still marked merged", async () => {
+      const session = makeSession({ finished: true, archived: true });
+      const deps = makeDeps({ getSession: vi.fn(async () => session) });
+      const outcome = await createConversationCommandService(deps).run(
         makeInput({ parsed: { command, hint: "" } }),
       );
-
-      expect(outcome).toEqual({
-        status: "rejected",
-        reason: "session-finished",
-      });
-      expect(deps.appendNotice).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.text).toMatch(
-        /finished/i,
-      );
-      expectNoAgentOrDispatch(deps);
+      expect(outcome.status).toBe("dispatched");
+      expect(session.finished).toBe(true);
     });
 
     it("rejects with job-active when a background job is already running", async () => {
@@ -198,7 +187,7 @@ describe("createConversationCommandService eligibility matrix", () => {
       expectNoAgentOrDispatch(deps);
     });
 
-    it("checks finished before active job (ordering)", async () => {
+    it("keeps the active job guard for merged sessions", async () => {
       const deps = makeDeps({
         getSession: vi.fn(async () => makeSession({ finished: true })),
         hasActiveJob: vi.fn(() => true),
@@ -211,9 +200,9 @@ describe("createConversationCommandService eligibility matrix", () => {
 
       expect(outcome).toEqual({
         status: "rejected",
-        reason: "session-finished",
+        reason: "job-active",
       });
-      expect(deps.hasActiveJob).not.toHaveBeenCalled();
+      expect(deps.hasActiveJob).toHaveBeenCalled();
     });
   });
 
@@ -1064,7 +1053,7 @@ describe("/align command", () => {
     expect(h.findDraftVersion()).toBeNull();
   });
 
-  it("rejects with session-finished for a finished session", async () => {
+  it("allows alignment authoring in a merged session", async () => {
     const h = makeAlignHarness("normal");
     harnesses.push(h.fixture);
     const finishedDeps: ConversationCommandDeps = {
@@ -1085,12 +1074,9 @@ describe("/align command", () => {
 
     const outcome = await service.run(alignInput());
 
-    expect(outcome).toEqual({
-      status: "rejected",
-      reason: "session-finished",
-    });
-    expect(h.findDraftVersion()).toBeNull();
-    expect(h.enqueuedAuthoringTurns).toHaveLength(0);
+    expect(outcome.status).toBe("alignment_draft_started");
+    expect(h.findDraftVersion()).not.toBeNull();
+    expect(h.enqueuedAuthoringTurns).toHaveLength(1);
   });
 
   it("surfaces AlignmentNotSupportedError as a graceful rejection, not a crash", () => {
@@ -1179,7 +1165,7 @@ describe("/ticket command", () => {
     );
   });
 
-  it("rejects through the existing notice path when the session is finished", async () => {
+  it("allows ticket creation from a merged session", async () => {
     const deps = makeDeps({
       getSession: vi.fn(async () => makeSession({ finished: true })),
     });
@@ -1189,11 +1175,8 @@ describe("/ticket command", () => {
       makeInput({ parsed: { command: "ticket", hint: "" } }),
     );
 
-    expect(outcome).toEqual({
-      status: "rejected",
-      reason: "session-finished",
-    });
-    expect(deps.runTicketCommand).not.toHaveBeenCalled();
+    expect(outcome.status).toBe("ticket_created");
+    expect(deps.runTicketCommand).toHaveBeenCalled();
   });
 
   it.each(["iteration", "validator"] as const)(

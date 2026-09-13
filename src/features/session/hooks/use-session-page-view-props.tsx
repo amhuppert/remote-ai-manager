@@ -178,7 +178,6 @@ function useComposerProps(
     showPlaceholder: store.showPlaceholder,
     promptPlaceholder: store.promptPlaceholder,
     isReadOnly: identity.isReadOnly,
-    isFinished: identity.isFinished,
     isWorkflowManagedConversation: identity.isWorkflowManagedConversation,
     sending: store.sending,
     hasActiveCollab: collaboration.hasActiveCollab,

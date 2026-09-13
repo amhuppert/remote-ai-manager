@@ -1,3 +1,4 @@
+import { mergeCompletionOption } from "./0046-merge-completion-option";
 import { addCheckpointForks } from "./0045-add-checkpoint-forks";
 import type { StateMigration } from "./types";
 import { dropLegacyRoadmapItems } from "./0001-drop-legacy-roadmap-items";
@@ -127,6 +128,7 @@ export const migrations: readonly StateMigration[] = [
   closePolicyAdmittedApprovalRequests,
   addConversationCheckpoints,
   addCheckpointForks,
+  mergeCompletionOption,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

@@ -498,7 +498,6 @@ export default function UnifiedComposer({
         showPlaceholder={setPromptPlaceholder}
         promptPlaceholder={promptPlaceholder}
         isReadOnly={false}
-        isFinished={false}
         sending={busy}
         hasActiveCollab={false}
         isRecording={voice.isRecording}

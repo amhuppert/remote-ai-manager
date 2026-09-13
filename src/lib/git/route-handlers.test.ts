@@ -72,6 +72,7 @@ function makeJobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
     executionId: "workflow-execution-1",
     finalPublish: true,
     finalizeSessionOnPublish: false,
+    skipMarkMerged: true,
     candidateValidation: {
       validationRef: "validation-1",
       validatedSha: "validated-sha",
@@ -282,7 +283,7 @@ describe("commitSession", () => {
     });
   });
 
-  it("409s for a finished session", async () => {
+  it("accepts commits in a merged session", async () => {
     const handlers = createGitRouteHandlers(
       makeDeps({
         getSession: vi.fn().mockResolvedValue(makeSession({ finished: true })),
@@ -292,10 +293,10 @@ describe("commitSession", () => {
       postRequest({ message: "msg" }),
       routeContext(sessionParams),
     );
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: "Session is finished and read-only",
-      code: "SESSION_FINISHED",
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      jobId: "job-1",
+      jobType: "commit",
     });
   });
 
@@ -712,32 +713,48 @@ describe("resolveSessionConflicts", () => {
     );
   });
 
-  it("carries a graph lane merge's non-finalizing fact into the retry", async () => {
-    const dispatchResolveConflictsJob = vi
-      .fn()
-      .mockReturnValue({ ok: true, value: { jobId: "job-3" } });
-    const handlers = createGitRouteHandlers(
-      makeDeps({
-        dispatchResolveConflictsJob,
-        getJob: vi.fn().mockReturnValue(
-          makeJob({
-            status: "conflicts",
-            finalizeSessionOnPublish: false,
-          }),
-        ),
-      }),
-    );
+  it.each([false, true])(
+    "preserves the merge's completion options on conflict retry (restarted=%s)",
+    async (restarted) => {
+      const dispatchResolveConflictsJob = vi
+        .fn()
+        .mockReturnValue({ ok: true, value: { jobId: "job-3" } });
+      const handlers = createGitRouteHandlers(
+        makeDeps({
+          dispatchResolveConflictsJob,
+          getJob: vi.fn().mockReturnValue(
+            restarted
+              ? undefined
+              : makeJob({
+                  status: "conflicts",
+                  finalizeSessionOnPublish: false,
+                  skipMarkMerged: true,
+                }),
+          ),
+          findLatestJobRecordForSession: vi.fn().mockReturnValue(
+            makeJobRecord({
+              status: "conflicts",
+              finalizeSessionOnPublish: false,
+              skipMarkMerged: true,
+            }),
+          ),
+        }),
+      );
 
-    const res = await handlers.resolveSessionConflicts(
-      postRequest({ decisions: [] }),
-      routeContext(sessionParams),
-    );
+      const res = await handlers.resolveSessionConflicts(
+        postRequest({ decisions: [] }),
+        routeContext(sessionParams),
+      );
 
-    expect(res.status).toBe(202);
-    expect(dispatchResolveConflictsJob).toHaveBeenCalledWith(
-      expect.objectContaining({ finalizeSessionOnPublish: false }),
-    );
-  });
+      expect(res.status).toBe(202);
+      expect(dispatchResolveConflictsJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          finalizeSessionOnPublish: false,
+          skipMarkMerged: true,
+        }),
+      );
+    },
+  );
 
   it("leaves a user-driven merge's retry session-finalizing", async () => {
     const dispatchResolveConflictsJob = vi
@@ -936,6 +953,7 @@ describe("landSession", () => {
         executionId: "workflow-execution-1",
         finalPublish: true,
         finalizeSessionOnPublish: false,
+        skipMarkMerged: true,
       }),
     );
   });
@@ -1036,7 +1054,9 @@ describe("landSession", () => {
         dispatchMergeJob,
         getJob: vi
           .fn()
-          .mockReturnValue(makeJob({ finalizeSessionOnPublish: false })),
+          .mockReturnValue(
+            makeJob({ finalizeSessionOnPublish: false, skipMarkMerged: true }),
+          ),
       }),
     );
 
@@ -1047,7 +1067,10 @@ describe("landSession", () => {
 
     expect(res.status).toBe(202);
     expect(dispatchMergeJob).toHaveBeenCalledWith(
-      expect.objectContaining({ finalizeSessionOnPublish: false }),
+      expect.objectContaining({
+        finalizeSessionOnPublish: false,
+        skipMarkMerged: true,
+      }),
     );
   });
 });

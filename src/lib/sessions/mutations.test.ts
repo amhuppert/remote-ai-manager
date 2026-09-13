@@ -11,6 +11,7 @@ import {
   useCreateSessionMutation,
   useDeleteSessionMutation,
   useTddToggleMutation,
+  useSessionMergeStatusMutation,
 } from "@/lib/sessions/mutations";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -21,6 +22,7 @@ import type {
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import { normalizeTicketListFilters } from "@/lib/tickets/list-filters";
 import { ticketKeys } from "@/lib/tickets/query-keys";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 
 function activeConvo(
   overrides: Partial<SessionActiveConversation> & { id: string },
@@ -108,6 +110,39 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+it("restores both merge-status caches and reports a rejected status change", async () => {
+  const client = makeClient();
+  const session = sessionListItem({
+    sessionName: "s",
+    finished: false,
+    archived: true,
+  });
+  client.setQueryData(sessionKeys.list("p"), [session]);
+  client.setQueryData(sessionKeys.detail("p", "s"), session);
+  useToastStoreForTesting.setState({ toasts: [] });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => jsonResponse({ error: "Status update failed" }, 500)),
+  );
+  try {
+    const { result } = renderHook(
+      () => useSessionMergeStatusMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+    await expect(result.current.mutateAsync(true)).rejects.toThrow(
+      "Status update failed",
+    );
+    expect(client.getQueryData(sessionKeys.list("p"))).toEqual([session]);
+    expect(client.getQueryData(sessionKeys.detail("p", "s"))).toEqual(session);
+    expect(useToastStoreForTesting.getState().toasts).toMatchObject([
+      { message: "Could not update merge status: Status update failed" },
+    ]);
+  } finally {
+    vi.unstubAllGlobals();
+    useToastStoreForTesting.setState({ toasts: [] });
+  }
+});
 
 describe("useGenericArchiveSessionMutation", () => {
   const fetchSpy = vi.fn<typeof fetch>();

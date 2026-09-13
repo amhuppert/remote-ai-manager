@@ -41,6 +41,9 @@ const TRIGGER_CLASS = cn(
 
 export interface SessionActionsMenuProps {
   targetBranch: string;
+  merged?: boolean;
+  onToggleMerged?: () => void;
+  mergeStatusPending?: boolean;
   activeLayout: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
   onPush?: () => void;
@@ -69,6 +72,9 @@ export interface SessionActionsMenuProps {
 
 export default function SessionActionsMenu({
   targetBranch,
+  merged,
+  onToggleMerged,
+  mergeStatusPending,
   activeLayout,
   onLayoutChange,
   onPush,
@@ -109,6 +115,17 @@ export default function SessionActionsMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" layoutClassName="w-[280px]">
+        {onToggleMerged && (
+          <>
+            <DropdownMenuItem
+              onSelect={onToggleMerged}
+              disabled={mergeStatusPending}
+            >
+              {merged ? "Unmark as merged" : "Mark as merged"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuLabel>Layout</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           aria-label="Layout"

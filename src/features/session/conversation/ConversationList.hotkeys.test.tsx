@@ -84,60 +84,63 @@ afterEach(() => {
 });
 
 describe("ConversationList hotkeys", () => {
-  it("creates and opens a conversation with C C", async () => {
-    const fetchMock = vi.fn(
-      async (_input: RequestInfo | URL, init?: RequestInit) => {
-        expect(init?.method).toBe("POST");
-        return Response.json({
-          id: "created-conversation",
-          scope: "session",
-          name: null,
-          transcriptPath: null,
-          status: "new",
-          promptCount: 0,
-          createdAt: "2026-07-27T12:00:00.000Z",
-          lastActivityAt: "2026-07-27T12:00:00.000Z",
-          source: "cc",
-          summary: null,
-          archived: false,
-          totalCostUsd: null,
-          totalDurationMs: null,
-          totalTurns: null,
-          pendingQuestionId: null,
-          pendingQuestions: null,
-          pendingPromptText: null,
-          forkedFrom: null,
-          role: null,
-          activeTurnSource: null,
-          contextTokens: null,
-          contextWindowMax: null,
-          debugMode: null,
-          agentBackend: "claude",
-          backendRef: null,
-          unread: false,
-          pendingQueue: [],
-        });
-      },
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    renderPage();
-
-    fireEvent.keyDown(document, { key: "c" });
-    fireEvent.keyDown(document, { key: "c" });
-
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.filter(
-          ([, init]) => init?.method?.toUpperCase() === "POST",
-        ),
-      ).toHaveLength(1);
-      expect(routerPush).toHaveBeenCalledWith(
-        "/conversations?c=created-conversation",
+  it.each([false, true])(
+    "creates and opens a conversation with C C (merged=%s)",
+    async (finished) => {
+      const fetchMock = vi.fn(
+        async (_input: RequestInfo | URL, init?: RequestInit) => {
+          expect(init?.method).toBe("POST");
+          return Response.json({
+            id: "created-conversation",
+            scope: "session",
+            name: null,
+            transcriptPath: null,
+            status: "new",
+            promptCount: 0,
+            createdAt: "2026-07-27T12:00:00.000Z",
+            lastActivityAt: "2026-07-27T12:00:00.000Z",
+            source: "cc",
+            summary: null,
+            archived: false,
+            totalCostUsd: null,
+            totalDurationMs: null,
+            totalTurns: null,
+            pendingQuestionId: null,
+            pendingQuestions: null,
+            pendingPromptText: null,
+            forkedFrom: null,
+            role: null,
+            activeTurnSource: null,
+            contextTokens: null,
+            contextWindowMax: null,
+            debugMode: null,
+            agentBackend: "claude",
+            backendRef: null,
+            unread: false,
+            pendingQueue: [],
+          });
+        },
       );
-    });
-  });
+      vi.stubGlobal("fetch", fetchMock);
+      renderPage(finished);
 
-  it("marks new conversation unavailable for a finished session", () => {
+      fireEvent.keyDown(document, { key: "c" });
+      fireEvent.keyDown(document, { key: "c" });
+
+      await waitFor(() => {
+        expect(
+          fetchMock.mock.calls.filter(
+            ([, init]) => init?.method?.toUpperCase() === "POST",
+          ),
+        ).toHaveLength(1);
+        expect(routerPush).toHaveBeenCalledWith(
+          "/conversations?c=created-conversation",
+        );
+      });
+    },
+  );
+
+  it("keeps new conversation available for a merged session", () => {
     const dispatcher = renderPage(true);
 
     expect(
@@ -145,6 +148,6 @@ describe("ConversationList hotkeys", () => {
         .getCommands()
         .find((command) => command.definition.id === "newConversation")
         ?.available,
-    ).toBe(false);
+    ).toBe(true);
   });
 });

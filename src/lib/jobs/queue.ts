@@ -160,13 +160,13 @@ export function getActiveJobs(): BackgroundJob[] {
 }
 
 /**
- * The session's in-flight merge that will also finalize the session, or null.
+ * The session's in-flight delivery merge, or null.
  *
  * The symmetric half of the delivery gate: while this job is running, the
- * session is about to be marked finished under the project lock, so a workflow
+ * session branch is being delivered under the project lock, so a workflow
  * launch must be refused — otherwise the two admit each other in the window
- * between the merge route's advisory lease check and the publish, seeding a
- * fresh run into a session that is being closed.
+ * between the merge route's advisory lease check and the publish. Skipping
+ * completion cleanup does not relax this exclusion.
  *
  * `finalizeSessionOnPublish` is read rather than `jobType` because a graph lane
  * merge is a merge job too, and it is the workflow's OWN work; blocking on it
@@ -957,12 +957,13 @@ export interface DispatchMergeParams {
   candidateValidation?: BackgroundJob["candidateValidation"];
   /**
    * Whether this job's publish also finishes the session. Omitted means the
-   * user-driven session merge, which is finalizing by definition; a re-entry
+   * user-driven session merge; skipMarkMerged can suppress its cleanup. A re-entry
    * (land, conflict retry) passes the fact forward from the job it continues,
    * because a graph lane merge parked as ready-to-land is still the workflow's
    * own work when an operator lands it.
    */
   finalizeSessionOnPublish?: boolean;
+  skipMarkMerged?: boolean;
 }
 
 /**
@@ -1210,6 +1211,7 @@ export function dispatchMergeJob(
         job.specExecutionId = resolvedSpecExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
+      job.skipMarkMerged = params.skipMarkMerged ?? false;
       job.intentSource = "session-merge";
       if (candidateValidation) job.candidateValidation = candidateValidation;
     },
@@ -1223,6 +1225,7 @@ export function dispatchMergeJob(
         entryMode: entryMode ?? "merge",
         executionId: resolvedExecutionId,
         finalPublish: resolvedFinalPublish === true,
+        skipMarkMerged: params.skipMarkMerged ?? false,
       });
     },
     createJobActor(jobId) {
@@ -1243,6 +1246,7 @@ export function dispatchMergeJob(
         jobType: "merge",
         targetBranch,
         finalizeSessionOnPublish,
+        skipMarkMerged: params.skipMarkMerged ?? false,
         ...(entryMode && { entryMode }),
         ...(preparedSha && { preparedSha }),
         ...(expectedTargetSha && { expectedTargetSha }),
@@ -1355,6 +1359,7 @@ export function dispatchResolveConflictsJob(params: {
   candidateValidation?: BackgroundJob["candidateValidation"];
   /** The resumed merge's own fact; see {@link DispatchMergeParams}. */
   finalizeSessionOnPublish?: boolean;
+  skipMarkMerged?: boolean;
 }): MergeDispatchResult {
   const {
     projectPath,
@@ -1417,6 +1422,7 @@ export function dispatchResolveConflictsJob(params: {
         job.specExecutionId = resolvedSpecExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
+      job.skipMarkMerged = params.skipMarkMerged ?? false;
       job.intentSource = "session-merge";
       if (candidateValidation) job.candidateValidation = candidateValidation;
     },
@@ -1427,6 +1433,7 @@ export function dispatchResolveConflictsJob(params: {
         resolutionContextLength: resolutionContext?.length ?? 0,
         executionId: resolvedExecutionId,
         finalPublish: resolvedFinalPublish === true,
+        skipMarkMerged: params.skipMarkMerged ?? false,
       });
     },
     createJobActor(jobId) {
@@ -1453,6 +1460,7 @@ export function dispatchResolveConflictsJob(params: {
         ...(conflictFiles && { conflictFiles }),
         targetBranch,
         finalizeSessionOnPublish,
+        skipMarkMerged: params.skipMarkMerged ?? false,
         ...(resolutionContext && { resolutionContext }),
         ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
         ...(resolvedSpecExecutionId && {

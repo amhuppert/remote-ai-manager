@@ -20,6 +20,7 @@ import {
 import {
   useDeleteSessionMutation,
   useArchiveSessionMutation,
+  useSessionMergeStatusMutation,
 } from "@/lib/sessions/mutations";
 import {
   useShowArchivedConversations,
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui/DropdownMenu";
 import {
   ArchiveIcon,
+  CheckIcon,
   CopyIcon,
   KebabIcon,
   PlusIcon,
@@ -105,7 +107,7 @@ export default function ConversationList({
 
   // --- Derived data ---
   const session = sessionQuery.data;
-  const isFinished = session?.finished ?? false;
+  const mergeStatus = useSessionMergeStatusMutation(projectName, sessionName);
 
   // --- Copy session context for debugging ---
   const handleCopyContext = useCallback(async () => {
@@ -136,7 +138,7 @@ export default function ConversationList({
   // selection, and the picker beside it names one when the user wants one.
   const handleNewConversation = useCallback(
     (profile?: AgentProfileRef) => {
-      if (createConvoMutation.isPending || isFinished || !session) return;
+      if (createConvoMutation.isPending || !session) return;
       log.info("session_overview.conversation_create", {
         projectName,
         sessionName,
@@ -158,17 +160,10 @@ export default function ConversationList({
         },
       );
     },
-    [
-      createConvoMutation,
-      isFinished,
-      session,
-      projectName,
-      sessionName,
-      router,
-    ],
+    [createConvoMutation, session, projectName, sessionName, router],
   );
   useAppHotkey("newConversation", () => handleNewConversation(), {
-    enabled: !createConvoMutation.isPending && !isFinished && !!session,
+    enabled: !createConvoMutation.isPending && !!session,
   });
 
   const handleDelete = useCallback(() => {
@@ -311,11 +306,10 @@ export default function ConversationList({
                   className="flex items-center gap-2xs"
                 >
                   <Button
-                    variant={isFinished ? "default" : "primary"}
+                    variant="primary"
                     touch
                     onClick={() => handleNewConversation()}
                     loading={createConvoMutation.isPending}
-                    disabled={isFinished}
                   >
                     <PlusIcon size={16} />
                     {createConvoMutation.isPending
@@ -326,7 +320,6 @@ export default function ConversationList({
                     projectName={projectName}
                     onCreate={handleNewConversation}
                     pending={createConvoMutation.isPending}
-                    disabled={isFinished}
                   />
                 </div>
               }
@@ -338,6 +331,7 @@ export default function ConversationList({
                         aria-label="Session actions"
                         disabled={
                           archiveSessionMutation.isPending ||
+                          mergeStatus.isPending ||
                           deleteMutation.isPending
                         }
                       >
@@ -352,6 +346,17 @@ export default function ConversationList({
                     >
                       <CopyIcon size={16} />
                       Copy session context
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      touch
+                      onSelect={() => mergeStatus.mutate(!session.finished)}
+                    >
+                      {session.finished ? (
+                        <UndoIcon size={16} />
+                      ) : (
+                        <CheckIcon size={16} />
+                      )}
+                      {session.finished ? "Unmark as merged" : "Mark as merged"}
                     </DropdownMenuItem>
                     <DropdownMenuItem touch onSelect={archiveSession}>
                       {session.archived ? (
@@ -397,7 +402,6 @@ export default function ConversationList({
                     projectName={projectName}
                     sessionName={sessionName}
                     execution={graphWorkflowExecutionQuery.data ?? null}
-                    isFinished={isFinished}
                   />
                 )
               }

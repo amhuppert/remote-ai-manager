@@ -32,7 +32,6 @@ function renderCard(): void {
         projectName="proj-1"
         sessionName="sess-1"
         execution={null}
-        isFinished={false}
       />
     </QueryClientProvider>,
   );

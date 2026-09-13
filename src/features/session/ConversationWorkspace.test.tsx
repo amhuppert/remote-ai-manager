@@ -349,15 +349,6 @@ vi.mock("@/lib/mcp/queries", () => ({
 
 const collaborationStartMutateMock = vi.fn();
 const collaborationStopMutateMock = vi.fn();
-vi.mock("@/lib/sessions/mutations", () => ({
-  useDeleteSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useGenericArchiveSessionMutation: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
-}));
-
 vi.mock("@/lib/git/mutations", () => ({
   useResolveConflictsMutation: () => ({ mutate: vi.fn(), isPending: false }),
   ApiCallError: class extends Error {

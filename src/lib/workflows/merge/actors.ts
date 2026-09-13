@@ -187,19 +187,20 @@ export type PrepareActorOutput =
 
 export interface PublishActorInput {
   projectPath: string;
+  worktreePath: string;
   sessionName: string;
   targetBranch: string;
   preparedSha: string;
   expectedTargetSha: string;
   parkedRef: string;
-  /** When true, the actor finalises the session (state, dev-servers, child retargeting) on success. */
+  /** Session delivery requires the delivery gate; completion cleanup is optional. */
   finalizeSession: boolean;
+  skipMarkMerged?: boolean;
   /**
    * Publish a merge that has nothing to land: the target already contains the
    * branch. The ref moves and the parked commit do not exist, so everything
-   * that touches them is skipped — but the session still finishes, which is
-   * why this runs through the publish step at all rather than short-circuiting
-   * to a terminal. Absent means an ordinary publish.
+   * that touches them is skipped. Session delivery and optional completion
+   * cleanup still run through this step. Absent means an ordinary publish.
    */
   upToDate?: boolean;
 }
@@ -210,7 +211,7 @@ export type PublishActorOutput =
       mergeHash: string;
       refreshWarning?: string;
     }
-  /** The merge was a no-op: the session was finalized, no commit was published. */
+  /** The merge was a no-op: no commit was published. */
   | { status: "up-to-date" }
   | {
       status: "ready-to-land";
@@ -570,6 +571,7 @@ export interface PublishActorDeps {
   publishPreparedMerge(
     input: PublishPreparedMergeInput,
   ): Promise<PublishResult>;
+  recordPublishedMerge(worktreePath: string, mergeHash: string): Promise<void>;
   acquireProjectLock: AcquireProjectLockOptions["acquireProjectLock"];
   runSessionLifecycleOperation<T>(
     projectPath: string,
@@ -721,7 +723,7 @@ export async function runPublish(
     }
 
     if (input.upToDate === true) {
-      if (input.finalizeSession) {
+      if (input.finalizeSession && !input.skipMarkMerged) {
         await finalizeSessionSideEffects(
           deps,
           input.projectPath,
@@ -733,6 +735,7 @@ export async function runPublish(
         sessionName: input.sessionName,
         targetBranch: input.targetBranch,
         finalizeSession: input.finalizeSession,
+        skipMarkMerged: input.skipMarkMerged === true,
       });
       return { status: "up-to-date" };
     }
@@ -775,7 +778,25 @@ export async function runPublish(
       return { status: "failed", error: result.error };
     }
 
+    let refreshWarning = result.refreshWarning;
     if (input.finalizeSession) {
+      try {
+        await deps.recordPublishedMerge(input.worktreePath, result.mergeHash);
+      } catch (error) {
+        const warning = `Merge published, but session ancestry could not be updated: ${getErrorMessage(error)}`;
+        refreshWarning = refreshWarning
+          ? `${refreshWarning}\n${warning}`
+          : warning;
+        logger.warn("publishActor.session_ancestry_failed", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          mergeHash: result.mergeHash,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    if (input.finalizeSession && !input.skipMarkMerged) {
       await finalizeSessionSideEffects(
         deps,
         input.projectPath,
@@ -783,12 +804,12 @@ export async function runPublish(
       );
     }
 
-    return result.refreshWarning === undefined
+    return refreshWarning === undefined
       ? { status: "completed", mergeHash: result.mergeHash }
       : {
           status: "completed",
           mergeHash: result.mergeHash,
-          refreshWarning: result.refreshWarning,
+          refreshWarning,
         };
   } finally {
     release();
@@ -890,8 +911,11 @@ export const prepareActor = fromPromise<PrepareActorOutput, PrepareActorInput>(
 
 export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
   async ({ input }) => {
-    const { discoverTargetCheckout, publishPreparedMerge } =
-      await import("@/lib/git/worktree");
+    const {
+      discoverTargetCheckout,
+      publishPreparedMerge,
+      recordPublishedMerge,
+    } = await import("@/lib/git/worktree");
     const { acquireProjectLock } = await import("@/lib/prompt/single-flight");
     const { getSessionLifecycleGate } =
       await import("@/lib/sessions/lifecycle-gate");
@@ -907,6 +931,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
       {
         discoverTargetCheckout,
         publishPreparedMerge,
+        recordPublishedMerge,
         acquireProjectLock,
         runSessionLifecycleOperation: (projectPath, sessionName, operation) =>
           getSessionLifecycleGate().runExclusive(

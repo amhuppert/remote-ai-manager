@@ -98,6 +98,7 @@ export interface DispatchMergeParams {
   branchName: string;
   message: string;
   autoResolve: boolean;
+  skipMarkMerged?: boolean;
   targetBranch?: string;
   /** Agent-written intent notes for a later conflict-resolution turn. */
   resolutionContext?: string;
@@ -205,7 +206,6 @@ export interface RunCommandInput {
 
 export type RejectionReason =
   | "no-session"
-  | "session-finished"
   | "job-active"
   | "no-changes"
   | "alignment-unavailable"
@@ -236,8 +236,6 @@ const REJECTION_NOTICES: Record<
 > = {
   "no-session": (command) =>
     `Cannot run /${command}: this conversation has no session worktree.`,
-  "session-finished": (command) =>
-    `Cannot run /${command}: the session is finished.`,
   "job-active": (command) =>
     `Cannot run /${command}: a commit, merge, or conflict-resolution job is already running for this session.`,
   "no-changes": (command) =>
@@ -284,13 +282,6 @@ export function createConversationCommandService(
     const session = await deps.getSession(input.projectPath, input.sessionName);
     if (session === null) {
       return { eligible: false, outcome: await reject(input, "no-session") };
-    }
-
-    if (session.finished) {
-      return {
-        eligible: false,
-        outcome: await reject(input, "session-finished"),
-      };
     }
 
     if (deps.hasActiveJob(input.projectPath, input.sessionName)) {
@@ -517,6 +508,7 @@ export function createConversationCommandService(
             branchName: session.branchName,
             message,
             autoResolve: true,
+            ...(parsed.skipMarkMerged ? { skipMarkMerged: true } : {}),
             targetBranch: target?.targetBranch,
             resolutionContext,
           })
@@ -558,6 +550,8 @@ export function createConversationCommandService(
       command: parsed.command,
       jobId: dispatched.value.jobId,
       usedFallback,
+      skipMarkMerged:
+        parsed.command === "merge" && parsed.skipMarkMerged === true,
       sessionName: session.sessionName,
       conversationId: input.conversationId,
     });
@@ -663,9 +657,6 @@ export function createConversationCommandService(
     if (session === null) {
       return reject(input, "no-session");
     }
-    if (session.finished) {
-      return reject(input, "session-finished");
-    }
 
     let draft: { authoringPrompt: string; draftId: string };
     try {
@@ -735,9 +726,6 @@ export function createConversationCommandService(
       );
       if (session === null) {
         return reject(input, "no-session");
-      }
-      if (session.finished) {
-        return reject(input, "session-finished");
       }
     }
 

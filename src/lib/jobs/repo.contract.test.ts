@@ -70,6 +70,7 @@ function buildMaximalJobRecord(): JobRecord {
     preparedSha: "prepared-sha-abc123",
     expectedTargetSha: "expected-target-sha-def456",
     finalizeSessionOnPublish: true,
+    skipMarkMerged: true,
     resolutionContext: "Kept the session's rename; main only reformatted.",
     candidateValidation: {
       validationRef: "validation-maximal",
@@ -145,6 +146,7 @@ describe("job-records durability contract", () => {
           specExecutionId: fixture.specExecutionId,
           finalPublish: fixture.finalPublish,
           finalizeSessionOnPublish: fixture.finalizeSessionOnPublish,
+          skipMarkMerged: fixture.skipMarkMerged,
           resolutionContext: fixture.resolutionContext,
           candidateValidation: fixture.candidateValidation,
         });

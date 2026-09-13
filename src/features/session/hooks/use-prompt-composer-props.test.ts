@@ -40,7 +40,6 @@ describe("usePromptComposerProps", () => {
         showPlaceholder: () => {},
         promptPlaceholder: null,
         isReadOnly: false,
-        isFinished: false,
         isWorkflowManagedConversation: true,
         sending: false,
         hasActiveCollab: false,

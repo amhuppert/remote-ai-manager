@@ -11,6 +11,7 @@ import { conversationKeys } from "@/lib/conversations/query-keys";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { OPEN_TABS_STORAGE_KEY } from "@/features/session/tabs/use-open-tabs";
 import type { ConversationsPageParams } from "@/lib/conversations/hrefs";
+import type { ConversationListItem } from "@/lib/conversations/schemas";
 import { useConversationsPageSelection } from "./use-conversations-page-selection";
 
 function sessionRow(
@@ -74,6 +75,7 @@ function renderSelection(args: {
   url: string;
   active?: ActiveConversationsResponse;
   pageParams: ConversationsPageParams;
+  lookup?: ConversationListItem;
 }) {
   window.history.replaceState(null, "", args.url);
   const queryClient = new QueryClient({
@@ -90,9 +92,12 @@ function renderSelection(args: {
   // call record, which tests inspect for selection-driven rewrites.
   replaceStateSpy.mockClear();
   pushStateSpy.mockClear();
-  return renderHook(() => useConversationsPageSelection(args.pageParams), {
-    wrapper,
-  });
+  return renderHook(
+    () => useConversationsPageSelection(args.pageParams, args.lookup),
+    {
+      wrapper,
+    },
+  );
 }
 
 let pushStateSpy: ReturnType<typeof vi.spyOn>;
@@ -114,6 +119,44 @@ afterEach(() => {
 });
 
 describe("useConversationsPageSelection", () => {
+  it("opens an explicitly requested conversation when its archived session is absent from the active feed", async () => {
+    const { result } = renderSelection({
+      url: "/conversations?c=hidden",
+      active: activeData([]),
+      pageParams: params({ conversationId: "hidden" }),
+      lookup: {
+        scope: "session",
+        projectName: "repo",
+        projectPath: "/projects/repo",
+        sessionName: "fix-bug",
+        worktreePath: "/projects/repo/.worktrees/fix-bug",
+        conversationId: "hidden",
+        conversationName: "Continue delivery",
+        summary: null,
+        firstPromptSnippet: null,
+        backend: "claude",
+        backendRef: null,
+        transcriptPath: null,
+        debugLogPath: null,
+        status: "awaiting",
+        lastActivityAt: "2026-09-13T00:00:00Z",
+        archived: false,
+      },
+    });
+    await waitFor(() =>
+      expect(result.current.openTabs.workingSet).toMatchObject([
+        {
+          id: "hidden",
+          name: "Continue delivery",
+          sessionName: "fix-bug",
+          archived: false,
+        },
+      ]),
+    );
+    expect(result.current.openTabs.addableConversations).toEqual([]);
+    expect(window.location.search).toBe("?c=hidden");
+  });
+
   it("restores the persisted last-active (lru tail) via replaceState, never pushState (1.8)", async () => {
     // A persisted multi-tab set whose lru tail is a LIVE session id, with NO
     // ?c= and NO session filter → the tail must be restored on entry.

@@ -95,7 +95,6 @@ function makeProps(): React.ComponentProps<typeof PromptComposer> {
     showPlaceholder: vi.fn(),
     promptPlaceholder: null,
     isReadOnly: false,
-    isFinished: false,
     sending: false,
     hasActiveCollab: false,
     isRecording: false,

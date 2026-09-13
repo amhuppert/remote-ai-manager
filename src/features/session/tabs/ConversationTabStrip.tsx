@@ -118,8 +118,7 @@ export default function ConversationTabStrip({
           sessionName: conversation.sessionName,
           branchName: conversation.branchName,
           worktreePath: conversation.worktreePath,
-          // Tabs come from the active feed, which only carries open rows.
-          archived: false,
+          archived: conversation.archived ?? false,
           approvalGatePending: conversation.pendingApproval !== null,
         },
         {
@@ -162,7 +161,7 @@ export default function ConversationTabStrip({
               projectName: conversation.projectName,
               sessionName: conversation.sessionName,
               conversationId: conversation.id,
-              archived: true,
+              archived: !conversation.archived,
             });
           },
           onArchiveOthers: () => {

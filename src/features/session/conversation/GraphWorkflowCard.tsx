@@ -31,7 +31,6 @@ interface GraphWorkflowCardProps {
   projectName: string;
   sessionName: string;
   execution: GraphWorkflowExecution | null;
-  isFinished: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -581,7 +580,6 @@ export default function GraphWorkflowCard({
   projectName,
   sessionName,
   execution,
-  isFinished,
 }: GraphWorkflowCardProps): React.JSX.Element {
   // Ambient indicators reflect Current only (R12.4). The active-execution query
   // answers with whatever row physically occupies the session's active position,
@@ -605,10 +603,6 @@ export default function GraphWorkflowCard({
         execution={execution}
       />
     );
-  }
-
-  if (isFinished) {
-    return <></>;
   }
 
   return (

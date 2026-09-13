@@ -122,6 +122,7 @@ export interface GitRouteDeps {
     finalPublish?: boolean;
     /** Carried forward from the job a re-entry resumes; see the land handler. */
     finalizeSessionOnPublish?: boolean;
+    skipMarkMerged?: boolean;
     candidateValidation?: BackgroundJob["candidateValidation"];
   }): MergeDispatchResult;
   dispatchResolveConflictsJob(params: {
@@ -141,6 +142,7 @@ export interface GitRouteDeps {
     finalPublish?: boolean;
     /** Carried forward from the conflicted job this retry resumes. */
     finalizeSessionOnPublish?: boolean;
+    skipMarkMerged?: boolean;
     candidateValidation?: BackgroundJob["candidateValidation"];
   }): MergeDispatchResult;
   getJob(projectPath: string, sessionName: string): BackgroundJob | undefined;
@@ -224,17 +226,6 @@ function jobAccepted(
   return NextResponse.json(
     { jobId, jobType, branchName, startedAt: new Date().toISOString() },
     { status: 202 },
-  );
-}
-
-/** 409 for a finished (read-only) session addressed by a mutating route. */
-function finishedSessionConflict(): Response {
-  return NextResponse.json(
-    {
-      error: "Session is finished and read-only",
-      code: "SESSION_FINISHED",
-    } satisfies ApiError,
-    { status: 409 },
   );
 }
 
@@ -477,8 +468,6 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     if (!r.ok) return r.response;
     const { projectPath, projectName, sessionName, session } = r.value;
 
-    if (session.finished) return finishedSessionConflict();
-
     const body = await parseJsonBody(
       request,
       commitRequestSchema,
@@ -508,8 +497,6 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     const r = await resolveRoute(context);
     if (!r.ok) return r.response;
     const { projectPath, projectName, sessionName, session } = r.value;
-
-    if (session.finished) return finishedSessionConflict();
 
     const admission = await evaluateMergeInitiation({
       projectPath,
@@ -587,11 +574,28 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     );
     const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
 
-    // The conflicts-terminal merge job (still in the registry) carries the
-    // intent notes generated at /merge time plus the merge's execution
+    // The conflicts-terminal merge job carries the intent notes generated at
+    // /merge time plus the merge's execution
     // provenance and validation fact; the retry must keep all of them or the
     // delivery gate silently loses its linkage.
-    const priorJob = deps.getJob(projectPath, sessionName);
+    const liveJob = deps.getJob(projectPath, sessionName);
+    const savedJob = liveJob
+      ? null
+      : deps.findLatestJobRecordForSession(projectName, sessionName);
+    const priorJob =
+      liveJob ??
+      (savedJob?.status === "conflicts" &&
+      (savedJob.jobType === "merge" || savedJob.jobType === "resolve-conflicts")
+        ? savedJob
+        : undefined);
+    if (!liveJob && priorJob) {
+      mergeLogger.info("merge.conflict_retry_recovered", {
+        projectName,
+        sessionName,
+        jobId: priorJob.jobId,
+        skipMarkMerged: priorJob.skipMarkMerged === true,
+      });
+    }
 
     const result = deps.dispatchResolveConflictsJob({
       projectPath,
@@ -616,6 +620,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       // would both false-block the engine's next launch and point the session
       // delivery gate at the workflow's own Current run.
       finalizeSessionOnPublish: priorJob?.finalizeSessionOnPublish,
+      skipMarkMerged: priorJob?.skipMarkMerged,
       candidateValidation: priorJob?.candidateValidation,
     });
 
@@ -729,6 +734,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       // Landing continues the parked merge, so it inherits that merge's own
       // finalization fact rather than assuming the session ends here.
       finalizeSessionOnPublish: job.finalizeSessionOnPublish,
+      skipMarkMerged: job.skipMarkMerged,
       candidateValidation: job.candidateValidation,
     });
 

@@ -154,6 +154,7 @@ describe("runPrepare", () => {
 
 const basePublishInput: PublishActorInput = {
   projectPath: "/proj",
+  worktreePath: "/proj/.worktrees/feature",
   sessionName: "feature",
   targetBranch: "main",
   preparedSha: "prep-1",
@@ -182,6 +183,8 @@ function makePublishDeps(
           mergeHash: "merge-abc",
         }),
       ),
+    recordPublishedMerge:
+      overrides.recordPublishedMerge ?? vi.fn(async () => {}),
     acquireProjectLock: overrides.acquireProjectLock ?? vi.fn(() => () => {}),
     runSessionLifecycleOperation:
       overrides.runSessionLifecycleOperation ??
@@ -541,6 +544,59 @@ describe("runPublish", () => {
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ cleanTargetWorktreePath: null }),
     );
+  });
+
+  it.each([false, true])(
+    "skips completion bookkeeping after publish (upToDate=%s)",
+    async (upToDate) => {
+      const deps = makePublishDeps();
+      const out = await runPublish(deps, {
+        ...basePublishInput,
+        skipMarkMerged: true,
+        upToDate,
+      });
+      expect(out.status).toBe(upToDate ? "up-to-date" : "completed");
+      expect(deps.setSessionFinished).not.toHaveBeenCalled();
+      expect(deps.stopAllForSession).not.toHaveBeenCalled();
+      expect(deps.reconcileTicketSessionLifecycle).not.toHaveBeenCalled();
+      expect(deps.finalizeSessionMemory).not.toHaveBeenCalled();
+      expect(deps.retargetOrphanedChildren).not.toHaveBeenCalled();
+      if (!upToDate) {
+        expect(deps.recordPublishedMerge).toHaveBeenCalledWith(
+          basePublishInput.worktreePath,
+          "merge-abc",
+        );
+      }
+    },
+  );
+
+  it("keeps the delivery guard when completion bookkeeping is skipped", async () => {
+    const deps = makePublishDeps({
+      getActiveGraphWorkflowExecution: vi
+        .fn()
+        .mockResolvedValue({ id: "active", status: "running" }),
+    });
+    const out = await runPublish(deps, {
+      ...basePublishInput,
+      skipMarkMerged: true,
+    });
+    expect(out.status).toBe("failed");
+    expect(deps.publishPreparedMerge).not.toHaveBeenCalled();
+  });
+
+  it("reports a published merge with a warning when session ancestry cannot be recorded", async () => {
+    const deps = makePublishDeps({
+      recordPublishedMerge: vi.fn(async () => {
+        throw new Error("uncommitted changes");
+      }),
+    });
+    expect(await runPublish(deps, basePublishInput)).toEqual({
+      status: "completed",
+      mergeHash: "merge-abc",
+      refreshWarning:
+        "Merge published, but session ancestry could not be updated: uncommitted changes",
+    });
+    expect(deps.setSessionFinished).toHaveBeenCalled();
   });
 
   it("finalizes session lifecycle only when finalizeSession is true", async () => {

@@ -21,6 +21,27 @@ describe("parseConversationCommand", () => {
     });
   });
 
+  it("extracts the skip-marking option from merge message guidance", () => {
+    expect(
+      parseConversationCommand("/merge --no-mark-merged\nship the parser"),
+    ).toEqual({
+      command: "merge",
+      hint: "ship the parser",
+      skipMarkMerged: true,
+    });
+    expect(parseConversationCommand("/merge --no-mark-merged")).toEqual({
+      command: "merge",
+      hint: "",
+      skipMarkMerged: true,
+    });
+    expect(
+      parseConversationCommand("/merge describe --no-mark-merged"),
+    ).toEqual({
+      command: "merge",
+      hint: "describe --no-mark-merged",
+    });
+  });
+
   it("parses /commit with trailing hint, trimmed", () => {
     expect(
       parseConversationCommand("/commit focus on the parser refactor"),

@@ -235,9 +235,7 @@ export default function SpecDeliveryReviewPanel({
         key={`continuation:${view.execution?.id ?? view.revisionId}`}
         view={view}
         pending={pending}
-        sessions={(sessions.data ?? [])
-          .filter((session) => !session.finished)
-          .map((session) => session.sessionName)}
+        sessions={(sessions.data ?? []).map((session) => session.sessionName)}
         sessionsError={sessions.error?.message}
         initialSession={active?.session_name ?? mergeSession ?? undefined}
         onContinue={async (input) => {

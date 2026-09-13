@@ -216,8 +216,8 @@ export default function SessionOverview({
         <div className="mb-xl flex flex-wrap items-center gap-sm rounded-md border border-solid border-green-glow bg-green-glow p-md text-[0.78rem] leading-relaxed text-green">
           <CheckIcon size={18} />
           <span>
-            Merged into <strong>{session.targetBranch}</strong>. This session is
-            read-only.
+            Marked as merged into <strong>{session.targetBranch}</strong>. You
+            can continue working in this session.
           </span>
           {finishedNotice}
         </div>
@@ -250,11 +250,9 @@ export default function SessionOverview({
                 Conversations
               </h2>
               <p className="mt-xs text-[0.72rem] leading-relaxed text-text-secondary">
-                {session.finished
-                  ? "Review the work captured in this session."
-                  : attention > 0
-                    ? "Decisions first. Running work next."
-                    : "Pick up a conversation or start a new one."}
+                {attention > 0
+                  ? "Decisions first. Running work next."
+                  : "Pick up a conversation or start a new one."}
               </p>
             </div>
             {(archived > 0 || showArchived) && (
@@ -358,7 +356,7 @@ export default function SessionOverview({
               <h3 className="font-display text-[1.1rem] font-semibold text-text-primary">
                 {query || filter !== "all"
                   ? "No matching conversations"
-                  : archived > 0 || session.finished
+                  : archived > 0
                     ? "No active conversations"
                     : "No conversations yet"}
               </h3>
@@ -367,9 +365,7 @@ export default function SessionOverview({
                   ? "Try another search or clear the filters."
                   : archived > 0
                     ? "Show archived conversations to revisit earlier work."
-                    : session.finished
-                      ? "This session has no active conversations."
-                      : "Start a conversation to work with an agent in this session."}
+                    : "Start a conversation to work with an agent in this session."}
               </p>
               {(query || filter !== "all") && (
                 <Button

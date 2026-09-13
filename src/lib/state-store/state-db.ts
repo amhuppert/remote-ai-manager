@@ -2692,7 +2692,8 @@ const SCHEMA_DDL = `
     prepared_sha   TEXT,
     expected_target_sha TEXT,
     finalize_session_on_publish INTEGER,
-    resolution_context TEXT
+    resolution_context TEXT,
+    skip_mark_merged INTEGER
   );
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
@@ -3119,6 +3120,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     type: "INTEGER",
   },
   { table: "job_records", column: "resolution_context", type: "TEXT" },
+  { table: "job_records", column: "skip_mark_merged", type: "INTEGER" },
   { table: "project_conversations", column: "pending_queue", type: "TEXT" },
   {
     table: "project_conversations",

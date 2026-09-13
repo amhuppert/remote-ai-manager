@@ -295,7 +295,7 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Ref under refs/cc-merges/ where the prepared commit is parked. */
   parkedRef: string | null;
 
-  /** Best-effort warning when refreshing the target worktree failed after CAS. */
+  /** Best-effort warning when refreshing target or session worktrees failed after CAS. */
   refreshWarning: string | null;
 
   /**
@@ -316,9 +316,12 @@ export interface MergeContext extends BaseWorkflowContext {
    * Whether the publish step should also run session finalization
    * (setSessionFinished + dev-server stop + retargetOrphanedChildren).
    * False for graph fan-in publishes; true for user-driven Smart Merge.
-   * Defaults to true via MergeInput.
+   * Defaults to true via MergeInput. skipMarkMerged suppresses the cleanup
+   * while retaining the session delivery gate and published merge ancestry.
    */
   finalizeSessionOnPublish: boolean;
+  /** Skip completion bookkeeping while retaining session delivery exclusion. */
+  skipMarkMerged: boolean;
 
   /** Workflow execution linkage used by the injected delivery gate. */
   executionId: string | null;
@@ -383,6 +386,7 @@ export interface MergeInput {
   maxCasAttempts?: number;
   /** Defaults to true; graph fan-in passes false so it doesn't finalize the session. */
   finalizeSessionOnPublish?: boolean;
+  skipMarkMerged?: boolean;
   /** Workflow execution linkage for delivery-gate evaluation. */
   executionId?: string;
   specExecutionId?: string;

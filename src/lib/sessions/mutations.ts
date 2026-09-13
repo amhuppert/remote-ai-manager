@@ -2,12 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { mutationFetch } from "@/lib/api/fetcher";
+import { pushToast } from "@/stores/toast.store";
 import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import {
   bulkSessionsResponseSchema,
   type BulkSessionsRequest,
   type BulkSessionsResponse,
   type SessionListItem,
+  type PublicSessionState,
 } from "@/lib/sessions/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { invalidateTicketSessionLifecycle } from "@/lib/tickets/cache-lifecycle";
@@ -171,6 +173,43 @@ export function useBulkSessionsMutation(projectName: string) {
           );
         }
       },
+    }),
+  );
+}
+
+export function useSessionMergeStatusMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation(
+    createOptimisticMutation(queryClient, {
+      onError: (error) => {
+        pushToast(`Could not update merge status: ${error.message}`);
+      },
+      mutationFn: (merged: boolean) =>
+        mutationFetch(
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge-status`,
+          "session-merge-status",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ merged }),
+          },
+        ),
+      updates: [
+        cacheUpdate<boolean, SessionListItem[]>({
+          key: () => sessionKeys.list(projectName),
+          update: (old, finished) =>
+            old?.map((s) =>
+              s.sessionName === sessionName ? { ...s, finished } : s,
+            ),
+        }),
+        cacheUpdate<boolean, PublicSessionState>({
+          key: () => sessionKeys.detail(projectName, sessionName),
+          update: (old, finished) => (old ? { ...old, finished } : old),
+        }),
+      ],
     }),
   );
 }

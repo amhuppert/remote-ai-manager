@@ -9,6 +9,7 @@ import type {
 import {
   useTddToggleMutation,
   useArchiveSessionMutation,
+  useSessionMergeStatusMutation,
 } from "@/lib/sessions/mutations";
 import { useConfirmDeleteSession } from "@/stores/sessions.store";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
@@ -99,6 +100,10 @@ export default function SessionRow({
     session.sessionName,
   );
   const confirmDelete = useConfirmDeleteSession();
+  const mergeStatus = useSessionMergeStatusMutation(
+    projectName,
+    session.sessionName,
+  );
 
   const status: RowStatus = session.finished ? "merged" : session.derivedStatus;
   const modeKey = session.finished ? "merged" : session.creationMode;
@@ -109,6 +114,7 @@ export default function SessionRow({
       onCopyBranch: (s: SessionListItem) => {
         void navigator.clipboard?.writeText(s.branchName);
       },
+      onToggleMerged: (s: SessionListItem) => mergeStatus.mutate(!s.finished),
       onArchive: (s: SessionListItem) => {
         archiveMutation.mutate(!s.archived);
       },
@@ -118,7 +124,7 @@ export default function SessionRow({
           projectName,
         }),
     }),
-    [archiveMutation, confirmDelete, onBranch, projectName],
+    [archiveMutation, mergeStatus, confirmDelete, onBranch, projectName],
   );
 
   const rowActions = useMemo(

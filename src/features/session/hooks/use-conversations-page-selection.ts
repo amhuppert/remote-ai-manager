@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { ConversationsPageParams } from "@/lib/conversations/hrefs";
+import type { ConversationListItem } from "@/lib/conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import {
   useSidebarSessionFilter,
@@ -31,6 +33,7 @@ import {
  */
 export function useConversationsPageSelection(
   params: ConversationsPageParams,
+  lookup?: ConversationListItem | null,
 ): {
   openConversation: (target: { conversationId: string }) => void;
   autoOpen: AutoOpenSnapshot;
@@ -91,9 +94,46 @@ export function useConversationsPageSelection(
     [conversations],
   );
 
+  const resolvedConversation = useMemo<
+    SessionActiveConversation | undefined
+  >(() => {
+    if (
+      lookup?.scope !== "session" ||
+      lookup.conversationId !== params.conversationId
+    )
+      return undefined;
+    return {
+      scope: "session",
+      id: lookup.conversationId,
+      name: lookup.conversationName,
+      projectName: lookup.projectName,
+      projectPath: lookup.projectPath,
+      sessionName: lookup.sessionName,
+      worktreePath: lookup.worktreePath,
+      agentBackend: lookup.backend,
+      status: lookup.status,
+      summary: lookup.summary,
+      lastActivityAt: lookup.lastActivityAt,
+      archived: lookup.archived,
+      redactedProfileSnapshot: lookup.redactedProfileSnapshot,
+      branchName: null,
+      pendingQuestion: null,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+      forkedFrom: null,
+      debugActive: false,
+      role: null,
+      lastActivitySummary: null,
+      unread: false,
+      pendingApproval: null,
+      backgroundActivity: null,
+    };
+  }, [lookup, params.conversationId]);
+
   const openTabs = useOpenTabs({
     activeConversationId: params.conversationId ?? "",
     activeConversations: sessionScoped,
+    resolvedConversation,
     // `sessionScoped` is `[]` both while the query loads AND when it genuinely
     // returns no session conversations; `useOpenTabs` cannot tell them apart on
     // its own. Pass the query-resolved signal so reconcile waits for the live
