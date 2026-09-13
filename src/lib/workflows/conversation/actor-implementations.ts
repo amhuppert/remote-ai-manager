@@ -1996,6 +1996,15 @@ async function runTaskRunTurnForMachine(
   let result: AgentCallResult;
   try {
     signal.throwIfAborted();
+    if (runtime.managed.backend) {
+      await runtime.managed.close();
+      deps.log.info("task_run.conversation_runtime_released", {
+        ...scopeRef,
+        backend: input.agentBackend,
+        conversationId: input.target.conversationId,
+      });
+      signal.throwIfAborted();
+    }
     result = await deps.execution.executeAgentCall(request, facadeDeps);
     runtime.attempt?.recordResult(result);
   } catch (err) {

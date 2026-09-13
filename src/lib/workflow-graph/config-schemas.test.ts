@@ -175,22 +175,14 @@ describe("graphWorkflowAgentConfigSchema", () => {
     ).toBe(true);
   });
 
-  // A registered backend that matches no arm is not a typo — it is one whose
-  // descriptor declares no task facet, and a workflow role is dispatched
-  // through that facet. The message has to say so (spec R15.2).
-  it("refuses a registered backend with no task facet by naming the facet", () => {
-    const result = graphWorkflowAgentConfigSchema.safeParse({
+  it("accepts Cursor workflow staffing with its model selection", () => {
+    const assignment = {
       backend: "cursor",
-      modelSelection: {
-        modelId: "composer-2.5",
-        parameters: { fast: "true" },
-      },
-    });
-
-    expect(result.success).toBe(false);
-    const message = result.error?.issues[0]?.message ?? "";
-    expect(message).toContain("Cursor");
-    expect(message).toContain("task");
+      modelSelection: { modelId: "composer-2.5", parameters: { fast: "true" } },
+    };
+    expect(graphWorkflowAgentConfigSchema.parse(assignment)).toEqual(
+      assignment,
+    );
   });
 
   it("keeps zod's own message for an unregistered backend value", () => {

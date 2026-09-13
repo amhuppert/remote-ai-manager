@@ -220,6 +220,10 @@ const MIGRATED_UTILITY_FIRST = [
   "src/features/session/document-viewer/CommentPopover.stories.tsx",
   "src/features/session/document-viewer/CommentPopover.test.tsx",
   "src/features/session/document-viewer/DocumentSurface.tsx",
+  // Cursor execution-policy disclosure is authored utility-first. Mirrors the
+  // prettier class-sort override and collision-test allowlist.
+  "src/components/BackendExecutionWarning.tsx",
+  "src/components/BackendExecutionWarning.stories.tsx",
   // Topbar nav switchers: utility-first component directory. Mirrors the
   // .prettierrc class-sort override and the tailwind-utility-collisions
   // UTILITY_FIRST_PATHS allowlist.

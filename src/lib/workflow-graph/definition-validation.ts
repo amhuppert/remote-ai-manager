@@ -1,6 +1,6 @@
 import {
   getFsWriteRestrictionForBackend,
-  getStaticBackendModelCatalog,
+  getConfiguredBackendModelCatalog,
 } from "@/lib/agent-backends/catalog";
 import { validateModelSelection } from "@/lib/agent-backends/model-selection";
 import type { ExecutionCatalogEntry } from "@/lib/agent-backends/execution-admission";
@@ -469,7 +469,7 @@ export function validateResolvedWorkflow(
 
   for (const site of collectResolvedWorkflowModelSelectionSites(resolved)) {
     const validation = validateModelSelection(
-      getStaticBackendModelCatalog(
+      getConfiguredBackendModelCatalog(
         site.backend,
         deps.configuredModelSelectionFor?.(site.backend),
       ),
@@ -611,10 +611,10 @@ function checkCohortWriteRestriction(
   const errors: WorkflowGraphValidationError[] = [];
   for (const [index, assignment] of cohort.assignments.entries()) {
     const { backend } = assignment.agent;
-    if (fsWriteRestrictionFor(backend) === "enforced") continue;
+    if (fsWriteRestrictionFor(backend) !== "unsupported") continue;
     errors.push({
       code: "validator-write-restriction-unsupported",
-      message: `${site.useSite} validator assignment "${assignment.id}" runs on ${backend}, which cannot enforce a filesystem write restriction; validators must be mechanically read-only, so this backend cannot hold a validator assignment`,
+      message: `${site.useSite} validator assignment "${assignment.id}" runs on ${backend}, which cannot apply a filesystem write policy for this validator assignment`,
       ...(site.contextId === undefined ? {} : { contextId: site.contextId }),
       field: `${site.fieldPath}.assignments.${index}.agent.backend`,
     });

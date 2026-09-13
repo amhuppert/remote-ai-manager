@@ -324,6 +324,10 @@ const UTILITY_FIRST_PATHS = [
   // MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}components${path.sep}references${path.sep}`,
   `${path.sep}features${path.sep}spec-studio${path.sep}`,
+  // Cursor execution-policy disclosure is authored utility-first. Registered
+  // in all three mirrored allowlists.
+  `${path.sep}components${path.sep}BackendExecutionWarning.tsx`,
+  `${path.sep}components${path.sep}BackendExecutionWarning.stories.tsx`,
   // Topbar nav switchers (project/session breadcrumb popovers): new component
   // directory authored utility-first against the design system. Registered in
   // all three mirrored allowlists (here + eslint.config.mjs

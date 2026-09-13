@@ -200,7 +200,7 @@ describe("the implementer dispatch path composes the envelope before dispatching
   // Per backend, because `backend` is an input to the very call that composes:
   // a composition gated on a backend — or a briefing rendered for one and not
   // the other — would leave the unproven backend dispatching unconfined.
-  for (const backend of ["claude", "codex"] as const) {
+  for (const backend of ["claude", "codex", "cursor"] as const) {
     it(`carries an owning context's policy onto the turn options (${backend})`, async () => {
       const { fsWritePolicy } = await runIterationCapturingOptions(
         {
@@ -300,10 +300,25 @@ describe("the implementer dispatch path composes the envelope before dispatching
     });
   }
 
-  // The charter requires enforcement to be GATED on the declared capability,
-  // not merely attempted: a backend whose adapter cannot natively confine writes
-  // must be refused before dispatch rather than discovered afterwards.
-  it("refuses an owning turn on a backend that does not declare enforced confinement", async () => {
+  it.each(["full", "readOnly"] as const)(
+    "dispatches Cursor in %s placement with the appropriate policy",
+    async (mode) => {
+      const { fsWritePolicy } = await runIterationCapturingOptions(
+        { lane: "session", mode },
+        "cursor",
+      );
+      if (mode === "full") {
+        expect(fsWritePolicy).toBeUndefined();
+        return;
+      }
+      expect(fsWritePolicy?.allowWrite).toHaveLength(2);
+      for (const allowed of fsWritePolicy?.allowWrite ?? []) {
+        expect(allowed.startsWith(realpathSync(worktreePath))).toBe(false);
+      }
+    },
+  );
+
+  it("refuses an owning turn on a backend that cannot deliver a write policy", async () => {
     let dispatched = false;
     let composed = false;
     const runner = createGraphWorkflowImplementerRunner({

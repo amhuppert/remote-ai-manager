@@ -10,7 +10,6 @@ const taskRequirements = {
   operation: "workflow-assignment",
   executionClass: "governed-execution",
   executionProfile: "standard",
-  requiresPrivilegedInstructions: true,
 } as const;
 
 export function workflowBackendRefusal(

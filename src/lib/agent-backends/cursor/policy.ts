@@ -15,7 +15,7 @@ type SandboxOptions = NonNullable<LocalAgentOptions["sandboxOptions"]>;
  * resume; per-send options carry only the model and MCP map. Every value here
  * is a constant with no user-configurable path — Command Center adds no
  * tool-configuration surface in Phase 1, and the descriptor declares native
- * mid-turn ask, filesystem restriction, and network confinement unsupported.
+ * mid-turn ask unsupported. Filesystem and network limits use agent instructions.
  *
  * Type-only SDK imports keep the option shapes checked against the real SDK
  * without loading it: the SDK is a worker-process dependency, and the server

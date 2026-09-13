@@ -437,13 +437,28 @@ describe("executePromptForMachine", () => {
     _resetForTesting();
   });
 
-  it("returns and streams a nonretryable admission refusal before creating a runtime", async () => {
+  it("admits Cursor conversations with instruction-based write limits", async () => {
     const input = makeExecutePromptInput({
       turn: {
         fsWritePolicy: { mode: "allowlist", allowWrite: [], denyWrite: [] },
       },
       agentBackend: "cursor",
     });
+    mockSendTurn.mockResolvedValue({
+      ...defaultTurnResult,
+      backendRef: { backend: "cursor", ref: "agent-conversation" },
+    });
+    mockFactory.createRuntime.mockResolvedValue(
+      createMockBackendRuntime({ backend: "cursor", sendTurn: mockSendTurn }),
+    );
+    conversationActors = createTestActorImplementations(
+      createMockDeps({
+        getConversationBackendFactory: () => ({
+          ...mockFactory,
+          backend: "cursor",
+        }),
+      }),
+    );
     const streamEmit = vi.fn();
     registerConversationRuntime(
       conversationRuntimeKey(
@@ -464,18 +479,15 @@ describe("executePromptForMachine", () => {
       },
     );
     const result = await conversationActors.executePromptForMachine(input);
-    expect(result.failure).toMatchObject({
-      kind: "capability_unavailable",
-      code: "backend-role-unsupported",
-      retryable: false,
-    });
-    expect(result.continuationDisposition).toBe("retain");
-    expect(streamEmit).toHaveBeenCalledWith(
+    expect(result.error).toBeNull();
+    expect(mockFactory.createRuntime).toHaveBeenCalled();
+    expect(mockSendTurn).toHaveBeenCalled();
+    expect(streamEmit).not.toHaveBeenCalledWith(
       "error",
-      expect.objectContaining({ code: "backend-role-unsupported" }),
+      expect.objectContaining({
+        code: "backend-governed-execution-unsupported",
+      }),
     );
-    expect(mockFactory.createRuntime).not.toHaveBeenCalled();
-    expect(mockSendTurn).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
@@ -8034,6 +8046,7 @@ describe("runTaskRunTurnForMachine", () => {
     const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
         turn: {
+          requiresPrivilegedInstructions: true,
           executionClass: "governed-execution",
           modelSelection: {
             modelId: "composer-2.5",
@@ -8045,7 +8058,7 @@ describe("runTaskRunTurnForMachine", () => {
     );
     expect(result.failure).toMatchObject({
       kind: "capability_unavailable",
-      code: "backend-role-unsupported",
+      code: "backend-instructions-unsupported",
       retryable: false,
     });
     expect(result.continuationDisposition).toBe("retain");
@@ -8110,6 +8123,47 @@ describe("runTaskRunTurnForMachine", () => {
     const result = await conversationActors.runTaskRunTurnForMachine(input);
     expect(result.error).toContain("no runner available");
     expect(runtime.abortController).toBe(controller);
+  });
+
+  it("releases the conversation worker before a task runner resumes its reference", async () => {
+    const input = makeRunTaskRunInput({
+      backendRef: { backend: "claude", ref: "conversation-ref" },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
+    );
+    const managed = createManagedRuntimeFixture(
+      key,
+      createMockBackendRuntime({}),
+    );
+    registerConversationRuntime(key, {
+      managed,
+      abortController: new AbortController(),
+    });
+    const runner = makeMockTaskRunner(async (request) => {
+      if (managed.backend)
+        throw new Error("conversation worker still owns the provider session");
+      return {
+        backendRef: request.resumeRef,
+        text: "captured",
+        usage: null,
+        error: null,
+        timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
+      };
+    });
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    conversationActors = createTestActorImplementations(mockDeps);
+    const result = await conversationActors.runTaskRunTurnForMachine(input);
+    expect(result.error).toBeNull();
+    expect(result.backendRef).toEqual(input.backendRef);
+    expect(result.contentBlocks).toEqual([{ type: "text", text: "captured" }]);
   });
 
   it("task_run WITHOUT outputFormat: persists exactly one assistant TranscriptMessage and forwards content blocks", async () => {

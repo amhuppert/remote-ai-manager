@@ -1,3 +1,4 @@
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { NodeAgentTarget } from "./node-agent-edit";
 import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import { classifyContextActivity } from "@/lib/workflow-graph/context-activity";
@@ -178,7 +179,7 @@ export type ContextDisplayPhase =
 
 export type DisplayValidators = {
   script: boolean;
-  agent: "claude" | "codex" | null;
+  agent: AgentBackendId | null;
 };
 
 export function getDisplayValidators(
@@ -202,7 +203,7 @@ function getDisplayScriptGate(
 // claiming one backend for a mixed cohort would be worse than none.
 function getDisplayAgentValidator(
   cohort: ExecutionContextNodeData["context"]["contextValidator"],
-): "claude" | "codex" | null {
+): AgentBackendId | null {
   if (!cohort?.enabled) return null;
   const backends = new Set(
     cohort.assignments.map((assignment) => assignment.agent.backend),

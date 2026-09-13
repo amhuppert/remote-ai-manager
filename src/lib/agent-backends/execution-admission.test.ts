@@ -47,14 +47,36 @@ describe("backend execution admission", () => {
     expect(backendExecutionSchema.safeParse(execution).success).toBe(false);
   });
 
-  it("requires both technical guarantees before a governed task declaration is valid", () => {
+  it("accepts governed tasks with instruction-only filesystem restrictions", () => {
     const execution = limitedEntry().execution;
-    execution.tasks!.classes.push("governed-execution");
-    expect(backendExecutionSchema.safeParse(execution).success).toBe(false);
-    execution.tasks!.instructionDelivery = "privileged";
-    expect(backendExecutionSchema.safeParse(execution).success).toBe(false);
-    execution.tasks!.fsWriteRestriction = "enforced";
+    const tasks = execution.tasks;
+    if (tasks === null) throw new Error("fixture requires a task facet");
+    tasks.classes.push("governed-execution");
+    const refused = backendExecutionSchema.safeParse(execution);
+    expect(refused.error?.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["tasks", "classes"],
+        message: expect.stringContaining("filesystem restrictions"),
+      }),
+    );
+    tasks.fsWriteRestriction = "instruction-only";
     expect(backendExecutionSchema.safeParse(execution).success).toBe(true);
+  });
+
+  it("admits an instruction-only write policy without claiming mechanical enforcement", () => {
+    const entry = limitedEntry();
+    const tasks = entry.execution.tasks;
+    if (tasks === null) throw new Error("fixture requires a task facet");
+    tasks.classes.push("governed-execution");
+    tasks.fsWriteRestriction = "instruction-only";
+    expect(
+      backendExecutionRefusal(entry, {
+        ...auxiliary,
+        executionClass: "governed-execution",
+        requiresFsWriteRestriction: true,
+      }),
+    ).toBeNull();
+    expect(tasks.fsWriteRestriction).not.toBe("enforced");
   });
 
   it("admits the explicitly supported auxiliary profile", () => {
@@ -111,7 +133,7 @@ describe("backend execution admission", () => {
     ).toBe("backend-instructions-unsupported");
   });
 
-  it("refuses exact filesystem requirements even when the role is admitted", () => {
+  it("refuses filesystem requirements when the backend cannot deliver the policy", () => {
     expect(
       backendExecutionRefusal(limitedEntry(), {
         ...auxiliary,

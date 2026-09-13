@@ -188,6 +188,7 @@ export type SkillTriggerPrefix = z.infer<typeof skillTriggerPrefixSchema>;
 
 export interface AgentBackendMetadata {
   label: string;
+  executionWarnings?: readonly string[];
   /** Design-system tone name driving UI chip/accent color (e.g. "cyan"). */
   toneToken: string;
   skillTriggerPrefix: SkillTriggerPrefix;
@@ -210,10 +211,9 @@ export interface AgentBackendConversationFacet {
   continuity: BackendContinuityAdapter;
   capabilities: BackendConversationCapabilities;
   /**
-   * Whether this backend's CONVERSATION runtime can mechanically confine a
-   * turn's writes to a delivered `fsWritePolicy`. Declared separately from the
-   * task facet because graph-workflow implementers dispatch conversation turns,
-   * so the confinement claim that gates them has to be about this runtime.
+   * How this backend's conversation runtime applies a delivered `fsWritePolicy`.
+   * Declared separately from the task facet because graph-workflow
+   * implementers dispatch conversation turns.
    */
   fsWriteRestriction: FsWriteRestrictionSupport;
   /** Neutral capability-cascade apply seam; translation happens inside. */
@@ -222,17 +222,16 @@ export interface AgentBackendConversationFacet {
 }
 
 /**
- * Whether the backend can mechanically confine a task run's filesystem writes
- * to the request's `fsWritePolicy` allowlist.
+ * How the backend applies the request's filesystem write policy.
  *
  * "enforced" is a claim about the ADAPTER, not the provider: it means this
  * backend's task runner translates the policy onto a native mechanism the agent
- * cannot talk its way out of. A backend that can only be asked nicely declares
- * "unsupported" and is refused as a validator at definition validate — a
- * convention is not an envelope.
+ * cannot talk its way out of. "instruction-only" delivers the policy as agent
+ * instructions without enforcement. "unsupported" cannot deliver the policy.
  */
 export const fsWriteRestrictionSupportSchema = z.enum([
   "enforced",
+  "instruction-only",
   "unsupported",
 ]);
 export type FsWriteRestrictionSupport = z.infer<

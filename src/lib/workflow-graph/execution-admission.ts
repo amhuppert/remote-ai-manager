@@ -54,7 +54,6 @@ export function validateWorkflowExecutionAdmission(
           facet: "tasks",
           executionClass: "governed-execution",
           executionProfile,
-          requiresPrivilegedInstructions: true,
           operation,
         },
       });

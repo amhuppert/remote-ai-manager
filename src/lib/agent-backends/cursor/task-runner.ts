@@ -28,7 +28,11 @@ import {
   BackendAdmissionError,
   backendExecutionRefusal,
 } from "../execution-admission";
-import { cursorTaskExecution } from "./descriptor";
+import {
+  cursorTaskExecution,
+  cursorTaskFsWriteRestriction,
+} from "./descriptor";
+import { cursorTaskPolicyInstructions } from "./runtime-policy";
 import { loadCursorTaskImages } from "./task-images";
 
 const logger = createLogger("cursor:task-runner");
@@ -91,7 +95,7 @@ export function createCursorTaskRunner(
               conversation: null,
               tasks: {
                 ...cursorTaskExecution,
-                fsWriteRestriction: "unsupported",
+                fsWriteRestriction: cursorTaskFsWriteRestriction,
               },
             },
           },
@@ -118,17 +122,31 @@ export function createCursorTaskRunner(
             input.approvalPolicy !== "never") ||
           (!isolated && input.additionalDirectories?.length)
         ) {
-          throw new Error(
-            "Cursor cannot enforce the requested sandbox, network, approval, search, or directory policy",
-          );
+          logger.warn("cursor.task_policy_instruction_only", {
+            sandboxMode: input.sandboxMode ?? null,
+            networkAccessEnabled: input.networkAccessEnabled ?? null,
+            approvalPolicy: input.approvalPolicy ?? null,
+            webSearchMode: input.webSearchMode ?? null,
+            additionalDirectoryCount: input.additionalDirectories?.length ?? 0,
+          });
         }
         const cwd = path.resolve(input.workingDirectory);
         const scope =
           !isolated && input.ccSessionScope
             ? ccTaskSessionScopeSchema.parse(input.ccSessionScope)
             : null;
+        const conversationResume =
+          !isolated &&
+          input.resumeRef?.backend === "cursor" &&
+          !input.resumeRef.ref.startsWith("{");
+        if (conversationResume && scope === null) {
+          throw new CursorLocalFailure(
+            "invalid_ref",
+            "Resuming a Cursor conversation as a task requires its CC session scope",
+          );
+        }
         const resumed =
-          !isolated && input.resumeRef
+          !isolated && input.resumeRef && !conversationResume
             ? decodeCursorTaskRef(input.resumeRef)
             : null;
         if (
@@ -145,11 +163,14 @@ export function createCursorTaskRunner(
           resumed ??
           cursorTaskRefSchema.parse({
             taskId: randomUUID(),
-            agentId: null,
+            agentId: conversationResume ? input.resumeRef?.ref : null,
             cwd,
             scope,
           });
-        const conversationId = `task-${task.taskId}`;
+        const conversationId =
+          conversationResume && scope
+            ? scope.conversationId
+            : `task-${task.taskId}`;
         storeId = conversationId;
         const target = scope
           ? targetFromStoreSessionName(
@@ -186,7 +207,11 @@ export function createCursorTaskRunner(
               ? { backend: "cursor", ref: task.agentId }
               : null,
             modelSelection: input.modelSelection,
-            sessionInstructions: [],
+            sessionInstructions: [
+              ...(input.systemInstructions ?? []),
+              ...cursorTaskPolicyInstructions(input),
+            ],
+            fsWritePolicy: input.fsWritePolicy,
             tooling: isolated ? {} : (input.tooling ?? {}),
           },
           {
@@ -208,13 +233,13 @@ export function createCursorTaskRunner(
         );
         logger.info("task.started", {
           taskId: task.taskId,
+          conversationId,
+          continuationKind: conversationResume ? "conversation" : "task",
           executionProfile: input.executionProfile ?? "standard",
-          resumed: resumed !== null,
+          resumed: resumed !== null || conversationResume,
         });
         const result = await runtime.sendTurn({
-          promptText: [...(input.systemInstructions ?? []), input.prompt].join(
-            "\n\n",
-          ),
+          promptText: input.prompt,
           imageRefs,
           sessionInstructions: [],
           modelSelection: input.modelSelection,
@@ -231,10 +256,12 @@ export function createCursorTaskRunner(
           onEvent(event) {
             if (event.type === "transcript_entry") transcript.push(event.entry);
             if (!isolated && event.type === "backend_init")
-              backendRef = encodeCursorTaskRef({
-                ...task,
-                agentId: event.backendRef.ref,
-              });
+              backendRef = conversationResume
+                ? event.backendRef
+                : encodeCursorTaskRef({
+                    ...task,
+                    agentId: event.backendRef.ref,
+                  });
           },
         });
         if (!result.backendRef || isolated) backendRef = null;

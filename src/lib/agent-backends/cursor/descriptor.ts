@@ -32,12 +32,12 @@ import { CURSOR_TURN_STALL_TIMEOUT_MS } from "./worker/bounds";
  */
 
 export const cursorConversationExecution: ConversationExecutionPolicy = {
-  classes: ["ordinary-conversation"],
+  classes: ["ordinary-conversation", "governed-execution"],
   instructionDelivery: "user-message",
 };
 
 export const cursorTaskExecution: TaskExecutionPolicy = {
-  classes: ["nongoverned-task"],
+  classes: ["nongoverned-task", "governed-execution"],
   profiles: ["standard", "isolated-one-shot"],
   instructionDelivery: "user-message",
 };
@@ -53,6 +53,9 @@ export const cursorTaskExecution: TaskExecutionPolicy = {
  */
 export const cursorBackendMetadata: AgentBackendMetadata = {
   label: "Cursor",
+  executionWarnings: [
+    "Network and native tool-approval limits are not enforced.",
+  ],
   toneToken: "amber",
   skillTriggerPrefix: "/",
   models: [
@@ -124,13 +127,12 @@ export const cursorConversationTranscriptProjection: BackendConversationTranscri
   };
 
 /**
- * Cursor cannot mechanically confine a turn's writes to a delivered policy:
- * Phase 1 runs with `sandboxOptions.enabled` false and registers no permission
- * handler, so an allowlist could only be ASKED for (D11). Exported as a literal
- * because the capability gates that read it are client-imported while the
- * descriptor carries the server-only factory.
+ * Cursor delivers filesystem limits as instructions. Its worker runs without
+ * mechanical filesystem confinement. Literals keep capability disclosure
+ * available to client consumers without importing the server-only factory.
  */
-export const cursorConversationFsWriteRestriction = "unsupported" as const;
+export const cursorConversationFsWriteRestriction = "instruction-only" as const;
+export const cursorTaskFsWriteRestriction = "instruction-only" as const;
 
 /**
  * Cursor is the honest exception: nothing in the SDK turns its memories off.
@@ -183,7 +185,7 @@ export function createCursorBackendDescriptor(
       runner: deps.taskRunner,
       execution: cursorTaskExecution,
       structuredOutput: "post_validation",
-      fsWriteRestriction: "unsupported",
+      fsWriteRestriction: cursorTaskFsWriteRestriction,
       transcript: {
         projectAssistantMetadata: (backendRef) =>
           backendRef ? { backendRef } : undefined,

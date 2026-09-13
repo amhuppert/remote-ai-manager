@@ -60,6 +60,7 @@ import {
   cursorTaskExecution,
   cursorConversationCapabilities,
   cursorConversationFsWriteRestriction,
+  cursorTaskFsWriteRestriction,
   cursorNativeMemory,
 } from "./cursor/descriptor";
 import {
@@ -115,6 +116,7 @@ export const backendCatalogFacetsSchema = z.object({
 export const backendCatalogEntrySchema = z.object({
   id: agentBackendSchema,
   label: z.string(),
+  executionWarnings: z.array(z.string()).optional(),
   toneToken: z.string(),
   skillTriggerPrefix: skillTriggerPrefixSchema,
   models: z.array(backendCatalogModelSchema),
@@ -152,6 +154,7 @@ function buildCatalogEntry(
   return backendCatalogEntrySchema.parse({
     id,
     label: metadata.label,
+    executionWarnings: metadata.executionWarnings ?? [],
     toneToken: metadata.toneToken,
     skillTriggerPrefix: metadata.skillTriggerPrefix,
     models: metadata.models.map((m) => ({
@@ -251,7 +254,10 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
         ...cursorConversationExecution,
         fsWriteRestriction: cursorConversationFsWriteRestriction,
       },
-      tasks: { ...cursorTaskExecution, fsWriteRestriction: "unsupported" },
+      tasks: {
+        ...cursorTaskExecution,
+        fsWriteRestriction: cursorTaskFsWriteRestriction,
+      },
     },
   ),
 };
@@ -285,7 +291,7 @@ const TASK_FS_WRITE_RESTRICTION: Readonly<
 > = {
   claude: claudeTaskFsWriteRestriction,
   codex: codexTaskFsWriteRestriction,
-  cursor: "unsupported",
+  cursor: cursorTaskFsWriteRestriction,
 };
 
 /** The conversation-facet twin, for the implementer dispatch gate. */
@@ -395,9 +401,9 @@ export function isSelectableModelForBackend(
 }
 
 /**
- * Whether the backend's task facet can mechanically enforce a write allowlist
- * (see {@link FsWriteRestrictionSupport}). Read by definition validate to refuse
- * a validator assignment that could only be asked to stay read-only.
+ * How the backend's task facet applies a write allowlist
+ * (see {@link FsWriteRestrictionSupport}). Validators accept enforced and
+ * instruction-only policies.
  */
 export function getFsWriteRestrictionForBackend(
   backend: AgentBackendId,
@@ -408,7 +414,7 @@ export function getFsWriteRestrictionForBackend(
 /**
  * The same question for the CONVERSATION facet, which is the path graph-workflow
  * implementers dispatch through. Read before an owning or read-only implementer
- * turn so a backend that cannot confine writes is refused rather than run.
+ * turn so its write policy can be delivered by the selected backend.
  */
 export function getConversationFsWriteRestrictionForBackend(
   backend: AgentBackendId,

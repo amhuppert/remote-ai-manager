@@ -2,6 +2,7 @@
 
 import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
 import BackendToggle from "@/components/BackendToggle";
+import BackendExecutionWarning from "@/components/BackendExecutionWarning";
 import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
 import { MultilineInput } from "@/components/MultilineInput";
 import {
@@ -114,6 +115,7 @@ export function AgentRuntimeFields({
           disabledReason={(entry) => workflowBackendRefusal(entry)}
         />
       </FieldRow>
+      <BackendExecutionWarning backend={value.backend} />
       <FieldRow label="Model selection">
         <DesktopModelSelectionControls
           catalog={catalog}

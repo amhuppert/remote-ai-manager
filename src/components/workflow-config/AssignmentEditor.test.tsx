@@ -87,28 +87,43 @@ function renderAssignment(
 }
 
 describe("AssignmentEditor", () => {
-  // A workflow role is dispatched through the backend's task facet, so a
-  // backend that registers none cannot hold an assignment. The option stays
-  // visible and says why rather than vanishing (spec R15.1).
-  it("refuses a backend with no task facet and says why, leaving the others selectable", () => {
+  it("allows Cursor staffing and displays its instruction-only limits", () => {
     const { onChange } = renderAssignment();
-
-    const cursor = screen.getByRole("button", { name: /Cursor/ });
-    expect(cursor).toHaveAttribute("aria-disabled", "true");
-    expect(cursor.getAttribute("title")).toContain("task");
+    expect(screen.queryByRole("note")).toBeNull();
+    const cursor = screen.getByRole("button", { name: "Cursor" });
+    expect(cursor).not.toHaveAttribute("aria-disabled", "true");
     fireEvent.click(cursor);
-    expect(onChange).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
-    const next = onChange.mock.calls[0]?.[0] as AgentAssignment | undefined;
-    expect(next?.agent).toEqual({
-      backend: "codex",
-      modelSelection: {
-        modelId: "gpt-5.4",
-        parameters: { reasoning: "high", fast: "false" },
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({ backend: "cursor" }),
+      }),
+    );
+    cleanup();
+    renderAssignment({
+      value: {
+        ...VALIDATOR,
+        agent: {
+          backend: "cursor",
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+        },
       },
     });
-    expect(next?.agent).not.toHaveProperty("model");
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Read-only and file ownership limits rely on instructions",
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "may edit outside its assigned paths",
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Network and native tool-approval limits are not enforced.",
+    );
+    expect(screen.getByRole("button", { name: "Cursor" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("shows the assigned profile and its tier badge from the library listing", () => {

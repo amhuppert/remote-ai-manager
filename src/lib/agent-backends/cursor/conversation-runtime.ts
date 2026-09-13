@@ -21,7 +21,10 @@ import type { FsWritePolicy } from "../task";
 import { CURSOR_BACKEND_ID } from "./backend-id";
 import { appendCursorContentDelta } from "./content-deltas";
 import { mayForceExpire } from "./continuity";
-import { assertCursorRuntimePolicy } from "./runtime-policy";
+import {
+  assertCursorRuntimePolicy,
+  cursorWritePolicyInstructions,
+} from "./runtime-policy";
 import {
   createCursorFailureClassifier,
   CursorLocalFailure,
@@ -174,7 +177,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
    * next turn, never on the one already running.
    */
   private stagedPortableMcp: PortableMcpConfig | null;
-  private isFirstTurn: boolean;
+  private instructionsPending: boolean;
   private activeTurn: ActiveTurn | null = null;
   /**
    * Serializes event delivery: handler N settles before handler N+1 starts, so
@@ -206,7 +209,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.conversationId = input.conversationId;
     this.conversationTarget = input.conversationTarget;
     this.worktreePath = input.worktreePath;
-    this.sessionInstructions = input.sessionInstructions;
+    this.sessionInstructions = [
+      ...input.sessionInstructions,
+      ...cursorWritePolicyInstructions(input.fsWritePolicy),
+    ];
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
     this.workflowLaneCapability = input.workflowLaneCapability;
@@ -222,7 +228,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.stagedPortableMcp = input.tooling.portableMcp
       ? structuredClone(input.tooling.portableMcp)
       : null;
-    this.isFirstTurn = this.backendRef === null;
+    this.instructionsPending = true;
     this.deps = deps;
   }
 
@@ -311,7 +317,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       });
     }
 
-    this.isFirstTurn = false;
+    this.instructionsPending = turn.outcome.kind !== "completed";
     if (turn.outcome.kind === "aborted") this.discardSession("turn_cancelled");
     await this.discarding;
     // Every event emitted for this turn has been handled before the caller
@@ -1068,7 +1074,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       // make every later turn retry a continuation the adapter just declared
       // dead.
       this.backendRef = null;
-      this.isFirstTurn = true;
+      this.instructionsPending = true;
     }
     logger.warn("cursor-runtime.turn_failed", {
       conversationId: this.conversationId,
@@ -1145,12 +1151,19 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     const skills = this.deps.capabilityDelivery?.snapshot;
     if (skills && !skills.delivered && skills.catalog)
       parts.push(skills.catalog);
-    if (this.isFirstTurn && this.sessionInstructions.length > 0) {
-      parts.push(
-        "```\n## System Instructions\n" +
-          this.sessionInstructions.join("\n\n") +
-          "\n```",
+    if (this.instructionsPending && this.sessionInstructions.length > 0) {
+      const instructions = this.sessionInstructions.join("\n\n");
+      const fenceLength = [...instructions.matchAll(/`+/g)].reduce(
+        (length, match) => Math.max(length, match[0].length + 1),
+        3,
       );
+      const fence = "`".repeat(fenceLength);
+      parts.push(`${fence}\n## System Instructions\n${instructions}\n${fence}`);
+      logger.info("cursor-runtime.instructions_prepared", {
+        conversationId: this.conversationId,
+        instructionCount: this.sessionInstructions.length,
+        instructionDelivery: "user-message",
+      });
     }
     if (input.syntheticForkSeed) {
       parts.push(input.syntheticForkSeed);

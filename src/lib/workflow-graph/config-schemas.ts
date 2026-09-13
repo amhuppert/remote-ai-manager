@@ -56,6 +56,13 @@ const graphWorkflowCodexAgentConfigSchema = z
   })
   .strict();
 
+const graphWorkflowCursorAgentConfigSchema = z
+  .object({
+    backend: z.literal("cursor"),
+    ...atomicAgentSelectionFields,
+  })
+  .strict();
+
 /**
  * Why a `backend` value matched no arm above, phrased for the author.
  *
@@ -90,7 +97,11 @@ export const graphWorkflowAgentConfigSchema = z.preprocess(
   },
   z.discriminatedUnion(
     "backend",
-    [graphWorkflowClaudeAgentConfigSchema, graphWorkflowCodexAgentConfigSchema],
+    [
+      graphWorkflowClaudeAgentConfigSchema,
+      graphWorkflowCodexAgentConfigSchema,
+      graphWorkflowCursorAgentConfigSchema,
+    ],
     { error: (issue) => agentConfigBackendRefusal(issue.input) },
   ),
 );

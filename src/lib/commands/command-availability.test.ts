@@ -31,10 +31,10 @@ describe("built-in command execution availability", () => {
     },
   );
   it.each(["/commit", "/merge", "/rebase"])(
-    "preserves deterministic %s while disclosing unavailable stages",
+    "keeps every %s stage available with instruction-based Cursor policies",
     (command) => {
-      expect(commandAvailability(cursor, command)).toMatchObject({
-        status: "degraded",
+      expect(commandAvailability(cursor, command)).toEqual({
+        status: "available",
       });
     },
   );

@@ -41,6 +41,51 @@ function withPlanOutputSchema(
 }
 
 describe("workflow-graph validation", () => {
+  it.each(["full", "owned", "readOnly"] as const)(
+    "admits resolved Cursor staffing in every role with %s ownership",
+    (mode) => {
+      const definition = createResolvedWorkflowDefinition();
+      const agent = {
+        backend: "cursor" as const,
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+      };
+      for (const context of definition.executionContexts) {
+        context.placement =
+          mode === "owned"
+            ? { lane: "session", mode, ownedPaths: ["src"] }
+            : { lane: "session", mode };
+        context.implementer.agent = agent;
+        context.contextValidator = {
+          enabled: true,
+          assignments: [
+            seedAssignment({
+              id: "cursor-reviewer",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              agent,
+              strategy: "conversation" as const,
+              authority: "blocking" as const,
+              continuity: { enabled: true },
+            }),
+          ],
+        };
+        context.planRepair = { enabled: true, maxAttemptsPerContext: 2, agent };
+        context.collaboration = {
+          enabled: { value: true, source: "per-node" },
+          secondAgent: { value: agent, source: "per-node" },
+          negotiationRounds: { value: 1, source: "per-node" },
+          autonomousResolutionThreshold: { value: "minor", source: "per-node" },
+        };
+      }
+      expect(validateResolvedWorkflow(definition)).toEqual({
+        ok: true,
+        errors: [],
+      });
+    },
+  );
+
   it("refuses governed staffing even when a restricted backend has a task facet", () => {
     const definition = createResolvedWorkflowDefinition();
     const result = validateResolvedWorkflow(definition, {
@@ -722,16 +767,8 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
     expect(errors[0]?.message).toContain("codex");
   });
 
-  // The gate reads one value — the backend's TASK-facet write restriction — and
-  // refuses anything but "enforced". Cursor declares "unsupported", so the gate
-  // refuses it with no cursor-specific change to this code (spec R15.3).
-  //
-  // Cursor's declared value is fed in through the gate's own dependency seam
-  // rather than by authoring a Cursor validator assignment: the workflow agent
-  // config schema refuses `backend: "cursor"` outright, so such an assignment
-  // is unrepresentable and never reaches this gate in the first place.
-  it("refuses a cohort whose backend declares Cursor's write-restriction value, unmodified", () => {
-    expect(getFsWriteRestrictionForBackend("cursor")).not.toBe("enforced");
+  it("admits Cursor's instruction-only filesystem policy for validators", () => {
+    expect(getFsWriteRestrictionForBackend("cursor")).toBe("instruction-only");
 
     const definition = createWorkflowDefinition({
       workflowConfig: {
@@ -744,10 +781,10 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
               strategy: "task",
               authority: "blocking",
               agent: {
-                backend: "codex",
+                backend: "cursor",
                 modelSelection: {
-                  modelId: "gpt-5.4",
-                  parameters: { reasoning: "medium", fast: "false" },
+                  modelId: "composer-2.5",
+                  parameters: { fast: "true" },
                 },
               },
               continuity: { enabled: true },
@@ -757,16 +794,14 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
       },
     });
 
-    const result = validateAuthoredDefinition(definition, {
-      fsWriteRestrictionFor: () => getFsWriteRestrictionForBackend("cursor"),
-    });
+    const result = validateAuthoredDefinition(definition);
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     expect(
       result.errors.filter(
         (e) => e.code === "validator-write-restriction-unsupported",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
   it("refuses a workflow-tier cohort on a backend without an enforceable envelope", () => {

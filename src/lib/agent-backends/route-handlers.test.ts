@@ -49,6 +49,9 @@ describe("GET /api/agent-backends", () => {
       acceptsWhileRunning: true,
       deliveryTiming: "next_turn",
     });
+    expect(cursor.executionWarnings).toEqual([
+      "Network and native tool-approval limits are not enforced.",
+    ]);
     // Facet presence is what the facet-gated pickers read; the wire has to
     // carry it or they would have to guess.
     expect(cursor.facets).toEqual({ conversation: true, tasks: true });
@@ -84,6 +87,7 @@ describe("GET /api/agent-backends", () => {
           "defaultModelId",
           "defaultTimeoutMs",
           "execution",
+          "executionWarnings",
           "facets",
           "id",
           "label",

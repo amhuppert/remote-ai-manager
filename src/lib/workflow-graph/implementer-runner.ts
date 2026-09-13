@@ -200,13 +200,9 @@ export function createGraphWorkflowImplementerRunner(
       input.executionTarget?.worktreePath ?? input.session.worktreePath;
     let envelope: ImplementerLaneWriteEnvelope | null = null;
     if (input.placement !== undefined && input.placement.mode !== "full") {
-      // Gated on the DECLARED capability before any envelope work: a backend
-      // whose conversation runtime cannot natively confine writes would carry
-      // this policy as a suggestion, and a suggestion is not isolation. Refused
-      // as an infrastructure outcome rather than dispatched hopefully.
       const restriction = conversationFsWriteRestriction(input.backend);
-      if (restriction !== "enforced") {
-        const message = `Backend "${input.backend}" cannot mechanically confine conversation writes (fsWriteRestriction: ${restriction}), so context "${input.contextId}" cannot run under a write envelope`;
+      if (restriction === "unsupported") {
+        const message = `Backend "${input.backend}" cannot apply conversation write limits (fsWriteRestriction: ${restriction}), so context "${input.contextId}" cannot run under a write envelope`;
         logger.error("graph-workflow.implementer.write_envelope_unsupported", {
           sessionName: input.session.sessionName,
           conversationId: input.conversationId,
@@ -220,6 +216,18 @@ export function createGraphWorkflowImplementerRunner(
           cause: "unknown",
           originalMessage: message,
         });
+      }
+      if (restriction === "instruction-only") {
+        logger.warn(
+          "graph-workflow.implementer.write_envelope_instruction_only",
+          {
+            sessionName: input.session.sessionName,
+            conversationId: input.conversationId,
+            contextId: input.contextId,
+            backend: input.backend,
+            placementMode: input.placement.mode,
+          },
+        );
       }
       try {
         envelope = composeWriteEnvelope({

@@ -26,7 +26,6 @@ export const automaticRepairRequirements = {
   facet: "tasks",
   executionClass: "governed-execution",
   executionProfile: "standard",
-  requiresPrivilegedInstructions: true,
   operation: "automatic-repair",
 } as const satisfies ExecutionRequirements;
 

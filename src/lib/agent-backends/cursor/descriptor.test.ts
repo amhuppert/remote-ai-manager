@@ -1,12 +1,10 @@
 /**
  * R2.2 — the Cursor descriptor's declarations are the honest ones.
  *
- * Every assertion here is a NEGATIVE claim the rest of Command Center reads
- * instead of branching on backend identity: nongoverned tasks, no native mid-turn
- * ask, no external turns, no context-window metrics, no managed skills, no
- * strict MCP authority, no write confinement, no native fork. A descriptor is
- * the only place those can be stated, so this suite is where an over-claim gets
- * caught before a consumer acts on it.
+ * Consumers read these declarations to select execution mechanisms and show
+ * limitations. Governed tasks and managed skills are available; filesystem
+ * policies use instructions, and native metrics, asks, forks and strict MCP
+ * authority are not claimed.
  */
 
 import { describe, expect, it } from "vitest";
@@ -96,12 +94,12 @@ function descriptor(): AgentBackendDescriptor {
 }
 
 describe("cursor descriptor — facets", () => {
-  it("declares nongoverned standard and isolated task execution", () => {
+  it("declares governed and nongoverned task execution", () => {
     const cursor = descriptor();
     expect(cursor.id).toBe("cursor");
     expect(cursor.conversation).toBeDefined();
     expect(cursor.tasks?.execution).toEqual({
-      classes: ["nongoverned-task"],
+      classes: ["nongoverned-task", "governed-execution"],
       profiles: ["standard", "isolated-one-shot"],
       instructionDelivery: "user-message",
     });
@@ -117,9 +115,11 @@ describe("cursor descriptor — facets", () => {
     });
   });
 
-  it("declares filesystem write confinement unsupported on the conversation facet", () => {
-    expect(cursorConversationFsWriteRestriction).toBe("unsupported");
-    expect(descriptor().conversation?.fsWriteRestriction).toBe("unsupported");
+  it("declares instruction-only filesystem limits on the conversation facet", () => {
+    expect(cursorConversationFsWriteRestriction).toBe("instruction-only");
+    expect(descriptor().conversation?.fsWriteRestriction).toBe(
+      "instruction-only",
+    );
   });
 
   it("declares managed skills bundled for normal launches", () => {

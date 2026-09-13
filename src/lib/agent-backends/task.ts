@@ -113,8 +113,8 @@ export interface AgentTaskRequest extends ExecutionIntent {
   /**
    * Server-derived filesystem-write envelope for this run (see
    * {@link fsWritePolicySchema}). Absent leaves the run unrestricted, which is
-   * what every implementer lane still is. An adapter whose descriptor declares
-   * `fsWriteRestriction: "enforced"` translates this onto its native mechanism.
+   * the default without a policy. An adapter declaring "enforced" translates
+   * this onto its native mechanism; "instruction-only" delivers agent guidance.
    */
   fsWritePolicy?: FsWritePolicy;
 }

@@ -21,6 +21,7 @@ import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import { CloseIcon } from "@/components/icons";
 import DebugStatusStrip from "@/components/session/DebugStatusStrip";
+import BackendExecutionWarning from "@/components/BackendExecutionWarning";
 import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
 import MobilePromptToolbar, {
   MOBILE_PROMPT_ROW_CLASS,
@@ -508,6 +509,7 @@ export default function PromptComposer({
               conversation={activeConversation}
             />
           )}
+          <BackendExecutionWarning backend={selectedBackend} />
           <Suspense fallback={null}>
             <PromptEditor
               ref={editorRef}

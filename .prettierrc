@@ -132,6 +132,8 @@
         "src/features/session/document-viewer/CommentPopover.stories.tsx",
         "src/features/session/document-viewer/CommentPopover.test.tsx",
         "src/features/session/document-viewer/DocumentSurface.tsx",
+        "src/components/BackendExecutionWarning.tsx",
+        "src/components/BackendExecutionWarning.stories.tsx",
         "src/components/topbar/**/*.{ts,tsx}"
       ],
       "options": {

@@ -599,25 +599,114 @@ describe("turn configuration", () => {
     ).toEqual(MODEL_SELECTION);
   });
 
-  it.each([null, { backend: "cursor" as const, ref: "persisted-agent" }])(
-    "refuses a filesystem policy during runtime construction for ref %j",
-    (persistedRef) => {
-      expect(() =>
-        createHarness({
-          create: {
-            persistedRef,
-            fsWritePolicy: { mode: "allowlist", allowWrite: [], denyWrite: [] },
+  it.each(
+    (["ordinary-conversation", "governed-execution"] as const).flatMap(
+      (executionClass) =>
+        [null, { backend: "cursor" as const, ref: "persisted-agent" }].map(
+          (persistedRef) => ({ executionClass, persistedRef }),
+        ),
+    ),
+  )(
+    "delivers filesystem limits as instructions on create and resume: %j",
+    async ({ executionClass, persistedRef }) => {
+      const harness = createHarness({
+        create: {
+          executionClass,
+          persistedRef,
+          fsWritePolicy: {
+            mode: "allowlist",
+            allowWrite: ["/repo/.worktrees/s1/owned"],
+            denyWrite: ["/repo/.worktrees/s1/other"],
           },
-        }),
-      ).toThrow("cannot enforce an exact filesystem write policy");
+        },
+      });
+      const result = await harness.send();
+      expect(result.failure).toBeNull();
+      const prompt = harness.transport.workers[0]?.turns[0]?.input.promptText;
+      expect(prompt).toContain("Write only within these paths");
+      expect(prompt).toContain('"/repo/.worktrees/s1/owned"');
+      expect(prompt).toContain("Do not modify these paths");
+      expect(prompt).toContain('"/repo/.worktrees/s1/other"');
+      expect(prompt).toContain("delegated agents");
     },
   );
 
-  it("refuses governed execution at direct runtime construction", () => {
-    expect(() =>
-      createHarness({ create: { executionClass: "governed-execution" } }),
-    ).toThrow("not eligible for governed-execution");
+  it("delivers fenced instructions to a governed conversation without a write policy", async () => {
+    const harness = createHarness({
+      create: {
+        executionClass: "governed-execution",
+        sessionInstructions: ["Follow the active charter."],
+      },
+    });
+    const result = await harness.send();
+    expect(result.failure).toBeNull();
+    expect(harness.transport.workers[0]?.turns[0]?.input.promptText).toContain(
+      "```\n## System Instructions\nFollow the active charter.\n```",
+    );
   });
+
+  it("delivers current instructions after a runtime is recreated with a persisted ref", async () => {
+    const original = createHarness({
+      create: { sessionInstructions: ["Use FIRST conventions."] },
+    });
+    const first = await original.send();
+    expect(first.backendRef).not.toBeNull();
+    await original.runtime.close();
+    const resumed = createHarness({
+      create: {
+        persistedRef: first.backendRef,
+        sessionInstructions: ["Use SECOND conventions."],
+      },
+    });
+    await resumed.send();
+    await resumed.send();
+    const turns = resumed.transport.workers.flatMap((worker) => worker.turns);
+    expect(turns[0]?.input.promptText).toContain(
+      "## System Instructions\nUse SECOND conventions.",
+    );
+    expect(turns[0]?.input.promptText).not.toContain("FIRST conventions");
+    expect(turns[1]?.input.promptText).not.toContain("## System Instructions");
+  });
+
+  it("keeps code fences inside the governing instruction fence", async () => {
+    const harness = createHarness({
+      create: {
+        sessionInstructions: ["Example:\n```sh\npwd\n```"],
+      },
+    });
+    await harness.send({ promptText: "USER_REQUEST" });
+    expect(harness.transport.workers[0]?.turns[0]?.input.promptText).toBe(
+      "````\n## System Instructions\nExample:\n```sh\npwd\n```\n````\n\nUSER_REQUEST",
+    );
+  });
+
+  it.each(["aborted", "failed"] as const)(
+    "redelivers instructions after a %s first turn",
+    async (outcome) => {
+      let attempt = 0;
+      const harness = createHarness({
+        create: { sessionInstructions: ["Keep the CHARTER convention."] },
+        worker: {
+          onTurn(turn, worker) {
+            attempt += 1;
+            if (attempt === 1) {
+              worker.settle(turn.runId, outcome);
+              return;
+            }
+            worker.sendInputAccepted(turn.runId);
+            worker.settle(turn.runId, "completed");
+          },
+        },
+      });
+      await harness.send();
+      await harness.send();
+      const turns = harness.transport.workers.flatMap((worker) => worker.turns);
+      expect(turns).toHaveLength(2);
+      expect(turns[1]?.input.promptText).toContain(
+        "## System Instructions\nKeep the CHARTER convention.",
+      );
+    },
+  );
 
   it("refuses an unsupported model before starting a worker", async () => {
     const harness = createHarness({
@@ -690,7 +779,7 @@ describe("turn configuration", () => {
   });
 
   // Spec `memory` R5.4/D4: the static advisory contract rides Cursor's
-  // privileged channel — the first-turn governing-instructions block — and
+  // user-message channel — the first-turn governing-instructions block — and
   // the changing block — a full <memory-index> on the first turn, a
   // <memory-index-delta> on later ones — rides the prompt outside it.
   it("delivers the memory advisory contract in the first-turn governing block and keeps the per-turn index outside it", async () => {

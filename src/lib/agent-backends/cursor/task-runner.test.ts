@@ -44,6 +44,39 @@ function harness(
   return { runner, transport };
 }
 describe("Cursor task runner", () => {
+  it("resumes a scoped conversation for a governed task using its original store and reference", async () => {
+    const { runner, transport } = harness({ ref: "agent-conversation" });
+    const resumeRef = { backend: "cursor" as const, ref: "agent-conversation" };
+    const result = await runner.run({
+      ...request,
+      executionClass: "governed-execution",
+      resumeRef,
+      ccSessionScope: {
+        project: "repo",
+        session: "session-1",
+        conversationId: "conversation-1",
+      },
+      fsWritePolicy: {
+        mode: "allowlist",
+        allowWrite: ["/scratch"],
+        denyWrite: ["/repo"],
+      },
+    });
+    expect(result.error).toBeNull();
+    expect(result.backendRef).toEqual(resumeRef);
+    expect(transport.startInputs[0]).toMatchObject({
+      conversationId: "conversation-1",
+      storePath: "/state/conversation-1",
+    });
+    expect(transport.workers[0]?.attachments[0]).toMatchObject({
+      mode: "resume",
+      ref: "agent-conversation",
+    });
+    expect(transport.workers[0]?.turns[0]?.input.promptText).toContain(
+      '"/scratch"',
+    );
+  });
+
   it("reports cleanup failure when cancellation races worker startup", async () => {
     const controller = new AbortController();
     const transport = createScriptedTransport({
@@ -95,7 +128,7 @@ describe("Cursor task runner", () => {
       systemInstructions: ["Use the SECOND_TASK convention."],
     });
     expect(transport.workers[1]?.turns[0]?.input.promptText).toContain(
-      "SECOND_TASK",
+      "```\n## System Instructions\nUse the SECOND_TASK convention.\n```\n\nCompute 17 times 19",
     );
   });
   it("forwards local task images through the bounded Cursor image projection", async () => {
@@ -286,9 +319,18 @@ describe("Cursor task runner", () => {
       mcpServers: {},
     });
   });
+  it.each([{ requiresPrivilegedInstructions: true }])(
+    "refuses an explicitly required native instruction channel: %j",
+    async (policy) => {
+      const { runner, transport } = harness();
+      const result = await runner.run({ ...request, ...policy });
+      expect(result.error).toContain("privileged instructions");
+      expect(transport.workers).toHaveLength(0);
+    },
+  );
+
   it.each([
     { executionClass: "governed-execution" as const },
-    { requiresPrivilegedInstructions: true },
     {
       fsWritePolicy: {
         mode: "allowlist" as const,
@@ -298,11 +340,32 @@ describe("Cursor task runner", () => {
     },
     { sandboxMode: "read-only" as const },
     { networkAccessEnabled: false },
-  ])("refuses an unimplemented policy before spawning: %j", async (policy) => {
+    { approvalPolicy: "on-request" as const },
+    { webSearchMode: "disabled" as const },
+  ])("runs with best-effort controls: %j", async (policy) => {
     const { runner, transport } = harness();
     const result = await runner.run({ ...request, ...policy });
-    expect(result.error).toBeTruthy();
-    expect(transport.workers).toHaveLength(0);
+    expect(result.error).toBeNull();
+    expect(transport.workers).toHaveLength(1);
+  });
+
+  it("delivers validator path and network limits in the governed task prompt", async () => {
+    const { runner, transport } = harness();
+    const result = await runner.run({
+      ...request,
+      executionClass: "governed-execution",
+      fsWritePolicy: {
+        mode: "allowlist",
+        allowWrite: ["/scratch"],
+        denyWrite: ["/repo"],
+      },
+      networkAccessEnabled: false,
+    });
+    expect(result.error).toBeNull();
+    const prompt = transport.workers[0]?.turns[0]?.input.promptText;
+    expect(prompt).toContain('"/scratch"');
+    expect(prompt).toContain('"/repo"');
+    expect(prompt).toContain("Do not use the network");
   });
   it("cancels while waiting for attach without leaving a worker", async () => {
     const controller = new AbortController();

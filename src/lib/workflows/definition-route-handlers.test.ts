@@ -745,11 +745,9 @@ describe("workflow definition route handlers", () => {
     }
   });
 
-  // A workflow role dispatches through the backend's task facet, so a plan
-  // naming a backend that registers none is refused at admission — before any
-  // definition is written (spec R15.2).
-  it("refuses an assignment backend with no task facet, naming the facet, and writes nothing", async () => {
+  it("accepts a Cursor workflow assignment through the registered task facet", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
+    createDefinition.mockResolvedValue(createWorkflowDefinitionRecord());
 
     const response = await handlers.CREATE(
       makeRequest("/api/projects/repo/workflows", "POST", {
@@ -785,12 +783,8 @@ describe("workflow definition route handlers", () => {
       makeContext({ name: "repo" }),
     );
 
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as {
-      issues?: { path: string; message: string }[];
-    };
-    expect(JSON.stringify(body)).toMatch(/task/i);
-    expect(createDefinition).not.toHaveBeenCalled();
+    expect(response.status).toBe(201);
+    expect(createDefinition).toHaveBeenCalledTimes(1);
   });
 
   it("accepts a POST with workflowConfig: {} and minimal contexts", async () => {

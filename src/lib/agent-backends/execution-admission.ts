@@ -30,7 +30,11 @@ export type ConversationExecutionPolicy = z.infer<
 >;
 export type TaskExecutionPolicy = z.infer<typeof taskExecutionPolicySchema>;
 
-const restrictionSchema = z.enum(["enforced", "unsupported"]);
+const restrictionSchema = z.enum([
+  "enforced",
+  "instruction-only",
+  "unsupported",
+]);
 export const backendExecutionSchema = z
   .object({
     conversation: conversationExecutionPolicySchema
@@ -72,14 +76,12 @@ export const backendExecutionSchema = z
     }
     if (
       task.classes.includes("governed-execution") &&
-      (task.instructionDelivery !== "privileged" ||
-        task.fsWriteRestriction !== "enforced")
+      task.fsWriteRestriction === "unsupported"
     ) {
       ctx.addIssue({
         code: "custom",
         path: ["tasks", "classes"],
-        message:
-          "Governed tasks require privileged instructions and enforced filesystem restrictions",
+        message: "Governed tasks require supported filesystem restrictions",
       });
     }
   });
@@ -178,11 +180,11 @@ export function backendExecutionRefusal(
   }
   if (
     requirements.requiresFsWriteRestriction &&
-    facet.fsWriteRestriction !== "enforced"
+    facet.fsWriteRestriction === "unsupported"
   ) {
     return refuse(
       "backend-fs-policy-unsupported",
-      `${entry.label} cannot enforce an exact filesystem write policy on its ${noun} runtime`,
+      `${entry.label} cannot apply a filesystem write policy on its ${noun} runtime`,
     );
   }
   return null;

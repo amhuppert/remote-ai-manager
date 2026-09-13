@@ -19,14 +19,17 @@ describe("agent backend registry bootstrap", () => {
     );
   });
 
-  it("registers Cursor conversation and nongoverned task facets", async () => {
+  it("registers Cursor conversation and governed task facets", async () => {
     vi.resetModules();
 
     const registry = await import("./registry");
     const cursor = registry.getBackendDescriptor("cursor");
 
     expect(cursor.conversation).toBeDefined();
-    expect(cursor.tasks?.execution.classes).toEqual(["nongoverned-task"]);
+    expect(cursor.tasks?.execution.classes).toEqual([
+      "nongoverned-task",
+      "governed-execution",
+    ]);
     expect(registry.getTaskRunner("cursor").backend).toBe("cursor");
   });
 

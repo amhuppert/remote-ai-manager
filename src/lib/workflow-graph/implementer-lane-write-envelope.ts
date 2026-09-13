@@ -1,12 +1,11 @@
 /**
  * The filesystem-write envelope an implementer execution context runs under.
  *
- * Concurrent same-lane contexts share ONE worktree, so what keeps them from
- * overwriting each other has to be mechanical rather than prompted: this module
- * composes the server-derived allowlist the backend adapters translate onto
- * their native sandboxes, and it is the only place the allowlist's shape is
- * decided. Ownership does double duty — write isolation during the turn, and
- * commit scoping when the lane lands.
+ * Concurrent same-lane contexts share one worktree. This module composes the
+ * server-derived allowlist; adapters apply it through native sandboxes or
+ * agent instructions according to their declared capability. Ownership also
+ * scopes commits when the lane lands. Instruction-only adapters cannot
+ * guarantee that concurrent contexts will respect each other's files.
  *
  * The composition rules, and why each exists:
  *  - the worktree root is canonicalized first, and every owned prefix is
@@ -29,7 +28,7 @@
  *    creates no repository directory;
  *  - `.git` is denied unconditionally. An agent that can write it can commit,
  *    branch, or reset the lane out from under the engine, which is precisely
- *    what the envelope exists to make impossible.
+ *    what this policy forbids.
  *
  * `allowWrite` order is the backend contract, not incidental: the first entry
  * is the run's writable working root (per-context scratch — the repository

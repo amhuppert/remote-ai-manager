@@ -135,7 +135,6 @@ export async function executeFreshTaskRun(
       backend: identity.backend,
       executionClass: "governed-execution",
       executionProfile: "standard",
-      requiresPrivilegedInstructions: true,
       prompt: input.prompt,
       modelSelection: identity.modelSelection,
       ...(input.systemInstructions !== undefined
