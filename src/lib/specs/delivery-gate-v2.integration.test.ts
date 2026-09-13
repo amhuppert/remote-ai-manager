@@ -642,6 +642,7 @@ describe("delivery gate v2 integrated execution identity", () => {
           criterionHandle: expect.any(String),
           outcome: "failed",
           reason: expect.stringContaining("COVERED_FAILURE"),
+          automated: ["context-plan failed validator_gate_failed"],
         },
       ]),
     });

@@ -1,3 +1,4 @@
+import { deliveryReadinessSchema } from "./delivery-review-schemas";
 import { z } from "zod";
 
 import {
@@ -36,6 +37,7 @@ import {
   specElementKindSchema,
   specExecutionCleanupPhaseSchema,
   specExecutionStateSchema,
+  specDeliveryBasisSchema,
   specWorkflowLaneStatusSchema,
   specGateAdmissionRowSchema,
   specGatePolicySchema,
@@ -384,6 +386,7 @@ const specStatusExecutionSchema = z
     state: specExecutionStateSchema,
     workflowSeedSource: graphWorkflowExecutionOriginSchema.nullable(),
     workflowExecutionId: z.string().min(1).nullable(),
+    deliveryBasis: specDeliveryBasisSchema.optional(),
     /**
      * The linked lane's live status at read time. A `running` spec execution
      * whose lane already completed is waiting on the session's delivering
@@ -606,6 +609,7 @@ export const specExecutionViewSchema = z
     state: specExecutionStateSchema,
     workflowSeedSource: graphWorkflowExecutionOriginSchema.nullable(),
     workflowExecutionId: z.string().min(1).nullable(),
+    deliveryBasis: specDeliveryBasisSchema.optional(),
     /**
      * Null when the stored scope does not parse. A row written by an older
      * build must not 500 the read, and an empty scope would be a different
@@ -765,6 +769,7 @@ export const specStatusViewSchema = z
     draftHealth: draftHealthTierSchema.nullable().default(null),
     coverage: specCoverageSchema,
     delivery: deliveryDisplaySchema,
+    deliveryReadiness: deliveryReadinessSchema.nullable().optional(),
     /**
      * Whether this spec entered the system by import, derived server-side from
      * the `import`-basis gate admissions on the current approved revision's
@@ -1275,6 +1280,7 @@ const executionLifecycleFindingSchema = z
     /** The coordinator's reached phase; null outside `abandoning`. */
     cleanupPhase: specExecutionCleanupPhaseSchema.nullable(),
     workflowExecutionId: z.string().min(1).nullable(),
+    deliveryBasis: specDeliveryBasisSchema.optional(),
     workflowStatus: graphWorkflowStatusSchema.nullable(),
     /** Whether the linked run still holds the session's execution slot. */
     ownsExecutionSlot: z.boolean(),

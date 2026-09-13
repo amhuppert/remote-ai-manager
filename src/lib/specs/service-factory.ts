@@ -1,3 +1,9 @@
+import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
+import { createDeliveryApprovalService } from "./delivery-approval";
+import { createDeliveryReviewService } from "./delivery-review-service";
+import { createDeliveryContinuationService } from "./delivery-continuation";
+import { readDeliveryReview } from "./delivery-review-query";
+import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
 import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
 import { createPlanReviewService } from "@/lib/workflows/plan-review/service";
 import { createHash, randomUUID } from "node:crypto";
@@ -293,6 +299,11 @@ export async function createProductionSpecRouteServices(
       return (await getSession(projectPath, sessionName)) !== null;
     },
     getWorkflowExecutionStatus,
+    getPublishedMergeBySpecExecutionId(specExecutionId) {
+      return Promise.resolve(
+        jobsRepo.findLatestPublishedMergeBySpecExecutionId(specExecutionId),
+      );
+    },
     getPublishedMerge(workflowExecutionId) {
       return Promise.resolve(
         jobsRepo.findLatestPublishedMergeByExecutionId(workflowExecutionId),
@@ -495,7 +506,72 @@ export async function createProductionSpecRouteServices(
     events,
   });
 
+  const deliveryReview = createDeliveryReviewService({
+    specs,
+    delivery: deliveryRepo,
+    events,
+    nextId: () => randomUUID(),
+    now: () => new Date().toISOString(),
+  });
+  const deliveryContinuation = createDeliveryContinuationService({
+    specs,
+    delivery: deliveryRepo,
+    links: linksRepo,
+    events,
+    execution,
+    deliveryPlan,
+    async sessionExists(path, sessionName) {
+      return (await getSession(path, sessionName)) !== null;
+    },
+    async workflowExists(path, executionId) {
+      return createSessionsRepo(db)
+        .findByProject(path)
+        .some(
+          (session) =>
+            workflowExecutions.getActive(path, session.sessionName)?.id ===
+              executionId ||
+            archivedWorkflowExecutions.findByExecution(
+              path,
+              session.sessionName,
+              executionId,
+            ) !== null,
+        );
+    },
+    nextId: () => randomUUID(),
+    now: () => new Date().toISOString(),
+  });
   const services: SpecMutationServices = {
+    deliveryReview,
+    deliveryContinuation,
+    deliveryApproval: createDeliveryApprovalService({
+      acceptance: deliveryReview,
+      review,
+      read: (spec, executionId) =>
+        readDeliveryReview(
+          {
+            specs,
+            bindings: bindingRepo,
+            delivery: deliveryRepo,
+            review: reviewRepo,
+            gate: createRegisteredDeliveryGateEvaluator(),
+          },
+          spec,
+          executionId,
+        ),
+    }),
+    readDeliveryReview(spec, executionId) {
+      return readDeliveryReview(
+        {
+          specs,
+          bindings: bindingRepo,
+          delivery: deliveryRepo,
+          review: reviewRepo,
+          gate: createRegisteredDeliveryGateEvaluator(),
+        },
+        spec,
+        executionId,
+      );
+    },
     authoring,
     review,
     evidence,

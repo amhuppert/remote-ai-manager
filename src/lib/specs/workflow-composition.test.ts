@@ -113,6 +113,7 @@ describe("spec workflow composition", () => {
     expect(mergeMarkDelivered).toHaveBeenCalledWith(
       "workflow-execution-1",
       "merge-sha",
+      undefined,
     );
     expect(validateDefinition).toHaveBeenCalledOnce();
   });

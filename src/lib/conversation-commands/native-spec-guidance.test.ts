@@ -214,12 +214,22 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     required: [/gate policy/i, /`human_act_required`/, /Spec Studio/],
   },
   {
-    id: "proof verdicts are machine-recorded and the human remedy is a waiver",
+    id: "delivery review records human acceptance separately from machine proof",
     required: [
       /Proof verdicts are recorded only by the delivery gate from machine\s+evidence/,
-      /Controls → Merge gate → Waive/,
+      /Spec Studio → Delivery/,
+      /Mark satisfied/,
+      /Waive evidence/,
+      /all criteria/,
+      /Continue delivery/,
+      /Finish in this session/,
+      /another workflow/,
+      /replacement workflow/,
+      /Record external delivery/,
+      /before validation and conflict resolution/,
     ],
     forbidden: [
+      /Controls → Merge gate → Waive/,
       // The old copy promised a Spec Studio proof-verdict surface that no
       // longer exists.
       /record proof verdicts on the user's behalf/,

@@ -11,6 +11,7 @@ vi.mock("@/lib/logging", () => ({
 
 import type Database from "better-sqlite3";
 import {
+  specAcceptanceReviewSchema,
   specCriterionDispositionRowSchema,
   specDeliveryVerdictRowSchema,
   specEvidenceRowSchema,
@@ -278,6 +279,15 @@ function maximalExecution(): SpecExecutionRow {
     }),
     workflow_execution_id: "workflow-execution-delivery-maximal",
     session_name: "native-sdd-delivery-maximal",
+    delivery_basis_json: JSON.stringify({
+      kind: "session",
+      sourceSpecExecutionIds: [SOURCE_EXECUTION_ID],
+      sourceWorkflowExecutionIds: ["other-workflow"],
+      commitRefs: ["abc123"],
+      note: "Continued in session",
+      actor: { kind: "human" },
+      createdAt: "2026-09-12T12:00:00Z",
+    }),
     delivered_at: "2026-07-18T11:07:00.000Z",
     abandoned_reason: "The pinned execution was superseded by human choice.",
     cleanup_phase: "finalize",
@@ -357,6 +367,37 @@ describe("spec-delivery-repo durability contract", () => {
   });
 
   it("round-trips every persisted delivery field and structured payload", async () => {
+    await assertRoundTripDurability({
+      label: "spec-acceptance-review",
+      schema: specAcceptanceReviewSchema,
+      buildMaximalFixture: () =>
+        specAcceptanceReviewSchema.parse({
+          id: "acceptance-review-maximal",
+          specId: SPEC_ID,
+          revisionId: REVISION_ID,
+          decision: "waived",
+          note: "External dependency unavailable",
+          actor: { kind: "human" },
+          criteria: [
+            {
+              criterionId: CRITERION_ID,
+              contentHash: "criterion-and-requirement-hash",
+            },
+            {
+              criterionId: SECOND_CRITERION_ID,
+              contentHash: "second-contract-hash",
+            },
+          ],
+          createdAt: "2026-09-12T12:00:00Z",
+        }),
+      persist: (review) => {
+        repo.insertAcceptanceReview(review);
+        return review;
+      },
+      reload: () =>
+        createSpecDeliveryRepo(db).findAcceptanceReviewsBySpecId(SPEC_ID)[0] ??
+        null,
+    });
     await assertRoundTripDurability({
       label: "spec-evidence",
       schema: specEvidenceRowSchema,

@@ -892,7 +892,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       surface: "delivery_gate",
       code: "delivery_gate_failed",
       executionId: started.specExecutionId,
-      preparedSha: "prepared-candidate",
+      preparedSha: "",
     });
     const recordedUnmet = gateIntervention?.payload.unmet as Array<{
       criterionId: string;

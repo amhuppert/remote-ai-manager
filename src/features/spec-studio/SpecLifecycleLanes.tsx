@@ -104,7 +104,11 @@ export default function SpecLifecycleLanes({
           </>
         ) : (
           <span className="font-mono text-[0.7rem] text-text-tertiary">
-            No delivery candidate
+            {execution?.deliveryBasis?.kind === "session"
+              ? "Session delivery"
+              : execution?.deliveryBasis?.kind === "external"
+                ? "External delivery recorded"
+                : "No delivery candidate"}
           </span>
         )}
         {execution && (

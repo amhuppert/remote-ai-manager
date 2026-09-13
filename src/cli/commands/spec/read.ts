@@ -214,6 +214,7 @@ async function requestTyped<T>(
 }
 
 type ExecutionLaneState =
+  | "session_delivery"
   | "running"
   | "merge_pending"
   | "halted"
@@ -235,6 +236,17 @@ interface ExecutionProgress {
  */
 function describeExecution(execution: ActiveExecution): ExecutionProgress {
   const lane = execution.workflowExecutionId;
+  if (
+    execution.state === "running" &&
+    execution.deliveryBasis?.kind === "session"
+  ) {
+    return {
+      laneState: "session_delivery",
+      actsNext: null,
+      detail:
+        "session delivery awaiting the delivering merge; review acceptance in Spec Studio",
+    };
+  }
   if (execution.state === "running") {
     // The spec execution stays `running` until the session's delivering
     // merge, so the lane's own status is what separates "lanes are working"
@@ -282,6 +294,11 @@ const LANE_STATE_CLAUSES: ReadonlyArray<{
   clause: (count: number) => string;
 }> = [
   {
+    laneState: "session_delivery",
+    clause: (count) =>
+      `${count} session delivery awaiting the delivering merge`,
+  },
+  {
     laneState: "running",
     clause: (count) =>
       `${count} workflow lane${count === 1 ? "" : "s"} running`,
@@ -326,14 +343,12 @@ function phaseQualifier(executions: readonly ActiveExecution[]): string {
   return clauses.length === 0 ? "" : ` (${clauses.join(", ")})`;
 }
 
-/**
- * The row is addressed by the workflow execution id, the one execution id a
- * reader passes to any verb (design 3.5, D-B). A run with no lane yet has no
- * addressable id at all, so the row says that rather than offering the
- * internal row id every surface refuses.
- */
 function executionLine(execution: ActiveExecution): string {
-  const named = execution.workflowExecutionId ?? "(no workflow lane)";
+  const named =
+    execution.workflowExecutionId ??
+    (execution.deliveryBasis?.kind === "session"
+      ? execution.id
+      : "(no workflow lane)");
   return `  ${named}: ${execution.state} — ${describeExecution(execution).detail}`;
 }
 
@@ -463,6 +478,10 @@ function boundStatus(
     boundedItems(items, Math.max(limit, 1), reveal);
   const boundedExecutions = bound(executions, whole);
   const pendingApprovals = bound(status.pendingApprovals, whole);
+  const deliveryBlockers = bound(
+    status.deliveryReadiness?.blockers ?? [],
+    whole,
+  );
   const importCarriedApprovals = bound(status.importCarriedApprovals, whole);
   // The ledger enumerates every consulted subject, so it is the section most
   // able to crowd out the rest. Only the enumeration is bounded: the counts
@@ -475,6 +494,14 @@ function boundStatus(
   return {
     status: {
       ...status,
+      ...(status.deliveryReadiness
+        ? {
+            deliveryReadiness: {
+              ...status.deliveryReadiness,
+              blockers: deliveryBlockers.items,
+            },
+          }
+        : {}),
       pendingApprovals: pendingApprovals.items,
       importCarriedApprovals: importCarriedApprovals.items,
       approvalLedger: {
@@ -488,6 +515,7 @@ function boundStatus(
     executions: boundedExecutions.items,
     disclosure: {
       executions: boundedExecutions.omission,
+      deliveryBlockers: deliveryBlockers.omission,
       pendingApprovals: pendingApprovals.omission,
       importCarriedApprovals: importCarriedApprovals.omission,
       approvalLedgerSubjects: approvalLedgerSubjects.omission,
@@ -582,6 +610,17 @@ function statusText(bounded: BoundedStatus): string {
           disclosure.executions,
           (execution) => [executionLine(execution)],
         )),
+    ...(status.deliveryReadiness
+      ? [
+          `delivery review: ${status.deliveryReadiness.settled}/${status.deliveryReadiness.totalInScope} criteria settled; ${status.deliveryReadiness.approvalGranted ? "approved" : "approval not recorded"}`,
+          ...sectionLines(
+            "delivery blockers",
+            status.deliveryReadiness.blockers,
+            disclosure.deliveryBlockers,
+            (blocker) => [`  ${blocker.kind}: ${blocker.reason}`],
+          ),
+        ]
+      : []),
     "gates:",
     ...gateLines(status.gates),
     // Read before the outstanding list, because the outstanding list read
@@ -1431,6 +1470,9 @@ export async function runSpecStatus(
         workflowSeedSource: execution.workflowSeedSource,
         workflowExecutionId: execution.workflowExecutionId,
         workflowStatus: execution.workflowStatus,
+        ...(execution.deliveryBasis
+          ? { deliveryBasis: execution.deliveryBasis }
+          : {}),
         laneState: progress.laneState,
         actsNext: progress.actsNext,
       };

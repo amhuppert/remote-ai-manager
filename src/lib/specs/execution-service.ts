@@ -1,3 +1,4 @@
+import { specDeliveryBasisSchema } from "./schemas";
 import { createLogger } from "@/lib/logging";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
@@ -109,6 +110,9 @@ export interface ExecutionServiceDeps {
   getWorkflowExecutionStatus(
     workflowExecutionId: string,
   ): Promise<SpecWorkflowLaneStatus | null>;
+  getPublishedMergeBySpecExecutionId(
+    specExecutionId: string,
+  ): Promise<{ mergeHash: string; deliveryGatePassed: boolean } | null>;
   getPublishedMerge(workflowExecutionId: string): Promise<{
     mergeHash: string;
     deliveryGatePassed: boolean;
@@ -378,6 +382,7 @@ export type ExecutionLifecycleDeps = Pick<
   | "nextId"
   | "now"
   | "getPublishedMerge"
+  | "getPublishedMergeBySpecExecutionId"
   | "runInImmediateTransaction"
   | "policyNotifier"
   | "attentionNotifier"
@@ -393,7 +398,11 @@ export interface ExecutionLifecycleCallbacks {
     workflowExecutionId: string,
     origin: GraphWorkflowExecutionOrigin,
   ): Promise<void>;
-  markDelivered(workflowExecutionId: string, mergeHash: string): Promise<void>;
+  markDelivered(
+    workflowExecutionId: string | undefined,
+    mergeHash: string,
+    specExecutionId?: string,
+  ): Promise<void>;
   awaitingDefinitionApproval(
     context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
@@ -490,6 +499,9 @@ export interface ExecutionService {
   ): Promise<LifecycleResult<ReconciledSpecExecution>>;
   abandonExecution(
     input: AbandonExecutionInput,
+  ): Promise<LifecycleResult<SpecExecutionRow>>;
+  retireDelivery(
+    input: AbandonExecutionInput & { specId: string },
   ): Promise<LifecycleResult<SpecExecutionRow>>;
   abandonSpec(input: AbandonSpecInput): Promise<LifecycleResult<Spec>>;
   captureScopeAmendment(
@@ -624,6 +636,18 @@ export function createExecutionService(
         ...input,
         executionId: resolved.execution.id,
       });
+    },
+    async retireDelivery(input) {
+      if (input.actor.kind !== "human")
+        return lifecycleRefused(
+          "human_act_required",
+          ["Delivery continuation requires a human in Spec Studio."],
+          "Open the delivery review in Spec Studio.",
+        );
+      const current = deps.deliveryRepo.findExecutionById(input.executionId);
+      if (current?.spec_id !== input.specId)
+        return lifecycleExecutionNotFound();
+      return abandonExecution(deps, input);
     },
     abandonSpec(input) {
       return abandonSpec(deps, input);
@@ -764,8 +788,12 @@ export function createExecutionLifecycleCallbacks(
       const result = await markRunning(deps, workflowExecutionId);
       if (!result.ok) throw new Error(result.refusal.unmetConditions.join(" "));
     },
-    async markDelivered(workflowExecutionId, mergeHash) {
-      const execution = findLinkedExecution(workflowExecutionId);
+    async markDelivered(workflowExecutionId, mergeHash, specExecutionId) {
+      const execution = specExecutionId
+        ? deps.deliveryRepo.findExecutionById(specExecutionId)
+        : workflowExecutionId
+          ? findLinkedExecution(workflowExecutionId)
+          : null;
       if (execution === null) return;
       const result = await markDelivered(deps, execution.id, mergeHash);
       if (!result.ok) throw new Error(result.refusal.unmetConditions.join(" "));
@@ -1106,16 +1134,16 @@ async function markDelivered(
   if (candidate.state !== "running") {
     return deliveryStateRefusal(candidate);
   }
-  if (candidate.workflow_execution_id === null) {
-    return lifecycleRefused(
-      "gate_blocked",
-      ["Delivered requires a linked workflow execution."],
-      "Link and start the workflow execution before publishing delivery.",
-    );
-  }
-  const published = await deps.getPublishedMerge(
-    candidate.workflow_execution_id,
-  );
+  const sessionDelivery = candidate.delivery_basis_json
+    ? specDeliveryBasisSchema.parse(JSON.parse(candidate.delivery_basis_json))
+        .kind === "session"
+    : false;
+  const published =
+    candidate.workflow_execution_id !== null
+      ? await deps.getPublishedMerge(candidate.workflow_execution_id)
+      : sessionDelivery
+        ? await deps.getPublishedMergeBySpecExecutionId(candidate.id)
+        : null;
   if (
     published === null ||
     published.mergeHash !== mergeHash ||
@@ -1124,9 +1152,9 @@ async function markDelivered(
     return lifecycleRefused(
       "gate_blocked",
       [
-        "The linked workflow has no matching successfully published, delivery-gate-passed merge.",
+        "This execution has no matching successfully published, delivery-gate-passed merge.",
       ],
-      "Complete the delivery gate and publish the linked workflow candidate before recording Delivered.",
+      "Complete the delivery review and publish the associated session merge before recording Delivered.",
     );
   }
   const deliveryMeasures = await buildDeliveryMeasureEvents(deps, candidate);
@@ -1287,6 +1315,15 @@ async function reconcileStatus(
   }
   const workflowExecutionId = current.workflow_execution_id;
   if (workflowExecutionId === null) {
+    const published =
+      current.state === "running" && current.delivery_basis_json
+        ? await deps.getPublishedMergeBySpecExecutionId(current.id)
+        : null;
+    if (published?.deliveryGatePassed)
+      return withLane(
+        await markDelivered(deps, current.id, published.mergeHash),
+        null,
+      );
     return { ok: true, value: { execution: current, workflowStatus: null } };
   }
 

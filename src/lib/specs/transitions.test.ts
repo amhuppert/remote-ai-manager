@@ -1255,7 +1255,7 @@ describe("transition predicates", () => {
       });
     });
 
-    it("marks the missing-human-approval refusal with the approval_required reason and the Controls-view instruction", () => {
+    it("marks the missing-human-approval refusal with the approval_required reason and the Delivery-view instruction", () => {
       expect(
         evaluateDeliveryGate(
           deliveryContext(contractPolicy, { deliveryApprovalGranted: false }),
@@ -1267,7 +1267,7 @@ describe("transition predicates", () => {
           reason: "approval_required",
           unmetConditions: ["The delivery gate requires human approval."],
           instruction:
-            "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+            "Open the spec’s Delivery view in Spec Studio, settle the listed acceptance criteria, and approve delivery to continue merge.",
         },
       });
     });

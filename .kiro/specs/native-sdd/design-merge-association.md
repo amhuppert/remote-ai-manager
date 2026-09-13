@@ -5,6 +5,8 @@
 **Extends:** `design.md` D12 (delivery gate), the "Delivered" transition row, and the composition-wiring section. On approval, fold the decisions here into those sections and append the tasks to `tasks.md`.
 **Date:** 2026-07-19
 
+The [delivery-flexibility contract](design-delivery-flexibility.md) extends this association design. A running session-delivery execution carries `specExecutionId` independently of a workflow id. Merge initiation assesses its readiness before preparation and opens the pinned delivery review; dispatch persists the association, and publication rechecks it. The successful mainline merge remains the basis for CC-observed delivery. A separately attributed external-delivery execution records work the human reports as already shipped.
+
 ## 1. The defect and the design gap
 
 The live round merged unproven spec-execution work into `plc-test-lab` main: user `/merge` created job `9ad7aa0f` with `execution_id = NULL`, the delivery gate never evaluated, and spec execution `9767e2b2` stayed `running` with no proof and no `delivered_at`.

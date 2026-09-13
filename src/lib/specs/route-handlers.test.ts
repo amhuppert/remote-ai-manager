@@ -256,6 +256,7 @@ function execution(
 
 function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
   return {
+    readDeliveryReview: async () => null,
     resolveProjectPath: async (name) => (name === "demo" ? PROJECT_PATH : null),
     listSpecs: async () => [spec],
     resolveSpec: async (_projectPath, slug) =>

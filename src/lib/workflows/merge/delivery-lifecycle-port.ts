@@ -13,7 +13,11 @@ const logger = createLogger("merge.delivery-lifecycle");
  * (execution, mergeHash).
  */
 export interface MergeDeliveryLifecycle {
-  markDelivered(workflowExecutionId: string, mergeHash: string): Promise<void>;
+  markDelivered(
+    workflowExecutionId: string | undefined,
+    mergeHash: string,
+    specExecutionId?: string,
+  ): Promise<void>;
 }
 
 /**
@@ -57,18 +61,21 @@ export function registerMergeDeliveryLifecycle(
 
 /** Fire-and-forget: delivery marking must never fail the merge job itself. */
 export function notifyRegisteredMergeDelivered(
-  workflowExecutionId: string,
+  workflowExecutionId: string | undefined,
   mergeHash: string,
+  specExecutionId?: string,
 ): void {
   const lifecycle = state().lifecycle;
   if (lifecycle === null) return;
-  void lifecycle.markDelivered(workflowExecutionId, mergeHash).catch((err) => {
-    logger.error("merge.delivery_lifecycle_failed", {
-      workflowExecutionId,
-      mergeHash,
-      error: err instanceof Error ? err.message : String(err),
+  void lifecycle
+    .markDelivered(workflowExecutionId, mergeHash, specExecutionId)
+    .catch((err) => {
+      logger.error("merge.delivery_lifecycle_failed", {
+        workflowExecutionId,
+        mergeHash,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
-  });
 }
 
 export function _resetMergeDeliveryLifecycleForTesting(): void {

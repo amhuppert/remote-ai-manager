@@ -46,7 +46,7 @@ import {
 } from "@/lib/shared/route-resolution";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { evaluateSessionMergeAdmission } from "@/lib/workflow-graph/session-merge-admission";
+import { evaluateMergeInitiation } from "@/lib/workflows/merge/initiation";
 import { createLogger, withTracing } from "@/lib/logging";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { getStateDb } from "@/lib/state-store/store";
@@ -118,6 +118,7 @@ export interface GitRouteDeps {
     parkedRef?: string;
     resolutionContext?: string;
     executionId?: string;
+    specExecutionId?: string;
     finalPublish?: boolean;
     /** Carried forward from the job a re-entry resumes; see the land handler. */
     finalizeSessionOnPublish?: boolean;
@@ -136,6 +137,7 @@ export interface GitRouteDeps {
     targetBranch?: string;
     resolutionContext?: string;
     executionId?: string;
+    specExecutionId?: string;
     finalPublish?: boolean;
     /** Carried forward from the conflicted job this retry resumes. */
     finalizeSessionOnPublish?: boolean;
@@ -509,8 +511,9 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
 
     if (session.finished) return finishedSessionConflict();
 
-    const admission = await evaluateSessionMergeAdmission({
+    const admission = await evaluateMergeInitiation({
       projectPath,
+      projectName,
       sessionName,
       surface: "merge-route",
       readActiveExecution: deps.getActiveGraphWorkflowExecution,
@@ -521,11 +524,14 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
         {
           error: refusal.message,
           code: refusal.code,
-          details: {
-            executionId: refusal.executionId,
-            status: refusal.status,
-            remedy: refusal.remedy,
-          },
+          details:
+            refusal.code === "GRAPH_WORKFLOW_ACTIVE"
+              ? {
+                  executionId: refusal.executionId,
+                  status: refusal.status,
+                  remedy: refusal.remedy,
+                }
+              : { reviewUrl: refusal.reviewUrl, blockers: refusal.blockers },
         } satisfies ApiError,
         { status: 409 },
       );
@@ -602,6 +608,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       targetBranch,
       resolutionContext: priorJob?.resolutionContext,
       executionId: priorJob?.executionId,
+      specExecutionId: priorJob?.specExecutionId,
       finalPublish: priorJob?.finalPublish,
       // Whether the publish finishes the session is the RESUMED merge's fact,
       // not this route's assumption: a conflicted graph lane merge retried here
@@ -717,6 +724,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       parkedRef,
       resolutionContext: job.resolutionContext,
       executionId: job.executionId,
+      specExecutionId: job.specExecutionId,
       finalPublish: job.finalPublish,
       // Landing continues the parked merge, so it inherits that merge's own
       // finalization fact rather than assuming the session ends here.

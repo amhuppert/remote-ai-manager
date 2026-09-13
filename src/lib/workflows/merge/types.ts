@@ -23,6 +23,7 @@ export interface CriterionOutcome {
   criterionHandle: string;
   outcome: string;
   reason?: string;
+  automated?: string[];
 }
 
 export interface CandidateValidationFact {
@@ -34,7 +35,9 @@ export interface CandidateValidationFact {
 }
 
 export interface DeliveryGateEvaluateInput {
-  workflowExecutionId: string;
+  workflowExecutionId?: string;
+  specExecutionId?: string;
+  readOnly?: boolean;
   preparedSha: string;
   expectedTargetSha: string;
   projectPath: string;
@@ -61,6 +64,7 @@ export type DeliveryGateEvaluation =
   | {
       status: "refused";
       unmet: CriterionOutcome[];
+      satisfied?: CriterionOutcome[];
       instruction: string;
       /**
        * Present only when the refusal is the delivery gate waiting on a human
@@ -318,6 +322,7 @@ export interface MergeContext extends BaseWorkflowContext {
 
   /** Workflow execution linkage used by the injected delivery gate. */
   executionId: string | null;
+  specExecutionId: string | null;
 
   /** Workflow attribution stamped on graph-owned validation ledger rows. */
   validationWorkflow: ValidationWorkflowRef | null;
@@ -380,6 +385,7 @@ export interface MergeInput {
   finalizeSessionOnPublish?: boolean;
   /** Workflow execution linkage for delivery-gate evaluation. */
   executionId?: string;
+  specExecutionId?: string;
   /** Workflow attribution for validation accounting; independent of delivery. */
   validationWorkflow?: ValidationWorkflowRef;
   /** This completed merge closes the workflow's final publish join. */

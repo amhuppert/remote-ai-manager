@@ -131,6 +131,7 @@ describe("native /spec first-save visibility", () => {
       getServices: async () => services,
     };
     const readDeps: SpecRouteDeps = {
+      readDeliveryReview: async () => null,
       resolveProjectPath: async (name) =>
         name === "demo" ? PROJECT_PATH : null,
       listSpecs: (projectPath) => specs.listByProject(projectPath),

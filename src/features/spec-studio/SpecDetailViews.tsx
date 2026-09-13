@@ -20,6 +20,7 @@ import { useSpecLintQuery, useSpecPlanReviewQuery } from "@/lib/specs/queries";
 import SpecControlsPanel, { SpecGatePolicyPanel } from "./SpecControls";
 import SpecCriterionEvidence from "./SpecCriterionEvidence";
 import SpecDeliveryBridge from "./SpecDeliveryBridge";
+import SpecDeliveryReviewPanel from "./SpecDeliveryReviewPanel";
 import SpecDeliveryDeltaPanel from "./SpecDeliveryDeltaPanel";
 import { SpecElementReader } from "./SpecElementReader";
 import SpecHistoryPanel from "./SpecHistoryPanel";
@@ -129,7 +130,11 @@ export default function SpecDetailViews({
         <div className="mt-lg grid gap-xl">
           <SurfaceIntro
             title="Delivery"
-            description="Track verified delivery, inspect remaining scope, and manage the next plan."
+            description="Review acceptance, choose how to finish the work, and approve delivery."
+          />
+          <SpecDeliveryReviewPanel
+            projectName={projectName}
+            slug={detail.spec.slug}
           />
           <SpecDeliveryDeltaPanel
             plan={

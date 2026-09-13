@@ -183,6 +183,7 @@ export interface DeliveryCriterionSnapshot {
   criterionId: string;
   handle: string;
   validProof: boolean;
+  humanAccepted?: boolean;
   waiver: DeliveryWaiverSnapshot | null;
   deliveredByMergedExecution: boolean;
 }
@@ -909,7 +910,7 @@ export function evaluateDeliveryGate(
         reason: "approval_required",
         unmetConditions: ["The delivery gate requires human approval."],
         instruction:
-          "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+          "Open the spec’s Delivery view in Spec Studio, settle the listed acceptance criteria, and approve delivery to continue merge.",
       },
     };
   }
@@ -930,6 +931,7 @@ export function evaluateDeliveryGate(
 
     if (
       criterion.validProof ||
+      criterion.humanAccepted ||
       validWaiver(criterion.waiver, pinnedRevisionId) ||
       criterion.deliveredByMergedExecution
     ) {

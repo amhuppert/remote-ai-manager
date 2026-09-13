@@ -84,6 +84,30 @@ function resolve(deps: MergeAssociationResolverDeps, targetBranch?: string) {
 }
 
 describe("merge association resolver", () => {
+  it("links session delivery by its spec execution without inventing a workflow", () => {
+    expect(
+      resolve(
+        makeDeps([
+          executionRow({
+            workflow_execution_id: null,
+            delivery_basis_json: JSON.stringify({
+              kind: "session",
+              sourceSpecExecutionIds: [],
+              sourceWorkflowExecutionIds: [],
+              commitRefs: [],
+              note: "",
+              actor: { kind: "human" },
+              createdAt: "2026-09-12T12:00:00Z",
+            }),
+          }),
+        ]),
+      ),
+    ).toEqual({
+      kind: "linked",
+      specExecutionId: "spec-exec-1",
+      finalPublish: true,
+    });
+  });
   it("passes through when the session hosts no active execution", () => {
     expect(resolve(makeDeps([]))).toEqual({ kind: "none" });
   });

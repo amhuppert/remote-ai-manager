@@ -108,6 +108,8 @@ describe("graph-merge-runner", () => {
     const evaluated: string[] = [];
     const deliveryGate: DeliveryGateEvaluator = {
       async evaluate(input) {
+        if (!input.workflowExecutionId)
+          throw new Error("Expected graph execution identity");
         evaluated.push(input.workflowExecutionId);
         return {
           status: "refused",
@@ -382,7 +384,7 @@ describe("graph-merge-runner", () => {
         buildCapturingMachine([], undefined, capturedValidation),
     });
 
-    await runner.run({
+    const output = await runner.run({
       jobId: "job-validation-attribution",
       projectPath: "/repo",
       projectName: "repo",
@@ -394,10 +396,11 @@ describe("graph-merge-runner", () => {
       targetWorktreePath: "/tmp/lane-a",
       message: "join merge",
       conversationId: "conv-lane-b-implementer",
-      executionId: "execution-1",
+      workflowExecutionId: "execution-1",
       validationMode: graphLaneValidationMode,
     });
 
+    expect(output.status).toBe("completed");
     expect(capturedValidation).toContainEqual(
       expect.objectContaining({
         source: "graph_lane_merge",

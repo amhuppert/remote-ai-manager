@@ -27,6 +27,10 @@
 2. **Trust boundary**: the operator's browser is the trusted human surface; `cctl` callers are authenticated agents — trusted as transport, **untrusted for approval semantics** (the server enforces that approval grants, waiver grants, and policy changes are always human acts regardless of caller claims; revision sign-off is a human act exactly when a propose-time dial is Gate — under an all-Notify/Off propose-time policy the propose transaction records the policy-admitted sign-off per 3.4/10.3). Tamper evidence targets accidental/out-of-band modification (other-branch builds, manual DB edits, buggy code), not a cryptographic adversary with DB write access.
 3. **Failure model**: durable = committed SQLite transactions survive server restart and crash. Every gate decision, approval, admission, and evidence record must be committed before its effect is observable. An in-flight agent turn or un-submitted UI form may be lost. Concurrent multi-worker DB opens must not corrupt (idempotent floor DDL, additive-only shapes). "Immutable" and "tamper-evident" are interpreted relative to this envelope.
 
+## Delivery review and continuation
+
+The delivery contract is defined in [design-delivery-flexibility.md](design-delivery-flexibility.md). Requirements and Design remain the durable approved contract. Delivery accepts applicable automated proof or recorded human judgment, supports session continuation and external-delivery testimony, and assesses readiness before merge preparation.
+
 ## Boundary Commitments
 
 ### This Spec Owns

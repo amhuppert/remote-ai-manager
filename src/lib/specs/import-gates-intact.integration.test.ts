@@ -45,7 +45,7 @@ interface Harness {
   readonly requestedApprovals: Array<{
     specId: string;
     revisionId: string;
-    workflowExecutionId: string;
+    workflowExecutionId?: string;
   }>;
 }
 
@@ -350,12 +350,14 @@ describe("an imported spec keeps every human gate", () => {
     expect(blocked).toMatchObject({
       status: "refused",
       refusalCode: "approval_required",
-      unmet: [
+      unmet: expect.arrayContaining([
         expect.objectContaining({
-          outcome: "gate_blocked",
+          outcome: "approval_required",
           reason: "The delivery gate requires human approval.",
         }),
-      ],
+        expect.objectContaining({ outcome: "missing_claimant" }),
+        expect.objectContaining({ outcome: "integration_failed" }),
+      ]),
     });
     expect(harness.requestedApprovals).toEqual([
       {

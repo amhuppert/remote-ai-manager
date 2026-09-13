@@ -1754,6 +1754,36 @@ export const specWaiverRowSchema = z.object({
 });
 export type SpecWaiverRow = z.infer<typeof specWaiverRowSchema>;
 
+export const specAcceptanceReviewSchema = z.object({
+  id: idSchema,
+  specId: idSchema,
+  revisionId: idSchema,
+  decision: z.enum(["satisfied", "waived", "revoked"]),
+  note: z.string(),
+  actor: actorProvenanceSchema,
+  criteria: z
+    .array(
+      z.object({
+        criterionId: idSchema,
+        contentHash: z.string().min(1),
+      }),
+    )
+    .min(1),
+  createdAt: timestampSchema,
+});
+export type SpecAcceptanceReview = z.infer<typeof specAcceptanceReviewSchema>;
+
+export const specDeliveryBasisSchema = z.object({
+  kind: z.enum(["session", "external"]),
+  sourceSpecExecutionIds: z.array(idSchema),
+  sourceWorkflowExecutionIds: z.array(idSchema),
+  commitRefs: z.array(z.string().min(1)),
+  note: z.string(),
+  actor: actorProvenanceSchema,
+  createdAt: timestampSchema,
+});
+export type SpecDeliveryBasis = z.infer<typeof specDeliveryBasisSchema>;
+
 export const specCriterionDispositionRowSchema = z.object({
   execution_id: idSchema,
   criterion_element_id: idSchema,
@@ -1791,6 +1821,7 @@ export const specExecutionRowSchema = z.object({
   workflow_seed_source_json: jsonColumnSchema.nullable().optional(),
   workflow_execution_binding_json: jsonColumnSchema.nullable().optional(),
   workflow_execution_id: nullableIdSchema,
+  delivery_basis_json: jsonColumnSchema.nullable().optional(),
   session_name: z.string().nullable(),
   delivered_at: nullableTimestampSchema,
   abandoned_reason: z.string().nullable(),

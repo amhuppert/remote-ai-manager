@@ -60,9 +60,9 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 2. The spec system shall report Draft while the current revision is editable and not yet proposed, In review while a proposed revision awaits approvals, Approved while an approved revision exists and no execution is active, and Executing while an active execution runs against a pinned revision.
 3. The spec system shall move each revision only through Draft → Proposed → Approved or Withdrawn; when a draft revision is proposed, the spec system shall freeze its content for review.
 4. A revision shall enter the Approved state only through the revision sign-off transition (Requirement 10), whether that transition is admitted by explicit human sign-off or by a recorded policy gate admission per the active dials.
-5. The spec system shall move each execution only through Definition review → Running → Delivered or Abandoned; while Running, an execution shall retain the existing graph-workflow lifecycle behaviors, including halts and repairs.
+5. The spec system shall move each execution only through Definition review → Running → Delivered or Abandoned for managed graphs, or directly into Running for an explicitly selected session delivery; graph-backed executions shall retain the existing graph-workflow lifecycle behaviors, including halts and repairs.
 6. While an execution is active, the spec system shall present Executing as the primary phase with concurrent authoring state (for example a revision in review) always visible as a secondary facet; a pending review or active run shall never be hidden by the projection.
-7. The spec system shall report Delivered only when every non-removed criterion of the current approved revision is proven-and-merged or explicitly waived and no delivery is pending; removing a criterion in a later revision shrinks the contract and shall not count as delivering it.
+7. The spec system shall report Delivered only when every non-removed criterion of the current approved revision is delivered through a successful merge or an attributed human external-delivery record, with each criterion proven, human-satisfied, or evidence-waived and no delivery pending; removing a criterion in a later revision shrinks the contract and shall not count as delivering it.
 8. Where a revision is delivered entirely through waivers, the spec system shall display that condition explicitly.
 9. When changes are proposed against an approved or delivered spec, the spec system shall open a new draft revision whose authoring state shows as Draft until proposed and In review once proposed — subject to the precedence rule of criterion 6 — while existing pins (running executions, merged deliveries) keep pointing at the revisions they used.
 10. The spec system shall treat Abandoned as terminal and shall record a reason whenever a spec is abandoned.
@@ -189,7 +189,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 4. Where the exploratory preset is active, requirements, design, plan, and execution-start shall be Notify and delivery/merge shall be Gate; additionally the spec system shall refuse completion claims and merges outright while the preset is active.
 5. Where the fast-path preset is active, requirements, design, and plan approval shall collapse into one combined approval at propose — recorded atomically as all per-element approvals plus the revision sign-off, all together or none — with execution start at Notify and delivery/merge at Gate.
 6. The spec system shall enforce, under every preset and override, that every execution pins a (revision, scope).
-7. The spec system shall enforce, under every preset and override, that every in-scope criterion reaches merge with valid proof or a human-recorded waiver.
+7. The spec system shall enforce, under every preset and override, that every in-scope criterion reaches merge with valid automated proof, an applicable human satisfaction decision, or a human-recorded evidence waiver.
 8. The spec system shall enforce the waiver rules of Requirement 14 — human-only, reason-required — under every preset and override.
 9. The spec system shall allow the delivery/merge dial to be lowered to Notify but never to Off.
 10. When a preset switch or any gate loosening is requested — including on an in-flight spec — the system shall require a hard, non-bypassable human confirmation, applied prospectively only and never retroactively creating approvals.
@@ -235,7 +235,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 1. The spec system shall record evidence as append-only, typed records attached at the acceptance-criterion level — commits, test runs, validator verdicts; every evidence kind is machine-produced.
 2. The spec system shall accept evidence only as server-resolvable references to objects CC already knows; if a cited reference cannot be resolved, the spec system shall reject the record the same way it rejects a gate violation.
 3. The spec system shall record on every evidence record its producer, producing execution, target criterion and revision, and the code/content state it evaluated.
-4. The spec system shall treat evidence and proof as distinct: an attached evidence record shall not by itself mark a criterion proven — a proof verdict (deterministic validator or agent validator) under the criterion's approved validation strategy is required; no surface records a human proof verdict, and the human remedy for a criterion that cannot be machine-proven is a waiver (Requirement 14).
+4. The spec system shall treat evidence and proof as distinct: an attached evidence record shall not by itself mark a criterion proven — a proof verdict (deterministic validator or agent validator) under the criterion's approved validation strategy is required; no surface records a human proof verdict. Human satisfaction and evidence waiver are distinct acceptance decisions (Requirement 14), displayed alongside automated results.
 5. When cited evidence satisfies the criterion's approved validation strategy, the proof verdict shall be proven; a validator shall never require evidence beyond the approved strategy.
 6. If a validator judges the approved validation strategy itself inadequate, it shall raise a finding or open question routed to the human — never unilaterally raise the required standard; changing a validation strategy shall be a spec amendment (a new revision).
 7. While an execution runs, the system shall attach lane commits, validator verdicts, and test results automatically to the criteria they prove, stamping each validation result with the lane commit that sealed the tree it validated; a validation superseded by a later iteration before any commit shall be recorded honestly stale.
@@ -246,16 +246,19 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 12. When the evidence-kind vocabulary narrows, the spec system shall migrate persisted state deterministically and traceably: retired kinds are removed from validation strategies (appending the weakest machine-provable kind, with a note recorded in the strategy itself, when none remains), evidence of a retired kind is deleted, proof verdicts citing it are marked stale with the migration named as the reason, and accepted claims citing it are reopened — a criterion's proof obligation is never silently weakened and its proof never silently preserved.
 13. The spec system shall retain evidence from an abandoned run as immutable fact that never automatically satisfies a later delivery; a later proof verdict may cite it only when its applicability to that delivery candidate is established.
 
-### Requirement 14: Waivers and criterion dispositions
+### Requirement 14: Human acceptance, waivers, and criterion dispositions
 **Objective:** As the operator, I want per-scope criterion dispositions and human-only waivers, so that every exception to proof is an explicit, attributable decision.
 
 #### Acceptance Criteria
 1. The spec system shall track a per-scope disposition for every criterion: in-scope (pending or proven), deferred, waived (pointing at a waiver record), or delivered-elsewhere.
-2. The spec system shall record a waiver only as a human act with a required reason, on a (criterion, revision) pair, terminal for that revision; a waiver is not a kind of evidence.
+2. The spec system shall record a waiver only as a human act with a required reason, against the reviewed criterion content and revision; changing or revoking the current decision shall append attributed history. A waiver is not a kind of evidence.
 3. The spec system shall let agents and Notify/Off policy request or route a waiver but never grant one.
 4. The spec system shall record "not in this delivery" as deferred, never as waived.
 5. When a waived criterion changes in a later revision, the spec system shall mark the waiver stale and require a new human decision.
-6. The spec system shall accept a delivered-elsewhere disposition only when a successfully merged execution delivered that criterion.
+6. The spec system shall accept a delivered-elsewhere disposition when a successful merge or an attributed human external-delivery record delivered that criterion with applicable acceptance.
+7. Spec Studio shall provide individual, selected, all-unresolved, and all-criteria actions to mark criteria satisfied or waive evidence. Selection shall include collapsed and undisplayed rows. The action shall show the affected count, revision, and delivery scope.
+8. One batch shall commit atomically with one attributed review and shared explanation. Satisfaction permits an optional note; waiving evidence requires one non-empty reason for the batch. A stale revision or review token shall refuse the entire batch.
+9. Decisions shall survive execution replacement when their criterion and governing requirement content remain applicable. A content change shall reopen only affected criteria; revocation shall not revive an earlier decision. Automated outcomes remain visible independently.
 
 ### Requirement 15: Tickets and specs — link, graduate, materialize
 **Objective:** As the operator, I want tickets and specs linked with provenance and mirrored by read-through display, so that board views track spec-driven work without duplicated state or sync jobs.
@@ -275,18 +278,18 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 1. When implementation starts, the spec system shall pin an exact (revision, scope) pair, where scope is the selected subset of tasks and criteria the run intends to deliver; partial scope shall be treated as normal, not exceptional.
 2. The spec system shall allow at most one active execution per spec in V1, where an execution in Definition review counts as active.
 3. If execution start is requested pinning a revision that is not in the Approved state, the spec system shall refuse the transition.
-4. When execution start is requested, the spec system shall refuse it unless the selected tasks are dependency-closed.
-5. When execution start is requested, the spec system shall refuse it unless every selected criterion has selected task coverage.
+4. When managed graph execution start is requested, the spec system shall refuse it unless the selected tasks are dependency-closed.
+5. When managed graph execution start is requested, the spec system shall refuse it unless every selected criterion has selected task coverage. Explicit session delivery may select criteria without inventing graph task coverage.
 6. When execution start is requested, the spec system shall refuse it unless every excluded criterion carries an explicit disposition (deferred, delivered-elsewhere, or waived).
 7. If a partial task selection is requested that the plan does not define as a valid smaller unit, the spec system shall reject the selection.
 8. While an execution is running, the spec system shall keep its pinned revision and scope immutable; neither shall ever mutate mid-run.
-9. When new work is discovered during execution, the spec system shall capture it as a proposed scope amendment on the spec — never a silent expansion of the run; an approved amendment shall queue for a future execution, and if the discovery blocks the current run the supported operation shall be abandon-and-restart.
+9. When new work is discovered during execution, the spec system shall capture it as a proposed scope amendment on the spec — never a silent expansion of the run; an approved amendment shall queue for a future execution, and if the discovery blocks the current run the supported operation shall retire the attempt and continue delivery through an explicitly selected path.
 
 ### Requirement 17: Execution plan compilation and provenance locking
 **Objective:** As the operator, I want the approved plan compiled into a standard graph workflow definition with contract content locked to its source, so that the run is reviewable with existing tools and the plan gate cannot be edited away downstream.
 
 #### Acceptance Criteria
-1. When an execution is prepared, the spec system shall compile the spec's approved plan into a standard graph workflow definition — task groups become contexts, dependencies become edges, acceptance criteria seed validator briefs, and each lane receives a narrow context pack — not a new artifact class.
+1. When a managed graph execution is prepared, the spec system shall compile the spec's approved plan into a standard graph workflow definition — task groups become contexts, dependencies become edges, acceptance criteria seed validator briefs, and each lane receives a narrow context pack — not a new artifact class.
 2. The generated definition shall be reviewed and edited in the existing graph-workflow surface and validated by the existing workflow machinery.
 3. The generated definition shall require its own approval before start, governed by the execution-start dial, and shall carry provenance links from each context back to the spec tasks and criteria it implements.
 4. The definition's execution-only choices (isolation, lane grouping, retries, budgets) shall remain freely editable and reviewable; its contract-derived content (pinned revision and scope, task dependencies, task-to-criterion mappings, required validation strategy) shall be provenance-locked — read-only with a source link offering amend-at-source-and-recompile instead of in-place editing.
@@ -298,11 +301,16 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 #### Acceptance Criteria
 1. The delivery gate shall read its inputs from the spec's pinned (revision, scope) criteria, never from the workflow definition, so that editing the compiled definition can never weaken what delivery demands.
 2. When merge is requested, the delivery gate shall evaluate exactly the criteria selected by the pinned scope — never the whole spec.
-3. When the merge gate evaluates an execution, the spec system shall accept a selected criterion only if it is proven by valid proof, validly waived by a human for the pinned revision, or already delivered by an earlier successfully merged execution (shown as satisfied rather than re-demanded).
+3. When the merge gate evaluates an execution, the spec system shall accept a selected criterion through applicable automated proof, human satisfaction, evidence waiver, or an applicable earlier delivery. Human judgment shall never be labeled automated proof.
 4. If any selected criterion is in none of the acceptable states of criterion 3, the spec system shall refuse the merge.
 5. When the merge gate evaluates an execution, criteria excluded from the pinned scope as deferred shall be listed visibly as out-of-scope without blocking the merge.
-6. The spec system shall mark an execution Delivered only after its merge succeeds — not when delivery is requested or approved.
-7. When the delivery gate refuses solely because the required human delivery approval is missing, the spec system shall file the durable approval request itself — idempotently for the execution, keyed to the run's pinned revision — so the wait reaches Needs You without an agent action, and the resulting halt shall present as waiting on approval with a deep link to the approving control, distinct from an unmet-criteria failure.
+6. Session delivery shall become Delivered only after its merge succeeds, never when requested or approved. Work already delivered outside CC may receive an explicit human external-delivery record with optional workflow or commit references; this record shall affect future delivery calculations without claiming a CC-observed merge.
+7. When the delivery gate finds that required human delivery approval is missing, the spec system shall file the durable approval request itself — idempotently for the execution, keyed to the run's pinned revision — so the wait reaches Needs You without an agent action, and the resulting halt shall present as waiting on approval with a deep link to the approving control, distinct from an unmet-criteria failure.
+
+8. Merge initiation shall assess delivery before validation, conflict resolution, or other avoidable preparation. UI, chat, machine entry, and final publication shall use the same readiness assessment. All known approval, criterion, and execution blockers shall be presented together.
+9. The delivery review shall provide Approve delivery and continue merge, plus an explicitly labeled action to waive remaining evidence and approve delivery with one reason. Routine revalidation or rebasing shall retain approval; changed scope or revoked acceptance shall be checked before publication. Failed merges shall never record successful delivery.
+10. Continue delivery shall support finishing in the session, recording another workflow as a delivery source, or opening a replacement managed workflow. Cleanup shall compose existing stop and lease-release behavior. Original attempts and their actual outcomes shall remain history; unrelated workflow references shall not acquire invented proof mappings.
+11. Session continuation shall work after abandonment and for approved Design specs that never launched a graph. It shall preserve applicable proof, including successfully completed archived runs, and shall not require a dummy workflow, completion of the original graph, or a premature Delivered record.
 
 ### Requirement 19: Liveness and attention
 **Objective:** As the operator, I want spec state changes to behave like every other CC domain — live, typed, and attention-routed — so that no spec surface polls or goes stale.

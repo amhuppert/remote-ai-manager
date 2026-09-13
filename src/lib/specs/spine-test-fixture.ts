@@ -1,3 +1,7 @@
+import { createDeliveryApprovalService } from "./delivery-approval";
+import { createDeliveryReviewService } from "./delivery-review-service";
+import { createDeliveryContinuationService } from "./delivery-continuation";
+import { readDeliveryReview } from "./delivery-review-query";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import type {
   ExecutionMutationDecision as FixtureDecision,
@@ -731,6 +735,8 @@ export function createSpecSpineWorld(
       activeWorkflowExecution.id === workflowExecutionId
         ? activeWorkflowExecution.status
         : null,
+    getPublishedMergeBySpecExecutionId: async (specExecutionId) =>
+      jobs.findLatestPublishedMergeBySpecExecutionId(specExecutionId),
     getPublishedMerge: async (workflowExecutionId) =>
       jobs.findLatestPublishedMergeByExecutionId(workflowExecutionId),
     runInImmediateTransaction<T>(fn: () => T): T {
@@ -886,6 +892,60 @@ export function createSpecSpineWorld(
   });
 
   const services: SpecSpineWorld["services"] = {
+    deliveryApproval: createDeliveryApprovalService({
+      read: (spec, executionId) =>
+        readDeliveryReview(
+          {
+            specs,
+            bindings: bindingRepo,
+            delivery,
+            review,
+            gate: createRegisteredDeliveryGateEvaluator(),
+          },
+          spec,
+          executionId,
+        ),
+      acceptance: createDeliveryReviewService({
+        specs,
+        delivery,
+        events,
+        nextId: () => newId("acceptance"),
+        now,
+      }),
+      review: reviewService,
+    }),
+    deliveryReview: createDeliveryReviewService({
+      specs,
+      delivery,
+      events,
+      nextId: () => newId("acceptance"),
+      now,
+    }),
+    deliveryContinuation: createDeliveryContinuationService({
+      specs,
+      delivery,
+      links,
+      events,
+      execution,
+      deliveryPlan,
+      sessionExists: async () => true,
+      workflowExists: async () => true,
+      nextId: () => newId("continuation"),
+      now,
+    }),
+    readDeliveryReview(spec, executionId) {
+      return readDeliveryReview(
+        {
+          specs,
+          bindings: bindingRepo,
+          delivery,
+          review,
+          gate: createRegisteredDeliveryGateEvaluator(),
+        },
+        spec,
+        executionId,
+      );
+    },
     authoring,
     review: reviewService,
     evidence,
@@ -910,6 +970,7 @@ export function createSpecSpineWorld(
     name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null;
 
   const readHandlers = createSpecRouteHandlers({
+    readDeliveryReview: (spec) => services.readDeliveryReview(spec),
     resolveProjectPath,
     listSpecs: (projectPath) => specs.listByProject(projectPath),
     resolveSpec: (projectPath, slug) => authoring.getSpec(projectPath, slug),
@@ -1054,6 +1115,8 @@ export function createSpecSpineWorld(
       writeQueue,
       nextId: newId,
       now,
+      getPublishedMergeBySpecExecutionId: async (specExecutionId) =>
+        jobs.findLatestPublishedMergeBySpecExecutionId(specExecutionId),
       getPublishedMerge: async (workflowExecutionId) =>
         jobs.findLatestPublishedMergeByExecutionId(workflowExecutionId),
       runInImmediateTransaction<T>(fn: () => T): T {
@@ -1093,8 +1156,12 @@ export function createSpecSpineWorld(
         getSessionTargetBranch: () => null,
       }),
       mergeDeliveryLifecycle: {
-        markDelivered: (workflowExecutionId, mergeHash) =>
-          lifecycleCallbacks.markDelivered(workflowExecutionId, mergeHash),
+        markDelivered: (workflowExecutionId, mergeHash, specExecutionId) =>
+          lifecycleCallbacks.markDelivered(
+            workflowExecutionId,
+            mergeHash,
+            specExecutionId,
+          ),
       },
     });
   }

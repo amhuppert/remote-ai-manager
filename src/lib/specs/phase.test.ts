@@ -33,6 +33,16 @@ function revision(
 }
 
 describe("spec phase projection", () => {
+  it("counts accepted merged delivery separately from automated proof", () => {
+    const display = projectDeliveryDisplay([
+      { criterionElementId: "human-criterion", state: "accepted_and_merged" },
+    ]);
+    expect(display).toMatchObject({
+      deliveredCount: 1,
+      provenCount: 0,
+      deliveredExternallyCriterionIds: [],
+    });
+  });
   it("3.1 derives the lifecycle phase instead of accepting a stored phase", () => {
     expect(
       projectSpecPhase(

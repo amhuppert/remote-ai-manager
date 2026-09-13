@@ -1,3 +1,14 @@
+import { specDeliveryBasisSchema } from "./schemas";
+import type { DeliveryApprovalService } from "./delivery-approval";
+import type { DeliveryReviewService } from "./delivery-review-service";
+import type { DeliveryContinuationService } from "./delivery-continuation";
+import type { DeliveryReviewView } from "./delivery-review-schemas";
+import {
+  acceptanceReviewRequestSchema,
+  deliveryContinuationRequestSchema,
+  deliveryReplacementRequestSchema,
+  deliveryApprovalRequestSchema,
+} from "./delivery-review-schemas";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -259,6 +270,7 @@ export type SpecRouteContext = {
 };
 
 export interface SpecRouteDeps {
+  readDeliveryReview(spec: Spec): Promise<DeliveryReviewView | null>;
   resolveProjectPath(name: string): Promise<string | null>;
   listSpecs(projectPath: string): Promise<Spec[]>;
   resolveSpec(projectPath: string, slug: string): Promise<Spec | null>;
@@ -457,6 +469,10 @@ function createDefaultDeps(): SpecRouteDeps {
   };
 
   return {
+    async readDeliveryReview(spec) {
+      const services = await loadProductionSpecRouteServices(spec.projectPath);
+      return services.readDeliveryReview(spec);
+    },
     resolveProjectPath: defaultResolveProjectPath,
     listSpecs: (projectPath) => specs.listByProject(projectPath),
     resolveSpec: (projectPath, slug) => authoring.getSpec(projectPath, slug),
@@ -709,6 +725,48 @@ function coverage(snapshot: SpecRevisionSnapshot | null): SpecCoverage {
   };
 }
 
+function recordedCriterionDelivery(
+  deps: SpecRouteDeps,
+  execution: SpecExecutionRow,
+  criterionId: string,
+  visited = new Set<string>(),
+): "accepted_and_merged" | "delivered_externally" | null {
+  if (execution.state !== "delivered" || visited.has(execution.id)) return null;
+  visited.add(execution.id);
+  const disposition = deps
+    .findCriterionDispositionsByExecution(execution.id)
+    .find((row) => row.criterion_element_id === criterionId);
+  if (
+    disposition?.disposition === "delivered_elsewhere" &&
+    disposition.delivered_by_execution_id
+  ) {
+    const source = deps
+      .findExecutionsBySpecId(execution.spec_id)
+      .find((row) => row.id === disposition.delivered_by_execution_id);
+    return source
+      ? recordedCriterionDelivery(deps, source, criterionId, visited)
+      : null;
+  }
+  if (
+    disposition?.disposition !== "in_scope" ||
+    disposition.delivered_by_execution_id !== execution.id
+  )
+    return null;
+  const verified = findDeliveryVerdictForExecution(
+    deps.findDeliveryVerdictsBySpecExecutionId(execution.id),
+    execution,
+    deps.findExecutionBindingBySpecExecutionId(execution.id),
+    criterionId,
+  );
+  if (verified !== null) return null;
+  const basis = execution.delivery_basis_json
+    ? specDeliveryBasisSchema.parse(JSON.parse(execution.delivery_basis_json))
+    : null;
+  return basis?.kind === "external"
+    ? "delivered_externally"
+    : "accepted_and_merged";
+}
+
 function deliveryCriteria(
   deps: SpecRouteDeps,
   currentApprovedSnapshot: SpecRevisionSnapshot | null,
@@ -758,7 +816,10 @@ function deliveryCriteria(
             .get(execution.id)
             ?.find((row) => row.criterion_element_id === element.id);
           if (disposition?.disposition === "delivered_elsewhere") {
-            return isEarlierMergedDelivery(priorRuns, execution, disposition);
+            return (
+              isEarlierMergedDelivery(priorRuns, execution, disposition) &&
+              recordedCriterionDelivery(deps, execution, element.id) === null
+            );
           }
           if (disposition?.disposition !== "in_scope") return false;
           const linkedBinding = deps.findExecutionBindingBySpecExecutionId(
@@ -788,6 +849,14 @@ function deliveryCriteria(
             state: "proven_and_merged" as const,
           };
         }
+
+        const recorded = deliveredExecutions
+          .map((execution) =>
+            recordedCriterionDelivery(deps, execution, element.id),
+          )
+          .find((state) => state !== null);
+        if (recorded)
+          return { criterionElementId: element.id, state: recorded };
 
         // The imported spec's own testimony that this content shipped
         // elsewhere. It is read from the revision the criterion belongs to, so
@@ -906,6 +975,14 @@ function criterionProofState(
   ) {
     return "proven";
   }
+  if (
+    deliveredExecutions.some(
+      (execution) =>
+        recordedCriterionDelivery(deps, execution, criterionElementId) ===
+        "delivered_externally",
+    )
+  )
+    return "delivered_externally";
   if (boundExecutions.length > 0) {
     return revision.externalDelivery === null
       ? "pending"
@@ -1176,6 +1253,13 @@ function toExecutionView(
     state: execution.state,
     workflowSeedSource: nativeSddSeedSourceSummary(execution),
     workflowExecutionId: execution.workflow_execution_id,
+    ...(execution.delivery_basis_json
+      ? {
+          deliveryBasis: specDeliveryBasisSchema.parse(
+            JSON.parse(execution.delivery_basis_json),
+          ),
+        }
+      : {}),
     scope,
     sessionName: execution.session_name,
     deliveredAt: execution.delivered_at,
@@ -1203,6 +1287,13 @@ function toStartedExecutionView(
     state: execution.state,
     workflowSeedSource: nativeSddSeedSourceSummary(execution),
     workflowExecutionId: execution.workflow_execution_id,
+    ...(execution.delivery_basis_json
+      ? {
+          deliveryBasis: specDeliveryBasisSchema.parse(
+            JSON.parse(execution.delivery_basis_json),
+          ),
+        }
+      : {}),
     scope: parseExecutionScope(execution.scope_json),
     sessionName: execution.session_name,
     deliveredAt: execution.delivered_at,
@@ -1635,6 +1726,13 @@ async function buildStatus(
       state: run.state,
       workflowSeedSource: nativeSddSeedSourceSummary(run),
       workflowExecutionId: run.workflow_execution_id,
+      ...(run.delivery_basis_json
+        ? {
+            deliveryBasis: specDeliveryBasisSchema.parse(
+              JSON.parse(run.delivery_basis_json),
+            ),
+          }
+        : {}),
       workflowStatus: reconciled.laneStatusById.get(run.id) ?? null,
     })),
     gates: projection.gates,
@@ -2655,9 +2753,27 @@ export function createSpecRouteHandlers(
     const resolved = await resolveSpecRoute(deps, context);
     if (!resolved.ok) return resolved.response;
     const state = await loadCurrentState(deps, resolved.value.spec.id);
-    return NextResponse.json(
-      await buildStatus(deps, resolved.value.spec, state),
-    );
+    const status = await buildStatus(deps, resolved.value.spec, state);
+    const review = await deps.readDeliveryReview(resolved.value.spec);
+    return NextResponse.json({
+      ...status,
+      deliveryReadiness:
+        review === null
+          ? null
+          : {
+              revisionId: review.revisionId,
+              executionId: review.execution?.id ?? null,
+              approvalGranted: review.approvalGranted,
+              totalInScope: review.criteria.filter(
+                (criterion) => criterion.inScope,
+              ).length,
+              settled: review.criteria.filter(
+                (criterion) =>
+                  criterion.inScope && criterion.outcome !== "needs_review",
+              ).length,
+              blockers: review.blockers,
+            },
+    });
   }
 
   /**
@@ -3517,6 +3633,13 @@ export const SPEC_CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
 export const SPEC_CALLER_BACKEND_HEADER = "x-cc-agent-backend";
 
 export interface SpecMutationServices {
+  deliveryReview: DeliveryReviewService;
+  deliveryApproval: DeliveryApprovalService;
+  deliveryContinuation: DeliveryContinuationService;
+  readDeliveryReview(
+    spec: Spec,
+    executionId?: string,
+  ): Promise<DeliveryReviewView | null>;
   authoring: Pick<
     AuthoringService,
     | "createSpec"
@@ -3947,6 +4070,10 @@ const HUMAN_ONLY_ACTIONS = new Map<string, string>([
   ["bulk-approve", BROWSER_SESSION_REMEDY],
   ["grant-gate-approval", BROWSER_SESSION_REMEDY],
   ["grant-waiver", BROWSER_SESSION_REMEDY],
+  ["review-acceptance", BROWSER_SESSION_REMEDY],
+  ["approve-delivery-review", BROWSER_SESSION_REMEDY],
+  ["continue-delivery", BROWSER_SESSION_REMEDY],
+  ["replace-delivery", BROWSER_SESSION_REMEDY],
   ["change-policy", BROWSER_SESSION_REMEDY],
   // Assumption disposition is the human half of the propose/dispose split
   // (mirrors waiver origin rules); the service also refuses agents, but the
@@ -4416,6 +4543,32 @@ export function createSpecWriteRouteHandlers(
                 approver: "operator",
               }),
           );
+        case "approve-delivery-review":
+          return invokeAction(request, deliveryApprovalRequestSchema, (input) =>
+            services.deliveryApproval.approve({
+              ...input,
+              spec: resolved.value.spec,
+              actor: actor.value,
+            }),
+          );
+        case "review-acceptance":
+          return invokeAction(request, acceptanceReviewRequestSchema, (input) =>
+            services.deliveryReview.record(withReviewIdentity(input)),
+          );
+        case "replace-delivery":
+          return invokeAction(
+            request,
+            deliveryReplacementRequestSchema,
+            (input) =>
+              services.deliveryContinuation.replace(withReviewIdentity(input)),
+          );
+        case "continue-delivery":
+          return invokeAction(
+            request,
+            deliveryContinuationRequestSchema,
+            (input) =>
+              services.deliveryContinuation.continue(withReviewIdentity(input)),
+          );
         case "grant-gate-approval":
           return invokeAction(request, grantGateApprovalBodySchema, (input) =>
             services.review.grantGateApproval({
@@ -4794,6 +4947,24 @@ export function createSpecWriteRouteHandlers(
     }
   }
 
+  async function specDeliveryReviewGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    try {
+      const services = await deps.getServices(resolved.value.projectPath);
+      const executionId =
+        new URL(request.url).searchParams.get("execution") ?? undefined;
+      return NextResponse.json(
+        await services.readDeliveryReview(resolved.value.spec, executionId),
+      );
+    } catch (error) {
+      return routeFailure(error, "delivery-review");
+    }
+  }
+
   /**
    * The delivery-plan review read: the plan projection resolved with its
    * pinned criteria in full. It is a separate route rather than a field on
@@ -4901,6 +5072,7 @@ export function createSpecWriteRouteHandlers(
     specActionPOST,
     specPlanGET,
     specPlanReviewGET,
+    specDeliveryReviewGET,
     specPlanDiffGET,
     specPlanPreviewGET,
   };
@@ -4916,4 +5088,8 @@ export const specPlanReviewGET = withTracing(writeHandlers.specPlanReviewGET);
 export const specPlanDiffGET = withTracing(writeHandlers.specPlanDiffGET);
 export const specPlanAttemptPreviewGET = withTracing(
   writeHandlers.specPlanPreviewGET,
+);
+
+export const specDeliveryReviewGET = withTracing(
+  writeHandlers.specDeliveryReviewGET,
 );

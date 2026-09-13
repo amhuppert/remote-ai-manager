@@ -53,6 +53,7 @@ const jobRecordRowSchema = registerTrustedSchema(
     conflict_files: z.string().nullable(),
     error_message: z.string().nullable(),
     execution_id: z.string().nullable(),
+    spec_execution_id: z.string().nullable(),
     final_publish: z.number().int(),
     candidate_validation: z.string().nullable(),
     // Nullish rather than nullable: a row read by a build that has the columns
@@ -262,6 +263,8 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
     candidate.conflictFiles = conflictFilesResult.value;
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
   if (row.execution_id !== null) candidate.executionId = row.execution_id;
+  if (row.spec_execution_id !== null)
+    candidate.specExecutionId = row.spec_execution_id;
   if (row.final_publish === 1) candidate.finalPublish = true;
   if (row.parked_ref != null) candidate.parkedRef = row.parked_ref;
   if (row.prepared_sha != null) candidate.preparedSha = row.prepared_sha;
@@ -306,6 +309,8 @@ function rowToJobRecord(rawRow: unknown): JobRecord {
     durable.conflictFiles = job.conflictFiles;
   if (job.errorMessage !== undefined) durable.errorMessage = job.errorMessage;
   if (job.executionId !== undefined) durable.executionId = job.executionId;
+  if (job.specExecutionId !== undefined)
+    durable.specExecutionId = job.specExecutionId;
   if (job.finalPublish !== undefined) durable.finalPublish = job.finalPublish;
   if (job.parkedRef !== undefined) durable.parkedRef = job.parkedRef;
   if (job.preparedSha !== undefined) durable.preparedSha = job.preparedSha;
@@ -329,6 +334,7 @@ export interface JobRecordUpdate {
   conflictFiles?: string[];
   errorMessage?: string;
   executionId?: string;
+  specExecutionId?: string;
   /**
    * Parked-merge bookkeeping, carried by a `ready-to-land` terminal. Written
    * unconditionally (not COALESCEd) so a later terminal for the same job — a
@@ -450,6 +456,10 @@ export interface JobsRepo {
     mergeHash: string;
     deliveryGatePassed: true;
   } | null;
+  findLatestPublishedMergeBySpecExecutionId(specExecutionId: string): {
+    mergeHash: string;
+    deliveryGatePassed: true;
+  } | null;
   findMergeValidationByExecutionIdAndRef(
     workflowExecutionId: string,
     validationRef: string,
@@ -481,8 +491,8 @@ export function createJobsRepo(db: Db): JobsRepo {
         // for the job, so they are written once here and left alone by the
         // terminal update.
         db.prepare(
-          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, execution_id, final_publish, candidate_validation, finalize_session_on_publish, resolution_context)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, execution_id, spec_execution_id, final_publish, candidate_validation, finalize_session_on_publish, resolution_context)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           validated.jobId,
           validated.jobType,
@@ -493,6 +503,7 @@ export function createJobsRepo(db: Db): JobsRepo {
           validated.startedAt,
           process.pid,
           validated.executionId ?? null,
+          validated.specExecutionId ?? null,
           validated.finalPublish === true ? 1 : 0,
           validated.candidateValidation
             ? JSON.stringify(validated.candidateValidation)
@@ -654,13 +665,14 @@ export function createJobsRepo(db: Db): JobsRepo {
     return rows.map((row) => parseTrusted(jobIdColumnSchema, row).job_id);
   }
 
-  function findLatestPublishedMergeByExecutionId(
-    workflowExecutionId: string,
+  function findLatestPublishedMerge(
+    identityColumn: "execution_id" | "spec_execution_id",
+    executionId: string,
   ): { mergeHash: string; deliveryGatePassed: true } | null {
     return timedSync(
       jobRecordLogger,
-      "state-db.findLatestPublishedMergeByExecutionId",
-      { workflowExecutionId },
+      "state-db.findLatestPublishedMerge",
+      { identityColumn, executionId },
       () => {
         const rawRow = db
           .prepare(
@@ -668,13 +680,13 @@ export function createJobsRepo(db: Db): JobsRepo {
                FROM job_records
               WHERE job_type IN ('merge', 'resolve-conflicts')
                 AND status = 'completed'
-                AND execution_id = ?
+                AND ${identityColumn} = ?
                 AND final_publish = 1
                 AND COALESCE(merge_hash, expected_target_sha) IS NOT NULL
               ORDER BY completed_at DESC, rowid DESC
               LIMIT 1`,
           )
-          .get(workflowExecutionId);
+          .get(executionId);
         if (rawRow === undefined) return null;
         const row = parseTrusted(publishedMergeColumnsSchema, rawRow);
         // A merge that landed carries its own commit; one that completed
@@ -822,6 +834,9 @@ export function createJobsRepo(db: Db): JobsRepo {
   }
 
   return {
+    findLatestPublishedMergeBySpecExecutionId(id) {
+      return findLatestPublishedMerge("spec_execution_id", id);
+    },
     createJobRecord,
     updateJobRecord,
     persistCandidateValidation,
@@ -829,7 +844,9 @@ export function createJobsRepo(db: Db): JobsRepo {
     findLatestJobRecordForSession,
     listParkedJobRecords,
     listJobIdsHoldingParkedRefs,
-    findLatestPublishedMergeByExecutionId,
+    findLatestPublishedMergeByExecutionId(id) {
+      return findLatestPublishedMerge("execution_id", id);
+    },
     findMergeValidationByExecutionIdAndRef,
     deleteJobRecordsForSession,
     deleteJobRecordsForProject,

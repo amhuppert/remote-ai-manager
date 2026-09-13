@@ -40,6 +40,12 @@ export const specKeys = {
         ? []
         : (["since", sinceExecutionId] as const)),
     ] as const,
+  deliveryReview: (projectName: string, slug: string, executionId?: string) =>
+    [
+      ...specKeys.detail(projectName, slug),
+      "delivery-review",
+      executionId ?? "current",
+    ] as const,
   planReview: (projectName: string, slug: string) =>
     [...specKeys.detail(projectName, slug), "plan-review"] as const,
   planPreview: (

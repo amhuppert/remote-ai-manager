@@ -659,3 +659,65 @@ describe("getIntegrationReadyFinalCandidate", () => {
     });
   });
 });
+
+describe("retained source proof", () => {
+  it.each(["halted", "aborted"] as const)(
+    "retains an integrated completed context from an archived %s run without approving the run",
+    async (status) => {
+      const execution = oneContextExecution("owned");
+      completeContext(execution);
+      landAndIntegrate(execution, "commit");
+      execution.status = status;
+      const service = lookup(execution, "archived");
+      await expect(
+        service.getAuthoredContextOutcome(
+          execution.id,
+          CONTEXT_ID,
+          "retained_source",
+        ),
+      ).resolves.toMatchObject({
+        status: "satisfied",
+        reason: "write_result_integrated",
+      });
+      await expect(
+        service.getAuthoredContextOutcome(execution.id, CONTEXT_ID),
+      ).resolves.toMatchObject({
+        status: "failed",
+        reason: `execution_${status}`,
+      });
+      await expect(
+        service.getIntegrationReadyFinalCandidate(execution.id, [CONTEXT_ID]),
+      ).resolves.toMatchObject({ status: "failed" });
+      execution.joins = {};
+      await expect(
+        service.getAuthoredContextOutcome(
+          execution.id,
+          CONTEXT_ID,
+          "retained_source",
+        ),
+      ).resolves.not.toMatchObject({ status: "satisfied" });
+    },
+  );
+  it("never treats an unfinished context or a still-active aborted source as proof", async () => {
+    const execution = oneContextExecution("readOnly");
+    execution.status = "aborted";
+    await expect(
+      lookup(execution, "archived").getAuthoredContextOutcome(
+        execution.id,
+        CONTEXT_ID,
+        "retained_source",
+      ),
+    ).resolves.toMatchObject({
+      status: "pending",
+      reason: "context_unsettled",
+    });
+    completeContext(execution);
+    await expect(
+      lookup(execution).getAuthoredContextOutcome(
+        execution.id,
+        CONTEXT_ID,
+        "retained_source",
+      ),
+    ).resolves.toMatchObject({ status: "failed", reason: "execution_aborted" });
+  });
+});

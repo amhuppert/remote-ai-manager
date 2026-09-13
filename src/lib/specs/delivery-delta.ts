@@ -523,7 +523,10 @@ function wasDelivered(
     return false;
   }
   if (dispositionRow.disposition === "in_scope") {
-    return hasDeliveryVerdict(input, dispositionRow.criterion_element_id);
+    return (
+      dispositionRow.delivered_by_execution_id === input.comparedExecution.id ||
+      hasDeliveryVerdict(input, dispositionRow.criterion_element_id)
+    );
   }
   return (
     dispositionRow.disposition === "delivered_elsewhere" &&

@@ -243,7 +243,7 @@ export type DeliveryGateActorOutput = DeliveryGateEvaluation;
 export function createDeliveryGateActor(evaluator: DeliveryGateEvaluator) {
   return fromPromise<DeliveryGateActorOutput, DeliveryGateActorInput>(
     async ({ input }) => {
-      if (!input.workflowExecutionId) {
+      if (!input.workflowExecutionId && !input.specExecutionId) {
         logger.debug("delivery_gate.skipped", {
           preparedSha: input.preparedSha,
           projectPath: input.projectPath,
@@ -259,6 +259,9 @@ export function createDeliveryGateActor(evaluator: DeliveryGateEvaluator) {
       });
       const result = await evaluator.evaluate({
         workflowExecutionId: input.workflowExecutionId,
+        ...(input.specExecutionId && {
+          specExecutionId: input.specExecutionId,
+        }),
         preparedSha: input.preparedSha,
         expectedTargetSha: input.expectedTargetSha,
         projectPath: input.projectPath,

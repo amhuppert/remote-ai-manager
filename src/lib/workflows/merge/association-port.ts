@@ -21,8 +21,16 @@ export interface MergeAssociationInput {
 
 export type MergeAssociationResolution =
   | { kind: "none" }
-  | { kind: "linked"; executionId: string; finalPublish: boolean }
-  | { kind: "refused"; reason: string; instruction: string };
+  | ({ kind: "linked"; finalPublish: boolean } & (
+      | { executionId: string; specExecutionId?: never }
+      | { specExecutionId: string; executionId?: never }
+    ))
+  | {
+      kind: "refused";
+      reason: string;
+      instruction: string;
+      specExecutionId?: string;
+    };
 
 export interface MergeAssociationResolver {
   resolve(input: MergeAssociationInput): MergeAssociationResolution;

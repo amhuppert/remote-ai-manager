@@ -35,6 +35,7 @@ export type {
 export const deliveryCriterionStateSchema = z.enum([
   "pending",
   "proven_and_merged",
+  "accepted_and_merged",
   /**
    * The criterion's work shipped outside this system, on the strength of an
    * imported spec's external-delivery record. It is its own state rather than
@@ -192,7 +193,9 @@ export function projectDeliveryDisplay(
       criteria.length > 0 && criteria.every(({ state }) => state === "waived"),
     deliveredCount: criteria.filter(
       ({ state }) =>
-        state === "proven_and_merged" || state === "delivered_externally",
+        state === "proven_and_merged" ||
+        state === "accepted_and_merged" ||
+        state === "delivered_externally",
     ).length,
     provenCount: criteria.filter(({ state }) => state === "proven_and_merged")
       .length,

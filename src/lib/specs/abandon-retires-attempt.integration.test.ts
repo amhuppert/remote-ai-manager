@@ -69,6 +69,115 @@ describe("spec abandon --execution retires the launched attempt", () => {
     _resetPublicationForTesting();
   });
 
+  it("continues an active graph through real cleanup without fabricating delivery", async () => {
+    const started = await launchedAttempt();
+    const spec = await spineSpec();
+    const continued = await world.services.deliveryContinuation.continue({
+      specId: spec.id,
+      revisionId: started.revisionId,
+      expectedExecutionId: started.specExecutionId,
+      mode: "session",
+      sessionName: "spine-session",
+      note: "Finish the remaining work in the session",
+      commitRefs: [],
+      actor: HUMAN,
+    });
+    expect(continued).toMatchObject({
+      ok: true,
+      value: {
+        state: "running",
+        workflow_execution_id: null,
+        delivered_at: null,
+      },
+    });
+    expect(
+      world.repos.delivery.findExecutionById(started.specExecutionId),
+    ).toMatchObject({
+      state: "abandoned",
+    });
+    expect(
+      world.repos.deliveryPlans.findAttemptById(started.attemptId),
+    ).toMatchObject({ status: "abandoned" });
+  });
+
+  it("retires an unused plan when delivery moves to a session", async () => {
+    const authored = await authorSpineDraft(world, SLUG);
+    await proposeSpineRevision(world, SLUG, authored);
+    await approveAndSignOffSpine(world, SLUG, authored);
+    const spec = await spineSpec();
+    const opened = await world.services.deliveryPlan.open({
+      spec,
+      actor: HUMAN,
+    });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const continued = await world.services.deliveryContinuation.continue({
+      specId: spec.id,
+      revisionId: authored.draftRevisionId,
+      expectedExecutionId: null,
+      mode: "session",
+      sessionName: "spine-session",
+      note: "No graph is needed",
+      commitRefs: [],
+      actor: HUMAN,
+    });
+    expect(continued).toMatchObject({ ok: true });
+    expect(
+      world.repos.deliveryPlans.findAttemptById(opened.value.attempt.id),
+    ).toMatchObject({ status: "abandoned" });
+  });
+
+  it("replaces a session delivery through the human route and leaves the old run abandoned", async () => {
+    const authored = await authorSpineDraft(world, SLUG);
+    await proposeSpineRevision(world, SLUG, authored);
+    await approveAndSignOffSpine(world, SLUG, authored);
+    const spec = await spineSpec();
+    const continued = await world.services.deliveryContinuation.continue({
+      specId: spec.id,
+      revisionId: authored.draftRevisionId,
+      expectedExecutionId: null,
+      mode: "session",
+      sessionName: "spine-session",
+      note: "Continue in session",
+      commitRefs: [],
+      actor: HUMAN,
+    });
+    if (!continued.ok)
+      throw new Error(continued.refusal.unmetConditions.join(" "));
+    const input = {
+      revisionId: authored.draftRevisionId,
+      expectedExecutionId: continued.value.id,
+      note: "Use a replacement workflow",
+    };
+    const refused = await world.postAction(
+      SLUG,
+      "replace-delivery",
+      input,
+      "agent",
+    );
+    expect(refused.status).toBe(403);
+    expect(
+      world.repos.delivery.findExecutionById(continued.value.id)?.state,
+    ).toBe("running");
+    const response = await world.postAction(
+      SLUG,
+      "replace-delivery",
+      input,
+      "human",
+    );
+    expect(response.status).toBe(200);
+    expect(
+      world.repos.delivery.findExecutionById(continued.value.id),
+    ).toMatchObject({ state: "abandoned", delivered_at: null });
+    expect(world.repos.deliveryPlans.findAttemptsBySpecId(spec.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "draft",
+          pinned_revision_id: authored.draftRevisionId,
+        }),
+      ]),
+    );
+  });
+
   function deferredBinding(authored: AuthoredSpineSpec): DeliveryPlanBinding {
     return {
       dispositions: [authored.criterionOneId, authored.criterionTwoId].map(

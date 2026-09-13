@@ -14,6 +14,8 @@ describe("merge delivery-gate port composition", () => {
     const observed: string[] = [];
     registerDeliveryGateEvaluator({
       async evaluate(input) {
+        if (!input.workflowExecutionId)
+          throw new Error("Expected graph execution identity");
         observed.push(input.workflowExecutionId);
         return { status: "pass", satisfied: [], deferred: [] };
       },

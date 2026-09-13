@@ -127,7 +127,9 @@ describe("delivery-approval reachability across the gate and the request-approva
       specName: spec.name,
       projectName: SPINE_PROJECT_NAME,
     });
-    expect(haltReason.instruction).toContain("Approve delivery in Spec Studio");
+    expect(haltReason.instruction).toContain(
+      "Open the delivery review in Spec Studio",
+    );
 
     // Exactly one durable Needs You request, keyed to this run.
     const afterFirst = approvalRequestEvents(authored.specId);

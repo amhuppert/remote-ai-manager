@@ -299,6 +299,39 @@ function criterionClassOf(
 }
 
 describe("projectDeliveryDelta element classes", () => {
+  it("retains human delivery as the next plan's baseline without inventing a graph proof", () => {
+    const rows = [
+      requirementRow("req", 1, "Human delivery"),
+      criterionRow("ac", 1, "req", "Deliver flexibly"),
+    ];
+    const delivered = deliveredExecution("rev-1", {
+      workflow_execution_id: null,
+      delivery_basis_json: JSON.stringify({
+        kind: "external",
+        sourceSpecExecutionIds: [],
+        sourceWorkflowExecutionIds: [],
+        commitRefs: [],
+        note: "",
+        actor: { kind: "human" },
+        createdAt: TS,
+      }),
+    });
+    const projection = projectDeliveryDelta(
+      input({
+        base: snapshotOf("rev-1", 1, rows),
+        current: snapshotOf("rev-2", 2, rows),
+        comparedExecution: delivered,
+        executionBinding: null,
+        deliveryVerdicts: [],
+        dispositions: [
+          disposition("ac", "in_scope", {
+            delivered_by_execution_id: delivered.id,
+          }),
+        ],
+      }),
+    );
+    expect(criterionClassOf(projection, "ac")).toBe("delivered_and_fresh");
+  });
   it("classifies every governed element by stable id and payload hash", () => {
     const base = snapshotOf("rev-1", 1, [
       requirementRow("req-1", 1, "Kept requirement"),

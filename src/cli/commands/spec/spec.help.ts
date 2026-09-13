@@ -14,12 +14,12 @@ export const SPEC_LAUNCH_HINTS = {
     hint: ({ executionId }) =>
       `cctl workflow status ${executionId} — reports the run's lane position`,
   }),
-  /** The working exit after an abandoned launch, which no other surface names. */
   abandonedExecution: successHintRow({
     after: "spec abandon --execution",
     names: ["spec", "plan", "open"],
     sampleTokens: { specSlug: "native-sdd" },
-    hint: ({ specSlug }) => `cctl spec plan open ${specSlug}`,
+    hint: ({ specSlug }) =>
+      `cctl spec plan open ${specSlug} — open a replacement workflow, or ask the human to continue session delivery in Spec Studio`,
   }),
 } as const;
 
@@ -909,7 +909,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "This is the only way a spec enters Command Center already past its authoring gates. Import is for content that has never been in CC at all. Handles are allocated in bundle order — requirements R1…Rn, criteria numbered within each requirement, decisions D1…Dn, questions Q1…Qn, assumptions A1…An — and decisions trace requirements by a bundle-local `ref` the importer resolves to real element ids. The receipt names what to do next: `cctl spec show <slug>` for a delivered import, which owes nothing further, and `cctl spec plan open <slug>` for one that has not shipped and still owes delivery here.",
+      "This is the only way a spec enters Command Center already past its authoring gates. Import is for content that has never been in CC at all. Handles are allocated in bundle order — requirements R1…Rn, criteria numbered within each requirement, decisions D1…Dn, questions Q1…Qn, assumptions A1…An — and decisions trace requirements by a bundle-local `ref` the importer resolves to real element ids. The receipt names what to do next: `cctl spec show <slug>` for a delivered import, which owes nothing further, and `cctl spec plan open <slug>` for a managed delivery of unshipped work. The human may instead choose session delivery from the spec’s Delivery view.",
     related: [
       {
         command: "spec list",
@@ -1744,7 +1744,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "plan", "reopen"],
     summary: "return an unlaunched attempt to draft, invalidating its approval",
     description:
-      "Return a proposed, approved, or parked attempt to draft at a fresh draft revision. Any approval it carried no longer stands, and the re-propose that follows requires a new one. Prior snapshots stay readable exactly as proposed. A LAUNCHED attempt is refused, naming its two post-launch paths and the execution id they address.",
+      "Return a proposed, approved, or parked attempt to draft at a fresh draft revision. Any approval it carried no longer stands, and the re-propose that follows requires a new one. Prior snapshots stay readable exactly as proposed. A LAUNCHED attempt is refused, naming its post-launch graph operations and their execution id. The human can also continue delivery in a session from Spec Studio.",
     usage: ["cctl spec plan reopen <slug> --reason <why>"],
     flags: [
       {
@@ -1788,7 +1788,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     summary: "retire a never-launched attempt so a fresh open can pin",
     usage: ["cctl spec plan abandon <slug> --reason <why>"],
     description:
-      "Retire the live delivery-plan attempt before launch, whatever its prelaunch state (draft, proposed, approved, or parked). The attempt's pin is immutable, so when the spec amends past it the attempt can neither validate new criteria nor launch honestly — retiring it is the exit, and the `cctl spec plan open` that follows pins the current approved revision. A LAUNCHED attempt is refused, naming its two post-launch paths and the execution id they address.",
+      "Retire the live delivery-plan attempt before launch, whatever its prelaunch state (draft, proposed, approved, or parked). The attempt's pin is immutable, so when the spec amends past it the attempt can neither validate new criteria nor launch honestly — retiring it is the exit, and the `cctl spec plan open` that follows pins the current approved revision. A LAUNCHED attempt is refused, naming its post-launch graph operations and their execution id. The human can also continue delivery in a session from Spec Studio.",
     flags: [
       {
         name: "reason",
@@ -1927,7 +1927,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "request-approval"],
     summary: "repair or re-fire a gate's approval request",
     description:
-      "Create durable attention for a human-controlled gate. This is recovery, not the routine second step it used to be: a successful `cctl spec propose` files the gate-scoped request itself, and running this after one that reported filed or already-filed only returns that same request unchanged. Reach for it when a propose reported delivery-uncertain (the durable request exists but its Needs You notice may never have reached a human — repeating the ask re-fires the notice against the same attention id) or not-filed (no request exists, so this is what creates it), or when the gate is one no propose consults: execution_start and delivery are routed only from here. A revision a human sent back is not one of those cases — its asks are retired with it, and the propose of the follow-up revision files the replacements. Agents can request approval but cannot approve, sign off, or change policy. Omitting --subject asks for the gate as a whole — one entry for a gate with a dozen outstanding subjects, still the same entry once they are all approved and only the revision sign-off remains, and cleared by the act that admits the gate. Naming --subject asks for that item alone, and only that item's approval clears it. The evergreen plan gate is legacy-only; approve the finalized delivery candidate with `cctl spec plan sign-off <slug>`. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, the draft has not reached it, or the revision is still a draft and no human act can land on it until it is proposed), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
+      "Create durable attention for a human-controlled gate. This is recovery, not the routine second step it used to be: a successful `cctl spec propose` files the gate-scoped request itself, and running this after one that reported filed or already-filed only returns that same request unchanged. Reach for it when a propose reported delivery-uncertain (the durable request exists but its Needs You notice may never have reached a human — repeating the ask re-fires the notice against the same attention id) or not-filed (no request exists, so this is what creates it), or when the gate is one no propose consults: execution_start and delivery can also be requested here. Merge initiation files delivery attention before validation or conflict resolution. A revision a human sent back is not one of those cases — its asks are retired with it, and the propose of the follow-up revision files the replacements. Agents can request approval but cannot approve, sign off, or change policy. Omitting --subject asks for the gate as a whole — one entry for a gate with a dozen outstanding subjects, still the same entry once they are all approved and only the revision sign-off remains, and cleared by the act that admits the gate. Naming --subject asks for that item alone, and only that item's approval clears it. The evergreen plan gate is legacy-only; approve the finalized delivery candidate with `cctl spec plan sign-off <slug>`. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, the draft has not reached it, or the revision is still a draft and no human act can land on it until it is proposed), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
     usage: [
       "cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]",
     ],

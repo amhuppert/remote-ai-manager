@@ -373,10 +373,14 @@ function persistTerminalState(job: BackgroundJob): void {
       (job.jobType === "merge" || job.jobType === "resolve-conflicts") &&
       job.status === "completed" &&
       deliveredSha !== null &&
-      job.executionId !== undefined &&
+      (job.executionId !== undefined || job.specExecutionId !== undefined) &&
       job.finalPublish === true
     ) {
-      notifyRegisteredMergeDelivered(job.executionId, deliveredSha);
+      notifyRegisteredMergeDelivered(
+        job.executionId,
+        deliveredSha,
+        job.specExecutionId,
+      );
     }
 
     const notifType = deriveNotificationType(job.jobType, job.status);
@@ -844,6 +848,7 @@ const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
     job.refreshWarning = output.refreshWarning ?? undefined;
     job.upToDate = output.upToDate === true ? true : undefined;
     job.executionId = context.executionId ?? undefined;
+    job.specExecutionId = context.specExecutionId ?? undefined;
     job.candidateValidation = output.candidateValidation ?? undefined;
     job.haltReason = output.haltReason ?? undefined;
 
@@ -947,6 +952,7 @@ export interface DispatchMergeParams {
   /** Agent-written intent notes for a conflict-resolution turn. */
   resolutionContext?: string;
   executionId?: string;
+  specExecutionId?: string;
   finalPublish?: boolean;
   candidateValidation?: BackgroundJob["candidateValidation"];
   /**
@@ -989,14 +995,21 @@ function resolveDispatchProvenance(input: {
   sessionName: string;
   targetBranch?: string;
   executionId?: string;
+  specExecutionId?: string;
   finalPublish?: boolean;
 }):
-  | { ok: true; executionId?: string; finalPublish?: boolean }
+  | {
+      ok: true;
+      executionId?: string;
+      specExecutionId?: string;
+      finalPublish?: boolean;
+    }
   | { ok: false; error: MergeAssociationRefusedError } {
-  if (input.executionId !== undefined) {
+  if (input.executionId !== undefined || input.specExecutionId !== undefined) {
     return {
       ok: true,
       executionId: input.executionId,
+      specExecutionId: input.specExecutionId,
       finalPublish: input.finalPublish,
     };
   }
@@ -1026,6 +1039,7 @@ function resolveDispatchProvenance(input: {
     return {
       ok: true,
       executionId: association.executionId,
+      specExecutionId: association.specExecutionId,
       finalPublish: association.finalPublish,
     };
   }
@@ -1072,6 +1086,7 @@ export function runRegisteredMergeJob(
           job.resolutionContext = input.resolutionContext;
         }
         if (input.executionId) job.executionId = input.executionId;
+        if (input.specExecutionId) job.specExecutionId = input.specExecutionId;
         if (input.finalPublish === true) job.finalPublish = true;
         job.finalizeSessionOnPublish = resolveFinalizeSessionOnPublish({
           ...(input.entryMode !== undefined
@@ -1095,6 +1110,7 @@ export function runRegisteredMergeJob(
           branchName: input.branchName,
           targetBranch: input.targetBranch,
           executionId: input.executionId,
+          specExecutionId: input.specExecutionId,
           finalPublish: input.finalPublish === true,
         });
       },
@@ -1145,6 +1161,7 @@ export function dispatchMergeJob(
     parkedRef,
     resolutionContext,
     executionId,
+    specExecutionId,
     finalPublish,
     candidateValidation,
   } = params;
@@ -1157,10 +1174,12 @@ export function dispatchMergeJob(
     sessionName,
     ...(targetBranch !== undefined && { targetBranch }),
     ...(executionId !== undefined && { executionId }),
+    ...(specExecutionId !== undefined && { specExecutionId }),
     ...(finalPublish !== undefined && { finalPublish }),
   });
   if (!provenance.ok) return { ok: false, error: provenance.error };
   const resolvedExecutionId = provenance.executionId;
+  const resolvedSpecExecutionId = provenance.specExecutionId;
   const resolvedFinalPublish = provenance.finalPublish;
   // Decided once and threaded into BOTH the job fact and the machine input, so
   // the launch guard's reader and the publish actor's gate read one decision.
@@ -1187,6 +1206,8 @@ export function dispatchMergeJob(
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
       if (resolvedExecutionId) job.executionId = resolvedExecutionId;
+      if (resolvedSpecExecutionId)
+        job.specExecutionId = resolvedSpecExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
       job.intentSource = "session-merge";
@@ -1228,6 +1249,9 @@ export function dispatchMergeJob(
         ...(parkedRef && { parkedRef }),
         ...(resolutionContext && { resolutionContext }),
         ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
+        ...(resolvedSpecExecutionId && {
+          specExecutionId: resolvedSpecExecutionId,
+        }),
         ...(resolvedFinalPublish !== undefined && {
           finalPublish: resolvedFinalPublish,
         }),
@@ -1326,6 +1350,7 @@ export function dispatchResolveConflictsJob(params: {
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
   executionId?: string;
+  specExecutionId?: string;
   finalPublish?: boolean;
   candidateValidation?: BackgroundJob["candidateValidation"];
   /** The resumed merge's own fact; see {@link DispatchMergeParams}. */
@@ -1346,6 +1371,7 @@ export function dispatchResolveConflictsJob(params: {
     acquireSessionLock,
     machine: injectedMachine,
     executionId,
+    specExecutionId,
     finalPublish,
     candidateValidation,
   } = params;
@@ -1358,10 +1384,12 @@ export function dispatchResolveConflictsJob(params: {
     sessionName,
     ...(targetBranch !== undefined && { targetBranch }),
     ...(executionId !== undefined && { executionId }),
+    ...(specExecutionId !== undefined && { specExecutionId }),
     ...(finalPublish !== undefined && { finalPublish }),
   });
   if (!provenance.ok) return { ok: false, error: provenance.error };
   const resolvedExecutionId = provenance.executionId;
+  const resolvedSpecExecutionId = provenance.specExecutionId;
   const resolvedFinalPublish = provenance.finalPublish;
   // Conflict resolution continues a merge that already exists, so its publish
   // finalizes the session exactly as the merge it resumes would have — which is
@@ -1385,6 +1413,8 @@ export function dispatchResolveConflictsJob(params: {
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
       if (resolvedExecutionId) job.executionId = resolvedExecutionId;
+      if (resolvedSpecExecutionId)
+        job.specExecutionId = resolvedSpecExecutionId;
       if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
       job.intentSource = "session-merge";
@@ -1425,6 +1455,9 @@ export function dispatchResolveConflictsJob(params: {
         finalizeSessionOnPublish,
         ...(resolutionContext && { resolutionContext }),
         ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
+        ...(resolvedSpecExecutionId && {
+          specExecutionId: resolvedSpecExecutionId,
+        }),
         ...(resolvedFinalPublish !== undefined && {
           finalPublish: resolvedFinalPublish,
         }),

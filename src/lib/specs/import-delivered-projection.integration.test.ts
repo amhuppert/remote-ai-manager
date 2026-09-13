@@ -192,6 +192,35 @@ describe("an import's external-delivery record projects Delivered without proof 
 });
 
 describe("the spec views expose import provenance without a human approver (R9.1)", () => {
+  it("reports external delivery recorded after import without manufacturing machine proof", async () => {
+    const imported = await importSpec(bundle({ delivered: false }));
+    const revisions = await world.repos.specs.listRevisions(imported.spec.id);
+    const revision = revisions.find((row) => row.state === "approved");
+    if (!revision) throw new Error("Approved fixture revision missing");
+    const result = await world.services.deliveryContinuation.continue({
+      specId: imported.spec.id,
+      revisionId: revision.id,
+      expectedExecutionId: null,
+      mode: "external",
+      commitRefs: ["external-reference"],
+      note: "Delivered outside CC",
+      actor: { kind: "human" },
+    });
+    expect(result.ok).toBe(true);
+    const status = await readStatus();
+    expect(status.phase.primary).toBe("delivered");
+    expect(status.delivery).toMatchObject({
+      deliveredCount: 1,
+      provenCount: 0,
+    });
+    expect(status.delivery.deliveredExternallyCriterionIds).toHaveLength(1);
+    const detail = await readDetail();
+    expect(
+      detail.elementStatuses.requirements.map(
+        ({ status: requirement }) => requirement.proof,
+      ),
+    ).toEqual(["delivered_externally"]);
+  });
   it("reports imported on the status and summary views, derived from the import admission basis", async () => {
     await importSpec();
     await authorSpineDraft(world, "authored-natively");
@@ -398,5 +427,16 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
       revisions.find(({ id }) => id === designAmendment.revision.id)
         ?.externalDelivery,
     ).toBeNull();
+  });
+});
+
+it("reports the same pending delivery review in agent-readable status for a design that never launched a graph", async () => {
+  await importSpec(bundle({ delivered: false }));
+  const status = await readStatus();
+  expect(status.deliveryReadiness).toMatchObject({
+    executionId: null,
+    totalInScope: 1,
+    settled: 0,
+    blockers: [expect.objectContaining({ kind: "execution" })],
   });
 });

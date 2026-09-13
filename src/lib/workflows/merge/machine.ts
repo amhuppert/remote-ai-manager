@@ -4,7 +4,7 @@
  * Models the full merge pipeline with conflict resolution, validation, and
  * a prepare/publish split for the final squash:
  *
- *   entryRouting → merge → verifyingBranch → routing → ...
+ *   entryRouting → merge → checkingDelivery → verifyingBranch → routing → ...
  *                                                   ↓
  *                                       validating → preparing → publishing → completed
  *                                                                            → readyToLand (final)
@@ -102,6 +102,26 @@ function formatDeliveryGateRefusal(
     )
     .join("; ");
   return `Delivery gate refused merge; unmet criteria: ${criteria}. ${output.instruction}`;
+}
+
+function deliveryGateFailure(output: DeliveryGateActorOutput) {
+  if (output.status !== "refused") return {};
+  return {
+    error:
+      output.refusalCode === "approval_required" && output.unmet.length <= 1
+        ? `Delivery gate is waiting on human delivery approval. ${output.instruction}`
+        : formatDeliveryGateRefusal(output),
+    haltReason: {
+      type: "delivery_gate_failed" as const,
+      unmet: output.unmet,
+      instruction: output.instruction,
+      ...(output.refusalCode === undefined
+        ? {}
+        : { refusalCode: output.refusalCode }),
+      ...(output.spec === undefined ? {} : { spec: output.spec }),
+    },
+    completedAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -336,6 +356,7 @@ export const mergeMachine = setup({
     maxCasAttempts: input.maxCasAttempts ?? 3,
     finalizeSessionOnPublish: input.finalizeSessionOnPublish ?? true,
     executionId: input.executionId ?? null,
+    specExecutionId: input.specExecutionId ?? null,
     validationWorkflow: input.validationWorkflow ?? null,
     candidateValidation: input.candidateValidation ?? null,
     haltReason: null,
@@ -357,8 +378,31 @@ export const mergeMachine = setup({
       always: [
         { guard: "isLandEntry", target: "publishing" },
         { guard: "isDiscardEntry", target: "discarding" },
-        { target: "verifyingBranch" },
+        { target: "checkingDelivery" },
       ],
+    },
+
+    checkingDelivery: {
+      invoke: {
+        src: "deliveryGate",
+        input: ({ context }) => ({
+          workflowExecutionId: context.executionId ?? undefined,
+          ...(context.specExecutionId && {
+            specExecutionId: context.specExecutionId,
+          }),
+          preparedSha: "",
+          expectedTargetSha: "",
+          projectPath: context.projectPath,
+        }),
+        onDone: [
+          { guard: "deliveryGatePassed", target: "verifyingBranch" },
+          {
+            target: "deliveryGateFailed",
+            actions: assign(({ event }) => deliveryGateFailure(event.output)),
+          },
+        ],
+        onError: { target: "failed", actions: errorAssign() },
+      },
     },
 
     /**
@@ -752,6 +796,9 @@ export const mergeMachine = setup({
         src: "deliveryGate",
         input: ({ context }) => ({
           workflowExecutionId: context.executionId ?? undefined,
+          ...(context.specExecutionId && {
+            specExecutionId: context.specExecutionId,
+          }),
           preparedSha: context.preparedSha ?? "",
           expectedTargetSha: context.expectedTargetSha ?? "",
           projectPath: context.projectPath,
@@ -766,33 +813,7 @@ export const mergeMachine = setup({
           },
           {
             target: "deliveryGateFailed",
-            actions: assign({
-              error: ({ event }) => {
-                const output = event.output;
-                if (output.status !== "refused") {
-                  return "Delivery gate refused merge";
-                }
-                // Waiting on a human approval is not an unmet-criteria
-                // failure: say what the run waits on, not a pseudo-criterion.
-                return output.refusalCode === "approval_required"
-                  ? `Delivery gate is waiting on human delivery approval. ${output.instruction}`
-                  : formatDeliveryGateRefusal(output);
-              },
-              haltReason: ({ event }) => {
-                const output = event.output;
-                if (output.status !== "refused") return null;
-                return {
-                  type: "delivery_gate_failed" as const,
-                  unmet: output.unmet,
-                  instruction: output.instruction,
-                  ...(output.refusalCode !== undefined
-                    ? { refusalCode: output.refusalCode }
-                    : {}),
-                  ...(output.spec !== undefined ? { spec: output.spec } : {}),
-                };
-              },
-              completedAt: () => new Date().toISOString(),
-            }),
+            actions: assign(({ event }) => deliveryGateFailure(event.output)),
           },
         ],
         onError: { target: "failed", actions: errorAssign() },

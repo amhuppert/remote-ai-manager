@@ -3,7 +3,7 @@ import type {
   MergeAssociationResolution,
   MergeAssociationResolver,
 } from "@/lib/workflows/merge/association-port";
-import type { SpecExecutionRow } from "./schemas";
+import { specDeliveryBasisSchema, type SpecExecutionRow } from "./schemas";
 
 const logger = createLogger("specs.merge-association");
 
@@ -56,6 +56,7 @@ export function createMergeAssociationResolver(
               : "refused_not_started",
         ...(resolution.kind === "linked" && {
           executionId: resolution.executionId,
+          specExecutionId: resolution.specExecutionId,
           finalPublish: resolution.finalPublish,
         }),
         candidateExecutionIds: active.map((execution) => execution.id),
@@ -93,6 +94,21 @@ function decide(
   const execution = active[0];
   if (execution === undefined) return { kind: "none" };
   if (
+    execution.state === "running" &&
+    execution.workflow_execution_id === null &&
+    execution.delivery_basis_json
+  ) {
+    const basis = specDeliveryBasisSchema.parse(
+      JSON.parse(execution.delivery_basis_json),
+    );
+    if (basis.kind === "session")
+      return {
+        kind: "linked",
+        specExecutionId: execution.id,
+        finalPublish: isDeliveryTarget(),
+      };
+  }
+  if (
     execution.state !== "running" ||
     execution.workflow_execution_id === null
   ) {
@@ -102,9 +118,10 @@ function decide(
         : `state ${execution.state} with no linked workflow execution`;
     return {
       kind: "refused",
+      specExecutionId: execution.id,
       reason: `Session "${sessionName}" hosts spec execution ${execution.id} in ${stateLabel}; the delivery gate cannot evaluate it.`,
       instruction:
-        "Start the execution (approve and launch its workflow definition) or abandon it in Spec Studio, then retry the merge.",
+        "Open delivery review in Spec Studio to continue delivery in this session or start the planned workflow, then retry the merge.",
     };
   }
 

@@ -275,6 +275,9 @@ function createFixture(): GateFixture {
   const getIntegrationReadyFinalCandidate = vi.fn(async () => finalCandidate);
   const policyAdmitted = vi.fn();
   const deliveryRepo = {
+    findAcceptanceReviewsBySpecId() {
+      return [];
+    },
     findExecutionByWorkflowExecutionId(workflowExecutionId: string) {
       return workflowExecutionId === WORKFLOW_EXECUTION_ID ? execution : null;
     },
@@ -468,6 +471,103 @@ describe("current-execution authored-outcome delivery gate", () => {
 
   beforeEach(() => {
     fixture = createFixture();
+  });
+
+  it("accepts human satisfaction while preserving the failed automated result", async () => {
+    fixture.outcomes.set("claimant-primary", failed("validation_gate_failed"));
+    fixture.deps.deliveryRepo.findAcceptanceReviewsBySpecId = () => [
+      {
+        id: "review-human",
+        specId: SPEC_ID,
+        revisionId: REVISION_ID,
+        decision: "satisfied",
+        note: "",
+        actor: { kind: "human" },
+        criteria: [
+          {
+            criterionId: CRITERION_ID,
+            contentHash: JSON.stringify(["criterion-hash", null]),
+          },
+        ],
+        createdAt: NOW,
+      },
+    ];
+    expect(
+      await createDeliveryGate(fixture.deps).evaluate(gateInput()),
+    ).toMatchObject({
+      status: "pass",
+      satisfied: [
+        expect.objectContaining({
+          criterionId: CRITERION_ID,
+          outcome: "human_satisfied",
+          automated: [expect.stringContaining("failed")],
+        }),
+      ],
+    });
+    expect(fixture.verdicts).toEqual([]);
+  });
+
+  it("reports missing approval and missing criterion proof together", async () => {
+    fixture.setDeliveryDial("gate");
+    fixture.setDeliveryApproval(false);
+    fixture.outcomes.set("claimant-primary", pending());
+    const result = await createDeliveryGate(fixture.deps).evaluate(gateInput());
+    expect(result).toMatchObject({
+      status: "refused",
+      refusalCode: "approval_required",
+      unmet: expect.arrayContaining([
+        expect.objectContaining({ criterionId: CRITERION_ID }),
+        expect.objectContaining({
+          reason: expect.stringContaining("human approval"),
+        }),
+      ]),
+    });
+  });
+
+  it("delivers a session continuation without a workflow or an integrated graph candidate", async () => {
+    const execution =
+      fixture.deps.deliveryRepo.findExecutionById(SPEC_EXECUTION_ID);
+    if (!execution) throw new Error("Missing execution fixture");
+    execution.workflow_execution_id = null;
+    execution.delivery_basis_json = JSON.stringify({
+      kind: "session",
+      sourceSpecExecutionIds: [],
+      sourceWorkflowExecutionIds: [],
+      commitRefs: [],
+      note: "Finished in session",
+      actor: { kind: "human" },
+      createdAt: NOW,
+    });
+    fixture.deps.deliveryRepo.findAcceptanceReviewsBySpecId = () => [
+      {
+        id: "review-human",
+        specId: SPEC_ID,
+        revisionId: REVISION_ID,
+        decision: "satisfied",
+        note: "",
+        actor: { kind: "human" },
+        criteria: [
+          {
+            criterionId: CRITERION_ID,
+            contentHash: JSON.stringify(["criterion-hash", null]),
+          },
+        ],
+        createdAt: NOW,
+      },
+    ];
+    const result = await createDeliveryGate(fixture.deps).evaluate({
+      specExecutionId: SPEC_EXECUTION_ID,
+      preparedSha: "",
+      expectedTargetSha: "",
+      projectPath: PROJECT_PATH,
+    });
+    expect(result).toMatchObject({
+      status: "pass",
+      satisfied: [expect.objectContaining({ outcome: "human_satisfied" })],
+    });
+    expect(fixture.getIntegrationReadyFinalCandidate).not.toHaveBeenCalled();
+    expect(execution.state).toBe("running");
+    expect(execution.delivered_at).toBeNull();
   });
 
   it.each([
@@ -864,5 +964,63 @@ describe("current-execution authored-outcome delivery gate", () => {
         executionId: SPEC_EXECUTION_ID,
       }),
     );
+  });
+});
+
+it("does not revive an older waiver after the human revokes the criterion decision", async () => {
+  const fixture = createFixture();
+  fixture.outcomes.set("claimant-primary", failed("validator_gate_failed"));
+  fixture.setWaiver({
+    id: "old-waiver",
+    spec_id: SPEC_ID,
+    criterion_element_id: CRITERION_ID,
+    revision_id: REVISION_ID,
+    reason: "Earlier review",
+    waived_at: NOW,
+    stale: 0,
+  });
+  fixture.deps.deliveryRepo.findAcceptanceReviewsBySpecId = () => [
+    {
+      id: "revocation",
+      specId: SPEC_ID,
+      revisionId: REVISION_ID,
+      decision: "revoked",
+      note: "Reopened for review",
+      actor: { kind: "human" },
+      createdAt: NOW,
+      criteria: [
+        {
+          criterionId: CRITERION_ID,
+          contentHash: JSON.stringify(["criterion-hash", null]),
+        },
+      ],
+    },
+  ];
+  const result = await createDeliveryGate(fixture.deps).evaluate(gateInput());
+  expect(result).toMatchObject({
+    status: "refused",
+    unmet: [expect.objectContaining({ criterionId: CRITERION_ID })],
+  });
+});
+
+it("returns the pinned spec review for an execution that never launched a graph", async () => {
+  const fixture = createFixture();
+  const execution =
+    fixture.deps.deliveryRepo.findExecutionById(SPEC_EXECUTION_ID);
+  if (!execution) throw new Error("Missing fixture execution");
+  execution.state = "definition_review";
+  execution.workflow_execution_id = null;
+  await expect(
+    createDeliveryGate(fixture.deps).evaluate({
+      specExecutionId: execution.id,
+      projectPath: PROJECT_PATH,
+      preparedSha: "",
+      expectedTargetSha: "",
+      readOnly: true,
+    }),
+  ).resolves.toMatchObject({
+    status: "refused",
+    spec: { specSlug: "delivery-v2" },
+    unmet: [expect.objectContaining({ outcome: "delivery_path_required" })],
   });
 });

@@ -188,6 +188,7 @@ const specStatusExecutionEnvelopeSchema = specStatusViewSchema.shape.executions
   .unwrap()
   .element.extend({
     laneState: z.enum([
+      "session_delivery",
       "running",
       "merge_pending",
       "halted",
@@ -205,6 +206,7 @@ const specStatusExecutionEnvelopeSchema = specStatusViewSchema.shape.executions
 const specStatusDisclosureSchema = z
   .object({
     executions: omissionSchema,
+    deliveryBlockers: omissionSchema,
     pendingApprovals: omissionSchema,
     importCarriedApprovals: omissionSchema,
     approvalLedgerSubjects: omissionSchema,

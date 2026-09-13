@@ -1,8 +1,42 @@
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
 import type { RunCommandInput, RunCommandOutcome } from "./service";
 
 export type ConversationCommandDispatchInput = RunCommandInput & {
   /** The user's message exactly as submitted, persisted to the transcript. */
   rawText: string;
+};
+
+export interface CommandDispatchDeps {
+  getTranscriptPath(conversationId: string): Promise<string>;
+  mutateConversation(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    label: string,
+    mutate: (conversation: ConversationState) => void,
+  ): Promise<void>;
+  appendEntry(
+    ...args: Parameters<typeof safeAppendTranscriptEntry>
+  ): ReturnType<typeof safeAppendTranscriptEntry>;
+  run(input: RunCommandInput): Promise<RunCommandOutcome>;
+}
+
+const defaultDeps: CommandDispatchDeps = {
+  async getTranscriptPath(id) {
+    return (await import("@/lib/prompt/transcript")).getTranscriptPath(id);
+  },
+  async mutateConversation(...args) {
+    return (await import("@/lib/state-store")).mutateConversation(...args);
+  },
+  async appendEntry(...args) {
+    return (await import("@/lib/prompt/transcript")).safeAppendTranscriptEntry(
+      ...args,
+    );
+  },
+  async run(input) {
+    return (await import("./service")).conversationCommandService.run(input);
+  },
 };
 
 /**
@@ -15,9 +49,29 @@ export type ConversationCommandDispatchInput = RunCommandInput & {
  */
 export async function dispatchConversationCommand(
   input: ConversationCommandDispatchInput,
+  deps: CommandDispatchDeps = defaultDeps,
 ): Promise<RunCommandOutcome> {
-  const { safeAppendTranscriptEntry } = await import("@/lib/prompt/transcript");
-  await safeAppendTranscriptEntry(
+  const storeSessionName = input.sessionName ?? input.noticeSessionName ?? "";
+  const transcriptPath = await deps.getTranscriptPath(input.conversationId);
+  await deps.mutateConversation(
+    input.projectPath,
+    storeSessionName,
+    input.conversationId,
+    "command-transcript-initialize",
+    (conversation) => {
+      conversation.transcriptPath ??= transcriptPath;
+    },
+  );
+  const { createLogger } = await import("@/lib/logging");
+  createLogger("conversation-commands.dispatch").debug(
+    "command.transcript_ready",
+    {
+      projectName: input.projectName,
+      conversationId: input.conversationId,
+      command: input.parsed.command,
+    },
+  );
+  await deps.appendEntry(
     input.conversationId,
     {
       timestamp: new Date().toISOString(),
@@ -32,9 +86,8 @@ export async function dispatchConversationCommand(
     undefined,
     {
       projectName: input.projectName,
-      storeSessionName: input.sessionName ?? input.noticeSessionName ?? "",
+      storeSessionName,
     },
   );
-  const { conversationCommandService } = await import("./service");
-  return conversationCommandService.run(input);
+  return deps.run(input);
 }

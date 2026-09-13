@@ -1,3 +1,4 @@
+import { deliveryReviewViewSchema } from "./delivery-review-schemas";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
@@ -107,6 +108,17 @@ function specBasePath(projectName: string, slug: string): string {
 }
 
 export const specQueries = {
+  deliveryReview: (projectName: string, slug: string, executionId?: string) =>
+    queryOptions({
+      queryKey: specKeys.deliveryReview(projectName, slug, executionId),
+      queryFn: ({ signal }) =>
+        apiFetch(
+          `${specBasePath(projectName, slug)}/delivery-review${executionId ? `?execution=${encodeURIComponent(executionId)}` : ""}`,
+          deliveryReviewViewSchema.nullable(),
+          { signal },
+        ),
+      refetchOnReconnect: false,
+    }),
   inventory: specReferenceQueries.inventory,
   detail: (projectName: string, slug: string) =>
     queryOptions({

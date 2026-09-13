@@ -42,6 +42,7 @@ export const deliveryGateCriterionOutcomeSchema = z.object({
   criterionHandle: z.string().min(1),
   outcome: z.string().min(1),
   reason: z.string().optional(),
+  automated: z.array(z.string()).optional(),
 });
 
 export const deliveryGateHaltReasonSchema = z.object({
@@ -133,6 +134,7 @@ export const backgroundJobSchema = registerTrustedSchema(
      */
     upToDate: z.boolean().optional(),
     executionId: z.string().optional(),
+    specExecutionId: z.string().optional(),
     finalPublish: z.boolean().optional(),
     candidateValidation: candidateValidationFactSchema.optional(),
     haltReason: mergeHaltReasonSchema.optional(),
@@ -199,6 +201,7 @@ export const jobRecordSchema = registerTrustedSchema(
       conflictFiles: true,
       errorMessage: true,
       executionId: true,
+      specExecutionId: true,
       finalPublish: true,
       parkedRef: true,
       preparedSha: true,

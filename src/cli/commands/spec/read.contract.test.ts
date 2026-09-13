@@ -890,6 +890,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
 
 function createDeps(): SpecRouteDeps {
   return {
+    readDeliveryReview: async () => null,
     async resolveProjectPath(name) {
       return name === "demo" ? PROJECT_PATH : null;
     },
@@ -1988,6 +1989,45 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(text.stdout).not.toContain(
       "dependencies: T1, task-dropped-by-amendment",
     );
+  });
+
+  it("identifies pending session delivery without claiming a workflow is missing", async () => {
+    const host = makeHost({
+      executions: [
+        {
+          ...runningExecution,
+          workflow_execution_id: null,
+          delivery_basis_json: JSON.stringify({
+            kind: "session",
+            sourceSpecExecutionIds: [],
+            sourceWorkflowExecutionIds: [],
+            commitRefs: [],
+            note: "",
+            actor: { kind: "human" },
+            createdAt: CREATED_AT,
+          }),
+        },
+      ],
+    });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "session delivery awaiting the delivering merge",
+    );
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      executions: [
+        {
+          id: runningExecution.id,
+          laneState: "session_delivery",
+          deliveryBasis: { kind: "session" },
+        },
+      ],
+    });
   });
 
   it("qualifies an executing phase whose executions have launched no workflow lane", async () => {

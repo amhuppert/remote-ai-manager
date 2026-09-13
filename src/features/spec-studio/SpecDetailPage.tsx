@@ -1038,19 +1038,20 @@ export function detailStatePresentation(
       if (pendingApprovals.some((pending) => pending.gate === "delivery")) {
         return {
           tone: "amber",
-          banner: "Execution active — approval needed",
+          banner: "Delivery approval needed",
           description:
-            "The delivery gate is waiting on a human approval; proof continues against the pinned revision.",
+            "Review the delivery scope and settle acceptance before continuing merge.",
           action: "Open delivery",
           view: "delivery",
         };
       }
       return {
         tone: "cyan",
-        banner: "Execution active",
-        description: "Delivery proof is evaluated against the pinned revision.",
-        action: "Open requirements",
-        view: "requirements",
+        banner: "Delivery in progress",
+        description:
+          "Review acceptance and the current delivery path for the pinned revision.",
+        action: "Open delivery",
+        view: "delivery",
       };
     case "delivered": {
       // `delivered` is reached either by proof taken here or by an import's
@@ -1076,8 +1077,9 @@ export function detailStatePresentation(
       }
       return {
         tone: "green",
-        banner: "Delivery proven",
-        description: "Every in-scope criterion is proven or explicitly waived.",
+        banner: "Delivery complete",
+        description:
+          "The delivered scope was verified, accepted, or had evidence waived.",
         action: null,
         view: null,
       };

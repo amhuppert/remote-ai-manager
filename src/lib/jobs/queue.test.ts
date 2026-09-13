@@ -2035,6 +2035,7 @@ describe("background-jobs", () => {
       expect(markDelivered).toHaveBeenCalledWith(
         "wf-exec-deliver",
         "assoc-merge-hash",
+        undefined,
       );
     });
 
@@ -2064,6 +2065,7 @@ describe("background-jobs", () => {
       expect(markDelivered).toHaveBeenCalledWith(
         "wf-exec-noop-deliver",
         "target-tip",
+        undefined,
       );
     });
 
@@ -2526,7 +2528,7 @@ describe("background-jobs", () => {
   // targetBranch threading
   // ----------------------------------------------------------
   describe("targetBranch threading", () => {
-    it("persists a fresh candidate-validation fact before delivery-gate evaluation", async () => {
+    it("checks readiness before preparation and persists candidate validation before the publication gate", async () => {
       const candidateValidation = {
         validationRef: "validation-before-gate",
         validatedSha: "validated-before-gate-sha",
@@ -2538,21 +2540,27 @@ describe("background-jobs", () => {
       let durableRecordAtGate: JobRecord | null | undefined;
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockRunValidation.mockResolvedValue(candidateValidation);
-      mockDeliveryGateActor.mockImplementation(async () => {
-        if (dispatchState.jobId === undefined) {
-          throw new Error(
-            "Delivery gate ran before dispatch returned the job id",
+      mockDeliveryGateActor.mockImplementation(
+        async (input: DeliveryGateActorInput) => {
+          if (!input.preparedSha && !input.expectedTargetSha) {
+            expect(mockRunValidation).not.toHaveBeenCalled();
+            return { status: "pass" as const, satisfied: [], deferred: [] };
+          }
+          if (dispatchState.jobId === undefined) {
+            throw new Error(
+              "Delivery gate ran before dispatch returned the job id",
+            );
+          }
+          durableRecordAtGate = createJobsRepo(testDb).getJobRecord(
+            dispatchState.jobId,
           );
-        }
-        durableRecordAtGate = createJobsRepo(testDb).getJobRecord(
-          dispatchState.jobId,
-        );
-        return {
-          status: "pass" as const,
-          satisfied: [],
-          deferred: [],
-        };
-      });
+          return {
+            status: "pass" as const,
+            satisfied: [],
+            deferred: [],
+          };
+        },
+      );
       mockPublishActor.mockResolvedValue({
         status: "completed" as const,
         mergeHash: "landed-sha",
@@ -2568,7 +2576,7 @@ describe("background-jobs", () => {
 
       await waitForJobCompletions();
 
-      expect(mockDeliveryGateActor).toHaveBeenCalledTimes(1);
+      expect(mockDeliveryGateActor).toHaveBeenCalledTimes(2);
       expect(mockPublishActor).toHaveBeenCalledTimes(1);
       expect(durableRecordAtGate).toMatchObject({
         executionId: "workflow-execution-before-gate",

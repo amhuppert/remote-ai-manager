@@ -362,6 +362,7 @@ export const SPEC_EXECUTIONS_SCHEMA_DDL = `
     workflow_definition_revision INTEGER CHECK (
       workflow_definition_revision > 0
     ),
+    delivery_basis_json TEXT,
     workflow_seed_source_json TEXT,
     workflow_execution_binding_json TEXT,
     workflow_execution_id  TEXT,
@@ -893,6 +894,16 @@ const SPEC_SCHEMA_DDL = `
     ON spec_proof_verdicts (execution_id, verdict_at);
 
   ${SPEC_DELIVERY_VERDICTS_SCHEMA_DDL}
+
+  CREATE TABLE IF NOT EXISTS spec_acceptance_reviews (
+    id           TEXT PRIMARY KEY,
+    spec_id      TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
+    revision_id  TEXT NOT NULL REFERENCES spec_revisions(id),
+    review_json  TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_spec_acceptance_reviews_spec
+    ON spec_acceptance_reviews (spec_id, created_at);
 
   CREATE TABLE IF NOT EXISTS spec_waivers (
     id                    TEXT PRIMARY KEY,
@@ -2674,6 +2685,7 @@ const SCHEMA_DDL = `
     error_message  TEXT,
     owner_pid      INTEGER,
     execution_id   TEXT,
+    spec_execution_id TEXT,
     final_publish  INTEGER NOT NULL DEFAULT 0,
     candidate_validation TEXT,
     parked_ref     TEXT,
@@ -3084,6 +3096,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     type: "TEXT",
   },
   { table: "job_records", column: "execution_id", type: "TEXT" },
+  { table: "job_records", column: "spec_execution_id", type: "TEXT" },
   {
     table: "job_records",
     column: "final_publish",
@@ -3170,6 +3183,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "workflow_definition_revision",
     type: "INTEGER CHECK (workflow_definition_revision > 0)",
   },
+  { table: "spec_executions", column: "delivery_basis_json", type: "TEXT" },
   {
     table: "spec_executions",
     column: "workflow_seed_source_json",

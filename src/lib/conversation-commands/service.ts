@@ -23,9 +23,9 @@ import { resolveMergeTarget, type MergeTarget } from "@/lib/git/merge-target";
 import type { RebaseOnto } from "@/lib/git/rebase";
 import { parseRebaseArgs } from "./rebase-args";
 import {
-  evaluateSessionMergeAdmission,
-  type SessionMergeAdmission,
-} from "@/lib/workflow-graph/session-merge-admission";
+  evaluateMergeInitiation as evaluateSessionMergeAdmission,
+  type MergeInitiation as SessionMergeAdmission,
+} from "@/lib/workflows/merge/initiation";
 import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";

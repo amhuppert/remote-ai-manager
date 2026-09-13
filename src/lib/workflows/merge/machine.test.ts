@@ -320,6 +320,41 @@ function createTestMachine(overrides: ActorOverrides = {}) {
 
 describe("mergeMachine", () => {
   describe("delivery gate", () => {
+    it("surfaces delivery review before touching the worktree or running validation", async () => {
+      const sequence: string[] = [];
+      const machine = createTestMachine({
+        getCurrentBranch: mockGetCurrentBranch(async () => {
+          sequence.push("worktree");
+          return { branch: defaultInput.branchName };
+        }),
+        runValidation: mockRunValidation(async () => {
+          sequence.push("validation");
+          return null;
+        }),
+        deliveryGateEvaluator: {
+          async evaluate() {
+            sequence.push("review");
+            return {
+              status: "refused",
+              unmet: [],
+              refusalCode: "approval_required",
+              instruction: "Review delivery.",
+            };
+          },
+        },
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, executionId: "workflow-execution-1" },
+      });
+      actor.start();
+      const output = await toPromise(actor);
+      expect(sequence).toEqual(["review"]);
+      expect(output.haltReason).toMatchObject({
+        type: "delivery_gate_failed",
+        refusalCode: "approval_required",
+      });
+      expect(output.preparedSha).toBeNull();
+    });
     it("evaluates the initially prepared candidate before publishing", async () => {
       const sequence: string[] = [];
       const evaluated: Parameters<DeliveryGateEvaluator["evaluate"]>[0][] = [];
@@ -358,8 +393,14 @@ describe("mergeMachine", () => {
       const output = await toPromise(actor);
 
       expect(output.status).toBe("completed");
-      expect(sequence).toEqual(["gate", "publish"]);
+      expect(sequence).toEqual(["gate", "gate", "publish"]);
       expect(evaluated).toEqual([
+        {
+          workflowExecutionId: "workflow-execution-1",
+          preparedSha: "",
+          expectedTargetSha: "",
+          projectPath: defaultInput.projectPath,
+        },
         {
           workflowExecutionId: "workflow-execution-1",
           preparedSha: "prepared-initial",
@@ -406,7 +447,7 @@ describe("mergeMachine", () => {
       const output = await toPromise(actor);
 
       expect(output.status).toBe("completed");
-      expect(evaluatedShas).toEqual(["prepared-1", "prepared-2"]);
+      expect(evaluatedShas).toEqual(["", "prepared-1", "prepared-2"]);
       expect(publishCall).toBe(2);
     });
 
@@ -423,7 +464,9 @@ describe("mergeMachine", () => {
       ];
       const machine = createTestMachine({
         deliveryGateEvaluator: {
-          async evaluate() {
+          async evaluate(input) {
+            if (!input.preparedSha)
+              return { status: "pass", satisfied: [], deferred: [] };
             return {
               status: "refused",
               unmet,
@@ -672,6 +715,12 @@ describe("mergeMachine", () => {
 
       expect(output.status).toBe("completed");
       expect(evaluated).toEqual([
+        {
+          workflowExecutionId: "workflow-execution-1",
+          preparedSha: "",
+          expectedTargetSha: "",
+          projectPath: defaultInput.projectPath,
+        },
         {
           workflowExecutionId: "workflow-execution-1",
           preparedSha: "target-tip",

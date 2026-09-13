@@ -4,9 +4,9 @@ import { executePromptStream } from "../prompt/sdk-driver";
 import { dispatchMergeJob } from "../jobs/queue";
 import { createJobNotification } from "../notifications/service";
 import {
-  evaluateSessionMergeAdmission,
-  type SessionMergeAdmission,
-} from "@/lib/workflow-graph/session-merge-admission";
+  evaluateMergeInitiation as evaluateSessionMergeAdmission,
+  type MergeInitiation as SessionMergeAdmission,
+} from "@/lib/workflows/merge/initiation";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { sleep } from "@/lib/shared/sleep";
 import { createLogger } from "../logging";

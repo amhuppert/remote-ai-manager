@@ -121,7 +121,8 @@ describe("cctl spec plan help", () => {
 
     expect(text).toContain("capture");
     expect(text).toContain("abandon");
-    expect(text).toContain("two post-launch paths");
+    expect(text).toContain("post-launch graph operations");
+    expect(text).toContain("continue delivery in a session from Spec Studio");
   });
 
   it("states the ten-item section cap on both read verbs", async () => {

@@ -99,6 +99,7 @@ export interface AuthoredContextOutcomeService {
   getAuthoredContextOutcome(
     executionId: string,
     authoredContextId: string,
+    purpose?: "delivery" | "retained_source",
   ): Promise<AuthoredContextOutcome>;
   getIntegrationReadyFinalCandidate(
     executionId: string,
@@ -138,6 +139,7 @@ function hasFailedIntegration(
 function resolveOutcome(
   located: LocatedGraphWorkflowExecution,
   authoredContextId: string,
+  purpose: "delivery" | "retained_source" = "delivery",
 ): AuthoredContextOutcome {
   const { execution, location: executionLocation } = located;
   const loopMembership = findLoopBodyMembership(
@@ -188,14 +190,19 @@ function resolveOutcome(
   if (state.status === "skipped") {
     return { status: "skipped", reason: "route_skipped", executionLocation };
   }
-  if (execution.status === "aborted") {
+  const retainedSource =
+    purpose === "retained_source" && executionLocation === "archived";
+  if (execution.status === "aborted" && !retainedSource) {
     return {
       status: "failed",
       reason: "execution_aborted",
       executionLocation,
     };
   }
-  if (execution.status === "halted" || state.status === "halted") {
+  if (
+    (execution.status === "halted" && !retainedSource) ||
+    state.status === "halted"
+  ) {
     return {
       status: "failed",
       reason: "execution_halted",
@@ -375,7 +382,11 @@ export function createAuthoredContextOutcomeService(
   deps: AuthoredContextOutcomeServiceDeps,
 ): AuthoredContextOutcomeService {
   return {
-    async getAuthoredContextOutcome(executionId, authoredContextId) {
+    async getAuthoredContextOutcome(
+      executionId,
+      authoredContextId,
+      purpose = "delivery",
+    ) {
       const located = await deps.findExecutionById(executionId);
       const outcome: AuthoredContextOutcome =
         located === null
@@ -384,10 +395,11 @@ export function createAuthoredContextOutcomeService(
               reason: "execution_not_found",
               executionLocation: "missing",
             }
-          : resolveOutcome(located, authoredContextId);
+          : resolveOutcome(located, authoredContextId, purpose);
       logger.debug("graph-workflow.authored-context-outcome.resolved", {
         executionId,
         authoredContextId,
+        purpose,
         status: outcome.status,
         reason: outcome.reason,
         executionLocation: outcome.executionLocation,

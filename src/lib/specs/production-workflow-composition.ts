@@ -136,7 +136,9 @@ export function createProductionSpecWorkflowComposition(): SpecWorkflowCompositi
         subject: "delivery",
         actor: {
           kind: "agent",
-          conversationId: `workflow:${workflowExecutionId}`,
+          conversationId: workflowExecutionId
+            ? `workflow:${workflowExecutionId}`
+            : `delivery:${specId}`,
         },
       });
       if (!result.ok) {
@@ -162,6 +164,8 @@ export function createProductionSpecWorkflowComposition(): SpecWorkflowCompositi
       writeQueue,
       nextId: () => randomUUID(),
       now: () => new Date().toISOString(),
+      getPublishedMergeBySpecExecutionId: async (specExecutionId) =>
+        jobsRepo.findLatestPublishedMergeBySpecExecutionId(specExecutionId),
       getPublishedMerge: (workflowExecutionId) =>
         Promise.resolve(
           jobsRepo.findLatestPublishedMergeByExecutionId(workflowExecutionId),
@@ -213,8 +217,16 @@ export function createProductionSpecWorkflowComposition(): SpecWorkflowCompositi
     },
   });
   const mergeDeliveryLifecycle = {
-    markDelivered(workflowExecutionId: string, mergeHash: string) {
-      return lifecycleCallbacks.markDelivered(workflowExecutionId, mergeHash);
+    markDelivered(
+      workflowExecutionId: string | undefined,
+      mergeHash: string,
+      specExecutionId?: string,
+    ) {
+      return lifecycleCallbacks.markDelivered(
+        workflowExecutionId,
+        mergeHash,
+        specExecutionId,
+      );
     },
   };
 

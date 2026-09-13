@@ -177,11 +177,12 @@ return to requirements, use `cctl spec return-to-requirements <slug>
 --reason <why>`; the server reopens that boundary explicitly and prevents
 requirements and design edits from proceeding at the same time. Approved
 legacy Plan revisions remain readable as history, but their tasks are not
-copied forward; delivery changes use a new delivery plan attempt.
+copied forward. Use Continue delivery in Spec Studio when the delivery
+path changes without changing the approved requirements and design.
 
 ## Execution start launches the approved candidate
 
-Execution requires an approved DeliveryPlanAttempt. Propose freezes one
+Managed graph execution requires an approved DeliveryPlanAttempt. Propose freezes one
 immutable finalized candidate, and human plan sign-off approves that
 candidate's `candidateId` and `candidateHash` rather than a recipe for rebuilding it.
 
@@ -199,20 +200,41 @@ different bytes.
 
 ## Human-only acts
 
-Approvals, sign-off, waivers, assumption disposition, rename, and gate
+Approvals, sign-off, acceptance decisions, delivery continuation, external
+delivery records, assumption disposition, rename, and gate
 policy changes are human-only Spec Studio acts. No `cctl spec` verb
 changes gate policy, and an agent transport that reaches a human-only
 action receives a typed `human_act_required` refusal telling it to
 perform the action from the authenticated browser session.
 
-Never approve, sign off, dispose assumptions, or change gate policy on
+Never approve, sign off, record human acceptance or delivery, dispose
+assumptions, or change gate policy on
 the user's behalf. Ask the operator to act in Spec Studio and continue
 with whatever remains authorable.
 
 Proof verdicts are recorded only by the delivery gate from machine
 evidence (test runs, validator verdicts, commits). No one records them
-by hand. When a criterion cannot be machine-proven, the human remedy is
-a waiver: Spec Studio → Controls → Merge gate → Waive…
+by hand. Spec Studio → Delivery records human judgment separately:
+Mark satisfied accepts a criterion with an optional note; Waive evidence
+accepts delivery without its proof and requires one reason for the batch.
+Either action supports individual, selected, unresolved, or all criteria.
+
+## Delivery review and continuation
+
+Continue delivery lets the human choose Finish in this session, reference
+another workflow as a source, or start a replacement workflow through
+the existing planning flow. This also works after an abandoned run or
+for approved design that never launched a graph. Original attempts retain
+their actual outcomes; source references do not fabricate proof mappings.
+Session delivery stays pending until a successful merge. Record external
+delivery is for work already shipped outside this merge flow and records
+an attributed human assertion with optional workflow or commit references.
+
+Merge checks delivery readiness before validation and conflict resolution.
+Follow its revision-pinned review link to settle known blockers together.
+The human can approve delivery and continue merge, or waive remaining
+evidence and approve with one reason. A final check before publication
+catches changed scope or revoked decisions; failed merges are not delivery.
 
 ## Elicitation
 

@@ -1,5 +1,8 @@
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import {
+  specAcceptanceReviewSchema,
+  type SpecAcceptanceReview,
   specCriterionDispositionRowSchema,
   specDeliveryVerdictRowSchema,
   specEvidenceRowSchema,
@@ -36,6 +39,8 @@ export interface SaveSpecDeliveryVerdictInput {
 }
 
 export interface SpecDeliveryRepo {
+  insertAcceptanceReview(review: SpecAcceptanceReview): void;
+  findAcceptanceReviewsBySpecId(specId: string): SpecAcceptanceReview[];
   insertEvidence(evidence: SpecEvidenceRow): SpecEvidenceRow;
   findEvidenceById(id: string): SpecEvidenceRow | null;
   findEvidenceBySourceEventId(sourceEventId: number): SpecEvidenceRow[];
@@ -347,14 +352,14 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
     `INSERT INTO spec_executions (
        id, spec_id, revision_id, scope_json, state, execution_start_dial,
        workflow_definition_id, workflow_definition_revision,
-       workflow_seed_source_json, workflow_execution_binding_json,
+       delivery_basis_json, workflow_seed_source_json, workflow_execution_binding_json,
        workflow_execution_id, session_name, delivered_at, abandoned_reason,
        cleanup_phase, linked_workflow_execution_id, cleanup_last_error,
        cleanup_last_error_at, created_at, updated_at
      ) VALUES (
        @id, @spec_id, @revision_id, @scope_json, @state,
        @execution_start_dial, @workflow_definition_id,
-       @workflow_definition_revision, @workflow_seed_source_json,
+       @workflow_definition_revision, @delivery_basis_json, @workflow_seed_source_json,
        @workflow_execution_binding_json,
        @workflow_execution_id, @session_name,
        @delivered_at, @abandoned_reason, @cleanup_phase,
@@ -421,6 +426,39 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
   );
 
   return {
+    insertAcceptanceReview(review) {
+      timed("insert", "spec_acceptance_review", review.id, () => {
+        const parsed = specAcceptanceReviewSchema.parse(review);
+        db.prepare(
+          `INSERT INTO spec_acceptance_reviews
+          (id, spec_id, revision_id, review_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+        ).run(
+          parsed.id,
+          parsed.specId,
+          parsed.revisionId,
+          JSON.stringify(parsed),
+          parsed.createdAt,
+        );
+      });
+    },
+    findAcceptanceReviewsBySpecId(specId) {
+      return timed("find_by_spec", "spec_acceptance_review", specId, () =>
+        db
+          .prepare(
+            "SELECT review_json FROM spec_acceptance_reviews WHERE spec_id = ? ORDER BY rowid ASC",
+          )
+          .all(specId)
+          .map((row) => {
+            const stored = z.object({ review_json: z.string() }).parse(row);
+            return parseRow(
+              specAcceptanceReviewSchema,
+              "spec_acceptance_review",
+              specId,
+              JSON.parse(stored.review_json),
+            );
+          }),
+      );
+    },
     insertEvidence(evidence) {
       return timed("insert", "spec_evidence", evidence.id, () => {
         const validated = parseRow(
@@ -768,6 +806,7 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
         );
         insertExecutionStmt.run({
           ...row,
+          delivery_basis_json: row.delivery_basis_json ?? null,
           workflow_seed_source_json: row.workflow_seed_source_json ?? null,
           workflow_execution_binding_json:
             row.workflow_execution_binding_json ?? null,

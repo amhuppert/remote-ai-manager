@@ -147,7 +147,7 @@ export default function SpecDeliveryScope({
             </p>
           </div>
           <span className="text-[0.7rem] text-text-tertiary">
-            Verified outcomes across {total} criteria
+            Delivery history across {total} criteria
           </span>
         </div>
         <div className="mt-xl grid grid-cols-4 gap-lg max-768:grid-cols-2">
@@ -181,7 +181,7 @@ export default function SpecDeliveryScope({
         <p className="mt-sm mb-0 text-[0.7rem] leading-relaxed text-text-tertiary">
           {total === 0
             ? "No acceptance criteria in the approved scope."
-            : "Coverage reflects delivered proof. Running work appears in the execution."}
+            : "Coverage includes verified and accepted delivery. Work awaiting merge appears in the delivery review."}
         </p>
       </div>
       <div

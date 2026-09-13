@@ -64,6 +64,7 @@ function buildMaximalJobRecord(): JobRecord {
     conflictFiles: ["src/alpha.ts", "src/beta.ts"],
     errorMessage: "Auto-merge halted on overlapping edits",
     executionId: "workflow-execution-maximal",
+    specExecutionId: "spec-execution-maximal",
     finalPublish: true,
     parkedRef: "refs/cc-merges/job-maximal",
     preparedSha: "prepared-sha-abc123",
@@ -90,6 +91,27 @@ const fieldPolicies = {
 } as const;
 
 describe("job-records durability contract", () => {
+  it("finds only successfully published mainline delivery for a session spec execution", () => {
+    const job = buildMaximalJobRecord();
+    repo.createJobRecord({ ...job, status: "running" });
+    expect(
+      repo.findLatestPublishedMergeBySpecExecutionId("spec-execution-maximal"),
+    ).toBeNull();
+    repo.updateJobRecord(job.jobId, {
+      status: "failed",
+      mergeHash: "failed-candidate",
+    });
+    expect(
+      repo.findLatestPublishedMergeBySpecExecutionId("spec-execution-maximal"),
+    ).toBeNull();
+    repo.updateJobRecord(job.jobId, {
+      status: "completed",
+      mergeHash: "published",
+    });
+    expect(
+      repo.findLatestPublishedMergeBySpecExecutionId("spec-execution-maximal"),
+    ).toEqual({ mergeHash: "published", deliveryGatePassed: true });
+  });
   it("round-trips every persisted durable job-record key path through the real repo", async () => {
     expect(Object.keys(jobRecordSchema.shape)).toEqual(
       expect.arrayContaining([
@@ -120,6 +142,7 @@ describe("job-records durability contract", () => {
           branchName: fixture.branchName,
           startedAt: fixture.startedAt,
           executionId: fixture.executionId,
+          specExecutionId: fixture.specExecutionId,
           finalPublish: fixture.finalPublish,
           finalizeSessionOnPublish: fixture.finalizeSessionOnPublish,
           resolutionContext: fixture.resolutionContext,

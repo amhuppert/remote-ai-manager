@@ -22,7 +22,7 @@ import { elementHandleInSnapshot } from "./review-state";
 import { exclusionDispositionFromDeliveryPlan } from "./delivery-plan";
 import type { SpecExecutionBindingPort } from "./execution-binding-service";
 import type { SpecEventsPublisher } from "./events";
-import { resolveDial } from "./policy";
+import { resolveDial, isExploratoryShippingRefused } from "./policy";
 import {
   recordPolicyGateAdmissionInTransaction,
   type SpecExecutionGateAdmissionNotifier,
@@ -36,6 +36,7 @@ import type {
   SpecExecutionRow,
   SpecRevisionSnapshot,
   SpecWaiverRow,
+  SpecAcceptanceReview,
 } from "./schemas";
 import type { ExecutionScope } from "./scope-validation";
 import {
@@ -43,21 +44,28 @@ import {
   type DeliveryCriterionSnapshot,
   type TransitionRefusal,
 } from "./transitions";
+import { specDeliveryBasisSchema } from "./schemas";
+import { executionScopeSchema } from "./scope-validation";
 import { isWaiverValidForExecution } from "./waiver-staleness";
+import {
+  currentAcceptanceReview,
+  criterionAcceptanceHash,
+} from "./acceptance-review";
 
 const logger = createLogger("specs.delivery-gate-v2");
 
 const ACTIVE_RECOVERY_INSTRUCTION =
-  "Resume or repair the active graph execution until the named claimant is recertified, obtain any required Studio waiver, then retry delivery from its final integrated candidate.";
+  "Resume or repair the active graph execution until the named claimant is recertified, or open Delivery in Spec Studio to mark criteria satisfied, waive evidence, and continue through session delivery.";
 const ARCHIVED_RECOVERY_INSTRUCTION =
-  "The claimant belongs to an archived graph execution and cannot be recertified in place. Obtain a current-revision Studio waiver for the refused criterion, or abandon the current spec execution and start a replacement delivery execution, then retry Merge.";
+  "The claimant belongs to an archived graph execution and cannot be recertified in place. Open Delivery in Spec Studio to mark it satisfied or grant a Studio waiver, then continue in the session or start a replacement workflow.";
 const RETRY_INSTRUCTION =
-  "Repair the current graph execution or delivery binding, obtain any required Studio waiver, then retry delivery from a final integrated candidate.";
+  "Repair the current graph execution or delivery binding, or open Delivery in Spec Studio to review acceptance and choose session delivery.";
 
 export interface GraphDeliveryOutcomePort {
   getAuthoredContextOutcome(
     executionId: string,
     authoredContextId: string,
+    purpose?: "delivery" | "retained_source",
   ): Promise<AuthoredContextOutcome>;
   getIntegrationReadyFinalCandidate(
     executionId: string,
@@ -80,6 +88,7 @@ export interface DeliveryGateDeps {
   deliveryRepo: Pick<
     SpecDeliveryRepo,
     | "findExecutionById"
+    | "findAcceptanceReviewsBySpecId"
     | "findWaiverForCriterionRevision"
     | "saveDeliveryVerdict"
   >;
@@ -102,7 +111,7 @@ export interface DeliveryGateDeps {
   requestDeliveryApproval(input: {
     specId: string;
     revisionId: string;
-    workflowExecutionId: string;
+    workflowExecutionId?: string;
   }): Promise<void>;
   getProjectDisplayName(projectPath: string): string;
   now(): string;
@@ -159,6 +168,27 @@ export function createDeliveryGate(
 ): DeliveryGateEvaluator {
   return {
     async evaluate(input) {
+      if (input.specExecutionId !== undefined) {
+        const execution = deps.deliveryRepo.findExecutionById(
+          input.specExecutionId,
+        );
+        if (execution?.workflow_execution_id == null)
+          return evaluateSessionDelivery(deps, execution, input);
+        if (
+          input.workflowExecutionId &&
+          input.workflowExecutionId !== execution.workflow_execution_id
+        ) {
+          throw new Error(
+            "Merge workflow and spec execution identities disagree",
+          );
+        }
+        input = {
+          ...input,
+          workflowExecutionId: execution.workflow_execution_id,
+        };
+      }
+      if (input.workflowExecutionId === undefined)
+        throw new Error("Delivery evaluation requires an execution identity");
       const linked = deps.bindingPort.resolveByWorkflowExecutionId(
         input.workflowExecutionId,
       );
@@ -176,9 +206,9 @@ export function createDeliveryGate(
         deps,
         linked,
         execution,
-        input,
+        { ...input, workflowExecutionId: input.workflowExecutionId },
       );
-      if (evaluation.status === "refused") {
+      if (evaluation.status === "refused" && !input.readOnly) {
         deps.recordIntervention({
           specId: execution?.spec_id ?? linked.specExecutionId,
           actor: { kind: "system" },
@@ -200,11 +230,242 @@ export function createDeliveryGate(
   };
 }
 
+async function evaluateSessionDelivery(
+  deps: DeliveryGateDeps,
+  execution: SpecExecutionRow | null,
+  input: Parameters<DeliveryGateEvaluator["evaluate"]>[0],
+): Promise<DeliveryGateEvaluation> {
+  if (!execution) throw new Error("The delivery execution is unavailable");
+  const spec = await deps.specsRepo.findById(execution.spec_id);
+  const snapshot = await deps.specsRepo.getRevisionSnapshot(
+    execution.revision_id,
+  );
+  if (
+    !spec ||
+    !snapshot ||
+    spec.projectPath !== input.projectPath ||
+    snapshot.revision.specId !== spec.id
+  )
+    throw new Error("The session delivery pin is unavailable for this project");
+  const presentation = {
+    specSlug: spec.slug,
+    specName: spec.name,
+    projectName: deps.getProjectDisplayName(spec.projectPath),
+  };
+  if (!execution.delivery_basis_json)
+    return {
+      status: "refused",
+      spec: presentation,
+      unmet: [
+        {
+          criterionId: execution.id,
+          criterionHandle: spec.slug,
+          outcome: "delivery_path_required",
+          reason:
+            "Choose session delivery or launch the planned graph before merging.",
+        },
+      ],
+      instruction:
+        "Open the delivery review in Spec Studio to choose how delivery continues.",
+    };
+  const basis = specDeliveryBasisSchema.parse(
+    JSON.parse(execution.delivery_basis_json),
+  );
+  const scope = executionScopeSchema.parse(JSON.parse(execution.scope_json));
+  const reviews = deps.deliveryRepo.findAcceptanceReviewsBySpecId(spec.id);
+  const contracts = criterionContracts(snapshot);
+  const approved = deps.reviewRepo.hasValidHumanGateApproval({
+    specId: spec.id,
+    revisionId: execution.revision_id,
+    executionId: execution.id,
+    gate: "delivery",
+  });
+  const criteria: DeliveryCriterionSnapshot[] = [];
+  const satisfied: CriterionOutcome[] = [];
+  const unmet: CriterionOutcome[] = [];
+  for (const criterionId of scope.selectedCriterionIds) {
+    const contract = contracts.get(criterionId) ?? {
+      id: criterionId,
+      handle: criterionId,
+    };
+    const hash = criterionAcceptanceHash(snapshot, criterionId);
+    const currentReview = currentAcceptanceReview(
+      reviews,
+      criterionId,
+      hash ?? "",
+    );
+    const decision =
+      currentReview?.decision === "revoked" ? null : currentReview;
+    const waiver = validWaiverForCriterion(
+      deps,
+      execution,
+      criterionId,
+      currentReview,
+    );
+    let provenBy: string | null = null;
+    const automated: string[] = [];
+    for (const sourceId of basis.sourceSpecExecutionIds) {
+      const source = deps.deliveryRepo.findExecutionById(sourceId);
+      if (
+        !source ||
+        source.spec_id !== spec.id ||
+        source.session_name !== execution.session_name ||
+        !source.workflow_execution_id
+      )
+        continue;
+      const sourceSnapshot = await deps.specsRepo.getRevisionSnapshot(
+        source.revision_id,
+      );
+      if (
+        !sourceSnapshot ||
+        criterionAcceptanceHash(sourceSnapshot, criterionId) !== hash
+      )
+        continue;
+      const binding = deps.bindingPort.resolveByWorkflowExecutionId(
+        source.workflow_execution_id,
+      );
+      if (!binding || binding.specExecutionId !== source.id) continue;
+      for (const claim of binding.binding.claims) {
+        if (!claim.criterionElementIds.includes(criterionId)) continue;
+        const outcome = await deps.outcomePort.getAuthoredContextOutcome(
+          source.workflow_execution_id,
+          claim.contextId,
+          "retained_source",
+        );
+        automated.push(
+          `${source.workflow_execution_id}: ${describeClaimantOutcome({ contextId: claim.contextId, outcome })}`,
+        );
+        if (outcome.status === "satisfied") {
+          provenBy = source.workflow_execution_id;
+          break;
+        }
+      }
+      if (provenBy) break;
+    }
+    criteria.push({
+      criterionId,
+      handle: contract.handle,
+      validProof: provenBy !== null,
+      humanAccepted: decision !== null,
+      waiver:
+        waiver === null
+          ? null
+          : {
+              revisionId: waiver.revision_id,
+              grantedByHuman: true,
+              reason: waiver.reason,
+              stale: false,
+            },
+      deliveredByMergedExecution: false,
+    });
+    if (provenBy)
+      satisfied.push({
+        ...satisfiedOutcome(
+          contract,
+          "satisfied",
+          `Applicable automated proof from workflow ${provenBy}.`,
+        ),
+        automated,
+      });
+    else if (decision)
+      satisfied.push({
+        ...satisfiedOutcome(
+          contract,
+          decision.decision === "satisfied" ? "human_satisfied" : "waived",
+          `Human review ${decision.id}. ${decision.note}`,
+        ),
+        automated,
+      });
+    else if (waiver)
+      satisfied.push({
+        ...satisfiedOutcome(
+          contract,
+          "waived",
+          `Human waiver ${waiver.id}. ${waiver.reason}`,
+        ),
+        automated,
+      });
+    else
+      unmet.push({
+        criterionId,
+        criterionHandle: contract.handle,
+        outcome: "needs_review",
+        automated,
+        reason: "Mark satisfied or waive evidence in the delivery review.",
+      });
+  }
+  const transition = evaluateDeliveryGate({
+    policy: spec.gatePolicy,
+    executionState: execution.state,
+    pinnedRevisionId: snapshot.revision.id,
+    pinnedScope: scope,
+    deliveryApprovalGranted: approved,
+    criteria,
+  });
+  if (!transition.ok) {
+    if (transition.refusal.reason === "approval_required") {
+      unmet.unshift({
+        criterionId: `${execution.id}:delivery-approval`,
+        criterionHandle: spec.slug,
+        outcome: "approval_required",
+        reason: "The delivery gate requires human approval.",
+      });
+      if (!input.readOnly)
+        await requestApprovalForRefusal(
+          deps,
+          execution,
+          undefined,
+          transition.refusal,
+        );
+    } else if (
+      unmet.length === 0 ||
+      transition.refusal.code !== "delivery_gate_failed" ||
+      isExploratoryShippingRefused(spec.gatePolicy)
+    ) {
+      unmet.push(
+        ...transition.refusal.unmetConditions.map((reason) => ({
+          criterionId: execution.id,
+          criterionHandle: spec.slug,
+          outcome: transition.refusal.code,
+          reason,
+        })),
+      );
+    }
+    return {
+      ...refusedByTransition(
+        execution,
+        presentation,
+        transition.refusal,
+        unmet,
+      ),
+      satisfied,
+    };
+  }
+  if (basis.kind !== "session")
+    throw new Error("External delivery cannot publish a session merge");
+  if (!input.readOnly)
+    await recordPolicyDeliveryAdmission(deps, spec, execution);
+  logger.info("specs.delivery-gate.session-evaluated", {
+    specExecutionId: execution.id,
+    selectedCount: criteria.length,
+    satisfiedCount: satisfied.length,
+  });
+  return {
+    status: "pass",
+    satisfied,
+    deferred: scope.exclusionDispositions
+      .filter((entry) => entry.disposition === "deferred")
+      .map((entry) => entry.criterionId),
+  };
+}
+
 async function evaluateLinkedExecution(
   deps: DeliveryGateDeps,
   linked: LinkedSpecExecutionBindingV2,
   execution: SpecExecutionRow | null,
-  input: Parameters<DeliveryGateEvaluator["evaluate"]>[0],
+  input: Parameters<DeliveryGateEvaluator["evaluate"]>[0] & {
+    workflowExecutionId: string;
+  },
 ): Promise<DeliveryGateEvaluation> {
   if (
     execution === null ||
@@ -263,7 +524,10 @@ async function evaluateLinkedExecution(
       deliveredByMergedExecution: false,
     })),
   });
-  if (!policyDecision.ok) {
+  if (
+    !policyDecision.ok &&
+    policyDecision.refusal.reason !== "approval_required"
+  ) {
     await requestApprovalForRefusal(
       deps,
       execution,
@@ -276,6 +540,24 @@ async function evaluateLinkedExecution(
       policyDecision.refusal,
     );
   }
+
+  const approvalOutcomes: CriterionOutcome[] = [];
+  if (!policyDecision.ok) {
+    if (!input.readOnly)
+      await requestApprovalForRefusal(
+        deps,
+        execution,
+        input.workflowExecutionId,
+        policyDecision.refusal,
+      );
+    approvalOutcomes.push({
+      criterionId: `${execution.id}:delivery-approval`,
+      criterionHandle: spec.slug,
+      outcome: "approval_required",
+      reason: "The delivery gate requires human approval.",
+    });
+  }
+  const reviews = deps.deliveryRepo.findAcceptanceReviewsBySpecId(spec.id);
 
   const claimsByCriterion = claimantIdsByCriterion(linked.binding);
   let failureExecution: GraphWorkflowExecution | null = null;
@@ -324,9 +606,16 @@ async function evaluateLinkedExecution(
     const satisfyingContextId =
       claimantOutcomes.find(({ outcome }) => outcome.status === "satisfied")
         ?.contextId ?? null;
+    const currentReview = currentAcceptanceReview(
+      reviews,
+      criterionId,
+      criterionAcceptanceHash(snapshot, criterionId) ?? "",
+    );
+    const humanReview =
+      currentReview?.decision === "revoked" ? null : currentReview;
     const waiver =
       satisfyingContextId === null
-        ? validWaiverForCriterion(deps, execution, criterionId)
+        ? validWaiverForCriterion(deps, execution, criterionId, currentReview)
         : null;
     const outcome =
       satisfyingContextId !== null
@@ -335,13 +624,22 @@ async function evaluateLinkedExecution(
             "satisfied",
             `Authored context ${satisfyingContextId} is satisfied in the current graph execution.`,
           )
-        : waiver !== null
+        : humanReview !== null
           ? satisfiedOutcome(
               contract,
-              "waived",
-              `Studio waiver ${waiver.id} is valid for the current pinned revision.`,
+              humanReview.decision === "satisfied"
+                ? "human_satisfied"
+                : "waived",
+              `Human review ${humanReview.id}: ${humanReview.decision === "satisfied" ? "criterion satisfied" : "evidence waived"}.${humanReview.note ? ` ${humanReview.note}` : ""}`,
             )
-          : unmetClaimantOutcome(contract, claimantOutcomes);
+          : waiver !== null
+            ? satisfiedOutcome(
+                contract,
+                "waived",
+                `Studio waiver ${waiver.id} is valid for the current pinned revision.`,
+              )
+            : unmetClaimantOutcome(contract, claimantOutcomes);
+    outcome.automated = claimantOutcomes.map(describeClaimantOutcome);
     evaluated.push({
       contract,
       outcome,
@@ -351,6 +649,7 @@ async function evaluateLinkedExecution(
         criterionId,
         handle: contract.handle,
         validProof: satisfyingContextId !== null,
+        humanAccepted: humanReview !== null,
         waiver:
           waiver === null
             ? null
@@ -375,6 +674,7 @@ async function evaluateLinkedExecution(
       input.workflowExecutionId,
       requiredContextIds,
     );
+  const integrationOutcomes: CriterionOutcome[] = [];
   if (finalCandidate.status !== "satisfied") {
     const integrationOutcome: CriterionOutcome = {
       criterionId: execution.id,
@@ -389,67 +689,58 @@ async function evaluateLinkedExecution(
       finalCandidateStatus: finalCandidate.status,
       finalCandidateReason: finalCandidate.reason,
     });
-    return refusedByTransition(
-      execution,
-      specPresentation,
-      deliveryRefusal(
-        [integrationOutcome.reason ?? RETRY_INSTRUCTION],
-        finalCandidate.executionLocation === "archived"
-          ? ARCHIVED_RECOVERY_INSTRUCTION
-          : ACTIVE_RECOVERY_INSTRUCTION,
-      ),
-      [
-        ...evaluated
-          .filter(
-            (criterion) =>
-              !criterion.state.validProof && criterion.state.waiver === null,
-          )
-          .map((criterion) => criterion.outcome),
-        integrationOutcome,
-      ],
-    );
+    integrationOutcomes.push(integrationOutcome);
   }
 
-  await recordVerdicts(deps, linked, evaluated);
+  if (!input.readOnly && finalCandidate.status === "satisfied")
+    await recordVerdicts(deps, linked, evaluated);
 
-  const outcomeDecision = evaluateDeliveryGate({
-    policy: spec.gatePolicy,
-    executionState: execution.state,
-    pinnedRevisionId: linked.binding.pinnedRevisionId,
-    pinnedScope: scope,
-    deliveryApprovalGranted,
-    criteria: evaluated.map((criterion) => criterion.state),
-  });
-  if (!outcomeDecision.ok) {
-    const unmet = evaluated
+  const unmet = [
+    ...approvalOutcomes,
+    ...evaluated
       .filter(
         (criterion) =>
-          !criterion.state.validProof && criterion.state.waiver === null,
+          !criterion.state.validProof &&
+          !criterion.state.humanAccepted &&
+          criterion.state.waiver === null,
       )
-      .map((criterion) => criterion.outcome);
-    logger.warn("specs.delivery-gate-v2.claimants-refused", {
+      .map((criterion) => criterion.outcome),
+    ...integrationOutcomes,
+  ];
+  if (unmet.length > 0) {
+    logger.warn("specs.delivery-gate-v2.readiness-refused", {
       specExecutionId: execution.id,
-      workflowExecutionId: input.workflowExecutionId,
-      candidateId: linked.binding.candidateId,
-      unmetCriterionCount: unmet.length,
-      claimantContextIds: evaluated.flatMap((criterion) =>
-        criterion.state.validProof || criterion.state.waiver !== null
-          ? []
-          : criterion.claimantOutcomes.map(({ contextId }) => contextId),
-      ),
+      approvalRequired: approvalOutcomes.length > 0,
+      unmetCount: unmet.length,
     });
-    return refusedByTransition(
-      execution,
-      specPresentation,
-      {
-        ...outcomeDecision.refusal,
-        instruction: recoveryInstructionForClaimants(evaluated),
-      },
-      unmet,
-    );
+    return {
+      ...refusedByTransition(
+        execution,
+        specPresentation,
+        deliveryRefusal(
+          unmet.map((outcome) => outcome.reason ?? outcome.outcome),
+          approvalOutcomes.length > 0
+            ? "Open the delivery review in Spec Studio to settle the listed criteria and approve delivery, then continue merge."
+            : recoveryInstructionForClaimants(evaluated),
+        ),
+        unmet,
+      ),
+      satisfied: evaluated
+        .filter(
+          (criterion) =>
+            criterion.state.validProof ||
+            criterion.state.humanAccepted ||
+            criterion.state.waiver !== null,
+        )
+        .map((criterion) => criterion.outcome),
+      ...(approvalOutcomes.length > 0
+        ? { refusalCode: "approval_required" as const }
+        : {}),
+    };
   }
 
-  await recordPolicyDeliveryAdmission(deps, spec, execution);
+  if (!input.readOnly)
+    await recordPolicyDeliveryAdmission(deps, spec, execution);
   const satisfied = evaluated.map((criterion) => criterion.outcome);
   const deferred = linked.binding.dispositions.flatMap((disposition) =>
     disposition.disposition === "deferred"
@@ -542,11 +833,18 @@ function validWaiverForCriterion(
   deps: DeliveryGateDeps,
   execution: SpecExecutionRow,
   criterionId: string,
+  review: SpecAcceptanceReview | null,
 ): SpecWaiverRow | null {
   const waiver = deps.deliveryRepo.findWaiverForCriterionRevision(
     criterionId,
     execution.revision_id,
   );
+  if (
+    waiver &&
+    review?.decision === "revoked" &&
+    Date.parse(review.createdAt) >= Date.parse(waiver.waived_at)
+  )
+    return null;
   return isWaiverValidForExecution(waiver, execution, criterionId)
     ? waiver
     : null;
@@ -608,7 +906,9 @@ function recoveryInstructionForClaimants(
   evaluated: readonly EvaluatedCriterion[],
 ): string {
   const unmetClaimants = evaluated.flatMap((criterion) =>
-    criterion.state.validProof || criterion.state.waiver !== null
+    criterion.state.validProof ||
+    criterion.state.humanAccepted ||
+    criterion.state.waiver !== null
       ? []
       : criterion.claimantOutcomes,
   );
@@ -622,7 +922,7 @@ function recoveryInstructionForClaimants(
 
 function satisfiedOutcome(
   contract: CriterionContract,
-  outcome: "satisfied" | "waived",
+  outcome: "satisfied" | "human_satisfied" | "waived",
   reason: string,
 ): CriterionOutcome {
   return {
@@ -705,7 +1005,7 @@ async function recordPolicyDeliveryAdmission(
 async function requestApprovalForRefusal(
   deps: DeliveryGateDeps,
   execution: SpecExecutionRow,
-  workflowExecutionId: string,
+  workflowExecutionId: string | undefined,
   refusal: TransitionRefusal,
 ): Promise<void> {
   if (refusal.reason !== "approval_required") return;
@@ -742,7 +1042,7 @@ function refusedByTransition(
   criterionOutcomes: CriterionOutcome[] = [],
 ): DeliveryGateEvaluation {
   const unmet =
-    refusal.code === "delivery_gate_failed" && criterionOutcomes.length > 0
+    criterionOutcomes.length > 0
       ? criterionOutcomes
       : refusal.unmetConditions.map((reason, index) => ({
           criterionId: `${execution.id}:gate:${index + 1}`,

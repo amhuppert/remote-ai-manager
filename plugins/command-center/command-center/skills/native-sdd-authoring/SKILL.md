@@ -70,7 +70,7 @@ A delivery attempt (`cctl spec plan open <slug>`) owns one real project workflow
 
 The version-4 binding contains dispositions only. Read it with `cctl spec plan get <slug>` and author criterion coverage in the linked workflow definition; the planning skill's "Delivering a native spec" section owns that contract. Keep payloads under `.cc/temp/`. Human disposition decisions stay on the review surface. Graph and binding revisions are independent; re-read the surface whose write was refused. Every unlaunched version-3 candidate must reopen, re-propose and receive fresh sign-off; historical snapshots remain readable.
 
-Every open derives its scope from the delivery delta. A criterion the last delivery proved and nothing invalidated becomes `delivered_elsewhere`; one whose governing content moved becomes `pending_reaffirmation`; undelivered, hard-stale, and deferred criteria are selected again. Only a human clears pending reaffirmations, as one batch on that review surface, against the binding revision they read.
+Every open derives its scope from the delivery delta. A criterion the last delivery accepted and nothing invalidated becomes `delivered_elsewhere`; one whose governing content moved becomes `pending_reaffirmation`; undelivered, hard-stale, and deferred criteria are selected again. Only a human clears pending reaffirmations, as one batch on that review surface, against the binding revision they read.
 
 Write each launch context's graph acceptance criteria in the ordinary graph dialect: `acceptanceCriteria` is an ordered list of `{ "id", "statement", "covers"? }` records, ids kebab-case and unique within the context, one independently-failable obligation per record. Validators cite those ids in blocking issues, so a record is the unit a verdict can address. Prose is still accepted on the authored write paths and wraps as exactly one `ac-1` record — a migration affordance, not a second spelling, and one record holding a paragraph of obligations is the blob the records replaced. These are graph criteria, distinct from the spec's own pinned criteria that binding dispositions and coverage address. Criteria and charter invariants state outcomes only; process rules such as red-green TDD belong in the charter's `conventions`, because a validator cannot verify process on the finished candidate and would fail correct work for lacking proof.
 
@@ -82,16 +82,15 @@ Proposal freezes coverage-derived claims against stable authored contexts. Dynam
 
 ### Recovering claimant validation failures
 
-Claim proof comes from the authored context's graph outcome, not from the merge
-job's prepared-candidate validation. If delivery refuses an active claimant whose
-required round is absent, open, or concluded without a passing outcome, repair or
-resume the graph until that context is recertified. If the claimant belongs to an
-archived execution, it cannot be recertified in place: obtain a current-revision
-Studio waiver for the refused criterion or abandon and start a replacement
-delivery execution. Re-running Merge validation alone cannot change native-SDD
-claim proof. This guidance was earned by remote-ai-manager#8 (2026-08-22), where a
-completed claimant retained a concluded/null round and every Merge retry was
-therefore deterministic.
+Automated proof comes from the authored context's graph outcome. Merge validation does not recertify a claimant. When a required round is absent, open, or failed, repair or resume the graph if that remains useful; otherwise direct the human to the spec's **Delivery** view.
+
+The delivery review supports individual, selected, unresolved, and all-criterion decisions. A human can mark criteria satisfied, waive evidence with one shared reason, or revoke a decision. Agents can prepare the selection and explanation; the human records the judgment in Spec Studio. Decisions remain applicable across execution changes while the criterion and its governing requirement remain unchanged.
+
+**Continue delivery** supports finishing in a session, referencing another workflow, or opening a replacement managed plan. It stops and retires an active attempt through the existing cleanup path, preserving its real outcome. A workflow reference records where work happened; it does not create approval history or map unrelated proof. Approved Design can proceed through session delivery without launching a graph. Work awaiting merge remains pending.
+
+**Record external delivery** is the human action for a scope already shipped outside CC's merge flow. Optional workflow and commit references support that record; they do not claim a CC-observed merge. Do not use external delivery for work still awaiting merge.
+
+Merge initiation assesses delivery before validation and conflict resolution. Follow the pinned delivery-review link and report all known blockers together. The human can approve and continue merge, including a combined waiver of remaining evidence with one reason. Publication rechecks the scope and decisions; a failed merge does not record delivery.
 
 ## Finalized proposal, sign-off, and one-off start
 
@@ -103,7 +102,7 @@ Only a human can sign off. `cctl spec start <slug> --inputs .cc/temp/inputs.json
 
 A running execution's working copy is edited through the ordinary `cctl workflow live edit` surface. It never changes the immutable approved candidate. Use `cctl spec capture` for discovered delivery work: without `--blocking-reason` it records follow-up work; with that reason it abandons the run and opens a replacement attempt. Before launch, edit a draft or reopen the proposed attempt instead of trying to capture work.
 
-A pause is safe at any point after start, including before any lane has been provisioned: a run paused that early resumes into its first dispatch rather than stalling. The exit after an abandoned launch is `cctl spec plan open <slug>`, which opens the replacement attempt.
+A pause is safe at any point after start, including before any lane has been provisioned: a run paused that early resumes into its first dispatch rather than stalling. After an abandoned launch, `cctl spec plan open <slug>` opens a replacement attempt when another managed run is useful; the human can also continue through session delivery from Spec Studio.
 
 The version-3 transition is a one-way destructive cutover. Its
 legacy-retirement boundary removes the embedded graph plan; do not retain or
