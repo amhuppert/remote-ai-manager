@@ -402,6 +402,11 @@ function buildInnerCallAgent(
           signal: abort.signal,
           modelSelection,
           autonomous: true,
+          // Hold the turn open until waitable background tasks settle. A lane
+          // agent that yields on background subagents otherwise has its
+          // runtime closed here, losing their results and leaving the format
+          // follow-up nothing to restate (collaboration 592fad92).
+          waitForBackgroundTasks: true,
           onEvent: () => stallWatchdog.touch(),
           sessionInstructions,
         }),

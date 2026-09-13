@@ -423,6 +423,93 @@ describe("createCollaborationProductionCallAgent", () => {
     });
   });
 
+  it("opts every Claude lane turn into waiting for in-flight background tasks so a work turn that yields on background subagents is held open instead of closed", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-claude-background-wait",
+      laneId: "agent_one",
+      backend: "claude",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      ref: null,
+      metrics: { rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const turnInputs: ConversationBackendTurnInput[] = [];
+    const factory: ConversationBackendFactory = {
+      backend: "claude",
+      async createRuntime(input): Promise<ConversationBackendRuntime> {
+        return {
+          backend: "claude",
+          status: "alive",
+          modelSelection: input.modelSelection,
+          outputFormat: input.outputFormat,
+
+          applyPortableMcpConfig: async () => ({
+            disposition: "applied_now",
+            droppedServerIds: [],
+            droppedFields: [],
+            errors: {},
+          }),
+          async sendTurn(turnInput): Promise<ConversationBackendTurnResult> {
+            turnInputs.push(turnInput);
+            const structuredOutput = draftOutput(1);
+            return {
+              backendRef: { backend: "claude", ref: "real-session-bg-wait" },
+              costUsd: null,
+              durationMs: 10,
+              numTurns: 1,
+              contextTokens: null,
+              contextWindowMax: null,
+              contentBlocks: [{ type: "text", text: structuredOutput.summary }],
+              structuredOutput,
+              aborted: false,
+              compacted: false,
+              failure: null,
+              continuationDisposition: "retain",
+            };
+          },
+          close: async () => {},
+        };
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-claude-background-wait",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      agents: collabAgents(),
+      getConversationBackendFactory: () => factory,
+    });
+
+    await callAgent({
+      executionClass: "ordinary-conversation" as const,
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: `round 1\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
+      laneRef: { workflowId: "wf-claude-background-wait", laneId: "agent_one" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    // Both the prose work turn and the JSON format turn hold open for
+    // waitable background tasks: the work turn is where an agent yields on
+    // background subagents, and a closed runtime there loses their results and
+    // starves the format turn of an answer to restate.
+    expect(turnInputs).toHaveLength(2);
+    expect(turnInputs[0]?.waitForBackgroundTasks).toBe(true);
+    expect(turnInputs[1]?.waitForBackgroundTasks).toBe(true);
+  });
+
   it("starts a fresh Codex thread on the first lane call and resumes the SDK-returned thread later when the lane has continuity enabled (collaboration mode default)", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({

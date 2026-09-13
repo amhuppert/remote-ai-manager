@@ -106,10 +106,10 @@ export interface ConversationBackendTurnInput {
   syntheticForkSeed?: string | null;
   /**
    * Opt-in: hold this turn open after the agent yields until its in-flight
-   * waitable background tasks settle (or the wait times out). Set only by the
-   * graph-workflow implementer turn; every other turn (including interactive)
-   * leaves it unset so behavior is unchanged. Backends without background-task
-   * lifecycle signals ignore it.
+   * waitable background tasks settle (or the wait times out). Set by the
+   * graph-workflow implementer turn and by collaboration lane turns; every
+   * other turn (including interactive) leaves it unset so behavior is
+   * unchanged. Backends without background-task lifecycle signals ignore it.
    */
   waitForBackgroundTasks?: boolean;
   /**

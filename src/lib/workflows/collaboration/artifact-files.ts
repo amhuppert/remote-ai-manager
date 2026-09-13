@@ -32,13 +32,15 @@ export interface ValidateGeneratedArtifactFilesInput {
   artifact: CollaborationArtifact;
 }
 
+export function collaborationWorkflowDir(workflowId: string): string {
+  return path.posix.join("memory-bank", "collaboration", workflowId);
+}
+
 export function collaborationArtifactDir(
   input: CollaborationArtifactFileContext,
 ): string {
   return path.posix.join(
-    "memory-bank",
-    "collaboration",
-    input.workflowId,
+    collaborationWorkflowDir(input.workflowId),
     `round-${input.round}`,
     input.agent,
     input.phase,
@@ -119,13 +121,12 @@ function validateRefPath(input: {
     return "path must not contain traversal segments";
   }
 
-  const expectedPrefix =
-    collaborationArtifactDir({
-      workflowId: input.workflowId,
-      round: input.artifact.round,
-      agent: input.artifact.agent,
-      phase: input.artifact.kind,
-    }) + "/";
+  // Any markdown file under this workflow's collaboration directory is a
+  // valid ref: a phase may cite an earlier phase's artifact (its own draft, the
+  // peer's review) as a supporting file. Confining refs to the current phase
+  // directory contradicted the path description the model is given and failed
+  // whole runs over a legitimate cross-reference.
+  const expectedPrefix = collaborationWorkflowDir(input.workflowId) + "/";
   if (!refPath.startsWith(expectedPrefix)) {
     return `path must stay under ${expectedPrefix}`;
   }

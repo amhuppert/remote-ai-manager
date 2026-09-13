@@ -131,30 +131,65 @@ describe("collaboration generated artifact files", () => {
     );
   });
 
+  it("accepts a supporting ref to an earlier phase's artifact in the same workflow alongside the phase's own main file", async () => {
+    const worktreePath = await tempWorktree();
+    const main = artifactRef();
+    const earlierDraft = artifactRef({
+      id: "initial-draft",
+      artifact_type: "supporting",
+      path: "memory-bank/collaboration/wf-test/round-0/agent_one/initial_draft/main.md",
+      summary: "My round-0 draft, referenced by section number.",
+    });
+    await writeMarkdown(worktreePath, main.path);
+    await writeMarkdown(worktreePath, earlierDraft.path, "# Draft\n\nBody");
+
+    await expect(
+      validateGeneratedArtifactFiles({
+        worktreePath,
+        workflowId: baseContext.workflowId,
+        artifact: {
+          kind: "proposed_changes",
+          agent: "agent_one",
+          target_agent: "agent_two",
+          round: 1,
+          summary: "Proposal.",
+          artifacts: [main, earlierDraft],
+          accepted_from_other_agent_draft: [],
+          proposed_changes: [],
+          remaining_disagreements: [],
+        },
+      }),
+    ).resolves.toEqual({ success: true, value: undefined });
+  });
+
   it.each([
-    ["/tmp/main.md", "absolute"],
+    ["/tmp/main.md", "absolute", "path must be relative"],
     [
       "memory-bank/collaboration/wf-test/round-1/agent_one/proposed_changes/../main.md",
       "traversal",
+      "path must not contain traversal segments",
     ],
     [
       "memory-bank/collaboration/other/round-1/agent_one/proposed_changes/main.md",
       "other workflow",
+      "path must stay under memory-bank/collaboration/wf-test/",
     ],
     [
-      "memory-bank/collaboration/wf-test/round-2/agent_one/proposed_changes/main.md",
-      "wrong round",
-    ],
-    [
-      "memory-bank/collaboration/wf-test/round-1/agent_two/proposed_changes/main.md",
-      "wrong agent",
+      "memory-bank/other-dir/wf-test/round-1/agent_one/proposed_changes/main.md",
+      "outside the collaboration directory",
+      "path must stay under memory-bank/collaboration/wf-test/",
     ],
     [
       "memory-bank/collaboration/wf-test/round-1/agent_one/proposed_changes/main.txt",
       "wrong extension",
+      "path must end with .md",
     ],
-  ])("rejects %s as %s", async (badPath) => {
+  ])("rejects %s as %s", async (badPath, _label, expectedError) => {
     const worktreePath = await tempWorktree();
+    // The file exists so the only possible rejection is the path rule itself.
+    if (!path.posix.isAbsolute(badPath)) {
+      await writeMarkdown(worktreePath, path.posix.normalize(badPath));
+    }
     const result = await validateGeneratedArtifactFiles({
       worktreePath,
       workflowId: baseContext.workflowId,
@@ -171,7 +206,10 @@ describe("collaboration generated artifact files", () => {
       },
     });
 
-    expect(result.success).toBe(false);
+    expect(result).toEqual({
+      success: false,
+      error: `${badPath}: ${expectedError}`,
+    });
   });
 
   it("rejects a missing generated file", async () => {
