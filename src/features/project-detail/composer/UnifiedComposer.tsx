@@ -254,7 +254,11 @@ export default function UnifiedComposer({
   }, [draft]);
   const fireAndForgetRef = useRef(false);
 
-  const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
+  const backendLocked =
+    (activeConversation?.promptCount ?? 0) > 0 ||
+    activeConversation?.checkpointFork?.submission !== undefined ||
+    activeConversation?.status === "running" ||
+    busy;
 
   if (prevRememberedSettingsKey !== rememberedSettingsKey) {
     setPrevRememberedSettingsKey(rememberedSettingsKey);
@@ -504,6 +508,7 @@ export default function UnifiedComposer({
         toggleRecording={voice.toggleRecording}
         stopAndSubmit={voice.stopAndSubmit}
         backendLocked={backendLocked}
+        isCheckpointFork={activeConversation?.checkpointFork !== undefined}
         selectedBackend={agentBackend}
         onBackendChange={onAgentChange}
         modelCatalog={modelCatalog}

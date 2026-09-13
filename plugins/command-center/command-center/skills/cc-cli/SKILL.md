@@ -427,7 +427,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl validate cancel <run-id> [--json]`
 
 - `cctl conversation` — read conversation transcripts and manage compaction artifacts
-  - `cctl conversation <read|compact|compact-context|compaction get|compaction list|checkpoint check|checkpoint list|checkpoint get|checkpoint cancel|checkpoint reconcile|entry get|image get>`
+  - `cctl conversation <read|compact|compact-context|compaction get|compaction list|checkpoint check|checkpoint list|checkpoint get|checkpoint cancel|checkpoint reconcile|checkpoint fork-check|checkpoint fork|entry get|image get>`
 - `cctl conversation read` — render a bounded window of a transcript
   - `cctl conversation read [<conversation-id>] [--outline] [--message N] [--message-range A:B] [--seq-range A:B] [--include-tools none|summary|full] [--include-thinking] [--search <regex>] [--max-bytes N] [--format json|markdown] [--json]`
 - `cctl conversation compact` — create or refresh a compaction artifact
@@ -437,7 +437,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl conversation compact-context` — start a CC checkpoint that retires this conversation's context
   - `cctl conversation compact-context [<conversation-id>] [--wait] [--recover <operation-id>] [--json]`
 - `cctl conversation checkpoint` — inspect and repair conversation checkpoint operations
-  - `cctl conversation checkpoint <check|list|get|cancel|reconcile>`
+  - `cctl conversation checkpoint <check|list|get|cancel|reconcile|fork-check|fork>`
 - `cctl conversation entry` — export one complete archive entry
   - `cctl conversation entry <get>`
 - `cctl conversation image` — materialize an archived image
@@ -446,6 +446,10 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl conversation compaction get <conversation-id> [--message N] [--format json|markdown] [--json]`
 - `cctl conversation compaction list` — list a conversation's compaction artifacts
   - `cctl conversation compaction list <conversation-id> [--json]`
+- `cctl conversation checkpoint fork-check` — check checkpoint fork admission without creating a conversation
+  - `cctl conversation checkpoint fork-check <conversation-id> <operation-id> --file <request.json> [--json]`
+- `cctl conversation checkpoint fork` — create a focused conversation from a saved checkpoint
+  - `cctl conversation checkpoint fork <conversation-id> <operation-id> --file <request.json> [--json]`
 - `cctl conversation checkpoint check` — report whether a checkpoint would be admitted right now
   - `cctl conversation checkpoint check [<conversation-id>] [--recover <operation-id>] [--json]`
 - `cctl conversation checkpoint list` — list a conversation's checkpoint receipts, newest first

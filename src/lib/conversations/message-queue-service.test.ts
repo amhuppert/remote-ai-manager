@@ -1,3 +1,4 @@
+import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
 import { describe, it, expect, vi } from "vitest";
 
 // Logging is module-load-time infrastructure; mocking it is the sanctioned
@@ -758,6 +759,38 @@ function makeDeps(store: FakeStore): {
 }
 
 describe("messageQueueService.enqueue", () => {
+  it("pins the checkpoint fork backend with the queued submission even after that message is cancelled", async () => {
+    const conversation = makeConversation();
+    conversation.checkpointFork = checkpointForkOriginFixture();
+    const store = { conversation };
+    const { deps } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+    const key = {
+      projectPath: "/project",
+      sessionName: "session",
+      conversationId: conversation.id,
+    };
+    const message = await service.enqueue({
+      ...key,
+      content: [{ type: "text", text: "Next phase" }],
+      backend: "codex",
+    });
+    expect(conversation).toMatchObject({
+      agentBackend: "codex",
+      checkpointFork: { submission: { backend: "codex", at: NOW } },
+    });
+    await service.cancel({ ...key, id: message.id });
+    await expect(
+      service.enqueue({
+        ...key,
+        content: [{ type: "text", text: "Retarget" }],
+        backend: "claude",
+      }),
+    ).rejects.toMatchObject({ code: "checkpoint_fork_backend_locked" });
+    expect(conversation.pendingQueue).toHaveLength(0);
+    expect(conversation.checkpointFork.submission?.backend).toBe("codex");
+  });
+
   it("persists a pending row that listActive then returns and emits message-queued exactly once", async () => {
     const store: FakeStore = { conversation: makeConversation() };
     const { deps, broadcasts } = makeDeps(store);

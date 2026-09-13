@@ -79,6 +79,9 @@ const PROJECT_CASE: ScopeCase = {
 /** Every conversation the repository is asked about exists in this fixture. */
 function gateway(): CheckpointConversationGateway {
   return {
+    insert() {
+      throw new Error("fork insertion is outside this fixture");
+    },
     exists: () => true,
     find: () => null,
     clearBackendRef: () => true,

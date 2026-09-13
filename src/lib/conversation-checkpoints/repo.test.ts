@@ -57,6 +57,9 @@ function recordingContinuation(): CheckpointConversationGateway & {
     targetExists: true,
     row: null as ConversationState | null,
     finds: [] as CheckpointScopeKey[],
+    insert() {
+      throw new Error("fork insertion is outside this fixture");
+    },
     exists(): boolean {
       return state.targetExists;
     },

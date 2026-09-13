@@ -71,6 +71,7 @@ export interface TurnExecutionDependencies {
   getProjectDisplayName(projectPath: string): string;
 
   // Backend runtime lifecycle
+  backendSupportsCheckpointFork(backend: AgentBackendId): boolean;
   getConversationBackendFactory(
     backend: AgentBackendId,
   ): ConversationBackendFactory;

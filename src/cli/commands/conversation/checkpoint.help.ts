@@ -29,6 +29,48 @@ const SCOPE_NOTE =
   "Scope: the mutation targets your ambient project/session. Acting on a conversation elsewhere requires --project (and --session for a session conversation); cctl never discovers another owning scope and writes there for you.";
 
 export const conversationCheckpointHelpEntries: CommandHelpEntry[] = [
+  ...(["fork-check", "fork"] as const).map(
+    (verb): CommandHelpEntry => ({
+      path: ["conversation", "checkpoint", verb],
+      dynamicContext: true,
+      summary:
+        verb === "fork"
+          ? "create a focused conversation from a saved checkpoint"
+          : "check checkpoint fork admission without creating a conversation",
+      description:
+        "Use an immutable saved checkpoint to seed an ordinary conversation in the source scope. No model request runs at creation: the task is an editable draft. Backend/model can change until first submission, including across providers. Related work is a context reference and grants no workflow ownership. " +
+        SCOPE_NOTE,
+      usage: [
+        `cctl conversation checkpoint ${verb} <conversation-id> <operation-id> --file <request.json> [--json]`,
+      ],
+      flags: [
+        {
+          name: "file",
+          kind: "value",
+          valuePlaceholder: "<request.json>",
+          description: "JSON request; locally validated before connecting",
+        },
+      ],
+      examples: [
+        {
+          invocation: `cctl conversation checkpoint ${verb} conv-1 op-1 --file fork.json`,
+          explanation:
+            verb === "fork"
+              ? "create or rejoin the fork using the file's stable requestId"
+              : "read-only check of the same request and scope used for creation",
+        },
+      ],
+      domainContext:
+        'Request: {"requestId":"<UUID>","name":"Next phase","task":"Implement the next task","relatedWork":{"kind":"ticket","ticketNumber":131},"backend":"codex","modelSelection":{"modelId":"gpt-6-astra","parameters":{}}}. Supply the complete atomic selection from the project model catalog. Other relatedWork shapes: {kind:"spec_task",specId,elementId,revisionId}, or {kind:"workflow_assignment",executionId,sessionName,owner:{kind:"workflow"}|{kind:"context",contextId}|{kind:"loop_template",loopGroupId,contextId},assignmentId,useSite:"implementer"|"validator"}. Reuse the identical file after a lost response; changing its body with the same requestId is refused. A session fork shares the current worktree; it restores no files and transfers no provider-private reasoning.',
+      related: [
+        {
+          command: "conversation checkpoint get",
+          oneLiner: "inspect saved seed and lineage",
+        },
+      ],
+    }),
+  ),
+
   {
     path: ["conversation", "compact-context"],
     dynamicContext: true,
@@ -91,7 +133,9 @@ export const conversationCheckpointHelpEntries: CommandHelpEntry[] = [
     summary: "inspect and repair conversation checkpoint operations",
     description:
       "Read checkpoint eligibility and receipts, and act on an operation that is stuck. Reads resolve a conversation by id in either scope; cancel and reconcile are mutations and stay in your ambient scope unless you pass --project/--session.",
-    usage: ["cctl conversation checkpoint <check|list|get|cancel|reconcile>"],
+    usage: [
+      "cctl conversation checkpoint <check|list|get|cancel|reconcile|fork-check|fork>",
+    ],
     flags: [],
     examples: [],
     related: [

@@ -1,3 +1,4 @@
+import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
@@ -42,6 +43,19 @@ afterEach(() => {
  */
 function buildMaximalProjectConversation(): ConversationState {
   return conversationStateSchema.parse({
+    checkpointFork: checkpointForkOriginFixture({
+      source: {
+        scope: "project",
+        projectName: "test",
+        conversationId: "source",
+      },
+      evidenceSource: {
+        scope: "project",
+        projectName: "test",
+        conversationId: "source",
+      },
+      submission: { backend: "codex", at: "2026-09-12T12:00:00Z" },
+    }),
     id: "plc-maximal",
     scope: "project",
     name: "Maximal project conversation",

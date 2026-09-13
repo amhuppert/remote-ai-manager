@@ -498,6 +498,7 @@ function makeFakeBackendActorDeps(
       idleQuerySessionTtlMs: 300_000,
     }),
     getProjectDisplayName: (p) => p.split("/").pop() ?? p,
+    backendSupportsCheckpointFork: () => false,
     getConversationBackendFactory: unusedInTaskRun(
       "getConversationBackendFactory",
     ),

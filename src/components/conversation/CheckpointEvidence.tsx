@@ -393,12 +393,20 @@ function ArchiveRange({
  * conversation's model context.
  */
 export default function CheckpointEvidence({
-  target,
+  target: seedTarget,
   receipt,
-  previousBoundarySeq = null,
-  onNavigateToMessage,
-  artifact,
+  previousBoundarySeq: suppliedPreviousBoundary = null,
+  onNavigateToMessage: suppliedNavigation,
+  artifact: suppliedArtifact,
 }: CheckpointEvidenceProps): React.JSX.Element {
+  const target = receipt.forkOrigin?.evidenceSource ?? seedTarget;
+  const previousBoundarySeq = receipt.forkOrigin
+    ? null
+    : suppliedPreviousBoundary;
+  const onNavigateToMessage = receipt.forkOrigin
+    ? undefined
+    : suppliedNavigation;
+  const artifact = receipt.forkOrigin ? null : suppliedArtifact;
   const [seedShown, setSeedShown] = useState(false);
   const boundarySeq = receipt.boundary.capturedThroughSeq;
   // Which entry's body is open. It follows the selected checkpoint by
@@ -408,7 +416,7 @@ export default function CheckpointEvidence({
   const boundaryEntryQuery = useHistoryEntryMetadata(target, boundarySeq);
   const boundaryEntry = boundaryEntryQuery.data?.entry ?? null;
 
-  const seedQuery = useCheckpointSeedQuery(target, receipt.operationId, {
+  const seedQuery = useCheckpointSeedQuery(seedTarget, receipt.operationId, {
     enabled: seedShown,
   });
 

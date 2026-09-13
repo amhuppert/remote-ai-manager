@@ -1,3 +1,4 @@
+import { assertCheckpointForkBackend } from "@/lib/conversation-checkpoints/fork-submission";
 import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
 import { createLogger } from "@/lib/logging";
 import { readConfig } from "@/lib/config/loader";
@@ -124,6 +125,13 @@ function defaultDeps(): ExecuteProjectPromptStreamDeps {
         conversationId,
         "adoptProjectConversationBackend",
         (conversation) => {
+          assertCheckpointForkBackend(conversation, backend);
+          if (
+            conversation.promptCount > 0 &&
+            conversation.agentBackend !== backend
+          ) {
+            throw new BackendMismatchError(conversation.agentBackend, backend);
+          }
           conversation.agentBackend = backend;
         },
       ),
@@ -221,6 +229,7 @@ export function createProjectPromptExecutor(
     // Backend lock: fixed once a turn has been sent (mirrors the session path's
     // semantics, but enforced against the project repo since the session-based
     // `setConversationBackend` cannot address a session-less conversation).
+    if (input.backend) assertCheckpointForkBackend(conversation, input.backend);
     if (input.backend && input.backend !== conversation.agentBackend) {
       if (conversation.promptCount > 0) {
         throw new BackendMismatchError(

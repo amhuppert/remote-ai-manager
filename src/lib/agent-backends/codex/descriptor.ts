@@ -94,6 +94,7 @@ export const codexConversationCapabilities: BackendConversationCapabilities = {
   // with all nine independent expectations satisfied in both scopes.
   // See docs/reports/checkpoint-compaction/codex-enablement.md.
   checkpoint: true,
+  checkpointFork: true,
   capabilityKinds: [
     { kind: "skills", applyTiming: "next_turn" },
     { kind: "plugins", applyTiming: "next_turn" },

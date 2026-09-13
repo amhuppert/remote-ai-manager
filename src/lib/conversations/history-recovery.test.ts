@@ -1,3 +1,4 @@
+import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
 import { describe, it, expect } from "vitest";
 
 import type { MessageContentBlock } from "./schemas";
@@ -223,6 +224,25 @@ describe("projectRangeBoundaries", () => {
 });
 
 describe("savedCheckpointBoundaries", () => {
+  it("does not project an imported checkpoint's source coordinates onto the target archive", () => {
+    const imported = {
+      operationId: "imported",
+      ordinal: 1,
+      boundary: { capturedThroughSeq: 42 },
+      checkpoint: { seedSha256: "source" },
+      forkOrigin: checkpointForkOriginFixture(),
+    };
+    const own = {
+      operationId: "own",
+      ordinal: 2,
+      boundary: { capturedThroughSeq: 9 },
+      checkpoint: { seedSha256: "target" },
+    };
+    expect(savedCheckpointBoundaries([imported, own])).toEqual([
+      { operationId: "own", ordinal: 2, capturedThroughSeq: 9 },
+    ]);
+  });
+
   it("keeps only the operations that froze a payload", () => {
     expect(
       savedCheckpointBoundaries([

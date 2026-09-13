@@ -303,10 +303,11 @@ export async function createCheckpointHarness(
 
   function createRuntime(
     input: ConversationBackendCreateInput,
+    backend: "claude" | "codex" | "cursor",
   ): ConversationBackendRuntime {
     runtimeCount += 1;
     const ref = {
-      backend: "claude",
+      backend,
       ref: `sdk-session-${runtimeCount}`,
     } as const;
     const close = vi.fn(async () => {
@@ -315,6 +316,8 @@ export async function createCheckpointHarness(
     });
     let dead = false;
     const runtime = createMockBackendRuntime({
+      backend,
+      modelSelection: input.modelSelection,
       prepareForTurnStart: async () =>
         state.prepareForTurnStart
           ? state.prepareForTurnStart()
@@ -395,12 +398,12 @@ export async function createCheckpointHarness(
     },
     actorDeps: {
       getTranscriptPath: async () => CHECKPOINT_TRANSCRIPT,
-      getConversationBackendFactory: () => ({
-        backend: "claude",
+      getConversationBackendFactory: (backend) => ({
+        backend,
         validateModelSelection() {},
         createRuntime: async (input) => {
           state.externalEvents = input.onExternalTurnEvent;
-          return createRuntime(input);
+          return createRuntime(input, backend);
         },
       }),
       getTaskRunner: () => cannedCheckpointRunner(state.laneCalls),

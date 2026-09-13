@@ -1,4 +1,5 @@
 "use client";
+import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 
 import type { ConversationWorkspaceViewProps } from "@/features/session/ConversationWorkspaceView";
 import { usePromptComposerProps } from "@/features/session/hooks/use-prompt-composer-props";
@@ -76,6 +77,8 @@ export function useSessionPageViewProps(
     contentProps: {
       session: identity.session,
       activeConversation: identity.activeConversation,
+      initialForkModel: selectLastUserTurnAgentSettings(identity.messages)
+        .modelSelection,
       projectName: identity.projectName,
       sessionName: identity.sessionName,
       conversationId: identity.conversationId,

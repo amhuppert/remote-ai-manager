@@ -115,6 +115,15 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
       });
     },
     async readTextFile(filePath) {
+      if (filePath === ".cc/temp/fork.json")
+        return JSON.stringify({
+          requestId: "88d015fc-dd0e-4610-bf59-f5d56b9c9833",
+          name: "Next",
+          task: "Implement",
+          relatedWork: { kind: "ticket", ticketNumber: 131 },
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        });
       if (filePath.includes("validation-lease-")) return "lease-1\n";
       return JSON.stringify({ summary: "s", objective: "o", decisions: [] });
     },
@@ -282,6 +291,36 @@ const PROJECT_SCOPE_INVOCATIONS: {
       receipt: CHECKPOINT_RECEIPT_BODY,
       statusUrl: "/x",
     },
+  },
+  {
+    name: "conversation checkpoint fork",
+    argv: [
+      "conversation",
+      "checkpoint",
+      "fork",
+      "conv-1",
+      "op-1",
+      "--file",
+      ".cc/temp/fork.json",
+    ],
+    body: {
+      conversation: { id: "fork" },
+      receipt: CHECKPOINT_RECEIPT_BODY,
+      reused: false,
+    },
+  },
+  {
+    name: "conversation checkpoint fork-check",
+    argv: [
+      "conversation",
+      "checkpoint",
+      "fork-check",
+      "conv-1",
+      "op-1",
+      "--file",
+      ".cc/temp/fork.json",
+    ],
+    body: { eligible: true },
   },
   {
     name: "conversation checkpoint check",

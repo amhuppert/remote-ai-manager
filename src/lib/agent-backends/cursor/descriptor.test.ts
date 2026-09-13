@@ -141,6 +141,7 @@ describe("cursor descriptor — conversation capabilities", () => {
       nativeMidTurnAskUser: false,
       externalTurns: false,
       checkpoint: false,
+      checkpointFork: false,
       capabilityKinds: [
         { kind: "skills", applyTiming: "next_conversation" },
         { kind: "plugins", applyTiming: "next_conversation" },

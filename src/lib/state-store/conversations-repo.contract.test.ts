@@ -1,3 +1,4 @@
+import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/logging", () => ({
@@ -1355,6 +1356,9 @@ describe("conversations-repo findBySession caching", () => {
  */
 function buildMaximalConversation(): ConversationState {
   return conversationStateSchema.parse({
+    checkpointFork: checkpointForkOriginFixture({
+      submission: { backend: "codex", at: "2026-09-12T12:00:00Z" },
+    }),
     id: "c-maximal",
     name: "Maximal conversation",
     nameOrigin: "auto",

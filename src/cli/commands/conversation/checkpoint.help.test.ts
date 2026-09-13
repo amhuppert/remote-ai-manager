@@ -111,6 +111,8 @@ describe("checkpoint and evidence help is offline and unauthenticated", () => {
       "conversation checkpoint",
       "conversation checkpoint cancel",
       "conversation checkpoint check",
+      "conversation checkpoint fork",
+      "conversation checkpoint fork-check",
       "conversation checkpoint get",
       "conversation checkpoint list",
       "conversation checkpoint reconcile",

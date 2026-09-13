@@ -1,3 +1,4 @@
+import { checkpointForkOriginSchema } from "@/lib/conversation-checkpoints/fork-schemas";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { agentBackendSchema } from "@/lib/shared/schemas";
@@ -145,6 +146,7 @@ export interface SharedConversationRawColumns {
   pending_questions: string | null;
   pending_prompt_text: string | null;
   forked_from: string | null;
+  checkpoint_fork?: string | null;
   role: string | null;
   context_tokens: number | null;
   context_window_max: number | null;
@@ -346,6 +348,16 @@ export function decodeSharedConversationColumns(
     return throwConversationValidationError(id, owner.issues);
   }
 
+  const checkpointFork = parseJsonColumn(
+    "checkpointFork",
+    row.checkpoint_fork ?? null,
+    checkpointForkOriginSchema,
+    "default",
+    null,
+  );
+  if (!checkpointFork.ok)
+    return throwConversationValidationError(id, checkpointFork.issues);
+
   const candidate: Record<string, unknown> = {
     name: row.name,
     nameOrigin: nameOriginResult.data,
@@ -364,6 +376,9 @@ export function decodeSharedConversationColumns(
     pendingQuestions: pendingQuestions.value ?? null,
     pendingPromptText: row.pending_prompt_text,
     forkedFrom: forkedFromValue ?? null,
+    ...(checkpointFork.value == null
+      ? {}
+      : { checkpointFork: checkpointFork.value }),
     role: roleResult.data,
     contextTokens: row.context_tokens,
     contextWindowMax: row.context_window_max,
@@ -416,6 +431,7 @@ export interface ConversationListItemRawColumns {
   pending_question_id: string | null;
   pending_questions: string | null;
   forked_from: string | null;
+  checkpoint_fork?: string | null;
   unread: 0 | 1;
   /**
    * The redacted profile identity, already narrowed by the SELECT's
@@ -641,6 +657,7 @@ export interface SharedConversationBindColumns {
   pending_questions: string | null;
   pending_prompt_text: string | null;
   forked_from: string | null;
+  checkpoint_fork: string | null;
   role: string | null;
   context_tokens: number | null;
   context_window_max: number | null;
@@ -682,6 +699,7 @@ export function encodeSharedConversationColumns(
     pending_questions: jsonOrNull(conversation.pendingQuestions),
     pending_prompt_text: conversation.pendingPromptText,
     forked_from: encodeForkedFromColumn(conversation.forkedFrom),
+    checkpoint_fork: jsonOrNull(conversation.checkpointFork),
     role: conversation.role,
     context_tokens: conversation.contextTokens,
     context_window_max: conversation.contextWindowMax,
@@ -762,6 +780,11 @@ const CONVERSATION_COLUMN_MAP = [
     "forkedFrom",
     "forked_from",
     (c: ConversationState) => encodeForkedFromColumn(c.forkedFrom),
+  ],
+  [
+    "checkpointFork",
+    "checkpoint_fork",
+    (c: ConversationState) => jsonOrNull(c.checkpointFork),
   ],
   ["role", "role", (c: ConversationState) => c.role],
   [

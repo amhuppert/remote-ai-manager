@@ -218,7 +218,9 @@ function stampedVersions(db: Db): number[] {
 
 describe("0044-add-conversation-checkpoints", () => {
   it("owns the schema version this build knows", () => {
-    expect(CONVERSATION_CHECKPOINTS_SCHEMA_VERSION).toBe(KNOWN_SCHEMA_VERSION);
+    expect(CONVERSATION_CHECKPOINTS_SCHEMA_VERSION).toBeLessThanOrEqual(
+      KNOWN_SCHEMA_VERSION,
+    );
   });
 
   it("creates the checkpoint tables, indexes and triggers on a pre-floor database", async () => {

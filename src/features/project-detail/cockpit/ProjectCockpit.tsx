@@ -1,4 +1,5 @@
 "use client";
+import CheckpointForkProvenance from "@/components/conversation/CheckpointForkProvenance";
 
 import {
   useCallback,
@@ -381,11 +382,28 @@ export default function ProjectCockpit({
   // Backend is fixed to the conversation's once initialized (promptCount > 0);
   // before the first turn it tracks the user's pre-init selection so the
   // composer toggle works for new tabs (Req 7.3).
-  const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
+  const [forkBackendDraft, setForkBackendDraft] = useState<{
+    id: string;
+    backend: AgentBackendId;
+  } | null>(null);
+  const backendLocked =
+    (activeConversation?.promptCount ?? 0) > 0 ||
+    activeConversation?.checkpointFork?.submission !== undefined ||
+    activeConversation?.status === "running";
   const agentBackend =
     backendLocked && activeConversation
       ? activeConversation.agentBackend
-      : selectedBackend;
+      : activeConversation?.checkpointFork
+        ? forkBackendDraft?.id === activeConversation.id
+          ? forkBackendDraft.backend
+          : activeConversation.agentBackend
+        : selectedBackend;
+  const changeBackend = (backend: AgentBackendId) => {
+    if (backendLocked) return;
+    if (activeConversation?.checkpointFork)
+      setForkBackendDraft({ id: activeConversation.id, backend });
+    onSelectedBackendChange(backend);
+  };
 
   // Source the inline spawn cards from the active conversation's transcript.
   // The query shares its key with the transcript host, so this is the same
@@ -673,7 +691,7 @@ export default function ProjectCockpit({
       activeConversation={activeConversation}
       agentBackend={agentBackend}
       backendDefaults={backendDefaults}
-      onAgentChange={onSelectedBackendChange}
+      onAgentChange={changeBackend}
       tokens={tokens}
       onTokensChange={onTokensChange}
       sessions={sessions}
@@ -681,7 +699,14 @@ export default function ProjectCockpit({
       busy={sender.isSending(composerTurnKey)}
       error={sender.errorFor(composerTurnKey)}
       onDismissError={handleDismissError}
-      lastUsedModelSelection={lastUserTurnAgentSettings.modelSelection}
+      lastUsedModelSelection={
+        lastUserTurnAgentSettings.modelSelection ??
+        (activeConversation?.promptCount === 0 &&
+        activeConversation.checkpointFork?.initialSelection.backend ===
+          agentBackend
+          ? activeConversation.checkpointFork.initialSelection.modelSelection
+          : undefined)
+      }
       initialDocument={initialComposerDocument}
       onDocumentChange={handleComposerDocumentChange}
       onRunCommand={onRunCommand}
@@ -746,6 +771,14 @@ export default function ProjectCockpit({
                     projectName,
                     conversationId: activeConversation.id,
                   }}
+                  sourceConversation={activeConversation}
+                  {...(lastUserTurnAgentSettings.modelSelection
+                    ? {
+                        initialForkModel:
+                          lastUserTurnAgentSettings.modelSelection,
+                      }
+                    : {})}
+                  onForkCreated={(conversation) => focusTab(conversation.id)}
                   onNavigateToMessage={navigateToCheckpointMessage}
                 />
               ),
@@ -762,7 +795,16 @@ export default function ProjectCockpit({
             creating={createConversation.isPending}
           />
         }
-        transcript={transcript}
+        transcript={
+          <>
+            {activeConversation?.checkpointFork && (
+              <CheckpointForkProvenance
+                origin={activeConversation.checkpointFork}
+              />
+            )}
+            {transcript}
+          </>
+        }
         composer={composer}
         diffSurface={<MainDiffSurface projectName={projectName} />}
       />

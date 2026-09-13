@@ -16,7 +16,7 @@ export const conversationHelpEntries: CommandHelpEntry[] = [
     description:
       "Read conversation transcripts in bounded windows and work with compaction artifacts — dense, structured context handoffs generated from a conversation's history. This is how an agent pulls context from another conversation (or its own earlier history) referenced via a <conversation-ref>. A <conversation-ref> carries ready-to-run read/compaction commands — copy them verbatim, no flags needed.",
     usage: [
-      "cctl conversation <read|compact|compact-context|compaction get|compaction list|checkpoint check|checkpoint list|checkpoint get|checkpoint cancel|checkpoint reconcile|entry get|image get>",
+      "cctl conversation <read|compact|compact-context|compaction get|compaction list|checkpoint check|checkpoint list|checkpoint get|checkpoint cancel|checkpoint reconcile|checkpoint fork-check|checkpoint fork|entry get|image get>",
     ],
     flags: [],
     examples: [],

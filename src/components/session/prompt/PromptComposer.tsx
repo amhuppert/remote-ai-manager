@@ -231,6 +231,7 @@ interface PromptComposerProps {
   toggleRecording: () => void;
   stopAndSubmit: () => void;
   backendLocked: boolean;
+  isCheckpointFork?: boolean;
   selectedBackend: AgentBackendId;
   onBackendChange: (backend: AgentBackendId) => void;
   modelCatalog: BackendModelCatalog | null;
@@ -285,6 +286,7 @@ export default function PromptComposer({
   toggleRecording,
   stopAndSubmit,
   backendLocked,
+  isCheckpointFork = activeConversation?.checkpointFork !== undefined,
   selectedBackend,
   onBackendChange,
   modelCatalog,
@@ -639,6 +641,7 @@ export default function PromptComposer({
             onAttachClick={() => fileInputRef.current?.click()}
             attachDisabled={isAtLimit || sending || isReadOnly}
             backendLocked={backendLocked}
+            isCheckpointFork={isCheckpointFork}
             selectedBackend={selectedBackend}
             onBackendChange={onBackendChange}
             modelCatalog={modelCatalog}
@@ -669,6 +672,7 @@ export default function PromptComposer({
             onModelSelectionChange={onModelSelectionChange}
             backend={selectedBackend}
             backendLocked={backendLocked}
+            isCheckpointFork={isCheckpointFork}
             onSelectBackend={onBackendChange}
             onAttach={() => fileInputRef.current?.click()}
             attachDisabled={isAtLimit || sending}

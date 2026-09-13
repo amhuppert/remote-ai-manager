@@ -722,6 +722,8 @@ describe("checkpoint retirement", () => {
       expect(row.status).not.toBe("running");
       const response = await enqueueQueuedMessage(
         {
+          admitCheckpointForkSelection: async ({ modelSelection }) =>
+            modelSelection ?? { modelId: "claude-opus-5", parameters: {} },
           checkpointAcceptsQueuedInput:
             fixture!.manager.checkpointAcceptsQueuedInput,
           admitModelSelection: async ({ modelSelection }) => ({

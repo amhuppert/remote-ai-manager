@@ -166,6 +166,12 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointMenuItems.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointMenuItems.stories.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointPanel.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}CheckpointFork.stories.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}CheckpointForkComposer.stories.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}CheckpointForkForm.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}CheckpointForkProvenance.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}CheckpointRelatedWorkPicker.tsx`,
+
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointPanel.stories.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointStatusChip.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointStatusChip.stories.tsx`,

@@ -161,7 +161,7 @@ const DB_FILE_NAME = "command-center.db";
  * ordinary turn against a conversation mid-retirement and establish a fresh
  * provider reference the pending seed can never be delivered into.
  */
-export const KNOWN_SCHEMA_VERSION = 15;
+export const KNOWN_SCHEMA_VERSION = 16;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -2494,6 +2494,7 @@ const SCHEMA_DDL = `
     pending_questions     TEXT,
     pending_prompt_text   TEXT,
     forked_from           TEXT,
+    checkpoint_fork       TEXT,
     role                  TEXT,
     context_tokens        INTEGER,
     context_window_max    INTEGER,
@@ -2539,6 +2540,7 @@ const SCHEMA_DDL = `
     pending_questions     TEXT,
     pending_prompt_text   TEXT,
     forked_from           TEXT,
+    checkpoint_fork       TEXT,
     role                  TEXT,
     context_tokens        INTEGER,
     context_window_max    INTEGER,
@@ -3013,6 +3015,8 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   type: string;
 }> = [
   { table: "conversations", column: "pending_prompt_text", type: "TEXT" },
+  { table: "conversations", column: "checkpoint_fork", type: "TEXT" },
+  { table: "project_conversations", column: "checkpoint_fork", type: "TEXT" },
   {
     table: "conversation_checkpoint_operations",
     column: "delivery_submitted_input_fingerprint",

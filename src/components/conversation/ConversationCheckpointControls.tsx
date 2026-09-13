@@ -23,6 +23,11 @@ import { useConversationCheckpoint } from "./use-conversation-checkpoint";
 
 export interface ConversationCheckpointControlsProps {
   target: CheckpointTarget;
+  sourceConversation?: import("@/lib/conversations/schemas").PublicConversationState;
+  initialForkModel?: import("@/lib/agent-backends/schemas").BackendModelSelection;
+  onForkCreated?(
+    conversation: import("@/lib/conversations/schemas").PublicConversationState,
+  ): void;
   /** Opens the existing queue-review UI for uncertain queued deliveries. */
   onReviewQueue?: () => void;
   /** Opens the host's compaction-artifact reader, when it has one. */
@@ -53,6 +58,9 @@ const TRIGGER_CLASS = cn(
  */
 export default function ConversationCheckpointControls({
   target,
+  sourceConversation,
+  initialForkModel,
+  onForkCreated,
   onReviewQueue,
   onViewArtifact,
   onNavigateToMessage,
@@ -115,6 +123,9 @@ export default function ConversationCheckpointControls({
         open={panelOpen}
         onOpenChange={setPanelOpen}
         surface={surface}
+        {...(sourceConversation ? { sourceConversation } : {})}
+        {...(initialForkModel ? { initialForkModel } : {})}
+        {...(onForkCreated ? { onForkCreated } : {})}
         artifact={artifact}
         {...(onReviewQueue === undefined ? {} : { onReviewQueue })}
         {...(onNavigateToMessage === undefined ? {} : { onNavigateToMessage })}

@@ -1,3 +1,4 @@
+import { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import { readRuntimeInstructions } from "./runtime-instructions";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -114,6 +115,9 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
       acquireQuerySlot: semaphoreMod.acquireQuerySlot,
       readConfig: configMod.readConfig,
       getConversationBackendFactory: registryMod.getConversationBackendFactory,
+      backendSupportsCheckpointFork: (backend) =>
+        registryMod.getBackendDescriptor(backend).conversation?.capabilities
+          .checkpointFork ?? false,
       admitConfiguredModelSelection: (input) =>
         modelSelectionAdmissionMod.admitConfiguredModelSelection(input),
       getConversationCapabilities: (backend: AgentBackendId) =>
@@ -484,6 +488,36 @@ export function createProductionConversationManagerDependencies(): ConversationM
       };
     },
     admitProfileForTurn: admitConversationProfileForTurn,
+    async admitCheckpointForkForTurn(
+      identity,
+      backend,
+      modelSelection,
+      isCurrent,
+    ) {
+      const { getConversation, mutateConversation } =
+        await import("@/lib/state-store");
+      const row = await getConversation(
+        identity.projectPath,
+        identity.sessionName,
+        identity.conversationId,
+      );
+      if (!row?.checkpointFork) return null;
+      const { admitCheckpointForkTurnSelection } =
+        await import("@/lib/conversation-checkpoints/fork-production");
+      const selection = await admitCheckpointForkTurnSelection({
+        projectPath: identity.projectPath,
+        conversation: row,
+        backend,
+        ...(modelSelection ? { modelSelection } : {}),
+      });
+      await admitCheckpointForkSubmission(
+        { mutateConversation },
+        identity,
+        backend,
+        isCurrent,
+      );
+      return selection;
+    },
     queue: getConversationQueueDeps(),
     persistence: resolveConversationPersistenceAdapter,
     forgetPersistence: forgetConversationPersistence,

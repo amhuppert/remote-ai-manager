@@ -295,6 +295,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     },
     saveTranscriptImage: async (_id, index) => `/inmemory/images/${index}`,
     getNextImageIndex: async () => 1,
+    backendSupportsCheckpointFork: () => false,
     getConversationBackendFactory: (backend) =>
       getConversationBackendFactory(backend),
     admitConfiguredModelSelection: async ({ modelSelection }) => ({

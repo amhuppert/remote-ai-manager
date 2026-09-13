@@ -41,12 +41,27 @@ export interface CheckpointConversationGateway {
    * not there, which readiness must treat as a refusal rather than a success.
    */
   clearBackendRef(key: CheckpointScopeKey): boolean;
+  insert(key: CheckpointScopeKey, conversation: ConversationState): void;
 }
 
 export function createCheckpointConversationGateway(
   repos: Pick<AllRepos, "conversations" | "projectConversations">,
 ): CheckpointConversationGateway {
   return {
+    insert(key, conversation) {
+      if (key.scope === "project") {
+        repos.projectConversations.upsert(key.projectPath, conversation);
+        return;
+      }
+      if (key.sessionName === null)
+        throw new Error("session scope requires a session name");
+      repos.conversations.upsertWithSessionTouch(
+        key.projectPath,
+        key.sessionName,
+        conversation,
+        conversation.createdAt,
+      );
+    },
     exists(key) {
       if (key.scope === "project") {
         return (

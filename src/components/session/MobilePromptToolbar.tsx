@@ -1,4 +1,5 @@
 "use client";
+import { checkpointForkBackendRefusal } from "@/lib/conversation-checkpoints/fork-backend-refusal";
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/ui/cn";
@@ -58,6 +59,7 @@ export interface MobilePromptToolbarProps {
 
   backend: AgentBackendId;
   backendLocked: boolean;
+  isCheckpointFork?: boolean;
   onSelectBackend(b: AgentBackendId): void;
 
   onAttach(): void;
@@ -101,6 +103,7 @@ export default function MobilePromptToolbar({
   onModelSelectionChange,
   backend,
   backendLocked,
+  isCheckpointFork = false,
   onSelectBackend,
   onAttach,
   attachDisabled,
@@ -312,22 +315,31 @@ export default function MobilePromptToolbar({
                     role="radiogroup"
                     aria-label="Backend"
                   >
-                    {catalogBackends.map((b) => (
-                      <button
-                        key={b.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={backend === b.id}
-                        className="cursor-pointer border-0 bg-transparent px-[10px] py-[6px] font-mono text-[0.72rem] text-text-secondary transition-[background,color] duration-150 disabled:cursor-not-allowed disabled:opacity-50 data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary data-[active=true]:data-[tone=cyan]:bg-cyan-dim data-[active=true]:data-[tone=violet]:bg-violet-dim data-[active=true]:text-text-inverse"
-                        data-active={backend === b.id}
-                        data-backend={b.id}
-                        data-tone={b.toneToken}
-                        onClick={() => onSelectBackend(b.id)}
-                        disabled={isBusy || isReadOnly}
-                      >
-                        {b.label}
-                      </button>
-                    ))}
+                    {catalogBackends.map((b) => {
+                      const reason = isCheckpointFork
+                        ? checkpointForkBackendRefusal(b)
+                        : null;
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={backend === b.id}
+                          className="cursor-pointer border-0 bg-transparent px-[10px] py-[6px] font-mono text-[0.72rem] text-text-secondary transition-[background,color] duration-150 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary data-[active=true]:data-[tone=cyan]:bg-cyan-dim data-[active=true]:data-[tone=violet]:bg-violet-dim data-[active=true]:text-text-inverse"
+                          data-active={backend === b.id}
+                          data-backend={b.id}
+                          data-tone={b.toneToken}
+                          title={reason ?? undefined}
+                          aria-disabled={reason ? true : undefined}
+                          onClick={() => {
+                            if (!reason) onSelectBackend(b.id);
+                          }}
+                          disabled={isBusy || isReadOnly}
+                        >
+                          {b.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </span>

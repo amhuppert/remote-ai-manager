@@ -1,3 +1,4 @@
+import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -205,6 +206,44 @@ async function renderEvidence(
 }
 
 describe("CheckpointEvidence", () => {
+  it("reads original source evidence while disclosing the fork's independent frozen seed", async () => {
+    stubApi();
+    const origin = checkpointForkOriginFixture({
+      source: { ...sessionTarget, conversationId: "original" },
+      evidenceSource: { ...sessionTarget, conversationId: "original" },
+    });
+    await renderEvidence({
+      receipt: {
+        ...checkpointReceiptFixture({ capturedThroughSeq: 148 }),
+        forkOrigin: origin,
+      },
+    });
+    await waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(([url]) =>
+          String(url).includes("/conversations/original/history/entries/148"),
+        ),
+      ).toBe(true),
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Saved handoff/ }));
+    await waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(([url]) =>
+          String(url).includes(
+            "/conversations/c1/checkpoints/op-1?detail=seed",
+          ),
+        ),
+      ).toBe(true),
+    );
+    expect(
+      fetchSpy.mock.calls.some(([url]) =>
+        String(url).includes("/conversations/c1/history/"),
+      ),
+    ).toBe(false);
+  });
+
   beforeEach(() => {
     fetchSpy.mockReset();
     vi.stubGlobal("fetch", fetchSpy);

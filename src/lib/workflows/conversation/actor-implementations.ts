@@ -573,10 +573,16 @@ async function executePromptForMachine(
           input.transcriptPath ?? null,
         )
       : [];
+  const forkInitialSelection =
+    persistedConversation?.promptCount === 0 &&
+    persistedConversation.checkpointFork?.initialSelection.backend ===
+      input.agentBackend
+      ? persistedConversation.checkpointFork.initialSelection.modelSelection
+      : null;
   let effectiveModelSelection = resolveTurnModelSelection({
     backend: input.agentBackend,
     config,
-    explicitModelSelection: input.turn.modelSelection,
+    explicitModelSelection: input.turn.modelSelection ?? forkInitialSelection,
     priorMessages,
   });
   const lastTurnSelection =
@@ -865,6 +871,20 @@ async function executePromptForMachine(
     },
   );
   const deliversCheckpoint = continuation.kind === "checkpoint";
+  const forkOrigin =
+    continuation.kind === "checkpoint" &&
+    persistedConversation?.checkpointFork?.operationId ===
+      continuation.operationId
+      ? persistedConversation.checkpointFork
+      : undefined;
+  if (
+    forkOrigin &&
+    !deps.execution.backendSupportsCheckpointFork(input.agentBackend)
+  ) {
+    throw new Error(
+      "The selected backend has no certified checkpoint fork continuation",
+    );
+  }
   const resumeRef = deliversCheckpoint ? null : input.backendRef;
   // A checkpoint delivery's receipt belongs to the attempt from here, before
   // any runtime exists: whatever fails between the fresh runtime's install
@@ -886,6 +906,7 @@ async function executePromptForMachine(
             ),
             operationId: continuation.operationId,
             payload: continuation.payload,
+            ...(forkOrigin === undefined ? {} : { forkOrigin }),
             closeAttemptedRuntime,
           },
         )

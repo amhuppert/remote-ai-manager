@@ -1,3 +1,4 @@
+import { CheckpointForkError } from "@/lib/conversation-checkpoints/fork-service";
 /**
  * Scope-invariant message-queue operations, shared by the session and project
  * queue routes.
@@ -64,6 +65,12 @@ const logger = createLogger("message-queue");
  * conversation without a parallel implementation.
  */
 export interface QueueOperationDeps {
+  admitCheckpointForkSelection(input: {
+    projectPath: string;
+    conversation: ConversationState;
+    backend: AgentBackendId;
+    modelSelection?: BackendModelSelection;
+  }): Promise<BackendModelSelection>;
   checkpointAcceptsQueuedInput(
     projectPath: string,
     sessionName: string,
@@ -216,7 +223,26 @@ export async function enqueueQueuedMessage(
   }
 
   let admittedModelSelection = body.modelSelection;
-  if (body.modelSelection !== undefined) {
+  if (conversation.checkpointFork) {
+    try {
+      admittedModelSelection = await deps.admitCheckpointForkSelection({
+        projectPath,
+        conversation,
+        backend: conversation.agentBackend,
+        ...(body.modelSelection ? { modelSelection: body.modelSelection } : {}),
+      });
+    } catch (error) {
+      if (!(error instanceof CheckpointForkError)) throw error;
+      logger.warn("checkpoint.fork.queue_refused", {
+        conversationId,
+        code: error.code,
+      });
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status },
+      );
+    }
+  } else if (body.modelSelection !== undefined) {
     const validation = await deps.admitModelSelection({
       backend: conversation.agentBackend,
       projectPath,

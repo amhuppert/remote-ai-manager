@@ -30,6 +30,7 @@ import {
   useOpenContextArtifactPanel,
   useRequestMessageNav,
 } from "@/stores/session-detail.store";
+import { useTicketSessionLinksQuery } from "@/lib/tickets/queries";
 import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
@@ -55,6 +56,7 @@ interface SessionInfoStripProps {
   // The PUBLIC shape: this strip renders read-surface data, and the profile
   // chip needs the redacted snapshot that only the public projection carries.
   activeConversation: PublicConversationState | undefined;
+  initialForkModel?: import("@/lib/agent-backends/schemas").BackendModelSelection;
   projectName: string;
   sessionName: string;
   conversationId: string;
@@ -97,6 +99,7 @@ interface SessionInfoStripProps {
 function SessionInfoStrip({
   session,
   activeConversation,
+  initialForkModel,
   projectName,
   sessionName,
   conversationId,
@@ -191,6 +194,8 @@ function SessionInfoStrip({
     () => checkpointArtifactCoverage(artifacts),
     [artifacts],
   );
+  const linkedTicket =
+    useTicketSessionLinksQuery(projectName).data?.[sessionName];
   const [checkpointPanelOpen, setCheckpointPanelOpen] = useState(false);
   const openCheckpointPanel = useCallback(
     () => setCheckpointPanelOpen(true),
@@ -345,6 +350,13 @@ function SessionInfoStrip({
         open={checkpointPanelOpen}
         onOpenChange={setCheckpointPanelOpen}
         surface={checkpoint}
+        {...(initialForkModel ? { initialForkModel } : {})}
+        {...(linkedTicket?.active
+          ? { initialForkTicket: linkedTicket.number }
+          : {})}
+        {...(activeConversation
+          ? { sourceConversation: activeConversation }
+          : {})}
         artifact={checkpointArtifact}
         onNavigateToMessage={navigateToCheckpointMessage}
       />

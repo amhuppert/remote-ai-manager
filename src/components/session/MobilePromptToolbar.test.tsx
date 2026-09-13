@@ -46,6 +46,19 @@ function renderToolbar(overrides: Partial<MobilePromptToolbarProps> = {}) {
 }
 
 describe("MobilePromptToolbar model selection", () => {
+  it("refuses a backend without checkpoint fork support while preserving the editable backend controls", () => {
+    const onSelectBackend = vi.fn();
+    renderToolbar({ isCheckpointFork: true, onSelectBackend });
+    fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    const cursor = screen.getByRole("radio", { name: "Cursor" });
+    expect(cursor).toHaveAttribute("aria-disabled", "true");
+    expect(cursor).toHaveAttribute(
+      "title",
+      "Checkpoint forks are unavailable for this backend.",
+    );
+    fireEvent.click(cursor);
+    expect(onSelectBackend).not.toHaveBeenCalled();
+  });
   it("applies a model's complete default variant", () => {
     const modelCatalog = getStaticBackendModelCatalog("claude");
     const modelSelection = defaultSelectionForModel(modelCatalog, "opus");

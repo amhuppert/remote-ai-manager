@@ -221,3 +221,38 @@ it("cancels a waiting caller without replacing the incumbent context or result",
     await fixture.close();
   }
 });
+
+it("does not dispatch a turn cancelled during checkpoint-fork admission", async () => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  const fixture = await createLifecycleFixture({
+    beforeForkAdmission: async () => {
+      entered.resolve();
+      await gate.promise;
+    },
+  });
+  const controller = new AbortController();
+  try {
+    const pending = fixture.manager.submitConversationTurn({
+      binding: fixture.binding,
+      turn: { promptText: "cancelled input" },
+      signal: controller.signal,
+    });
+    await entered.promise;
+    controller.abort();
+    gate.resolve();
+    expect(await pending).toMatchObject({ kind: "refused", code: "cancelled" });
+    expect(
+      (
+        await fixture.persistence.store.getConversation(
+          fixture.identity.projectPath,
+          fixture.identity.sessionName,
+          fixture.identity.conversationId,
+        )
+      )?.promptCount,
+    ).toBe(0);
+  } finally {
+    gate.resolve();
+    await fixture.close();
+  }
+});

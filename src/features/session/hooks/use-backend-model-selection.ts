@@ -71,8 +71,15 @@ export function useBackendModelSelection({
   conversationId,
   activeConversation,
   backendDefaults,
-  lastUsedSelection,
+  lastUsedSelection: suppliedLastUsedSelection,
 }: UseBackendModelSelectionArgs): UseBackendModelSelectionResult {
+  const initial = activeConversation?.checkpointFork?.initialSelection;
+  const lastUsedSelection =
+    suppliedLastUsedSelection ??
+    (activeConversation?.promptCount === 0 &&
+    initial?.backend === activeConversation.agentBackend
+      ? initial.modelSelection
+      : undefined);
   const initialBackend = activeConversation?.agentBackend ?? "claude";
   const [selectedBackend, setSelectedBackend] = useState<AgentBackendId>(
     () => initialBackend,
@@ -83,6 +90,7 @@ export function useBackendModelSelection({
     );
 
   const backendLocked =
+    activeConversation?.checkpointFork?.submission !== undefined ||
     (activeConversation?.promptCount ?? 0) > 0 ||
     activeConversation?.status === "running";
   const activeBackend = activeConversation?.agentBackend;
@@ -165,6 +173,7 @@ export function useBackendModelSelection({
 
   const handleBackendChange = useCallback(
     (backend: AgentBackendId) => {
+      if (backendLocked) return;
       const effectiveDefault = projectOptionsQuery.data?.find(
         (options) => options.backend === backend,
       )?.defaultSelection;
@@ -173,7 +182,7 @@ export function useBackendModelSelection({
         cloneSelection(effectiveDefault ?? backendDefaults[backend]),
       );
     },
-    [backendDefaults, projectOptionsQuery.data],
+    [backendDefaults, projectOptionsQuery.data, backendLocked],
   );
 
   return {

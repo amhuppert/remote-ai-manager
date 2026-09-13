@@ -49,6 +49,9 @@ const SEED_TEXT = "## Working state\nShip the widget before the demo.\n";
 
 function stubContinuation(): CheckpointConversationGateway {
   return {
+    insert() {
+      throw new Error("fork insertion is outside this fixture");
+    },
     exists: () => true,
     find: (): ConversationState | null => null,
     clearBackendRef: () => true,

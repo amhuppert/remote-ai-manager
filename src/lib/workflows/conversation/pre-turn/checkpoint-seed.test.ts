@@ -80,6 +80,9 @@ function payloadFor(operationId: string): CheckpointPayload {
 }
 
 const gateway: CheckpointConversationGateway = {
+  insert() {
+    throw new Error("fork insertion is outside this fixture");
+  },
   exists: () => true,
   find: () => makeConversationState({ id: KEY.conversationId }),
   clearBackendRef: () => true,
@@ -151,6 +154,62 @@ async function operation(id: string) {
 }
 
 describe("prepareCheckpointSeed", () => {
+  it("frames a source checkpoint as fork history while keeping its seed and acceptance hash intact", async () => {
+    const ready = await readyOperation();
+    const source = {
+      scope: "session" as const,
+      projectName: "alpha",
+      sessionName: "csm-alpha",
+      conversationId: "source-17",
+    };
+    const seed = prepareCheckpointSeed(
+      {
+        checkpoint: { repo: async () => repo, now },
+        log: createCapturingLogger(),
+      },
+      {
+        key: KEY,
+        operationId: ready.id,
+        payload: payloadFor(ready.id),
+        closeAttemptedRuntime: async () => {},
+        forkOrigin: {
+          source,
+          evidenceSource: source,
+          sourceOperationId: "source-checkpoint",
+          operationId: ready.id,
+          ordinal: 3,
+          schemaVersion: 1,
+          seedSha256: SEED_SHA,
+          capturedThroughSeq: 3,
+          requestHash: "hash",
+          relatedWork: { kind: "ticket", ticketNumber: 131 },
+          initialSelection: {
+            backend: "codex",
+            modelSelection: { modelId: "gpt-6-astra", parameters: {} },
+          },
+        },
+      },
+    );
+    expect(seed.block).toContain("source-17");
+    expect(seed.block).toContain("source-checkpoint");
+    expect(seed.block).toContain("131");
+    expect(seed.block.endsWith(SEED_TEXT)).toBe(true);
+    expect(seed.seedSha256).toBe(SEED_SHA);
+    expect(
+      Buffer.byteLength(seed.block) - Buffer.byteLength(SEED_TEXT),
+    ).toBeLessThanOrEqual(4096);
+    await seed.bind(BINDING);
+    seed.markDispatched();
+    await seed.onInputAccepted();
+    await seed.onBackendInit({ backend: "codex", ref: "fresh-codex-fork" });
+    await seed.finish();
+    expect(await operation(ready.id)).toMatchObject({
+      phase: "applied",
+      acceptance: { seedHash: SEED_SHA },
+      protectedReferences: { acceptedBackendRef: "fresh-codex-fork" },
+    });
+  });
+
   it("carries the exact frozen bytes and binds the admitted attempt before any provider event", async () => {
     const ready = await readyOperation();
     const seed = prepare(ready.id);

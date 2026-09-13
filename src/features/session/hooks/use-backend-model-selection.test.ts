@@ -19,6 +19,8 @@ import {
 import { createTestQueryClient } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
+import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
+
 import { useBackendModelSelection } from "./use-backend-model-selection";
 
 const claudeCatalog = getStaticBackendModelCatalog("claude");
@@ -147,6 +149,45 @@ describe("useBackendModelSelection", () => {
     expect(result.current.modelCatalog).toEqual(codexCatalog);
     expect(result.current.modelCatalogs.codex).toEqual(codexCatalog);
     expect(result.current.modelSelectionValid).toBe(true);
+  });
+
+  it("starts a checkpoint fork with its chosen model, allows cross-backend edits, and locks on submission before prompt count advances", async () => {
+    serveEffectiveCatalogs();
+    const initial = { modelId: "gpt-5.4", parameters: { reasoning: "high" } };
+    const origin = checkpointForkOriginFixture({
+      initialSelection: { backend: "codex", modelSelection: initial },
+    });
+    const conversation = makeConversation({
+      agentBackend: "codex",
+      checkpointFork: origin,
+    });
+    const { result, rerender } = renderHook(
+      ({ activeConversation }) =>
+        useBackendModelSelection({
+          projectName: "proj",
+          conversationId: "c1",
+          activeConversation,
+          backendDefaults,
+        }),
+      { wrapper, initialProps: { activeConversation: conversation } },
+    );
+    expect(result.current.modelSelection).toEqual(initial);
+    expect(result.current.backendLocked).toBe(false);
+    act(() => result.current.handleBackendChange("claude"));
+    expect(result.current.selectedBackend).toBe("claude");
+    rerender({
+      activeConversation: makeConversation({
+        agentBackend: "claude",
+        promptCount: 0,
+        checkpointFork: {
+          ...origin,
+          submission: { backend: "claude", at: "2026-09-12T12:00:00Z" },
+        },
+      }),
+    });
+    expect(result.current.backendLocked).toBe(true);
+    act(() => result.current.handleBackendChange("codex"));
+    expect(result.current.selectedBackend).toBe("claude");
   });
 
   it("preserves a stale whole selection instead of repairing it from defaults", async () => {

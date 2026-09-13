@@ -1206,8 +1206,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 15 after the conversation-checkpoint cutover", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(15);
+  it("this build understands checkpoint forks at schema version 16", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(16);
   });
 
   it("refuses a version-12 binary after ticket relationships stamp version 13", () => {

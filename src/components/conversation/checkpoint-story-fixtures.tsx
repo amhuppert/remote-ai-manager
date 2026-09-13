@@ -406,18 +406,20 @@ export function checkpointSurfaceFixture(
 export function CheckpointStoryProvider({
   target,
   receipts,
+  additionalFetch,
   children,
 }: {
   target: CheckpointTarget;
   /** Every saved operation the panel can select, newest first. */
   receipts: readonly CheckpointReceipt[];
+  additionalFetch?: typeof fetch;
   children: ReactNode;
 }): React.JSX.Element {
   // Installed during the first render, before any query runs: an effect would
   // land after the panel's first reads had already missed it.
   const [client] = useState(() => {
     const original = window.fetch.bind(window);
-    window.fetch = storyFetch(target, receipts, original);
+    window.fetch = storyFetch(target, receipts, additionalFetch ?? original);
     return {
       queryClient: new QueryClient({
         defaultOptions: { queries: { retry: false, staleTime: Infinity } },

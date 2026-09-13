@@ -1,3 +1,4 @@
+import { addCheckpointForks } from "./0045-add-checkpoint-forks";
 import type { StateMigration } from "./types";
 import { dropLegacyRoadmapItems } from "./0001-drop-legacy-roadmap-items";
 import { splitGraphWorkflowHistory } from "./0002-split-graph-workflow-history";
@@ -125,6 +126,7 @@ export const migrations: readonly StateMigration[] = [
   addMemoryTelemetry,
   closePolicyAdmittedApprovalRequests,
   addConversationCheckpoints,
+  addCheckpointForks,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

@@ -117,6 +117,8 @@ function harness(overrides: Partial<ProjectQueueRouteDeps> = {}): Harness {
       }
       return { entry, deliveryTiming: "next_turn" };
     },
+    admitCheckpointForkSelection: async ({ modelSelection }) =>
+      modelSelection ?? { modelId: "claude-opus-5", parameters: {} },
     checkpointAcceptsQueuedInput: () => false,
     queueCapabilityForBackend: () => ({
       acceptsWhileRunning: true,
@@ -294,6 +296,8 @@ describe("project conversation queue routes", () => {
 
     it("refuses a backend that cannot accept a message while running", async () => {
       const h = harness({
+        admitCheckpointForkSelection: async ({ modelSelection }) =>
+          modelSelection ?? { modelId: "claude-opus-5", parameters: {} },
         checkpointAcceptsQueuedInput: () => false,
         queueCapabilityForBackend: () => ({
           acceptsWhileRunning: false,

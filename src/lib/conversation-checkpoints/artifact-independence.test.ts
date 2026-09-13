@@ -154,6 +154,9 @@ function recordingContinuation(): CheckpointConversationGateway & {
 } {
   const state = {
     cleared: [] as CheckpointScopeKey[],
+    insert() {
+      throw new Error("fork insertion is outside this fixture");
+    },
     exists(): boolean {
       return true;
     },

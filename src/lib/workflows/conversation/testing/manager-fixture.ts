@@ -68,6 +68,9 @@ export function createConversationManagerFixture(
     async readAdmissionState() {
       return { found: true, requiresQueueReview: false };
     },
+    async admitCheckpointForkForTurn() {
+      return null;
+    },
     async admitProfileForTurn() {
       return { instructionBlock: null, snapshot: null, lockedAt: null };
     },
@@ -104,6 +107,9 @@ export function createConversationManagerFixture(
           throw new Error("Fixture has no checkpoint repository");
         };
         return {
+          createFork: async () => {
+            throw new Error("fork creation is outside this fixture");
+          },
           admitOperation: unavailable,
           admitRecovery: unavailable,
           freezePayload: unavailable,

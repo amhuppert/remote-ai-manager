@@ -1,4 +1,5 @@
 "use client";
+import { checkpointForkBackendRefusal } from "@/lib/conversation-checkpoints/fork-backend-refusal";
 
 import BackendToggle from "@/components/BackendToggle";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
@@ -36,6 +37,7 @@ export interface PromptDesktopToolbarProps {
   onAttachClick: () => void;
   attachDisabled: boolean;
   backendLocked: boolean;
+  isCheckpointFork?: boolean;
   selectedBackend: AgentBackendId;
   onBackendChange: (backend: AgentBackendId) => void;
   modelCatalog: BackendModelCatalog | null;
@@ -69,6 +71,7 @@ export default function PromptDesktopToolbar({
   onAttachClick,
   attachDisabled,
   backendLocked,
+  isCheckpointFork = false,
   selectedBackend,
   onBackendChange,
   modelCatalog,
@@ -130,6 +133,9 @@ export default function PromptDesktopToolbar({
           onChange={onBackendChange}
           disabled={sending || isReadOnly}
           readOnly={backendLocked}
+          disabledReason={
+            isCheckpointFork ? checkpointForkBackendRefusal : undefined
+          }
         />
         {modelCatalog === null ? (
           <UnavailableModelSelectionControl

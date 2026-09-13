@@ -91,6 +91,7 @@ export const backendCatalogCapabilitiesSchema = z.object({
   nativeMidTurnAskUser: z.boolean(),
   externalTurns: z.boolean(),
   checkpoint: z.boolean(),
+  checkpointFork: z.boolean(),
   capabilityKinds: z.array(
     z.object({
       kind: capabilityKindSchema,

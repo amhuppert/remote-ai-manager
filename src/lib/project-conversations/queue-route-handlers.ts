@@ -1,3 +1,4 @@
+import { admitCheckpointForkTurnSelection } from "@/lib/conversation-checkpoints/fork-production";
 /**
  * Project-conversation queue routes — the project adapter of the shared queue
  * operations.
@@ -51,6 +52,7 @@ export interface ProjectQueueRouteDeps extends QueueOperationDeps {
 function defaultDeps(): ProjectQueueRouteDeps {
   const service = createProjectConversationService();
   return {
+    admitCheckpointForkSelection: admitCheckpointForkTurnSelection,
     checkpointAcceptsQueuedInput,
     admitModelSelection: admitConfiguredModelSelection,
     resolveProjectPath: defaultResolveProjectPath,

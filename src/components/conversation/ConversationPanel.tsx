@@ -1,4 +1,5 @@
 "use client";
+import CheckpointForkProvenance from "./CheckpointForkProvenance";
 
 import { useCallback, useState, type ReactNode, type RefObject } from "react";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
@@ -140,6 +141,9 @@ export default function ConversationPanel({
           )}
         </div>
       </div>
+      {activeConversation?.checkpointFork && (
+        <CheckpointForkProvenance origin={activeConversation.checkpointFork} />
+      )}
       {contextPercent != null && (
         <div className="mobile-context-fill">
           <ContextFillIndicator percentage={contextPercent} />

@@ -93,6 +93,8 @@ function context() {
 
 function handlers(onQueue?: () => Promise<void>) {
   return createQueueRouteHandlers({
+    admitCheckpointForkSelection: async ({ modelSelection }) =>
+      modelSelection ?? { modelId: "claude-opus-5", parameters: {} },
     checkpointAcceptsQueuedInput: () => false,
     admitModelSelection: async ({ modelSelection }) => ({
       ok: true,

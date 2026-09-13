@@ -85,6 +85,7 @@ export const claudeConversationCapabilities: BackendConversationCapabilities = {
   // expectation satisfied (9/9 in each scope).
   // scripts/probes/run-checkpoint-continuation.sh.
   checkpoint: true,
+  checkpointFork: true,
   capabilityKinds: [
     { kind: "skills", applyTiming: "idle_live" },
     { kind: "plugins", applyTiming: "idle_live" },

@@ -98,6 +98,7 @@ export const cursorConversationCapabilities: BackendConversationCapabilities = {
   externalTurns: false,
   // Disabled until backend-continuation-probes holds real continuation evidence.
   checkpoint: false,
+  checkpointFork: false,
   capabilityKinds: [
     { kind: "skills", applyTiming: "next_conversation" },
     { kind: "plugins", applyTiming: "next_conversation" },

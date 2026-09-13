@@ -113,6 +113,7 @@ export function createActorDependenciesFixture(
     ),
     getNextImageIndex: vi.fn(async () => 1),
     getConversationBackendFactory: vi.fn(() => factory),
+    backendSupportsCheckpointFork: () => true,
     admitConfiguredModelSelection: vi.fn(async ({ modelSelection }) => ({
       ok: true as const,
       modelSelection,
@@ -129,6 +130,7 @@ export function createActorDependenciesFixture(
       nativeMidTurnAskUser: true,
       externalTurns: true,
       checkpoint: false,
+      checkpointFork: false,
       capabilityKinds: [
         { kind: "skills" as const, applyTiming: "idle_live" as const },
         { kind: "plugins" as const, applyTiming: "idle_live" as const },
@@ -263,6 +265,7 @@ export function groupActorFixtureDependencies(
       readConfig: deps.readConfig,
       getProjectDisplayName: deps.getProjectDisplayName,
       getConversationBackendFactory: deps.getConversationBackendFactory,
+      backendSupportsCheckpointFork: deps.backendSupportsCheckpointFork,
       admitConfiguredModelSelection: deps.admitConfiguredModelSelection,
       getConversationCapabilities: deps.getConversationCapabilities,
       registerBackendRuntime: deps.registerBackendRuntime,

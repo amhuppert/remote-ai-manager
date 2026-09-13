@@ -500,6 +500,9 @@ describe.each(["session", "project"] as const)(
     it("reads frozen boundaries across receipt pages, scopes them, and caps the rendered range", async () => {
       const db = _createTestDb({ inMemory: true });
       const repo = createConversationCheckpointsRepo(db, createWriteQueue(), {
+        insert() {
+          throw new Error("fork insertion is outside this fixture");
+        },
         exists: () => true,
         find: () => null,
         clearBackendRef: () => true,

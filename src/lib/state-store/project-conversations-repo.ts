@@ -127,6 +127,7 @@ const projectConversationsTableRowSchema = z.object({
   pending_questions: z.string().nullable(),
   pending_prompt_text: z.string().nullable(),
   forked_from: z.string().nullable(),
+  checkpoint_fork: z.string().nullable(),
   role: z.string().nullable(),
   context_tokens: z.number().int().nullable(),
   context_window_max: z.number().int().nullable(),
@@ -175,6 +176,7 @@ interface ProjectSqlBindRow {
   pending_questions: string | null;
   pending_prompt_text: string | null;
   forked_from: string | null;
+  checkpoint_fork: string | null;
   role: string | null;
   context_tokens: number | null;
   context_window_max: number | null;
@@ -236,6 +238,7 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "pending_questions",
   "pending_prompt_text",
   "forked_from",
+  "checkpoint_fork",
   "role",
   "context_tokens",
   "context_window_max",
@@ -376,7 +379,7 @@ export function createProjectConversationsRepo(
        id, project_path, name, name_origin, transcript_path, status,
        prompt_count, created_at, last_activity_at, source, summary, archived, open,
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
-       pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
+       pending_questions, pending_prompt_text, forked_from, checkpoint_fork, role, context_tokens, context_window_max,
        debug_mode, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
        unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices,
@@ -386,7 +389,7 @@ export function createProjectConversationsRepo(
        @id, @project_path, @name, @name_origin, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived, @open,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
-       @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
+       @pending_questions, @pending_prompt_text, @forked_from, @checkpoint_fork, @role, @context_tokens, @context_window_max,
        @debug_mode, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
        @unread, @spawned_session_ids, @pending_queue, @last_seen_alignment_version, @pending_agent_notices,
@@ -413,6 +416,7 @@ export function createProjectConversationsRepo(
        pending_questions          = excluded.pending_questions,
        pending_prompt_text        = excluded.pending_prompt_text,
        forked_from                = excluded.forked_from,
+       checkpoint_fork            = excluded.checkpoint_fork,
        role                       = excluded.role,
        context_tokens             = excluded.context_tokens,
        context_window_max         = excluded.context_window_max,

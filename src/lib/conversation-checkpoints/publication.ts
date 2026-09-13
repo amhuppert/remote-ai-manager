@@ -146,6 +146,13 @@ export function withCheckpointPublication(
   }
 
   return {
+    async createFork(input) {
+      return publishOperation(
+        await repo.createFork(input),
+        input.key,
+        (created) => (created.reused ? [] : [created.operation.id]),
+      );
+    },
     async admitOperation(
       input: AdmitCheckpointInput,
     ): Promise<CheckpointResult<AdmittedCheckpoint>> {

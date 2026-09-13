@@ -1,3 +1,4 @@
+import { isValidCheckpointForkPayload } from "./fork-validation";
 /**
  * The durable authority for a conversation's checkpoint phase.
  *
@@ -30,6 +31,7 @@ import { PersistenceError } from "@/lib/shared/errors";
 import type { WriteQueue } from "@/lib/state-store/write-queue";
 
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { CheckpointForkOrigin } from "./fork-schemas";
 
 import type { CheckpointConversationGateway } from "./continuation";
 import { checkpointReceipt, type CheckpointReceipt } from "./receipt";
@@ -72,6 +74,20 @@ export type CheckpointAdmissionOutcome = "admitted" | "reused";
 export interface AdmittedCheckpoint {
   outcome: CheckpointAdmissionOutcome;
   operation: CheckpointOperation;
+}
+
+export interface CreateCheckpointForkInput {
+  sourceKey: CheckpointScopeKey;
+  sourceOperationId: string;
+  key: CheckpointScopeKey;
+  conversation: ConversationState;
+  origin: CheckpointForkOrigin;
+}
+
+export interface CreatedCheckpointFork {
+  conversation: ConversationState;
+  operation: CheckpointOperation;
+  reused: boolean;
 }
 
 export interface AdmitCheckpointInput {
@@ -187,6 +203,9 @@ export interface CheckpointReceiptPage {
 }
 
 export interface ConversationCheckpointsRepo {
+  createFork(
+    input: CreateCheckpointForkInput,
+  ): Promise<CheckpointResult<CreatedCheckpointFork>>;
   /**
    * Admit an ordinary checkpoint. Idempotent on the request UUID for the same
    * conversation; refused while any other operation holds the slot.
@@ -758,6 +777,29 @@ export function createConversationCheckpointsRepo(
       LIMIT @limit`,
   );
 
+  function insertPayload(payload: CheckpointPayload): void {
+    insertPayloadStmt.run({
+      id: payload.id,
+      schema_version: payload.schemaVersion,
+      captured_through_seq: payload.sourceBasis.capturedThroughSeq,
+      source_hash: payload.sourceBasis.sourceHash,
+      source_artifact_id: payload.artifactProvenance?.artifactId ?? null,
+      source_artifact_hash:
+        payload.artifactProvenance?.artifactSourceHash ?? null,
+      generator_version: payload.versions.generatorVersion,
+      builder_version: payload.versions.builderVersion,
+      normalizer_version: payload.versions.normalizerVersion,
+      model_selection_json: JSON.stringify(payload.modelSelection),
+      sections_json: JSON.stringify(payload.sections),
+      seed_text: payload.seedText,
+      seed_sha256: payload.seedSha256,
+      section_bytes_json: JSON.stringify(payload.sectionBytes),
+      omissions_json: JSON.stringify(payload.omissions),
+      generation_pass_count: payload.generationPassCount,
+      created_at: payload.createdAt,
+    });
+  }
+
   function scopeBind(key: CheckpointScopeKey): {
     scope: string;
     project_path: string;
@@ -869,6 +911,158 @@ export function createConversationCheckpointsRepo(
   }
 
   return {
+    async createFork(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.createFork", () =>
+        db
+          .transaction((): CheckpointResult<CreatedCheckpointFork> => {
+            const { key, sourceKey, origin } = input;
+            const existing = continuation.find(key);
+            if (existing !== null) {
+              const operation = findScoped(key, origin.operationId);
+              if (
+                existing.checkpointFork?.requestHash === origin.requestHash &&
+                existing.checkpointFork.sourceOperationId ===
+                  input.sourceOperationId &&
+                existing.checkpointFork.source.conversationId ===
+                  sourceKey.conversationId &&
+                operation !== null
+              ) {
+                logger.info(
+                  "checkpoint.fork.reused",
+                  operationLogFields(key, operation.id),
+                );
+                return ok({ conversation: existing, operation, reused: true });
+              }
+              return refuse(
+                "request_id_conflict",
+                "the request id already belongs to another fork",
+                operation,
+              );
+            }
+            const sourceOperation = findScoped(
+              sourceKey,
+              input.sourceOperationId,
+            );
+            const raw: unknown = findPayloadStmt.get({
+              ...scopeBind(sourceKey),
+              id: input.sourceOperationId,
+            });
+            if (sourceOperation === null || raw === undefined) {
+              return refuse(
+                "checkpoint_not_found",
+                "no saved checkpoint exists in the source scope",
+                null,
+              );
+            }
+            const sourceConversation = continuation.find(sourceKey);
+            if (
+              sourceConversation === null ||
+              sourceConversation.archived ||
+              sourceConversation.role !== null ||
+              sourceConversation.owner !== null
+            ) {
+              return refuse(
+                "fence_refused",
+                "the source must be an ordinary, non-archived, unowned conversation",
+                sourceOperation,
+              );
+            }
+            const payload = rowToPayload(raw);
+            const expectedEvidenceSource =
+              sourceConversation.checkpointFork?.operationId ===
+              sourceOperation.id
+                ? sourceConversation.checkpointFork.evidenceSource
+                : origin.source;
+            if (
+              origin.submission !== undefined ||
+              origin.initialSelection.backend !==
+                input.conversation.agentBackend ||
+              JSON.stringify(expectedEvidenceSource) !==
+                JSON.stringify(origin.evidenceSource)
+            ) {
+              return refuse(
+                "invalid_payload",
+                "fork evidence and initial selection must belong to the addressed source and fresh target",
+                sourceOperation,
+              );
+            }
+            if (
+              key.scope !== sourceKey.scope ||
+              key.projectPath !== sourceKey.projectPath ||
+              key.sessionName !== sourceKey.sessionName ||
+              key.conversationId === sourceKey.conversationId ||
+              key.conversationId !== input.conversation.id ||
+              origin.operationId !== key.conversationId ||
+              origin.sourceOperationId !== sourceOperation.id ||
+              origin.source.conversationId !== sourceKey.conversationId ||
+              origin.source.scope !== sourceKey.scope ||
+              (origin.source.scope === "session" &&
+                origin.source.sessionName !== sourceKey.sessionName) ||
+              origin.ordinal !== sourceOperation.ordinal ||
+              origin.schemaVersion !== payload.schemaVersion ||
+              origin.capturedThroughSeq !==
+                payload.sourceBasis.capturedThroughSeq ||
+              origin.seedSha256 !== payload.seedSha256 ||
+              !isValidCheckpointForkPayload(payload)
+            ) {
+              return refuse(
+                "invalid_payload",
+                "fork provenance must match the saved checkpoint and its source scope",
+                sourceOperation,
+              );
+            }
+            if (
+              input.conversation.promptCount !== 0 ||
+              input.conversation.backendRef !== null ||
+              input.conversation.forkedFrom !== null ||
+              input.conversation.transcriptPath !== null ||
+              input.conversation.role !== null ||
+              input.conversation.owner !== null
+            ) {
+              return refuse(
+                "fence_refused",
+                "the fork must start as a fresh ordinary conversation",
+                sourceOperation,
+              );
+            }
+            if (findByIdStmt.get(origin.operationId) !== undefined) {
+              return refuse(
+                "request_id_conflict",
+                "the request id already names a checkpoint operation",
+                null,
+              );
+            }
+            const conversation = {
+              ...input.conversation,
+              checkpointFork: origin,
+            };
+            continuation.insert(key, conversation);
+            insertAdmitted(
+              {
+                key,
+                requestId: origin.operationId,
+                sourceBasis: payload.sourceBasis,
+                priorBackendRef: null,
+                requestedAt: conversation.createdAt,
+              },
+              null,
+            );
+            insertPayload({ ...payload, id: origin.operationId });
+            db.prepare(
+              "UPDATE conversation_checkpoint_operations SET phase = 'ready', payload_id = id, generation_pass_count = 0 WHERE id = ?",
+            ).run(origin.operationId);
+            const operation = reload(origin.operationId);
+            logger.info("checkpoint.fork.created", {
+              ...operationLogFields(key, operation.id),
+              sourceConversationId: sourceKey.conversationId,
+              sourceOperationId: sourceOperation.id,
+              seedSha256: payload.seedSha256,
+            });
+            return ok({ conversation, operation, reused: false });
+          })
+          .immediate(),
+      );
+    },
     async admitOperation(input) {
       return writeQueue.withWriteQueueSync("checkpoint.admitOperation", () =>
         db
@@ -998,27 +1192,7 @@ export function createConversationCheckpointsRepo(
             }
 
             const payload = parsed.data;
-            insertPayloadStmt.run({
-              id: payload.id,
-              schema_version: payload.schemaVersion,
-              captured_through_seq: payload.sourceBasis.capturedThroughSeq,
-              source_hash: payload.sourceBasis.sourceHash,
-              source_artifact_id:
-                payload.artifactProvenance?.artifactId ?? null,
-              source_artifact_hash:
-                payload.artifactProvenance?.artifactSourceHash ?? null,
-              generator_version: payload.versions.generatorVersion,
-              builder_version: payload.versions.builderVersion,
-              normalizer_version: payload.versions.normalizerVersion,
-              model_selection_json: JSON.stringify(payload.modelSelection),
-              sections_json: JSON.stringify(payload.sections),
-              seed_text: payload.seedText,
-              seed_sha256: payload.seedSha256,
-              section_bytes_json: JSON.stringify(payload.sectionBytes),
-              omissions_json: JSON.stringify(payload.omissions),
-              generation_pass_count: payload.generationPassCount,
-              created_at: payload.createdAt,
-            });
+            insertPayload(payload);
             freezeOperationStmt.run({
               id: operation.id,
               generation_pass_count: payload.generationPassCount,
@@ -1485,6 +1659,7 @@ export function createConversationCheckpointsRepo(
       return checkpointReceipt(
         operation,
         payloadRaw === undefined ? null : rowToPayloadReceipt(payloadRaw),
+        continuation.find(key)?.checkpointFork,
       );
     },
 
@@ -1513,6 +1688,7 @@ export function createConversationCheckpointsRepo(
         return checkpointReceipt(
           operation,
           payloadRaw === undefined ? null : rowToPayloadReceipt(payloadRaw),
+          continuation.find(key)?.checkpointFork,
         );
       });
       const last = page.at(-1);

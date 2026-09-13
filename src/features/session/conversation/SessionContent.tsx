@@ -51,6 +51,7 @@ const PROMPT_SLOT_CLASS =
 export interface SessionContentProps {
   session: SessionState;
   activeConversation: PublicConversationState | undefined;
+  initialForkModel?: import("@/lib/agent-backends/schemas").BackendModelSelection;
   projectName: string;
   sessionName: string;
   conversationId: string;
@@ -96,6 +97,7 @@ export interface SessionContentProps {
 export default function SessionContent({
   session,
   activeConversation,
+  initialForkModel,
   projectName,
   sessionName,
   conversationId,
@@ -167,6 +169,7 @@ export default function SessionContent({
         <SessionInfoStrip
           session={session}
           activeConversation={activeConversation}
+          {...(initialForkModel ? { initialForkModel } : {})}
           projectName={projectName}
           sessionName={sessionName}
           conversationId={conversationId}

@@ -118,6 +118,8 @@ function createTestDeps(
     queueMessage: vi
       .fn()
       .mockResolvedValue({ entry, deliveryTiming: "in_turn" as const }),
+    admitCheckpointForkSelection: async ({ modelSelection }) =>
+      modelSelection ?? { modelId: "claude-opus-5", parameters: {} },
     checkpointAcceptsQueuedInput: () => false,
     queueCapabilityForBackend: vi.fn().mockReturnValue(inTurnCapability),
     toQueuedMessageView: vi.fn((e: PendingQueuedMessage) => makeView(e)),

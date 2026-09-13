@@ -183,6 +183,16 @@ export function receiptDetailLines(
     `conversation ${receipt.conversationId}\tscope=${receipt.scope}\tmechanism=${receipt.mechanism}`,
     `boundary: capturedThroughSeq=${receipt.boundary.capturedThroughSeq} sourceHash=${receipt.boundary.sourceHash}`,
   ];
+  if (receipt.forkOrigin) {
+    const origin = receipt.forkOrigin;
+    lines.push(
+      `fork source: ${origin.source.conversationId} checkpoint ${origin.sourceOperationId} ordinal ${origin.ordinal}`,
+      `related work: ${JSON.stringify(origin.relatedWork)}`,
+      `fork framing: ${receipt.forkFramingBytes ?? "unavailable"} bytes in addition to the unchanged saved seed`,
+      `source checkpoint: cctl conversation checkpoint get ${origin.source.conversationId} ${origin.sourceOperationId}`,
+      `original evidence: cctl conversation read ${origin.evidenceSource.conversationId} --outline`,
+    );
+  }
   if (receipt.lastStablePhase !== null) {
     lines.push(`last stable phase: ${receipt.lastStablePhase}`);
   }

@@ -1,3 +1,4 @@
+import { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import { readRuntimeInstructions } from "../runtime-instructions";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationAddress } from "../turn-spec";
@@ -43,6 +44,7 @@ import type { ConversationBinding } from "../turn-spec";
 
 export interface LifecycleFixtureOptions {
   beforeProfileAdmission?(): Promise<void>;
+  beforeForkAdmission?(): Promise<void>;
   /** Runs ahead of every admission-state read; throwing fails that read. */
   beforeAdmissionStateRead?(): Promise<void>;
   verifyDebugCleanup?: import("../actor-host").ConversationMachineDependencies["verifyDebugCleanup"];
@@ -246,6 +248,21 @@ export async function createLifecycleFixture(
               row?.pendingQueue.some((item) => item.status === "uncertain") ??
               false,
           };
+        },
+        admitCheckpointForkForTurn: async (
+          key,
+          backend,
+          _selection,
+          isCurrent,
+        ) => {
+          await options.beforeForkAdmission?.();
+          await admitCheckpointForkSubmission(
+            persistence.store,
+            key,
+            backend,
+            isCurrent,
+          );
+          return null;
         },
         admitProfileForTurn: (key) =>
           admitConversationProfile(

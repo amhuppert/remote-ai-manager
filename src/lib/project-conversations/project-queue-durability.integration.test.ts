@@ -1,3 +1,5 @@
+import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
+import { CheckpointForkError } from "@/lib/conversation-checkpoints/fork-service";
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createQueueAdmissionFixture } from "@/lib/workflows/conversation/testing/queue-admission-fixture";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
@@ -106,9 +108,18 @@ describe("project message queue durability", () => {
   }
 
   /** The real project queue route, wired to the given store. */
-  function handlers(store: StateStore) {
+  function handlers(store: StateStore, refuseFork = false) {
     const svc = queueService(store);
     return createProjectQueueRouteHandlers({
+      admitCheckpointForkSelection: async ({ modelSelection }) => {
+        if (refuseFork)
+          throw new CheckpointForkError(
+            "backend_unsupported",
+            "Uncertified checkpoint backend",
+            422,
+          );
+        return modelSelection ?? { modelId: "claude-opus-5", parameters: {} };
+      },
       checkpointAcceptsQueuedInput: () => false,
       admitModelSelection: async ({ modelSelection }) => ({
         ok: true,
@@ -149,6 +160,36 @@ describe("project message queue durability", () => {
       cancel: (input) => svc.cancel(input),
     });
   }
+
+  it("keeps a fork editable and its queue empty when omitted-model checkpoint admission is refused", async () => {
+    await fixture.store.mutateProjectConversation(
+      PROJECT_PATH,
+      CONVERSATION_ID,
+      "seed-fork",
+      (row) => {
+        row.promptCount = 0;
+        row.checkpointFork = checkpointForkOriginFixture();
+      },
+    );
+    const response = await handlers(fixture.store, true).POST(
+      postRequest({ text: "queued first task" }),
+      {
+        params: Promise.resolve({
+          name: "cc",
+          conversationId: CONVERSATION_ID,
+        }),
+      },
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      code: "backend_unsupported",
+    });
+    const row = await fixture
+      .recreateStore()
+      .getProjectConversation(PROJECT_PATH, CONVERSATION_ID);
+    expect(row?.pendingQueue).toEqual([]);
+    expect(row?.checkpointFork?.submission).toBeUndefined();
+  });
 
   function postRequest(body: unknown): Request {
     return new Request("http://127.0.0.1/", {

@@ -55,6 +55,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
     discharges: {
       spawnedSessionIds:
         "not-persisted: PLC-only field; the conversations table has no column (lives on project_conversations).",
+      "checkpointFork.initialSelection.modelSelection.parameters":
+        "bounded: one immutable selection admitted by fork-service against the backend's model catalog; at most one value per declared parameter, never accumulated across turns.",
       "pendingQuestions.**":
         "bounded: one in-flight AskUserQuestion set, cleared when answered.",
       "debugMode.**":

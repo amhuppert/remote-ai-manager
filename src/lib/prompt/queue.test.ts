@@ -190,6 +190,7 @@ describe("queueMessage next_turn", () => {
     expect(enqueueMock).toHaveBeenCalledTimes(1);
     expect(enqueueMock).toHaveBeenCalledWith({
       ...baseParams,
+      backend: "codex",
       content: [{ type: "text", text: "follow up" }],
     });
     expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
@@ -219,6 +220,7 @@ describe("queueMessage next_turn", () => {
 
     expect(enqueueMock).toHaveBeenCalledWith({
       ...baseParams,
+      backend: "codex",
       content: [{ type: "text", text: "follow up" }],
       modelSelection,
     });
@@ -255,6 +257,7 @@ describe("queueMessage next_turn", () => {
     // text block (avoids duplicate display + the drain re-derives the prose).
     expect(enqueueMock).toHaveBeenCalledWith({
       ...baseParams,
+      backend: "codex",
       content: [{ type: "document_feedback", items: documentFeedback.items }],
     });
   });
@@ -419,6 +422,7 @@ describe("queueMessage in_turn", () => {
 
     expect(enqueueMock).toHaveBeenCalledWith({
       ...baseParams,
+      backend: "claude",
       content: [{ type: "text", text: rawPrompt }],
     });
     expect(queueUserInputMock).toHaveBeenCalledWith({
@@ -467,6 +471,7 @@ describe("queueMessage in_turn", () => {
     // The durable entry carries the structured card.
     expect(enqueueMock).toHaveBeenCalledWith({
       ...baseParams,
+      backend: "claude",
       content: [{ type: "document_feedback", items: documentFeedback.items }],
     });
 
@@ -525,6 +530,7 @@ describe("queueMessage in_turn", () => {
     // The durable entry carries the typed block, not the derivable prose.
     expect(enqueueMock).toHaveBeenCalledWith({
       ...baseParams,
+      backend: "claude",
       content: [expectedBlock],
     });
 
@@ -665,6 +671,7 @@ describe("queueMessage in_turn", () => {
 
     expect(enqueueMock).toHaveBeenCalledWith({
       ...baseParams,
+      backend: "claude",
       content: [{ type: "text", text: "/commit" }],
     });
     expect(claimLiveDeliveryMock).not.toHaveBeenCalled();

@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { checkpointForkFraming } from "./fork-framing";
+import {
+  checkpointForkOriginSchema,
+  type CheckpointForkOrigin,
+} from "./fork-schemas";
 
 import {
   CHECKPOINT_MECHANISM,
@@ -33,6 +38,8 @@ export type CheckpointPayloadReceipt = z.infer<
 >;
 
 export const checkpointReceiptSchema = z.object({
+  forkOrigin: checkpointForkOriginSchema.optional(),
+  forkFramingBytes: z.number().int().nonnegative().max(4096).optional(),
   operationId: z.string().min(1),
   mechanism: z.literal("cc_checkpoint"),
   scope: checkpointScopeSchema,
@@ -94,8 +101,17 @@ export type CheckpointReceipt = z.infer<typeof checkpointReceiptSchema>;
 export function checkpointReceipt(
   operation: CheckpointOperation,
   payload: CheckpointPayloadReceipt | null,
+  forkOrigin?: CheckpointForkOrigin,
 ): CheckpointReceipt {
   return {
+    ...(forkOrigin?.operationId === operation.id
+      ? {
+          forkOrigin,
+          forkFramingBytes: new TextEncoder().encode(
+            checkpointForkFraming(operation.conversationId, forkOrigin),
+          ).byteLength,
+        }
+      : {}),
     operationId: operation.id,
     mechanism: CHECKPOINT_MECHANISM,
     scope: operation.scope,

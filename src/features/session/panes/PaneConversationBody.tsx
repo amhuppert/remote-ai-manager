@@ -1,4 +1,5 @@
 "use client";
+import CheckpointForkProvenance from "@/components/conversation/CheckpointForkProvenance";
 import SyntheticForkBadge from "@/features/session/conversation/SyntheticForkBadge";
 import { useForkAvailability } from "@/lib/conversations/use-fork-availability";
 
@@ -191,6 +192,9 @@ export default function PaneConversationBody({
       />
       {conversationState?.forkedFrom?.forkMode === "synthetic" && (
         <SyntheticForkBadge />
+      )}
+      {conversationState?.checkpointFork && (
+        <CheckpointForkProvenance origin={conversationState.checkpointFork} />
       )}
       <ConversationTranscript
         scope={{ kind: "session", projectName, sessionName, conversationId }}

@@ -1,3 +1,4 @@
+import { checkpointForkOriginSchema } from "@/lib/conversation-checkpoints/fork-schemas";
 import { z } from "zod";
 import {
   projectConversationTarget,
@@ -329,6 +330,7 @@ const conversationStateFieldsSchema = z.object({
   // prompt.
   unread: z.boolean().default(false),
   forkedFrom: forkedFromSchema,
+  checkpointFork: checkpointForkOriginSchema.optional(),
   role: conversationRoleSchema,
   activeTurnSource: activeTurnSourceSchema,
   contextTokens: z.number().nullable().default(null),

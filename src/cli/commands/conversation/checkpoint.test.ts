@@ -2394,3 +2394,83 @@ describe("checkpoint seed omissions are revealable", () => {
     });
   });
 });
+
+describe.each([sessionEnv, projectEnv])(
+  "checkpoint fork in scope $CC_CONVERSATION_SCOPE",
+  (env) => {
+    const request = {
+      requestId: "12345678-1234-4234-8234-123456789abc",
+      name: "Next phase",
+      task: "Implement ticket 131",
+      relatedWork: { kind: "ticket", ticketNumber: 131 },
+      backend: "codex",
+      modelSelection: { modelId: "gpt-6-astra", parameters: {} },
+    };
+    it.each(["fork", "fork-check"])(
+      "%s submits the exact validated file to the explicit source scope",
+      async (verb) => {
+        const host = makeHost(() =>
+          jsonResponse(
+            verb === "fork-check"
+              ? { eligible: true }
+              : {
+                  conversation: { id: request.requestId },
+                  reused: false,
+                  receipt: makeReceipt({
+                    operationId: request.requestId,
+                    phase: "ready",
+                  }),
+                },
+          ),
+        );
+        host.readTextFile = async () => JSON.stringify(request);
+        const result = await runCli(
+          [
+            "conversation",
+            "checkpoint",
+            verb,
+            "conv-1",
+            "op-1",
+            "--file",
+            "fork.json",
+            "--json",
+          ],
+          env,
+          host,
+        );
+        expect(host.requests).toHaveLength(1);
+        expect(host.requests[0]).toMatchObject({
+          path: `${env === projectEnv ? PROJECT_BASE : SESSION_BASE}/checkpoints/op-1/fork${verb === "fork-check" ? "/check" : ""}`,
+          method: "POST",
+          body: request,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain(
+          verb === "fork-check" ? '"eligible":true' : request.requestId,
+        );
+      },
+    );
+    it("rejects incomplete atomic model input before connecting", async () => {
+      const host = makeHost(() => jsonResponse({ eligible: true }));
+      host.readTextFile = async () =>
+        JSON.stringify({ ...request, modelSelection: {} });
+      const result = await runCli(
+        [
+          "conversation",
+          "checkpoint",
+          "fork",
+          "conv-1",
+          "op-1",
+          "--file",
+          "fork.json",
+          "--json",
+        ],
+        env,
+        host,
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr + result.stdout).toContain("modelSelection");
+      expect(host.requests).toHaveLength(0);
+    });
+  },
+);

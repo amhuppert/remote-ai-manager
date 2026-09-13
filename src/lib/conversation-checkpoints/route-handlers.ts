@@ -1,3 +1,5 @@
+import { resolveSessionRoute } from "@/lib/conversations/route-resolution";
+import { resolveProjectOr404 } from "@/lib/shared/route-resolution";
 /**
  * Scoped HTTP surface for the checkpoint operation (design §8 route table).
  *
@@ -16,10 +18,20 @@
  */
 
 import { NextResponse } from "next/server";
+import { toPublicConversationState } from "@/lib/conversations/schemas";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
+import { checkpointForkRequestSchema } from "./fork-schemas";
+import {
+  CheckpointForkError,
+  type createCheckpointForkService,
+} from "./fork-service";
+import { getCheckpointForkService } from "./fork-production";
 import { z } from "zod";
 
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import {
+  projectConversationTarget,
+  sessionConversationTarget,
   conversationStoreIdentity,
   conversationTargetApiBase,
   conversationTargetLogFields,
@@ -61,6 +73,7 @@ const logger = createLogger("conversation-checkpoints");
 type RouteContext = { params: Promise<Record<string, string>> };
 
 export interface CheckpointRouteDeps extends ScopedConversationRouteDeps {
+  forkService?: ReturnType<typeof createCheckpointForkService>;
   repo(): Promise<ConversationCheckpointsRepo>;
   startCheckpoint(
     input: ConversationCheckpointRequest,
@@ -232,11 +245,15 @@ function refusalResponse(
 // Handlers
 // ---------------------------------------------------------------------------
 
-function addressOf(target: ScopedConversationTarget): ConversationAddress {
+function addressOf(
+  target: Pick<ScopedConversationTarget, "projectPath" | "target">,
+): ConversationAddress {
   return { projectPath: target.projectPath, target: target.target };
 }
 
-function scopeKeyOf(target: ScopedConversationTarget): CheckpointScopeKey {
+function scopeKeyOf(
+  target: Pick<ScopedConversationTarget, "projectPath" | "target">,
+): CheckpointScopeKey {
   return checkpointScopeKeyForStoreIdentity(
     conversationStoreIdentity(addressOf(target)),
   );
@@ -269,6 +286,61 @@ export function createCheckpointRouteHandlers(
   deps: CheckpointRouteDeps = defaultDeps(),
 ) {
   const log = deps.log ?? logger;
+
+  async function fork(
+    request: Request,
+    target: Pick<ScopedConversationTarget, "projectPath" | "target">,
+    operationId: string,
+    check = false,
+  ): Promise<Response> {
+    const raw: unknown = await request.json().catch(() => null);
+    const parsed = checkpointForkRequestSchema.safeParse(raw);
+    if (!parsed.success)
+      return invalidRequest("invalid_checkpoint_fork", zodIssues(parsed.error));
+    const service = deps.forkService ?? getCheckpointForkService();
+    const input = {
+      projectPath: target.projectPath,
+      source: target.target,
+      operationId,
+      request: parsed.data,
+    };
+    try {
+      if (check) {
+        await service.check(input);
+        return NextResponse.json({ eligible: true });
+      }
+      const created = await service.create(input);
+      const receipt = await (
+        await deps.repo()
+      ).getReceipt(
+        { ...scopeKeyOf(target), conversationId: created.conversation.id },
+        created.operation.id,
+      );
+      return NextResponse.json(
+        {
+          conversation: toPublicConversationState(created.conversation),
+          receipt,
+          reused: created.reused,
+        },
+        { status: created.reused ? 200 : 201 },
+      );
+    } catch (error) {
+      if (
+        error instanceof CheckpointForkError ||
+        error instanceof BackendAdmissionError
+      ) {
+        log.info("checkpoint.fork.route_refused", {
+          ...conversationTargetLogFields(target.target),
+          code: error.code,
+        });
+        return NextResponse.json(
+          { error: error.message, code: error.code },
+          { status: error instanceof CheckpointForkError ? error.status : 422 },
+        );
+      }
+      throw error;
+    }
+  }
 
   async function start(
     request: Request,
@@ -527,6 +599,49 @@ export function createCheckpointRouteHandlers(
     };
   }
 
+  function withForkTarget(scope: "session" | "project", check: boolean) {
+    return async (
+      request: Request,
+      context: RouteContext,
+    ): Promise<Response> => {
+      const denied = await checkOptionalToken(request);
+      if (denied) return denied;
+      const params = await context.params;
+      const projectName = params["name"] ?? "";
+      const conversationId = params["conversationId"] ?? "";
+      const operationId = params["checkpointId"] ?? "";
+      if (!conversationId || !operationId) return checkpointNotFound();
+      if (scope === "session") {
+        const base = await resolveSessionRoute(deps, context);
+        if (!base.ok) return base.response;
+        return fork(
+          request,
+          {
+            projectPath: base.value.projectPath,
+            target: sessionConversationTarget(
+              projectName,
+              base.value.sessionName,
+              conversationId,
+            ),
+          },
+          operationId,
+          check,
+        );
+      }
+      const project = await resolveProjectOr404(deps, projectName);
+      if (!project.ok) return project.response;
+      return fork(
+        request,
+        {
+          projectPath: project.value,
+          target: projectConversationTarget(projectName, conversationId),
+        },
+        operationId,
+        check,
+      );
+    };
+  }
+
   async function checkOptionalToken(
     request: Request,
   ): Promise<Response | null> {
@@ -537,6 +652,10 @@ export function createCheckpointRouteHandlers(
   }
 
   return {
+    sessionFork: withForkTarget("session", false),
+    sessionForkCheck: withForkTarget("session", true),
+    projectFork: withForkTarget("project", false),
+    projectForkCheck: withForkTarget("project", true),
     sessionList: withTarget(resolveSessionScopedConversation, list),
     sessionStart: withTarget(resolveSessionScopedConversation, start),
     sessionEligibility: withTarget(
@@ -589,6 +708,14 @@ function shell(
 }
 
 export const listSessionConversationCheckpoints = shell((h) => h.sessionList);
+export const forkSessionConversationCheckpoint = shell((h) => h.sessionFork);
+export const checkSessionConversationCheckpointFork = shell(
+  (h) => h.sessionForkCheck,
+);
+export const forkProjectConversationCheckpoint = shell((h) => h.projectFork);
+export const checkProjectConversationCheckpointFork = shell(
+  (h) => h.projectForkCheck,
+);
 export const startSessionConversationCheckpoint = shell((h) => h.sessionStart);
 export const getSessionConversationCheckpointEligibility = shell(
   (h) => h.sessionEligibility,

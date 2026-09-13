@@ -40,6 +40,8 @@
  */
 
 import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
+import type { CheckpointForkOrigin } from "@/lib/conversation-checkpoints/fork-schemas";
+import { checkpointForkFraming } from "@/lib/conversation-checkpoints/fork-framing";
 import type {
   ConversationCheckpointsRepo,
   RecordCheckpointOutcomeInput,
@@ -144,6 +146,7 @@ export function prepareCheckpointSeed(
     key: CheckpointScopeKey;
     operationId: string;
     payload: CheckpointPayload;
+    forkOrigin?: CheckpointForkOrigin;
     /** Settle the runtime an unsent attempt created, so nothing resumes it. */
     closeAttemptedRuntime(): Promise<void>;
   },
@@ -366,7 +369,11 @@ export function prepareCheckpointSeed(
   return {
     operationId,
     seedSha256: payload.seedSha256,
-    block: payload.seedText,
+    block:
+      (input.forkOrigin === undefined
+        ? ""
+        : checkpointForkFraming(key.conversationId, input.forkOrigin)) +
+      payload.seedText,
     async bind(next) {
       const repo = await deps.checkpoint.repo();
       const result = await repo.beginDelivery({

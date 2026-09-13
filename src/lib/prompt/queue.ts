@@ -128,6 +128,7 @@ export interface QueueMessageDeps {
   enqueue(
     input: ConversationKey & {
       content: MessageContentBlock[];
+      backend?: AgentBackendId;
       metadata?: QueuedMessageMetadata;
       modelSelection?: BackendModelSelection;
       consumePendingQuestionId?: string;
@@ -398,6 +399,7 @@ export async function queueMessage(
       : buildQueueContent({ text: agentFacingText, images });
 
   const entry = await deps.enqueue({
+    backend,
     projectPath,
     sessionName,
     conversationId,

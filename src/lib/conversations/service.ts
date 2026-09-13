@@ -1,3 +1,4 @@
+import { assertCheckpointForkBackend } from "@/lib/conversation-checkpoints/fork-submission";
 import crypto from "node:crypto";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
@@ -396,6 +397,7 @@ export function createConversationService(
           );
         }
 
+        assertCheckpointForkBackend(conversation, backend);
         conversation.agentBackend = backend;
       },
     );

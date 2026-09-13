@@ -314,10 +314,14 @@ export function savedCheckpointBoundaries(
     ordinal: number;
     boundary: { capturedThroughSeq: number };
     checkpoint: object | null;
+    forkOrigin?: object;
   }[],
 ): CheckpointBoundaryInput[] {
   return receipts
-    .filter((receipt) => receipt.checkpoint !== null)
+    .filter(
+      (receipt) =>
+        receipt.checkpoint !== null && receipt.forkOrigin === undefined,
+    )
     .map((receipt) => ({
       operationId: receipt.operationId,
       ordinal: receipt.ordinal,

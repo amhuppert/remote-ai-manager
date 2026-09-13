@@ -1,3 +1,5 @@
+import { stampCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {
   getConversation as defaultGetConversation,
@@ -48,6 +50,7 @@ interface ConversationKey {
 }
 
 interface EnqueueQueuedMessageInput extends ConversationKey {
+  backend?: AgentBackendId;
   content: MessageContentBlock[];
   metadata?: QueuedMessageMetadata;
   modelSelection?: BackendModelSelection;
@@ -707,6 +710,11 @@ export function createMessageQueueService(
           conversation.pendingQuestionId = null;
           conversation.pendingQuestions = null;
         }
+        stampCheckpointForkSubmission(
+          conversation,
+          input.backend ?? conversation.agentBackend,
+          now,
+        );
         conversation.pendingQueue = appendPendingEntry(
           conversation.pendingQueue,
           entry,

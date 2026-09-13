@@ -79,6 +79,8 @@ import {
   type CheckpointReceipt,
 } from "./checkpoint-feedback";
 
+import { runCheckpointFork } from "./checkpoint-fork";
+
 const INTEGER_PATTERN = /^\d+$/;
 
 /**
@@ -264,6 +266,9 @@ export async function runConversationCheckpoint(
     json: flags.json,
     noun: "verb",
     handlers: {
+      fork: (r) => runCheckpointFork(r, flags, values, env, host, "fork"),
+      "fork-check": (r) =>
+        runCheckpointFork(r, flags, values, env, host, "fork-check"),
       check: (r) => runCheckpointCheck(r, flags, values, env, host),
       list: (r) => runCheckpointList(r, flags, values, env, host),
       get: (r) => runCheckpointGet(r, flags, values, env, host),

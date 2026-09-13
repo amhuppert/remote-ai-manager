@@ -113,6 +113,7 @@ export interface BackendConversationCapabilities {
    * consumers read it here rather than branching on backend identity.
    */
   checkpoint: boolean;
+  checkpointFork: boolean;
   capabilityKinds: readonly BackendCapabilityKindSupport[];
 }
 

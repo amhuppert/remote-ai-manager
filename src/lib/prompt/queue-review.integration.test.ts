@@ -57,6 +57,8 @@ describe.each(scopes)("queue review in $scope", (scope) => {
         await queue.recoverAbandonedDeliveries(key);
         let drainStatus: string[] | undefined;
         const deps: QueueOperationDeps = {
+          admitCheckpointForkSelection: async ({ modelSelection }) =>
+            modelSelection ?? { modelId: "claude-opus-5", parameters: {} },
           checkpointAcceptsQueuedInput: () => false,
           admitModelSelection: async ({ modelSelection }) => ({
             ok: true,

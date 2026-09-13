@@ -1,3 +1,4 @@
+import type { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { readRuntimeInstructions } from "./runtime-instructions";
 import type { DesiredRuntimeConfiguration } from "./pre-turn/runtime-recreate";
@@ -346,6 +347,16 @@ export interface ConversationManagerDependencies {
   admitProfileForTurn(
     ...args: Parameters<typeof admitConversationProfileForTurn>
   ): ReturnType<typeof admitConversationProfileForTurn>;
+  admitCheckpointForkForTurn(
+    identity: Parameters<typeof admitCheckpointForkSubmission>[1],
+    backend: AgentBackendId,
+    modelSelection:
+      | import("@/lib/agent-backends/schemas").BackendModelSelection
+      | null,
+    isCurrent: () => boolean,
+  ): Promise<
+    import("@/lib/agent-backends/schemas").BackendModelSelection | null
+  >;
   queue: ConversationQueueDeps;
   persistence(mode: "durable" | "ephemeral"): ConversationPersistenceAdapter;
   forgetPersistence(
@@ -1268,6 +1279,37 @@ export function createConversationManager(
               message: "Conversation host changed during admission",
             };
         }
+        const admissionIsCurrent = () =>
+          !input.signal?.aborted &&
+          !reservation.cancelled &&
+          deps.getRuntime(key) === runtime &&
+          runtime.admission === reservation &&
+          actor.getSnapshot().can(makeEvent());
+        if (
+          binding.kind === "durable" &&
+          turn.kind !== "task_run" &&
+          admissionIsCurrent()
+        ) {
+          const forkSelection = await deps.admitCheckpointForkForTurn(
+            identity,
+            turn.backend,
+            turn.modelSelection,
+            admissionIsCurrent,
+          );
+          if (forkSelection) turn.modelSelection = forkSelection;
+        }
+        if (input.signal?.aborted || reservation.cancelled)
+          return {
+            kind: "refused",
+            code: "cancelled",
+            message: "Turn admission cancelled",
+          };
+        if (!admissionIsCurrent())
+          return {
+            kind: "refused",
+            code: "binding_mismatch",
+            message: "Conversation host changed during admission",
+          };
         const attempt: TurnAttempt = new TurnAttempt({
           conversationId: identity.conversationId,
           executionContext: input.executionContext,
