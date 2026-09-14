@@ -164,6 +164,44 @@ function buildComposition(database: Db): Composition {
 }
 
 describe("graph lane outcome recording — full-composition contract (finding 2)", () => {
+  it("retains Cursor conversation continuity and unknown occupancy through SQLite reload", async () => {
+    const repo = createGraphWorkflowExecutionsRepo(db);
+    const lane: GraphWorkflowAgentSessionState = {
+      ...seedImplementerLane(),
+      backend: "cursor",
+      sessionRef: { backend: "cursor", ref: "conv-cursor-1" },
+      workflowConversationId: "conv-cursor-1",
+    };
+    const execution = createWorkflowExecution({
+      id: EXECUTION_ID,
+      status: "running",
+      laneStates: { [CONTEXT_ID]: { implementer: lane } },
+    });
+    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, NOW);
+    await buildComposition(db).continuity.recordLaneTurnOutcome({
+      execution,
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: CONTEXT_ID,
+      lane: "implementer",
+      outcome: {
+        backend: "cursor",
+        ref: "opaque-provider-ref",
+        contextLimitTokens: 1_000,
+      },
+    });
+    const persisted = readActiveFresh(db)?.laneStates[CONTEXT_ID]?.implementer;
+    expect(persisted?.backend).toBe("cursor");
+    expect(persisted?.sessionRef).toEqual({
+      backend: "cursor",
+      ref: "conv-cursor-1",
+    });
+    expect(persisted?.limitEvaluation).toBe("unsupported");
+    expect(persisted?.metrics.contextTokens).toBeUndefined();
+    expect(persisted?.metrics.contextWindowMax).toBeUndefined();
+    expect(persisted?.metrics.rotateBeforeNextTurn).toBe(false);
+  });
+
   it("records one outcome with exactly one durable execution mutation", async () => {
     const repo = createGraphWorkflowExecutionsRepo(db);
     const execution = seedActiveExecution(repo);

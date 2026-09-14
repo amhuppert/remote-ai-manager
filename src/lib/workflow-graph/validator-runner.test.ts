@@ -3515,7 +3515,12 @@ describe("context validator continuity runtime integration", () => {
 
     expect(threadAdapter.resumeOrRecover).toHaveBeenCalledWith(
       { backend: "codex", ref: "thread-real-1" },
-      { projectPath: "/repo", sessionName: "session-1" },
+      expect.objectContaining({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        taskScope: null,
+        modelSelection: codexValidator.agent.modelSelection,
+      }),
     );
     expect(result2.metadata.reviewArtifact).toMatchObject({
       backend: "codex",

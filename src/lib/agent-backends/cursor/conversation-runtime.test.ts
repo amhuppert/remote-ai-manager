@@ -354,6 +354,8 @@ describe("turn settlement", () => {
       totalTokens: 120,
       reasoningTokens: 7,
     });
+    expect(result.contextTokens).toBeNull();
+    expect(result.contextWindowMax).toBeNull();
     expect(result.costUsd).toBeNull();
   });
 

@@ -1047,7 +1047,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       costUsd: null,
       durationMs: this.deps.now() - startedAt,
       numTurns: 1,
-      contextTokens: turn.usage?.inputTokens ?? null,
+      contextTokens: null,
       contextWindowMax: null,
       contentBlocks: turn.contentBlocks,
       finalText: turn.finalText,

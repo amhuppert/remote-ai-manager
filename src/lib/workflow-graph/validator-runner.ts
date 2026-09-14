@@ -1359,14 +1359,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       strategy,
     });
 
+    const taskConversationId = syntheticValidatorConversationId(
+      execution.id,
+      contextId,
+      lane,
+      assignmentId,
+      backend,
+    );
     if (!deps.continuityService) {
-      const noServiceConversationId = syntheticValidatorConversationId(
-        execution.id,
-        contextId,
-        lane,
-        assignmentId,
-        backend,
-      );
       const taskResult = await dispatchValidatorTurn({
         strategy: "task",
         prompt,
@@ -1379,7 +1379,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         laneRef: { workflowId: execution.id, laneId: lane },
         projectPath,
         sessionName,
-        conversationId: noServiceConversationId,
+        conversationId: taskConversationId,
         fsWritePolicy,
         outputSchema,
       });
@@ -1397,7 +1397,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         sessionName,
         execution.id,
         contextId,
-        noServiceConversationId,
+        taskConversationId,
         backend,
       );
       if (askedUser) {
@@ -1464,6 +1464,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       strategy,
       profileSnapshot,
       pinnedConversationId,
+      taskContext: {
+        conversationId: taskConversationId,
+        modelSelection,
+        workingDirectory: worktreePath,
+        taskScope: null,
+      },
     });
 
     const laneKey = laneStateKey(lane, assignmentId);
@@ -1490,13 +1496,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const dispatchConversationId =
       resolved.strategy === "conversation"
         ? resolved.conversationId
-        : syntheticValidatorConversationId(
-            execution.id,
-            contextId,
-            lane,
-            assignmentId,
-            backend,
-          );
+        : taskConversationId;
     // Persist the lane binding BEFORE dispatch. Active cancellation
     // (pause/abort/halt/resume) collects abortable conversations from
     // execution.laneStates; a lane resolved only in local state — every

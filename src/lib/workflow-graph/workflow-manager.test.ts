@@ -28,6 +28,8 @@ import {
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
   createWorkflowLayout,
+  makeImplementerAssignment,
+  makeValidatorAssignment,
   makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
 import {
@@ -1420,48 +1422,78 @@ describe("graph workflow manager", () => {
       ).toBe(false);
     });
 
-    it("creates a spec-delivery execution from the exact stored managed definition", async () => {
-      const loadCalls: string[] = [];
-      const manager = buildParityManager(loadCalls);
-      const plan = authoredPlan();
-      const record = await definitionStorage().create(
-        scopeForTier("project", PROJECT_PATH),
-        plan,
-      );
-      const before = await snapshotDefinitionStore();
+    it.each(["claude", "cursor"] as const)(
+      "creates a %s spec-delivery execution from the exact stored managed definition",
+      async (backend) => {
+        const loadCalls: string[] = [];
+        const manager = buildParityManager(loadCalls);
+        const plan = authoredPlan();
+        const agent: Parameters<typeof makeImplementerAssignment>[0] = {
+          backend,
+          modelSelection:
+            backend === "cursor"
+              ? { modelId: "composer-2.5", parameters: { fast: "true" } }
+              : { modelId: "opus", parameters: { effort: "high" } },
+        };
+        plan.definition.workflowConfig = {
+          ...plan.definition.workflowConfig,
+          implementer: makeImplementerAssignment(agent),
+          contextValidator: {
+            enabled: true,
+            assignments: [makeValidatorAssignment({ agent })],
+          },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2, agent },
+        };
+        for (const context of plan.definition.executionContexts) {
+          context.implementer = plan.definition.workflowConfig.implementer;
+          context.contextValidator =
+            plan.definition.workflowConfig.contextValidator;
+          context.planRepair = plan.definition.workflowConfig.planRepair;
+        }
+        const record = await definitionStorage().create(
+          scopeForTier("project", PROJECT_PATH),
+          plan,
+        );
+        const before = await snapshotDefinitionStore();
 
-      const launched = await manager.launchSpecDelivery({
-        projectPath: PROJECT_PATH,
-        sessionName: INLINE_SESSION,
-        definitionId: record.id,
-        expectedDefinitionRevision: record.revision,
-        specSlug: "conversation-compaction",
-        candidateId: record.id,
-      });
+        const launched = await manager.launchSpecDelivery({
+          projectPath: PROJECT_PATH,
+          sessionName: INLINE_SESSION,
+          definitionId: record.id,
+          expectedDefinitionRevision: record.revision,
+          specSlug: "conversation-compaction",
+          candidateId: record.id,
+        });
 
-      // Launching reads but never rewrites the immutable managed definition.
-      expect(await snapshotDefinitionStore()).toEqual(before);
-      expect(loadCalls).toEqual([record.id]);
+        // Launching reads but never rewrites the immutable managed definition.
+        expect(await snapshotDefinitionStore()).toEqual(before);
+        expect(loadCalls).toEqual([record.id]);
 
-      const row = await fixture.store.getActiveGraphWorkflowExecution(
-        PROJECT_PATH,
-        INLINE_SESSION,
-      );
-      expect(row?.id).toBe(launched.execution.id);
-      expect(row?.origin).toEqual({
-        kind: "spec_delivery",
-        specSlug: "conversation-compaction",
-        candidateId: record.id,
-      });
-      expect(row?.seedDefinitionId).toBe(record.id);
-      expect(row?.seedDefinitionRevision).toBe(record.revision);
-      expect(row?.launchDocument).toEqual({
-        name: record.name,
-        description: record.description,
-        definition: record.definition,
-        layout: record.layout,
-      });
-    });
+        const row = await fixture.store.getActiveGraphWorkflowExecution(
+          PROJECT_PATH,
+          INLINE_SESSION,
+        );
+        expect(row?.id).toBe(launched.execution.id);
+        expect(row?.origin).toEqual({
+          kind: "spec_delivery",
+          specSlug: "conversation-compaction",
+          candidateId: record.id,
+        });
+        expect(row?.seedDefinitionId).toBe(record.id);
+        expect(row?.seedDefinitionRevision).toBe(record.revision);
+        for (const context of row?.workingDefinition.executionContexts ?? []) {
+          expect(context.implementer.agent).toEqual(agent);
+          expect(context.contextValidator.assignments[0]?.agent).toEqual(agent);
+          expect(context.planRepair.agent).toEqual(agent);
+        }
+        expect(row?.launchDocument).toEqual({
+          name: record.name,
+          description: record.description,
+          definition: record.definition,
+          layout: record.layout,
+        });
+      },
+    );
 
     /**
      * Inline parameter binding (D7 R1.3).

@@ -119,8 +119,7 @@ export interface RunIterationInput {
 }
 
 /**
- * What the agent has to be TOLD about its envelope, because the envelope itself
- * only enforces.
+ * What the agent needs to know about its assigned paths and scratch space.
  *
  * Two facts are not discoverable from inside a confined turn. The repository is
  * no longer necessarily the working directory — a sandbox that makes its cwd
@@ -131,6 +130,7 @@ export interface RunIterationInput {
  */
 function renderWriteEnvelopeBriefing(
   envelope: ImplementerLaneWriteEnvelope,
+  restriction: ReturnType<typeof getConversationFsWriteRestrictionForBackend>,
 ): string {
   const owned =
     envelope.ownedPrefixes.length > 0
@@ -143,10 +143,13 @@ function renderWriteEnvelopeBriefing(
     `Scratch directory: ${envelope.contextScratchDir}`,
     `Payload directory (write \`--file\` JSON and scratch files here): ${envelope.payloadDir}`,
     "",
-    "Shell commands run from Scratch directory, not Repository.",
+    "Use the Scratch directory for temporary files.",
     "Treat every relative repository path in the task as relative to Repository above and address it by absolute path.",
     "",
-    "Writable repository paths (everything else in the repository is read-only, enforced by the OS):",
+    restriction === "instruction-only"
+      ? "Filesystem limits are instruction-only; they are not enforced isolation. Do not write outside the allowed paths or modify repository metadata."
+      : "Filesystem write limits are enforced by the OS.",
+    "Writable repository paths (everything else in the repository is read-only):",
     owned,
   ].join("\n");
 }
@@ -199,8 +202,8 @@ export function createGraphWorkflowImplementerRunner(
     const worktreePath =
       input.executionTarget?.worktreePath ?? input.session.worktreePath;
     let envelope: ImplementerLaneWriteEnvelope | null = null;
+    const restriction = conversationFsWriteRestriction(input.backend);
     if (input.placement !== undefined && input.placement.mode !== "full") {
-      const restriction = conversationFsWriteRestriction(input.backend);
       if (restriction === "unsupported") {
         const message = `Backend "${input.backend}" cannot apply conversation write limits (fsWriteRestriction: ${restriction}), so context "${input.contextId}" cannot run under a write envelope`;
         logger.error("graph-workflow.implementer.write_envelope_unsupported", {
@@ -268,7 +271,7 @@ export function createGraphWorkflowImplementerRunner(
       promptText:
         envelope === null
           ? input.prompt
-          : `${renderWriteEnvelopeBriefing(envelope)}\n\n${input.prompt}`,
+          : `${renderWriteEnvelopeBriefing(envelope, restriction)}\n\n${input.prompt}`,
       modelSelection: input.modelSelection,
       autonomous: true,
       backend: input.backend,

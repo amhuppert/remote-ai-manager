@@ -8,7 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { createDefinitionMutationCoordinator } from "@/lib/workflow-graph/definition-mutation-coordinator";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
+import {
+  createWorkflowDefinitionRecord,
+  makeImplementerAssignment,
+  makeValidatorAssignment,
+} from "@/lib/workflow-graph/test-fixtures";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
 import { createManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
 import type { Spec } from "./schemas";
@@ -36,6 +40,99 @@ afterEach(async () => {
 });
 
 describe("managed workflow definition service", () => {
+  it.each(["full", "owned", "readOnly"] as const)(
+    "preserves Cursor staffing and %s ownership through managed freeze, reload, and reopen",
+    async (mode) => {
+      const storage = createWorkflowStorageService({
+        resolveConfigDir: () => tempDir,
+        listActiveExecutions: async () => new Map(),
+      });
+      const service = createManagedWorkflowDefinitionService({
+        storage,
+        mutationCoordinator: createDefinitionMutationCoordinator(),
+      });
+      const agent = {
+        backend: "cursor" as const,
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+      };
+      const launch = createWorkflowDefinitionRecord();
+      launch.definition.workflowConfig = {
+        implementer: makeImplementerAssignment(agent),
+        contextValidator: {
+          enabled: true,
+          assignments: ["conversation", "task"].map((strategy) =>
+            makeValidatorAssignment({
+              id: strategy,
+              strategy: strategy === "task" ? "task" : "conversation",
+              agent,
+            }),
+          ),
+        },
+        planRepair: { enabled: true, maxAttemptsPerContext: 2, agent },
+      };
+      for (const context of launch.definition.executionContexts) {
+        context.placement =
+          mode === "owned"
+            ? { lane: context.id, mode, ownedPaths: ["src"] }
+            : { lane: context.id, mode };
+        context.outputSchema = {
+          type: "object",
+          properties: { summary: { type: "string" } },
+          required: ["summary"],
+          additionalProperties: false,
+        };
+      }
+      const opened = await service.open({
+        spec: SPEC,
+        pinnedRevisionId: "revision-1",
+        attemptId: "cursor-attempt",
+        launch,
+      });
+      const frozen = await service.restage({
+        spec: SPEC,
+        pinnedRevisionId: "revision-1",
+        attemptId: "cursor-attempt",
+        workflowDefinitionId: opened.id,
+        expectedRevision: opened.revision,
+        stage: "candidate",
+      });
+      const reloaded = await createWorkflowStorageService({
+        resolveConfigDir: () => tempDir,
+      }).get({ kind: "project", projectPath: SPEC.projectPath }, frozen.id);
+      expect(reloaded?.definition.workflowConfig).toEqual(
+        launch.definition.workflowConfig,
+      );
+      expect(
+        reloaded?.definition.executionContexts.map(
+          (context) => context.placement,
+        ),
+      ).toEqual(
+        launch.definition.executionContexts.map((context) => context.placement),
+      );
+      const clone = await service.clone({
+        spec: SPEC,
+        pinnedRevisionId: "revision-1",
+        attemptId: "cursor-attempt",
+        sourceDefinitionId: frozen.id,
+        cloneDefinitionId: "cursor-reopened",
+      });
+      expect(clone.definition.workflowConfig).toEqual(
+        launch.definition.workflowConfig,
+      );
+      await expect(
+        service.getExact({
+          projectPath: SPEC.projectPath,
+          workflowDefinitionId: clone.id,
+          revision: clone.revision,
+          definitionHash: workflowDefinitionHash(clone),
+        }),
+      ).resolves.toEqual(clone);
+    },
+  );
+
   it("discovers the sole unlinked open or reopen definition and refuses ambiguity", async () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,

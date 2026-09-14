@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture } from "@/test/fetch-fixture";
+import { publicSessionStateSchema } from "@/lib/sessions/schemas";
+import { toPublicConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 // react-virtuoso is layout-driven and renders no items in jsdom (no real
 // height/scroll). Replace it with a flat list renderer so the full data path
@@ -85,6 +89,17 @@ const INTERLEAVED_FIXTURE = [
   },
 ] as const;
 
+const SESSION_FIXTURE = publicSessionStateSchema.parse({
+  sessionName: "sess",
+  worktreePath: "/repo",
+  branchName: "test",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  lastActivityAt: "2026-01-01T00:00:00.000Z",
+  conversations: ["conv-1", "conv-codex-xyz", "conv-mixed"].map((id) =>
+    toPublicConversationState(makeConversationState({ id })),
+  ),
+});
+
 describe("WorkflowConversationViewer", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
@@ -98,7 +113,7 @@ describe("WorkflowConversationViewer", () => {
           json: async () => [],
         };
       }
-      return { ok: true, status: 200, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => SESSION_FIXTURE };
     });
     vi.stubGlobal("fetch", fetchSpy);
   });
@@ -106,6 +121,89 @@ describe("WorkflowConversationViewer", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
+
+  it("does not label an unresolved conversation as another backend", () => {
+    const api = installFetchFixture();
+    api.pending("GET", "/api/projects/proj/sessions/sess");
+    api.json(
+      "GET",
+      "/api/projects/proj/sessions/sess/conversations/conv-1/messages",
+      [],
+    );
+    try {
+      renderWithQuery(
+        <WorkflowConversationViewer
+          projectName="proj"
+          sessionName="sess"
+          conversationId="conv-1"
+          role="Implementer"
+          contextTitle="Build"
+          isLive={false}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+      expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+    } finally {
+      api.restore();
+    }
+  });
+
+  it.each([
+    ["cursor", "Cursor"],
+    ["codex", "Codex"],
+    ["claude", "Claude"],
+  ] as const)(
+    "identifies the persisted %s workflow conversation",
+    async (backend, label) => {
+      const api = installFetchFixture();
+      api.json(
+        "GET",
+        "/api/projects/proj/sessions/sess",
+        publicSessionStateSchema.parse({
+          sessionName: "sess",
+          worktreePath: "/repo",
+          branchName: "test",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          lastActivityAt: "2026-01-01T00:00:00.000Z",
+          conversations: [
+            toPublicConversationState(
+              makeConversationState({
+                id: "conv-1",
+                agentBackend: backend,
+              }),
+            ),
+          ],
+        }),
+      );
+      api.json(
+        "GET",
+        "/api/projects/proj/sessions/sess/conversations/conv-1/messages",
+        [],
+      );
+      try {
+        const { container } = renderWithQuery(
+          <WorkflowConversationViewer
+            projectName="proj"
+            sessionName="sess"
+            conversationId="conv-1"
+            role="Implementer"
+            contextTitle="Build"
+            isLive={false}
+            onClose={vi.fn()}
+          />,
+        );
+        expect(await screen.findByText(label)).toBeInTheDocument();
+        expect(
+          container
+            .querySelector(".conversation")
+            ?.getAttribute("data-backend"),
+        ).toBe(backend);
+      } finally {
+        api.restore();
+      }
+    },
+  );
 
   it("titles the Log surface with the conversation id and the role that owns it", async () => {
     const onClose = vi.fn();
@@ -262,7 +360,7 @@ describe("WorkflowConversationViewer", () => {
             json: async () => INTERLEAVED_FIXTURE,
           };
         }
-        return { ok: true, status: 200, json: async () => ({}) };
+        return { ok: true, status: 200, json: async () => SESSION_FIXTURE };
       });
       consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     });

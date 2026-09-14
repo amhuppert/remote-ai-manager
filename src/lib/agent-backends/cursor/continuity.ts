@@ -1,6 +1,6 @@
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import { decodeCursorTaskRef } from "./task-ref";
+import { decodeCursorTaskRef, encodeCursorTaskRef } from "./task-ref";
 import { CURSOR_ATTACH_TIMEOUT_MS } from "./worker/bounds";
 import type { BackendModelSelection } from "../schemas";
 import {
@@ -64,6 +64,7 @@ export interface CursorContinuityBinding {
   storePath: string;
   modelSelection: BackendModelSelection;
   mcpServers: Record<string, CursorWorkerMcpServer>;
+  taskRef?: Parameters<typeof encodeCursorTaskRef>[0];
 }
 
 export interface CursorContinuityDeps {
@@ -304,7 +305,11 @@ export function createCursorContinuityAdapter(
       logger.info("continuity.start", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
+        kind: binding.taskRef ? "task" : "conversation",
       });
+      if (binding.taskRef) {
+        return encodeCursorTaskRef({ ...binding.taskRef, agentId: probe.ref });
+      }
       return {
         backend: CURSOR_BACKEND_ID,
         ref: probe.ref,

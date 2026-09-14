@@ -21,6 +21,9 @@ import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-sch
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
+import { publicSessionStateSchema } from "@/lib/sessions/schemas";
+import { toPublicConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 const noopCallbacks = {
   projectName: "test-project",
@@ -748,6 +751,23 @@ function createCodexExecutionWithRunningTask() {
   });
 }
 
+const CODEX_SESSION_FIXTURE = publicSessionStateSchema.parse({
+  sessionName: "test-session",
+  worktreePath: "/repo/.worktrees/test-session",
+  branchName: "csm/test-session",
+  createdAt: "2026-03-27T16:00:00.000Z",
+  lastActivityAt: "2026-03-27T16:00:00.000Z",
+  conversations: [
+    toPublicConversationState(
+      makeConversationState({
+        id: "cc-conv-codex-abc",
+        agentBackend: "codex",
+        status: "running",
+      }),
+    ),
+  ],
+});
+
 describe("resolveViewingTask — codex implementer parity", () => {
   it("resolves a codex-backed task to its CC conversation ID plus context/task titles", () => {
     const execution = createCodexExecutionWithRunningTask();
@@ -848,11 +868,15 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    fetchSpy = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => [],
-    }));
+    fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          url.endsWith("/sessions/test-session") ? CODEX_SESSION_FIXTURE : [],
+      };
+    });
     vi.stubGlobal("fetch", fetchSpy);
   });
 
@@ -895,16 +919,15 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
     // CC conversation ID — confirming Codex tasks reuse the normal conversation
     // transport, not a codex-specific one.
     await waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalled();
-    });
-    const urls = fetchSpy.mock.calls.map(([u]) => String(u));
-    expect(
-      urls.some((u) =>
-        u.includes(
-          "/api/projects/test-project/sessions/test-session/conversations/cc-conv-codex-abc/messages",
+      const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+      expect(
+        urls.some((u) =>
+          u.includes(
+            "/api/projects/test-project/sessions/test-session/conversations/cc-conv-codex-abc/messages",
+          ),
         ),
-      ),
-    ).toBe(true);
+      ).toBe(true);
+    });
   });
 
   it("does not refetch a live transcript on a timer", async () => {

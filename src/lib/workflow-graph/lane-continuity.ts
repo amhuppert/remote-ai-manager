@@ -34,6 +34,7 @@ import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
   BackendContinuityAdapter,
   ContinuityResumption,
+  ContinuityContext,
 } from "@/lib/agent-backends/continuity";
 import {
   DEFAULT_AGENT_BACKEND_ID,
@@ -204,6 +205,10 @@ export interface ResolveImplementerCallInput {
 }
 
 export interface ResolveValidatorCallInput {
+  taskContext?: Pick<
+    ContinuityContext,
+    "taskScope" | "conversationId" | "modelSelection" | "workingDirectory"
+  >;
   execution: GraphWorkflowExecution;
   projectPath: string;
   sessionName: string;
@@ -930,7 +935,11 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     // Task-strategy validator lane: the continuity handle is owned by the
     // backend's continuity adapter.
     const adapter = resolveAdapter(backend);
-    const continuityContext = { projectPath, sessionName };
+    const continuityContext = {
+      ...input.taskContext,
+      projectPath,
+      sessionName,
+    };
 
     async function persistFreshBackendLane(
       started: AgentSessionRef,

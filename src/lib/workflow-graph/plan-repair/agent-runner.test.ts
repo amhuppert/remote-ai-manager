@@ -100,6 +100,35 @@ function makeRunner(result: TaskRunResult) {
 }
 
 describe("plan-repair agent runner", () => {
+  it("decodes Cursor's prompt-delivered repair JSON without changing backend or dropping write limits", async () => {
+    const { runner, calls } = makeRunner({
+      kind: "text",
+      text: JSON.stringify(AGENT_OUTPUT),
+      usage: { ...USAGE, costUsd: null },
+      backendRef: { backend: "cursor", ref: "opaque-cursor-repair" },
+      continuationDisposition: "retain",
+    });
+    const agent = {
+      backend: "cursor" as const,
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "false" },
+      },
+    };
+    const result = await runner(makeInvocation({ agent }));
+    expect(result).toMatchObject({ kind: "verdict", verdict: VERDICT });
+    const call = calls[0];
+    expect(call?.binding).toMatchObject({
+      kind: "ephemeral",
+      backend: "cursor",
+    });
+    expect(call?.modelSelection).toEqual(agent.modelSelection);
+    expect(call?.executionClass).toBe("governed-execution");
+    expect(call?.fsWritePolicy?.denyWrite).toEqual([
+      path.join(worktreePath, ".git"),
+    ]);
+  });
+
   it("dispatches an ephemeral session-scoped one-shot with the verdict schema and agent config", async () => {
     const { runner, calls } = makeRunner({
       kind: "structured",

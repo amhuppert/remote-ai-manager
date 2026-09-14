@@ -10,6 +10,7 @@
 
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "./schemas";
+import type { CcTaskSessionScope } from "./task";
 
 export type ContinuityStartInput = ContinuityContext;
 
@@ -21,6 +22,8 @@ export interface ContinuityContext {
   modelSelection?: BackendModelSelection;
   /** Task cwd when it differs from the project root. */
   workingDirectory?: string;
+  /** Task continuation scope; null for tasks without CC API access. */
+  taskScope?: CcTaskSessionScope | null;
 }
 
 export interface ForkInput {

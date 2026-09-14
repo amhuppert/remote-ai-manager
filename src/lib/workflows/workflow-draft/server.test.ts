@@ -1,5 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import {
+  createWorkflowDefinition,
+  makeImplementerAssignment,
+} from "@/lib/workflow-graph/test-fixtures";
+import {
+  createPlannerDraftSubmission,
+  consumePlannerDraft,
+  deletePlannerDraft,
+  submitPlannerDraft,
+} from "./registry";
 
 type CapturedTool = {
   options: Record<string, unknown>;
@@ -24,6 +37,40 @@ function createToolCaptureServer() {
 }
 
 describe("workflow-draft/server", () => {
+  it("round-trips a Cursor-staffed charter through the advertised MCP input schema", async () => {
+    const { registerPlannerDraftTools } = await import("./server");
+    const { draftId } = createPlannerDraftSubmission();
+    const server = new McpServer({ name: "draft-test", version: "1" });
+    const client = new Client({ name: "planner-test", version: "1" });
+    registerPlannerDraftTools(server, { draftId }, { submitPlannerDraft });
+    const [serverTransport, clientTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const definition = createWorkflowDefinition({
+        workflowConfig: {
+          implementer: makeImplementerAssignment({
+            backend: "cursor",
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "false" },
+            },
+          }),
+        },
+      });
+      const result = await client.callTool({
+        name: "submit_workflow_draft",
+        arguments: definition,
+      });
+      expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+      expect(consumePlannerDraft(draftId)).toEqual(definition);
+    } finally {
+      await client.close();
+      await server.close();
+      deletePlannerDraft(draftId);
+    }
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

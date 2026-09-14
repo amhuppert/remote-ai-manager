@@ -318,6 +318,25 @@ describe("the implementer dispatch path composes the envelope before dispatching
     },
   );
 
+  it.each(["owned", "readOnly"] as const)(
+    "briefs Cursor's %s limits as instructions without claiming OS confinement or a relocated cwd",
+    async (mode) => {
+      const { prompt } = await runIterationCapturingOptions(
+        mode === "owned"
+          ? { lane: "build", mode, ownedPaths: [...OWNED_PATHS] }
+          : { lane: "session", mode },
+        "cursor",
+      );
+
+      expect(prompt).toContain("Filesystem limits are instruction-only");
+      expect(prompt).toContain("Do not write outside the allowed paths");
+      expect(prompt).not.toContain("enforced by the OS");
+      expect(prompt).not.toContain("Shell commands run from Scratch directory");
+      expect(prompt).toContain(realpathSync(worktreePath));
+      expect(prompt).toContain("Implement the context");
+    },
+  );
+
   it("refuses an owning turn on a backend that cannot deliver a write policy", async () => {
     let dispatched = false;
     let composed = false;

@@ -5,7 +5,8 @@ import { CursorContinuityError } from "./continuity";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
 import path from "node:path";
-import { decodeCursorTaskRef } from "./task-ref";
+import { randomUUID } from "node:crypto";
+import { decodeCursorTaskRef, cursorTaskRefSchema } from "./task-ref";
 
 const logger = createLogger("cursor:continuity-binding");
 
@@ -38,6 +39,7 @@ export function createCursorContinuityBindingResolver(
   ): Promise<CursorContinuityBinding> => {
     let conversationId = input.conversationId;
     let cwd: string;
+    let taskRef: CursorContinuityBinding["taskRef"];
     if (ref?.ref.startsWith("{")) {
       const task = decodeCursorTaskRef(ref);
       if (
@@ -54,6 +56,15 @@ export function createCursorContinuityBindingResolver(
       }
       conversationId = `task-${task.taskId}`;
       cwd = task.cwd;
+    } else if (input.taskScope !== undefined) {
+      taskRef = cursorTaskRefSchema.parse({
+        taskId: randomUUID(),
+        agentId: null,
+        cwd: path.resolve(input.workingDirectory ?? input.projectPath),
+        scope: input.taskScope,
+      });
+      conversationId = `task-${taskRef.taskId}`;
+      cwd = taskRef.cwd;
     } else {
       if (!conversationId)
         throw new CursorContinuityError(
@@ -99,6 +110,7 @@ export function createCursorContinuityBindingResolver(
       storePath: deps.storePath(conversationId),
       modelSelection: model.selection,
       mcpServers: {},
+      ...(taskRef ? { taskRef } : {}),
     };
   };
 }

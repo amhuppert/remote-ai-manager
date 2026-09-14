@@ -1,5 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
+import { publicSessionStateSchema } from "@/lib/sessions/schemas";
+import { toPublicConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 
 /**
@@ -104,9 +107,7 @@ const VALIDATOR_MESSAGES: StoryMessage[] = [
 
 /**
  * Storybook has no MSW layer, so the transcript's own fetch is answered here.
- * Only the messages route is served — the session detail query is left to fail,
- * which is exactly the degraded state the viewer already tolerates (it reads
- * worktree and status optionally).
+ * Session metadata supplies each conversation's persisted backend identity.
  */
 function stubMessages(byConversation: Record<string, StoryMessage[]>) {
   const json = (body: unknown, status = 200) =>
@@ -116,6 +117,27 @@ function stubMessages(byConversation: Record<string, StoryMessage[]>) {
     });
   window.fetch = (input: RequestInfo | URL) => {
     const url = String(typeof input === "string" ? input : input.toString());
+    if (url.endsWith(`/api/projects/${PROJECT}/sessions/${SESSION}`)) {
+      return Promise.resolve(
+        json(
+          publicSessionStateSchema.parse({
+            sessionName: SESSION,
+            worktreePath: "/repo",
+            branchName: "story",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            lastActivityAt: "2026-01-01T00:00:00.000Z",
+            conversations: Object.keys(byConversation).map((id) =>
+              toPublicConversationState(
+                makeConversationState({
+                  id,
+                  agentBackend: id === "conv_cursor" ? "cursor" : "claude",
+                }),
+              ),
+            ),
+          }),
+        ),
+      );
+    }
     for (const [conversationId, messages] of Object.entries(byConversation)) {
       if (url.includes(`/conversations/${conversationId}/messages`)) {
         return Promise.resolve(json(messages));
@@ -128,10 +150,14 @@ function stubMessages(byConversation: Record<string, StoryMessage[]>) {
 function LogDecorator(Story: React.ComponentType) {
   stubMessages({
     conv_b41f: IMPLEMENTER_MESSAGES,
+    conv_cursor: IMPLEMENTER_MESSAGES.map((message) => ({
+      ...message,
+      ...(message.role === "assistant" ? { model: "composer-2.5" } : {}),
+    })),
     conv_val_security_1: VALIDATOR_MESSAGES,
   });
   return (
-    <div className="flex h-[640px] w-[520px] flex-col bg-bg-void">
+    <div className="flex h-[640px] w-[520px] max-w-[calc(100vw-32px)] flex-col bg-bg-void">
       <Story />
     </div>
   );
@@ -172,6 +198,16 @@ export const ValidatorEnded: Story = {
     conversationId: "conv_val_security_1",
     role: "Validator · security",
     contextTitle: "Implement checkout",
+    isLive: false,
+  },
+};
+
+export const CursorImplementer: Story = {
+  args: {
+    conversationId: "conv_cursor",
+    role: "Implementer",
+    contextTitle: "Cursor owned context",
+    taskTitle: "Write the timeout-path audit record",
     isLive: false,
   },
 };

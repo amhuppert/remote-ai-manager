@@ -10,10 +10,9 @@
  * temp only, with repository metadata denied — for EVERY run, not only a run
  * pinned read-only by the dirty-worktree exemption (D7 decision D10). A repair
  * agent changes the plan through live-edit operations it returns; it has no
- * reason to touch the worktree at all, so the confinement costs nothing and
- * makes "the repair cannot write the candidate" mechanical rather than
- * prompted. Establishment is fail-closed: an envelope that cannot be composed
- * ends the attempt instead of dispatching an unconfined turn.
+ * reason to touch the worktree at all. The backend applies the policy through
+ * native confinement or instruction-only limits according to its descriptor.
+ * An envelope that cannot be composed ends the attempt before dispatch.
  */
 
 import { createLogger } from "@/lib/logging";

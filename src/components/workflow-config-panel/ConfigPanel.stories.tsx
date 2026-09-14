@@ -4,6 +4,9 @@ import { useState } from "react";
 import { fn } from "storybook/test";
 import { OUTPUT_SCHEMA_TEMPLATE } from "@/components/workflow-config/OutputSchemaField";
 import { agentProfileKeys } from "@/lib/agent-profiles/query-keys";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
+import { makeImplementerAssignment } from "@/lib/workflow-graph/test-fixtures";
 import type { AgentProfileLibraryListing } from "@/lib/agent-profiles/schemas";
 import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import {
@@ -225,7 +228,7 @@ function registryFor(
 /** The 420px right rail, at the panel's real height. */
 function Rail({ children }: { children: React.ReactNode }) {
   return (
-    <div className="h-[820px] w-[420px] border border-solid border-border-dim">
+    <div className="h-[820px] w-[420px] max-w-[calc(100vw-32px)] border border-solid border-border-dim">
       {children}
     </div>
   );
@@ -237,9 +240,13 @@ function Canvas({ children }: { children: React.ReactNode }) {
   // same wiring a real host gives them.
   const [client] = useState(() => {
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
     queryClient.setQueryData(agentProfileKeys.projectList(PROJECT), LISTING);
+    queryClient.setQueryData(
+      backendCatalogKeys.catalog(),
+      listBackendCatalogEntries(),
+    );
     return queryClient;
   });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -525,6 +532,24 @@ export const ExecutionReadOnly: Story = {
       host="execution"
       affordance="read-only"
       readOnlyReason="awaiting-definition-approval"
+    />
+  ),
+};
+
+export const CursorImplementer: Story = {
+  render: () => (
+    <Panel
+      host="builder"
+      initialScreenPath={["agents", "implementer"]}
+      contextOverrides={{
+        implementer: makeImplementerAssignment({
+          backend: "cursor",
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "false" },
+          },
+        }),
+      }}
     />
   ),
 };

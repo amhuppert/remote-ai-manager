@@ -47,9 +47,9 @@ export default function WorkflowConversationViewer({
 }: WorkflowConversationViewerProps) {
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const worktreePath = sessionQuery.data?.worktreePath;
-  const conversationStatus = sessionQuery.data?.conversations.find(
+  const conversation = sessionQuery.data?.conversations.find(
     (c) => c.id === conversationId,
-  )?.status;
+  );
   useQuickTicketConversationRegistration({
     projectName,
     sessionName,
@@ -107,39 +107,47 @@ export default function WorkflowConversationViewer({
           {isLive ? "live" : "ended"}
         </StatusChip>
       </header>
-      <ConversationPanel
-        conversations={false}
-        activeConversation={undefined}
-        sessionName={sessionName}
-        canStop={false}
-        onStop={noop}
-        openMobileSidebar={noop}
-        currentMessageIndex={nav?.currentMessageIndex ?? 0}
-        totalMessages={nav?.totalMessages ?? 0}
-        handleFirstMessage={nav?.handleFirstMessage ?? noop}
-        handlePrevMessage={nav?.handlePrevMessage ?? noop}
-        handleNextMessage={nav?.handleNextMessage ?? noop}
-        handleLastMessage={nav?.handleLastMessage ?? noop}
-        contextPercent={null}
-        panelBodyRef={panelBodyRef}
-        selectedBackend="claude"
-        transcript={
-          <ConversationTranscript
-            scope={{
-              kind: "session",
-              projectName,
-              sessionName,
-              conversationId,
-            }}
-            backend="claude"
-            status={conversationStatus}
-            worktreePath={worktreePath}
-            onNavChange={setNav}
-          />
-        }
-        alignmentGateSlot={null}
-        promptInputSlot={null}
-      />
+      {conversation ? (
+        <ConversationPanel
+          conversations={false}
+          activeConversation={undefined}
+          sessionName={sessionName}
+          canStop={false}
+          onStop={noop}
+          openMobileSidebar={noop}
+          currentMessageIndex={nav?.currentMessageIndex ?? 0}
+          totalMessages={nav?.totalMessages ?? 0}
+          handleFirstMessage={nav?.handleFirstMessage ?? noop}
+          handlePrevMessage={nav?.handlePrevMessage ?? noop}
+          handleNextMessage={nav?.handleNextMessage ?? noop}
+          handleLastMessage={nav?.handleLastMessage ?? noop}
+          contextPercent={null}
+          panelBodyRef={panelBodyRef}
+          selectedBackend={conversation.agentBackend}
+          transcript={
+            <ConversationTranscript
+              scope={{
+                kind: "session",
+                projectName,
+                sessionName,
+                conversationId,
+              }}
+              backend={conversation.agentBackend}
+              status={conversation.status}
+              worktreePath={worktreePath}
+              onNavChange={setNav}
+            />
+          }
+          alignmentGateSlot={null}
+          promptInputSlot={null}
+        />
+      ) : (
+        <p className="p-md text-sm text-text-secondary" role="status">
+          {sessionQuery.isPending
+            ? "Loading conversation…"
+            : "Conversation unavailable."}
+        </p>
+      )}
     </div>
   );
 }

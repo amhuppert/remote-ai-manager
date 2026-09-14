@@ -5,6 +5,7 @@ import { createScriptedTransport } from "./testing/scripted-worker";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-target";
+import { decodeCursorTaskRef } from "./task-ref";
 
 const modelSelection = {
   modelId: "composer-2.5",
@@ -33,6 +34,40 @@ function harness() {
   };
 }
 describe("production Cursor continuity binding", () => {
+  it.each([
+    null,
+    {
+      project: "repo",
+      session: "lane",
+      conversationId: "__validator__:exec:ctx:review",
+    },
+  ])(
+    "starts and resumes a task handle in its lane cwd with scope %j",
+    async (taskScope) => {
+      const { transport, adapter } = harness();
+      const taskContext = {
+        ...context,
+        conversationId: "__validator__:exec:ctx:review",
+        workingDirectory: "/repo/.worktrees/lane.review",
+        taskScope,
+      };
+      const ref = await adapter.start(taskContext);
+      const task = decodeCursorTaskRef(ref);
+      expect(task).toMatchObject({
+        cwd: taskContext.workingDirectory,
+        scope: taskContext.taskScope,
+      });
+      expect(await adapter.resumeOrRecover(ref, taskContext)).toEqual({
+        ref,
+        recovered: false,
+      });
+      expect(transport.startInputs).toHaveLength(2);
+      for (const input of transport.startInputs) {
+        expect(input.cwd).toBe(taskContext.workingDirectory);
+        expect(input.storePath).toBe(`/cc-owned/cursor/task-${task.taskId}`);
+      }
+    },
+  );
   it("resolves session and project conversations after reloading the real state store", async () => {
     const fixture = createPersistenceFixture();
     try {

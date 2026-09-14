@@ -38,17 +38,15 @@ export function registerPlannerDraftTools(
     {
       description:
         "Submit the generated workflow draft exactly once with explicit IDs for contexts, tasks, and edges.",
-      inputSchema: {
-        schemaVersion: workflowSemanticDefinitionSchema.shape.schemaVersion,
-        executionContexts:
-          workflowSemanticDefinitionSchema.shape.executionContexts,
-        tasks: workflowSemanticDefinitionSchema.shape.tasks,
-        edges: workflowSemanticDefinitionSchema.shape.edges,
-      },
+      inputSchema: workflowSemanticDefinitionSchema.shape,
     },
     async (args) => {
       const parsed = workflowSemanticDefinitionSchema.safeParse(args);
       if (!parsed.success) {
+        logger.warn("tool.submit_workflow_draft.invalid", {
+          draftId: context.draftId,
+          issuePaths: parsed.error.issues.map((issue) => issue.path.join(".")),
+        });
         return errorResult(`Validation error: ${parsed.error.message}`);
       }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import BackendToggle from "@/components/BackendToggle";
+import BackendExecutionWarning from "@/components/BackendExecutionWarning";
 import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
 import { agentConfigForBackend } from "@/components/workflow-config/AssignmentEditor";
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
@@ -76,7 +77,9 @@ export function ConfigAgentRuntimeRows({
             }}
           />
         }
-      />
+      >
+        <BackendExecutionWarning backend={value.backend} />
+      </ConfigControlRow>
       <ConfigControlRow
         rowId={`${rowPrefix}-model-selection`}
         label="Model selection"

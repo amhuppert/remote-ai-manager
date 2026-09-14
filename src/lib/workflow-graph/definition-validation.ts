@@ -516,8 +516,8 @@ function resolvedSelectionUseSite(site: {
 /**
  * Backend facts a definition check needs but a definition does not carry.
  * Injected because the write-restriction lookup is a per-backend capability
- * declaration: a test can only prove the refusal by naming a backend that
- * cannot enforce, and every registered one can.
+ * declaration: a test proves refusal by supplying a backend that cannot apply
+ * write limits, either natively or through instructions.
  */
 export interface BackendCapabilityDeps {
   executionEntryFor?(backend: AgentBackendId): ExecutionCatalogEntry;
@@ -540,20 +540,18 @@ interface WriteRestrictionCheckableContext {
 }
 
 /**
- * Refuse every cohort member whose backend cannot mechanically confine the
- * lane's writes (R7.2).
+ * Refuse cohort members whose backend cannot apply the lane's write policy.
  *
  * The refusal is at definition accept-time rather than at dispatch because a
- * validator that reached dispatch on an unenforceable backend has only two
- * outcomes — run unsandboxed, or fail the round — and both are worse than never
- * admitting the definition. It is attached to the STRUCTURAL validator (which
+ * validator needs its write limits delivered on every turn. Instruction-only
+ * limits are supported and disclosed by the backend contract. The check is
+ * attached to the STRUCTURAL validator (which
  * every accept path calls) and to the resolved check (which sees cascade-supplied
  * cohorts the authored document never named), because a backend id is an enum
  * member, never a substitution target, so the check is identical on both sides
  * of the authored → concrete transition.
  *
- * Implementer assignments are deliberately untouched: they are write-capable by
- * design, so the envelope has nothing to say about them. A disabled cohort is
+ * Implementer placement is checked by execution admission. A disabled cohort is
  * skipped because it is dormant configuration, not a run; model-selection
  * admission still validates it so enabling the cohort cannot expose a latent
  * invalid selection.
