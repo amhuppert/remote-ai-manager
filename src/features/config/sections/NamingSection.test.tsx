@@ -89,6 +89,25 @@ describe("NamingSection", () => {
     ).toBeNull();
   });
 
+  it("shows Cursor limits without disabling its selected backend", () => {
+    const selection = { modelId: "composer-2.5", parameters: { fast: "true" } };
+    const { controller } = makeController({
+      conversationNaming: {
+        backend: "cursor",
+        enabled: true,
+        modelSelection: selection,
+      },
+    });
+    renderWithQuery(<NamingSection controller={controller} />);
+    expect(pillIn("conversationNaming.backend", "cursor")).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "limits rely on instructions",
+    );
+  });
+
   it("refuses a backend with no task facet and keeps the configured one", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<NamingSection controller={controller} />, true);

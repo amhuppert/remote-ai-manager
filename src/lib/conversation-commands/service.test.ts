@@ -298,34 +298,37 @@ describe("createConversationCommandService eligible path", () => {
       expect(deps.runTicketCommand).not.toHaveBeenCalled();
     });
   });
-  it("dispatches a commit job with the generated message", async () => {
-    const deps = makeDeps();
-    const service = createConversationCommandService(deps);
+  it.each(["claude", "cursor"] as const)(
+    "dispatches a commit job with the %s generated message",
+    async (backend) => {
+      const deps = makeDeps({ getConversationBackend: async () => backend });
+      const service = createConversationCommandService(deps);
 
-    const outcome = await service.run(
-      makeInput({ parsed: { command: "commit", hint: "focus on API" } }),
-    );
+      const outcome = await service.run(
+        makeInput({ parsed: { command: "commit", hint: "focus on API" } }),
+      );
 
-    expect(outcome).toEqual({
-      status: "dispatched",
-      jobId: "job-commit-1",
-      usedFallback: false,
-    });
-    expect(deps.executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    expect(deps.dispatchCommitJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectPath: "/tmp/projects/demo",
-        projectName: "demo",
-        sessionName: "my-session",
-        worktreePath: "/tmp/worktrees/my-session",
-        branchName: "csm/my-session",
-        message: "Add eligibility checks",
-        targetBranch: "main",
-      }),
-    );
-    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
-    expect(deps.appendNotice).not.toHaveBeenCalled();
-  });
+      expect(outcome).toEqual({
+        status: "dispatched",
+        jobId: "job-commit-1",
+        usedFallback: false,
+      });
+      expect(deps.executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+      expect(deps.dispatchCommitJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: "/tmp/projects/demo",
+          projectName: "demo",
+          sessionName: "my-session",
+          worktreePath: "/tmp/worktrees/my-session",
+          branchName: "csm/my-session",
+          message: "Add eligibility checks",
+          targetBranch: "main",
+        }),
+      );
+      expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+      expect(deps.appendNotice).not.toHaveBeenCalled();
+    },
+  );
 
   it("dispatches a rebase job onto the session target when no argument is given", async () => {
     const deps = makeDeps();
@@ -459,33 +462,37 @@ describe("createConversationCommandService eligible path", () => {
     expect(deps.dispatchCommitJob).not.toHaveBeenCalled();
   });
 
-  it("threads the generated resolutionContext into the merge dispatch", async () => {
-    const deps = makeDeps({
-      executeWorkflowTaskRun: vi.fn(async () => ({
-        kind: "structured" as const,
-        structuredOutput: {
+  it.each(["claude", "cursor"] as const)(
+    "threads %s generated resolutionContext into the merge dispatch",
+    async (backend) => {
+      const deps = makeDeps({
+        getConversationBackend: async () => backend,
+        executeWorkflowTaskRun: vi.fn(async () => ({
+          kind: "structured" as const,
+          structuredOutput: {
+            message: "Add eligibility checks",
+            resolutionContext:
+              "Session reworked eligibility gating; keep the new guard order.",
+          },
+          text: "",
+          usage: emptyUsage,
+          backendRef: null,
+          continuationDisposition: "retain" as const,
+        })),
+      });
+      const service = createConversationCommandService(deps);
+
+      await service.run(makeInput({ parsed: { command: "merge", hint: "" } }));
+
+      expect(deps.dispatchMergeJob).toHaveBeenCalledWith(
+        expect.objectContaining({
           message: "Add eligibility checks",
           resolutionContext:
             "Session reworked eligibility gating; keep the new guard order.",
-        },
-        text: "",
-        usage: emptyUsage,
-        backendRef: null,
-        continuationDisposition: "retain" as const,
-      })),
-    });
-    const service = createConversationCommandService(deps);
-
-    await service.run(makeInput({ parsed: { command: "merge", hint: "" } }));
-
-    expect(deps.dispatchMergeJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "Add eligibility checks",
-        resolutionContext:
-          "Session reworked eligibility gating; keep the new guard order.",
-      }),
-    );
-  });
+        }),
+      );
+    },
+  );
 
   it("dispatches the merge without resolutionContext when generation falls back", async () => {
     const deps = makeDeps({

@@ -37,6 +37,8 @@ import { createLogger, timed } from "../logging";
 import type { BulkSessionResult } from "@/lib/sessions/schemas";
 import { readRepoConfig } from "../projects/repo-config";
 import { readConfig } from "../config/loader";
+import { resolveConversationNamingConfig } from "../config/schemas";
+import { DEFAULT_NAMING_TIMEOUT_MS } from "../conversations/name-generation";
 import { resolveBranchPrefix } from "../config/cascade";
 import { stopAllForSession } from "../dev-server/registry";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -477,30 +479,46 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     objective: string,
     projectPath: string,
   ): Promise<string> {
+    const config = resolveConversationNamingConfig(await readConfig());
+    logger.info("session.name_generation_started", {
+      projectPath,
+      backend: config.backend,
+      modelSelection: config.modelSelection,
+    });
     const result = await runAdmittedTask(
-      "claude",
+      config.backend,
       {
         executionClass: "nongoverned-task",
         workingDirectory: projectPath,
         prompt: `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
-        modelSelection: { modelId: "haiku", parameters: {} },
-        timeoutMs: 60_000,
+        modelSelection: config.modelSelection,
+        timeoutMs: config.timeoutMs ?? DEFAULT_NAMING_TIMEOUT_MS,
         executionProfile: "isolated-one-shot",
         autonomous: true,
       },
       { getRunner: getTaskRunner },
     );
 
-    if (result.error) {
+    if (result.error !== null || result.failure !== null || result.timedOut) {
+      const error =
+        result.error ??
+        result.failure?.message ??
+        (result.timedOut
+          ? "Session name generation timed out"
+          : "Session name generation failed");
       logger.warn("session.name_generation_failed", {
         projectPath,
-        error: result.error,
+        backend: config.backend,
+        error,
+        failureKind: result.timedOut
+          ? "timeout"
+          : (result.failure?.kind ?? "backend_error"),
         timedOut: result.timedOut,
       });
-      throw new Error(result.error);
+      throw new Error(error);
     }
 
-    const name = (result.text ?? "").trim().split("\n")[0]!.trim();
+    const name = (result.text ?? "").trim().split("\n")[0]?.trim() ?? "";
     if (!name) {
       throw new Error("Session name generation returned empty result");
     }
@@ -509,6 +527,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         "Generated session name is invalid: must contain at least one letter or number",
       );
     }
+    logger.info("session.name_generation_completed", {
+      projectPath,
+      backend: config.backend,
+      modelSelection: config.modelSelection,
+    });
     return name;
   }
 

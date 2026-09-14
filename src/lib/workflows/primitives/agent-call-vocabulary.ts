@@ -78,7 +78,15 @@ export const portableMcpConfigInputSchema = z.custom<PortableMcpConfig>(
   { message: "tooling must be a PortableMcpConfig with a servers array" },
 );
 
-export const outputSchemaInputSchema = z.record(z.string(), z.unknown());
+// Zod-generated JSON Schemas carry non-enumerable ~standard callbacks. Keep
+// only JSON object members before z.record makes hidden properties enumerable.
+export const outputSchemaInputSchema = z.preprocess(
+  (value: Record<string, unknown>) =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value))
+      : value,
+  z.record(z.string(), z.unknown()),
+);
 const structuredOutputRepairInputSchema = z.object({
   maxAttempts: z.number().int().min(0).max(1),
 });

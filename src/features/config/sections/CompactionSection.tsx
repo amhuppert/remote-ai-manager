@@ -1,3 +1,4 @@
+import BackendExecutionWarning from "@/components/BackendExecutionWarning";
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { backendExecutionRefusalIn } from "@/lib/agent-backends/execution-admission";
@@ -106,7 +107,7 @@ export function CompactionSection({
     <SettingsPage
       title="Conversation"
       accent="compaction"
-      sub="Choose the backend, model, and reasoning level used to create conversation checkpoints and compaction artifacts."
+      sub="CC summarizes saved transcripts to create checkpoints and compaction artifacts. This is separate from native provider compaction and does not compact the provider’s internal history."
     >
       <SettingsSubSection
         title="Compaction backend"
@@ -164,6 +165,7 @@ export function CompactionSection({
               ]);
             }}
           />
+          <BackendExecutionWarning backend={backend} />
         </ConfigField>
       </SettingsSubSection>
       <SettingsSubSection

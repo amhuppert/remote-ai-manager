@@ -72,6 +72,7 @@ export interface DispatchTaskRunDeps {
    * caller that owns the originating session may supply it.
    */
   ccSessionScope?: AgentTaskRequest["ccSessionScope"];
+  conversationTarget?: AgentTaskRequest["conversationTarget"];
   /**
    * Server-derived filesystem-write envelope for the run, forwarded verbatim to
    * the runner. Absent leaves the run unrestricted.
@@ -167,6 +168,9 @@ export async function dispatchTaskRun(
       : {}),
     ...(deps.ccSessionScope !== undefined
       ? { ccSessionScope: deps.ccSessionScope }
+      : {}),
+    ...(deps.conversationTarget !== undefined
+      ? { conversationTarget: deps.conversationTarget }
       : {}),
     ...(deps.fsWritePolicy !== undefined
       ? { fsWritePolicy: deps.fsWritePolicy }

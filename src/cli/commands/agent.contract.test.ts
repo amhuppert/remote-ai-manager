@@ -10,6 +10,7 @@ import {
   startAgentRun,
   _resetForTesting,
   type AgentRunExecResult,
+  type AgentRunExecInput,
 } from "@/lib/agent-runs/service";
 import { createAgentRunHandlers } from "@/lib/agent-runs/route-handlers";
 import {
@@ -118,7 +119,7 @@ function abortableExecutor(): (input: {
 }
 
 function makeHost(
-  runTask: (input: { signal: AbortSignal }) => Promise<AgentRunExecResult>,
+  runTask: (input: AgentRunExecInput) => Promise<AgentRunExecResult>,
 ): CliHost {
   const handlers = createAgentRunHandlers({
     auth: createAgentAuth({ configDir: dir }),
@@ -232,50 +233,67 @@ afterEach(async () => {
 });
 
 describe("cctl agent against the real route handlers", () => {
-  it("run (no --wait) starts a run that outlives the call and is recovered via status", async () => {
-    const host = makeHost(completingExecutor());
-    const promptPath = path.join(dir, "prompt.json");
+  it.each(["codex", "cursor"] as const)(
+    "runs %s without fallback and recovers the result via status",
+    async (backend) => {
+      await writeFile(
+        path.join(dir, "prompt.json"),
+        JSON.stringify({ backend, prompt: "analyze the repo" }),
+      );
+      const host = makeHost(async (input) => {
+        if (input.backend !== backend)
+          throw new Error(`${input.backend} unavailable`);
+        expect(input.modelSelection).toEqual(
+          makeConfig().agentBackends[backend].modelSelection,
+        );
+        return completingExecutor()();
+      });
+      const promptPath = path.join(dir, "prompt.json");
 
-    const started = await runCli(
-      ["agent", "run", "--file", promptPath],
-      env(),
-      host,
-    );
-    expect(started.exitCode).toBe(0);
-    const runId = JSON.parse(
-      (
-        await runCli(
-          ["agent", "run", "--file", promptPath, "--json"],
-          env(),
-          host,
-        )
-      ).stdout,
-    ).runId as string;
-    expect(typeof runId).toBe("string");
-
-    // Poll status through the real handlers until the run reaches its terminal
-    // state — the run completed server-side with no client waiting on it.
-    let recovered = "";
-    for (let i = 0; i < 50; i++) {
-      const status = await runCli(
-        ["agent", "status", runId, "--json"],
+      const started = await runCli(
+        ["agent", "run", "--file", promptPath],
         env(),
         host,
       );
-      const envelope = JSON.parse(status.stdout);
-      if (envelope.status !== "running") {
-        recovered = status.stdout;
-        break;
+      expect(started.exitCode).toBe(0);
+      const runId = JSON.parse(
+        (
+          await runCli(
+            ["agent", "run", "--file", promptPath, "--json"],
+            env(),
+            host,
+          )
+        ).stdout,
+      ).runId as string;
+      expect(typeof runId).toBe("string");
+
+      // Poll status through the real handlers until the run reaches its terminal
+      // state — the run completed server-side with no client waiting on it.
+      let recovered = "";
+      for (let i = 0; i < 50; i++) {
+        const status = await runCli(
+          ["agent", "status", runId, "--json"],
+          env(),
+          host,
+        );
+        const envelope = JSON.parse(status.stdout);
+        if (envelope.status !== "running") {
+          recovered = status.stdout;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2));
       }
-      await new Promise((r) => setTimeout(r, 2));
-    }
-    const envelope = JSON.parse(recovered);
-    expect(envelope.status).toBe("completed");
-    expect(envelope.summary).toBe("the agent did it");
-    expect(envelope.referenceDocuments).toEqual([
-      { filePath: "memory-bank/agent-runs/out.md", description: "the output" },
-    ]);
-  });
+      const envelope = JSON.parse(recovered);
+      expect(envelope.status).toBe("completed");
+      expect(envelope.summary).toBe("the agent did it");
+      expect(envelope.referenceDocuments).toEqual([
+        {
+          filePath: "memory-bank/agent-runs/out.md",
+          description: "the output",
+        },
+      ]);
+    },
+  );
 
   it("run --wait long-polls to the completed result", async () => {
     const host = makeHost(completingExecutor());

@@ -1449,6 +1449,12 @@ describe("executeAgentCall — structured-output repair", () => {
         session: "sess-1",
         conversationId: "conv-originating",
       },
+      conversationTarget: {
+        scope: "session",
+        projectName: "example",
+        sessionName: "sess-1",
+        conversationId: "conv-originating",
+      },
     });
 
     const result = await executeAgentCall(
@@ -1507,6 +1513,10 @@ describe("executeAgentCall — structured-output repair", () => {
       conversationId: "conv-originating",
     });
     expect(requests[1]?.ccSessionScope).toBeUndefined();
+    expect(requests[0]?.conversationTarget?.conversationId).toBe(
+      "conv-originating",
+    );
+    expect(requests[1]?.conversationTarget).toBeUndefined();
     expect(result.backendRef).toEqual({
       backend: "codex",
       ref: "thread-original",

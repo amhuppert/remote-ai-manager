@@ -152,59 +152,69 @@ afterEach(() => {
 });
 
 describe("generateAndApplyConversationName", () => {
-  it("applies structured output and publishes a schema-valid project-scoped rename event", async () => {
-    await fixture.seedProjectConversation(
-      PROJECT_PATH,
-      buildConversation({
-        id: CONVERSATION_ID,
-        scope: "project",
-        name: `${PROJECT_NAME} chat 1`,
-        createdAt: "2026-08-04T12:00:00.000Z",
-        agentBackend: "claude",
-      }),
-    );
-    const harness = createHarness();
-
-    await expect(
-      generateAndApplyConversationName(
-        generationInput({
-          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+  it.each(["claude", "cursor"] as const)(
+    "applies %s output and persists a project-scoped rename",
+    async (backend) => {
+      await fixture.seedProjectConversation(
+        PROJECT_PATH,
+        buildConversation({
+          id: CONVERSATION_ID,
+          scope: "project",
+          name: `${PROJECT_NAME} chat 1`,
+          createdAt: "2026-08-04T12:00:00.000Z",
+          agentBackend: "claude",
         }),
-        harness.deps,
-      ),
-    ).resolves.toBe("Generated Conversation Name");
+      );
+      const modelSelection: AgentTaskRequest["modelSelection"] =
+        backend === "cursor"
+          ? { modelId: "composer-2.5", parameters: { fast: "false" } }
+          : { modelId: "haiku", parameters: {} };
+      const harness = createHarness({
+        config: configWithNaming({ backend, modelSelection }),
+      });
 
-    const reloaded = await reloadConversation(
-      PROJECT_CONVERSATION_SESSION_SENTINEL,
-    );
-    expect(reloaded).toMatchObject({
-      name: "Generated Conversation Name",
-      nameOrigin: "auto",
-    });
-    expect(harness.requests).toHaveLength(1);
-    expect(harness.requests[0]).toMatchObject({
-      workingDirectory: PROJECT_PATH,
-      modelSelection: { modelId: "haiku", parameters: {} },
-      timeoutMs: DEFAULT_NAMING_TIMEOUT_MS,
-      executionProfile: "isolated-one-shot",
-      autonomous: true,
-      outputSchema: CONVERSATION_NAME_OUTPUT_SCHEMA,
-    });
-    expect(harness.requests[0]?.prompt).toContain(
-      "Implement background conversation naming",
-    );
-    expect(harness.published).toHaveLength(1);
-    expect(
-      conversationRenamedEventSchema.safeParse(harness.published[0]).success,
-    ).toBe(true);
-    expect(harness.published[0]).toEqual({
-      type: "conversation-renamed",
-      scope: "project",
-      projectName: PROJECT_NAME,
-      conversationId: CONVERSATION_ID,
-      name: "Generated Conversation Name",
-    });
-  });
+      await expect(
+        generateAndApplyConversationName(
+          generationInput({
+            sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          }),
+          harness.deps,
+        ),
+      ).resolves.toBe("Generated Conversation Name");
+
+      const reloaded = await reloadConversation(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+      expect(reloaded).toMatchObject({
+        name: "Generated Conversation Name",
+        nameOrigin: "auto",
+      });
+      expect(harness.runnerBackends).toEqual([backend]);
+      expect(harness.requests).toHaveLength(1);
+      expect(harness.requests[0]).toMatchObject({
+        workingDirectory: PROJECT_PATH,
+        modelSelection,
+        timeoutMs: DEFAULT_NAMING_TIMEOUT_MS,
+        executionProfile: "isolated-one-shot",
+        autonomous: true,
+        outputSchema: CONVERSATION_NAME_OUTPUT_SCHEMA,
+      });
+      expect(harness.requests[0]?.prompt).toContain(
+        "Implement background conversation naming",
+      );
+      expect(harness.published).toHaveLength(1);
+      expect(
+        conversationRenamedEventSchema.safeParse(harness.published[0]).success,
+      ).toBe(true);
+      expect(harness.published[0]).toEqual({
+        type: "conversation-renamed",
+        scope: "project",
+        projectName: PROJECT_NAME,
+        conversationId: CONVERSATION_ID,
+        name: "Generated Conversation Name",
+      });
+    },
+  );
 
   it("skips an automatic apply when a manual rename wins during generation", async () => {
     const harness = createHarness({

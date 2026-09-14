@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
-import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import {
+  conversationTargetSchema,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import {
   ccTaskSessionScopeSchema,
@@ -139,16 +142,31 @@ export function createCursorTaskRunner(
           !isolated &&
           input.resumeRef?.backend === "cursor" &&
           !input.resumeRef.ref.startsWith("{");
-        if (conversationResume && scope === null) {
+        const target = scope
+          ? targetFromStoreSessionName(
+              scope.project,
+              scope.session,
+              scope.conversationId,
+            )
+          : null;
+        const conversationTarget =
+          !isolated && input.conversationTarget
+            ? conversationTargetSchema.parse(input.conversationTarget)
+            : target;
+        if (conversationResume && conversationTarget === null) {
           throw new CursorLocalFailure(
             "invalid_ref",
-            "Resuming a Cursor conversation as a task requires its CC session scope",
+            "Resuming a Cursor conversation as a task requires its CC conversation target",
           );
         }
         const resumed =
           !isolated && input.resumeRef && !conversationResume
             ? decodeCursorTaskRef(input.resumeRef)
             : null;
+        const hostedConversation =
+          conversationTarget !== null &&
+          (conversationResume ||
+            (input.conversationTarget !== undefined && resumed === null));
         if (
           resumed &&
           (resumed.cwd !== cwd ||
@@ -168,17 +186,10 @@ export function createCursorTaskRunner(
             scope,
           });
         const conversationId =
-          conversationResume && scope
-            ? scope.conversationId
+          hostedConversation && conversationTarget
+            ? conversationTarget.conversationId
             : `task-${task.taskId}`;
         storeId = conversationId;
-        const target = scope
-          ? targetFromStoreSessionName(
-              scope.project,
-              scope.session,
-              scope.conversationId,
-            )
-          : null;
         if (controller.signal.aborted)
           throw new Error(abortReason ?? "Cursor task cancelled");
         const capabilityDelivery = await deps.prepareCapabilities?.(
@@ -196,8 +207,8 @@ export function createCursorTaskRunner(
             executionClass: "ordinary-conversation",
             conversationId,
             projectPath: cwd,
-            projectName: scope?.project ?? conversationId,
-            conversationTarget: target ?? {
+            projectName: conversationTarget?.projectName ?? conversationId,
+            conversationTarget: conversationTarget ?? {
               scope: "project",
               projectName: conversationId,
               conversationId,
@@ -234,7 +245,7 @@ export function createCursorTaskRunner(
         logger.info("task.started", {
           taskId: task.taskId,
           conversationId,
-          continuationKind: conversationResume ? "conversation" : "task",
+          continuationKind: hostedConversation ? "conversation" : "task",
           executionProfile: input.executionProfile ?? "standard",
           resumed: resumed !== null || conversationResume,
         });
@@ -256,7 +267,7 @@ export function createCursorTaskRunner(
           onEvent(event) {
             if (event.type === "transcript_entry") transcript.push(event.entry);
             if (!isolated && event.type === "backend_init")
-              backendRef = conversationResume
+              backendRef = hostedConversation
                 ? event.backendRef
                 : encodeCursorTaskRef({
                     ...task,

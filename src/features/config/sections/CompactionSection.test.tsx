@@ -73,6 +73,25 @@ describe("CompactionSection", () => {
     ).toBeNull();
   });
 
+  it("shows Cursor limits without disabling its selected backend", () => {
+    const selection = { modelId: "composer-2.5", parameters: { fast: "true" } };
+    const { controller } = makeController({
+      compaction: {
+        backend: "cursor",
+        conversationModelSelection: selection,
+        messageModelSelection: selection,
+      },
+    });
+    renderWithQuery(<CompactionSection controller={controller} />);
+    expect(pillIn("compaction.backend", "cursor")).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "limits rely on instructions",
+    );
+  });
+
   it("refuses a backend with no task facet", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />, true);

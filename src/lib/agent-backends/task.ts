@@ -11,6 +11,7 @@ import type {
   ContinuationDisposition,
 } from "./errors";
 import type { BackendModelSelection } from "./schemas";
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 
 /**
  * Semantic execution shape for a backend task. `isolated-one-shot` requests a
@@ -79,6 +80,9 @@ export interface AgentTaskRequest extends ExecutionIntent {
   systemInstructions?: string[];
   modelSelection: BackendModelSelection;
   resumeRef?: AgentSessionRef | null;
+  /** Server-owned host identity for locating resumed conversation state. Does
+   * not grant the child CC API access; ccSessionScope owns that opt-in. */
+  conversationTarget?: ConversationTarget;
   outputSchema?: Record<string, unknown>;
   timeoutMs: number;
   tooling?: ConversationToolingOverrides;

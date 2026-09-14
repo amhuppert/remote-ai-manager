@@ -1,4 +1,7 @@
 import { readRuntimeInstructions } from "./runtime-instructions";
+import { createCursorTaskRunner } from "@/lib/agent-backends/cursor/task-runner";
+import { createScriptedTransport } from "@/lib/agent-backends/cursor/testing/scripted-worker";
+import { translatePortableMcpToCursor } from "@/lib/agent-backends/cursor/mcp-translation";
 import {
   conversationTargetStoreSessionName,
   targetFromStoreSessionName,
@@ -7968,6 +7971,68 @@ describe("executePromptForMachine pending agent notices", () => {
 // ===========================================================================
 
 describe("runTaskRunTurnForMachine", () => {
+  it.each([
+    { scope: "session", resumed: true },
+    { scope: "project", resumed: true },
+    { scope: "session", resumed: false },
+    { scope: "project", resumed: false },
+  ] as const)(
+    "runs Cursor auxiliary tasks in $scope scope (resumed=$resumed) without granting CC API access",
+    async ({ scope, resumed }) => {
+      const transport = createScriptedTransport({ ref: "agent-conversation" });
+      const runner = createCursorTaskRunner({
+        transport,
+        storePath: (id) => `/state/${id}`,
+        resolveModel: async (selection) => ({ ok: true, selection }),
+        translatePortableMcpToCursor,
+        newRunId: () => "auxiliary-run",
+        now: Date.now,
+        stallTimeoutMs: 1000,
+        cancelSettleTimeoutMs: 50,
+      });
+      mockDeps = createMockDeps({
+        executeAgentCall: defaultExecuteAgentCall,
+        getTaskRunner(backend) {
+          if (backend !== "cursor") throw new Error(`${backend} unavailable`);
+          return runner;
+        },
+      });
+      conversationActors = createTestActorImplementations(mockDeps);
+      const ref = { backend: "cursor" as const, ref: "agent-conversation" };
+      const result = await conversationActors.runTaskRunTurnForMachine(
+        makeRunTaskRunInput({
+          target:
+            scope === "session"
+              ? targetFromStoreSessionName("repo", "test-session", "conv-1")
+              : {
+                  scope: "project",
+                  projectName: "repo",
+                  conversationId: "conv-1",
+                },
+          agentBackend: "cursor",
+          backendRef: resumed ? ref : null,
+          turn: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "false" },
+            },
+          },
+        }),
+      );
+      expect(result.error).toBeNull();
+      expect(result.backendRef).toEqual(ref);
+      expect(transport.startInputs[0]).toMatchObject({
+        conversationId: "conv-1",
+        storePath: "/state/conv-1",
+        target: null,
+      });
+      expect(transport.workers[0]?.attachments[0]).toMatchObject({
+        mode: resumed ? "resume" : "create",
+        ...(resumed ? { ref: "agent-conversation" } : {}),
+      });
+    },
+  );
+
   function makeRunTaskRunInput(
     overrides: Omit<Partial<RunTaskRunInput>, "turn"> & {
       turn?: Partial<RunTaskRunInput["turn"]>;

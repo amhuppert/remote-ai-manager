@@ -123,6 +123,7 @@ interface TaskRunnerResolution {
    * persisted conversation may grant it; it never comes from a task request.
    */
   ccSessionScope?: AgentTaskRequest["ccSessionScope"];
+  conversationTarget?: AgentTaskRequest["conversationTarget"];
   /**
    * The run's filesystem-write envelope. Sourced from the request rather than
    * from a resolver seam — see the normalization in
@@ -154,6 +155,7 @@ export interface TaskExecutionIntent {
   signal?: AbortSignal;
   /** Trusted hosted identity; never populate from task requests or agent output. */
   ccSessionScope?: AgentTaskRequest["ccSessionScope"];
+  conversationTarget?: AgentTaskRequest["conversationTarget"];
 }
 
 /** Outcome of the pre-turn portable-MCP apply hook. */
@@ -616,6 +618,9 @@ async function resolveTaskRunnerTarget(
       ...(intent.ccSessionScope !== undefined
         ? { ccSessionScope: intent.ccSessionScope }
         : {}),
+      ...(intent.conversationTarget !== undefined
+        ? { conversationTarget: intent.conversationTarget }
+        : {}),
     };
   }
   if (deps.resolveTaskRunner) {
@@ -681,6 +686,9 @@ async function executeTaskRun(
     ...(resolution.ccSessionScope !== undefined
       ? { ccSessionScope: resolution.ccSessionScope }
       : {}),
+    ...(resolution.conversationTarget !== undefined
+      ? { conversationTarget: resolution.conversationTarget }
+      : {}),
     ...(resolution.fsWritePolicy !== undefined
       ? { fsWritePolicy: resolution.fsWritePolicy }
       : {}),
@@ -709,6 +717,7 @@ async function executeTaskRun(
         // inherits the governed call's CC identity, so no `cctl` verb —
         // memory included — is reachable from it.
         ccSessionScope: undefined,
+        conversationTarget: undefined,
       });
     },
   );

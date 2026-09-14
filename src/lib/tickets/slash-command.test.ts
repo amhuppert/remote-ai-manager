@@ -88,7 +88,7 @@ let events: SSEEvent[];
 let notices: AppendNoticeInput[];
 let taskRunInputs: ExecuteWorkflowTaskRunInput[];
 let taskRunResult: TaskRunResult;
-let backendRef: { backend: "claude"; ref: string } | null;
+let backendRef: import("@/lib/shared/schemas").AgentSessionRef | null;
 let liveCompaction: LiveCompaction | null;
 let transcriptEntries: TranscriptEntriesResult;
 let ensureResult: EnsureConversationCompactionResult;
@@ -379,81 +379,85 @@ describe("createTicketCommandRunner", () => {
     ]);
   });
 
-  it("creates the ticket with the auto-attached conversation and a success notice", async () => {
-    const outcome = await runner.run(runInput({ hint: "retry bug" }));
+  it.each(["claude", "cursor"] as const)(
+    "creates the ticket from %s with a captured conversation and a success notice",
+    async (backend) => {
+      backendRef = { backend, ref: "agent-conversation" };
+      const outcome = await runner.run(runInput({ hint: "retry bug" }));
 
-    expect(outcome).toEqual({
-      status: "created",
-      identifier: "command-center#1",
-      confirmationPersisted: true,
-    });
+      expect(outcome).toEqual({
+        status: "created",
+        identifier: "command-center#1",
+        confirmationPersisted: true,
+      });
 
-    // Structured turn ran in the originating conversation with the schema.
-    expect(taskRunInputs).toHaveLength(1);
-    const turn = taskRunInputs[0]!;
-    expect(
-      conversationTargetStoreSessionName(turn.binding.address.target),
-    ).toBe(SESSION_NAME);
-    expect(turn.binding.address.target.conversationId).toBe(CONVERSATION_ID);
-    expect(turn.outputFormat).toEqual({
-      type: "json_schema",
-      schema: TICKET_COMMAND_JSON_SCHEMA,
-    });
-    expect(turn.prompt).toContain("retry bug");
-    // Native context: no fallback rendering embedded when a backendRef exists.
-    expect(turn.prompt).not.toContain("## Compaction");
+      // Structured turn ran in the originating conversation with the schema.
+      expect(taskRunInputs).toHaveLength(1);
+      const turn = taskRunInputs[0]!;
+      expect(
+        conversationTargetStoreSessionName(turn.binding.address.target),
+      ).toBe(SESSION_NAME);
+      expect(turn.binding.address.target.conversationId).toBe(CONVERSATION_ID);
+      expect(turn.outputFormat).toEqual({
+        type: "json_schema",
+        schema: TICKET_COMMAND_JSON_SCHEMA,
+      });
+      expect(turn.prompt).toContain("retry bug");
+      // Native context: no fallback rendering embedded when a backendRef exists.
+      expect(turn.prompt).not.toContain("## Compaction");
 
-    // Read back through the real repo: ticket + attachment in one transaction.
-    const detail = await repo.find(PROJECT_PATH, 1);
-    expect(detail).not.toBeNull();
-    expect(detail!.title).toBe("Fix flaky retry");
-    expect(detail!.description).toBe("Retries fail under load.");
-    expect(detail!.workType).toBe("bug");
-    expect(detail!.status).toBe("not_started");
-    expect(detail!.attachments).toHaveLength(1);
-    const attachment = detail!.attachments[0]!;
-    expect(attachment.payload).toMatchObject({
-      kind: "conversation",
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-      snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
-      snapshotStatus: "captured",
-    });
+      // Read back through the real repo: ticket + attachment in one transaction.
+      const detail = await repo.find(PROJECT_PATH, 1);
+      expect(detail).not.toBeNull();
+      expect(detail!.title).toBe("Fix flaky retry");
+      expect(detail!.description).toBe("Retries fail under load.");
+      expect(detail!.workType).toBe("bug");
+      expect(detail!.status).toBe("not_started");
+      expect(detail!.attachments).toHaveLength(1);
+      const attachment = detail!.attachments[0]!;
+      expect(attachment.payload).toMatchObject({
+        kind: "conversation",
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        snapshotCapturedAt: "2026-07-10T00:00:00.000Z",
+        snapshotStatus: "captured",
+      });
 
-    // The compaction snapshot blob exists in the content store.
-    if (attachment.payload.kind !== "conversation") {
-      throw new Error("expected conversation payload");
-    }
-    if (attachment.payload.snapshotKey === null) {
-      throw new Error("expected captured conversation snapshot");
-    }
-    const blob = await contentStore.read(attachment.payload.snapshotKey);
-    expect(Buffer.from(blob).toString("utf8")).toBe(
-      "## Compaction\nwhat happened so far",
-    );
+      // The compaction snapshot blob exists in the content store.
+      if (attachment.payload.kind !== "conversation") {
+        throw new Error("expected conversation payload");
+      }
+      if (attachment.payload.snapshotKey === null) {
+        throw new Error("expected captured conversation snapshot");
+      }
+      const blob = await contentStore.read(attachment.payload.snapshotKey);
+      expect(Buffer.from(blob).toString("utf8")).toBe(
+        "## Compaction\nwhat happened so far",
+      );
 
-    // Deterministic success notice reports the identifier.
-    expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatchObject({
-      text: expect.stringContaining("command-center#1"),
-      storeSessionName: SESSION_NAME,
-    });
+      // Deterministic success notice reports the identifier.
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({
+        text: expect.stringContaining("command-center#1"),
+        storeSessionName: SESSION_NAME,
+      });
 
-    // A created change event went out with the attachment counted.
-    const created = events.find(
-      (event) =>
-        "type" in event &&
-        event.type === "ticket-changed" &&
-        "change" in event &&
-        event.change === "created",
-    );
-    expect(created).toMatchObject({
-      projectName: PROJECT_NAME,
-      ticketNumber: 1,
-      listItem: { attachmentCount: 1 },
-    });
-  });
+      // A created change event went out with the attachment counted.
+      const created = events.find(
+        (event) =>
+          "type" in event &&
+          event.type === "ticket-changed" &&
+          "change" in event &&
+          event.change === "created",
+      );
+      expect(created).toMatchObject({
+        projectName: PROJECT_NAME,
+        ticketNumber: 1,
+        listItem: { attachmentCount: 1 },
+      });
+    },
+  );
 
   it("uses the admitted complete model selection for ticket field generation", async () => {
     const modelSelection = {

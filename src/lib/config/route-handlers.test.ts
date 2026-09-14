@@ -476,6 +476,27 @@ describe("PUT /api/config", () => {
   });
 
   it.each(["conversationNaming", "compaction"])(
+    "saves an admitted Cursor %s selection unchanged",
+    async (field) => {
+      const selection = {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      };
+      const block =
+        field === "conversationNaming"
+          ? { backend: "cursor", enabled: true, modelSelection: selection }
+          : {
+              backend: "cursor",
+              conversationModelSelection: selection,
+              messageModelSelection: selection,
+            };
+      const response = await handlers.PUT(makePutRequest({ [field]: block }));
+      expect(response.status).toBe(200);
+      expect(deps.writeRawConfig).toHaveBeenCalledWith({ [field]: block });
+    },
+  );
+
+  it.each(["conversationNaming", "compaction"])(
     "refuses an unsupported %s selection before saving",
     async (field) => {
       await withTasklessBackend("cursor", async () => {

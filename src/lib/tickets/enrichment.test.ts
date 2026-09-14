@@ -53,6 +53,7 @@ const input: TicketEnrichmentInput = {
 };
 
 interface HarnessOptions {
+  backend?: AgentTaskRunner["backend"];
   resolveRunnerError?: unknown;
   run?: (request: AgentTaskRequest) => Promise<AgentTaskResult>;
   append?: (input: AppendTriageNoteInput) => Promise<void>;
@@ -63,7 +64,7 @@ function createHarness(options: HarnessOptions = {}) {
   const resolvedBackends: string[] = [];
   const appendInputs: AppendTriageNoteInput[] = [];
   const runner: AgentTaskRunner = {
-    backend: "codex",
+    backend: options.backend ?? "codex",
     async run(request) {
       requests.push(request);
       return options.run?.(request) ?? taskResult();
@@ -91,6 +92,36 @@ function createHarness(options: HarnessOptions = {}) {
 }
 
 describe("createTicketEnrichmentService", () => {
+  it("appends Cursor triage from fenced JSON without native structured output", async () => {
+    const markdown =
+      "## Triage\n\nReproduce the failed request with its trace ID.";
+    const harness = createHarness({
+      backend: "cursor",
+      run: async () =>
+        taskResult({
+          structuredOutput: undefined,
+          text: "```json\n" + JSON.stringify({ markdown }) + "\n```",
+        }),
+    });
+    const result = await harness.service.enrich({
+      ...input,
+      backend: "cursor",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "false" },
+      },
+    });
+    expect(result).toEqual({
+      status: "appended",
+      attachmentId: ticketEnrichmentAttachmentId(input.ticketId),
+    });
+    expect(harness.resolvedBackends).toEqual(["cursor"]);
+    expect(harness.appendInputs[0]).toMatchObject({
+      ticketId: input.ticketId,
+      markdown,
+    });
+  });
+
   it("forwards the selected backend profile without changing the fixed enrichment timeout", async () => {
     const harness = createHarness();
     const configuredInput = {

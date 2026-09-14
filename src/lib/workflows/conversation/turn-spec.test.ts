@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   conversationTurnRequestSchema,
   normalizeTurn,
@@ -6,6 +7,25 @@ import {
 } from "./turn-spec";
 
 describe("turn normalization", () => {
+  it("keeps generated JSON Schemas serializable across task normalization", () => {
+    const schema = z.toJSONSchema(
+      z.object({ title: z.string(), description: z.string() }),
+    );
+    const expected = JSON.parse(JSON.stringify(schema));
+    const turn = normalizeTurn(
+      {
+        kind: "task_run",
+        executionClass: "nongoverned-task",
+        promptText: "Generate a ticket",
+        outputFormat: { type: "json_schema", schema },
+      },
+      "cursor",
+    );
+    expect(turn.outputFormat?.schema).toEqual(expected);
+    expect(structuredClone(turn).outputFormat?.schema).toEqual(expected);
+    expect(Reflect.ownKeys(schema)).toContain("~standard");
+  });
+
   it("normalizes defaults without losing an explicit disabled asking policy", () => {
     expect(
       normalizeTurn(

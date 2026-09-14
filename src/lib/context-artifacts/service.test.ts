@@ -297,34 +297,52 @@ function echoService(
 }
 
 describe("createCompactionService — full run", () => {
-  it("persists a complete artifact with coverage, versions, and provenance", async () => {
-    const service = echoService();
-    const result = await service.trigger(makeTriggerInput());
-    expect(result.outcome).toBe("started");
-    if (result.outcome !== "started") return;
+  it.each(["claude", "cursor"] as const)(
+    "persists a complete %s artifact with coverage, versions, and provenance",
+    async (backend) => {
+      const modelSelection =
+        backend === "cursor"
+          ? { modelId: "composer-2.5", parameters: { fast: "false" } }
+          : { modelId: "sonnet", parameters: { effort: "medium" } };
+      const service = makeService(
+        async (input) => {
+          expect(input.binding.kind).toBe("ephemeral");
+          if (input.binding.kind !== "ephemeral")
+            throw new Error("expected ephemeral");
+          expect(input.binding.backend).toBe(backend);
+          return structuredResult(envelopeFromPrompt(input.prompt));
+        },
+        ENTRIES,
+        compactionConfigSchema.parse({
+          backend,
+          conversationModelSelection: modelSelection,
+          messageModelSelection: modelSelection,
+        }),
+      );
+      const result = await service.trigger(makeTriggerInput());
+      expect(result.outcome).toBe("started");
+      if (result.outcome !== "started") return;
 
-    const row = await result.completion;
-    expect(row.status).toBe("complete");
+      const row = await result.completion;
+      expect(row.status).toBe("complete");
 
-    const reloaded = repo.findById(result.artifactId);
-    expect(reloaded).not.toBeNull();
-    expect(reloaded?.status).toBe("complete");
-    expect(reloaded?.kind).toBe("conversation_compaction");
-    expect(reloaded?.coveredStartSeq).toBe(0);
-    expect(reloaded?.coveredEndSeq).toBe(3);
-    expect(reloaded?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(reloaded?.backend).toBe("claude");
-    expect(reloaded?.modelSelection).toEqual({
-      modelId: "sonnet",
-      parameters: { effort: "medium" },
-    });
-    expect(reloaded?.schemaVersion).toBe(CONTEXT_ARTIFACT_SCHEMA_VERSION);
-    expect(reloaded?.promptVersion).toBe(PROMPT_VERSION);
-    expect(reloaded?.normalizerVersion).toBe(NORMALIZER_VERSION);
-    expect(reloaded?.createdBy).toBe("user");
-    expect(reloaded?.payload?.agentBrief).toBe("dense handoff brief");
-    expect(reloaded?.payload?.source.coveredEndSeq).toBe(3);
-  });
+      const reloaded = repo.findById(result.artifactId);
+      expect(reloaded).not.toBeNull();
+      expect(reloaded?.status).toBe("complete");
+      expect(reloaded?.kind).toBe("conversation_compaction");
+      expect(reloaded?.coveredStartSeq).toBe(0);
+      expect(reloaded?.coveredEndSeq).toBe(3);
+      expect(reloaded?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(reloaded?.backend).toBe(backend);
+      expect(reloaded?.modelSelection).toEqual(modelSelection);
+      expect(reloaded?.schemaVersion).toBe(CONTEXT_ARTIFACT_SCHEMA_VERSION);
+      expect(reloaded?.promptVersion).toBe(PROMPT_VERSION);
+      expect(reloaded?.normalizerVersion).toBe(NORMALIZER_VERSION);
+      expect(reloaded?.createdBy).toBe("user");
+      expect(reloaded?.payload?.agentBrief).toBe("dense handoff brief");
+      expect(reloaded?.payload?.source.coveredEndSeq).toBe(3);
+    },
+  );
 
   it("runs the model on a synthetic transient lane, never the target conversation", async () => {
     const captured: ExecuteWorkflowTaskRunInput[] = [];

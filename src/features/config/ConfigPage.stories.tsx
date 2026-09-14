@@ -507,3 +507,43 @@ export const CheckpointCompactionCodex = {
   ],
   play: CheckpointCompaction.play,
 } satisfies Story;
+
+const cursorAuxiliaryConfig: GlobalConfig = {
+  ...defaultConfig,
+  conversationNaming: {
+    enabled: true,
+    backend: "cursor",
+    modelSelection: defaultConfig.agentBackends.cursor.modelSelection,
+  },
+  compaction: {
+    backend: "cursor",
+    conversationModelSelection:
+      defaultConfig.agentBackends.cursor.modelSelection,
+    messageModelSelection: defaultConfig.agentBackends.cursor.modelSelection,
+  },
+};
+
+export const CursorNaming = {
+  decorators: [
+    (Story) => (
+      <WithMockData
+        config={cursorAuxiliaryConfig}
+        raw={{
+          ...minimalRaw,
+          conversationNaming: cursorAuxiliaryConfig.conversationNaming,
+          compaction: cursorAuxiliaryConfig.compaction,
+        }}
+      >
+        <Story />
+      </WithMockData>
+    ),
+  ],
+  play: async ({ canvas }) => {
+    await userEvent.click(await canvas.findByRole("tab", { name: "Naming" }));
+  },
+} satisfies Story;
+
+export const CursorCompaction = {
+  decorators: CursorNaming.decorators,
+  play: CheckpointCompaction.play,
+} satisfies Story;

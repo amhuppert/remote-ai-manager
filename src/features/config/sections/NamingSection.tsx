@@ -1,3 +1,4 @@
+import BackendExecutionWarning from "@/components/BackendExecutionWarning";
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { backendExecutionRefusalIn } from "@/lib/agent-backends/execution-admission";
@@ -65,9 +66,9 @@ export function NamingSection({
 
   return (
     <SettingsPage
-      title="Conversation"
+      title="Session & conversation"
       accent="naming"
-      sub="Names new conversations in the background from their first user message. The toggle gates only automatic naming; the explicit regenerate actions always work."
+      sub="Names sessions from their objective and conversations from their content. The toggle controls automatic conversation naming; session naming and explicit regenerate actions always use the selected model."
     >
       <SettingsSubSection
         title="Automatic naming"
@@ -90,7 +91,7 @@ export function NamingSection({
       </SettingsSubSection>
       <SettingsSubSection
         title="Model selection"
-        hint="The backend, model, and supported model parameters used for the one-shot naming call."
+        hint="The backend, model, and supported parameters used to name both sessions and conversations."
       >
         <ConfigField
           label="Backend"
@@ -135,6 +136,7 @@ export function NamingSection({
               ]);
             }}
           />
+          <BackendExecutionWarning backend={backend} />
         </ConfigField>
         <ConfigField
           label="Model selection"

@@ -22,6 +22,7 @@ beforeEach(() => {
 });
 
 import type { GitClient } from "../git/client";
+import { materializeGlobalConfig } from "@/lib/config/loader";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import type {
   AgentTaskResult,
@@ -462,6 +463,53 @@ describe("generateRandomSuffix", () => {
 // ===========================================================================
 
 describe("generateSessionName", () => {
+  it("uses the configured naming backend even when automatic conversation naming is disabled", async () => {
+    const selection = {
+      modelId: "composer-2.5",
+      parameters: { fast: "false" },
+    };
+    deps.readConfig = async () =>
+      materializeGlobalConfig({
+        conversationNaming: {
+          enabled: false,
+          backend: "cursor",
+          modelSelection: selection,
+          timeoutMs: 45_000,
+        },
+      });
+    const requests: Parameters<AgentTaskRunner["run"]>[0][] = [];
+    deps.getTaskRunner = (backend) => {
+      if (backend !== "cursor") throw new Error(`${backend} unavailable`);
+      return {
+        backend,
+        async run(request) {
+          requests.push(request);
+          return taskResult({ text: "Cursor Naming" });
+        },
+      };
+    };
+    service = createSessionService(deps);
+
+    await expect(
+      service.generateSessionName("Name through Cursor", "/projects/repo"),
+    ).resolves.toBe("Cursor Naming");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      modelSelection: selection,
+      timeoutMs: 45_000,
+    });
+  });
+
+  it("rejects partial text from a timed-out naming task without an error string", async () => {
+    taskRunnerRunMock.mockResolvedValue({
+      ...taskResult({ text: "Partial Name", timedOut: true }),
+      failure: null,
+    });
+    await expect(
+      service.generateSessionName("Name this session", "/projects/repo"),
+    ).rejects.toThrow("Session name generation timed out");
+  });
+
   it("runs a naming task through the backend task runner and returns its text", async () => {
     taskRunnerRunMock.mockResolvedValue(taskResult({ text: "Add Auth" }));
     const name = await service.generateSessionName(
