@@ -1,0 +1,62 @@
+diff --git a/dist/index.js b/dist/index.js
+index 062039c2610107095bd7a254bdebd6fcf7e15fc6..c0ee1cc93bfd5fc5f54d6f4822f9bcf65b6398f5 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -140,7 +140,6 @@ function normalizeInput(input) {
+ import { spawn } from "child_process";
+ import { statSync } from "fs";
+ import path2 from "path";
+-import readline from "readline";
+ import { createRequire } from "module";
+ var INTERNAL_ORIGINATOR_ENV = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
+ var TYPESCRIPT_SDK_ORIGINATOR = "codex_sdk_ts";
+@@ -154,6 +153,27 @@ var PLATFORM_PACKAGE_BY_TARGET = {
+   "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64"
+ };
+ var moduleRequire = createRequire(import.meta.url);
++// Splits the JSONL stream on "\n" only. Node 24's readline also treats
++// U+2028 / U+2029 as line terminators, and codex emits both unescaped inside
++// JSON strings, so a readline-based split shattered events mid-string.
++async function* readJsonLines(stream) {
++  const decoder = new TextDecoder("utf-8");
++  let pending = "";
++  for await (const chunk of stream) {
++    pending += decoder.decode(chunk, { stream: true });
++    let newline = pending.indexOf("\n");
++    while (newline !== -1) {
++      const line = pending.slice(0, newline);
++      pending = pending.slice(newline + 1);
++      yield line.endsWith("\r") ? line.slice(0, -1) : line;
++      newline = pending.indexOf("\n");
++    }
++  }
++  pending += decoder.decode();
++  if (pending.length > 0) {
++    yield pending.endsWith("\r") ? pending.slice(0, -1) : pending;
++  }
++}
+ var CodexExec = class {
+   executablePath;
+   pathDirs;
+@@ -289,12 +309,8 @@ var CodexExec = class {
+         });
+       }
+     );
+-    const rl = readline.createInterface({
+-      input: child.stdout,
+-      crlfDelay: Infinity
+-    });
+     try {
+-      for await (const line of rl) {
++      for await (const line of readJsonLines(child.stdout)) {
+         yield line;
+       }
+       if (spawnError) throw spawnError;
+@@ -305,7 +321,6 @@ var CodexExec = class {
+         throw new Error(`Codex Exec exited with ${detail}: ${stderrBuffer.toString("utf8")}`);
+       }
+     } finally {
+-      rl.close();
+       child.removeAllListeners();
+       try {
+         if (!child.killed) child.kill();

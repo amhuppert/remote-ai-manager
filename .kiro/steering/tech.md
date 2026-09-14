@@ -25,6 +25,12 @@ z.record(z.string(), valueSchema);  // ✅ v4 requires explicit key schema
 z.record(valueSchema);              // ❌ v4 treats single arg as key schema
 ```
 
+## Dependency patches
+
+`patches/` holds bun `patchedDependencies` (declared in `package.json`, applied by `bun install`). Each patch is pinned to one package version, so a version bump must regenerate it: `bun patch <pkg>`, re-apply the change in `node_modules/<pkg>`, `bun patch --commit 'node_modules/<pkg>'`, and re-run the test that pins the behavior.
+
+- `@openai/codex-sdk` — splits the `codex exec --json` stream on `\n` only. Node 24's `readline` also breaks lines on U+2028 / U+2029, which codex emits unescaped inside JSON strings, so tool output carrying either character shattered the event and failed the turn. Pinned by `src/lib/agent-backends/codex/sdk-line-splitting.test.ts`. The same trap applies to any JSONL reader in CC: split on newline bytes, never `readline`.
+
 ## Schema location
 
 Each domain owns its schemas in `src/lib/<domain>/schemas.ts`; types are derived via `z.infer` and exported from the same file. No central `src/lib/schemas.ts`. Cross-domain shared primitives (rare) live in `src/lib/shared/schemas.ts`. See `structure.md`.
