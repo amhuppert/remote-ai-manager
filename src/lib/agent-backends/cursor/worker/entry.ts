@@ -17,6 +17,9 @@ import {
 } from "./ipc";
 import type { BackendModelSelection } from "../../schemas";
 import { validateCursorWorkerModelSelection } from "./model-selection";
+import { createLogger } from "@/lib/logging";
+
+const logger = createLogger("cursor-worker");
 
 /**
  * The Cursor worker process (spec D1, D2, D3 layer 2, D9).
@@ -85,10 +88,11 @@ export interface CursorWorkerAttachOptions {
 
 /**
  * Per-send options (D11): the model, the MCP map, and the force-expiry
- * recovery flag — nothing else. The flag is a send option because that is
+ * recovery flag, plus public task progress. The flag is a send option because that is
  * where the SDK exposes it (`LocalSendOptions.force`).
  */
 export interface CursorWorkerSendOptions {
+  onTaskUpdate?(update: unknown): void;
   modelSelection: BackendModelSelection;
   mcpServers: Record<string, CursorWorkerMcpServer>;
   forceExpirePersistedRun: boolean;
@@ -354,7 +358,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     // Exactly one bound governs each phase. While the handshake bound is
     // pending it owns the window, so an idle expiry cannot pre-empt the more
     // specific missing-credential diagnosis.
-    if (handshakeTimer !== null) return;
+    if (handshakeTimer !== null || activeRun !== null || stopping) return;
     const idleTimeoutMs = config?.idleTimeoutMs ?? CURSOR_WORKER_IDLE_TTL_MS;
     idleTimer = setTimeout(() => {
       void stop("idle");
@@ -391,9 +395,9 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
   }
 
   /**
-   * Self-termination (D9). Disposal is attempted first and bounded, then the
-   * whole process group is signalled: descendants the SDK spawned are the reason
-   * the group — not this pid — is the unit.
+   * Self-termination (D9). Native cancellation and disposal are bounded, then
+   * the process group is signalled. SDK shell children can lead separate groups,
+   * so cancellation must run while the SDK connection is still available.
    */
   async function stop(reason: CursorWorkerStopReason): Promise<void> {
     if (stopping) return;
@@ -402,9 +406,24 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
 
     const graceMs =
       config?.terminationGraceMs ?? CURSOR_WORKER_TERMINATION_GRACE_MS;
+    const cancelling = activeRun;
     const disposing = agent;
     agent = null;
     activeRun = null;
+    if (cancelling !== null) {
+      try {
+        await withTimeout(cancelling.run.cancel(), graceMs);
+        logger.info("cursor-worker.shutdown_run_cancelled", {
+          runId: cancelling.runId,
+          reason,
+        });
+      } catch {
+        logger.warn("cursor-worker.shutdown_cancel_unconfirmed", {
+          runId: cancelling.runId,
+          reason,
+        });
+      }
+    }
     if (disposing !== null) {
       try {
         await withTimeout(disposing.dispose(), graceMs);
@@ -727,6 +746,22 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       return;
     }
 
+    let eventIndex = 0;
+    let forwarding = true;
+    const forward = (event: unknown): void => {
+      if (!forwarding || stopping) return;
+      // The earliest provable receipt (D6): the agent answered on this run.
+      if (eventIndex === 0)
+        send({
+          v: CURSOR_IPC_CODEC_VERSION,
+          type: "inputAccepted",
+          runId: frame.runId,
+        });
+      const ref = readString(event, "agent_id");
+      if (ref !== null) issueRef(ref, frame.runId);
+      forwardEvent(frame.runId, eventIndex++, event);
+      armIdleTimer();
+    };
     let run: CursorWorkerRun;
     try {
       run = await current.send(
@@ -738,9 +773,12 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
           modelSelection: modelSelection.selection,
           mcpServers: frame.mcpServers,
           forceExpirePersistedRun: frame.forceExpirePersistedRun,
+          onTaskUpdate: (update) =>
+            forward({ type: "cursor_task_delta", update }),
         },
       );
     } catch (error) {
+      forwarding = false;
       send({
         v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
@@ -752,25 +790,15 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     }
 
     activeRun = { runId: frame.runId, run };
-    let eventIndex = 0;
+    armIdleTimer();
     try {
       for await (const event of run.stream()) {
-        if (eventIndex === 0) {
-          // The earliest provable receipt (D6): the agent answered on this run.
-          send({
-            v: CURSOR_IPC_CODEC_VERSION,
-            type: "inputAccepted",
-            runId: frame.runId,
-          });
-        }
-        const ref = readString(event, "agent_id");
-        if (ref !== null) issueRef(ref, frame.runId);
-        forwardEvent(frame.runId, eventIndex, event);
-        eventIndex += 1;
-        armIdleTimer();
+        forward(event);
       }
     } catch (error) {
+      forwarding = false;
       activeRun = null;
+      armIdleTimer();
       send({
         v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
@@ -785,7 +813,9 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     try {
       result = await run.wait();
     } catch (error) {
+      forwarding = false;
       activeRun = null;
+      armIdleTimer();
       send({
         v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
@@ -795,7 +825,9 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       });
       return;
     }
+    forwarding = false;
     activeRun = null;
+    armIdleTimer();
 
     if (result.usage !== undefined) sendUsage(frame.runId, result.usage);
     send({

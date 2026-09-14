@@ -50,6 +50,7 @@ describe("GET /api/agent-backends", () => {
       deliveryTiming: "next_turn",
     });
     expect(cursor.executionWarnings).toEqual([
+      "Provider tasks continue within the current turn. Background completion after a turn ends is unavailable; interrupted task outcomes are unknown and are reported when the conversation next runs.",
       "Network and native tool-approval limits are not enforced.",
     ]);
     // Facet presence is what the facet-gated pickers read; the wire has to

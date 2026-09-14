@@ -1024,6 +1024,37 @@ describe("cursor worker registry lifetime", () => {
     expect(child.ofType("shutdown")).toHaveLength(0);
   });
 
+  it("holds quiet provider work through the idle bound and reaps after settlement", async () => {
+    const harness = createHarness();
+    const session = await startReady(harness);
+    const child = harness.host.last();
+    session.startTurn({
+      runId: "quiet-run",
+      promptText: "work",
+      images: [],
+      structuredOutputInstruction: null,
+      modelSelection: MODEL_SELECTION,
+      mcpServers: {},
+      forceExpirePersistedRun: false,
+    });
+    await vi.advanceTimersByTimeAsync(BOUNDS.idleTtlMs * 2);
+    expect(child.ofType("shutdown")).toHaveLength(0);
+    expect(harness.transport.find(CONVERSATION_ID)).not.toBeNull();
+
+    child.emit({
+      v: CURSOR_IPC_CODEC_VERSION,
+      type: "turnSettled",
+      runId: "quiet-run",
+      outcome: "completed",
+      error: null,
+    });
+    await vi.advanceTimersByTimeAsync(
+      BOUNDS.idleTtlMs + BOUNDS.exitGraceMs * 2,
+    );
+    expect(child.ofType("shutdown")).toHaveLength(1);
+    expect(harness.transport.find(CONVERSATION_ID)).toBeNull();
+  });
+
   it("clears the registry and reports an unexpected worker exit", async () => {
     const harness = createHarness();
     await startReady(harness);

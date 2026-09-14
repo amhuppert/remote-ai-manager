@@ -12,6 +12,7 @@ import {
   type TranscriptEntry,
 } from "@/lib/prompt/transcript";
 import type {
+  ConversationBackgroundActivity,
   ConversationBackendCreateInput,
   ConversationBackendEvent,
   ConversationBackendTurnResult,
@@ -19,6 +20,8 @@ import type {
 import { conversationTranscriptFrame } from "../transcript";
 import { buildStructuredOutputRepairPrompt } from "../structured-output-repair";
 import { validateStructuredOutput } from "../structured-output";
+import { createCursorTaskStore } from "./background-task-store";
+import { applyCursorTaskEvent } from "./background-tasks";
 import { CURSOR_BACKEND_ID } from "./backend-id";
 import {
   CursorConversationRuntime,
@@ -42,7 +45,7 @@ import { CURSOR_IPC_CODEC_VERSION } from "./worker/ipc";
  * boundary rather than about the runtime's own bookkeeping.
  */
 
-const TEST_DIR = path.join("/tmp", `cc-cursor-behavior-${process.pid}`);
+const TEST_DIR = path.resolve(".cc/temp", `cc-cursor-behavior-${process.pid}`);
 const CONVERSATION_ID = "conv-behavior";
 const BROADCAST_META = { projectName: "repo", storeSessionName: "s1" };
 const MODEL_SELECTION = {
@@ -849,4 +852,226 @@ describe("structured output through the shared post-validation path", () => {
     expect(typeof validation.error).toBe("string");
     expect(repaired.failure).toBeNull();
   });
+});
+
+describe("provider task activity and continuation", () => {
+  const task = {
+    type: "tool_call",
+    name: "task",
+    call_id: "child-call",
+    status: "running",
+    args: { description: "Compute result" },
+  };
+  it("persists task progress and completes once in the caller turn", async () => {
+    const activities: Array<ConversationBackgroundActivity | null> = [];
+    const taskStore = createCursorTaskStore(path.join(TEST_DIR, "task-store"));
+    const harness = createPersistingHarness({
+      deps: { taskStore: () => taskStore, stallTimeoutMs: 1000 },
+      create: { onBackgroundActivity: (value) => activities.push(value) },
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          worker.sendNativeEvent(turn.runId, 0, task);
+          worker.sendNativeEvent(turn.runId, 0, task);
+          worker.sendNativeEvent(turn.runId, 1, {
+            type: "cursor_task_delta",
+            update: {
+              type: "tool-call-delta",
+              callId: "child-call",
+              taskUpdate: {
+                type: "tool-call-started",
+                toolCall: { type: "shell" },
+              },
+            },
+          });
+          worker.sendNativeEvent(turn.runId, 2, {
+            ...task,
+            status: "completed",
+            result: { status: "success", value: { isBackground: false } },
+          });
+          worker.sendNativeEvent(
+            turn.runId,
+            3,
+            ASSISTANT("TASK122_RESULT_847"),
+          );
+          worker.settle(turn.runId, "completed");
+        },
+      },
+    });
+    const result = await harness.send();
+    expect(
+      activities.some(
+        (value) => value?.tasks[0]?.taskId === "cursor:run-1:child-call",
+      ),
+    ).toBe(true);
+    expect(
+      activities.some((value) => value?.tasks[0]?.lastToolName === "shell"),
+    ).toBe(true);
+    expect(activities.at(-1)).toBeNull();
+    expect(result).toMatchObject({
+      numTurns: 1,
+      finalText: "TASK122_RESULT_847",
+      costUsd: null,
+    });
+    expect(
+      harness.events.filter((event) => event.type === "external_turn_started"),
+    ).toEqual([]);
+    expect(await taskStore.load()).toMatchObject([{ status: "completed" }]);
+    const lines = await harness.transcriptLines();
+    expect(
+      lines.filter((line) => line.id === `cursor:${CONVERSATION_ID}:run-1:0`),
+    ).toHaveLength(1);
+    await harness.runtime.close();
+  });
+  it("cleans up unobservable background work and persists an honest loss notice", async () => {
+    const taskStore = createCursorTaskStore(path.join(TEST_DIR, "task-store"));
+    const harness = createPersistingHarness({
+      deps: { taskStore: () => taskStore, stallTimeoutMs: 1000 },
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          worker.sendNativeEvent(turn.runId, 0, {
+            ...task,
+            status: "completed",
+            result: { status: "success", value: { isBackground: true } },
+          });
+          worker.settle(turn.runId, "completed");
+        },
+      },
+    });
+    await harness.send();
+    expect(await taskStore.load()).toMatchObject([{ status: "lost" }]);
+    const notices = (await harness.transcriptLines()).filter(
+      (line) => line.type === "notice",
+    );
+    expect(notices).toHaveLength(1);
+    expect(JSON.stringify(notices)).toContain("outcome is unknown");
+    expect(harness.transport.workers[0]?.closeCount).toBe(1);
+    await harness.runtime.close();
+  });
+  it("recovers interrupted tasks on the next runtime and tells the agent without replaying work", async () => {
+    const taskStore = createCursorTaskStore(path.join(TEST_DIR, "task-store"));
+    await taskStore.save(
+      applyCursorTaskEvent(
+        [],
+        task,
+        "abandoned-run",
+        "2026-09-14T00:00:00.000Z",
+      ),
+    );
+    let prompt = "";
+    const harness = createPersistingHarness({
+      deps: { taskStore: () => taskStore, stallTimeoutMs: 1000 },
+      create: { persistedRef: { backend: "cursor", ref: "existing-agent" } },
+      worker: {
+        onTurn: (turn, worker) => {
+          prompt = turn.input.promptText;
+          worker.sendInputAccepted(turn.runId);
+          worker.settle(turn.runId, "completed");
+        },
+      },
+    });
+    await harness.send();
+    expect(prompt).toContain("abandoned-run:child-call");
+    expect(prompt).toContain("outcome is unknown");
+    expect(
+      (await harness.transcriptLines()).filter(
+        (line) => line.type === "notice",
+      ),
+    ).toHaveLength(1);
+    expect(await taskStore.load()).toEqual([]);
+    await harness.runtime.close();
+  });
+});
+
+it("records task loss and retracts activity when an owned runtime is stopped mid-task", async () => {
+  const taskStore = createCursorTaskStore(path.join(TEST_DIR, "task-store"));
+  const running = deferredSignal();
+  const activities: Array<ConversationBackgroundActivity | null> = [];
+  const harness = createPersistingHarness({
+    deps: { taskStore: () => taskStore, stallTimeoutMs: 5000 },
+    create: {
+      onBackgroundActivity: (activity) => {
+        activities.push(activity);
+        if (activity) running.resolve();
+      },
+    },
+    worker: {
+      onTurn: (turn, worker) => {
+        worker.sendInputAccepted(turn.runId);
+        worker.sendNativeEvent(turn.runId, 0, {
+          type: "tool_call",
+          name: "task",
+          call_id: "cancelled-child",
+          status: "running",
+        });
+      },
+    },
+  });
+  const result = harness.send();
+  await running.promise;
+  expect(
+    (await createCursorTaskStore(path.join(TEST_DIR, "task-store")).load())[0]
+      ?.status,
+  ).toBe("running");
+  await harness.runtime.close();
+  await result;
+  expect(activities.at(-1)).toBeNull();
+  expect((await taskStore.load())[0]?.status).toBe("lost");
+  expect(
+    (await harness.transcriptLines()).filter((line) => line.type === "notice"),
+  ).toHaveLength(1);
+});
+
+it("preserves native transcript and reports accounting failure when the task ledger cannot be saved", async () => {
+  const harness = createPersistingHarness({
+    deps: {
+      taskStore: () => ({
+        async load() {
+          return [];
+        },
+        async save() {
+          throw new Error("disk full");
+        },
+      }),
+    },
+    worker: {
+      onTurn: (turn, worker) => {
+        worker.sendInputAccepted(turn.runId);
+        worker.sendNativeEvent(turn.runId, 0, {
+          type: "tool_call",
+          name: "task",
+          call_id: "child",
+          status: "running",
+        });
+        worker.sendNativeEvent(turn.runId, 1, {
+          type: "tool_call",
+          name: "task",
+          call_id: "child",
+          status: "completed",
+          result: { status: "success", value: { isBackground: false } },
+        });
+        worker.sendNativeEvent(
+          turn.runId,
+          2,
+          ASSISTANT("LEDGER_FAILURE_RESULT"),
+        );
+        worker.settle(turn.runId, "completed");
+      },
+    },
+  });
+  await harness.send();
+  const lines = await harness.transcriptLines();
+  expect(
+    lines.filter((line) =>
+      line.id?.toString().startsWith(`cursor:${CONVERSATION_ID}:run-1:`),
+    ),
+  ).toHaveLength(3);
+  expect(
+    harness.events.filter((event) => event.type === "input_accepted"),
+  ).toHaveLength(1);
+  expect(
+    JSON.stringify(lines.filter((line) => line.type === "notice")),
+  ).toContain("Task recovery after restart is unavailable");
+  await harness.runtime.close();
 });

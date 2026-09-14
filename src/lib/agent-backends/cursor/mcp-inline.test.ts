@@ -13,6 +13,7 @@ import type {
 } from "../conversation";
 import type { PortableMcpConfig } from "../portable-mcp";
 import { CURSOR_BACKEND_ID } from "./backend-id";
+import { CURSOR_BACKGROUND_INSTRUCTIONS } from "./background-tasks";
 import { CursorConversationRuntime } from "./conversation-runtime";
 import { translatePortableMcpToCursor } from "./mcp-translation";
 import { CURSOR_DEFAULT_MODEL } from "./model-policy";
@@ -71,6 +72,7 @@ const API_KEY = "cursor-key-sentinel-mcp-7c1e";
 const MARKER = "marker-7c1e";
 const PROMPT = "ping-42";
 const EXPECTED_REPLY = cursorMcpFixtureReply(MARKER, PROMPT);
+const EXPECTED_MODEL_MESSAGE = `\`\`\`\n## System Instructions\n${CURSOR_BACKGROUND_INSTRUCTIONS}\n\`\`\`\n\n${PROMPT}`;
 const FIXTURE_SERVER_ID = "fixture";
 const FIXTURE_QUALIFIED_TOOL = `mcp_${FIXTURE_SERVER_ID}_${CURSOR_MCP_FIXTURE_TOOL}`;
 const MODEL_SELECTION = {
@@ -128,6 +130,7 @@ interface McpToolCall {
 interface SdkLog {
   creates: CursorWorkerAttachOptions[];
   resumes: { ref: string; options: CursorWorkerAttachOptions }[];
+  sends: CursorWorkerSendMessage[];
   sendOptions: CursorWorkerSendOptions[];
   negotiations: McpNegotiation[];
   calls: McpToolCall[];
@@ -137,6 +140,7 @@ function newSdkLog(): SdkLog {
   return {
     creates: [],
     resumes: [],
+    sends: [],
     sendOptions: [],
     negotiations: [],
     calls: [],
@@ -208,12 +212,14 @@ class InlineMcpAgent implements CursorWorkerAgent {
     readonly agentId: string,
     private readonly clients: Map<string, Client>,
     private readonly log: SdkLog,
+    private readonly toolValue: string,
   ) {}
 
   async send(
     message: CursorWorkerSendMessage,
     options: CursorWorkerSendOptions,
   ): Promise<CursorWorkerRun> {
+    this.log.sends.push(message);
     this.log.sendOptions.push(options);
     const client = this.clients.get(FIXTURE_SERVER_ID);
     if (client === undefined) {
@@ -222,13 +228,13 @@ class InlineMcpAgent implements CursorWorkerAgent {
 
     const result = await client.callTool({
       name: CURSOR_MCP_FIXTURE_TOOL,
-      arguments: { value: message.text },
+      arguments: { value: this.toolValue },
     });
     const reply = readReplyText(result);
     this.log.calls.push({
       serverId: FIXTURE_SERVER_ID,
       tool: CURSOR_MCP_FIXTURE_TOOL,
-      value: message.text,
+      value: this.toolValue,
       reply,
     });
 
@@ -243,7 +249,7 @@ class InlineMcpAgent implements CursorWorkerAgent {
         agent_id: this.agentId,
         call_id: callId,
         name: FIXTURE_QUALIFIED_TOOL,
-        args: { value: message.text },
+        args: { value: this.toolValue },
         status: "running",
       },
       {
@@ -271,7 +277,11 @@ class InlineMcpAgent implements CursorWorkerAgent {
   }
 }
 
-function createInlineMcpSdk(log: SdkLog, agentId: string): CursorWorkerSdk {
+function createInlineMcpSdk(
+  log: SdkLog,
+  agentId: string,
+  toolValue: string,
+): CursorWorkerSdk {
   return {
     async verifyCredential(): Promise<void> {},
     async create(options) {
@@ -280,11 +290,17 @@ function createInlineMcpSdk(log: SdkLog, agentId: string): CursorWorkerSdk {
         agentId,
         await openMcpClients(options, log),
         log,
+        toolValue,
       );
     },
     async resume(ref, options) {
       log.resumes.push({ ref, options });
-      return new InlineMcpAgent(ref, await openMcpClients(options, log), log);
+      return new InlineMcpAgent(
+        ref,
+        await openMcpClients(options, log),
+        log,
+        toolValue,
+      );
     },
   };
 }
@@ -484,7 +500,7 @@ async function driveTurn(options: {
   const frames: CursorWorkerFrame[] = [];
   const events: ConversationBackendEvent[] = [];
   const host = new InProcessWorkerHost(() =>
-    createInlineMcpSdk(log, "agent-inline-1"),
+    createInlineMcpSdk(log, "agent-inline-1", PROMPT),
   );
   // The worker's cwd is the conversation's worktree; the fixture entry names
   // the repository root because its loader resolves from there.
@@ -620,6 +636,9 @@ describe("inline stdio MCP through the worker path", () => {
   });
 
   it("makes exactly one call that returns the expected result", () => {
+    expect(live.log.sends.map((message) => message.text)).toEqual([
+      EXPECTED_MODEL_MESSAGE,
+    ]);
     expect(live.log.calls).toEqual([
       {
         serverId: FIXTURE_SERVER_ID,
@@ -733,6 +752,9 @@ describe("inline stdio MCP across a restart", () => {
         // The resumed agent reached the same server, not just the same config.
         expect(live.log.negotiations).toEqual([
           { serverId: FIXTURE_SERVER_ID, tools: [CURSOR_MCP_FIXTURE_TOOL] },
+        ]);
+        expect(live.log.sends.map((message) => message.text)).toEqual([
+          EXPECTED_MODEL_MESSAGE,
         ]);
         expect(live.log.calls[0]?.reply).toBe(EXPECTED_REPLY);
       } finally {

@@ -1,3 +1,4 @@
+import { CURSOR_BACKGROUND_INSTRUCTIONS } from "./background-tasks";
 import { describe, expect, it } from "vitest";
 import { elementAt } from "@/lib/shared/testing/element-at";
 import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
@@ -643,7 +644,9 @@ describe("turn configuration", () => {
     const result = await harness.send();
     expect(result.failure).toBeNull();
     expect(harness.transport.workers[0]?.turns[0]?.input.promptText).toContain(
-      "```\n## System Instructions\nFollow the active charter.\n```",
+      "```\n## System Instructions\nFollow the active charter.\n\n" +
+        CURSOR_BACKGROUND_INSTRUCTIONS +
+        "\n```",
     );
   });
 
@@ -678,7 +681,9 @@ describe("turn configuration", () => {
     });
     await harness.send({ promptText: "USER_REQUEST" });
     expect(harness.transport.workers[0]?.turns[0]?.input.promptText).toBe(
-      "````\n## System Instructions\nExample:\n```sh\npwd\n```\n````\n\nUSER_REQUEST",
+      "````\n## System Instructions\nExample:\n```sh\npwd\n```\n\n" +
+        CURSOR_BACKGROUND_INSTRUCTIONS +
+        "\n````\n\nUSER_REQUEST",
     );
   });
 
@@ -1118,7 +1123,9 @@ it("delivers synthetic fork history once before the first user prompt", async ()
   });
   const worker = elementAt(harness.transport.workers, 0);
   expect(worker.turns[0]?.input.promptText).toBe(
-    "anchored history\n\nedited prompt",
+    "```\n## System Instructions\n" +
+      CURSOR_BACKGROUND_INSTRUCTIONS +
+      "\n```\n\nanchored history\n\nedited prompt",
   );
   expect(worker.turns[1]?.input.promptText).toBe("follow-up");
   await harness.runtime.close();
@@ -1136,7 +1143,11 @@ it("delivers an unaccepted synthetic seed to an eagerly created agent", async ()
   });
   expect(
     elementAt(harness.transport.workers, 0).turns[0]?.input.promptText,
-  ).toBe("anchored history\n\nretry first prompt");
+  ).toBe(
+    "```\n## System Instructions\n" +
+      CURSOR_BACKGROUND_INSTRUCTIONS +
+      "\n```\n\nanchored history\n\nretry first prompt",
+  );
   await harness.runtime.close();
 });
 

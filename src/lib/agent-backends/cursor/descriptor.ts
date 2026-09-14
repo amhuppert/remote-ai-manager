@@ -1,3 +1,4 @@
+import { CURSOR_BACKGROUND_WARNING } from "./background-tasks";
 import type {
   ConversationExecutionPolicy,
   TaskExecutionPolicy,
@@ -54,6 +55,7 @@ export const cursorTaskExecution: TaskExecutionPolicy = {
 export const cursorBackendMetadata: AgentBackendMetadata = {
   label: "Cursor",
   executionWarnings: [
+    CURSOR_BACKGROUND_WARNING,
     "Network and native tool-approval limits are not enforced.",
   ],
   toneToken: "amber",

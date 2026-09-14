@@ -1,0 +1,427 @@
+{
+  "date": "2026-09-14",
+  "ticket": "command-center#122",
+  "sdkVersion": "1.0.28",
+  "fixtureConversationId": "7a9a457e-5e70-4362-94cf-68cbfb4695aa",
+  "validations": {
+    "tracker": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-467380c3-2a8c-4247-a9c0-7de816e939ef",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "store": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-e610d466-795a-4ee3-9f6e-99936e7b4d36",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "runtime": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-3536aeec-f758-4d28-9d04-ca6ab4b01382",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "runtimeRegression": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-936250c7-419c-4e48-acf6-ae7f42ef2418",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "taskRunner": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-ded3c639-78ff-48e0-b16e-e2c7b2e0675e",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "worker": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-11ed8ef6-9be2-4d98-bd56-d278cf73b696",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "sdkPort": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-9238a51c-b228-4721-85c6-bfee9265f51f",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "supervisor": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-e5191832-e81f-4efb-a4f0-5570645fad70",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "workerProcess": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "test",
+      "kind": "passed",
+      "runId": "vrun-4c53c6d7-c714-4607-9a4b-9a9f08819775",
+      "exitCode": 0,
+      "filesMatched": 1,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "typecheck": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "typecheck",
+      "kind": "passed",
+      "runId": "vrun-d7b5a1f3-7455-4dc0-a47a-3e5c7be8ad1b",
+      "exitCode": 0,
+      "requestedScope": "changed",
+      "effectiveScope": "full",
+      "queuePositions": []
+    },
+    "lint": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "lint",
+      "kind": "passed",
+      "runId": "vrun-48edd102-54f8-435b-a5d3-9afbf3db3e71",
+      "exitCode": 0,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "format": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "format",
+      "kind": "passed",
+      "runId": "vrun-82888a6a-2481-40ab-a1b5-832c5cce8564",
+      "exitCode": 0,
+      "requestedScope": "changed",
+      "effectiveScope": "changed",
+      "queuePositions": []
+    },
+    "seams": {
+      "ok": true,
+      "code": "validation_passed",
+      "commandName": "seams",
+      "kind": "passed",
+      "runId": "vrun-ded8a62d-b07d-4212-bdb9-f469b2244ca1",
+      "exitCode": 0,
+      "requestedScope": "changed",
+      "effectiveScope": "full",
+      "queuePositions": []
+    }
+  },
+  "liveTask": {
+    "conversations": [
+      {
+        "scope": "session",
+        "id": "7a9a457e-5e70-4362-94cf-68cbfb4695aa",
+        "name": "PRECHECK122_847",
+        "status": "running",
+        "lastActivityAt": "2026-09-14T18:57:44.441Z",
+        "projectName": "cursor122-scratch",
+        "projectPath": "/Users/alex/github/command-center/.worktrees/cursor-122-background-tasks-4546f8/.cc/temp/cursor122/projects/cursor122-scratch",
+        "sessionName": "run-a",
+        "agentBackend": "cursor",
+        "summary": null,
+        "pendingQuestion": null,
+        "pendingQuestionId": null,
+        "pendingQuestions": null,
+        "forkedFrom": null,
+        "debugActive": false,
+        "role": null,
+        "branchName": "csm/run-a-68819e",
+        "worktreePath": "/Users/alex/github/command-center/.worktrees/cursor-122-background-tasks-4546f8/.cc/temp/cursor122/projects/cursor122-scratch/.worktrees/run-a-68819e",
+        "lastActivitySummary": "Using task",
+        "unread": false,
+        "pendingApproval": null,
+        "backgroundActivity": {
+          "tasks": [
+            {
+              "taskId": "cursor:0ddc821f-d211-4758-9202-98ed3f6a0213:tool_fffa5a75-5c7b-4b9d-a18f-255bf066263",
+              "description": "Run 120s fixed crash probe",
+              "taskType": "subagent",
+              "workflowName": null,
+              "subagentType": "unspecified",
+              "lastToolName": "shell",
+              "totalTokens": null,
+              "toolUses": null,
+              "startedAt": "2026-09-14T18:57:47.667Z",
+              "lastActivityAt": "2026-09-14T18:57:47.858Z"
+            }
+          ],
+          "updatedAt": "2026-09-14T18:57:47.864Z"
+        },
+        "redactedProfileSnapshot": {
+          "tier": "builtin",
+          "id": "standard-agent",
+          "name": "Standard Agent",
+          "revision": 1,
+          "sourceContentHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "resolvedInstructionHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    ],
+    "graphWorkflowExecutions": [],
+    "activeCollaborationExecutions": [],
+    "specExecutions": []
+  },
+  "queueOrder": {
+    "ordered": true,
+    "rows": 113,
+    "ids": 113,
+    "uniqueIds": 113,
+    "db": "awaiting|4|4|93794|0.0"
+  },
+  "stop": {
+    "httpStatus": 200,
+    "body": {
+      "ok": true
+    },
+    "childPid": 74980,
+    "childAlive": false,
+    "durationMs": 12220,
+    "tasks": [
+      {
+        "taskId": "cursor:6633bc71-2233-4426-9b00-37c086797396:tool_768293ef-9486-4a9c-84e2-d22a9972b76",
+        "description": "Run 90s node command",
+        "taskType": "subagent",
+        "workflowName": null,
+        "subagentType": "unspecified",
+        "lastToolName": "shell",
+        "totalTokens": null,
+        "toolUses": null,
+        "startedAt": "2026-09-14T18:44:48.604Z",
+        "lastActivityAt": "2026-09-14T18:44:49.256Z",
+        "runId": "6633bc71-2233-4426-9b00-37c086797396",
+        "callId": "tool_768293ef-9486-4a9c-84e2-d22a9972b76",
+        "status": "lost"
+      }
+    ]
+  },
+  "crashBeforeFix": {
+    "serverPid": 19942,
+    "workerPid": 89716,
+    "childPid": 91321,
+    "workerAlive": false,
+    "childAlive": true,
+    "durationMs": 40054,
+    "tasksBefore": [
+      {
+        "taskId": "cursor:93872fed-3310-4c0b-a78d-232eb5fc901b:tool_4a94b8e0-5fe1-489b-98a0-9de5f8ac19c",
+        "description": "Run 120s crash probe",
+        "taskType": "subagent",
+        "workflowName": null,
+        "subagentType": "unspecified",
+        "lastToolName": null,
+        "totalTokens": null,
+        "toolUses": null,
+        "startedAt": "2026-09-14T18:51:56.230Z",
+        "lastActivityAt": "2026-09-14T18:51:56.230Z",
+        "runId": "93872fed-3310-4c0b-a78d-232eb5fc901b",
+        "callId": "tool_4a94b8e0-5fe1-489b-98a0-9de5f8ac19c",
+        "status": "running"
+      }
+    ],
+    "tasksAfter": [
+      {
+        "taskId": "cursor:93872fed-3310-4c0b-a78d-232eb5fc901b:tool_4a94b8e0-5fe1-489b-98a0-9de5f8ac19c",
+        "description": "Run 120s crash probe",
+        "taskType": "subagent",
+        "workflowName": null,
+        "subagentType": "unspecified",
+        "lastToolName": null,
+        "totalTokens": null,
+        "toolUses": null,
+        "startedAt": "2026-09-14T18:51:56.230Z",
+        "lastActivityAt": "2026-09-14T18:51:56.230Z",
+        "runId": "93872fed-3310-4c0b-a78d-232eb5fc901b",
+        "callId": "tool_4a94b8e0-5fe1-489b-98a0-9de5f8ac19c",
+        "status": "running"
+      }
+    ]
+  },
+  "crashAfterFix": {
+    "serverPid": 3936,
+    "workerPid": 6915,
+    "childPid": 8202,
+    "workerAlive": false,
+    "childAlive": false,
+    "durationMs": 1508,
+    "tasksBefore": [
+      {
+        "taskId": "cursor:0ddc821f-d211-4758-9202-98ed3f6a0213:tool_fffa5a75-5c7b-4b9d-a18f-255bf066263",
+        "description": "Run 120s fixed crash probe",
+        "taskType": "subagent",
+        "workflowName": null,
+        "subagentType": "unspecified",
+        "lastToolName": null,
+        "totalTokens": null,
+        "toolUses": null,
+        "startedAt": "2026-09-14T18:57:47.667Z",
+        "lastActivityAt": "2026-09-14T18:57:47.667Z",
+        "runId": "0ddc821f-d211-4758-9202-98ed3f6a0213",
+        "callId": "tool_fffa5a75-5c7b-4b9d-a18f-255bf066263",
+        "status": "running"
+      }
+    ],
+    "tasksAfter": [
+      {
+        "taskId": "cursor:0ddc821f-d211-4758-9202-98ed3f6a0213:tool_fffa5a75-5c7b-4b9d-a18f-255bf066263",
+        "description": "Run 120s fixed crash probe",
+        "taskType": "subagent",
+        "workflowName": null,
+        "subagentType": "unspecified",
+        "lastToolName": null,
+        "totalTokens": null,
+        "toolUses": null,
+        "startedAt": "2026-09-14T18:57:47.667Z",
+        "lastActivityAt": "2026-09-14T18:57:47.667Z",
+        "runId": "0ddc821f-d211-4758-9202-98ed3f6a0213",
+        "callId": "tool_fffa5a75-5c7b-4b9d-a18f-255bf066263",
+        "status": "running"
+      }
+    ]
+  },
+  "recovery": {
+    "lossNotice": {
+      "id": "cursor-task-loss:7a9a457e-5e70-4362-94cf-68cbfb4695aa:cursor:0ddc821f-d211-4758-9202-98ed3f6a0213:tool_fffa5a75-5c7b-4b9d-a18f-255bf066263",
+      "timestamp": "2026-09-14T18:59:14.613Z",
+      "type": "notice",
+      "role": "notice",
+      "content": [
+        {
+          "type": "text",
+          "text": "Cursor provider task cursor:0ddc821f-d211-4758-9202-98ed3f6a0213:tool_fffa5a75-5c7b-4b9d-a18f-255bf066263 (Run 120s fixed crash probe): its outcome is unknown (runtime_recovery). Completion can no longer wake the agent. Check its outputs before deciding whether to rerun it."
+        }
+      ]
+    },
+    "assistantText": "Acknowledging the provider task with unknown outcome. No tools will be executed or rerun.\n\nThe interrupted task was the 120-second fixed crash probe. It was cut off after roughly 91 seconds while writing the child PID and waiting for the timeout to finish.**Unknown-outcome provider task**\n\n**Run 120s fixed crash probe** (`cursor:0ddc821f-d211-4758-9202-98ed3f6a0213:tool_fffa5a75-5c7b-4b9d-a18f-255bf066263`) \u2014 CRASH122_FIXED_PROBE: child was to write `crash-fixed-child.pid`, then after 120s print `CRASH122_FIXED_CHILD_DONE`. Interrupted after ~92s; no child stdout returned; parent did not emit `CRASH122_FIXED_PARENT_DONE`.\n\nRECOVERY122_FIXED_ACK_887",
+    "toolCalls": 0,
+    "transcriptEntries": 384,
+    "uniqueIds": 384,
+    "ledger": [],
+    "usageEvents": [
+      {
+        "inputTokens": 23749,
+        "outputTokens": 267,
+        "cacheReadTokens": 17440,
+        "cacheWriteTokens": 0,
+        "totalTokens": 41456
+      }
+    ]
+  },
+  "settled": {
+    "conversations": [
+      {
+        "scope": "session",
+        "id": "7a9a457e-5e70-4362-94cf-68cbfb4695aa",
+        "name": "PRECHECK122_847",
+        "status": "awaiting",
+        "lastActivityAt": "2026-09-14T18:59:22.678Z",
+        "projectName": "cursor122-scratch",
+        "projectPath": "/Users/alex/github/command-center/.worktrees/cursor-122-background-tasks-4546f8/.cc/temp/cursor122/projects/cursor122-scratch",
+        "sessionName": "run-a",
+        "agentBackend": "cursor",
+        "summary": null,
+        "pendingQuestion": null,
+        "pendingQuestionId": null,
+        "pendingQuestions": null,
+        "forkedFrom": null,
+        "debugActive": false,
+        "role": null,
+        "branchName": "csm/run-a-68819e",
+        "worktreePath": "/Users/alex/github/command-center/.worktrees/cursor-122-background-tasks-4546f8/.cc/temp/cursor122/projects/cursor122-scratch/.worktrees/run-a-68819e",
+        "lastActivitySummary": null,
+        "unread": true,
+        "pendingApproval": null,
+        "backgroundActivity": null,
+        "redactedProfileSnapshot": {
+          "tier": "builtin",
+          "id": "standard-agent",
+          "name": "Standard Agent",
+          "revision": 1,
+          "sourceContentHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "resolvedInstructionHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    ],
+    "graphWorkflowExecutions": [],
+    "activeCollaborationExecutions": [],
+    "specExecutions": []
+  },
+  "accounting": [
+    {
+      "status": "awaiting",
+      "prompt_count": 7,
+      "total_turns": 7,
+      "total_duration_ms": 155522,
+      "total_cost_usd": 0.0,
+      "context_tokens": 23749,
+      "turn_generation": 8,
+      "pending_queue": "[]"
+    }
+  ],
+  "cleanup": {
+    "remainingConversationRows": 0,
+    "fixtureWorktreeExists": false,
+    "providerStoreExists": true,
+    "observedProcessLiveness": {
+      "545": false,
+      "6915": false,
+      "8202": false,
+      "11538": false,
+      "57023": false,
+      "74980": false,
+      "89716": false,
+      "91321": false
+    },
+    "providerStoreRemovedExplicitly": true
+  }
+}

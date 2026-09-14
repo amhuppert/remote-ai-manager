@@ -171,6 +171,10 @@ export function wrapCursorSdkAgent(
         },
         {
           model: toCursorModelSelection(options.modelSelection),
+          onDelta: ({ update }) => {
+            if (update.type === "tool-call-delta")
+              options.onTaskUpdate?.(update);
+          },
           mcpServers: bridge.servers,
           ...(options.forceExpirePersistedRun
             ? { local: { force: true } }

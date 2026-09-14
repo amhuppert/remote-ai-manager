@@ -14,6 +14,7 @@ import {
 import { translatePortableMcpToCursor } from "./mcp-translation";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import { decodeCursorTaskRef } from "./task-ref";
+import { CURSOR_BACKGROUND_INSTRUCTIONS } from "./background-tasks";
 
 const selection = { modelId: "composer-2.5", parameters: {} };
 const request: AgentTaskRequest = {
@@ -128,7 +129,7 @@ describe("Cursor task runner", () => {
       systemInstructions: ["Use the SECOND_TASK convention."],
     });
     expect(transport.workers[1]?.turns[0]?.input.promptText).toContain(
-      "```\n## System Instructions\nUse the SECOND_TASK convention.\n```\n\nCompute 17 times 19",
+      `\`\`\`\n## System Instructions\nUse the SECOND_TASK convention.\n\n${CURSOR_BACKGROUND_INSTRUCTIONS}\n\`\`\`\n\nCompute 17 times 19`,
     );
   });
   it("forwards local task images through the bounded Cursor image projection", async () => {

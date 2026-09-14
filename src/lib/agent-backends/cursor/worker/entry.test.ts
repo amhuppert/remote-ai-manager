@@ -736,7 +736,7 @@ describe("cursor worker turns", () => {
     expect(harness.channel.ofType("turnSettled")[0]?.outcome).toBe("completed");
   });
 
-  it("carries only the model selection, MCP map, and force-expiry flag as per-send options", async () => {
+  it("carries model selection, MCP map, recovery flag, and task progress as per-send options", async () => {
     const harness = createHarness();
     await handshake(harness);
     await attach(harness);
@@ -757,6 +757,7 @@ describe("cursor worker turns", () => {
       "forceExpirePersistedRun",
       "mcpServers",
       "modelSelection",
+      "onTaskUpdate",
     ]);
     expect(harness.sdk.agent.sends[0]?.options.modelSelection).toEqual({
       modelId: "claude-opus-5",
@@ -906,6 +907,50 @@ describe("cursor worker turns", () => {
 });
 
 describe("cursor worker watchdog", () => {
+  it("keeps the SDK attached until active-run cancellation finishes on parent loss", async () => {
+    const harness = createHarness();
+    const cancellation = Promise.withResolvers<void>();
+    const completion = Promise.withResolvers<void>();
+    harness.sdk.agent.run.stream = async function* () {
+      yield { type: "tool_call", name: "task", status: "running" };
+      await completion.promise;
+    };
+    harness.sdk.agent.run.cancel = () => cancellation.promise;
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+
+    harness.channel.disconnect();
+    await settle();
+    expect(harness.sdk.agent.disposeCalls).toBe(0);
+    expect(harness.control.signals).toEqual([]);
+
+    cancellation.resolve();
+    await vi.advanceTimersByTimeAsync(TERMINATION_GRACE_MS * 2);
+    expect(harness.sdk.agent.disposeCalls).toBe(1);
+    expect(harness.control.exits).toEqual([CURSOR_WORKER_EXIT_ORPHANED]);
+    completion.resolve();
+  });
+
+  it("still terminates when provider cancellation never settles", async () => {
+    const harness = createHarness();
+    const completion = Promise.withResolvers<void>();
+    harness.sdk.agent.run.stream = async function* () {
+      yield { type: "tool_call", name: "task", status: "running" };
+      await completion.promise;
+    };
+    harness.sdk.agent.run.cancel = () => new Promise<void>(() => {});
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+    harness.channel.disconnect();
+    await vi.advanceTimersByTimeAsync(TERMINATION_GRACE_MS * 3);
+    expect(harness.control.exits).toEqual([CURSOR_WORKER_EXIT_ORPHANED]);
+    completion.resolve();
+  });
+
   it("self-terminates with its process group when the channel disconnects", async () => {
     const harness = createHarness();
     await handshake(harness);
@@ -956,6 +1001,31 @@ describe("cursor worker watchdog", () => {
 
     await vi.advanceTimersByTimeAsync(1 + TERMINATION_GRACE_MS * 2);
     expect(harness.control.exits).toStrictEqual([CURSOR_WORKER_EXIT_IDLE]);
+  });
+
+  it("keeps quiet provider work alive until its run settles, then applies the idle bound", async () => {
+    const harness = createHarness();
+    const completion = Promise.withResolvers<void>();
+    harness.sdk.agent.run.stream = async function* () {
+      yield { type: "tool_call", name: "task", status: "running" };
+      await completion.promise;
+    };
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS * 2);
+    expect(harness.control.signals).toEqual([]);
+    expect(harness.sdk.agent.disposeCalls).toBe(0);
+
+    completion.resolve();
+    await settle();
+    expect(harness.channel.ofType("turnSettled")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(
+      IDLE_TIMEOUT_MS + TERMINATION_GRACE_MS * 2,
+    );
+    expect(harness.control.exits).toEqual([CURSOR_WORKER_EXIT_IDLE]);
   });
 
   it("escalates past a disposal that never returns", async () => {
@@ -1055,4 +1125,28 @@ describe("cursor worker protocol handling", () => {
 
     expect(harness.control.exits).toStrictEqual([CURSOR_WORKER_EXIT_ORPHANED]);
   });
+});
+
+it("forwards task deltas with unique transcript sequence numbers and one input receipt", async () => {
+  const harness = createHarness();
+  const delta = {
+    type: "tool-call-delta",
+    callId: "task-1",
+    taskUpdate: { type: "text-delta", text: "child progress" },
+  };
+  harness.sdk.agent.send = async (_message, options) => {
+    options.onTaskUpdate?.(delta);
+    return new FakeRun([{ type: "assistant" }], { status: "finished" });
+  };
+  await handshake(harness);
+  await attach(harness);
+  harness.channel.emit(startTurnFrame());
+  await settle();
+  const events = harness.channel.ofType("nativeEvent");
+  expect(events.map((event) => event.eventType)).toEqual([
+    "cursor_task_delta",
+    "assistant",
+  ]);
+  expect(events.map((event) => event.eventIndex)).toEqual([0, 1]);
+  expect(harness.channel.ofType("inputAccepted")).toHaveLength(1);
 });

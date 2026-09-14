@@ -204,3 +204,42 @@ describe("SDK port MCP replacement lifecycle", () => {
     expect(disposed).toBe(true);
   });
 });
+
+it("forwards public nested task deltas without duplicating parent content", async () => {
+  const nested = {
+    type: "tool-call-delta" as const,
+    callId: "task-1",
+    modelCallId: "model-1",
+    taskUpdate: { type: "text-delta" as const, text: "child progress" },
+  };
+  const received: unknown[] = [];
+  const done = new Error("dispatch inspected");
+  const wrapped = wrapCursorSdkAgent(
+    {
+      agentId: "fixture-agent",
+      async send(_message, options) {
+        await options?.onDelta?.({
+          update: { type: "text-delta", text: "parent" },
+        });
+        await options?.onDelta?.({ update: nested });
+        throw done;
+      },
+      async [Symbol.asyncDispose]() {},
+    },
+    { servers: {}, async close() {} },
+    { mcpServers: {} },
+  );
+  await expect(
+    wrapped.send(
+      { text: "run", images: [] },
+      {
+        modelSelection: { modelId: "default", parameters: {} },
+        mcpServers: {},
+        forceExpirePersistedRun: false,
+        onTaskUpdate: (update) => received.push(update),
+      },
+    ),
+  ).rejects.toBe(done);
+  expect(received).toEqual([nested]);
+  await wrapped.dispose();
+});

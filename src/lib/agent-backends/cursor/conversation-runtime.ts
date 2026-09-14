@@ -1,3 +1,10 @@
+import {
+  applyCursorTaskEvent,
+  cursorTaskActivity,
+  isCursorTaskRunning,
+  CURSOR_BACKGROUND_INSTRUCTIONS,
+  type CursorTaskState,
+} from "./background-tasks";
 import type { CursorCapabilityDelivery } from "./capability-delivery";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
@@ -70,6 +77,9 @@ const failureClassifier = createCursorFailureClassifier();
 const MAX_SEEN_EVENT_KEYS = 20_000;
 
 export interface CursorConversationRuntimeDeps {
+  taskStore?(
+    conversationId: string,
+  ): import("./background-tasks").CursorTaskStore;
   attachTimeoutMs?: number;
   capabilityDelivery?: CursorCapabilityDelivery;
   transport: CursorWorkerTransport;
@@ -200,6 +210,14 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   /** Run-scoped event keys already projected, for the resume quarantine. */
   private readonly seenEventKeys = new Set<string>();
   private readonly seenEventOrder: string[] = [];
+  private tasks: CursorTaskState = [];
+  private tasksLoaded = false;
+  private taskLedgerFailureNotified = false;
+  private readonly taskStore:
+    | import("./background-tasks").CursorTaskStore
+    | undefined;
+  private taskLossInstruction: string | null = null;
+  private readonly onBackgroundActivity: ConversationBackendCreateInput["onBackgroundActivity"];
 
   constructor(
     input: ConversationBackendCreateInput,
@@ -207,11 +225,13 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   ) {
     assertCursorRuntimePolicy(input);
     this.conversationId = input.conversationId;
+    this.onBackgroundActivity = input.onBackgroundActivity;
     this.conversationTarget = input.conversationTarget;
     this.worktreePath = input.worktreePath;
     this.sessionInstructions = [
       ...input.sessionInstructions,
       ...cursorWritePolicyInstructions(input.fsWritePolicy),
+      CURSOR_BACKGROUND_INSTRUCTIONS,
     ];
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
@@ -230,6 +250,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       : null;
     this.instructionsPending = true;
     this.deps = deps;
+    this.taskStore = deps.taskStore?.(input.conversationId);
   }
 
   get capabilitiesAtCreation() {
@@ -288,6 +309,12 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       );
     }
 
+    if (!this.tasksLoaded) {
+      this.tasks = (await this.taskStore?.load()) ?? [];
+      this.tasksLoaded = true;
+      this.loseTasks("runtime_recovery", true);
+      await this.emitChain;
+    }
     const promptText = this.buildPromptText(input);
     let turn = await this.runOnce(session, input, {
       promptText,
@@ -319,6 +346,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
     this.instructionsPending = turn.outcome.kind !== "completed";
     if (turn.outcome.kind === "aborted") this.discardSession("turn_cancelled");
+    if (this.tasks.some(isCursorTaskRunning)) {
+      this.discardSession("provider_tasks_unobserved");
+      this.loseTasks("run_ended");
+    }
     await this.discarding;
     // Every event emitted for this turn has been handled before the caller
     // sees the result, so a transcript append cannot land after the turn row.
@@ -394,6 +425,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   private async closeRuntime(): Promise<void> {
     if (this._status === "dead") return;
     this._status = "dead";
+    this.loseTasks("runtime_closed");
     const session = this.session;
     this.session = null;
     this.attaching = null;
@@ -426,6 +458,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       }
     }
 
+    await this.emitChain;
+
     // A turn still open at this point has no worker left to settle it; it gets
     // the one terminal outcome it is owed rather than never resolving.
     const turn = this.activeTurn;
@@ -443,6 +477,93 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
             },
       );
     }
+  }
+
+  private updateTasks(tasks: CursorTaskState, persist: boolean): void {
+    this.tasks = tasks;
+    const at = new Date(this.deps.now()).toISOString();
+    const handler = this.onEvent;
+    this.emitChain = this.emitChain
+      .then(async () => {
+        try {
+          if (persist) await this.taskStore?.save(tasks);
+        } catch (error) {
+          logger.error("cursor-runtime.task_ledger_failed", {
+            conversationId: this.conversationId,
+            error: getErrorMessage(error),
+          });
+          if (!this.taskLedgerFailureNotified) {
+            this.taskLedgerFailureNotified = true;
+            await handler?.({
+              type: "transcript_entry",
+              entry: {
+                backend: "cursor",
+                seq: 0,
+                type: "notice",
+                raw: {
+                  timestamp: at,
+                  type: "notice",
+                  role: "notice",
+                  content: [
+                    {
+                      type: "text",
+                      text: "Cursor provider task accounting could not be saved. Task recovery after restart is unavailable for this run.",
+                    },
+                  ],
+                },
+              },
+            });
+          }
+        }
+        this.onBackgroundActivity?.(cursorTaskActivity(tasks, at));
+      })
+      .catch((error) => {
+        logger.warn("cursor-runtime.task_activity_handler_failed", {
+          conversationId: this.conversationId,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
+  private loseTasks(reason: string, includeLost = false): void {
+    const lost = this.tasks.filter(
+      (task) =>
+        isCursorTaskRunning(task) || (includeLost && task.status === "lost"),
+    );
+    if (!lost.length) return;
+    this.updateTasks(
+      this.tasks.map((task) =>
+        lost.includes(task) ? { ...task, status: "lost" } : task,
+      ),
+      true,
+    );
+    const messages = lost.map(
+      (task) =>
+        `Cursor provider task ${task.taskId}${task.description ? ` (${task.description})` : ""}: its outcome is unknown (${reason}). Completion can no longer wake the agent. Check its outputs before deciding whether to rerun it.`,
+    );
+    this.taskLossInstruction = messages.join("\n");
+    for (const [index, task] of lost.entries()) {
+      this.emit({
+        type: "transcript_entry",
+        entry: {
+          backend: "cursor",
+          seq: 0,
+          type: "notice",
+          raw: {
+            id: `cursor-task-loss:${this.conversationId}:${task.taskId}`,
+            timestamp: new Date(this.deps.now()).toISOString(),
+            type: "notice",
+            role: "notice",
+            content: [{ type: "text", text: messages[index] }],
+          },
+        },
+      });
+    }
+    logger.warn("cursor-runtime.tasks_lost", {
+      conversationId: this.conversationId,
+      reason,
+      taskIds: lost.map((task) => task.taskId),
+    });
   }
 
   // ============================================================
@@ -734,6 +855,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
           this.touch(turn);
           if (this.acceptedThisPrompt) return;
           this.acceptedThisPrompt = true;
+          this.taskLossInstruction = null;
+          this.updateTasks([], true);
           this.emit({
             type: "input_accepted",
             mcpConfigHash: turn.mcpConfigHash,
@@ -869,6 +992,24 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // Envelope first, interpretation second: the lossless record is durable
     // before any block derived from it reaches a consumer.
     this.emit({ type: "transcript_entry", entry: projection.entry });
+    const tasks = applyCursorTaskEvent(
+      this.tasks,
+      decoded.value,
+      turn.runId,
+      new Date(this.deps.now()).toISOString(),
+    );
+    if (tasks !== this.tasks) {
+      const persist =
+        tasks.length !== this.tasks.length ||
+        tasks.some((task, index) => task.status !== this.tasks[index]?.status);
+      if (persist)
+        logger.info("cursor-runtime.task_state", {
+          conversationId: this.conversationId,
+          runId: turn.runId,
+          tasks: tasks.map(({ taskId, status }) => ({ taskId, status })),
+        });
+      this.updateTasks(tasks, persist);
+    }
     for (const block of projection.blocks) {
       turn.contentDeltaCount += 1;
       appendCursorContentDelta(turn.contentBlocks, block);
@@ -1165,6 +1306,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
         instructionDelivery: "user-message",
       });
     }
+    if (this.taskLossInstruction) parts.push(this.taskLossInstruction);
     if (input.syntheticForkSeed) {
       parts.push(input.syntheticForkSeed);
     }

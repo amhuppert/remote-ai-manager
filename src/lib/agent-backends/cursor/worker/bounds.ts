@@ -25,8 +25,8 @@ export const CURSOR_WORKER_IDLE_TTL_MS = 5 * 60 * 1000;
 export const CURSOR_WORKER_PARENT_POLL_INTERVAL_MS = 1_000;
 
 /**
- * The worker's own teardown window: how long agent disposal may take before the
- * worker signals its process group, and how long the group has after SIGTERM
+ * The worker's own teardown window: how long cancellation and disposal may each
+ * take before it signals its process group, and how long the group has after SIGTERM
  * before SIGKILL. Deliberately short — this path only runs when the parent is
  * already gone, so there is nobody left to report progress to.
  */

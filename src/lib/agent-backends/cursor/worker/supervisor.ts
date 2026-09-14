@@ -216,7 +216,6 @@ class SupervisedWorker implements CursorWorkerSession {
       return;
     }
     const frame = parsed.frame;
-    this.touch();
 
     switch (frame.type) {
       case "ready":
@@ -241,6 +240,7 @@ class SupervisedWorker implements CursorWorkerSession {
         break;
     }
 
+    this.touch();
     this.input.onFrame(frame);
   }
 
@@ -284,6 +284,7 @@ class SupervisedWorker implements CursorWorkerSession {
   private touch(): void {
     if (this.exited || this.closing !== null) return;
     this.clearIdleTimer();
+    if (this.activeRuns.size > 0) return;
     this.idleTimer = setTimeout(() => {
       logger.info("cursor-worker.idle_reaped", {
         conversationId: this.conversationId,

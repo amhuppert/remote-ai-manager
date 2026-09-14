@@ -1,3 +1,4 @@
+import { createCursorTaskStore } from "./background-task-store";
 import { cursorAgentStorePath } from "./store-path";
 import { createCursorTaskRunner } from "./task-runner";
 import type { AgentTaskRunner } from "../task";
@@ -183,6 +184,7 @@ export const cursorConversationBackendFactory: ConversationBackendFactory = {
     });
     return new CursorConversationRuntime(input, {
       capabilityDelivery,
+      taskStore: (id) => createCursorTaskStore(cursorAgentStorePath(id)),
       transport: productionTransport(),
       storePath: cursorAgentStorePath,
       resolveModel: (selection) =>
@@ -212,6 +214,7 @@ export const cursorTaskRunner: AgentTaskRunner = {
   backend: "cursor",
   run(input) {
     return createCursorTaskRunner({
+      taskStore: (id) => createCursorTaskStore(cursorAgentStorePath(id)),
       removeStore: (id) =>
         rm(cursorAgentStorePath(id), { recursive: true, force: true }),
       transport: productionTransport(),

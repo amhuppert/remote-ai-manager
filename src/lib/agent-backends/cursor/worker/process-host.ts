@@ -63,8 +63,8 @@ export function createCursorProcessHost(): CursorProcessHost {
         cwd: request.cwd,
         env: { ...request.env, NODE_ENV: nodeEnvOf(request.env) },
         // `detached` makes the worker its own process-group leader, which is
-        // what lets teardown signal the whole tree — the SDK's shell and MCP
-        // children included — instead of just the worker.
+        // what lets teardown signal children that remain in that group. SDK
+        // shell children can lead separate groups and require native cancellation.
         detached: true,
         // Explicit rather than inherited: the server's own execArgv (heap caps,
         // loaders) has nothing to do with what the worker needs.
