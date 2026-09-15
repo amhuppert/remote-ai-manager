@@ -320,6 +320,56 @@ describe("NotepadReviewSurface — the notepad's own rendering", () => {
 });
 
 describe("NotepadReviewSurface — persisting a selection as a comment", () => {
+  it("persists a rendered selection spanning formatted paragraphs", async () => {
+    stubComments();
+    stubCreatedComment("nc-span", "Review both paragraphs.");
+    const content =
+      "## Release plan\n\nThe **migration** lands.\n\n\nConfirm the backfill.";
+    const { container } = renderSurface(content);
+    await screen.findByText("Confirm the backfill.");
+    const first = container.querySelector<HTMLElement>('[data-cc-line="3"]');
+    const last = container.querySelector<HTMLElement>('[data-cc-line="6"]');
+    if (first === null || last === null)
+      throw new Error("fixture blocks did not render");
+    const firstRange = _rangeFromBlockOffsetsForTesting(first, 4, 9);
+    const lastRange = _rangeFromBlockOffsetsForTesting(last, 0, 20);
+    if (firstRange === null || lastRange === null)
+      throw new Error("fixture endpoints did not map");
+    const range = document.createRange();
+    range.setStart(firstRange.startContainer, firstRange.startOffset);
+    range.setEnd(lastRange.endContainer, lastRange.endOffset);
+    range.getBoundingClientRect = () => new DOMRect(0, 0, 100, 50);
+    const selection = window.getSelection();
+    if (selection === null) throw new Error("selection API unavailable");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.pointerUp(document);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Comment" }));
+    await user.type(
+      await screen.findByRole("textbox", { name: "Comment note" }),
+      "Review both paragraphs.",
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Add comment" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        api.requestsTo("POST", "/api/notepads/np-a/comments")[0]?.jsonBody,
+      ).toMatchObject({
+        body: "Review both paragraphs.",
+        anchor: {
+          line: 3,
+          endBlock: { line: 6, sectionId: "release-plan" },
+          charStart: 6,
+          quote: "migration** lands.\n\n\nConfirm the backfill",
+          notepadRevision: 4,
+        },
+      }),
+    );
+  });
+
   it("persists an anchor stated over the canonical text", async () => {
     stubComments();
     api.reply("POST", "/api/notepads/np-a/comments", (request) => ({

@@ -1283,7 +1283,7 @@ function SpecProseSection({
       <div
         ref={contentRef}
         data-testid={`spec-prose-body-${payload.role}`}
-        className="mt-sm min-w-0 overflow-hidden [&_[data-markdown-intent=document]]:px-0 [&_[data-markdown-intent=document]]:py-0 [&_[data-markdown-intent=document]]:text-[0.875rem] [&_[data-markdown-intent=document]]:leading-[1.65] [&_[data-markdown-viewport]>div]:pl-0"
+        className="mt-sm min-w-0 overflow-hidden [&_[data-markdown-intent=document]]:py-0 [&_[data-markdown-intent=document]]:text-[0.875rem] [&_[data-markdown-intent=document]]:leading-[1.65]"
       >
         <AnnotatedMarkdown
           docRef={{

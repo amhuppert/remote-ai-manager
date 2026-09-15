@@ -176,7 +176,7 @@ export default function NotepadCommentThreads({
                 <div className="font-mono text-[0.68rem] text-text-tertiary">
                   {passage.location}
                 </div>
-                <blockquote className="m-0 border-0 border-l-2 border-solid border-border-default pl-sm font-mono text-[0.72rem] leading-[1.5] [overflow-wrap:anywhere] text-text-secondary">
+                <blockquote className="m-0 border-0 border-l-2 border-solid border-border-default pl-sm font-mono text-[0.72rem] leading-[1.5] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-secondary">
                   {passage.quote}
                 </blockquote>
                 <p className="m-0 font-mono text-[0.75rem] leading-[1.5] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary">

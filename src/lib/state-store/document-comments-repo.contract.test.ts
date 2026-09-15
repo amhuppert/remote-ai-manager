@@ -82,6 +82,32 @@ afterEach(() => {
 });
 
 describe("document-comments-repo round-trip", () => {
+  it("retains a spanning passage endpoint through create, update, and reload", () => {
+    const single = makeComment();
+    const spanning = makeComment({
+      anchor: {
+        ...single.anchor,
+        endBlock: { line: 48, sectionId: "details" },
+        quote: "First paragraph.\n\nSecond paragraph.",
+        charStart: 0,
+        charEnd: 35,
+      },
+    });
+    repo.upsert(spanning);
+    expect(
+      repo.findByIdInScope(PROJECT_PATH, SESSION_NAME, spanning.id),
+    ).toEqual(spanning);
+    repo.upsert({ ...spanning, note: "Comment on both paragraphs." });
+    expect(
+      repo.findByDocument(PROJECT_PATH, SESSION_NAME, spanning.docPath)[0]
+        ?.anchor,
+    ).toEqual(spanning.anchor);
+    repo.upsert(single);
+    expect(repo.findByIdInScope(PROJECT_PATH, SESSION_NAME, single.id)).toEqual(
+      single,
+    );
+  });
+
   it("upsert + findByIdInScope round-trips every field, including a null sentAt", () => {
     const fixture = makeComment();
     repo.upsert(fixture);
@@ -236,6 +262,7 @@ function buildMaximalDocumentComment(): DocumentComment {
       sectionId: "3-naming",
       headingLabel: "3 › Naming",
       line: 128,
+      endBlock: { line: 134, sectionId: "paths" },
       charStart: 12,
       charEnd: 64,
       quote: "Lib modules: kebab-case",

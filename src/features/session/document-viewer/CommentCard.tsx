@@ -122,7 +122,7 @@ export default function CommentCard({
         </span>
       </div>
 
-      <blockquote className="m-0 [overflow-wrap:anywhere] max-h-[88px] overflow-y-auto overscroll-contain border-x-0 border-y-0 border-l-2 border-solid border-l-cyan bg-bg-raised px-[10px] py-[6px] font-body text-[0.8rem] leading-[1.5] text-text-secondary">
+      <blockquote className="whitespace-pre-wrap m-0 [overflow-wrap:anywhere] max-h-[88px] overflow-y-auto overscroll-contain border-x-0 border-y-0 border-l-2 border-solid border-l-cyan bg-bg-raised px-[10px] py-[6px] font-body text-[0.8rem] leading-[1.5] text-text-secondary">
         {comment.anchor.quote}
       </blockquote>
 

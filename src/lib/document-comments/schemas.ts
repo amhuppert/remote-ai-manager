@@ -7,12 +7,16 @@ import { conversationStatusSchema } from "@/lib/conversations/schemas";
 export const commentStatusSchema = z.enum(["pending", "sent"]);
 export type CommentStatus = z.infer<typeof commentStatusSchema>;
 
+export const commentAnchorEndBlockSchema = z.object({
+  line: z.number().int().positive(),
+  sectionId: z.string(),
+});
+
 /**
- * The full anchor recorded for a commented passage. Scope is a SINGLE rendered
- * block: one `sectionId` + one `line`, with `charStart`/`charEnd` offsets into
- * that block's text. Cross-block selections are rejected upstream and never
- * reach this model, so there is no end-block identity (deferred, Out of
- * Boundary). `prefix`/`suffix` are stored with the anchor and are unused by v1
+ * The full anchor recorded for a commented passage. `sectionId` + `line`
+ * identify its starting block; `endBlock` bounds a passage spanning blocks.
+ * Offsets count annotatable text in that span, joining block runs with two
+ * newlines. `prefix`/`suffix` are stored with the anchor and are unused by v1
  * exact-match re-anchoring; `docRevision` is the content hash at creation.
  * Effect-free (registerTrustedSchema): no refinements, so it stays a
  * plain ZodObject the persistence durability harness can introspect.
@@ -22,6 +26,7 @@ export const commentAnchorSchema = registerTrustedSchema(
     sectionId: z.string(),
     headingLabel: z.string(),
     line: z.number().int().positive(),
+    endBlock: commentAnchorEndBlockSchema.optional(),
     charStart: z.number().int().nonnegative(),
     charEnd: z.number().int().nonnegative(),
     quote: z.string(),

@@ -27,6 +27,8 @@ export type MarkdownAnchorState =
 export interface ResolvedMarkdownAnnotation extends MarkdownAnnotationSource {
   anchorState: MarkdownAnchorState;
   block: HTMLElement | null;
+  /** Selected annotatable text in DOM order, excluding protected subtrees. */
+  ranges?: readonly Range[];
 }
 
 export type SpecThreadAnchorState =
@@ -45,9 +47,9 @@ export interface PersistCommentInput {
 /**
  * What a host is shown of the live selection when it is asked to describe a
  * clip. `anchor` is the same one a comment would persist; `text` is the
- * selection exactly as rendered — what the clip quotes; `block` is the rendered
- * block it resolved within, so code ancestry is read off the DOM the reader is
- * looking at rather than guessed from the source.
+ * selected annotatable text with paragraph separators — what the clip quotes;
+ * `block` is its first rendered block. The range carries the complete selection
+ * for ancestry checks across every selected block.
  */
 export interface ClipSelectionContext {
   anchor: CommentAnchor;

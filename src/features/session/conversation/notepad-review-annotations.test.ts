@@ -5,6 +5,7 @@ import type {
   ResolvedMarkdownAnnotation,
 } from "@/components/document-viewer/annotation-contract";
 import { buildNotepadRefXml } from "@/lib/notepads/references";
+import { notepadAnchorFromSelection } from "@/lib/notepads/annotatable-projection";
 import type {
   NotepadCommentStatus,
   NotepadCommentAnchorState,
@@ -94,6 +95,67 @@ function stampsFor(
 }
 
 describe("notepadAnnotationSources", () => {
+  it("restates a multi-block canonical quote and both stamped endpoint identities", () => {
+    const content =
+      "# Release notes\n\nThe **migration** lands.\n\n\nConfirm the backfill.";
+    const rendered = "The migration lands.\n\nConfirm the backfill.";
+    const quote = "migration lands.\n\nConfirm the backfill";
+    const anchor = notepadAnchorFromSelection(
+      {
+        sectionId: "release-notes",
+        headingLabel: "Release notes",
+        line: 3,
+        endBlock: { line: 6, sectionId: "release-notes" },
+        charStart: 4,
+        charEnd: 4 + quote.length,
+        quote,
+      },
+      content,
+      6,
+    );
+    if (anchor === null)
+      throw new Error("fixture passage could not be anchored");
+    const thread = threadFixture("c-span");
+    thread.comment.anchor = anchor;
+    thread.passage.quote = anchor.quote;
+    const stamped = new Map([
+      [
+        3,
+        {
+          line: 3,
+          sectionId: "shipping-notes",
+          headingLabel: "Shipping notes",
+        },
+      ],
+      [
+        6,
+        {
+          line: 6,
+          sectionId: "shipping-notes",
+          headingLabel: "Shipping notes",
+        },
+      ],
+    ]);
+
+    const [source] = notepadAnnotationSources([thread], content, stamped);
+    expect(source?.anchor).toMatchObject({
+      sectionId: "shipping-notes",
+      headingLabel: "Shipping notes",
+      line: 3,
+      endBlock: { line: 6, sectionId: "shipping-notes" },
+      charStart: 4,
+      charEnd: rendered.length - 1,
+      quote,
+    });
+    expect(
+      notepadAnnotationSources(
+        [thread],
+        content.replace("lands", "waits"),
+        stamped,
+      ),
+    ).toEqual([]);
+  });
+
   it("tones an open comment active and a resolved one settled", () => {
     const sources = notepadAnnotationSources(
       [

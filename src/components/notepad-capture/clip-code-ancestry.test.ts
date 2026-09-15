@@ -56,6 +56,26 @@ const FENCED =
   "<pre><code>const landed = await land(fragment);</code></pre></div>";
 
 describe("selectionLiesWithinCode", () => {
+  it("treats a selection spanning a fenced block and following prose as prose", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `${FENCED}<p>Explanation after code.</p>`;
+    const block = host.firstElementChild;
+    const start = block?.querySelector("code")?.firstChild;
+    const end = host.lastElementChild?.firstChild;
+    if (!(block instanceof HTMLElement) || !start || !end)
+      throw new Error("no passage");
+    const range = document.createRange();
+    range.setStart(start, 0);
+    range.setEnd(end, 11);
+    expect(
+      selectionLiesWithinCode({
+        ...selectionOver(block, "const landed"),
+        block,
+        range,
+      }),
+    ).toBe(false);
+  });
+
   it("treats a fenced block as code though the stamp sits on the wrapper", () => {
     expect(selectionLiesWithinCode(selection(FENCED, "const landed"))).toBe(
       true,

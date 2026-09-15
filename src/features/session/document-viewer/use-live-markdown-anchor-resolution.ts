@@ -7,10 +7,23 @@ import type {
   ResolvedMarkdownAnnotation,
 } from "@/components/document-viewer/annotation-contract";
 import { tryReanchorExact } from "@/lib/document-comments/anchor";
+import {
+  CC_LINE_ATTR,
+  CC_SECTION_ATTR,
+} from "@/components/markdown/markdown-source-map";
+import { createClientLogger } from "@/lib/logging/client-logger";
 
-import { blockAnnotatableText, findCommentBlockCandidates } from "./anchor-dom";
+import {
+  findCommentPassageCandidates,
+  rangesFromCommentPassage,
+} from "./anchor-dom";
 
-type LiveResolution = Pick<ResolvedMarkdownAnnotation, "anchorState" | "block">;
+const logger = createClientLogger("markdown-anchor-resolution");
+
+type LiveResolution = Pick<
+  ResolvedMarkdownAnnotation,
+  "anchorState" | "block" | "ranges"
+>;
 
 export function resolveLiveMarkdownAnchors<T extends MarkdownAnnotationSource>(
   sources: readonly T[],
@@ -18,13 +31,18 @@ export function resolveLiveMarkdownAnchors<T extends MarkdownAnnotationSource>(
 ): Array<T & LiveResolution> {
   return sources.map((source) => {
     const matches = (
-      contentEl ? findCommentBlockCandidates(contentEl, source.anchor) : []
-    ).flatMap((block) => {
-      const result = tryReanchorExact(
-        blockAnnotatableText(block),
-        source.anchor,
+      contentEl ? findCommentPassageCandidates(contentEl, source.anchor) : []
+    ).flatMap((passage) => {
+      const result = tryReanchorExact(passage.text, source.anchor);
+      if (result.status === "stale") return [];
+      const ranges = rangesFromCommentPassage(
+        passage,
+        result.charStart,
+        result.charEnd,
       );
-      return result.status === "anchored" ? [{ block, result }] : [];
+      return ranges.length > 0
+        ? [{ block: passage.block, result, ranges }]
+        : [];
     });
     const match = matches.length === 1 ? matches[0] : undefined;
     if (match === undefined) {
@@ -45,6 +63,7 @@ export function resolveLiveMarkdownAnchors<T extends MarkdownAnnotationSource>(
         charEnd: match.result.charEnd,
       },
       block: match.block,
+      ranges: match.ranges,
     };
   });
 }
@@ -62,14 +81,31 @@ export function useLiveMarkdownAnchorResolution<
 
   useLayoutEffect(() => {
     const resolve = (): void => {
-      setResolved(resolveLiveMarkdownAnchors(sources, contentRef.current));
+      const next = resolveLiveMarkdownAnchors(sources, contentRef.current);
+      setResolved(next);
+      if (sources.length > 0)
+        logger.debug("markdown-anchors.resolved", {
+          total: sources.length,
+          spanningBlocks: sources.filter(
+            ({ anchor }) => anchor.endBlock !== undefined,
+          ).length,
+          stale: next.filter(
+            ({ anchorState }) => anchorState.status === "stale",
+          ).length,
+        });
     };
     resolve();
 
     const contentEl = contentRef.current;
     if (contentEl === null) return;
     const observer = new MutationObserver(resolve);
-    observer.observe(contentEl, { childList: true, subtree: true });
+    observer.observe(contentEl, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: [CC_LINE_ATTR, CC_SECTION_ATTR, "class"],
+    });
     return () => observer.disconnect();
   }, [sources, content, contentRef]);
 

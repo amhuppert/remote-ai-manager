@@ -1,4 +1,5 @@
 import { tryReanchorExact } from "@/lib/document-comments/anchor";
+import { projectMarkdownPassage } from "@/components/markdown/markdown-source-map";
 
 import type { NotepadCommentAnchor } from "./schemas";
 
@@ -118,10 +119,7 @@ export function resolveNotepadCommentAnchor(
   anchor: NotepadCommentAnchor,
   content: string,
 ): NotepadAnchorResolution {
-  const result = tryReanchorExact(
-    notepadBlockTextAtLine(content, anchor.line),
-    anchor,
-  );
+  const result = tryReanchorExact(notepadPassageText(content, anchor), anchor);
   return result.status === "anchored"
     ? {
         state: "anchored",
@@ -129,6 +127,22 @@ export function resolveNotepadCommentAnchor(
         charEnd: result.charEnd,
       }
     : { state: "stale" };
+}
+
+export function notepadPassageText(
+  content: string,
+  anchor: Pick<NotepadCommentAnchor, "line" | "endBlock">,
+): string | null {
+  if (anchor.endBlock === undefined)
+    return notepadBlockTextAtLine(content, anchor.line);
+  const passage = projectMarkdownPassage(
+    content,
+    anchor.line,
+    anchor.endBlock.line,
+  );
+  return passage === null
+    ? null
+    : content.slice(passage.sourceStart, passage.sourceEnd);
 }
 
 /**

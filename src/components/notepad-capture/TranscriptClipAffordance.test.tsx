@@ -24,7 +24,7 @@ afterEach(() => {
  */
 function TranscriptFixture(): React.JSX.Element {
   return (
-    <div>
+    <div className="conversation">
       <div className="message">
         <div
           className="message-content"
@@ -34,12 +34,20 @@ function TranscriptFixture(): React.JSX.Element {
           data-clip-model="opus"
         >
           <p data-testid="prose-0">Alpha prose worth clipping.</p>
+          {"\n"}
+          <p data-testid="paragraph-0">Second paragraph.</p>
+          {"\n"}
           <pre data-testid="code-0">
             <code>const answer = 42;</code>
           </pre>
+          {"\n"}
+          <button type="button" data-testid="code-copy">
+            Copy code
+          </button>
         </div>
       </div>
       <div className="message">
+        <div className="message-role">You · 10:01</div>
         <div
           className="message-content"
           data-clip-index="1"
@@ -146,12 +154,16 @@ describe("TranscriptClipAffordance — single-message mapping", () => {
 
     fireEvent.click(trigger!);
     expect(onClip).toHaveBeenCalledWith({
-      messageIndex: 0,
-      role: "assistant",
-      timestamp: "2026-08-31T10:00:00.000Z",
-      model: "opus",
-      text: "prose",
-      isCode: false,
+      messages: [
+        {
+          messageIndex: 0,
+          role: "assistant",
+          timestamp: "2026-08-31T10:00:00.000Z",
+          model: "opus",
+          text: "prose",
+          isCode: false,
+        },
+      ],
       rect: expect.objectContaining({ bottom: 120 }) as DOMRect,
     });
     // Clipping consumes the selection: the trigger dismisses.
@@ -181,16 +193,20 @@ describe("TranscriptClipAffordance — single-message mapping", () => {
 
     expect(onClip).toHaveBeenCalledWith(
       expect.objectContaining({
-        messageIndex: 1,
-        role: "user",
-        timestamp: null,
-        model: null,
+        messages: [
+          expect.objectContaining({
+            messageIndex: 1,
+            role: "user",
+            timestamp: null,
+            model: null,
+          }),
+        ],
       }),
     );
   });
 
-  it("offers nothing for a selection spanning two messages", () => {
-    renderHarness();
+  it("clips a selection spanning messages with ordered attribution and no chrome", () => {
+    const { onClip } = renderHarness();
     const range = document.createRange();
     range.setStart(screen.getByTestId("prose-0").childNodes[0]!, 0);
     range.setEnd(screen.getByTestId("prose-1").childNodes[0]!, 5);
@@ -200,7 +216,103 @@ describe("TranscriptClipAffordance — single-message mapping", () => {
       fireEvent.pointerUp(document);
     });
 
+    expect(clipTrigger()).not.toBeNull();
+    fireEvent.click(clipTrigger()!);
+    expect(onClip).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            messageIndex: 0,
+            text: "Alpha prose worth clipping.\n\nSecond paragraph.\n\nconst answer = 42;",
+            isCode: false,
+          }),
+          expect.objectContaining({
+            messageIndex: 1,
+            text: "Bravo",
+            isCode: false,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("preserves paragraph boundaries within a message", () => {
+    const { onClip } = renderHarness();
+    const range = document.createRange();
+    range.setStart(screen.getByTestId("prose-0").firstChild!, 6);
+    range.setEnd(screen.getByTestId("paragraph-0").firstChild!, 6);
+    stubSelection(range);
+    fireEvent.pointerUp(document);
+    fireEvent.click(clipTrigger()!);
+    expect(onClip).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            text: "prose worth clipping.\n\nSecond",
+            isCode: false,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("combines split rows for one message into one attributed selection", () => {
+    const { onClip } = renderHarness();
+    const content = screen.getByTestId("prose-1").parentElement!;
+    content.dataset["clipIndex"] = "0";
+    content.dataset["clipRole"] = "assistant";
+    const range = document.createRange();
+    range.setStart(screen.getByTestId("paragraph-0").firstChild!, 0);
+    range.setEnd(screen.getByTestId("prose-1").firstChild!, 5);
+    stubSelection(range);
+    fireEvent.pointerUp(document);
+    fireEvent.click(clipTrigger()!);
+    expect(onClip).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            messageIndex: 0,
+            text: "Second paragraph.\n\nconst answer = 42;\n\nBravo",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("does not offer clips on controls inside a message", () => {
+    renderHarness();
+    stubSelection(rangeOverText(screen.getByTestId("code-copy"), 0, 4));
+    fireEvent.pointerUp(document);
     expect(clipTrigger()).toBeNull();
+  });
+
+  it("refuses a range crossing an ungated row even when both endpoints are gated", () => {
+    renderHarness();
+    const first = screen.getByTestId("prose-0").closest(".message")!;
+    const ungated = screen.getByTestId("ungated").closest(".message")!;
+    first.after(ungated);
+    const range = document.createRange();
+    range.setStart(screen.getByTestId("prose-0").firstChild!, 0);
+    range.setEnd(screen.getByTestId("prose-1").firstChild!, 5);
+    stubSelection(range);
+    fireEvent.pointerUp(document);
+    expect(clipTrigger()).toBeNull();
+  });
+
+  it("refuses a range between transcript roots", () => {
+    renderHarness();
+    const other = document.createElement("div");
+    other.className = "conversation";
+    const last = screen.getByTestId("prose-1").closest(".message")!;
+    last.parentElement!.after(other);
+    other.append(last);
+    const range = document.createRange();
+    range.setStart(screen.getByTestId("prose-0").firstChild!, 0);
+    range.setEnd(screen.getByTestId("prose-1").firstChild!, 5);
+    stubSelection(range);
+    fireEvent.pointerUp(document);
+    expect(clipTrigger()).toBeNull();
+    other.remove();
   });
 
   it("offers nothing on a row without the clip-source contract (queued/provisional)", () => {
@@ -227,6 +339,41 @@ describe("TranscriptClipAffordance — single-message mapping", () => {
 });
 
 describe("TranscriptClipAffordance — code derivation (D20)", () => {
+  it("preserves selected code indentation and blank lines", () => {
+    const { onClip } = renderHarness();
+    const code = screen.getByTestId("code-0").querySelector("code")!;
+    code.textContent = " \n  ";
+    stubSelection(rangeOverText(code, 0, 4));
+    fireEvent.pointerUp(document);
+    fireEvent.click(clipTrigger()!);
+    expect(onClip).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [expect.objectContaining({ text: " \n  ", isCode: true })],
+      }),
+    );
+  });
+
+  it("keeps a code-only excerpt fenced when the selection continues into another message", () => {
+    const { onClip } = renderHarness();
+    const range = document.createRange();
+    range.setStart(
+      screen.getByTestId("code-0").querySelector("code")!.firstChild!,
+      0,
+    );
+    range.setEnd(screen.getByTestId("prose-1").firstChild!, 5);
+    stubSelection(range);
+    fireEvent.pointerUp(document);
+    fireEvent.click(clipTrigger()!);
+    expect(onClip).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({ text: "const answer = 42;", isCode: true }),
+          expect.objectContaining({ text: "Bravo", isCode: false }),
+        ],
+      }),
+    );
+  });
+
   it("marks a selection inside a fenced block as code", () => {
     const { onClip } = renderHarness();
     const code = screen.getByTestId("code-0").querySelector("code")!;
@@ -238,7 +385,11 @@ describe("TranscriptClipAffordance — code derivation (D20)", () => {
     fireEvent.click(clipTrigger()!);
 
     expect(onClip).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "const answer", isCode: true }),
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({ text: "const answer", isCode: true }),
+        ],
+      }),
     );
   });
 
@@ -252,7 +403,9 @@ describe("TranscriptClipAffordance — code derivation (D20)", () => {
     fireEvent.click(clipTrigger()!);
 
     expect(onClip).toHaveBeenCalledWith(
-      expect.objectContaining({ isCode: false }),
+      expect.objectContaining({
+        messages: [expect.objectContaining({ isCode: false })],
+      }),
     );
   });
 });

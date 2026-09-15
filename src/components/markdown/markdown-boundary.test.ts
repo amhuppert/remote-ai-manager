@@ -84,6 +84,8 @@ const SOURCE_MAP_PUBLIC_EXPORTS = new Set([
   // rule and gets offsets back, so no renderer internal escapes.
   "MarkdownSourceSpan",
   "markdownTokenSourceSpans",
+  "MarkdownPassageProjection",
+  "projectMarkdownPassage",
 ]);
 
 /**

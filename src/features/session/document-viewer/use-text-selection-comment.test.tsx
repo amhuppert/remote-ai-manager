@@ -152,7 +152,7 @@ describe("useTextSelectionComment", () => {
     expect(draftRef.current?.anchor.line).toBe(5);
   });
 
-  it("offers no draft for a selection spanning more than one block", async () => {
+  it("offers a draft for a selection spanning list items", async () => {
     const { container, draftRef } = await renderHarness();
     const items = container.querySelectorAll("ul li");
     const range = document.createRange();
@@ -164,7 +164,32 @@ describe("useTextSelectionComment", () => {
       fireEvent.pointerUp(document);
     });
 
+    expect(draftRef.current?.anchor.quote).toBe(
+      "alpha beta gamma item\n\nsecond list item here",
+    );
+    expect(draftRef.current?.anchor.endBlock).toEqual({
+      line: 8,
+      sectionId: "section-two",
+    });
+    expect(draftRef.current?.block).toBe(items[0]);
+  });
+
+  it("clears an old draft when a subsequent selection leaves its document", async () => {
+    const { container, draftRef } = await renderHarness();
+    stubSelection(selectQuote(container));
+    fireEvent.pointerUp(document);
+    expect(draftRef.current).not.toBeNull();
+    const outside = document.createElement("p");
+    outside.textContent = "outside";
+    document.body.append(outside);
+    const range = selectQuote(container);
+    range.setEnd(outside.firstChild!, 7);
+    stubSelection(range);
+
+    fireEvent.pointerUp(document);
+
     expect(draftRef.current).toBeNull();
+    outside.remove();
   });
 
   it("clear() collapses the live selection and drops the draft", async () => {

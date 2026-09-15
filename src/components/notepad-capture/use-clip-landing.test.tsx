@@ -228,6 +228,63 @@ describe("useClipLanding — HTTP path", () => {
     });
   });
 
+  it("appends and undoes a multi-message clip as one unit", async () => {
+    stubList([RECENT]);
+    const clips = [
+      CLIP,
+      {
+        ...CLIP,
+        text: "second message",
+        provenance: {
+          kind: "ref" as const,
+          xml: '<message-ref message-index="4" />',
+        },
+      },
+    ];
+    const fragment = clips.map(buildClipFragment).join("\n\n");
+    api.reply("POST", "/api/notepads/np-recent/content", (req) => ({
+      json: notepadBody({
+        content:
+          (req.jsonBody as { operation: string }).operation === "append"
+            ? composeAppendedNotepadContent("existing", fragment)
+            : "existing",
+        revision: 5,
+      }),
+    }));
+    api.json(
+      "GET",
+      "/api/notepads/np-recent",
+      notepadBody({
+        content: composeAppendedNotepadContent("existing", fragment),
+        revision: 5,
+      }),
+    );
+    const hook = landingHook();
+    await act(() => hook.current.land(clips));
+    expect(toasts()).toHaveLength(1);
+    expect(
+      api
+        .requestsTo("POST", "/api/notepads/np-recent/content")
+        .map((req) => req.jsonBody),
+    ).toEqual([{ operation: "append", content: fragment }]);
+    await act(async () => {
+      toastAction("Undo").onClick();
+      await waitFor(() =>
+        expect(
+          api.requestsTo("POST", "/api/notepads/np-recent/content"),
+        ).toHaveLength(2),
+      );
+    });
+    expect(
+      api.requestsTo("POST", "/api/notepads/np-recent/content")[1]?.jsonBody,
+    ).toEqual({
+      operation: "update",
+      content: "existing",
+      baseRevision: 5,
+      enforceBaseRevision: true,
+    });
+  });
+
   it("Undo refuses when a racing write lands between the head read and the guarded update", async () => {
     stubList([RECENT]);
     const tailIntact = composeAppendedNotepadContent("existing", FRAGMENT);
@@ -335,6 +392,24 @@ describe("useClipLanding — open-target path (R22.5)", () => {
       api.requestsTo("POST", "/api/notepads/np-recent/content"),
     ).toHaveLength(0);
     expect(toasts()[0]?.message).toBe("Clipped to capture target");
+  });
+
+  it("sends a multi-message clip through the open editor as one append and undo", async () => {
+    stubList([RECENT]);
+    const { appended, undone } = fakeTarget();
+    const clips = [CLIP, { ...CLIP, text: "second message" }];
+    const fragment = clips.map(buildClipFragment).join("\n\n");
+    const hook = landingHook();
+    await act(() => hook.current.land(clips));
+    expect(appended).toEqual([fragment]);
+    expect(toasts()).toHaveLength(1);
+    await act(async () => {
+      toastAction("Undo").onClick();
+    });
+    expect(undone).toEqual([fragment]);
+    expect(
+      api.requestsTo("POST", "/api/notepads/np-recent/content"),
+    ).toHaveLength(0);
   });
 
   it("Undo delegates to the target and stays quiet when it undoes", async () => {

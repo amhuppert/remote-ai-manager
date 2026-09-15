@@ -33,7 +33,7 @@ import { ConversationTargetPicker } from "./ConversationTargetPicker";
 import { useDocumentComments } from "./use-document-comments";
 import { useConversationTarget } from "./use-conversation-target";
 import { useSendDocumentFeedback } from "./use-send-document-feedback";
-import { findCommentBlock, rangeFromBlockOffsets } from "./anchor-dom";
+import { findCommentBlock, rangesFromCommentAnchor } from "./anchor-dom";
 import type { ResolvedComment } from "./types";
 import {
   useActivateDocument,
@@ -115,13 +115,13 @@ function commentPassageRect(
   comment: ResolvedComment,
 ): DOMRect | null {
   if (comment.reanchor.status !== "anchored") return null;
-  const block = findCommentBlock(contentEl, comment.anchor);
-  if (!block) return null;
-  const range = rangeFromBlockOffsets(
-    block,
+  const ranges = rangesFromCommentAnchor(
+    contentEl,
+    comment.anchor,
     comment.reanchor.charStart,
     comment.reanchor.charEnd,
   );
+  const range = ranges[0];
   if (!range || range.collapsed) return null;
   return range.getBoundingClientRect();
 }

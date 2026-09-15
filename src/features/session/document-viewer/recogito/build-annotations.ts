@@ -5,7 +5,7 @@ import {
   type TextAnnotation,
 } from "@recogito/text-annotator";
 import {
-  rangeFromBlockOffsets,
+  rangesFromCommentAnchor,
   selectRenderableAnnotations,
 } from "../anchor-dom";
 import type { ResolvedMarkdownAnnotation } from "@/components/document-viewer/annotation-contract";
@@ -47,17 +47,22 @@ export function markdownAnnotationsToTextAnnotations(
   for (const source of selectRenderableAnnotations(sources)) {
     if (source.anchorState.status === "stale" || source.block === null)
       continue;
-    const range = rangeFromBlockOffsets(
-      source.block,
-      source.anchorState.charStart,
-      source.anchorState.charEnd,
-    );
-    if (!range || range.collapsed) continue;
-    const selector = rangeToSelector(range, container);
+    const ranges =
+      source.ranges ??
+      rangesFromCommentAnchor(
+        container,
+        source.anchor,
+        source.anchorState.charStart,
+        source.anchorState.charEnd,
+      );
+    const selectors = ranges
+      .filter((range) => !range.collapsed)
+      .map((range) => rangeToSelector(range, container));
+    if (selectors.length === 0) continue;
     annotations.push({
       id: source.id,
       bodies: [],
-      target: { annotation: source.id, selector: [selector] },
+      target: { annotation: source.id, selector: selectors },
     });
   }
   return annotations;

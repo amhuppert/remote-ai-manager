@@ -16,9 +16,8 @@ const CODE_BLOCK_SELECTOR = "[data-markdown-code-block], pre";
  * prose block. Both matter to a clip: the fragment builder fences code so it
  * survives verbatim, and a blockquote would reflow it.
  *
- * The two cases need different evidence. A fenced block IS the stamped block,
- * so the block answers it. An inline span sits inside a paragraph, whose
- * stamped block says nothing about it — only the selection's own range does.
+ * The range's common ancestor must lie inside one code region, so a selection
+ * continuing from a fenced block into prose is classified as mixed content.
  *
  * Offered as the shared default because every current host renders through the
  * canonical Markdown renderer; a host whose code lives elsewhere in its DOM
@@ -27,12 +26,10 @@ const CODE_BLOCK_SELECTOR = "[data-markdown-code-block], pre";
 export function selectionLiesWithinCode(
   selection: ClipSelectionContext,
 ): boolean {
-  if (selection.block.closest(CODE_BLOCK_SELECTOR) !== null) return true;
-
   // `commonAncestorContainer` is the deepest node containing BOTH endpoints, so
   // a selection that starts inside a code span and runs out into the prose
   // around it resolves to the paragraph and is correctly not code.
   const node = selection.range.commonAncestorContainer;
   const element = node instanceof Element ? node : node.parentElement;
-  return element?.closest("code") != null;
+  return element?.closest(`${CODE_BLOCK_SELECTOR}, code`) != null;
 }

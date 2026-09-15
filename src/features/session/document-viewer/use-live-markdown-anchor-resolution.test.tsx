@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useRef } from "react";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { MarkdownAnnotationSource } from "@/components/document-viewer/annotation-contract";
@@ -47,6 +47,62 @@ function stampedBlock(text = "prefix target suffix"): HTMLDivElement {
 }
 
 describe("resolveLiveMarkdownAnchors", () => {
+  it("resolves one passage across blocks and paints each selected text segment", () => {
+    const container = document.createElement("div");
+    container.innerHTML =
+      '<p data-cc-line="4" data-cc-section="requirements">prefix target</p><p data-cc-line="6" data-cc-section="requirements">middle</p><p data-cc-line="8" data-cc-section="requirements">last suffix</p>';
+    const passage = source("passage", {
+      endBlock: { line: 8, sectionId: "requirements" },
+      charEnd: 27,
+      quote: "target\n\nmiddle\n\nlast",
+    });
+
+    const [resolved] = resolveLiveMarkdownAnchors([passage], container);
+
+    expect(resolved?.anchorState).toEqual({
+      status: "anchored",
+      charStart: 7,
+      charEnd: 27,
+    });
+    expect(resolved?.ranges?.map((range) => range.toString())).toEqual([
+      "target",
+      "middle",
+      "last",
+    ]);
+    expect(resolved?.block).toBe(container.querySelector("p"));
+
+    container.querySelectorAll("p")[1]!.textContent = "changed";
+    expect(
+      resolveLiveMarkdownAnchors([passage], container)[0]?.anchorState.status,
+    ).toBe("stale");
+  });
+
+  it("reanchors the entire multi-block quote after an edit before its start", () => {
+    const container = document.createElement("div");
+    container.innerHTML =
+      '<p data-cc-line="4" data-cc-section="requirements">a prefix target</p><p data-cc-line="6" data-cc-section="requirements">last</p>';
+    const [resolved] = resolveLiveMarkdownAnchors(
+      [
+        source("shifted-passage", {
+          endBlock: { line: 6, sectionId: "requirements" },
+          charEnd: 19,
+          quote: "target\n\nlast",
+        }),
+      ],
+      container,
+    );
+
+    expect(resolved?.anchorState).toEqual({
+      status: "reanchored",
+      charStart: 9,
+      charEnd: 21,
+    });
+    expect(resolved?.ranges?.map((range) => range.toString())).toEqual([
+      "target",
+      "last",
+    ]);
+  });
+
   it("distinguishes exact stored offsets from a unique nearby shift", () => {
     const container = stampedBlock();
 
@@ -138,6 +194,23 @@ function DeferredHarness({
 }
 
 describe("useLiveMarkdownAnchorResolution", () => {
+  it("invalidates a passage when the live text node changes in place", async () => {
+    let latest: readonly ReturnType<
+      typeof resolveLiveMarkdownAnchors
+    >[number][] = [];
+    const view = render(
+      <DeferredHarness rendered onResolved={(value) => (latest = value)} />,
+    );
+    await waitFor(() => expect(latest[0]?.anchorState.status).toBe("anchored"));
+
+    act(() => {
+      const text = view.container.querySelector("p")!.firstChild!;
+      text.nodeValue = "prefix removed suffix";
+    });
+
+    await waitFor(() => expect(latest[0]?.anchorState.status).toBe("stale"));
+  });
+
   it("resolves a deferred block after the always-mounted subtree mutates", async () => {
     let latest: readonly ReturnType<
       typeof resolveLiveMarkdownAnchors

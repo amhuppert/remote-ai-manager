@@ -412,6 +412,8 @@ describe("notepad comment tables DDL", () => {
       "section_id",
       "heading_label",
       "line",
+      "end_line",
+      "end_section_id",
       "char_start",
       "char_end",
       "quote",

@@ -394,6 +394,10 @@ function SelectionAffordanceLayer({
               if (!sourceBlock.hasAttribute("tabindex")) {
                 sourceBlock.setAttribute("tabindex", "-1");
               }
+              sourceBlock.classList.add(
+                "focus-visible:[outline:2px_solid_var(--color-cyan)]",
+                "focus-visible:outline-offset-2",
+              );
               sourceBlock.focus();
             }
             clear();
