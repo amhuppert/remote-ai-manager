@@ -18,6 +18,7 @@ import {
 import type { BackendModelSelection } from "../../schemas";
 import { validateCursorWorkerModelSelection } from "./model-selection";
 import { createLogger } from "@/lib/logging";
+import { CURSOR_NATIVE_MEMORY_INSTRUCTION } from "../native-memory";
 
 const logger = createLogger("cursor-worker");
 
@@ -764,8 +765,17 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     };
     let run: CursorWorkerRun;
     try {
+      logger.info("cursor-worker.native_memory_policy", {
+        runId: frame.runId,
+        mechanism: "none",
+        instructionDelivery: "user-message",
+        effectiveState: "unknown",
+      });
       run = await current.send(
-        { text: frame.promptText, images: frame.images },
+        {
+          text: `${CURSOR_NATIVE_MEMORY_INSTRUCTION}\n\n${frame.promptText}`,
+          images: frame.images,
+        },
         // Per-send options carry the model, the MCP map, and the force-expiry
         // recovery flag; the rest of the policy was established at attach and
         // is retained by the agent.

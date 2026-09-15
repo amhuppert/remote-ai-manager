@@ -57,6 +57,19 @@ describe("registered backends declare their native-memory disposition", () => {
     expect(byId.get("cursor")?.mechanism).toBe("none");
   });
 
+  it("discloses Cursor's instruction-only memory policy in execution warnings", () => {
+    const cursor = descriptors.find((descriptor) => descriptor.id === "cursor");
+    expect(cursor?.nativeMemory.mechanism).toBe("none");
+    if (cursor?.nativeMemory.mechanism !== "none") return;
+    expect(cursor.nativeMemory.reason).toContain("instruction-only");
+    expect(cursor.metadata.executionWarnings).toContain(
+      cursor.nativeMemory.reason,
+    );
+    expect(getBackendCatalogEntry("cursor").executionWarnings).toContain(
+      cursor.nativeMemory.reason,
+    );
+  });
+
   it("derives the disclosure set from the declarations, naming only the exceptions", () => {
     const exceptions = listNativeMemoryExceptions(
       descriptors.map((d) => ({

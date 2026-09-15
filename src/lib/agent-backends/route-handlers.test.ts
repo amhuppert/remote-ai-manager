@@ -49,7 +49,10 @@ describe("GET /api/agent-backends", () => {
       acceptsWhileRunning: true,
       deliveryTiming: "next_turn",
     });
+    expect(cursor.nativeMemory.mechanism).toBe("none");
+    if (cursor.nativeMemory.mechanism !== "none") return;
     expect(cursor.executionWarnings).toEqual([
+      cursor.nativeMemory.reason,
       "Provider tasks continue within the current turn. Background completion after a turn ends is unavailable; interrupted task outcomes are unknown and are reported when the conversation next runs.",
       "Network and native tool-approval limits are not enforced.",
     ]);

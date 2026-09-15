@@ -480,6 +480,39 @@ describe("cursor worker handshake", () => {
 });
 
 describe("cursor worker attach", () => {
+  it.each(["create", "resume"] as const)(
+    "delivers CC memory authority on every turn after %s without blocking execution",
+    async (mode) => {
+      const harness = createHarness();
+      await handshake(harness);
+      await attach(harness, {
+        mode,
+        ref: mode === "resume" ? "agent-ref-1" : null,
+      });
+      const prompt =
+        "<memory-index>cc-memory-marker</memory-index>\nDo the task.";
+      for (const runId of ["memory-first", "memory-followup"]) {
+        harness.channel.emit(startTurnFrame({ runId, promptText: prompt }));
+        await settle();
+      }
+
+      expect(harness.sdk.agent.sends).toHaveLength(2);
+      for (const { message } of harness.sdk.agent.sends) {
+        expect(message.text).toContain("Use Command Center's shared memory");
+        expect(message.text).toContain(
+          "Do not read or write Cursor-native memories",
+        );
+        expect(message.text).toContain("cctl memory");
+        expect(message.text).not.toContain("This policy is instruction-only");
+        expect(message.text).not.toContain("Do not claim");
+        expect(message.text).toContain(prompt);
+      }
+      expect(
+        harness.channel.ofType("turnSettled").map((frame) => frame.outcome),
+      ).toEqual(["completed", "completed"]);
+    },
+  );
+
   it("passes the full non-persisted option set on create", async () => {
     const harness = createHarness();
     await handshake(harness);

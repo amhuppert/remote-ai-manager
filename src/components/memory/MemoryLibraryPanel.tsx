@@ -319,7 +319,7 @@ function NativeMemoryDisclosure(): React.JSX.Element | null {
               <span className="shrink-0 text-amber" aria-hidden="true">
                 <AlertTriangleIcon size={16} />
               </span>
-              <span>{exception.label} native memory is also active</span>
+              <span>{exception.label} native memory is not disabled</span>
               <ChevronDownIcon
                 size={14}
                 className="ml-auto shrink-0 text-text-secondary group-data-[state=open]:rotate-180"
@@ -327,7 +327,7 @@ function NativeMemoryDisclosure(): React.JSX.Element | null {
             </button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <p className="px-lg pb-md">{exception.reason}.</p>
+            <p className="px-lg pb-md">{exception.reason}</p>
           </CollapsibleContent>
         </Collapsible>
       ))}

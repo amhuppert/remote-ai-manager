@@ -15,7 +15,7 @@
  *    test; the claim is what those tests are about.
  *  - `none` is the honest admission that the SDK surface exposes no such lever.
  *    It is not a waiver: it is what the two disclosure surfaces render, so the
- *    operator knows that backend is running two memory systems at once.
+ *    operator knows that provider memory may coexist with CC memory.
  *
  * The type lives here rather than beside either provider because both the
  * client-safe catalog and the server registry project it, and the disclosure
@@ -40,7 +40,7 @@ export const backendNativeMemorySchema = z.discriminatedUnion("mechanism", [
 ]);
 export type BackendNativeMemory = z.infer<typeof backendNativeMemorySchema>;
 
-/** One backend that keeps its own memory running, and why. */
+/** One backend whose native memory CC cannot disable, and why. */
 export const nativeMemoryExceptionSchema = z.object({
   backend: agentBackendSchema,
   label: z.string(),
@@ -94,5 +94,5 @@ export function renderNativeMemoryDisclosureLine(
   const named = exceptions
     .map((exception) => `${exception.label} (${exception.reason})`)
     .join("; ");
-  return `native memory still running: ${named}`;
+  return `native memory not disabled: ${named}`;
 }

@@ -1084,7 +1084,7 @@ describe("native-memory disclosure", () => {
     for (const exception of exceptions) {
       expect(notice.textContent).toContain(exception.label);
       const disclosure = within(notice).getByRole("button", {
-        name: `${exception.label} native memory is also active`,
+        name: `${exception.label} native memory is not disabled`,
       });
       expect(disclosure).toHaveAttribute("aria-expanded", "false");
       await userEvent.setup().click(disclosure);

@@ -61,6 +61,8 @@ describe("renderNativeMemoryDisclosureLine", () => {
     expect(line).not.toBeNull();
     expect(line).toContain("Cursor");
     expect(line).toContain("the SDK exposes no lever");
+    expect(line).toContain("native memory not disabled:");
+    expect(line).not.toContain("still running");
     // One line: this rides a header, not a paragraph.
     expect(line).not.toContain("\n");
     // A neutralized backend is never named — the notice would stop meaning

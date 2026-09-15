@@ -16,7 +16,10 @@ import type { BackendRuntimeConfigAdapter } from "../runtime-config";
 import type { AgentFailureClassifier } from "../errors";
 import type { AgentTaskRunner } from "../task";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
-import type { BackendNativeMemory } from "../native-memory";
+import {
+  listNativeMemoryExceptions,
+  type BackendNativeMemory,
+} from "../native-memory";
 import { CURSOR_BACKEND_ID } from "./backend-id";
 import { CURSOR_DEFAULT_MODEL } from "./model-policy";
 import { CURSOR_TURN_STALL_TIMEOUT_MS } from "./worker/bounds";
@@ -44,6 +47,23 @@ export const cursorTaskExecution: TaskExecutionPolicy = {
 };
 
 /**
+ * Cursor is the honest exception: nothing in the SDK turns its memories off.
+ * `AgentOptions` carries no memory field, and the only memory switch reachable
+ * anywhere in the package (`memoryDefaultEnabled`) is a field of the
+ * server-delivered feature config the client receives — an embedder cannot set
+ * it. `settingSources: []`, which the Phase 1 worker already passes, suppresses
+ * the ambient RULES layers; it is not a memory lever and is not claimed as one.
+ *
+ * This is a `none` declaration rather than an omission precisely so the two
+ * disclosure surfaces can say it out loud. Revisit when the SDK grows a lever.
+ */
+export const cursorNativeMemory: BackendNativeMemory = {
+  mechanism: "none",
+  reason:
+    "Cursor native memory cannot be disabled or verified through the SDK. CC shared-memory policy is instruction-only; native memory may remain active.",
+};
+
+/**
  * Backend catalog metadata for Cursor.
  *
  * The tone token is Cursor's identity accent in the UI, distinct from Claude's
@@ -55,6 +75,13 @@ export const cursorTaskExecution: TaskExecutionPolicy = {
 export const cursorBackendMetadata: AgentBackendMetadata = {
   label: "Cursor",
   executionWarnings: [
+    ...listNativeMemoryExceptions([
+      {
+        id: CURSOR_BACKEND_ID,
+        label: "Cursor",
+        nativeMemory: cursorNativeMemory,
+      },
+    ]).map(({ reason }) => reason),
     CURSOR_BACKGROUND_WARNING,
     "Network and native tool-approval limits are not enforced.",
   ],
@@ -135,23 +162,6 @@ export const cursorConversationTranscriptProjection: BackendConversationTranscri
  */
 export const cursorConversationFsWriteRestriction = "instruction-only" as const;
 export const cursorTaskFsWriteRestriction = "instruction-only" as const;
-
-/**
- * Cursor is the honest exception: nothing in the SDK turns its memories off.
- * `AgentOptions` carries no memory field, and the only memory switch reachable
- * anywhere in the package (`memoryDefaultEnabled`) is a field of the
- * server-delivered feature config the client receives — an embedder cannot set
- * it. `settingSources: []`, which the Phase 1 worker already passes, suppresses
- * the ambient RULES layers; it is not a memory lever and is not claimed as one.
- *
- * This is a `none` declaration rather than an omission precisely so the two
- * disclosure surfaces can say it out loud. Revisit when the SDK grows a lever.
- */
-export const cursorNativeMemory: BackendNativeMemory = {
-  mechanism: "none",
-  reason:
-    "the Cursor SDK exposes no option that disables its memories; the only memory switch in the package is server-delivered feature config an embedder cannot set",
-};
 
 export interface CursorDescriptorDeps {
   taskRunner: AgentTaskRunner;

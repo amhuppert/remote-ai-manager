@@ -942,7 +942,7 @@ describe("cctl memory index previews one conversation's next turn", () => {
     const result = await runCli(["memory", "index"], makeEnv(), host);
     expect(result.exitCode, result.stderr).toBe(EXIT_OK);
     expect(result.stderr).toContain(expected!);
-    expect(result.stdout).not.toContain("native memory still running");
+    expect(result.stdout).not.toContain("native memory not disabled");
 
     // Still byte-identical to what the turn injects: the disclosure changed
     // nothing about the block.
@@ -966,7 +966,7 @@ describe("cctl memory index previews one conversation's next turn", () => {
 
     expect(result.exitCode, result.stderr).toBe(EXIT_OK);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("native memory still running");
+    expect(result.stderr).toContain("native memory not disabled");
   });
 
   it("carries the exceptions structurally in the --json envelope", async () => {

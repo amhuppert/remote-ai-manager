@@ -17,6 +17,7 @@ import { CURSOR_BACKGROUND_INSTRUCTIONS } from "./background-tasks";
 import { CursorConversationRuntime } from "./conversation-runtime";
 import { translatePortableMcpToCursor } from "./mcp-translation";
 import { CURSOR_DEFAULT_MODEL } from "./model-policy";
+import { CURSOR_NATIVE_MEMORY_INSTRUCTION } from "./native-memory";
 import {
   CURSOR_MCP_FIXTURE_MARKER_VAR,
   CURSOR_MCP_FIXTURE_TOOL,
@@ -72,7 +73,7 @@ const API_KEY = "cursor-key-sentinel-mcp-7c1e";
 const MARKER = "marker-7c1e";
 const PROMPT = "ping-42";
 const EXPECTED_REPLY = cursorMcpFixtureReply(MARKER, PROMPT);
-const EXPECTED_MODEL_MESSAGE = `\`\`\`\n## System Instructions\n${CURSOR_BACKGROUND_INSTRUCTIONS}\n\`\`\`\n\n${PROMPT}`;
+const EXPECTED_MODEL_MESSAGE = `${CURSOR_NATIVE_MEMORY_INSTRUCTION}\n\n\`\`\`\n## System Instructions\n${CURSOR_BACKGROUND_INSTRUCTIONS}\n\`\`\`\n\n${PROMPT}`;
 const FIXTURE_SERVER_ID = "fixture";
 const FIXTURE_QUALIFIED_TOOL = `mcp_${FIXTURE_SERVER_ID}_${CURSOR_MCP_FIXTURE_TOOL}`;
 const MODEL_SELECTION = {
