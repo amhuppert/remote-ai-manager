@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { createClientLogger } from "@/lib/logging/client-logger";
 
 import { buildMessageRefXml } from "@/lib/conversations/message-ref";
 import {
@@ -12,6 +13,8 @@ import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import { TranscriptClipAffordance } from "./TranscriptClipAffordance";
 import type { TranscriptClipDraft } from "./use-transcript-clip-selection";
 import { useClipLanding } from "./use-clip-landing";
+
+const log = createClientLogger("transcript-clip-capture");
 
 export interface TranscriptClipCaptureProps {
   /** The conversation this surface renders — the clip's provenance identity. */
@@ -41,30 +44,37 @@ export default function TranscriptClipCapture({
 
   const handleClip = useCallback(
     (draft: TranscriptClipDraft) => {
-      const artifact = artifacts?.find(
-        (row) =>
-          row.kind === "message_compaction" &&
-          row.messageIndex === draft.messageIndex &&
-          row.status === "complete",
-      );
-      const xml = buildMessageRefXml({
-        projectName: target.projectName,
-        sessionName: target.scope === "session" ? target.sessionName : null,
+      const fragments = draft.messages.map((message) => {
+        const artifact = artifacts?.find(
+          (row) =>
+            row.kind === "message_compaction" &&
+            row.messageIndex === message.messageIndex &&
+            row.status === "complete",
+        );
+        const xml = buildMessageRefXml({
+          projectName: target.projectName,
+          sessionName: target.scope === "session" ? target.sessionName : null,
+          conversationId: target.conversationId,
+          conversationName,
+          messageIndex: message.messageIndex,
+          role: message.role,
+          timestamp: message.timestamp,
+          model: message.model,
+          compaction: artifact
+            ? { artifactId: artifact.id, createdAt: artifact.createdAt }
+            : null,
+        });
+        return {
+          text: message.text,
+          isCode: message.isCode,
+          provenance: { kind: "ref" as const, xml },
+        };
+      });
+      log.debug("clip.capture_requested", {
         conversationId: target.conversationId,
-        conversationName,
-        messageIndex: draft.messageIndex,
-        role: draft.role,
-        timestamp: draft.timestamp,
-        model: draft.model,
-        compaction: artifact
-          ? { artifactId: artifact.id, createdAt: artifact.createdAt }
-          : null,
+        messageIndices: draft.messages.map((message) => message.messageIndex),
       });
-      void land({
-        text: draft.text,
-        isCode: draft.isCode,
-        provenance: { kind: "ref", xml },
-      });
+      void land(fragments);
     },
     [target, conversationName, land, artifacts],
   );

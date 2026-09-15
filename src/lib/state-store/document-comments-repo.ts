@@ -41,6 +41,8 @@ const documentCommentTableRowSchema = registerTrustedSchema(
     section_id: z.string(),
     heading_label: z.string(),
     line: z.number().int(),
+    end_line: z.number().int().nullable(),
+    end_section_id: z.string().nullable(),
     char_start: z.number().int(),
     char_end: z.number().int(),
     quote: z.string(),
@@ -65,6 +67,8 @@ interface SqlBindRow {
   section_id: string;
   heading_label: string;
   line: number;
+  end_line: number | null;
+  end_section_id: string | null;
   char_start: number;
   char_end: number;
   quote: string;
@@ -87,6 +91,8 @@ function documentCommentToSqlBind(comment: DocumentComment): SqlBindRow {
     section_id: comment.anchor.sectionId,
     heading_label: comment.anchor.headingLabel,
     line: comment.anchor.line,
+    end_line: comment.anchor.endBlock?.line ?? null,
+    end_section_id: comment.anchor.endBlock?.sectionId ?? null,
     char_start: comment.anchor.charStart,
     char_end: comment.anchor.charEnd,
     quote: comment.anchor.quote,
@@ -136,6 +142,10 @@ function rowToDomain(rawRow: unknown): DocumentComment {
     (issues) => logAndThrowValidationFailure(fallbackId, issues),
   );
 
+  if ((row.end_line === null) !== (row.end_section_id === null)) {
+    logAndThrowValidationFailure(row.id, "Incomplete passage endpoint");
+  }
+
   const candidate = {
     id: row.id,
     projectPath: row.project_path,
@@ -145,6 +155,9 @@ function rowToDomain(rawRow: unknown): DocumentComment {
       sectionId: row.section_id,
       headingLabel: row.heading_label,
       line: row.line,
+      ...(row.end_line !== null && row.end_section_id !== null
+        ? { endBlock: { line: row.end_line, sectionId: row.end_section_id } }
+        : {}),
       charStart: row.char_start,
       charEnd: row.char_end,
       quote: row.quote,
@@ -211,12 +224,12 @@ export function createDocumentCommentsRepo(db: Db): DocumentCommentsRepo {
   const upsertStmt = db.prepare(
     `INSERT INTO document_comments (
        id, project_path, session_name, doc_path,
-       section_id, heading_label, line, char_start, char_end,
+       section_id, heading_label, line, end_line, end_section_id, char_start, char_end,
        quote, prefix, suffix, doc_revision,
        note, status, created_at, updated_at, sent_at
      ) VALUES (
        @id, @project_path, @session_name, @doc_path,
-       @section_id, @heading_label, @line, @char_start, @char_end,
+       @section_id, @heading_label, @line, @end_line, @end_section_id, @char_start, @char_end,
        @quote, @prefix, @suffix, @doc_revision,
        @note, @status, @created_at, @updated_at, @sent_at
      )
@@ -227,6 +240,8 @@ export function createDocumentCommentsRepo(db: Db): DocumentCommentsRepo {
        section_id    = excluded.section_id,
        heading_label = excluded.heading_label,
        line          = excluded.line,
+       end_line      = excluded.end_line,
+       end_section_id = excluded.end_section_id,
        char_start    = excluded.char_start,
        char_end      = excluded.char_end,
        quote         = excluded.quote,

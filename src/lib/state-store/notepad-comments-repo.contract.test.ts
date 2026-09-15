@@ -118,6 +118,39 @@ async function addComment(
 }
 
 describe("comment creation and anchors", () => {
+  it("reloads a spanning comment and resolves its whole canonical passage", async () => {
+    const content = "First paragraph.\n\n\nSecond paragraph.";
+    const notepad = await createNotepad("Spanning review", content);
+    const passage = anchor({
+      sectionId: "",
+      headingLabel: "",
+      line: 1,
+      endBlock: { line: 4, sectionId: "" },
+      charStart: 0,
+      charEnd: content.length,
+      quote: content,
+      prefix: "",
+      suffix: "",
+    });
+    const comment = await addComment(notepad.id, "Review both paragraphs.", {
+      anchor: passage,
+    });
+    const reloaded = await reader().find(comment.id);
+    expect(reloaded?.anchor).toEqual(passage);
+    if (!reloaded) throw new Error("Comment did not reload");
+    expect(resolveNotepadCommentAnchor(reloaded.anchor, content)).toEqual({
+      state: "anchored",
+      charStart: 0,
+      charEnd: content.length,
+    });
+    expect(
+      resolveNotepadCommentAnchor(
+        reloaded.anchor,
+        content.replace("Second", "Changed"),
+      ),
+    ).toEqual({ state: "stale" });
+  });
+
   it("persists a comment with its full anchor and author attribution", async () => {
     const notepad = await createNotepad();
 
@@ -519,6 +552,7 @@ describe("durability contracts", () => {
           id: "comment-maximal",
           notepadId: notepad.id,
           anchor: {
+            endBlock: { line: 16, sectionId: "details" },
             sectionId: "release-notes",
             headingLabel: "Release notes",
             line: 5,

@@ -1,5 +1,7 @@
 import { markdownTokenSourceSpans } from "@/components/markdown/markdown-source-map";
 import { tryReanchorExact } from "@/lib/document-comments/anchor";
+import { projectMarkdownPassage } from "@/components/markdown/markdown-source-map";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import { notepadChipPartSpans } from "@/lib/notepads/content-parts";
 
 import {
@@ -8,6 +10,8 @@ import {
   resolveNotepadCommentAnchor,
 } from "./comment-anchors";
 import type { NotepadCommentAnchor } from "./schemas";
+
+const log = createClientLogger("notepad-annotation-projection");
 
 /**
  * The bridge between the two coordinate spaces a notepad comment lives in: the
@@ -53,6 +57,7 @@ export interface NotepadSelectionAnchor {
   sectionId: string;
   headingLabel: string;
   line: number;
+  endBlock?: NotepadCommentAnchor["endBlock"];
   charStart: number;
   charEnd: number;
   quote: string;
@@ -177,6 +182,21 @@ export function notepadAnchorFromSelection(
   content: string,
   notepadRevision: number,
 ): NotepadCommentAnchor | null {
+  if (selection.endBlock !== undefined) {
+    const anchor = projectPassageSelection(selection, content, notepadRevision);
+    log.debug(
+      anchor === null
+        ? "notepad.annotation.selection_refused"
+        : "notepad.annotation.selection_projected",
+      {
+        line: selection.line,
+        endLine: selection.endBlock.line,
+        notepadRevision,
+        quoteLength: selection.quote.length,
+      },
+    );
+    return anchor;
+  }
   const blockText = notepadBlockTextAtLine(content, selection.line);
   if (blockText === null) return null;
 
@@ -204,6 +224,50 @@ export function notepadAnchorFromSelection(
   };
 }
 
+function projectPassageSelection(
+  selection: NotepadSelectionAnchor,
+  content: string,
+  notepadRevision: number,
+): NotepadCommentAnchor | null {
+  if (selection.endBlock === undefined) return null;
+  const excluded = notepadNonAnnotatableSpans(content);
+  const projection = projectMarkdownPassage(
+    content,
+    selection.line,
+    selection.endBlock.line,
+    excluded,
+  );
+  if (projection === null) return null;
+  const passageText = content.slice(
+    projection.sourceStart,
+    projection.sourceEnd,
+  );
+  const match = tryReanchorExact(projection.text, selection);
+  if (match.status === "stale") return null;
+  const start = projection.positions[match.charStart];
+  const end = projection.positions[match.charEnd - 1];
+  if (start == null || end == null) return null;
+  if (excluded.some((span) => span.start < end.end && span.end > start.start))
+    return null;
+  const charStart = start.start - projection.sourceStart;
+  const charEnd = end.end - projection.sourceStart;
+  return {
+    sectionId: selection.sectionId,
+    headingLabel: selection.headingLabel,
+    line: selection.line,
+    endBlock: selection.endBlock,
+    charStart,
+    charEnd,
+    quote: passageText.slice(charStart, charEnd),
+    prefix: passageText.slice(
+      Math.max(0, charStart - NOTEPAD_ANCHOR_CONTEXT_CHARS),
+      charStart,
+    ),
+    suffix: passageText.slice(charEnd, charEnd + NOTEPAD_ANCHOR_CONTEXT_CHARS),
+    notepadRevision,
+  };
+}
+
 /**
  * A stored anchor restated over its block's annotatable text — the coordinates
  * the rendered view paints in. Resolution runs first through the one canonical
@@ -214,7 +278,34 @@ export function notepadAnchorFromSelection(
 export function notepadAnchorInAnnotatableSpace(
   anchor: NotepadCommentAnchor,
   content: string,
-): NotepadTextSpan | null {
+): (NotepadTextSpan & { quote?: string }) | null {
+  if (anchor.endBlock !== undefined) {
+    const resolution = resolveNotepadCommentAnchor(anchor, content);
+    if (resolution.state === "stale") return null;
+    const excluded = notepadNonAnnotatableSpans(content);
+    const projection = projectMarkdownPassage(
+      content,
+      anchor.line,
+      anchor.endBlock.line,
+      excluded,
+    );
+    if (projection === null) return null;
+    const sourceStart = projection.sourceStart + resolution.charStart;
+    const sourceEnd = projection.sourceStart + resolution.charEnd;
+    if (
+      excluded.some((span) => span.start < sourceEnd && span.end > sourceStart)
+    )
+      return null;
+    const start = projection.positions.findIndex(
+      (position) => position?.start === sourceStart,
+    );
+    const last = projection.positions.findLastIndex(
+      (position) => position?.end === sourceEnd,
+    );
+    if (start < 0 || last < start) return null;
+    const end = last + 1;
+    return { start, end, quote: projection.text.slice(start, end) };
+  }
   const blockText = notepadBlockTextAtLine(content, anchor.line);
   if (blockText === null) return null;
 

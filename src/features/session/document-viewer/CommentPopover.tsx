@@ -110,7 +110,7 @@ export default function CommentPopover({
       }
       className="flex max-h-[var(--radix-popover-content-available-height)] w-[320px] max-w-[calc(100vw-16px)] min-w-0 flex-col gap-sm overflow-y-auto overscroll-contain rounded-md border border-solid border-border-default bg-bg-elevated p-md shadow-menu"
     >
-      <blockquote className="m-0 max-h-[88px] min-w-0 overflow-y-auto overscroll-contain border-x-0 border-y-0 border-l border-solid border-l-cyan bg-bg-raised px-sm py-xs font-mono text-[0.78rem] leading-[1.5] [overflow-wrap:anywhere] text-text-secondary">
+      <blockquote className="m-0 max-h-[88px] min-w-0 overflow-y-auto overscroll-contain border-x-0 border-y-0 border-l border-solid border-l-cyan bg-bg-raised px-sm py-xs font-mono text-[0.78rem] leading-[1.5] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-secondary">
         {anchor.quote}
       </blockquote>
       <MultilineInput

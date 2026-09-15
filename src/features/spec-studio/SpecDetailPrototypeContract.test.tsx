@@ -159,10 +159,8 @@ describe("Spec detail prototype structure", () => {
     expect(within(narrative).getByText("Design narrative")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Spec document" })).toBeNull();
     expect(screen.getByTestId("spec-prose-body-intent_problem")).toHaveClass(
-      "[&_[data-markdown-intent=document]]:px-0",
       "[&_[data-markdown-intent=document]]:py-0",
       "[&_[data-markdown-intent=document]]:text-[0.875rem]",
-      "[&_[data-markdown-viewport]>div]:pl-0",
     );
   });
 

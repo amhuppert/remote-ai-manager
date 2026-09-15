@@ -81,6 +81,16 @@ describe("commentStatusSchema", () => {
 });
 
 describe("commentAnchorSchema", () => {
+  it("preserves the endpoint of a passage spanning rendered blocks", () => {
+    const spanning = {
+      ...maximalAnchor(),
+      endBlock: { line: 48, sectionId: "details" },
+      charEnd: 40,
+      quote: "First paragraph.\n\nSecond paragraph.",
+    };
+    expect(commentAnchorSchema.parse(spanning)).toEqual(spanning);
+  });
+
   it("parses a maximal anchor", () => {
     expect(commentAnchorSchema.parse(maximalAnchor())).toEqual(maximalAnchor());
   });

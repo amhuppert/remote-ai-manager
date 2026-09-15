@@ -50,13 +50,13 @@ function markdownRoot(container: HTMLElement, intent: MarkdownIntent) {
 // budget that is milliseconds when the file runs alone. Resolving the same
 // specifiers once here pays that cost against an explicit hook budget and
 // leaves the per-test waits measuring what they actually assert.
+// The CJS root must finish before its ESM entries load their shared refractor
+// graph, matching the production highlight loader's import order.
 beforeAll(async () => {
-  await Promise.all([
-    import("./MarkdownRenderer"),
-    import("react-syntax-highlighter"),
-    import("react-syntax-highlighter/dist/esm/languages/prism/typescript"),
-    import("react-syntax-highlighter/dist/esm/styles/prism"),
-  ]);
+  await import("./MarkdownRenderer");
+  await import("react-syntax-highlighter");
+  await import("react-syntax-highlighter/dist/esm/languages/prism/typescript");
+  await import("react-syntax-highlighter/dist/esm/styles/prism");
 }, 120_000);
 
 afterEach(() => {

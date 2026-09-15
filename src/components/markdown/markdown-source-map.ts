@@ -1,4 +1,6 @@
 import type { Element, Nodes, Root } from "hast";
+import { decodeString } from "micromark-util-decode-string";
+import remarkRehype from "remark-rehype";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
@@ -194,4 +196,235 @@ export function resolveSelectionBlock(range: Range): HTMLElement | null {
 export function resolveSelectionMeta(range: Range): BlockMeta | null {
   const block = resolveSelectionBlock(range);
   return block ? blockMetaFromElement(block) : null;
+}
+
+const parser = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeStampSourcePosition);
+
+interface TextRun {
+  owner: Element;
+  text: string;
+  positions: (MarkdownSourceSpan | null)[];
+}
+
+export interface MarkdownPassageProjection {
+  sectionId: string;
+  endSectionId: string;
+  text: string;
+  /** Absolute source coordinates; synthetic block separators have no source. */
+  positions: (MarkdownSourceSpan | null)[];
+  sourceStart: number;
+  sourceEnd: number;
+}
+
+/**
+ * Source coordinates for rendered literal text. Node positions bound each
+ * search, so repeated text elsewhere in the document can never capture an
+ * endpoint. Lines are mapped separately because blockquote and indented-code
+ * markers exist in source between rendered lines.
+ */
+function literalPositions(
+  text: string,
+  content: string,
+  start: number | undefined,
+  end: number | undefined,
+  decode = true,
+): (MarkdownSourceSpan | null)[] {
+  const unmapped = (): null[] =>
+    Array.from({ length: text.length }, () => null);
+  if (start === undefined || end === undefined) return unmapped();
+  const raw = content.slice(start, end);
+  const sourcePositions: MarkdownSourceSpan[] = [];
+  let source = "";
+  const append = (value: string, offset: number, width: number): void => {
+    source += value;
+    for (let index = 0; index < value.length; index++) {
+      sourcePositions.push({
+        start: start + offset,
+        end: start + offset + width,
+      });
+    }
+  };
+  const tokens = /\\.|&(?:#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]+);/g;
+  let rawOffset = 0;
+  for (const match of decode ? raw.matchAll(tokens) : []) {
+    for (; rawOffset < match.index; rawOffset++)
+      append(raw[rawOffset] ?? "", rawOffset, 1);
+    const value = decodeString(match[0]);
+    if (value === match[0]) {
+      for (let index = 0; index < value.length; index++)
+        append(value[index] ?? "", rawOffset + index, 1);
+    } else {
+      append(value, rawOffset, match[0].length);
+    }
+    rawOffset += match[0].length;
+  }
+  for (; rawOffset < raw.length; rawOffset++)
+    append(raw[rawOffset] ?? "", rawOffset, 1);
+  const positions: (MarkdownSourceSpan | null)[] = [];
+  let cursor = 0;
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? "";
+    const found = source.indexOf(line, cursor);
+    if (found < cursor || found + line.length > source.length)
+      return unmapped();
+    for (let offset = 0; offset < line.length; offset++) {
+      positions.push(sourcePositions[found + offset] ?? null);
+    }
+    cursor = found + line.length;
+    if (index === lines.length - 1) continue;
+    const newline = source.indexOf("\n", cursor);
+    if (newline < 0) return unmapped();
+    positions.push(sourcePositions[newline] ?? null);
+    cursor = newline + 1;
+  }
+  return positions;
+}
+
+function lineOf(owner: Element): number {
+  return Number(owner.properties[CC_LINE_ATTR]);
+}
+
+function hasStampedDescendant(element: Element): boolean {
+  return element.children.some(
+    (child) =>
+      child.type === "element" &&
+      (child.properties[CC_LINE_ATTR] !== undefined ||
+        hasStampedDescendant(child)),
+  );
+}
+
+function sourceLineStart(content: string, line: number): number {
+  let offset = 0;
+  for (let index = 1; index < line; index++) {
+    const newline = content.indexOf("\n", offset);
+    if (newline < 0) return content.length;
+    offset = newline + 1;
+  }
+  return offset;
+}
+
+/**
+ * The same stamped-block text stream the annotation DOM measures, projected
+ * from Markdown source. Owner transitions contribute two newlines, independent
+ * of the source's blank-line count. A position can be unavailable for generated
+ * text; callers needing canonical endpoints must refuse those positions.
+ */
+export function projectMarkdownPassage(
+  content: string,
+  startLine: number,
+  endLine: number,
+  excluded: readonly MarkdownSourceSpan[] = [],
+): MarkdownPassageProjection | null {
+  const tree = parser.runSync(parser.parse(content));
+  const runs: TextRun[] = [];
+
+  const visit = (
+    node: Nodes,
+    owner: Element | null,
+    literalCode = false,
+  ): void => {
+    if (node.type === "element") {
+      const nextOwner =
+        node.properties[CC_LINE_ATTR] === undefined ? owner : node;
+      if (node.tagName === "pre") {
+        const code = node.children.find(
+          (child) => child.type === "element" && child.tagName === "code",
+        );
+        const literal = code?.type === "element" ? code.children[0] : undefined;
+        if (literal?.type === "text" && nextOwner !== null) {
+          const text = literal.value.replace(/\n$/, "");
+          const start = node.position?.start.offset;
+          const codeStart =
+            start !== undefined &&
+            /^ {0,3}(?:`{3,}|~{3,})/.test(content.slice(start))
+              ? content.indexOf("\n", start) + 1
+              : start;
+          append(
+            nextOwner,
+            text,
+            literalPositions(
+              text,
+              content,
+              codeStart,
+              node.position?.end.offset,
+              false,
+            ),
+          );
+          return;
+        }
+      }
+      for (const child of node.children)
+        visit(child, nextOwner, literalCode || node.tagName === "code");
+      return;
+    }
+    if (node.type === "root") {
+      for (const child of node.children) visit(child, owner);
+      return;
+    }
+    if ((node.type !== "text" && node.type !== "raw") || owner === null) return;
+    if (node.value.trim() === "" && hasStampedDescendant(owner)) return;
+    const positions = literalPositions(
+      node.value,
+      content,
+      node.position?.start.offset,
+      node.position?.end.offset,
+      !literalCode && node.type !== "raw",
+    );
+    append(owner, node.value, positions);
+  };
+
+  const append = (
+    owner: Element,
+    text: string,
+    positions: (MarkdownSourceSpan | null)[],
+  ): void => {
+    let kept = "";
+    const mapped: (MarkdownSourceSpan | null)[] = [];
+    for (let index = 0; index < text.length; index++) {
+      const position = positions[index] ?? null;
+      if (
+        position !== null &&
+        excluded.some(
+          (span) => position.start < span.end && position.end > span.start,
+        )
+      )
+        continue;
+      kept += text[index] ?? "";
+      mapped.push(position);
+    }
+    if (kept === "") return;
+    const previous = runs.at(-1);
+    if (previous?.owner === owner) {
+      previous.text += kept;
+      previous.positions.push(...mapped);
+      return;
+    }
+    runs.push({ owner, text: kept, positions: mapped });
+  };
+
+  visit(tree, null);
+  const start = runs.findIndex((run) => lineOf(run.owner) === startLine);
+  const end = runs.findLastIndex((run) => lineOf(run.owner) === endLine);
+  if (start < 0 || end < start) return null;
+  const selected = runs.slice(start, end + 1);
+  const last = selected.at(-1);
+  if (last === undefined) return null;
+  const positions: (MarkdownSourceSpan | null)[] = [];
+  for (const [index, run] of selected.entries()) {
+    if (index > 0) positions.push(null, null);
+    positions.push(...run.positions);
+  }
+  return {
+    sectionId: String(selected[0]?.owner.properties[CC_SECTION_ATTR] ?? ""),
+    endSectionId: String(last.owner.properties[CC_SECTION_ATTR] ?? ""),
+    text: selected.map((run) => run.text).join("\n\n"),
+    positions,
+    sourceStart: sourceLineStart(content, startLine),
+    sourceEnd: last.owner.position?.end.offset ?? content.length,
+  };
 }

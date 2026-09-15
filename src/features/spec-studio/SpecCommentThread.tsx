@@ -198,7 +198,7 @@ export default function SpecCommentThread({
       ) : null}
 
       {thread.root.quote ? (
-        <blockquote className="my-sm border-x-0 border-y-0 border-l border-solid border-l-cyan-dim pl-sm font-mono text-[0.78rem] leading-relaxed text-text-secondary italic">
+        <blockquote className="my-sm border-x-0 border-y-0 border-l border-solid border-l-cyan-dim pl-sm font-mono text-[0.78rem] leading-relaxed whitespace-pre-wrap text-text-secondary italic">
           “{thread.root.quote}”
         </blockquote>
       ) : null}

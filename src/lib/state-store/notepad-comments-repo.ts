@@ -115,6 +115,8 @@ const notepadCommentsTableRowSchema = registerTrustedSchema(
     section_id: z.string(),
     heading_label: z.string(),
     line: z.number().int(),
+    end_line: z.number().int().nullable(),
+    end_section_id: z.string().nullable(),
     char_start: z.number().int(),
     char_end: z.number().int(),
     quote: z.string(),
@@ -190,6 +192,15 @@ function rowToComment(rawRow: unknown): NotepadComment {
   const row = parseTrusted(notepadCommentsTableRowSchema, rawRow, (issues) =>
     logAndThrowValidationFailure("notepad_comment", "<row>", issues),
   );
+  if ((row.end_line === null) !== (row.end_section_id === null)) {
+    logAndThrowValidationFailure("notepad_comment", row.id, [
+      {
+        code: "custom",
+        path: ["end_line"],
+        message: "Incomplete passage endpoint",
+      },
+    ]);
+  }
   return parseTrusted(
     notepadCommentSchema,
     {
@@ -199,6 +210,9 @@ function rowToComment(rawRow: unknown): NotepadComment {
         sectionId: row.section_id,
         headingLabel: row.heading_label,
         line: row.line,
+        ...(row.end_line !== null && row.end_section_id !== null
+          ? { endBlock: { line: row.end_line, sectionId: row.end_section_id } }
+          : {}),
         charStart: row.char_start,
         charEnd: row.char_end,
         quote: row.quote,
@@ -278,11 +292,11 @@ export function createNotepadCommentsRepo(
     .pluck();
   const insertCommentStmt = db.prepare(
     `INSERT INTO notepad_comments
-       (id, notepad_id, section_id, heading_label, line, char_start, char_end,
+       (id, notepad_id, section_id, heading_label, line, end_line, end_section_id, char_start, char_end,
         quote, prefix, suffix, notepad_revision, body, status, author_kind,
         author_conversation_id, created_at, updated_at, resolved_at)
      VALUES
-       (@id, @notepad_id, @section_id, @heading_label, @line, @char_start,
+       (@id, @notepad_id, @section_id, @heading_label, @line, @end_line, @end_section_id, @char_start,
         @char_end, @quote, @prefix, @suffix, @notepad_revision, @body, 'open',
         @author_kind, @author_conversation_id, @created_at, @created_at, NULL)`,
   );
@@ -354,6 +368,8 @@ export function createNotepadCommentsRepo(
         section_id: input.anchor.sectionId,
         heading_label: input.anchor.headingLabel,
         line: input.anchor.line,
+        end_line: input.anchor.endBlock?.line ?? null,
+        end_section_id: input.anchor.endBlock?.sectionId ?? null,
         char_start: input.anchor.charStart,
         char_end: input.anchor.charEnd,
         quote: input.anchor.quote,

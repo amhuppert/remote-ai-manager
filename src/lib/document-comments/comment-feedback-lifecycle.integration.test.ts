@@ -225,14 +225,19 @@ describe("document comment + feedback lifecycle (real store)", () => {
   // create / edit / delete + full-field round-trip durability
   // -------------------------------------------------------------------------
 
-  it("creates, edits, and deletes a comment, round-tripping every field through SQLite", async () => {
+  it("creates, edits, and deletes a spanning comment, round-tripping every field through SQLite", async () => {
     const api = commentApi(
       createDocumentCommentsRouteHandlers(commentDeps(fx, ["c1"])),
     );
+    const passage = anchor({
+      endBlock: { line: 16, sectionId: "details" },
+      quote: "selected words\n\nAnother paragraph.",
+      charEnd: 38,
+    });
 
     const created = await api.create(DOC_SESSION, {
       docPath: DOC_PATH,
-      anchor: anchor(),
+      anchor: passage,
       note: "tighten this heading",
     });
     expect(created.status).toBe(201);
@@ -249,7 +254,7 @@ describe("document comment + feedback lifecycle (real store)", () => {
       projectPath: PROJECT_PATH,
       sessionName: DOC_SESSION,
       docPath: DOC_PATH,
-      anchor: anchor(),
+      anchor: passage,
       note: "tighten this heading",
       status: "pending",
       createdAt: NOW,
@@ -269,6 +274,7 @@ describe("document comment + feedback lifecycle (real store)", () => {
     );
     expect(afterEdit?.note).toBe("reworded note");
     expect(afterEdit?.status).toBe("pending");
+    expect(afterEdit?.anchor).toEqual(passage);
 
     // Delete it.
     const removed = await api.remove(DOC_SESSION, "c1");

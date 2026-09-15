@@ -1792,6 +1792,8 @@ export const NOTEPAD_COMMENTS_SCHEMA_DDL = `
     section_id             TEXT NOT NULL,
     heading_label          TEXT NOT NULL,
     line                   INTEGER NOT NULL,
+    end_line               INTEGER,
+    end_section_id         TEXT,
     char_start             INTEGER NOT NULL,
     char_end               INTEGER NOT NULL,
     quote                  TEXT NOT NULL,
@@ -2649,6 +2651,8 @@ const SCHEMA_DDL = `
     section_id    TEXT NOT NULL,
     heading_label TEXT NOT NULL,
     line          INTEGER NOT NULL,
+    end_line      INTEGER,
+    end_section_id TEXT,
     char_start    INTEGER NOT NULL,
     char_end      INTEGER NOT NULL,
     quote         TEXT NOT NULL,
@@ -3027,6 +3031,10 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   column: string;
   type: string;
 }> = [
+  { table: "document_comments", column: "end_line", type: "INTEGER" },
+  { table: "document_comments", column: "end_section_id", type: "TEXT" },
+  { table: "notepad_comments", column: "end_line", type: "INTEGER" },
+  { table: "notepad_comments", column: "end_section_id", type: "TEXT" },
   { table: "conversations", column: "pending_prompt_text", type: "TEXT" },
   { table: "conversations", column: "checkpoint_fork", type: "TEXT" },
   { table: "project_conversations", column: "checkpoint_fork", type: "TEXT" },

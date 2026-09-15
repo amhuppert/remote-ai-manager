@@ -57,6 +57,15 @@ export function notepadAnnotationSources(
     if (rendered === null) return [];
     const { notepadRevision, ...anchor } = comment.anchor;
     const block = stamped.get(anchor.line);
+    const endBlock =
+      anchor.endBlock === undefined
+        ? undefined
+        : {
+            ...anchor.endBlock,
+            sectionId:
+              stamped.get(anchor.endBlock.line)?.sectionId ??
+              anchor.endBlock.sectionId,
+          };
     return [
       {
         id: comment.id,
@@ -64,8 +73,10 @@ export function notepadAnnotationSources(
           ...anchor,
           sectionId: block?.sectionId ?? anchor.sectionId,
           headingLabel: block?.headingLabel ?? anchor.headingLabel,
+          ...(endBlock === undefined ? {} : { endBlock }),
           charStart: rendered.start,
           charEnd: rendered.end,
+          quote: rendered.quote ?? anchor.quote,
           docRevision: String(notepadRevision),
         },
         tone:

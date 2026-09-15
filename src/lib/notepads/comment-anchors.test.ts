@@ -44,6 +44,29 @@ function anchorFor(
 }
 
 describe("resolveNotepadCommentAnchor", () => {
+  it("anchors a passage across paragraphs including their canonical separation", () => {
+    const blocks = "The migration lands.\n\n\nConfirm the backfill.";
+    const anchor = anchorFor(
+      blocks,
+      "migration lands.\n\n\nConfirm the backfill",
+      {
+        endBlock: { line: 6, sectionId: "release-notes" },
+      },
+    );
+
+    expect(resolveNotepadCommentAnchor(anchor, documentWith(blocks))).toEqual({
+      state: "anchored",
+      charStart: anchor.charStart,
+      charEnd: anchor.charEnd,
+    });
+    expect(
+      resolveNotepadCommentAnchor(
+        anchor,
+        documentWith(blocks.replace("lands", "waits")),
+      ),
+    ).toEqual({ state: "stale" });
+  });
+
   it("anchors an unchanged passage at its stored offsets", () => {
     const anchor = anchorFor(PARAGRAPH, "migration");
 

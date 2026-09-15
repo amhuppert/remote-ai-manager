@@ -71,7 +71,7 @@ afterEach(() => {
 /** A transcript-shaped DOM carrying MessageRow's clip-source stamps. */
 function TranscriptFixture(): React.JSX.Element {
   return (
-    <div data-testid="surface-root">
+    <div className="conversation" data-testid="surface-root">
       <div className="message">
         <div
           className="message-content"
@@ -85,6 +85,17 @@ function TranscriptFixture(): React.JSX.Element {
             <code>const answer = 42;</code>
           </pre>
         </div>
+      </div>
+      <div className="message">
+        <div className="message-role">You · 10:01</div>
+        <div
+          className="message-content"
+          data-clip-index="1"
+          data-clip-role="user"
+        >
+          <p data-testid="prose-1">Bravo message text.</p>
+        </div>
+        <button type="button">Copy reference</button>
       </div>
     </div>
   );
@@ -215,6 +226,35 @@ describe("TranscriptClipCapture — selection landing", () => {
     await waitFor(() => expect(appendBodies()).toHaveLength(1));
     const body = appendBodies()[0] as { content: string };
     expect(body.content.startsWith("```\nconst answer\n```")).toBe(true);
+  });
+
+  it("lands a cross-message selection once with each message reference and one confirmation", async () => {
+    renderCapture();
+    const range = document.createRange();
+    range.setStart(screen.getByTestId("prose-0").firstChild!, 6);
+    range.setEnd(screen.getByTestId("prose-1").firstChild!, 5);
+    selectAndClip(range);
+
+    await waitFor(() => expect(appendBodies()).toHaveLength(1));
+    const body = appendBodies()[0] as { content: string };
+    const refs = findMessageRefs(body.content);
+    expect(refs.map((ref) => ref.attrs["message-index"])).toEqual(["0", "1"]);
+    expect(refs.map((ref) => ref.attrs.role)).toEqual(["assistant", "user"]);
+    expect(body.content).toBe(
+      [
+        buildClipFragment({
+          text: "prose worth clipping.\n\nconst answer = 42;",
+          isCode: false,
+          provenance: { kind: "ref", xml: refs[0]!.raw },
+        }),
+        buildClipFragment({
+          text: "Bravo",
+          isCode: false,
+          provenance: { kind: "ref", xml: refs[1]!.raw },
+        }),
+      ].join("\n\n"),
+    );
+    expect(useToastStoreForTesting.getState().toasts).toHaveLength(1);
   });
 
   it("ignores selections outside its surface root", () => {

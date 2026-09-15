@@ -135,6 +135,133 @@ describe("projectNotepadBlock", () => {
 });
 
 describe("notepadAnchorFromSelection", () => {
+  it.each([
+    {
+      source: "A &amp; B \\*literal\\*.\n\nAfter.",
+      rendered: "A & B *literal*.\n\nAfter.",
+    },
+    {
+      source: "Use `code` here.\n\nAfter.",
+      rendered: "Use code here.\n\nAfter.",
+    },
+    {
+      source: "Before.\n\n## Plan\n\n- alpha\n- beta\n\nAfter.",
+      rendered: "Before.\n\nPlan\n\nalpha\n\nbeta\n\nAfter.",
+    },
+    {
+      source: "Before.\n\n- Parent\n  - Child\n- Sibling\n\nAfter.",
+      rendered: "Before.\n\nParent\n\nChild\n\nSibling\n\nAfter.",
+    },
+    {
+      source:
+        "Before.\n\n```ts\nconst alpha = 1;\n\nconst beta = 2;\n```\n\nAfter.",
+      rendered: "Before.\n\nconst alpha = 1;\n\nconst beta = 2;\n\nAfter.",
+    },
+    {
+      source: "Before.\n\n> Quoted.\n> Continued.\n\nAfter.",
+      rendered: "Before.\n\nQuoted.\nContinued.\n\nAfter.",
+    },
+  ])(
+    "round trips a passage through Markdown blocks: $source",
+    ({ source, rendered }) => {
+      const selection = {
+        ...selectionOf(rendered, rendered, 3),
+        endBlock: { line: source.split("\n").length + 2, sectionId: "plan" },
+      };
+      const content = documentWith(source);
+      const anchor = notepadAnchorFromSelection(selection, content, 8);
+      expect(anchor?.quote).toBe(source);
+      if (anchor === null)
+        throw new Error("selection did not produce an anchor");
+      expect(notepadAnchorInAnnotatableSpace(anchor, content)).toEqual({
+        start: 0,
+        end: rendered.length,
+        quote: rendered,
+      });
+    },
+  );
+
+  it("projects a multi-paragraph selection onto its exact canonical passage", () => {
+    const source = "The **migration** lands.\n\n\nConfirm the backfill.";
+    const rendered = "The migration lands.\n\nConfirm the backfill.";
+    const quote = "migration lands.\n\nConfirm the backfill";
+    const selection = {
+      ...selectionOf(rendered, quote, 3),
+      endBlock: { line: 6, sectionId: "release-notes" },
+    };
+    const canonicalQuote = "migration** lands.\n\n\nConfirm the backfill";
+
+    const anchor = notepadAnchorFromSelection(
+      selection,
+      documentWith(source),
+      7,
+    );
+    expect(anchor).toMatchObject({
+      line: 3,
+      endBlock: selection.endBlock,
+      charStart: source.indexOf("migration"),
+      charEnd: source.indexOf("migration") + canonicalQuote.length,
+      quote: canonicalQuote,
+      notepadRevision: 7,
+    });
+    if (anchor === null) throw new Error("selection did not produce an anchor");
+    expect(
+      notepadAnchorInAnnotatableSpace(anchor, documentWith(source)),
+    ).toEqual({
+      start: selection.charStart,
+      end: selection.charEnd,
+      quote,
+    });
+  });
+
+  it("maps a passage starting inside a code block past its fence language", () => {
+    const source = "```ts\nts\n```\n\nAfter.";
+    const rendered = "ts\n\nAfter.";
+    const selection = {
+      ...selectionOf(rendered, rendered, 3),
+      endBlock: { line: 7, sectionId: "release-notes" },
+    };
+    const anchor = notepadAnchorFromSelection(
+      selection,
+      documentWith(source),
+      7,
+    );
+    expect(anchor).toMatchObject({ charStart: 6, quote: "ts\n```\n\nAfter." });
+  });
+
+  it("maps a passage beginning inside inline code", () => {
+    const source = "Use `code` here.\n\nAfter.";
+    const rendered = "Use code here.\n\nAfter.";
+    const selection = {
+      ...selectionOf(rendered, "code here.\n\nAfter.", 3),
+      endBlock: { line: 5, sectionId: "release-notes" },
+    };
+    const anchor = notepadAnchorFromSelection(
+      selection,
+      documentWith(source),
+      7,
+    );
+    expect(anchor).toMatchObject({
+      charStart: 5,
+      quote: "code` here.\n\nAfter.",
+    });
+  });
+
+  it("refuses a multi-block passage across a reference chip", () => {
+    const source = `Before.\n\nSee ${REF_XML}.\n\nAfter.`;
+    const selection = {
+      ...selectionOf(
+        "Before.\n\nSee .\n\nAfter.",
+        "Before.\n\nSee .\n\nAfter.",
+        3,
+      ),
+      endBlock: { line: 7, sectionId: "release-notes" },
+    };
+    expect(
+      notepadAnchorFromSelection(selection, documentWith(source), 7),
+    ).toBeNull();
+  });
+
   it("keeps the selected offsets when the rendered block matches the canonical one", () => {
     const content = documentWith(PARAGRAPH);
     const selection = selectionOf(PARAGRAPH, "backfill", 3);

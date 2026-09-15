@@ -52,7 +52,7 @@ export default function CommentGutterPin({
       aria-label={title}
       style={{ top }}
       className={cn(
-        "pointer-events-auto absolute left-[14px] inline-flex min-h-[24px] min-w-[24px] -translate-y-[2px] cursor-pointer items-center justify-center gap-[2px] rounded-md border border-solid px-[5px] font-mono text-[0.62rem] leading-none font-bold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan max-768:min-h-[44px] max-768:min-w-[44px]",
+        "pointer-events-auto absolute left-[14px] inline-flex min-h-[24px] min-w-[24px] -translate-y-[2px] cursor-pointer items-center justify-center gap-[2px] rounded-md border border-solid px-[5px] font-mono text-[0.62rem] leading-none font-bold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan max-768:left-0 max-768:min-h-[44px] max-768:min-w-[44px]",
         tone === "settled"
           ? "border-green-dim bg-green-glow text-green"
           : "border-cyan bg-cyan-glow text-cyan",

@@ -139,11 +139,11 @@ export const notepadCommentStatusSchema = z.enum(["open", "resolved"]);
 export type NotepadCommentStatus = z.infer<typeof notepadCommentStatusSchema>;
 
 /**
- * The block-scoped anchor document comments already use
+ * The passage anchor document comments already use
  * (`commentAnchorSchema`), with one substitution: the notepad's integer
  * revision stands in for that domain's content hash, because the revision
- * counter is the version every other notepad surface states. Scope is a SINGLE
- * block — one `sectionId` + `line`, with offsets into that block's text — and
+ * counter is the version every other notepad surface states. `endBlock` bounds
+ * passages spanning blocks; offsets address the canonical source span, and
  * `prefix`/`suffix` are stored context that exact-match re-anchoring does not
  * consult.
  *
@@ -157,6 +157,12 @@ export const notepadCommentAnchorSchema = registerTrustedSchema(
     sectionId: z.string(),
     headingLabel: z.string(),
     line: z.number().int().positive(),
+    endBlock: z
+      .object({
+        line: z.number().int().positive(),
+        sectionId: z.string(),
+      })
+      .optional(),
     charStart: z.number().int().nonnegative(),
     charEnd: z.number().int().nonnegative(),
     quote: z.string(),

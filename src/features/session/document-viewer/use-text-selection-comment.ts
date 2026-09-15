@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useState, type RefObject } from "react";
 import type { CommentAnchor } from "@/lib/document-comments/schemas";
 import { deriveAnchorFromSelection, findCommentBlock } from "./anchor-dom";
+import { createClientLogger } from "@/lib/logging/client-logger";
 
-/** A pending single-block selection: its derived anchor + viewport rect. */
+const logger = createClientLogger("text-selection-comment");
+
+/** A pending selection: its derived anchor + viewport rect. */
 export interface SelectionDraft {
   anchor: CommentAnchor;
   /** Selection bounding rect (viewport coordinates) for popover placement. */
@@ -25,16 +28,18 @@ function sameAnchor(a: CommentAnchor, b: CommentAnchor): boolean {
     a.sectionId === b.sectionId &&
     a.charStart === b.charStart &&
     a.charEnd === b.charEnd &&
+    a.endBlock?.line === b.endBlock?.line &&
+    a.endBlock?.sectionId === b.endBlock?.sectionId &&
     a.quote === b.quote
   );
 }
 
 /**
  * Bridges in-document text selection to the comment popover. On each completed
- * selection within the rendered content it derives a single-block anchor (exact
+ * selection within the rendered content it derives a passage anchor (exact
  * quote + section/heading/line) and exposes it as a draft. A selection that
- * spans more than one block — or resolves to no block — yields no draft, so no
- * comment affordance is offered (single-block scope, 5.1). `clear` dismisses the
+ * leaves the host or resolves to no annotatable text yields no draft.
+ * `clear` dismisses the
  * draft and collapses the selection (cancel / outside-click / after create).
  *
  * Re-deriving the identical selection returns the SAME draft object so opening
@@ -63,11 +68,12 @@ export function useTextSelectionComment(
         !contentEl.contains(range.startContainer) ||
         !contentEl.contains(range.endContainer)
       ) {
+        setDraft(null);
         return;
       }
-      const anchor = deriveAnchorFromSelection(range, content);
+      const anchor = deriveAnchorFromSelection(range, content, contentEl);
       if (!anchor) {
-        // cross-block / collapsed / unmappable selection — no affordance
+        logger.debug("annotation.selection.rejected", { reason: "unmappable" });
         setDraft(null);
         return;
       }
@@ -77,6 +83,11 @@ export function useTextSelectionComment(
         return;
       }
       const rect = range.getBoundingClientRect();
+      logger.debug("annotation.selection.derived", {
+        line: anchor.line,
+        endLine: anchor.endBlock?.line ?? anchor.line,
+        quoteLength: anchor.quote.length,
+      });
       setDraft((prev) =>
         prev && sameAnchor(prev.anchor, anchor)
           ? prev

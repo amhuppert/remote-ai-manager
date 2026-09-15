@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { getOpenNotepadClipTarget } from "@/components/notepad/open-editor-registry";
 import { ApiCallError } from "@/lib/api/errors";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import { trimAppendedNotepadContent } from "@/lib/notepads/append-composition";
 import {
   resolveCaptureDestination,
@@ -23,6 +24,7 @@ import { pushToast } from "@/stores/toast.store";
 const UNDO_REFUSED_MESSAGE =
   "Can't undo — the notepad changed since the clip landed";
 const UNDO_FAILED_MESSAGE = "Undo failed — the notepad could not be updated";
+const log = createClientLogger("clip-landing");
 
 /**
  * Lands a clip from either transcript entry point (selection or whole-message)
@@ -36,7 +38,7 @@ const UNDO_FAILED_MESSAGE = "Undo failed — the notepad could not be updated";
  * is still the content tail).
  */
 export function useClipLanding(projectName: string): {
-  land(input: ClipFragmentInput): Promise<void>;
+  land(input: ClipFragmentInput | ClipFragmentInput[]): Promise<void>;
 } {
   const queryClient = useQueryClient();
   const landCapture = useLandCaptureMutation();
@@ -93,8 +95,10 @@ export function useClipLanding(projectName: string): {
   );
 
   const land = useCallback(
-    async (input: ClipFragmentInput): Promise<void> => {
-      const fragment = buildClipFragment(input);
+    async (input: ClipFragmentInput | ClipFragmentInput[]): Promise<void> => {
+      const inputs = Array.isArray(input) ? input : [input];
+      if (inputs.length === 0) return;
+      const fragment = inputs.map(buildClipFragment).join("\n\n");
       // A fresh listing (archived included, for name collisions) so the
       // recency tier and takenNames never decide from a stale cache.
       const candidates = await queryClient.fetchQuery({
@@ -137,6 +141,12 @@ export function useClipLanding(projectName: string): {
         landedName = landed.name;
       }
 
+      log.info("clip.landed", {
+        notepadId: landedId,
+        fragmentCount: inputs.length,
+        characters: fragment.length,
+        destination: handle ? "open_editor" : "http",
+      });
       pushToast(`Clipped to ${landedName}`, {
         actions: [
           {

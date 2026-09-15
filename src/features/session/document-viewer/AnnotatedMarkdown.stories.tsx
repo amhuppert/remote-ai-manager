@@ -73,6 +73,7 @@ const meta = {
         style={{
           height: 560,
           width: 760,
+          maxWidth: "100%",
           display: "flex",
           flexDirection: "column",
           background: "var(--bg-surface)",
@@ -475,6 +476,84 @@ export const PersistOnlySelection: Story = {
       ),
     );
     await expect(body.queryByRole("button", { name: "Add & send" })).toBeNull();
+  },
+};
+
+export const MultiBlockSelection: Story = {
+  args: {
+    docRef: {
+      projectName: "project",
+      sessionName: "session",
+      docPath: "annotation-review.md",
+      title: "Annotation Review",
+    },
+    content:
+      "# Annotation Review\n\nSelect a passage that continues into the following paragraphs.\n\nComments keep the entire passage together.\n\n## Checklist\n\n- Include the first list item.\n- Include the second list item.",
+    isLoading: false,
+    annotations: [],
+  },
+  render: (args) => {
+    const [sources, setSources] = useState<MarkdownAnnotationSource[]>([]);
+    return (
+      <LiveAnnotatedMarkdown
+        {...args}
+        sources={sources}
+        composer={{
+          kind: "persist-only",
+          submit: async ({ anchor, note }) => {
+            setSources((current) => [
+              ...current,
+              {
+                id: `comment-${current.length + 1}`,
+                anchor,
+                tone: "active",
+                accessibleLabel: note,
+              },
+            ]);
+          },
+        }}
+      />
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const start = await waitFor(
+      () => {
+        const paragraph = canvasElement.querySelector("p");
+        if (!paragraph?.firstChild) throw new Error("passage not rendered");
+        return paragraph.firstChild;
+      },
+      { timeout: PLAY_TIMEOUT },
+    );
+    const end = canvasElement.querySelectorAll("li")[1];
+    if (!end?.firstChild) throw new Error("list not rendered");
+    const range = document.createRange();
+    range.setStart(start, 0);
+    range.setEnd(end.firstChild, end.firstChild.textContent?.length ?? 0);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    document.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "ArrowDown",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("button", { name: "Comment" }));
+    await userEvent.type(
+      await body.findByLabelText("Comment note"),
+      "Review this complete passage together.",
+    );
+    await userEvent.click(body.getByRole("button", { name: "Add comment" }));
+    await waitFor(
+      () =>
+        expect(
+          within(canvasElement).getByRole("button", {
+            name: /on this passage$/,
+          }),
+        ).toBeVisible(),
+      { timeout: PLAY_TIMEOUT },
+    );
   },
 };
 

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import { SourceMappedDocumentMarkdown } from "@/components/markdown/Markdown";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
+import { projectMarkdownPassage } from "@/components/markdown/markdown-source-map";
 import {
   blockAnnotatableText,
   deriveAnchorFromSelection,
@@ -10,6 +11,7 @@ import {
   findCommentBlockCandidates,
   groupResolvedAnnotations,
   rangeFromBlockOffsets,
+  rangesFromCommentAnchor,
   selectRenderableAnnotations,
   selectionOffsetsInBlock,
 } from "./anchor-dom";
@@ -263,6 +265,49 @@ describe("selectionOffsetsInBlock", () => {
 });
 
 describe("deriveAnchorFromSelection", () => {
+  it("matches the source projection across nested lists, blockquotes, and code", async () => {
+    const content = [
+      "# Passage",
+      "",
+      "Prose with **emphasis**.",
+      "",
+      "- before",
+      "  - nested",
+      "- last",
+      "",
+      "> quoted",
+      ">",
+      "> second quote",
+      "",
+      "```ts",
+      "const value = 1;",
+      "",
+      "value;",
+      "```",
+    ].join("\n");
+    const { container } = render(
+      <SourceMappedDocumentMarkdown content={content} />,
+    );
+    await waitFor(() => expect(container.querySelector("pre")).not.toBeNull());
+    const range = document.createRange();
+    range.selectNodeContents(container);
+    const anchor = deriveAnchorFromSelection(range, content, container);
+
+    expect(anchor?.endBlock).toBeDefined();
+    if (!anchor?.endBlock) throw new Error("expected multi-block anchor");
+    const projection = projectMarkdownPassage(
+      content,
+      anchor.line,
+      anchor.endBlock.line,
+    );
+    expect(projection?.text).toBe(anchor.quote);
+    expect(
+      rangesFromCommentAnchor(container, anchor)
+        .map((part) => part.toString())
+        .join(""),
+    ).toContain("const value = 1;\n\nvalue;");
+  });
+
   it("derives a single-block anchor with the exact quote, heading, and line", async () => {
     const container = await renderSelDoc();
     const block = findCommentBlock(container, {
@@ -285,13 +330,49 @@ describe("deriveAnchorFromSelection", () => {
     expect(anchor?.docRevision).toMatch(/.+/);
   });
 
-  it("rejects a selection spanning more than one block (returns null)", async () => {
+  it("anchors a selection spanning list items with element boundaries", async () => {
     const container = await renderSelDoc();
     const items = container.querySelectorAll("ul li");
     const range = document.createRange();
     range.selectNodeContents(items[0]!);
     range.setEnd(items[1]!, items[1]!.childNodes.length);
-    expect(deriveAnchorFromSelection(range, SEL_DOC)).toBeNull();
+    expect(deriveAnchorFromSelection(range, SEL_DOC)).toMatchObject({
+      line: 7,
+      endBlock: { line: 8, sectionId: "section-two" },
+      quote: "alpha beta gamma item\n\nsecond list item here",
+      charStart: 0,
+      charEnd: 44,
+    });
+  });
+
+  it("preserves direct list text around nested items without duplicating descendants", () => {
+    const container = document.createElement("div");
+    container.innerHTML =
+      '<ul data-cc-line="1"><li data-cc-line="1">before<ul data-cc-line="2"><li data-cc-line="2">nested</li></ul>after</li><li data-cc-line="3">last</li></ul>';
+    const range = document.createRange();
+    range.selectNodeContents(container);
+
+    expect(deriveAnchorFromSelection(range, "source")).toMatchObject({
+      line: 1,
+      endBlock: { line: 3, sectionId: "" },
+      quote: "before\n\nnested\n\nafter\n\nlast",
+    });
+  });
+
+  it("skips protected text while preserving selected prose and code across sections", () => {
+    const container = document.createElement("div");
+    container.innerHTML =
+      '<p data-cc-line="1" data-cc-section="one">first <span class="not-annotatable">hidden</span>paragraph</p>\n<h2 data-cc-line="3" data-cc-section="two">Heading</h2>\n<pre data-cc-line="5" data-cc-section="two"><code>alpha\n\nbeta\n</code></pre>';
+    const range = document.createRange();
+    range.setStart(container.querySelector("p")!.firstChild!, 2);
+    range.setEnd(container.querySelector("code")!.firstChild!, 11);
+
+    expect(deriveAnchorFromSelection(range, "source")).toMatchObject({
+      line: 1,
+      endBlock: { line: 5, sectionId: "two" },
+      quote: "rst paragraph\n\nHeading\n\nalpha\n\nbeta",
+      charStart: 2,
+    });
   });
 
   it("rejects a collapsed (empty) selection", async () => {
@@ -302,5 +383,64 @@ describe("deriveAnchorFromSelection", () => {
     })!;
     const range = rangeFromBlockOffsets(block, 3, 3)!;
     expect(deriveAnchorFromSelection(range, SEL_DOC)).toBeNull();
+  });
+
+  it("round-trips a passage that returns from a nested item to its parent", () => {
+    const container = document.createElement("div");
+    container.innerHTML =
+      '<ul data-cc-line="1" data-cc-section=""><li data-cc-line="1" data-cc-section="">before<ul data-cc-line="2" data-cc-section=""><li data-cc-line="2" data-cc-section="">nested</li></ul>after</li></ul>';
+    const parent = container.querySelector("li")!;
+    const nested = parent.querySelector("li")!;
+    const range = document.createRange();
+    range.setStart(nested.firstChild!, 1);
+    range.setEnd(parent.lastChild!, 3);
+
+    const anchor = deriveAnchorFromSelection(range, "source", container);
+    expect(anchor).toMatchObject({
+      line: 2,
+      endBlock: { line: 1, sectionId: "" },
+      quote: "ested\n\naft",
+    });
+    if (!anchor) throw new Error("expected passage anchor");
+    expect(
+      rangesFromCommentAnchor(container, anchor).map((part) => part.toString()),
+    ).toEqual(["ested", "aft"]);
+  });
+
+  it("keeps one-block offsets when element endpoints enclose inline markup", () => {
+    const container = document.createElement("div");
+    container.innerHTML =
+      '<p data-cc-line="1" data-cc-section="">first <strong>important</strong> last</p>';
+    const block = container.querySelector("p")!;
+    const range = document.createRange();
+    range.setStart(block, 1);
+    range.setEnd(block, 2);
+
+    expect(selectionOffsetsInBlock(block, range)).toEqual({
+      blockText: "first important last",
+      charStart: 6,
+      charEnd: 15,
+    });
+    const anchor = deriveAnchorFromSelection(range, "source", container);
+    expect(anchor).toMatchObject({
+      quote: "important",
+      charStart: 6,
+      charEnd: 15,
+    });
+    expect(anchor?.endBlock).toBeUndefined();
+  });
+
+  it("does not include a block touched only at its empty end boundary", () => {
+    const container = document.createElement("div");
+    container.innerHTML =
+      '<p data-cc-line="1" data-cc-section="">first</p><p data-cc-line="3" data-cc-section="">second</p>';
+    const paragraphs = container.querySelectorAll("p");
+    const range = document.createRange();
+    range.setStart(paragraphs[0]!.firstChild!, 0);
+    range.setEnd(paragraphs[1]!.firstChild!, 0);
+
+    const anchor = deriveAnchorFromSelection(range, "source", container);
+    expect(anchor?.quote).toBe("first");
+    expect(anchor?.endBlock).toBeUndefined();
   });
 });

@@ -3,9 +3,8 @@ import type { CommentAnchor } from "./schemas";
 /**
  * Pure comment-anchoring logic. No DOM, no I/O — only strings and offsets — so
  * it is fully unit-testable and runs identically on the server and in the
- * browser (it is imported by client viewer components). The anchor model is a
- * SINGLE rendered block: cross-block selections are rejected upstream and never
- * reach this layer.
+ * browser (it is imported by client viewer components). Callers provide the
+ * annotatable text of the source span identified by the anchor.
  */
 
 /** Chars of surrounding context stored on each anchor (unused by v1 matching). */
@@ -52,7 +51,7 @@ export function computeDocRevision(content: string): string {
 }
 
 interface SelectionAnchorInput {
-  /** The full text of the single block the selection lies within. */
+  /** The full annotatable text of the block span containing the selection. */
   blockText: string;
   /** 1-based source line of the block. */
   blockLine: number;
@@ -69,7 +68,7 @@ interface SelectionAnchorInput {
 }
 
 /**
- * Build the full anchor value object for a fresh single-block selection. The
+ * Build the anchor value object for a selected passage. The
  * quote is the exact selected slice; prefix/suffix are bounded surrounding
  * context stored with the anchor and unused by v1 matching.
  * Precondition: `0 <= charStart <= charEnd <= blockText.length`.
@@ -116,7 +115,7 @@ export function tryReanchorExact(
   blockText: string | null,
   // Only the passage and its stored offsets participate in matching, so the
   // parameter asks for exactly those. Notepad comment anchors carry the same
-  // block-scoped shape under their own revision field and re-anchor through
+  // span-scoped shape under their own revision field and re-anchor through
   // here rather than through a second matcher.
   anchor: Pick<CommentAnchor, "quote" | "charStart" | "charEnd">,
 ): ReanchorResult {
