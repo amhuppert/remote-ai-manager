@@ -381,6 +381,7 @@ describe("resetContextStateToInitial", () => {
       pendingUserInputs: {},
       skipReason: null,
       landingIntent: null,
+      reviewOrigin: null,
     });
     expect(next["context-plan"]).toBe(execution.contextStates["context-plan"]);
     expect(next["context-verify"]).toBe(

@@ -42,31 +42,10 @@ const HINT_BASE = "font-mono text-[0.7rem]";
 const NOTE_CLASS =
   "m-0 font-mono text-[0.72rem] leading-[1.55] text-text-secondary";
 
-/**
- * The change set an ENVELOPED context's reviewer decides on (R15.2): the
- * ownership-scoped snapshot its gate froze, resolved through the approval API.
- *
- * A union rather than a nullable diff because the three non-ready states are
- * things the reviewer has to be told, not absences to render as "no changes":
- * `drifted` means the owned paths moved after the gate opened, so these are no
- * longer the bytes the gate froze, and `unavailable` means the artifact could
- * not be read at all. Neither ever falls back to the whole-worktree delta — in a
- * shared lane that delta is partly a concurrent sibling's in-progress work.
- *
- * Null on the props for a full-access member, which keeps the whole-tree
- * approval view the session's own diff surface already provides.
- */
+/** The gate's frozen baseline-relative change set, including self-commits. */
 export type ApprovalCandidate =
-  /** An enveloped member: the frozen change set inside the paths it owns. */
   | { scope: "owned"; ownedPaths: string[]; diff: SessionDiff }
-  /**
-   * A full-access member. Its write surface IS the lane worktree, so the gate
-   * froze no ownership-scoped snapshot and the approval API answers
-   * `whole_tree` — an explicit answer about the scope, not a missing one. The
-   * whole-worktree delta is never substituted: in a shared lane it is partly a
-   * sibling's in-progress work, and no read of it is scoped to this gate.
-   */
-  | { scope: "whole_tree" };
+  | { scope: "whole_tree"; diff: SessionDiff };
 
 export type ApprovalScopedChanges =
   | { status: "loading" }
@@ -90,14 +69,16 @@ interface ApprovalGatePanelProps {
   onReject(message: string): void;
 }
 
-function diffSummary(ownedPaths: string[], diff: SessionDiff): string {
+function diffSummary(ownedPaths: string[] | null, diff: SessionDiff): string {
   const fileCount = diff.files.length;
   const files = `${fileCount} ${fileCount === 1 ? "file" : "files"}`;
   const lines = `+${diff.totalAdditions} −${diff.totalDeletions}`;
   const scope =
-    ownedPaths.length > 0
-      ? `scoped to ${ownedPaths.join(", ")}`
-      : "owns no writable path";
+    ownedPaths === null
+      ? "whole lane worktree"
+      : ownedPaths.length > 0
+        ? `scoped to ${ownedPaths.join(", ")}`
+        : "owns no writable path";
   return `${files} · ${lines} · ${scope}`;
 }
 
@@ -134,17 +115,13 @@ function CandidateState({
           tone: "border-[var(--cc-green-a20)] bg-green-glow text-green",
           icon: <CheckIcon size={12} />,
           label: "Candidate ready",
-          aside:
+          aside: diffSummary(
             scopedChanges.candidate.scope === "owned"
-              ? diffSummary(
-                  scopedChanges.candidate.ownedPaths,
-                  scopedChanges.candidate.diff,
-                )
-              : "whole lane worktree · no ownership scope",
-          detail:
-            scopedChanges.candidate.scope === "owned"
-              ? null
-              : "This context writes without an ownership envelope, so its gate froze no scoped change set. Its lane worktree is the candidate — review it there before approving.",
+              ? scopedChanges.candidate.ownedPaths
+              : null,
+            scopedChanges.candidate.diff,
+          ),
+          detail: "Changes since this context began, including committed work.",
         };
       case "drifted":
         return {
@@ -198,7 +175,7 @@ function ScopedChangesSection({
   ownedPaths,
   diff,
 }: {
-  ownedPaths: string[];
+  ownedPaths: string[] | null;
   diff: SessionDiff;
 }) {
   return (
@@ -208,9 +185,15 @@ function ScopedChangesSection({
     >
       {diff.files.length === 0 ? (
         <div className={cn(HINT_BASE, "px-md py-sm text-text-tertiary")}>
-          No changes inside the paths this context owns
-          {ownedPaths.length > 0 ? ` (${ownedPaths.join(", ")})` : ""}. Work by
-          other contexts sharing this worktree is deliberately not shown.
+          {ownedPaths === null ? (
+            "This context produced no file changes since it began."
+          ) : (
+            <>
+              No changes inside the paths this context owns
+              {ownedPaths.length > 0 ? ` (${ownedPaths.join(", ")})` : ""}. Work
+              by other contexts sharing this worktree is deliberately not shown.
+            </>
+          )}
         </div>
       ) : (
         <div className="max-h-[320px] overflow-auto py-sm font-mono text-[0.7rem] leading-[1.5]">
@@ -359,13 +342,16 @@ export default function ApprovalGatePanel({
             publish it.
           </p>
 
-          {scopedChanges?.status === "ready" &&
-            scopedChanges.candidate.scope === "owned" && (
-              <ScopedChangesSection
-                ownedPaths={scopedChanges.candidate.ownedPaths}
-                diff={scopedChanges.candidate.diff}
-              />
-            )}
+          {scopedChanges?.status === "ready" && (
+            <ScopedChangesSection
+              ownedPaths={
+                scopedChanges.candidate.scope === "owned"
+                  ? scopedChanges.candidate.ownedPaths
+                  : null
+              }
+              diff={scopedChanges.candidate.diff}
+            />
+          )}
 
           {busyHint && (
             <div className={cn(HINT_BASE, "text-text-tertiary")}>

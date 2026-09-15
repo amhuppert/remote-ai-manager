@@ -18,10 +18,9 @@ import {
  * projections they produced under `recordings/`, and the deterministic agent
  * script each scenario runs.
  *
- * The fixtures and recordings were authored and captured against the pre-D4
- * engine. Neither is regenerated as a matter of course — a recording changes
- * only through an explicit {@link RECORDING_UPDATE_ENV} run, and changing one is
- * a claim that observable pre-D4 behaviour genuinely moved.
+ * Pre-D4 fixture definitions exercise unconditional graph behavior. Recordings
+ * pin the engine's observable contract and change only with a reviewed behavior
+ * change; {@link RECORDING_UPDATE_ENV} explicitly enables bulk regeneration.
  *
  * Test-support only; not imported by production code.
  */

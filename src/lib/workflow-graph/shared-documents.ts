@@ -7,6 +7,8 @@ import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import {
   createSharedDocumentStore,
+  hashSharedDocumentContent,
+  type SharedDocumentContent,
   type SharedDocumentStore,
 } from "@/lib/workflow-graph/shared-document-store";
 import type {
@@ -33,16 +35,14 @@ export interface GraphWorkflowSharedDocumentRegistryServiceDeps {
   now(): string;
   createDocumentId(): string;
   /**
-   * Copy the just-registered document's content from the registering lane's
-   * worktree into the central per-execution store, so it can be materialized
-   * into other lane worktrees. Defaults to a no-op; production wires the real
-   * {@link createSharedDocumentStore} capture at the composition root.
+   * Capture immutable bytes before publishing registration metadata. The
+   * reference remains valid even if a competing registration changes the path.
    */
   captureDocumentContent(input: {
     executionId: string;
     worktreePath: string;
     relativePath: string;
-  }): Promise<void>;
+  }): Promise<SharedDocumentContent>;
 }
 
 export type SharedDocumentUpsertOptionalOutcome =
@@ -60,6 +60,7 @@ export interface SharedDocumentMergeOutcome {
   relativePath: string;
   description: string;
   readWhen: string;
+  contentHash: string;
   conversationId: string | null;
 }
 
@@ -77,11 +78,13 @@ export function logSharedDocumentUpsert(
       documentId: outcome.documentId,
       relativePath: outcome.relativePath,
       conversationId: outcome.conversationId,
+      contentHash: outcome.contentHash,
     });
     logger.info("graph-workflow.shared_document.updated", {
       executionId,
       documentId: outcome.documentId,
       relativePath: outcome.relativePath,
+      contentHash: outcome.contentHash,
     });
     return;
   }
@@ -91,11 +94,13 @@ export function logSharedDocumentUpsert(
     description: outcome.description,
     readWhen: outcome.readWhen,
     conversationId: outcome.conversationId,
+    contentHash: outcome.contentHash,
   });
   logger.info("graph-workflow.shared_document.created", {
     executionId,
     documentId: outcome.documentId,
     relativePath: outcome.relativePath,
+    contentHash: outcome.contentHash,
   });
 }
 
@@ -106,8 +111,8 @@ const defaultDeps: GraphWorkflowSharedDocumentRegistryServiceDeps = {
   createDocumentId() {
     return `doc-${randomUUID()}`;
   },
-  async captureDocumentContent() {
-    // No-op by default; the composition root injects the real central store.
+  async captureDocumentContent(input) {
+    return createSharedDocumentStore().captureFromWorktree(input);
   },
 };
 
@@ -132,6 +137,20 @@ export function createGraphWorkflowSharedDocumentRegistryService(
     return execution.sharedDocuments;
   }
 
+  function assertWritable(
+    execution: GraphWorkflowExecution,
+    relativePath: string,
+  ): void {
+    const existingEntry = execution.sharedDocuments.find(
+      (entry) => entry.relativePath === path.normalize(relativePath),
+    );
+    if (existingEntry && existingEntry.kind !== "shared") {
+      throw new Error(
+        `Shared document "${relativePath}" is engine-owned (${existingEntry.kind}) and cannot be re-registered by an agent`,
+      );
+    }
+  }
+
   /**
    * Pure, synchronous merge of one shared-document entry into a cloned
    * execution — no I/O, no awaits, no logging. This is the only state mutation
@@ -146,6 +165,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
     relativePath: string;
     description: string;
     readWhen: string;
+    contentHash: string;
     conversationId: string | null;
     now: string;
   }): SharedDocumentMergeOutcome {
@@ -156,26 +176,19 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       readWhen,
       conversationId,
     } = input;
+    assertWritable(nextExecution, relativePath);
     const existingIndex = nextExecution.sharedDocuments.findIndex(
       (entry) => entry.relativePath === relativePath,
     );
 
     if (existingIndex >= 0) {
       const existingEntry = nextExecution.sharedDocuments[existingIndex]!;
-      if (existingEntry.kind !== "shared") {
-        // Engine-owned content: the launching tier wrote it and every lane
-        // materializes the central store's copy. Accepting the re-registration
-        // would recapture THIS lane's file over it, so one lane could rewrite
-        // what every other lane reads as its contract.
-        throw new Error(
-          `Shared document "${relativePath}" is engine-owned (${existingEntry.kind}) and cannot be re-registered by an agent`,
-        );
-      }
       nextExecution.sharedDocuments[existingIndex] = {
         ...existingEntry,
         relativePath,
         description,
         readWhen,
+        contentHash: input.contentHash,
         updatedAt: input.now,
         lastUpdatedByConversationId: conversationId,
       };
@@ -186,6 +199,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
         description,
         readWhen,
         conversationId,
+        contentHash: input.contentHash,
       };
     }
 
@@ -196,6 +210,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       description,
       readWhen,
       kind: "shared",
+      contentHash: input.contentHash,
       createdAt: input.now,
       updatedAt: input.now,
       lastUpdatedByConversationId: conversationId,
@@ -207,6 +222,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       description,
       readWhen,
       conversationId,
+      contentHash: input.contentHash,
     };
   }
 
@@ -244,25 +260,24 @@ export function createGraphWorkflowSharedDocumentRegistryService(
   }
 
   /**
-   * Best-effort copy of the agent-written file into the central per-execution
-   * store so it survives the worktree and reaches other lanes. A missing or
-   * unreadable file degrades to a warning — it never throws — so a staged caller
-   * can run this slow disk I/O outside the lock and still finalize the
-   * registration afterward.
+   * Capture an immutable publication candidate outside the database lock.
+   * Failure refuses registration; a refused finalize leaves any older
+   * publication's content untouched.
    */
   async function captureContent(input: {
     executionId: string;
     worktreePath: string;
     relativePath: string;
-  }): Promise<void> {
+  }): Promise<SharedDocumentContent> {
     try {
-      await resolvedDeps.captureDocumentContent(input);
+      return await resolvedDeps.captureDocumentContent(input);
     } catch (err) {
       logger.warn("graph-workflow.shared_document.capture_failed", {
         executionId: input.executionId,
         relativePath: input.relativePath,
         warning: getErrorMessage(err),
       });
+      throw err;
     }
   }
 
@@ -279,6 +294,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       relativePath: string;
       description: string;
       readWhen: string;
+      contentHash: string;
       conversationId: string | null;
     },
   ): {
@@ -291,6 +307,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       relativePath: input.relativePath,
       description: input.description,
       readWhen: input.readWhen,
+      contentHash: input.contentHash,
       conversationId: input.conversationId,
       now: resolvedDeps.now(),
     });
@@ -303,7 +320,8 @@ export function createGraphWorkflowSharedDocumentRegistryService(
     input: SharedDocumentUpsertInput,
   ): Promise<GraphWorkflowExecution> {
     const { relativePath } = await prepareUpsert(worktreePath, input);
-    await captureContent({
+    assertWritable(execution, relativePath);
+    const { contentHash } = await captureContent({
       executionId: execution.id,
       worktreePath,
       relativePath,
@@ -312,6 +330,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       relativePath,
       description: input.description,
       readWhen: input.readWhen,
+      contentHash,
       conversationId: input.conversationId ?? null,
     });
     logSharedDocumentUpsert(execution.id, outcome);
@@ -341,6 +360,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
     getDirectory,
     list,
     prepareUpsert,
+    assertWritable,
     captureContent,
     applyUpsert,
     logUpsert: logSharedDocumentUpsert,
@@ -481,6 +501,7 @@ export function createWorkflowSeededDocumentService(
                 description: reg.description,
                 readWhen: reg.readWhen,
                 kind: "seeded",
+                contentHash: hashSharedDocumentContent(document.contents),
                 updatedAt: timestamp,
               };
               return;
@@ -491,6 +512,7 @@ export function createWorkflowSeededDocumentService(
               description: reg.description,
               readWhen: reg.readWhen,
               kind: "seeded",
+              contentHash: hashSharedDocumentContent(document.contents),
               createdAt: timestamp,
               updatedAt: timestamp,
               lastUpdatedByConversationId: null,
@@ -553,10 +575,9 @@ export function createWorkflowSeededDocumentService(
       // Lane worktrees fork from the committed session branch and `.cc` is
       // git-ignored, so this capture — not the worktree file — is what reaches
       // a lane.
-      await store.captureFromWorktree({
+      await store.captureContent({
         executionId: input.executionId,
-        worktreePath: input.worktreePath,
-        relativePath: record.relativePath,
+        contents: document.contents,
       });
 
       getExecutionLogger(input.executionId)?.lifecycle(

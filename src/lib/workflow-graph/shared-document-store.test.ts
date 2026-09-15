@@ -10,7 +10,10 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createSharedDocumentStore } from "./shared-document-store";
+import {
+  createSharedDocumentStore,
+  hashSharedDocumentContent,
+} from "./shared-document-store";
 
 describe("shared document store", () => {
   let configDir: string;
@@ -44,7 +47,7 @@ describe("shared document store", () => {
     const relativePath = ".cc/graph-workflow-docs/api-contract.md";
     await writeWorktreeFile(relativePath, "# API contract\nendpoints…");
 
-    await store.captureFromWorktree({
+    const reference = await store.captureFromWorktree({
       executionId: "execution-1",
       worktreePath: worktree,
       relativePath,
@@ -54,7 +57,8 @@ describe("shared document store", () => {
       configDir,
       "workflow-docs",
       "execution-1",
-      relativePath,
+      "objects",
+      reference.contentHash,
     );
     expect(existsSync(stored)).toBe(true);
     await expect(readFile(stored, "utf-8")).resolves.toBe(
@@ -62,7 +66,7 @@ describe("shared document store", () => {
     );
 
     await expect(
-      store.read({ executionId: "execution-1", relativePath }),
+      store.read({ executionId: "execution-1", relativePath, ...reference }),
     ).resolves.toBe("# API contract\nendpoints…");
   });
 
@@ -85,16 +89,27 @@ describe("shared document store", () => {
       relativePath,
     };
     await writeWorktreeFile(relativePath, "Complete revision 1");
-    await store.captureFromWorktree(capture);
+    const initialReference = await store.captureFromWorktree(capture);
     const reader = await open(
-      path.join(configDir, "workflow-docs", "execution-1", relativePath),
+      path.join(
+        configDir,
+        "workflow-docs",
+        "execution-1",
+        "objects",
+        initialReference.contentHash,
+      ),
       "r",
     );
     try {
       await writeWorktreeFile(relativePath, "Complete revision 2");
-      await store.captureFromWorktree(capture);
+      const nextReference = await store.captureFromWorktree(capture);
       expect(await reader.readFile("utf-8")).toBe("Complete revision 1");
-      expect(await store.read(capture)).toBe("Complete revision 2");
+      expect(await store.read({ ...capture, ...nextReference })).toBe(
+        "Complete revision 2",
+      );
+      expect(await store.read({ ...capture, ...initialReference })).toBe(
+        "Complete revision 1",
+      );
     } finally {
       await reader.close();
     }
@@ -105,17 +120,17 @@ describe("shared document store", () => {
     const relativePath = ".cc/graph-workflow-docs/plan.md";
     await writeWorktreeFile(relativePath, "plan-A");
 
-    await store.captureFromWorktree({
+    const reference = await store.captureFromWorktree({
       executionId: "execution-A",
       worktreePath: worktree,
       relativePath,
     });
 
     await expect(
-      store.read({ executionId: "execution-A", relativePath }),
+      store.read({ executionId: "execution-A", relativePath, ...reference }),
     ).resolves.toBe("plan-A");
     await expect(
-      store.read({ executionId: "execution-B", relativePath }),
+      store.read({ executionId: "execution-B", relativePath, ...reference }),
     ).resolves.toBeNull();
   });
 
@@ -129,7 +144,7 @@ describe("shared document store", () => {
     ).rejects.toThrow(/escapes the store/);
   });
 
-  it("throws when the source document is absent so the caller can degrade", async () => {
+  it("refuses capture when the source document is absent", async () => {
     const store = makeStore();
     await expect(
       store.captureFromWorktree({
@@ -138,5 +153,49 @@ describe("shared document store", () => {
         relativePath: ".cc/graph-workflow-docs/never-written.md",
       }),
     ).rejects.toThrow();
+  });
+  it("refuses corrupted objects instead of delivering different bytes", async () => {
+    const store = makeStore();
+    const contentHash = hashSharedDocumentContent("original");
+    const objectPath = path.join(
+      configDir,
+      "workflow-docs",
+      "execution-1",
+      "objects",
+      contentHash,
+    );
+    await mkdir(path.dirname(objectPath), { recursive: true });
+    await writeFile(objectPath, "corrupted");
+    await expect(
+      store.read({
+        executionId: "execution-1",
+        relativePath: "plan.md",
+        contentHash,
+      }),
+    ).rejects.toThrow(/hash mismatch/);
+  });
+
+  it("converts legacy content idempotently without a runtime path fallback", async () => {
+    const store = makeStore();
+    const input = {
+      executionId: "execution-1",
+      relativePath: ".cc/graph-workflow-docs/plan.md",
+    };
+    const oldPath = path.join(
+      configDir,
+      "workflow-docs",
+      input.executionId,
+      input.relativePath,
+    );
+    await mkdir(path.dirname(oldPath), { recursive: true });
+    await writeFile(oldPath, "retained publication");
+    expect(await store.read(input)).toBeNull();
+    const reference = await store.migrateLegacyDocument(input);
+    expect(reference).toEqual(await store.migrateLegacyDocument(input));
+    await rm(oldPath);
+    expect(await makeStore().read({ ...input, ...reference })).toBe(
+      "retained publication",
+    );
+    expect(await store.migrateLegacyDocument(input)).toBeNull();
   });
 });

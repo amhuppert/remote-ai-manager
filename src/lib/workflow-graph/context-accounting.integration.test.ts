@@ -194,7 +194,7 @@ describe("durable context accounting", () => {
             createTaskId: () => `task-${randomUUID()}`,
             executionContract: policy,
             signalHalt: createGraphWorkflowSignalHaltHandler(manager),
-            materializeWorkflowDocuments: async () => {},
+            materializeWorkflowDocuments: async ({ execution }) => execution,
             now: () => NOW,
           },
         });

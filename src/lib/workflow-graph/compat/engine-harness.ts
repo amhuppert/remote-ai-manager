@@ -703,8 +703,7 @@ export async function runEngineScenario<T>(
             fixture.store.reserveActiveGraphWorkflowExecution,
           archiveActiveGraphWorkflowExecution:
             fixture.store.archiveActiveGraphWorkflowExecution,
-          markGraphWorkflowContextEventsPreReset:
-            fixture.store.markGraphWorkflowContextEventsPreReset,
+
           charterService: createWorkflowCharterService({
             writeFile: async () => {},
             ensureDir: async () => {},
@@ -733,7 +732,7 @@ export async function runEngineScenario<T>(
         soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
         laneCommitter: {
           commit: async () => ({ status: "skipped" }),
-          resolveHead: async () => null,
+          resolveHead: async () => "stub-head",
         },
         executionTargetResolver: createExecutionTargetResolver(),
       },
@@ -996,7 +995,7 @@ export async function runEngineScenario<T>(
           policy: {
             readRepoConfig,
             // The harness does not materialize workflow documents into its lane targets.
-            materializeWorkflowDocuments: async () => {},
+            materializeWorkflowDocuments: async ({ execution }) => execution,
             // Every fixture context leaves `askUserQuestions` disabled, so no lane
             // conversation can end on a pending question batch.
             readLaneConversation: async () => null,

@@ -10,6 +10,18 @@ export type DirtyPath = {
   tracked: boolean;
 };
 
+export class WorkflowDocumentDeliveryError extends Error {
+  constructor(
+    readonly contextId: string,
+    cause: unknown,
+  ) {
+    super(`Workflow document preparation failed: ${getErrorMessage(cause)}`, {
+      cause,
+    });
+    this.name = "WorkflowDocumentDeliveryError";
+  }
+}
+
 type AgentTurnFailedInit = {
   failure?: AgentFailureClassification;
   contextId: string;
@@ -91,10 +103,12 @@ export function isTypedWorkflowError(
 ): err is
   | AgentTurnFailedError
   | ConversationTurnSettlementError
+  | WorkflowDocumentDeliveryError
   | WorktreeCreationDirty {
   return (
     err instanceof AgentTurnFailedError ||
     err instanceof ConversationTurnSettlementError ||
+    err instanceof WorkflowDocumentDeliveryError ||
     err instanceof WorktreeCreationDirty
   );
 }
@@ -123,6 +137,14 @@ export function toHaltReason(
   // completed; the settlement identity lives on the retained original.
   const settlement =
     err instanceof IterationFailureWithProgressError ? err.originalError : err;
+  if (settlement instanceof WorkflowDocumentDeliveryError) {
+    return {
+      type: "execution_loop_failed",
+      contextId: settlement.contextId,
+      message: settlement.message,
+      cause: "io",
+    };
+  }
   if (settlement instanceof ConversationTurnSettlementError) {
     return {
       type: "execution_loop_failed",

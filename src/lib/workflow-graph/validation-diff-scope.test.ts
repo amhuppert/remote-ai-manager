@@ -65,7 +65,6 @@ describe("computeValidationDiffScope", () => {
       fileDiff("src/b.ts", ["const b = 2;"], ["const old = 0;"]),
     ]);
     const deps: ValidationDiffScopeDeps = {
-      hasUncommittedChanges: vi.fn(async () => true),
       computeCandidateSnapshot: vi.fn(async () => ({
         treeHash: "tree-1",
         diff,
@@ -91,7 +90,6 @@ describe("computeValidationDiffScope", () => {
 
   it("returns empty carrying the clean tree's identity", async () => {
     const deps: ValidationDiffScopeDeps = {
-      hasUncommittedChanges: vi.fn(async () => false),
       computeCandidateSnapshot: vi.fn(async () => ({
         treeHash: "tree-clean",
         diff: sessionDiff([]),
@@ -109,48 +107,8 @@ describe("computeValidationDiffScope", () => {
     expect(scope.treeHash).toBe("tree-clean");
   });
 
-  it("returns unavailable when the tree is dirty but the diff comes back empty (degraded)", async () => {
-    const deps: ValidationDiffScopeDeps = {
-      hasUncommittedChanges: vi.fn(async () => true),
-      computeCandidateSnapshot: vi.fn(async () => ({
-        treeHash: "tree-1",
-        diff: sessionDiff([]),
-      })),
-    };
-
-    const scope = await computeValidationDiffScope(
-      "/wt",
-      WHOLE_TREE_CANDIDATE_SCOPE,
-      deps,
-    );
-
-    expect(scope.kind).toBe("unavailable");
-    if (scope.kind !== "unavailable") throw new Error("expected unavailable");
-    expect(scope.reason.length).toBeGreaterThan(0);
-  });
-
-  it("returns unavailable when the status probe throws", async () => {
-    const deps: ValidationDiffScopeDeps = {
-      hasUncommittedChanges: vi.fn(async () => {
-        throw new Error("not a git repository");
-      }),
-      computeCandidateSnapshot: vi.fn(async () => null),
-    };
-
-    const scope = await computeValidationDiffScope(
-      "/wt",
-      WHOLE_TREE_CANDIDATE_SCOPE,
-      deps,
-    );
-
-    expect(scope.kind).toBe("unavailable");
-    if (scope.kind !== "unavailable") throw new Error("expected unavailable");
-    expect(scope.reason).toContain("not a git repository");
-  });
-
   it("returns unavailable when the candidate snapshot cannot be read", async () => {
     const deps: ValidationDiffScopeDeps = {
-      hasUncommittedChanges: vi.fn(async () => true),
       computeCandidateSnapshot: vi.fn(async () => null),
     };
 
@@ -167,7 +125,6 @@ describe("computeValidationDiffScope", () => {
 
   it("returns unavailable when reading the candidate throws", async () => {
     const deps: ValidationDiffScopeDeps = {
-      hasUncommittedChanges: vi.fn(async () => true),
       computeCandidateSnapshot: vi.fn(async () => {
         throw new Error("diff boom");
       }),
@@ -336,6 +293,58 @@ describe("computeValidationDiffScope (real git repo)", () => {
 
   afterEach(async () => {
     await rm(repoPath, { recursive: true, force: true });
+  });
+
+  it("reviews retained self-commits and later dirty edits against the original baseline", async () => {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repoPath,
+      env: buildChildEnv(),
+    });
+    const baselineSha = stdout.trim();
+    await writeFile(
+      join(repoPath, "tracked.ts"),
+      "export const selfCommitted = 2;\n",
+    );
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "implementer self commit", "--no-verify"]);
+    const committed = await computeValidationDiffScope(
+      repoPath,
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      undefined,
+      baselineSha,
+    );
+    expect(committed.kind).toBe("available");
+    expect(renderDiffScopeSection(committed).section).toContain(
+      "+export const selfCommitted = 2;",
+    );
+
+    await writeFile(
+      join(repoPath, "uncommitted.ts"),
+      "export const later = 3;\n",
+    );
+    const dirty = await computeValidationDiffScope(
+      repoPath,
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      undefined,
+      baselineSha,
+    );
+    expect(dirty.kind).toBe("available");
+    expect(renderDiffScopeSection(dirty).section).toContain(
+      "+export const selfCommitted = 2;",
+    );
+    expect(renderDiffScopeSection(dirty).section).toContain(
+      "+export const later = 3;",
+    );
+  });
+
+  it("reports an absent review origin as unavailable evidence even for a clean tree", async () => {
+    const result = await computeValidationDiffScope(
+      repoPath,
+      WHOLE_TREE_CANDIDATE_SCOPE,
+      undefined,
+      null,
+    );
+    expect(result.kind).toBe("unavailable");
   });
 
   it("captures modified, deleted, renamed, and untracked changes against HEAD", async () => {

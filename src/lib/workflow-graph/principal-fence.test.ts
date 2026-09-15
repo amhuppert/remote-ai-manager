@@ -9,7 +9,7 @@
  * on E2, and an agent with no business on E2 mutates it.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ExecutionTurnoverError,
   LaneBindingTurnoverError,
@@ -32,6 +32,48 @@ const fence = (
 });
 
 describe("runWithExecutionPrincipalFence", () => {
+  it("reports cross-module execution turnover as a conflict", async () => {
+    vi.resetModules();
+    const routeModule = await import("./mutation-guard");
+    const result = await routeModule.runPinnedMutation(
+      fence(),
+      "pause",
+      async () => {
+        assertExecutionPrincipalFence(
+          "/repo",
+          "session-1",
+          createWorkflowExecution({ id: "execution-successor" }),
+        );
+      },
+    );
+    expect(result.kind).toBe("turnover");
+    if (result.kind !== "turnover")
+      throw new Error("expected turnover refusal");
+    expect(result.refusal.status).toBe(409);
+    expect(await result.refusal.json()).toMatchObject({
+      code: "execution_turnover",
+      authorizedExecutionId: "execution-1",
+      activeExecutionId: "execution-successor",
+    });
+  });
+
+  it("enforces route authority across independently loaded runtime modules", async () => {
+    vi.resetModules();
+    const routeModule = await import("./principal-fence");
+    await routeModule.runWithExecutionPrincipalFence(fence(), async () => {
+      await Promise.resolve();
+      expect(() =>
+        assertExecutionPrincipalFence(
+          "/repo",
+          "session-1",
+          createWorkflowExecution({
+            id: "execution-successor",
+          }),
+        ),
+      ).toThrow(ExecutionTurnoverError);
+    });
+  });
+
   it("exposes the fence to everything the fenced act awaits", async () => {
     const observed = await runWithExecutionPrincipalFence(fence(), async () => {
       await Promise.resolve();

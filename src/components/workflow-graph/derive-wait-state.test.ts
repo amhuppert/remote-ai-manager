@@ -580,7 +580,11 @@ describe("deriveContextWaitState", () => {
           status: "merged",
           includedContextIds: ["ctx-1"],
         }),
-        __session__: makeLane({ laneId: "__session__", kind: "session" }),
+        __session__: makeLane({
+          laneId: "__session__",
+          kind: "session",
+          includedContextIds: ["ctx-1"],
+        }),
       },
       joins: {
         "join-publish": makeJoin({
@@ -603,11 +607,8 @@ describe("deriveContextWaitState", () => {
   });
 
   /**
-   * The lane a context RAN on is rarely the lane the publish names. Final-publish
-   * planning drops any lane a succeeded context_merge already consumed, so a
-   * fan-in topology (plan → delivery → session) lists only `lane-delivery` as a
-   * source. Publication has to be read as reachability through succeeded joins,
-   * or every context upstream of a join stalls on "completed" forever.
+   * A carrier can publish work that ran on another lane. The session records
+   * the transferred contributions regardless of which lane carried them.
    */
   it("reports published for a lane that reached the session through a chained join", () => {
     const execution = makeExecution({
@@ -630,8 +631,13 @@ describe("deriveContextWaitState", () => {
         "lane-delivery": makeLane({
           laneId: "lane-delivery",
           status: "merged",
+          includedContextIds: ["ctx-1"],
         }),
-        __session__: makeLane({ laneId: "__session__", kind: "session" }),
+        __session__: makeLane({
+          laneId: "__session__",
+          kind: "session",
+          includedContextIds: ["ctx-1"],
+        }),
       },
       joins: {
         "join-merge": makeJoin({
@@ -658,12 +664,21 @@ describe("deriveContextWaitState", () => {
     });
 
     expect(result).toEqual({ kind: "published" });
+
+    execution.executionLanes.__session__!.includedContextIds = [];
+    expect(
+      deriveContextWaitState({
+        contextId: "ctx-1",
+        definition: makeDefinition(),
+        execution,
+      }),
+    ).toEqual({ kind: "awaiting-merge", targetLaneName: null });
   });
 
   /**
-   * The other half of reachability: an UNFINISHED link in the chain must not
-   * publish the whole upstream. The publish landed `lane-delivery`, but the
-   * merge that would have carried `lane-plan` into it never succeeded.
+   * An unfinished transfer cannot confer membership on the session. The
+   * publish landed `lane-delivery`, but the merge that would have carried
+   * `lane-plan` into it never succeeded.
    */
   it("reports awaiting-merge when the chain to the session is broken by an unfinished join", () => {
     const execution = makeExecution({

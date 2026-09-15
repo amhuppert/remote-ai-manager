@@ -11,7 +11,6 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import {
   classifyContextSchedulability,
-  contextsPresentInLane,
   isContextOutputCommittedToLane,
   isUpstreamVisibleToDownstream,
 } from "./lane-readiness";
@@ -224,6 +223,7 @@ describe("isUpstreamVisibleToDownstream", () => {
     const downstreamLane = makeLane({
       laneId: "lane-down",
       branchName: "csm/test-down",
+      includedContextIds: ["context-plan"],
     });
     const join = makeJoin({
       joinId: "join-1",
@@ -458,6 +458,7 @@ describe("isUpstreamVisibleToDownstream", () => {
       laneId: "session-lane",
       branchName: "csm/test-session",
       kind: "session",
+      includedContextIds: ["context-plan"],
       worktreePath: null,
     });
     const finalPublish = makeJoin({
@@ -1037,6 +1038,7 @@ describe("classifyContextSchedulability", () => {
     const laneTarget = makeLane({
       laneId: "lane-target",
       branchName: "csm/test-target",
+      includedContextIds: ["context-plan", "context-implement"],
     });
     const join = makeJoin({
       joinId: "join-1",
@@ -1678,69 +1680,3 @@ describe("classifyContextSchedulability", () => {
  * model cannot see it and the scheduler judges the context dependency-blocked
  * forever.
  */
-describe("contextsPresentInLane", () => {
-  it("includes contexts a succeeded join already merged into the lane", () => {
-    const base = createWorkflowExecution();
-    const execution: GraphWorkflowExecution = {
-      ...base,
-      executionLanes: {
-        "lane-target": makeLane({
-          laneId: "lane-target",
-          branchName: "csm/target",
-          includedContextIds: ["context-plan"],
-        }),
-        "lane-source": makeLane({
-          laneId: "lane-source",
-          branchName: "csm/source",
-          includedContextIds: ["context-implement"],
-        }),
-      },
-      joins: {
-        "join-1": makeJoin({
-          joinId: "join-1",
-          targetLaneId: "lane-target",
-          sourceLaneIds: ["lane-target", "lane-source"],
-          mergedSourceLaneIds: ["lane-source"],
-          status: "succeeded",
-        }),
-      },
-    };
-
-    expect(contextsPresentInLane("lane-target", execution).sort()).toEqual([
-      "context-implement",
-      "context-plan",
-    ]);
-  });
-
-  it("ignores a join that has not merged the source lane yet", () => {
-    const base = createWorkflowExecution();
-    const execution: GraphWorkflowExecution = {
-      ...base,
-      executionLanes: {
-        "lane-target": makeLane({
-          laneId: "lane-target",
-          branchName: "csm/target",
-          includedContextIds: ["context-plan"],
-        }),
-        "lane-source": makeLane({
-          laneId: "lane-source",
-          branchName: "csm/source",
-          includedContextIds: ["context-implement"],
-        }),
-      },
-      joins: {
-        "join-1": makeJoin({
-          joinId: "join-1",
-          targetLaneId: "lane-target",
-          sourceLaneIds: ["lane-target", "lane-source"],
-          mergedSourceLaneIds: [],
-          status: "running",
-        }),
-      },
-    };
-
-    expect(contextsPresentInLane("lane-target", execution)).toEqual([
-      "context-plan",
-    ]);
-  });
-});

@@ -139,9 +139,7 @@ function setup(
     async archiveActiveGraphWorkflowExecution() {
       return { archived: false as const, reason: "no_active" as const };
     },
-    async markGraphWorkflowContextEventsPreReset() {
-      return 0;
-    },
+
     eventPublisher,
     seededDocumentService: createWorkflowSeededDocumentService({
       store,
@@ -252,6 +250,7 @@ describe("engine-seeded shared documents", () => {
         relativePath: SPEC_DOC_PATH,
         description: "mine now",
         readWhen: "whenever",
+        contentHash: "a".repeat(64),
         conversationId: "conv-lane",
       }),
     ).toThrow(/engine/i);

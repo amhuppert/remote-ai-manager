@@ -1439,6 +1439,8 @@ describe("archiveActiveGraphWorkflowExecution — authoritative eligibility", ()
         }),
       );
 
+      cachedReadsInsideTransaction = 0;
+
       const outcome = await store.archiveActiveGraphWorkflowExecution(
         PROJECT_PATH,
         SESSION_NAME,
@@ -1808,7 +1810,16 @@ describe("reserveActiveGraphWorkflowExecution — pending artifact reconstructio
       },
     );
 
-    await fixture.store.clearGraphWorkflowPendingArtifacts("wf-winner");
+    const capturedDebt = await fixture.store.getGraphWorkflowPendingArtifacts(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "wf-winner",
+    );
+    expect(capturedDebt).not.toBeNull();
+    await fixture.store.clearGraphWorkflowPendingArtifacts(capturedDebt!, {
+      loopEpoch: 0,
+      status: "pending",
+    });
 
     expect(
       await fixture.store.getGraphWorkflowPendingArtifacts(

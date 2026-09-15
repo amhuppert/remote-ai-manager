@@ -520,6 +520,8 @@ export const graphWorkflowExecutionLaneStateSchema = z.object({
   status: graphWorkflowExecutionLaneStatusSchema,
   worktreePath: z.string().nullable().default(null),
   branchName: z.string().trim().min(1),
+  // Confirmed contributions carried by this branch, including forks and transfers.
+  // Context assignment is contextStates[id].laneId; testing has its own evidence.
   includedContextIds: z.array(z.string().trim().min(1)).default([]),
   lastCommittingContextId: z.string().trim().min(1).nullable().default(null),
   commitSnapshots: z
@@ -599,7 +601,7 @@ export const graphWorkflowExecutionJoinStateSchema = z.object({
   // mutable includedContextIds remains useful operational state, but barrier
   // coverage expands through this frozen map so a replay proves which members
   // the original intent covered. The planner always populates this map;
-  // recovery treats its absence as unknown coverage and uses lane state.
+  // recovery treats its absence as unknown coverage and replays the transfer.
   sourceLaneContextIds: z
     .record(
       graphWorkflowExecutionLaneIdSchema,
@@ -682,7 +684,13 @@ export type GraphWorkflowApprovalDecision = z.infer<
  * whose change set is empty by construction, not a degenerate whole-tree one.
  */
 export const graphWorkflowApprovalScopeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("whole_tree") }).strict(),
+  z
+    .object({
+      kind: z.literal("whole_tree"),
+      treeHash: z.string().trim().min(1).optional(),
+      headSha: z.string().trim().min(1).optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("scoped"),
@@ -1343,9 +1351,8 @@ export type GraphWorkflowContextSkipReason = z.infer<
 export const graphWorkflowLandingIntentSchema = z.object({
   mode: z.enum(["lane_commit", "solo_commit", "fan_in_merge"]),
   /**
-   * Monotonic per context. A reset-and-redispatch mints a fresh token so a
-   * commit from the previous attempt is never adopted as this attempt's
-   * evidence.
+   * Counts dispatches since the last reset. The persisted token has its own
+   * unique identity, independent of this counter.
    */
   attempt: z.number().int().min(1),
   token: z.string().trim().min(1),
@@ -1391,6 +1398,27 @@ export const graphWorkflowCanonicalOwnershipSchema = z.object({
 });
 export type GraphWorkflowCanonicalOwnership = z.infer<
   typeof graphWorkflowCanonicalOwnershipSchema
+>;
+
+/** Retained work outlives a dispatch attempt, including resets that keep code. */
+export const graphWorkflowReviewOriginSchema = z
+  .object({
+    laneId: z.string().trim().min(1).nullable(),
+    baselineSha: z.string().trim().min(1),
+    candidateScope: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("wholeTree") }).strict(),
+      z
+        .object({
+          mode: z.literal("owned"),
+          ownedPaths: z.array(z.string().trim().min(1)).max(100),
+        })
+        .strict(),
+    ]),
+    capturedAt: z.string(),
+  })
+  .strict();
+export type GraphWorkflowReviewOrigin = z.infer<
+  typeof graphWorkflowReviewOriginSchema
 >;
 
 /**
@@ -1503,6 +1531,8 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
    * every pre-D4 row.
    */
   landingIntent: graphWorkflowLandingIntentSchema.nullable().default(null),
+  /** Absent before first capture; null permanently marks unavailable retained-work evidence. */
+  reviewOrigin: graphWorkflowReviewOriginSchema.nullable().optional(),
   /**
    * The advisory-response phase this context is in, or absent/null when it is in
    * none. Optional for the same reason as `validationRound`: absent and null are

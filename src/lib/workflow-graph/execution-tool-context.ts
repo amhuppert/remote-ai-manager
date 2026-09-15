@@ -5,6 +5,7 @@ import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
+import { StaleLoopFenceError } from "./loop-fence";
 import {
   evaluateContextLimit,
   type ContextLimitMetrics,
@@ -49,12 +50,13 @@ interface GraphWorkflowExecutionToolContextSharedDocumentRegistry {
     worktreePath: string,
     input: SharedDocumentUpsertInput,
   ): Promise<{ relativePath: string }>;
-  /** Best-effort slow content capture; never throws. */
+  assertWritable(execution: GraphWorkflowExecution, relativePath: string): void;
+  /** Capture immutable bytes before the fenced registration. */
   captureContent(input: {
     executionId: string;
     worktreePath: string;
     relativePath: string;
-  }): Promise<void>;
+  }): Promise<{ contentHash: string }>;
   /**
    * Pure, synchronous merge of the resolved entry into the execution, returning
    * the next execution and the inert merge outcome (logged post-commit).
@@ -65,6 +67,7 @@ interface GraphWorkflowExecutionToolContextSharedDocumentRegistry {
       relativePath: string;
       description: string;
       readWhen: string;
+      contentHash: string;
       conversationId: string | null;
     },
   ): {
@@ -488,24 +491,16 @@ export function createGraphWorkflowExecutionToolContext(
     async function upsertSharedDocument(
       document: Omit<SharedDocumentUpsertInput, "conversationId">,
     ): Promise<GraphWorkflowExecution> {
-      // Staged protocol (Design 3.1) with a genuine reserve→work→finalize order
-      // and no side effect a refused finalize would have to compensate for:
-      //
-      //  1. RESERVE — a short sync mutation that pins the loop fence and checks
-      //     the bound context is still active/running. A stale or invalid
-      //     request is rejected HERE, before any path resolution or capture, so
-      //     it can never resolve a path or touch the central store.
-      //  2. Slow canonical-path resolution OUTSIDE the write queue (no durable
-      //     I/O; surfaces an escaping/invalid path before the finalize).
-      //  3. FINALIZE — a short sync mutation that re-pins the fence, re-checks
-      //     the context, and merges the entry. Pure (no logging).
-      //  4. Best-effort content capture runs AFTER the finalize COMMITS. Placing
-      //     the only durable side effect after the commit means a refused
-      //     finalize (superseded fence / deactivated context) captures nothing —
-      //     there is no orphaned central-store write to restore or remove.
-      await deps.executionRepository
+      // Capture creates an immutable candidate outside the write queue. Only
+      // the fenced finalize publishes its reference, so a refused mutation
+      // cannot alter the bytes named by an existing registration.
+      const reservation = await deps.executionRepository
         .mutateActive(input.projectPath, input.sessionName, (execution) => {
           ensureBoundContextActive(execution);
+          deps.sharedDocumentRegistry.assertWritable(
+            execution,
+            document.relativePath,
+          );
           return unchanged();
         })
         .then((mutation) => mutation.execution);
@@ -515,17 +510,35 @@ export function createGraphWorkflowExecutionToolContext(
         { ...document },
       );
 
+      const { contentHash } = await deps.sharedDocumentRegistry.captureContent({
+        executionId: input.executionId,
+        worktreePath: input.executionTarget.worktreePath,
+        relativePath,
+      });
+
       const { execution: execution, mergeOutcome } =
         await deps.executionRepository
           .mutateActive(input.projectPath, input.sessionName, (current) => {
             let mergeOutcome: SharedDocumentMergeOutcome | null = null;
 
             ensureBoundContextActive(current);
+            if (current.loopEpoch !== reservation.loopEpoch) {
+              throw new StaleLoopFenceError(
+                {
+                  projectPath: input.projectPath,
+                  sessionName: input.sessionName,
+                  executionId: input.executionId,
+                  loopEpoch: reservation.loopEpoch,
+                },
+                current,
+              );
+            }
             const { nextExecution, outcome } =
               deps.sharedDocumentRegistry.applyUpsert(current, {
                 relativePath,
                 description: document.description,
                 readWhen: document.readWhen,
+                contentHash,
                 conversationId: resolveConversationId(current),
               });
             mergeOutcome = outcome;
@@ -536,13 +549,6 @@ export function createGraphWorkflowExecutionToolContext(
             ...mutationValue(mutation),
           }));
 
-      // Post-commit: capture content and emit the registration log — both file
-      // I/O, kept out of the write-queue critical section.
-      await deps.sharedDocumentRegistry.captureContent({
-        executionId: input.executionId,
-        worktreePath: input.executionTarget.worktreePath,
-        relativePath,
-      });
       if (mergeOutcome !== null) {
         deps.sharedDocumentRegistry.logUpsert(execution.id, mergeOutcome);
       }

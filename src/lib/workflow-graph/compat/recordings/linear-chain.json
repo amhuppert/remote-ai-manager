@@ -79,8 +79,6 @@
       "joinKind": "final_publish",
       "contextId": null,
       "sourceLaneIds": [
-        "ctx-build",
-        "ctx-plan",
         "ctx-verify"
       ],
       "targetLaneId": "__session__"
@@ -162,7 +160,7 @@
     {
       "kind": "graph-workflow-status",
       "subject": null,
-      "detail": "pending"
+      "detail": "running"
     },
     {
       "kind": "graph-workflow-context-status",
@@ -203,11 +201,6 @@
       "kind": "graph-workflow-shared-documents-updated",
       "subject": null,
       "detail": "1"
-    },
-    {
-      "kind": "graph-workflow-status",
-      "subject": null,
-      "detail": "running"
     },
     {
       "kind": "graph-workflow-context-status",
@@ -466,23 +459,8 @@
     },
     {
       "kind": "graph-workflow-lane-status",
-      "subject": "ctx-build",
-      "detail": "merged"
-    },
-    {
-      "kind": "graph-workflow-join-status",
-      "subject": "loop-job-1",
-      "detail": "final_publish:running"
-    },
-    {
-      "kind": "graph-workflow-lane-status",
-      "subject": "ctx-plan",
-      "detail": "merged"
-    },
-    {
-      "kind": "graph-workflow-join-status",
-      "subject": "loop-job-1",
-      "detail": "final_publish:running"
+      "subject": "__session__",
+      "detail": "active"
     },
     {
       "kind": "graph-workflow-lane-status",

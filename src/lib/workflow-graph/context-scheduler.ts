@@ -21,7 +21,6 @@ import { releaseLoopPassSlotsForContexts } from "@/lib/workflow-graph/loop-budge
 import {
   classifyContextSchedulability,
   isRouteSourceLanded,
-  contextsPresentInLane,
   type ContextSchedulability,
 } from "@/lib/workflow-graph/lane-readiness";
 
@@ -421,6 +420,7 @@ export function createContextScheduler(
         sourceLaneId: string | null;
         parentBranchName: string;
         parentContextId: string | null;
+        includedContextIds: string[];
       } | null;
     };
     // Routing plan captured by the sync `reserve` mutation below and consumed by
@@ -768,6 +768,12 @@ export function createContextScheduler(
                   : running.executionLanes[sourceLaneId];
               mint = {
                 sourceLaneId: parentLane ? sourceLaneId : null,
+                includedContextIds: [
+                  ...(parentLane?.includedContextIds ??
+                    running.executionLanes[SESSION_LANE_ID]
+                      ?.includedContextIds ??
+                    []),
+                ],
                 parentBranchName:
                   parentLane?.branchName ?? sessionTargets.sessionBranch,
                 parentContextId:
@@ -1409,24 +1415,16 @@ export function createContextScheduler(
                     `Provisioned lane "${entry.laneId}" has no mint plan; only a minting entry is provisioned`,
                   );
                 }
-                // Inherit everything present in the fork parent's branch — what ran
-                // on it AND what a succeeded join already merged into it — so
-                // upstream visibility checks recognize the full history the fork
-                // copied. Inheriting only the parent's own `includedContextIds`
-                // strands the fork on any upstream that arrived by join: its work is
-                // in the branch, but nothing in the lane graph connects the fork to
-                // it. A lane forked from the session branch inherits nothing.
-                const inheritedIncluded =
-                  mint.sourceLaneId === null
-                    ? []
-                    : contextsPresentInLane(mint.sourceLaneId, running);
+                // Graph-owned branches only advance while provisioning. The
+                // reservation's coverage is therefore a conservative snapshot
+                // of the branch copied, independent of later parent landings.
                 running.executionLanes[entry.laneId] = {
                   laneId: entry.laneId,
                   kind: "worktree",
                   status: "active",
                   worktreePath: result.worktreePath,
                   branchName: result.branchName,
-                  includedContextIds: [...inheritedIncluded],
+                  includedContextIds: [...mint.includedContextIds],
                   lastCommittingContextId: mint.parentContextId,
                   commitSnapshots: [],
                   createdAt: provisionTimestamp,

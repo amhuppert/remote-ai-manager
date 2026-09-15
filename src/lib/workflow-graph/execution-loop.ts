@@ -1,3 +1,4 @@
+import { captureContextReviewOrigin } from "./review-origin";
 import type { ContextLanding } from "./context-landing";
 import { type ContextLandingInput } from "./context-landing";
 import type { GraphWorkflowExecutionRepository } from "./execution-repository";
@@ -81,6 +82,7 @@ import {
   materializeSessionLane,
   planContextJoin,
   planFinalPublishJoin,
+  unpublishedContributions,
 } from "@/lib/workflow-graph/lane-join";
 import {
   describeValidationCertificationDebt,
@@ -566,6 +568,8 @@ const ACTIVE_LOOPS_KEY = "__cc_graph_workflow_active_loops" as const;
 interface ActiveExecutionLoop {
   token: string;
   abortController: AbortController;
+  fence: GraphWorkflowLoopFence;
+  result: Promise<GraphWorkflowExecution>;
 }
 
 function getActiveLoops(): Map<string, ActiveExecutionLoop> {
@@ -847,22 +851,73 @@ export function createGraphWorkflowExecutionLoop(
     };
     return runAsTrace(
       `workflow:${input.execution.id}`,
-      () => runWithLoopFence(fence, () => runImpl(input, fence)),
+      () => runWithLoopFence(fence, () => admitLoop(input, fence)),
       captureTraceContext(),
     );
+  }
+
+  async function admitLoop(
+    input: GraphWorkflowExecutionLoopInput,
+    fence: GraphWorkflowLoopFence,
+  ): Promise<GraphWorkflowExecution> {
+    const current = await deps.executionRepository.getActive(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (current === null || !matchesLoopFence(fence, current))
+      throw new StaleLoopFenceError(fence, current);
+    if (current.status !== "running") return current;
+    const key = loopKey(input.projectPath, input.sessionName);
+    const active = getActiveLoops().get(key);
+    if (active && !active.abortController.signal.aborted) {
+      if (
+        active.fence.executionId === fence.executionId &&
+        active.fence.loopEpoch === fence.loopEpoch
+      ) {
+        return active.result;
+      }
+      logger.info("graph-workflow.loop.claim_refused", {
+        executionId: fence.executionId,
+        loopEpoch: fence.loopEpoch,
+        ownerExecutionId: active.fence.executionId,
+        ownerLoopEpoch: active.fence.loopEpoch,
+      });
+      throw new StaleLoopFenceError(fence, {
+        id: active.fence.executionId,
+        loopEpoch: active.fence.loopEpoch,
+      });
+    }
+    const loopInstanceToken = randomUUID();
+    const loopAbortController = new AbortController();
+    const result = Promise.resolve()
+      .then(() =>
+        runImpl(
+          { ...input, execution: current },
+          fence,
+          loopInstanceToken,
+          loopAbortController,
+        ),
+      )
+      .finally(() => {
+        if (getActiveLoops().get(key)?.token === loopInstanceToken)
+          getActiveLoops().delete(key);
+      });
+    getActiveLoops().set(key, {
+      token: loopInstanceToken,
+      abortController: loopAbortController,
+      fence,
+      result,
+    });
+    return result;
   }
 
   async function runImpl(
     input: GraphWorkflowExecutionLoopInput,
     fence: GraphWorkflowLoopFence,
+    loopInstanceToken: string,
+    loopAbortController: AbortController,
   ): Promise<GraphWorkflowExecution> {
     const key = loopKey(input.projectPath, input.sessionName);
-    const loopInstanceToken = randomUUID();
-    const loopAbortController = new AbortController();
-    getActiveLoops().set(key, {
-      token: loopInstanceToken,
-      abortController: loopAbortController,
-    });
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
     // SDK-caused turn failures get their own strike count because the
@@ -881,8 +936,7 @@ export function createGraphWorkflowExecutionLoop(
     const inFlight = new Map<string, Promise<void>>();
     const pendingContextTaskErrors: unknown[] = [];
     const deferredJoinBusySignatures = new Map<string, string>();
-    const maxConcurrency = await getMaxConcurrentQueries();
-    const queryCapacity = createQueryCapacityCoordinator(maxConcurrency);
+    let queryCapacity: ReturnType<typeof createQueryCapacityCoordinator>;
     const execLogger = getExecutionLogger(execution.id);
 
     execLogger?.lifecycle("loop.started", {
@@ -1981,33 +2035,43 @@ export function createGraphWorkflowExecutionLoop(
     }
 
     /**
-     * Persist the landing baseline the dispatch could not know.
-     *
-     * The intent itself is recorded when the lane is assigned (decision D8),
-     * but the lane HEAD is resolved out of the write queue — so the baseline
-     * lands here, on the first durable write after the capture and still BEFORE
-     * the context's first turn. It is the low end of the SHA range that
-     * evidences a self-authored commit adopted at head-advance.
+     * Capture review evidence before work begins, alongside the attempt's
+     * adoption baseline. Resumed attempts never replace either captured origin.
      */
     async function persistLandingBaseline(
       contextId: string,
       baselineSha: string | null,
     ): Promise<void> {
       if (baselineSha === null) return;
+      let originCaptured = false;
       const next = await deps.executionRepository
         .mutateActive(input.projectPath, input.sessionName, (current) => {
-          const intent = current.contextStates[contextId]?.landingIntent;
-          if (!intent || intent.state !== "pending") return unchanged();
-          if (intent.baselineSha === baselineSha) return unchanged();
+          const state = current.contextStates[contextId];
+          if (!state) return unchanged();
           const draft = structuredClone(current);
-          draft.contextStates[contextId]!.landingIntent = {
-            ...intent,
+          originCaptured = captureContextReviewOrigin(
+            draft,
+            contextId,
             baselineSha,
-          };
+            new Date().toISOString(),
+          );
+          const intent = draft.contextStates[contextId]!.landingIntent;
+          const needsBaseline =
+            intent?.state === "pending" && intent.baselineSha === null;
+          if (!originCaptured && !needsBaseline) return unchanged();
+          if (needsBaseline) intent.baselineSha = baselineSha;
           return changed(draft);
         })
         .then((mutation) => mutation.execution);
       adoptExecution(next);
+      if (originCaptured) {
+        logger.info("graph-workflow.review_origin.captured", {
+          executionId: execution.id,
+          contextId,
+          baselineSha,
+          laneId: execution.contextStates[contextId]?.reviewOrigin?.laneId,
+        });
+      }
     }
 
     /**
@@ -2072,11 +2136,6 @@ export function createGraphWorkflowExecutionLoop(
       let preTurnLaneHeadSha: string | null = null;
       let laneHeadCaptured = false;
 
-      const contextIsReadOnly = (): boolean =>
-        execution.workingDefinition.executionContexts.find(
-          (context) => context.id === contextId,
-        )?.placement.mode === "readOnly";
-
       async function runCommitPhase(): Promise<void> {
         if (
           isolation === "worktree" &&
@@ -2130,11 +2189,7 @@ export function createGraphWorkflowExecutionLoop(
           if (target.isolation === "worktree") {
             featureWorktreePath = target.worktreePath;
             featureBranchName = target.branchName;
-            if (
-              target.laneId !== null &&
-              !laneHeadCaptured &&
-              !contextIsReadOnly()
-            ) {
+            if (!laneHeadCaptured) {
               laneHeadCaptured = true;
               try {
                 preTurnLaneHeadSha = await deps.laneCommitter.resolveHead(
@@ -2148,8 +2203,11 @@ export function createGraphWorkflowExecutionLoop(
                 target.worktreePath,
               );
               await persistLandingBaseline(contextId, preTurnLaneHeadSha);
+              preTurnLaneHeadSha =
+                execution.contextStates[contextId]?.landingIntent
+                  ?.baselineSha ?? preTurnLaneHeadSha;
             }
-          } else if (!laneHeadCaptured && !contextIsReadOnly()) {
+          } else if (!laneHeadCaptured) {
             // Session isolation: the same self-commit adoption baseline,
             // captured against the session worktree, so solo runs also carry
             // commit evidence when the implementer commits its own work.
@@ -2162,6 +2220,9 @@ export function createGraphWorkflowExecutionLoop(
               preTurnLaneHeadSha = null;
             }
             await persistLandingBaseline(contextId, preTurnLaneHeadSha);
+            preTurnLaneHeadSha =
+              execution.contextStates[contextId]?.landingIntent?.baselineSha ??
+              preTurnLaneHeadSha;
           }
 
           // A context parked at the approval gate — whether it parked during
@@ -3042,6 +3103,8 @@ export function createGraphWorkflowExecutionLoop(
     }
 
     try {
+      const maxConcurrency = await getMaxConcurrentQueries();
+      queryCapacity = createQueryCapacityCoordinator(maxConcurrency);
       // Outer scheduling loop: schedule currently-eligible work, wait for the
       // next in-flight context or merge event to settle, refresh execution
       // state, and reschedule. Downstream contexts can become eligible the
@@ -3312,6 +3375,28 @@ export function createGraphWorkflowExecutionLoop(
           }
           if (joinOutcome === "retry") {
             continue;
+          }
+          const unpublished = unpublishedContributions(execution);
+          if (
+            unpublished.length > 0 &&
+            findContextsWithUnfinishedTasks(execution).length === 0
+          ) {
+            logger.error("graph-workflow.loop.completion_blocked_unpublished", {
+              executionId: execution.id,
+              contextIds: unpublished,
+            });
+            execLogger?.lifecycle("loop.completion_blocked_unpublished", {
+              contextIds: unpublished,
+            });
+            await recordHalt({
+              type: "recovery_error",
+              message: `Refusing to complete: contributions have not reached the session branch (${unpublished.join(", ")}). No eligible lane can currently publish them. Restore the missing source or resolve its outstanding lane gates, then resume.`,
+            });
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
           }
           // Completion invariant: the loop only reaches this point when nothing
           // is schedulable and no join remains, which it treats as "all work

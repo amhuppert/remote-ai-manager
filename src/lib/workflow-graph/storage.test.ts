@@ -61,8 +61,7 @@ function createServices() {
         stateManager.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         stateManager.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        stateManager.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
       charterService,
       readConfig: () => configReader.readConfig(),
@@ -468,10 +467,9 @@ describe("graph workflow execution repository", () => {
       ownerConversationId: null,
     });
 
-    expect(created.status).toBe("pending");
+    expect(created.status).toBe("running");
     expect(created.taskStates["task-plan-1"]?.status).toBe("pending");
 
-    created.status = "running";
     created.activeContextIds = ["context-plan"];
     await repository.update("/repo", "session-1", created);
 

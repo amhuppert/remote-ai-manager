@@ -375,27 +375,45 @@ export function projectRoutes<
   function resolveSourceView(
     edge: RouteProjectionEdge,
     loop: RouteProjectionLoop | undefined,
-  ): { effectiveSourceId: string | null; settlement: RouteContextSettlement } {
+  ): {
+    effectiveSourceId: string | null;
+    settlement: RouteContextSettlement;
+    policy: RouteCardinalityPolicy;
+  } {
     const external =
       loop !== undefined && !loop.bodyContextIds.includes(edge.targetContextId);
     if (!external) {
       return {
         effectiveSourceId: edge.sourceContextId,
         settlement: settlementOf(edge.sourceContextId),
+        policy:
+          contextById.get(edge.sourceContextId)?.routing?.cardinality ??
+          "independent",
       };
     }
     if (loop.activation === "skipped") {
-      return { effectiveSourceId: null, settlement: "skipped" };
+      return {
+        effectiveSourceId: null,
+        settlement: "skipped",
+        policy: "independent",
+      };
     }
     if (
       loop.activation !== "concluded" ||
       loop.concludingExitContextId === null
     ) {
-      return { effectiveSourceId: null, settlement: "unsettled" };
+      return {
+        effectiveSourceId: null,
+        settlement: "unsettled",
+        policy: "independent",
+      };
     }
     return {
       effectiveSourceId: loop.concludingExitContextId,
       settlement: settlementOf(loop.concludingExitContextId),
+      policy:
+        contextById.get(loop.concludingExitContextId)?.routing?.cardinality ??
+        "independent",
     };
   }
 
@@ -513,19 +531,20 @@ export function projectRoutes<
 
   function computeCardinality(): RouteCardinalityOutcome[] {
     const outcomes: RouteCardinalityOutcome[] = [];
-    for (const contextId of contextIds) {
-      if (settlementOf(contextId) === "skipped") continue;
+    for (const contextId of walkIds) {
       const conditional = (outgoing.get(contextId) ?? []).filter(
         (edge) => guardKind(edge) !== "none",
       );
-      if (conditional.length === 0) continue;
+      const firstEdge = conditional[0];
+      if (firstEdge === undefined) continue;
+      const view = resolveSourceView(firstEdge, loopByExitId.get(contextId));
+      if (view.settlement === "skipped") continue;
 
       const resolutions = conditional.map(
         (edge) =>
           resolutionByEdgeId.get(edge.id)?.resolution ?? { kind: "unresolved" },
       );
-      const policy =
-        contextById.get(contextId)?.routing?.cardinality ?? "independent";
+      const policy = view.policy;
       const conditionalEdgeIds = conditional.map((edge) => edge.id);
       const activatedEdgeIds = conditional
         .filter((_, index) => resolutions[index]?.kind === "active")

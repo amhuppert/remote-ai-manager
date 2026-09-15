@@ -593,6 +593,80 @@ describe("DevServerRegistry", () => {
     });
   });
 
+  describe("captured worktree cleanup", () => {
+    it("does not stop a replacement installed at the captured server key", async () => {
+      const query = {
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "captured",
+        worktreePath: "/tmp",
+      };
+      const start = {
+        ...query,
+        command: "sleep 60",
+        startMode: startMode(59835),
+      };
+      await registry.startServer(start);
+      const captured = registry.captureStopForWorktree({
+        projectPath: query.projectPath,
+        worktreePath: query.worktreePath,
+      });
+      await registry.stopServer(query);
+      await registry.startServer(start);
+      const successor = registry.getServer(query)!;
+      await captured();
+      expect(registry.getServer(query)).toBe(successor);
+      expect(successor.status).toBe("starting");
+      expect(successor._pid).not.toBeNull();
+    });
+
+    it("queues a replacement behind an asynchronous stop at the same key", async () => {
+      vi.mocked(deps.checkPortListening).mockResolvedValue(true);
+      const query = {
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "ordered",
+        worktreePath: "/tmp",
+      };
+      const start = {
+        ...query,
+        command: "sleep 60",
+        startMode: startMode(59836),
+      };
+      await registry.startServer(start);
+      const original = await waitForServer(
+        query,
+        (entry) => entry.status === "running",
+      );
+      const config = await deps.readConfig();
+      let release!: () => void;
+      let entered!: () => void;
+      const enteredPromise = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.mocked(deps.readConfig).mockImplementationOnce(async () => {
+        entered();
+        await pending;
+        return config;
+      });
+      const stop = registry.stopServer(query);
+      await enteredPromise;
+      const restarted = registry.startServer(start).then(
+        () => true,
+        () => false,
+      );
+      expect(registry.getServer(query)).toBe(original);
+      release();
+      await stop;
+      expect(await restarted).toBe(true);
+      expect(registry.getServer(query)).not.toBe(original);
+      expect(registry.getServer(query)?._pid).not.toBeNull();
+    });
+  });
+
   describe("worktree-disambiguated keys", () => {
     it("tracks same (project, session, serverName) in two worktrees independently", async () => {
       const sessionPath = mkdtempSync(path.join(tmpdir(), "cc-session-"));

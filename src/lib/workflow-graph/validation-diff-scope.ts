@@ -1,6 +1,5 @@
 import {
   computeCandidateSnapshot as defaultComputeCandidateSnapshot,
-  hasCandidateScopeChanges as defaultHasCandidateScopeChanges,
   WHOLE_TREE_CANDIDATE_SCOPE,
   type CandidateScope,
   type CandidateSnapshot,
@@ -47,21 +46,9 @@ export function candidateScopeForPlacement(
 }
 
 /**
- * The change set a context validator reviews. Computed from the validator's
- * worktree just before its turn. Because the engine commits each context once
- * at land time (and never mid-iteration), the uncommitted working-tree delta
- * against HEAD at validation time is exactly the current context's changes —
- * restricted, for an enveloped context, to the paths that context owns.
- *
- * `treeHash` is the identity of the candidate the patch was read from. It
- * travels with the scope so a validation round can prove the bytes it showed
- * reviewers came from the candidate it froze, rather than trusting that two
- * independent probes of the same worktree happened to agree.
- *
- * `candidateScope` travels with it too, because the two are only meaningful
- * together: the same worktree yields different patches and different identities
- * under different ownership, so a reader that lost the scope could not say what
- * the identity was an identity OF.
+ * A retained context's change set, including self-commits, from its review
+ * origin to one candidate snapshot. Identity and scope accompany the patch so
+ * a validation round can prove it reviewed the candidate it froze.
  */
 export type ValidationDiffScope =
   | {
@@ -77,27 +64,21 @@ export type ValidationDiffScope =
   | { kind: "unavailable"; candidateScope: CandidateScope; reason: string };
 
 export interface ValidationDiffScopeDeps {
-  /**
-   * Read the candidate's identity and its patch against HEAD from ONE temporary
-   * index, both restricted to the same scope. Not `computeDiff`: that result is
-   * cached on HEAD plus a porcelain hash, which cannot see a content-only edit
-   * to an already-modified file, so it can hand back a patch older than the
-   * candidate a round froze.
-   */
   computeCandidateSnapshot(
     worktreePath: string,
     scope: CandidateScope,
+    baselineSha: string,
   ): Promise<CandidateSnapshot | null>;
-  /** Cheap scoped porcelain probe; throws when git itself is unavailable. */
-  hasUncommittedChanges(
-    worktreePath: string,
-    scope: CandidateScope,
-  ): Promise<boolean>;
 }
 
 const defaultDeps: ValidationDiffScopeDeps = {
-  computeCandidateSnapshot: defaultComputeCandidateSnapshot,
-  hasUncommittedChanges: defaultHasCandidateScopeChanges,
+  computeCandidateSnapshot: (worktreePath, scope, baselineSha) =>
+    defaultComputeCandidateSnapshot(
+      worktreePath,
+      scope,
+      undefined,
+      baselineSha,
+    ),
 };
 
 function describeError(error: unknown): string {
@@ -105,34 +86,21 @@ function describeError(error: unknown): string {
 }
 
 /**
- * Resolve the validator's change-set scope for the given worktree.
- *
- * An independent `git status --porcelain` probe (via `hasUncommittedChanges`)
- * tells a genuinely clean tree apart from a degraded read:
- * - probe throws → git unavailable → `unavailable`
- * - snapshot unreadable → `unavailable`
- * - probe clean → genuine no-op context → `empty` (still carrying its identity)
- * - probe dirty + non-empty diff → `available`
- * - probe dirty + empty diff → degraded → `unavailable`
- *
- * The probe is scoped alongside the snapshot, not left whole-tree. An unscoped
- * probe in a shared lane worktree would call the tree dirty on a sibling's
- * writes, find nothing inside this context's ownership to show for it, and
- * report a clean owned subset as a degraded read.
+ * A null origin is unavailable evidence, never a clean change set. Empty means
+ * one successfully read candidate has the same scoped bytes as the baseline;
+ * HEAD cleanliness cannot answer that after an implementer commits its work.
  */
 export async function computeValidationDiffScope(
   worktreePath: string,
   candidateScope: CandidateScope = WHOLE_TREE_CANDIDATE_SCOPE,
   deps: ValidationDiffScopeDeps = defaultDeps,
+  baselineSha: string | null = "HEAD",
 ): Promise<ValidationDiffScope> {
-  let dirty: boolean;
-  try {
-    dirty = await deps.hasUncommittedChanges(worktreePath, candidateScope);
-  } catch (error) {
+  if (baselineSha === null) {
     return {
       kind: "unavailable",
       candidateScope,
-      reason: `status probe failed: ${describeError(error)}`,
+      reason: "the retained work has no captured review origin",
     };
   }
 
@@ -141,6 +109,7 @@ export async function computeValidationDiffScope(
     snapshot = await deps.computeCandidateSnapshot(
       worktreePath,
       candidateScope,
+      baselineSha,
     );
   } catch (error) {
     return {
@@ -158,16 +127,8 @@ export async function computeValidationDiffScope(
     };
   }
 
-  if (!dirty) {
-    return { kind: "empty", candidateScope, treeHash: snapshot.treeHash };
-  }
-
   if (snapshot.diff.files.length === 0) {
-    return {
-      kind: "unavailable",
-      candidateScope,
-      reason: "working tree is dirty but no diff could be produced",
-    };
+    return { kind: "empty", candidateScope, treeHash: snapshot.treeHash };
   }
 
   return {
@@ -209,12 +170,12 @@ const SHARED_INSTRUCTIONS = [
 function renderInstructions(candidateScope: CandidateScope): string {
   if (candidateScope.mode === "wholeTree") {
     return [
-      "These are the uncommitted changes this context produced (working tree vs HEAD).",
+      "These are the changes this context produced since its captured review origin, including committed and uncommitted work.",
       ...SHARED_INSTRUCTIONS,
     ].join("\n");
   }
   return [
-    "These are the uncommitted changes this context produced (working tree vs HEAD), scoped to the paths this context owns:",
+    "These are the changes since this context’s captured review origin, including committed and uncommitted work, scoped to its frozen owned paths:",
     ...candidateScope.ownedPaths.map((ownedPath) => `- ${ownedPath}`),
     "This context runs under a file-ownership envelope and may write nothing else. Its worktree is shared with concurrent sibling contexts, whose changes are outside these owned paths and are deliberately absent below — do not fail this context for them, and do not read their absence as work this context left undone.",
     ...SHARED_INSTRUCTIONS,

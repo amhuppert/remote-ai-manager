@@ -31,6 +31,7 @@ import { createGraphWorkflowBoundaryEvent } from "@/lib/workflow-graph/execution
 import { projectGraphWorkflowBoundaryResult } from "@/lib/workflow-graph/execution-result-projection";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowPendingArtifacts,
   GraphWorkflowLeaseIncumbent,
   GraphWorkflowResultDelivery,
   SeededWorkflowDocument,
@@ -1514,85 +1515,100 @@ export function createSetters(
         `${label}[${sessionName}]`,
         () => {
           const startedAt = Date.now();
-          const captured = captureRepositoryLogs(() => {
-            const session = repos.sessions.findByKey(projectPath, sessionName);
-            if (!session) {
-              throw new Error(
-                `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
-              );
-            }
-            const current = repos.graphWorkflowExecutions.getActive(
-              projectPath,
-              sessionName,
-            );
-            const decision = mutate(current);
-            if (decision.kind === "no_commit")
-              return {
-                kind: "not_committed" as const,
-                execution: current,
-                value: decision.value,
-              };
-            const { execution: reduced, events, pushes } = decision;
-            // Stamp the structural fence HERE, at the durable-write boundary,
-            // not only at the execution-repository seam above it. `setActive`
-            // skips rewriting `definition_json` whenever this revision has not
-            // moved, so a reducer that edits the graph without advancing it
-            // would have its edit silently dropped on the floor. Deriving it
-            // from the values makes that impossible for every caller of this
-            // API, including the ones that never went through the seam.
-            // Idempotent: the seam derives the same number from the same
-            // `current`, so a commit that already carries it re-derives it
-            // unchanged.
-            const execution =
-              current === null
-                ? reduced
-                : {
-                    ...reduced,
-                    executionStateRevision: current.executionStateRevision + 1,
-                    structuralRevision: nextStructuralRevision(
-                      current,
-                      reduced,
-                    ),
+          const captured = captureRepositoryLogs(() =>
+            db
+              .transaction(() => {
+                const session = repos.sessions.findByKey(
+                  projectPath,
+                  sessionName,
+                );
+                if (!session) {
+                  throw new Error(
+                    `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+                  );
+                }
+                const current = repos.graphWorkflowExecutions.getActive(
+                  projectPath,
+                  sessionName,
+                );
+                const decision = mutate(current);
+                if (decision.kind === "no_commit")
+                  return {
+                    kind: "not_committed" as const,
+                    execution: current,
+                    value: decision.value,
                   };
-            const now = new Date().toISOString();
-            let publications: GraphWorkflowSSEEvent[] = [];
-            let resultEffects: NonNullable<
-              GraphWorkflowEventDelivery["resultEffects"]
-            > = [];
-            const txn = db.transaction(() => {
-              repos.graphWorkflowExecutions.setActive(
-                projectPath,
-                sessionName,
-                execution,
-                now,
-              );
-              const eventRecords = repos.graphWorkflowEvents.appendMany(
-                projectPath,
-                sessionName,
-                execution.id,
-                now,
-                events,
-              );
-              ({ publications, resultEffects } = recordBoundaryResultDeliveries(
-                projectPath,
-                sessionName,
-                execution,
-                eventRecords,
-              ));
-            });
-            txn.immediate();
-            return {
-              kind: "committed" as const,
-              value: decision.value,
-              execution,
-              delivery: {
-                events,
-                pushes: pushes ?? [],
-                publications,
-                resultEffects,
-              },
-            };
-          });
+                const { execution: reduced, events, pushes } = decision;
+                // Stamp the structural fence HERE, at the durable-write boundary,
+                // not only at the execution-repository seam above it. `setActive`
+                // skips rewriting `definition_json` whenever this revision has not
+                // moved, so a reducer that edits the graph without advancing it
+                // would have its edit silently dropped on the floor. Deriving it
+                // from the values makes that impossible for every caller of this
+                // API, including the ones that never went through the seam.
+                // Idempotent: the seam derives the same number from the same
+                // `current`, so a commit that already carries it re-derives it
+                // unchanged.
+                const execution =
+                  current === null
+                    ? reduced
+                    : {
+                        ...reduced,
+                        executionStateRevision:
+                          current.executionStateRevision + 1,
+                        structuralRevision: nextStructuralRevision(
+                          current,
+                          reduced,
+                        ),
+                      };
+                const now = new Date().toISOString();
+                let publications: GraphWorkflowSSEEvent[] = [];
+                let resultEffects: NonNullable<
+                  GraphWorkflowEventDelivery["resultEffects"]
+                > = [];
+                for (const contextId of decision.preResetContextIds ?? []) {
+                  repos.graphWorkflowEvents.markPreReset(
+                    projectPath,
+                    sessionName,
+                    execution.id,
+                    contextId,
+                    Number.MAX_SAFE_INTEGER,
+                  );
+                }
+                repos.graphWorkflowExecutions.setActive(
+                  projectPath,
+                  sessionName,
+                  execution,
+                  now,
+                );
+                const eventRecords = repos.graphWorkflowEvents.appendMany(
+                  projectPath,
+                  sessionName,
+                  execution.id,
+                  now,
+                  events,
+                );
+                ({ publications, resultEffects } =
+                  recordBoundaryResultDeliveries(
+                    projectPath,
+                    sessionName,
+                    execution,
+                    eventRecords,
+                  ));
+                return {
+                  kind: "committed" as const,
+                  value: decision.value,
+                  execution,
+                  delivery: {
+                    events,
+                    pushes: pushes ?? [],
+                    publications,
+                    resultEffects,
+                  },
+                };
+              })
+              .immediate(),
+          );
           flushRepositoryLogs = captured.flush;
           holdMs = Date.now() - startedAt;
           return captured.value;
@@ -1835,18 +1851,25 @@ export function createSetters(
   }
 
   /**
-   * Settle one execution's outstanding-artifact record: its `.cc` writes are on
-   * disk, so nothing is left to reconstruct. Serialized like every other write,
-   * and keyed by execution id alone — the record's identity — so a settle can
-   * never delete another run's.
+   * Settle only the reconstruction record whose bytes reached disk. A later
+   * record for the same execution must survive an older publisher finishing.
    */
   async function clearGraphWorkflowPendingArtifacts(
-    executionId: string,
+    expected: GraphWorkflowPendingArtifacts,
+    owner: Pick<GraphWorkflowExecution, "loopEpoch" | "status">,
   ): Promise<boolean> {
-    return writeQueue.withWriteQueueSync(
-      `graphWorkflowPendingArtifacts.clear[${executionId}]`,
-      () => repos.graphWorkflowPendingArtifacts.clear(executionId),
+    const cleared = await writeQueue.withWriteQueueSync(
+      `graphWorkflowPendingArtifacts.clear[${expected.executionId}]`,
+      () => repos.graphWorkflowPendingArtifacts.clear(expected, owner),
     );
+    logger.debug("graph-workflow.artifacts.debt_settled", {
+      executionId: expected.executionId,
+      cleared,
+      recordedAt: expected.recordedAt,
+      loopEpoch: owner.loopEpoch,
+      status: owner.status,
+    });
+    return cleared;
   }
 
   /**
@@ -2023,53 +2046,6 @@ export function createSetters(
       durationMs: holdMs,
     });
     return outcome;
-  }
-
-  /**
-   * Mark every persisted event for a context up to the current insertion
-   * boundary as pre-reset, replacing the old in-memory `history.map` reset
-   * marking. Returns the number of rows newly marked.
-   */
-  async function markGraphWorkflowContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number> {
-    return writeQueue.withWriteQueue(
-      `markGraphWorkflowContextEventsPreReset[${sessionName}]`,
-      async () =>
-        timed(
-          logger,
-          "state.mutate",
-          {
-            label: "markGraphWorkflowContextEventsPreReset",
-            projectPath,
-            sessionName,
-            conversationId: undefined,
-          },
-          async () => {
-            const boundaryRow = db
-              .prepare(
-                `SELECT MAX(id) AS maxId FROM graph_workflow_events
-                  WHERE project_path = ? AND session_name = ?
-                    AND execution_id = ?`,
-              )
-              .get(projectPath, sessionName, executionId) as {
-              maxId: number | null;
-            };
-            const boundaryId = boundaryRow.maxId;
-            if (boundaryId === null) return 0;
-            return repos.graphWorkflowEvents.markPreReset(
-              projectPath,
-              sessionName,
-              executionId,
-              contextId,
-              boundaryId,
-            );
-          },
-        ),
-    );
   }
 
   /**
@@ -2311,7 +2287,7 @@ export function createSetters(
     reserveActiveGraphWorkflowExecution,
     clearGraphWorkflowPendingArtifacts,
     archiveActiveGraphWorkflowExecution,
-    markGraphWorkflowContextEventsPreReset,
+
     mutateSessionWorkflowLanes,
     mutateSessionWorkflowEnvelopes,
     claimGraphWorkflowResultDeliveries,

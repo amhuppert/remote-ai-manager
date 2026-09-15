@@ -52,6 +52,7 @@ import {
   type GraphExecutionLifecycleContext,
 } from "@/lib/workflow-graph/execution-lifecycle-port";
 
+import { runWithLoopFence } from "./loop-fence";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
 
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -78,11 +79,6 @@ export interface GraphWorkflowLifecycleDeps {
    * longer plausibly live. Defaults to the real clock.
    */
   now?(): string;
-
-  normalizeExecutionAfterRestart(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<GraphWorkflowExecution | null>;
 
   startExecution(input: {
     projectPath: string;
@@ -445,6 +441,7 @@ export function createGraphWorkflowLifecycleService(
     projectPath: string;
     sessionName: string;
     expectedExecutionId: string;
+    expectedLoopEpoch: number;
     error: unknown;
     phase: "start" | "resume";
   }): Promise<void> {
@@ -471,6 +468,7 @@ export function createGraphWorkflowLifecycleService(
     if (
       !active ||
       active.id !== input.expectedExecutionId ||
+      active.loopEpoch !== input.expectedLoopEpoch ||
       active.status !== "running"
     ) {
       logger.error("graph-workflow.execution_loop_failed", {
@@ -481,6 +479,8 @@ export function createGraphWorkflowLifecycleService(
         hasActiveExecution: active !== null,
         expectedExecutionId: input.expectedExecutionId,
         activeExecutionId: active?.id ?? null,
+        expectedLoopEpoch: input.expectedLoopEpoch,
+        activeLoopEpoch: active?.loopEpoch ?? null,
         executionStatus: active?.status ?? null,
         haltRecovery:
           active !== null && active.id !== input.expectedExecutionId
@@ -490,37 +490,47 @@ export function createGraphWorkflowLifecycleService(
       return;
     }
     try {
-      const recorded = await deps.recordPendingHaltReason({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        expectedExecutionId: input.expectedExecutionId,
-        reason,
-      });
-      if (!recorded.accepted) {
-        logger.error("graph-workflow.execution_loop_failed", {
+      await runWithLoopFence(
+        {
           projectPath: input.projectPath,
           sessionName: input.sessionName,
-          phase: input.phase,
-          haltReasonType: reason.type,
-          hasActiveExecution: true,
-          executionStatus: recorded.execution.status,
-          haltRecovery: "rejected",
-        });
-        return;
-      }
-      await deps.drainAndHalt({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        expectedExecutionId: input.expectedExecutionId,
-      });
-      logger.error("graph-workflow.execution_loop_failed", {
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        phase: input.phase,
-        haltReasonType: reason.type,
-        hasActiveExecution: true,
-        haltRecovery: "completed",
-      });
+          executionId: input.expectedExecutionId,
+          loopEpoch: input.expectedLoopEpoch,
+        },
+        async () => {
+          const recorded = await deps.recordPendingHaltReason({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            expectedExecutionId: input.expectedExecutionId,
+            reason,
+          });
+          if (!recorded.accepted) {
+            logger.error("graph-workflow.execution_loop_failed", {
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              phase: input.phase,
+              haltReasonType: reason.type,
+              hasActiveExecution: true,
+              executionStatus: recorded.execution.status,
+              haltRecovery: "rejected",
+            });
+            return;
+          }
+          await deps.drainAndHalt({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            expectedExecutionId: input.expectedExecutionId,
+          });
+          logger.error("graph-workflow.execution_loop_failed", {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            phase: input.phase,
+            haltReasonType: reason.type,
+            hasActiveExecution: true,
+            haltRecovery: "completed",
+          });
+        },
+      );
     } catch (haltError) {
       logger.error("graph-workflow.execution_loop_failed", {
         projectPath: input.projectPath,
@@ -929,6 +939,7 @@ export function createGraphWorkflowLifecycleService(
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           expectedExecutionId: result.execution.id,
+          expectedLoopEpoch: result.execution.loopEpoch,
           error,
           phase: "start",
         });
@@ -1051,6 +1062,7 @@ export function createGraphWorkflowLifecycleService(
         await reportExecutionLoopFailure({
           ...input,
           expectedExecutionId: input.execution.id,
+          expectedLoopEpoch: input.execution.loopEpoch,
           error,
           phase,
         });
@@ -1069,10 +1081,6 @@ export function createGraphWorkflowLifecycleService(
     input: LifecycleAddress & { options?: GraphWorkflowResumeOptions },
   ): Promise<GraphWorkflowExecution> {
     const execution = await withCommandFence(input, async () => {
-      await deps.normalizeExecutionAfterRestart(
-        input.projectPath,
-        input.sessionName,
-      );
       return deps.resumeExecution(
         input.projectPath,
         input.sessionName,

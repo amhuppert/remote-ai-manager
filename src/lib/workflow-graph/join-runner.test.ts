@@ -7,7 +7,11 @@ import { describe, expect, it } from "vitest";
 import { defaultGitClient } from "@/lib/git/client";
 import { commitOwnedPaths } from "@/lib/git/owned-landing";
 import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
-import { abortInProgressMerge } from "@/lib/git/worktree";
+import {
+  abortInProgressMerge,
+  prepareSquashMerge,
+  publishPreparedMerge,
+} from "@/lib/git/worktree";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
@@ -294,11 +298,143 @@ function setupExecutionWithJoin(
   return {
     ...base,
     executionLanes: lanes,
-    joins: { [join.joinId]: join },
+    joins: {
+      [join.joinId]: {
+        ...join,
+        sourceLaneContextIds:
+          join.sourceLaneContextIds ??
+          Object.fromEntries(
+            join.sourceLaneIds.map((laneId) => [
+              laneId,
+              [...(lanes[laneId]?.includedContextIds ?? [])],
+            ]),
+          ),
+      },
+    },
   };
 }
 
 describe("join-runner", () => {
+  it.each([true, false])(
+    "records reverse coverage only when the source incorporated the captured target (integrated=%s)",
+    async (integrated) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "cc-join-reverse-"));
+      const sourceDirectory = path.join(directory, "source");
+      try {
+        await git(directory, ["init", "--initial-branch=target"]);
+        await git(directory, [
+          "config",
+          "user.email",
+          "engine@command-center.test",
+        ]);
+        await git(directory, ["config", "user.name", "Command Center"]);
+        await writeFile(path.join(directory, "base.txt"), "base\n");
+        await git(directory, ["add", "base.txt"]);
+        await git(directory, ["commit", "-m", "base"]);
+        await git(directory, [
+          "worktree",
+          "add",
+          "-b",
+          "source",
+          sourceDirectory,
+          "HEAD",
+        ]);
+        await writeFile(path.join(directory, "target.txt"), "target\n");
+        await git(directory, ["add", "target.txt"]);
+        await git(directory, ["commit", "-m", "target contribution"]);
+        await writeFile(path.join(sourceDirectory, "source.txt"), "source\n");
+        await git(sourceDirectory, ["add", "source.txt"]);
+        await git(sourceDirectory, ["commit", "-m", "source contribution"]);
+        const targetSha = await git(directory, ["rev-parse", "HEAD"]);
+        const execution = setupExecutionWithJoin(
+          makeJoin({
+            joinId: "reverse",
+            targetLaneId: "target",
+            sourceLaneIds: ["source", "target"],
+          }),
+          {
+            target: makeLane({
+              laneId: "target",
+              branchName: "target",
+              worktreePath: directory,
+              includedContextIds: ["context-plan"],
+            }),
+            source: makeLane({
+              laneId: "source",
+              branchName: "source",
+              worktreePath: sourceDirectory,
+              includedContextIds: ["context-implement"],
+            }),
+          },
+        );
+        const persist = createInMemoryPersist(execution);
+        const runner = createJoinRunner({
+          mergeRunner: {
+            async run() {
+              if (integrated)
+                await git(sourceDirectory, ["merge", "--no-edit", targetSha]);
+              const prepared = await prepareSquashMerge({
+                projectPath: directory,
+                featureBranch: "source",
+                featureSha: await git(sourceDirectory, ["rev-parse", "HEAD"]),
+                targetBranch: "target",
+                targetSha,
+                message: "publish source",
+                jobId: "reverse",
+                forcePath: "plumbing",
+              });
+              if (prepared.kind !== "prepared")
+                throw new Error(`Unexpected merge result: ${prepared.kind}`);
+              const published = await publishPreparedMerge({
+                projectPath: directory,
+                targetBranch: "target",
+                ...prepared,
+                cleanTargetWorktreePath: directory,
+              });
+              expect(published.kind).toBe("published");
+              return {
+                ...completed(prepared.preparedSha),
+                expectedTargetSha: targetSha,
+              };
+            },
+          },
+          sessionGitLock: createSessionGitLock({
+            acquireSessionLock: () => () => {},
+          }),
+          mergeMutex: createPerSessionMergeMutex(),
+          readRepoConfig: async () => null,
+          now: () => t0,
+        });
+        expect(
+          await runner.run({
+            projectPath: directory,
+            projectName: "repo",
+            sessionName: "session",
+            joinId: "reverse",
+            mutateActive: persist.mutateActive,
+          }),
+        ).toEqual({ status: "succeeded" });
+        expect(
+          persist
+            .read()
+            .executionLanes.source!.includedContextIds.includes("context-plan"),
+        ).toBe(integrated);
+        expect(
+          persist.read().executionLanes.target!.includedContextIds,
+        ).toEqual(["context-plan", "context-implement"]);
+        expect(await readFile(path.join(directory, "source.txt"), "utf8")).toBe(
+          "source\n",
+        );
+        if (integrated)
+          expect(
+            await readFile(path.join(sourceDirectory, "target.txt"), "utf8"),
+          ).toBe("target\n");
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("resyncs both worktree indexes before merging a sibling lane", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({
@@ -1396,6 +1532,11 @@ describe("join-runner", () => {
         }),
       },
     );
+    execution.contextStates["context-source"] = {
+      ...execution.contextStates["context-plan"]!,
+      contextId: "context-source",
+      laneId: "lane-b",
+    };
     execution.laneStates = {
       "context-source": {
         implementer: {

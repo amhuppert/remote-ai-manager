@@ -108,8 +108,6 @@ export const clearGraphWorkflowPendingArtifacts =
   defaultStore.clearGraphWorkflowPendingArtifacts;
 export const archiveActiveGraphWorkflowExecution =
   defaultStore.archiveActiveGraphWorkflowExecution;
-export const markGraphWorkflowContextEventsPreReset =
-  defaultStore.markGraphWorkflowContextEventsPreReset;
 export const mutateSessionWorkflowLanes =
   defaultStore.mutateSessionWorkflowLanes;
 export const mutateSessionWorkflowEnvelopes =

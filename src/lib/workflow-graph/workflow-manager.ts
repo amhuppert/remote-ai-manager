@@ -1,4 +1,6 @@
+import { captureExecutionLaneDevServerCleanup } from "./dev-server-lane-cleanup";
 import { requireRunningExecution } from "./execution-transitions";
+import { matchesLoopFence, StaleLoopFenceError } from "./loop-fence";
 import { accountContextAction } from "./context-accounting";
 import { unchanged } from "@/lib/workflow-graph/execution-mutation";
 import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
@@ -53,6 +55,7 @@ import { settleLoops } from "./loop-settlement";
 
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import { toHaltReason } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import {
   buildLifecycleSnapshot,
@@ -638,8 +641,6 @@ export interface GraphWorkflowManagerDeps {
   eventPublisher?: ReturnType<
     typeof createGraphWorkflowExecutionEventPublisher
   >;
-  /** Check if an execution loop is currently running for this session. When true, normalizeAfterRestart skips normalization. */
-  isExecutionLoopActive?(projectPath: string, sessionName: string): boolean;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -703,6 +704,7 @@ export interface GraphWorkflowManagerDeps {
    * abort/halt/drain/reset so a workflow that ends (or has a context reset)
    * never leaves orphaned lane dev servers.
    */
+  captureExecutionLaneDevServerCleanup?: typeof captureExecutionLaneDevServerCleanup;
   stopExecutionLaneDevServers(input: {
     execution: GraphWorkflowExecution;
     projectPath: string;
@@ -1228,7 +1230,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
    * the prerequisite preflight, input validation, seeding (substitution,
    * structural re-validation, reference checks, the global → workflow →
    * per-context cascade, assignment snapshots, the selector freeze), the
-   * approval park, and the pending → running transition all happen HERE, once,
+   * approval park, and launch admission all happen HERE, once,
    * so validation parity between the two verbs is structural rather than
    * aspirational.
    */
@@ -1465,77 +1467,118 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       },
     );
 
-    const authoredDefinition = {
-      ...pendingExecution.workingDefinition,
-      charter: pendingExecution.charter,
-    };
-    const sourceWarnings =
-      session === null
-        ? []
-        : locatePlanIssues(
-            await (
-              deps.lintCommittedSourceLocators ??
-              defaultLintCommittedSourceLocators
-            )(authoredDefinition, session),
-            // The same id-bearing locator `workflow validate` renders (#80
-            // design 3.2): a source warning names the charter source it is
-            // about, not the position it happens to occupy.
-            authoredDefinition,
-          );
-    logger.info("graph-workflow.start.source_check", {
+    const launchFence = {
       projectPath: input.projectPath,
       sessionName: input.sessionName,
-      ...attribution,
-      resolutionKind:
-        session === null ? "session_unavailable" : "launch_session_head",
-      warningCount: sourceWarnings.length,
-    });
-    const warningFields =
-      sourceWarnings.length === 0 ? {} : { warnings: sourceWarnings };
-
-    // An authored `approvalRequired` is an ACCEPTED launch that has not begun
-    // (D7 R14): the pending execution is durable and holds the session's lease,
-    // so the outcome carries the park rather than raising it. Nothing below this
-    // line runs for a parked run — the loop starts only once a human decides.
-    if (
-      awaitsDefinitionApproval(
-        pendingExecution.status,
-        pendingExecution.definitionApproval,
-      )
-    ) {
-      logger.info("graph-workflow.definition_approval.pending", {
-        executionId: pendingExecution.id,
-        ...attribution,
+      executionId: pendingExecution.id,
+      loopEpoch: pendingExecution.loopEpoch,
+    };
+    try {
+      const authoredDefinition = {
+        ...pendingExecution.workingDefinition,
+        charter: pendingExecution.charter,
+      };
+      const sourceWarnings =
+        session === null
+          ? []
+          : locatePlanIssues(
+              await (
+                deps.lintCommittedSourceLocators ??
+                defaultLintCommittedSourceLocators
+              )(authoredDefinition, session),
+              // The same id-bearing locator `workflow validate` renders (#80
+              // design 3.2): a source warning names the charter source it is
+              // about, not the position it happens to occupy.
+              authoredDefinition,
+            );
+      logger.info("graph-workflow.start.source_check", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
-        requestedAt: pendingExecution.definitionApproval?.requestedAt ?? null,
+        ...attribution,
+        resolutionKind:
+          session === null ? "session_unavailable" : "launch_session_head",
+        warningCount: sourceWarnings.length,
       });
+      const warningFields =
+        sourceWarnings.length === 0 ? {} : { warnings: sourceWarnings };
+
+      const admitted = await deps.executionRepository.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (current) => {
+          if (
+            !matchesLoopFence(launchFence, current) ||
+            current.status !== pendingExecution.status
+          ) {
+            throw new StaleLoopFenceError(launchFence, current);
+          }
+          return unchanged();
+        },
+      );
+
+      // An authored `approvalRequired` is an ACCEPTED launch that has not begun
+      // (D7 R14): the pending execution is durable and holds the session's lease,
+      // so the outcome carries the park rather than raising it. Nothing below this
+      // line runs for a parked run — the loop starts only once a human decides.
+      if (
+        awaitsDefinitionApproval(
+          pendingExecution.status,
+          pendingExecution.definitionApproval,
+        )
+      ) {
+        logger.info("graph-workflow.definition_approval.pending", {
+          executionId: pendingExecution.id,
+          ...attribution,
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          requestedAt: pendingExecution.definitionApproval?.requestedAt ?? null,
+        });
+        return {
+          execution: admitted.execution,
+          awaitingDefinitionApproval: true,
+          ...warningFields,
+        };
+      }
+
+      const nextExecution = admitted.execution;
+
+      recordExecutionStarted(
+        nextExecution,
+        input.projectPath,
+        input.sessionName,
+      );
+
       return {
-        execution: pendingExecution,
-        awaitingDefinitionApproval: true,
+        execution: nextExecution,
+        awaitingDefinitionApproval: false,
         ...warningFields,
       };
-    }
-
-    const nextExecution = await deps.executionRepository
-      .mutateActive(input.projectPath, input.sessionName, (execution) => {
-        execution.status = "running";
-        execution.machineSnapshot = buildLifecycleSnapshot(execution, {
-          lifecycleStatus: "running",
-          recoveryMode: "none",
-          hasLiveIteration: false,
+    } catch (error) {
+      await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (current) => {
+          if (
+            !matchesLoopFence(launchFence, current) ||
+            current.status !== "running"
+          )
+            return unchanged();
+          return changed(
+            transitionToNonRunningState(
+              current,
+              "halted",
+              getNow(deps),
+              toHaltReason(error, { cause: "unknown" }),
+            ),
+          );
+        })
+        .catch((haltError: unknown) => {
+          logger.warn("graph-workflow.start.failure_settlement_refused", {
+            executionId: pendingExecution.id,
+            loopEpoch: pendingExecution.loopEpoch,
+            error: getErrorMessage(haltError),
+          });
         });
-        return changed(execution);
-      })
-      .then((mutation) => mutation.execution);
-
-    recordExecutionStarted(nextExecution, input.projectPath, input.sessionName);
-
-    return {
-      execution: nextExecution,
-      awaitingDefinitionApproval: false,
-      ...warningFields,
-    };
+      throw error;
+    }
   }
 
   /**
@@ -2517,17 +2560,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     });
   }
 
-  /**
-   * `options.expectedExecutionId` fences the whole call on one run.
-   *
-   * Normalization addresses the SESSION's active row, which is right for the
-   * restart sweep that means "whatever is here". A caller that means one
-   * particular execution — plan repair normalizing the run it just repaired
-   * before resuming it — has to say so: an abandon-plus-relaunch in that window
-   * would otherwise let it repair the successor's artifacts and rewrite the
-   * successor's running state, which the fenced resume behind it then refuses
-   * far too late.
-   */
+  /** Recover interrupted work before runtime admission opens. */
   async function normalizeAfterRestart(
     projectPath: string,
     sessionName: string,
@@ -2554,34 +2587,18 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return null;
     }
 
-    // Settled before any status branch, because restart is the only kickoff an
-    // ordinary launch ever gets. A launch commits its row as `pending` and
-    // writes its `.cc` artifacts after that transaction, so the crash this
-    // function exists for strands a run whose charter and seeded documents were
-    // never written — and nothing else comes back for it: `resume` refuses a
-    // pending run, and approval-gated repair only covers launches that stop for
-    // a definition approval. The debt belongs to whoever holds the row, not to
-    // one lifecycle state, and settling it is a no-op for a run that owes
-    // nothing (the repository has no record to act on).
-    await repairPendingArtifacts(projectPath, sessionName, expectedExecutionId);
-
-    // A stranded definition-approval reservation is deliberately NOT swept
-    // here. A reservation is taken before the admission consumer is called, so
-    // one that outlives its holder may already have that consumer's durable
-    // records behind it; freeing it would let a later act end the run and
-    // strand those records — the interrupted act would have written and lost.
-    // An interrupted decision is finished rather than discarded, which only the
-    // act that owns the admission seam can do (see
-    // `interruptedDefinitionDecision` and the route layer's settlement).
-
-    if (execution.status !== "running") {
-      return execution;
-    }
-
-    // If the execution loop is genuinely active in this process, the
-    // iteration is still running — skip normalization.
-    if (deps.isExecutionLoopActive?.(projectPath, sessionName)) {
-      return execution;
+    const recoveryFence = {
+      projectPath,
+      sessionName,
+      executionId: execution.id,
+      loopEpoch: execution.loopEpoch,
+    };
+    await repairPendingArtifacts(projectPath, sessionName, execution.id);
+    const orphanedLaunch =
+      execution.status === "pending" &&
+      !awaitsDefinitionApproval(execution.status, execution.definitionApproval);
+    if (execution.status !== "running" && !orphanedLaunch) {
+      return deps.executionRepository.getActive(projectPath, sessionName);
     }
 
     // Probed BEFORE the mutation: reading a branch is I/O and the write queue
@@ -2597,15 +2614,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       { normalizedJoinIds: string[]; reconciledIntentContextIds: string[] },
       "superseded"
     >(projectPath, sessionName, (current) => {
-      // The probe ran outside the queue. Recheck identity and status so a
-      // successor or a run that settled during the probe receives no write.
       if (
-        expectedExecutionId !== undefined &&
-        current.id !== expectedExecutionId
+        !matchesLoopFence(recoveryFence, current) ||
+        current.status !== execution.status
       ) {
-        return refused("superseded");
-      }
-      if (current.status !== "running") {
         return refused("superseded");
       }
 
@@ -2670,10 +2682,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       });
     });
 
-    // Refused: the run settled itself or the row turned over while the landing
-    // probe ran. The caller gets the run as it was read, unnormalized.
     if (normalized.kind === "refused") {
-      return expectedExecutionId !== undefined ? null : execution;
+      return normalized.execution;
     }
     const normalizedExecution = normalized.execution;
     const { normalizedJoinIds, reconciledIntentContextIds } = normalized.value;
@@ -2977,37 +2987,28 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     contextId: string,
   ): Promise<GraphWorkflowExecution> {
-    // Mark every event filed under the context up to the current insertion
-    // boundary as pre-reset before the reset write appends its own status-change
-    // events, so those new events stay visible post-reset (the old in-memory
-    // history.map ran before the reset's appendEvents for the same reason).
-    const active = await deps.executionRepository.getActive(
+    const captured = await deps.executionRepository.getActive(
       projectPath,
       sessionName,
     );
-    if (active) {
-      await deps.executionRepository.markContextEventsPreReset(
-        projectPath,
-        sessionName,
-        active.id,
-        contextId,
+    if (captured === null)
+      throw new Error(
+        "Session does not have an active graph workflow execution",
       );
-      // Stop this context's lane dev servers before the reset drops its lane
-      // association (resetExecutionContext rebuilds the context's lane state).
-      await stopLaneDevServers({
-        execution: active,
-        projectPath,
-        contextIds: [contextId],
-      });
-      // Reset-intent log emitted BEFORE entering the queue, off the write-queue
-      // critical section (`no-slow-work-in-critical-section`).
-      logger.info("graph-workflow.context.reset_requested", {
-        executionId: active.id,
-        contextId,
-        status: active.status,
-      });
-    }
-
+    const cleanup = (
+      deps.captureExecutionLaneDevServerCleanup ??
+      captureExecutionLaneDevServerCleanup
+    )({
+      execution: captured,
+      projectPath,
+      contextIds: [contextId],
+    });
+    const resetFence = {
+      projectPath,
+      sessionName,
+      executionId: captured.id,
+      loopEpoch: captured.loopEpoch,
+    };
     // The reducer captures the pre-reset status (pure) and returns the reset
     // execution; a rejected reset (ResetExecutionContextError) is logged in the
     // catch below, outside the lock.
@@ -3015,10 +3016,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       projectPath,
       sessionName,
       (execution) => {
+        if (
+          !matchesLoopFence(resetFence, execution) ||
+          execution.status !== captured.status
+        )
+          throw new StaleLoopFenceError(resetFence, execution);
         try {
-          return changed(resetExecutionContext(execution, contextId), {
-            previousStatus: execution.status,
-          });
+          return changed(
+            resetExecutionContext(execution, contextId),
+            {
+              previousStatus: execution.status,
+            },
+            { events: [], pushes: [], preResetContextIds: [contextId] },
+          );
         } catch (error) {
           if (error instanceof ResetExecutionContextError)
             return refused(error);
@@ -3039,6 +3049,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       execution: nextExecution,
       value: { previousStatus },
     } = mutation;
+
+    await cleanup();
 
     let execLogger = getExecutionLogger(nextExecution.id);
     if (!execLogger) {

@@ -26,12 +26,9 @@ export type GraphWorkflowApprovalSnapshot = z.infer<
 /**
  * What the approval API answers with for one parked context.
  *
- * The union is the point. `whole_tree` is not an absent snapshot but a positive
- * statement that this member reviews the whole worktree — what a full-access
- * member has always reviewed, and what the session's own diff view shows.
- * `drifted` is fail-closed and deliberately carries no patch: the gate's claim
- * is that the human decides on the candidate it froze, and a re-read that no
- * longer matches that identity is not that candidate.
+ * Both scope grades carry the frozen candidate's baseline-relative patch.
+ * `drifted` carries no patch: bytes that no longer match the gate's frozen
+ * identity cannot be rendered as that gate's evidence.
  *
  * Lives here rather than beside the server-side resolver because the client
  * parses it, and the resolver reaches git.
@@ -43,7 +40,13 @@ export const graphWorkflowApprovalSnapshotResponseSchema = z.discriminatedUnion(
       kind: z.literal("scoped"),
       snapshot: graphWorkflowApprovalSnapshotSchema,
     }),
-    z.object({ kind: z.literal("whole_tree"), contextId: z.string() }),
+    z.object({
+      kind: z.literal("whole_tree"),
+      contextId: z.string(),
+      snapshot: z
+        .object({ treeHash: z.string(), diff: sessionDiffSchema })
+        .strict(),
+    }),
     z.object({
       kind: z.literal("drifted"),
       contextId: z.string(),

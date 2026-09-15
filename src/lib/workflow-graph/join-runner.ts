@@ -4,6 +4,7 @@ import type {
 } from "./execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { randomUUID } from "node:crypto";
+import { defaultGitClient } from "@/lib/git/client";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, type Logger } from "@/lib/logging";
 import { abortInProgressMerge as defaultAbortInProgressMerge } from "@/lib/git/worktree";
@@ -124,6 +125,10 @@ export interface JoinRunnerDeps {
    *  becomes either side of a merge. Production composition supplies the git
    *  helper; merge-runner tests that use synthetic paths may omit it. */
   resyncSharedIndex?(worktreePath: string): Promise<void>;
+  targetIntegratedIntoSource?(
+    worktreePath: string,
+    targetSha: string,
+  ): Promise<boolean>;
   readRepoConfig?: ReadLaneMergeRepoConfig;
   logger?: Logger;
   createJobId?(): string;
@@ -131,16 +136,12 @@ export interface JoinRunnerDeps {
 }
 
 function coveredContextIdsForLanes(
-  execution: GraphWorkflowExecution,
   join: GraphWorkflowExecutionJoinState,
   laneIds: readonly string[],
 ): string[] {
   const covered = new Set<string>();
   for (const laneId of laneIds) {
-    const contextIds =
-      join.sourceLaneContextIds?.[laneId] ??
-      execution.executionLanes[laneId]?.includedContextIds ??
-      [];
+    const contextIds = join.sourceLaneContextIds?.[laneId] ?? [];
     for (const contextId of contextIds) covered.add(contextId);
   }
   return [...covered];
@@ -154,6 +155,19 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
   const inspectInProgressMerge =
     deps.inspectInProgressMerge ?? defaultInspectInProgressMerge;
   const resyncSharedIndex = deps.resyncSharedIndex;
+  const targetIntegratedIntoSource =
+    deps.targetIntegratedIntoSource ??
+    (async (worktreePath: string, targetSha: string): Promise<boolean> => {
+      try {
+        await defaultGitClient.git(
+          ["merge-base", "--is-ancestor", targetSha, "HEAD"],
+          worktreePath,
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    });
   const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
   const logger = deps.logger ?? defaultLogger;
 
@@ -285,6 +299,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         let mergeHaltReason: DeliveryGateHaltReason | null = null;
         let resolutionFailure: AgentFailureClassification | null = null;
         let completedMergeValidationMode: MergeValidationMode | null = null;
+        let confirmedSourceContextIds: string[] = [];
         // First-attempt conflict detail when the clean retry succeeds — the
         // retry's own output no longer knows the merge was ever conflicted.
         let cleanRetryConflicts: {
@@ -316,7 +331,6 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             ]),
           ];
           const coveredContextIds = coveredContextIdsForLanes(
-            execution,
             currentJoin,
             coveredLaneIds,
           );
@@ -452,7 +466,24 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                       workflowExecutionId: execution.id,
                     });
 
-                  const first = await runMerge();
+                  const confirmSource = async (
+                    output: MergeOutput,
+                  ): Promise<MergeOutput> => {
+                    if (
+                      output.status === "completed" &&
+                      output.expectedTargetSha !== null &&
+                      (await targetIntegratedIntoSource(
+                        sourceWorktreePath,
+                        output.expectedTargetSha,
+                      ))
+                    ) {
+                      confirmedSourceContextIds = [
+                        ...targetLane.includedContextIds,
+                      ];
+                    }
+                    return output;
+                  };
+                  const first = await confirmSource(await runMerge());
                   const retryCause = cleanRetryCause(first);
                   if (retryCause === null) {
                     return {
@@ -483,7 +514,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                   await abortInProgressMerge(sourceWorktreePath);
                   return {
                     kind: "merged" as const,
-                    output: await runMerge(),
+                    output: await confirmSource(await runMerge()),
                     retriedConflicts: {
                       files: first.conflictFiles,
                       analysis: first.conflictAnalysis,
@@ -553,12 +584,21 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             validationMode: completedMergeValidationMode?.mode ?? null,
             conflictResolution: resolvedConflict?.resolution ?? null,
             conflictFileCount: resolvedConflict?.files.length ?? 0,
+            confirmedSourceContextIds,
           });
           execution = await mutateActive((e) =>
             changed(
               applyJoinProgress(e, joinId, now(), {
                 status: "running",
                 addMergedSourceLaneId: sourceLaneId,
+                ...(confirmedSourceContextIds.length > 0
+                  ? {
+                      confirmedSourceCoverage: {
+                        laneId: sourceLaneId,
+                        contextIds: confirmedSourceContextIds,
+                      },
+                    }
+                  : {}),
                 ...(resolvedConflict
                   ? { addResolvedConflict: resolvedConflict }
                   : {}),

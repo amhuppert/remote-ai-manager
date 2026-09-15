@@ -97,12 +97,6 @@ interface InMemoryExecutionRepository {
       execution: GraphWorkflowExecution,
     ) => ExecutionMutationDecision<Value, Refusal>,
   ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
-  markContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number>;
 }
 
 function createRepository(
@@ -160,9 +154,7 @@ function createRepository(
       throw new Error("archiveActive not used in integration tests");
     },
     mutateActive: mutateActiveImpl,
-    async markContextEventsPreReset() {
-      return 0;
-    },
+
     read() {
       return active;
     },
@@ -1703,7 +1695,7 @@ describe("execution loop — parallel integration", () => {
     expect(joinRun).not.toHaveBeenCalled();
     expect(soloCommit).not.toHaveBeenCalled();
     expect(laneCommit).not.toHaveBeenCalled();
-    expect(resolveHead).not.toHaveBeenCalled();
+    expect(resolveHead).toHaveBeenCalled();
     for (const readerId of readerIds) {
       const state = result.contextStates[readerId];
       expect(state?.isolation).toBe("session");
@@ -3596,6 +3588,9 @@ describe("execution loop — parallel integration", () => {
       (join) => join.kind === "final_publish" && join.joinId !== "join-stale",
     );
     expect(freshFinalPublish?.status).toBe("succeeded");
-    expect(freshFinalPublish?.sourceLaneIds).toEqual(["ctx-a", sweepLaneId]);
+    expect(freshFinalPublish?.sourceLaneIds).toEqual([sweepLaneId]);
+    expect(freshFinalPublish?.sourceLaneContextIds?.[sweepLaneId!]).toEqual(
+      expect.arrayContaining(["ctx-a", "ctx-sweep"]),
+    );
   });
 });

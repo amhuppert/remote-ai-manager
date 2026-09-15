@@ -9,12 +9,10 @@ import {
 } from "./scenarios";
 
 /**
- * R14.1 / decision D14. Each committed recording under `recordings/` was
- * produced by this harness against the pre-D4 engine; the D4-enabled engine
- * must reproduce it exactly. A recording is regenerated ONLY by an explicit
- * `<RECORDING_UPDATE_ENV>=1` run, and regenerating one is an assertion that the
- * observable pre-D4 behaviour genuinely changed — the whole point of the fixture
- * is that additive D4 work leaves it untouched.
+ * R14.1 / decision D14. Pre-D4 fixture definitions pin the engine's scheduling,
+ * context transitions, and event ordering. Recordings must reproduce exactly;
+ * reviewed behavior changes require an explicit recording edit. Bulk regeneration
+ * is available only through `<RECORDING_UPDATE_ENV>=1`.
  */
 describe("pre-D4 observational equivalence", () => {
   for (const scenarioName of COMPATIBILITY_SCENARIOS) {

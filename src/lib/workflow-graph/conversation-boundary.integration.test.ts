@@ -96,8 +96,7 @@ async function compose(
       store.reserveActiveGraphWorkflowExecution,
     archiveActiveGraphWorkflowExecution:
       store.archiveActiveGraphWorkflowExecution,
-    markGraphWorkflowContextEventsPreReset:
-      store.markGraphWorkflowContextEventsPreReset,
+
     eventPublisher,
   });
   const gate = createUserInputGateService({
@@ -205,7 +204,7 @@ async function compose(
     });
   const orchestrator = createContextIterationFixture({
     ...createContextTestCapabilities(),
-    materializeWorkflowDocuments: async () => {},
+    materializeWorkflowDocuments: async ({ execution }) => execution,
 
     executionContract: createNonParticipatingGraphExecutionContract(),
 

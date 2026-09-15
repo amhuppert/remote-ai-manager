@@ -28,6 +28,7 @@ import {
 } from "../shared/global-singleton";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { sleep } from "@/lib/shared/sleep";
+import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
 import {
   defaultPortOwnershipService,
   type PortOwnershipInput,
@@ -247,6 +248,10 @@ export function createDevServerRegistry(
   deps: DevServerRegistryDeps = defaultDevServerRegistryDeps,
 ) {
   const log = deps.logger ?? logger;
+  const lifecycleMutex = getGlobalSingleton(
+    "__cc_dev_server_lifecycle_mutex",
+    createKeyedMutex,
+  );
 
   type RegistryMap = Map<string, DevServerEntry>;
 
@@ -503,12 +508,34 @@ export function createDevServerRegistry(
     }
   }
 
+  function lifecycleKey(params: {
+    projectPath: string;
+    sessionName: string;
+    worktreePath: string;
+    serverName: string;
+  }): string {
+    return makeKey(
+      params.projectPath,
+      params.sessionName,
+      path.resolve(params.worktreePath),
+      params.serverName,
+    );
+  }
+
+  async function startServer(
+    params: Parameters<typeof startServerUnlocked>[0],
+  ): Promise<void> {
+    return lifecycleMutex.run(lifecycleKey(params), () =>
+      startServerUnlocked(params),
+    );
+  }
+
   /**
    * Start a dev server for a session. Spawns the command with the assigned
    * port injected via `CC_ASSIGNED_PORT`/`PORT`/aliases, polls for TCP
    * readiness, and manages status transitions.
    */
-  async function startServer(params: {
+  async function startServerUnlocked(params: {
     projectPath: string;
     sessionName: string;
     serverName: string;
@@ -701,23 +728,48 @@ export function createDevServerRegistry(
     });
   }
 
+  async function stopServer(
+    params: Parameters<typeof stopServerUnlocked>[0],
+  ): Promise<void> {
+    return lifecycleMutex.run(lifecycleKey(params), () =>
+      stopServerUnlocked(params),
+    );
+  }
+
+  async function stopCapturedServer(entry: DevServerEntry): Promise<void> {
+    return lifecycleMutex.run(lifecycleKey(entry), () =>
+      stopServerUnlocked(entry, entry),
+    );
+  }
+
   /**
    * Stop a specific dev server.
    * Kills the process group first (shell + all children), then falls back
    * to port-based kill for any orphaned processes.
    */
-  async function stopServer(params: {
-    projectPath: string;
-    sessionName: string;
-    worktreePath: string;
-    serverName: string;
-  }): Promise<void> {
+  async function stopServerUnlocked(
+    params: {
+      projectPath: string;
+      sessionName: string;
+      worktreePath: string;
+      serverName: string;
+    },
+    expectedEntry?: DevServerEntry,
+  ): Promise<void> {
     const { projectPath, sessionName, worktreePath, serverName } = params;
     const registry = getRegistry();
     const key = makeKey(projectPath, sessionName, worktreePath, serverName);
     const entry = registry.get(key);
 
     if (!entry) return;
+    if (expectedEntry !== undefined && entry !== expectedEntry) {
+      log.debug("dev-server.cleanup.superseded", {
+        serverName,
+        worktreePath,
+        sessionName,
+      });
+      return;
+    }
     if (entry.status !== "running" && entry.status !== "starting") return;
 
     log.info("dev-server.stop", {
@@ -788,16 +840,7 @@ export function createDevServerRegistry(
     const running = servers.filter(
       (s) => s.status === "running" || s.status === "starting",
     );
-    await Promise.all(
-      running.map((s) =>
-        stopServer({
-          projectPath: params.projectPath,
-          sessionName: params.sessionName,
-          worktreePath: s.worktreePath,
-          serverName: s.serverName,
-        }),
-      ),
-    );
+    await Promise.all(running.map(stopCapturedServer));
   }
 
   /**
@@ -810,29 +853,28 @@ export function createDevServerRegistry(
     projectPath: string;
     worktreePath: string;
   }): Promise<void> {
-    const registry = getRegistry();
+    await captureStopForWorktree(params)();
+  }
+
+  function captureStopForWorktree(params: {
+    projectPath: string;
+    worktreePath: string;
+  }): () => Promise<void> {
     const target = path.resolve(params.worktreePath);
-    const matches = Array.from(registry.values()).filter(
-      (e) =>
-        e.projectPath === params.projectPath &&
-        path.resolve(e.worktreePath) === target &&
-        (e.status === "running" || e.status === "starting"),
+    const matches = Array.from(getRegistry().values()).filter(
+      (entry) =>
+        entry.projectPath === params.projectPath &&
+        path.resolve(entry.worktreePath) === target &&
+        (entry.status === "running" || entry.status === "starting"),
     );
-    log.info("dev-server.stop_all_for_worktree", {
-      projectPath: params.projectPath,
-      worktreePath: params.worktreePath,
-      matched: matches.length,
-    });
-    await Promise.allSettled(
-      matches.map((e) =>
-        stopServer({
-          projectPath: e.projectPath,
-          sessionName: e.sessionName,
-          worktreePath: e.worktreePath,
-          serverName: e.serverName,
-        }),
-      ),
-    );
+    return async () => {
+      log.info("dev-server.stop_all_for_worktree", {
+        projectPath: params.projectPath,
+        worktreePath: params.worktreePath,
+        matched: matches.length,
+      });
+      await Promise.allSettled(matches.map(stopCapturedServer));
+    };
   }
 
   /** Stop all dev servers across all sessions (CC shutdown). */
@@ -841,16 +883,7 @@ export function createDevServerRegistry(
     const entries = Array.from(registry.values()).filter(
       (e) => e.status === "running" || e.status === "starting",
     );
-    await Promise.all(
-      entries.map((e) =>
-        stopServer({
-          projectPath: e.projectPath,
-          sessionName: e.sessionName,
-          worktreePath: e.worktreePath,
-          serverName: e.serverName,
-        }),
-      ),
-    );
+    await Promise.all(entries.map(stopCapturedServer));
   }
 
   /** Get runtime state for all dev servers in a session. */
@@ -1023,6 +1056,7 @@ export function createDevServerRegistry(
     stopServer,
     stopAllForSession,
     stopAllForWorktree,
+    captureStopForWorktree,
     stopAll,
     getSessionServers,
     getServer,
@@ -1140,6 +1174,7 @@ export const startServer = defaultRegistry.startServer;
 export const stopServer = defaultRegistry.stopServer;
 export const stopAllForSession = defaultRegistry.stopAllForSession;
 export const stopAllForWorktree = defaultRegistry.stopAllForWorktree;
+export const captureStopForWorktree = defaultRegistry.captureStopForWorktree;
 export const stopAll = defaultRegistry.stopAll;
 export const getSessionServers = defaultRegistry.getSessionServers;
 export const getServer = defaultRegistry.getServer;

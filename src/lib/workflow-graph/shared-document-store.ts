@@ -1,5 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { resolveConfigDir as defaultResolveConfigDir } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
@@ -14,8 +15,8 @@ const logger = createLogger("graph-workflow-shared-document-store");
  * registering agent runs in, but lane worktrees fork from the *committed*
  * session branch — so a document one lane writes (and never commits) is
  * invisible to every other lane. This store keeps a copy of each registered
- * document's content under the OS config dir, keyed by execution + the
- * document's worktree-relative path, so it can be re-materialized into any
+ * document's immutable content under the OS config dir, keyed by execution +
+ * content hash, so it can be re-materialized into any
  * lane worktree regardless of commit state. It mirrors the per-execution
  * layout used by the workflow log system (`<configDir>/workflow-logs/<id>/`).
  */
@@ -38,17 +39,37 @@ export interface CaptureFromWorktreeInput {
 export interface ReadStoredDocumentInput {
   executionId: string;
   relativePath: string;
+  contentHash?: string | null;
+}
+
+export interface SharedDocumentContent {
+  contentHash: string;
 }
 
 export interface SharedDocumentStore {
   /**
    * Copy a document the agent already wrote into its worktree
    * (`<worktreePath>/<relativePath>`) into the central per-execution store.
-   * Throws if the source file is absent so the caller can degrade to a warning.
+   * Returns an immutable object reference. Registration may publish that
+   * reference only after capture succeeds; an unreferenced object is harmless.
    */
-  captureFromWorktree(input: CaptureFromWorktreeInput): Promise<void>;
+  captureFromWorktree(
+    input: CaptureFromWorktreeInput,
+  ): Promise<SharedDocumentContent>;
+  captureContent(input: {
+    executionId: string;
+    contents: string;
+  }): Promise<SharedDocumentContent>;
   /** Read a captured document's content, or null when it was never captured. */
   read(input: ReadStoredDocumentInput): Promise<string | null>;
+  /** One-time cutover only; ordinary readers never consult path-keyed files. */
+  migrateLegacyDocument(
+    input: Omit<ReadStoredDocumentInput, "contentHash">,
+  ): Promise<SharedDocumentContent | null>;
+}
+
+export function hashSharedDocumentContent(contents: string): string {
+  return createHash("sha256").update(contents, "utf8").digest("hex");
 }
 
 function assertSafeRelativePath(relativePath: string): void {
@@ -84,38 +105,98 @@ export function createSharedDocumentStore(
     fileExists: overrides.fileExists ?? existsSync,
   };
 
-  function storePathFor(executionId: string, relativePath: string): string {
+  function executionDirectory(executionId: string): string {
+    if (
+      !executionId ||
+      executionId === "." ||
+      executionId === ".." ||
+      /[/\\]/.test(executionId)
+    ) {
+      throw new Error("Invalid shared document execution id");
+    }
+    return path.join(deps.resolveConfigDir(), STORE_SUBDIR, executionId);
+  }
+
+  function legacyPathFor(executionId: string, relativePath: string): string {
     assertSafeRelativePath(relativePath);
-    return path.join(
-      deps.resolveConfigDir(),
-      STORE_SUBDIR,
-      executionId,
-      relativePath,
-    );
+    return path.join(executionDirectory(executionId), relativePath);
+  }
+
+  function objectPathFor(executionId: string, contentHash: string): string {
+    if (!/^[a-f0-9]{64}$/.test(contentHash)) {
+      throw new Error("Invalid shared document content hash");
+    }
+    return path.join(executionDirectory(executionId), "objects", contentHash);
+  }
+
+  async function captureContent(input: {
+    executionId: string;
+    contents: string;
+  }): Promise<SharedDocumentContent> {
+    const contentHash = hashSharedDocumentContent(input.contents);
+    const dest = objectPathFor(input.executionId, contentHash);
+    await deps.ensureDir(path.dirname(dest));
+    await deps.writeFile(dest, input.contents);
+    return { contentHash };
   }
 
   async function captureFromWorktree(
     input: CaptureFromWorktreeInput,
-  ): Promise<void> {
+  ): Promise<SharedDocumentContent> {
+    assertSafeRelativePath(input.relativePath);
     const source = path.join(input.worktreePath, input.relativePath);
     const contents = await deps.readFile(source);
-    const dest = storePathFor(input.executionId, input.relativePath);
-    await deps.ensureDir(path.dirname(dest));
-    await deps.writeFile(dest, contents);
+    const reference = await captureContent({
+      executionId: input.executionId,
+      contents,
+    });
     logger.info("graph-workflow.shared_document_store.captured", {
       executionId: input.executionId,
       relativePath: input.relativePath,
-      bytes: contents.length,
+      contentHash: reference.contentHash,
+      bytes: Buffer.byteLength(contents, "utf8"),
     });
+    return reference;
   }
 
   async function read(input: ReadStoredDocumentInput): Promise<string | null> {
-    const stored = storePathFor(input.executionId, input.relativePath);
+    assertSafeRelativePath(input.relativePath);
+    if (!input.contentHash) return null;
+    const stored = objectPathFor(input.executionId, input.contentHash);
     if (!deps.fileExists(stored)) {
       return null;
     }
-    return deps.readFile(stored);
+    const contents = await deps.readFile(stored);
+    if (hashSharedDocumentContent(contents) !== input.contentHash) {
+      logger.error("graph-workflow.shared_document_store.hash_mismatch", {
+        executionId: input.executionId,
+        relativePath: input.relativePath,
+        contentHash: input.contentHash,
+      });
+      throw new Error(
+        `Shared document content hash mismatch: ${input.relativePath}`,
+      );
+    }
+    return contents;
   }
 
-  return { captureFromWorktree, read };
+  async function migrateLegacyDocument(
+    input: Omit<ReadStoredDocumentInput, "contentHash">,
+  ): Promise<SharedDocumentContent | null> {
+    const source = legacyPathFor(input.executionId, input.relativePath);
+    if (!deps.fileExists(source)) return null;
+    const contents = await deps.readFile(source);
+    const reference = await captureContent({
+      executionId: input.executionId,
+      contents,
+    });
+    logger.info("graph-workflow.shared_document_store.legacy_captured", {
+      executionId: input.executionId,
+      relativePath: input.relativePath,
+      contentHash: reference.contentHash,
+    });
+    return reference;
+  }
+
+  return { captureFromWorktree, captureContent, read, migrateLegacyDocument };
 }

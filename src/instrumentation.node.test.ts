@@ -13,6 +13,9 @@ describe("createStartupRegistrar", () => {
         calls.push("migrations");
         return [];
       },
+      initializeGraphWorkflowRuntime: async () => {
+        calls.push("graph-recovery");
+      },
       registerSpecWorkflowComposition: () => {
         calls.push("spec-composition");
       },
@@ -48,6 +51,13 @@ describe("createStartupRegistrar", () => {
     expect(calls.filter((c) => c === "verify-url")).toHaveLength(1);
     expect(calls.indexOf("record-url")).toBeLessThan(
       calls.indexOf("verify-url"),
+    );
+    expect(calls).toContain("graph-recovery");
+    expect(calls.indexOf("spec-composition")).toBeLessThan(
+      calls.indexOf("graph-recovery"),
+    );
+    expect(calls.indexOf("graph-recovery")).toBeLessThan(
+      calls.indexOf("record-url"),
     );
     expect(calls).toContain("spec-composition");
     expect(calls.indexOf("migrations")).toBeLessThan(
@@ -338,6 +348,76 @@ describe("createStartupRegistrar", () => {
     });
 
     await expect(register()).rejects.toThrow("simulated migration failure");
+    expect(calls).toEqual([]);
+  });
+
+  it("aborts startup when graph recovery fails, before background actors can run", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => {
+        calls.push("load-manager");
+        return {
+          rehydrateConversationActors: async () => {
+            calls.push("rehydrate");
+            return 0;
+          },
+        };
+      },
+      runStateMigrations: async () => [],
+      initializeGraphWorkflowRuntime: async () => {
+        throw new Error("simulated recovery failure");
+      },
+      initNotificationDb: () => {
+        calls.push("notifications");
+      },
+      setConfigReader: () => {
+        calls.push("setConfigReader");
+      },
+      readConfig: async () => {
+        throw new Error("unexpected config read");
+      },
+      ensureAgentToken: async () => {
+        calls.push("token");
+        return "test-token";
+      },
+      publishManagedSkills: async () => null,
+      installCli: async () => {
+        calls.push("install");
+        return { installed: false, reason: "bundle_missing" } as const;
+      },
+      recordServerBaseUrl: () => {
+        calls.push("record-url");
+        return "http://127.0.0.1:3000";
+      },
+      verifyServerBaseUrl: () => {
+        calls.push("verify-url");
+      },
+      recoverActiveWorkflowEnvelopes: async () => {
+        calls.push("envelope-recovery");
+        return {
+          scanned: 0,
+          failed: 0,
+          preservedPaused: 0,
+          preservedRunning: 0,
+          movedToPaused: 0,
+        };
+      },
+      sweepInterruptedCompactions: () => {
+        calls.push("compaction-sweep");
+        return 0;
+      },
+      recoverStaleAgentRuns: () => {
+        calls.push("agent-run-sweep");
+        return 0;
+      },
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => {
+        calls.push("conversation-snapshot-recovery");
+        return 0;
+      },
+    });
+
+    await expect(register()).rejects.toThrow("simulated recovery failure");
     expect(calls).toEqual([]);
   });
 

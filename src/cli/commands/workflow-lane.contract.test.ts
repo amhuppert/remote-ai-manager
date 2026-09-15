@@ -15,6 +15,7 @@ import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
+import { hashSharedDocumentContent } from "@/lib/workflow-graph/shared-document-store";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type {
@@ -37,8 +38,8 @@ import type { CliEnv, CliHost } from "../shared";
  * `contexts/[contextId]/tasks/[taskId]` params, the shared-document catch-all —
  * is parsed by production code, and the response facts (`remainingTaskCount`,
  * `stopInstruction`, the 409 halt reason) round-trip back into the CLI's
- * hint-vs-stop rendering. Only the store's `mutateActive` and the halt/block
- * signals are controlled per test.
+ * hint-vs-stop rendering. The store's `mutateActive`, document capture, and
+ * halt/block signals are controlled per test.
  */
 
 const sessionTarget: ExecutionTarget = {
@@ -118,6 +119,7 @@ function buildRunningExecution(
 }
 
 interface RealContextOptions {
+  documentContents?: string;
   execution?: GraphWorkflowExecution;
   readLiveOccupancy?: (conversationId: string) => LiveOccupancySnapshot | null;
   allowAgentTaskAdd?: boolean;
@@ -161,6 +163,14 @@ function buildRealContext(
     sharedDocumentRegistry: createGraphWorkflowSharedDocumentRegistryService({
       now: () => "2026-03-27T12:00:00.000Z",
       createDocumentId: () => "doc-1",
+      async captureDocumentContent() {
+        if (options.documentContents === undefined) {
+          throw new Error("No document bytes supplied by this fixture");
+        }
+        return {
+          contentHash: hashSharedDocumentContent(options.documentContents),
+        };
+      },
     }),
     publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
     readLiveOccupancy: options.readLiveOccupancy ?? (() => null),
@@ -423,12 +433,15 @@ describe("cctl workflow lane verbs against the real lane route handlers", () => 
         docFile,
       ],
       laneEnv,
-      laneRouteHost(buildRealContext(), {
-        [docFile]: JSON.stringify({
-          description: "API contract",
-          readWhen: "before implementing any route",
-        }),
-      }),
+      laneRouteHost(
+        buildRealContext({ documentContents: "# API contract\n" }),
+        {
+          [docFile]: JSON.stringify({
+            description: "API contract",
+            readWhen: "before implementing any route",
+          }),
+        },
+      ),
     );
 
     expect(result.exitCode).toBe(0);

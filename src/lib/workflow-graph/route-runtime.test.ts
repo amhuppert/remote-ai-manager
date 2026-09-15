@@ -848,7 +848,22 @@ describe("settleRoutes — typed resumable halts", () => {
 });
 
 describe("landing intents (decision D8)", () => {
-  it("records a pending intent with a deterministic token at dispatch", () => {
+  it("does not reuse a landing token when reset clears the previous attempt", () => {
+    const execution = classifierExecution({});
+    const first = recordLandingIntent(execution, "fix", {
+      mode: "lane_commit",
+      now: NOW,
+    });
+    execution.contextStates.fix!.landingIntent = null;
+    const second = recordLandingIntent(execution, "fix", {
+      mode: "lane_commit",
+      now: LATER,
+    });
+    expect(second.attempt).toBe(1);
+    expect(second.token).not.toBe(first.token);
+    expect(execution.contextStates.fix!.landingIntent).toEqual(second);
+  });
+  it("persists a pending intent with a fresh token at dispatch", () => {
     const execution = classifierExecution({});
     const intent = recordLandingIntent(execution, "fix", {
       mode: "lane_commit",
@@ -861,7 +876,7 @@ describe("landing intents (decision D8)", () => {
     expect(intent).toEqual({
       mode: "lane_commit",
       attempt: 1,
-      token: "cc-landing:execution-1:fix:1",
+      token: expect.stringMatching(/^cc-landing:execution-1:fix:1:/),
       laneId: "lane-1",
       worktreePath: "/tmp/lane-1",
       baselineSha: "aaa",
@@ -882,7 +897,7 @@ describe("landing intents (decision D8)", () => {
       now: NOW,
     });
     expect(second.attempt).toBe(2);
-    expect(second.token).toBe("cc-landing:execution-1:fix:2");
+    expect(second.token).toMatch(/^cc-landing:execution-1:fix:2:/);
   });
 
   it("settles an intent with its landing evidence", () => {

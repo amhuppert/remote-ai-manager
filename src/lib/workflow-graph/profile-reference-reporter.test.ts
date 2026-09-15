@@ -388,9 +388,7 @@ function launchRepository() {
     async archiveActiveGraphWorkflowExecution() {
       return { archived: false as const, reason: "no_active" as const };
     },
-    async markGraphWorkflowContextEventsPreReset() {
-      return 0;
-    },
+
     charterService: createWorkflowCharterService({
       writeFile: async () => {},
       ensureDir: async () => {},

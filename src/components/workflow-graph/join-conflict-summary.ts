@@ -30,9 +30,8 @@ export interface JoinConflictMember {
   /** The source lane this member merged from — the unit the join tracks. */
   laneId: string;
   /**
-   * The context to name and to navigate to. Null only when neither the frozen
-   * membership map nor live lane state knows what the lane carried, in which
-   * case the row falls back to naming the lane itself.
+   * The context to name and to navigate to. Null when the frozen membership
+   * does not identify a contribution; the row then names the lane itself.
    */
   contextId: string | null;
   title: string;
@@ -75,17 +74,14 @@ export interface JoinConflictSummary {
  * The contexts a source lane brought to this join.
  *
  * The join's own frozen map is authoritative — it proves which members the
- * original intent covered, while a lane's `includedContextIds` keeps changing —
- * and live lane state is the fallback for a join planned before the map existed.
+ * original intent covered, while a lane's `includedContextIds` keeps changing.
+ * Missing evidence names the lane without claiming it transferred today's work.
  */
 function laneContextIds(
-  execution: GraphWorkflowExecution,
   join: GraphWorkflowExecutionJoinState | null,
   laneId: string,
 ): string[] {
-  const frozen = join?.sourceLaneContextIds?.[laneId];
-  if (frozen !== undefined && frozen.length > 0) return frozen;
-  return execution.executionLanes[laneId]?.includedContextIds ?? [];
+  return join?.sourceLaneContextIds?.[laneId] ?? [];
 }
 
 export function deriveJoinConflictSummary(
@@ -119,7 +115,7 @@ export function deriveJoinConflictSummary(
         ? "blocked"
         : "pending";
     const detail = status === "blocked" ? blockedDetail : null;
-    const contextIds = laneContextIds(execution, join, laneId);
+    const contextIds = laneContextIds(join, laneId);
     if (contextIds.length === 0) {
       members.push({ laneId, contextId: null, title: laneId, status, detail });
       continue;

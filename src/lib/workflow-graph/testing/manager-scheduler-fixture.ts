@@ -1,3 +1,4 @@
+import { buildLifecycleSnapshot } from "../context-transitions";
 import { resolveWorkflowDefinition } from "../resolve-config";
 import { seedAssignment, TEST_AGENT_BACKENDS_CONFIG } from "../test-fixtures";
 import type {
@@ -61,12 +62,6 @@ export interface InMemoryExecutionRepository {
       execution: GraphWorkflowExecution,
     ) => ExecutionMutationDecision<Value, Refusal>,
   ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
-  markContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number>;
 }
 
 export type CreateSeedCapture = {
@@ -84,13 +79,13 @@ export function createRepository(
   initialExecution: GraphWorkflowExecution | null = null,
 ): InMemoryExecutionRepository & {
   read(): GraphWorkflowExecution | null;
-  preResetCalls: Array<{ executionId: string; contextId: string }>;
+
   createCalls: CreateSeedCapture[];
   archiveCalls: number;
 } {
   let activeExecution = initialExecution;
   let lock: Promise<void> = Promise.resolve();
-  const preResetCalls: Array<{ executionId: string; contextId: string }> = [];
+
   const createCalls: CreateSeedCapture[] = [];
   let archiveCalls = 0;
 
@@ -153,6 +148,8 @@ export function createRepository(
       });
       activeExecution = createWorkflowExecution({
         id: seed.executionId,
+        status:
+          seed.definition.approvalRequired === true ? "pending" : "running",
         liveSessionReadOnlyPinned: seed.liveSessionReadOnlyPinned ?? false,
         origin: provenance.origin,
         launchDocument: seed.launchDocument,
@@ -168,6 +165,10 @@ export function createRepository(
         workingDefinition: resolveSeedDefinition(seed.definition),
         startedAt: seed.startedAt,
       });
+      activeExecution.machineSnapshot = buildLifecycleSnapshot(
+        activeExecution,
+        { hasLiveIteration: false },
+      );
       return activeExecution;
     },
     async archiveActive(): Promise<GraphWorkflowArchiveOutcome> {
@@ -182,19 +183,10 @@ export function createRepository(
       activeExecution = execution;
     },
     mutateActive: mutateActiveImpl,
-    async markContextEventsPreReset(
-      _projectPath,
-      _sessionName,
-      executionId,
-      contextId,
-    ) {
-      preResetCalls.push({ executionId, contextId });
-      return 0;
-    },
     read() {
       return activeExecution;
     },
-    preResetCalls,
+
     createCalls,
     get archiveCalls() {
       return archiveCalls;

@@ -98,12 +98,6 @@ interface InMemoryExecutionRepository {
       execution: GraphWorkflowExecution,
     ) => ExecutionMutationDecision<Value, Refusal>,
   ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
-  markContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number>;
 }
 
 /**
@@ -146,9 +140,7 @@ function createFencedRepository(
         release();
       }
     },
-    async markContextEventsPreReset() {
-      return 0;
-    },
+
     read() {
       return active;
     },

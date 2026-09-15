@@ -4032,6 +4032,12 @@ describe("createValidatorRunner diff scope", () => {
     });
 
     const execution = buildExecutionWithContextValidation();
+    execution.contextStates["context-plan"]!.reviewOrigin = {
+      laneId: null,
+      baselineSha: "retained-work-base",
+      candidateScope: { mode: "wholeTree" },
+      capturedAt: "2026-09-15T12:00:00.000Z",
+    };
     const contextDef = planContext(execution);
 
     await runner.runContextValidator({
@@ -4045,6 +4051,7 @@ describe("createValidatorRunner diff scope", () => {
     expect(computeValidationDiffScope).toHaveBeenCalledWith(
       sessionWorktreeDir,
       WHOLE_TREE_CANDIDATE_SCOPE,
+      "retained-work-base",
     );
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
     expect(input.prompt).toContain("## Changes Under Review");
@@ -4070,6 +4077,12 @@ describe("createValidatorRunner diff scope", () => {
     });
 
     const execution = buildExecutionWithContextValidation();
+    execution.contextStates["context-plan"]!.reviewOrigin = {
+      laneId: null,
+      baselineSha: "retained-work-base",
+      candidateScope: { mode: "wholeTree" },
+      capturedAt: "2026-09-15T12:00:00.000Z",
+    };
     const contextDef = planContext(execution);
 
     await runner.runContextValidator({
@@ -4089,6 +4102,7 @@ describe("createValidatorRunner diff scope", () => {
     expect(computeValidationDiffScope).toHaveBeenCalledWith(
       laneWorktreeDir,
       WHOLE_TREE_CANDIDATE_SCOPE,
+      "retained-work-base",
     );
   });
 
@@ -4114,6 +4128,12 @@ describe("createValidatorRunner diff scope", () => {
     });
 
     const execution = buildExecutionWithContextValidation();
+    execution.contextStates["context-plan"]!.reviewOrigin = {
+      laneId: null,
+      baselineSha: "retained-work-base",
+      candidateScope: { mode: "wholeTree" },
+      capturedAt: "2026-09-15T12:00:00.000Z",
+    };
     const contextDef = planContext(execution);
 
     const result = await runner.runContextValidator({

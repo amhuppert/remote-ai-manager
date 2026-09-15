@@ -56,17 +56,7 @@ export function isContextOutputCommittedToLane(
   return lane.includedContextIds.includes(state.contextId);
 }
 
-/**
- * Upstream output is visible to a downstream context when its commits are
- * reachable from the downstream's lane. Visibility holds via:
- *
- *  - Same-lane ancestry: upstream and downstream share a laneId and the
- *    upstream output is committed.
- *  - Joined-lane: a succeeded join has merged the upstream's lane (or any
- *    ancestor lane) into the downstream's lane.
- *  - Session-lane output (legacy): upstream landed on the session worktree
- *    and downstream has no lane assignment (it would also target session).
- */
+/** A landed contribution is visible exactly where the lane ledger carries it. */
 export function isUpstreamVisibleToDownstream(
   upstreamId: string,
   downstreamId: string,
@@ -92,36 +82,24 @@ export function isUpstreamVisibleToLane(
   if (!upstream) return false;
   if (!isContextOutputCommittedToLane(upstream, execution)) return false;
 
-  // Fork ancestry: a downstream lane forked from the upstream's lane carries
-  // the upstream's committed output in its own branch history, recorded as the
-  // upstream context id in the fork lane's includedContextIds. This visibility
-  // is established at fork time and does not depend on any later join — without
-  // it, an interrupted forked context reset to `ready` is wrongly judged
-  // dependency-blocked and stranded as ineligible, so the scheduler never
-  // reschedules it and the loop completes with the work unfinished.
-  if (targetLaneId !== null) {
-    const targetLane = execution.executionLanes[targetLaneId];
-    if (targetLane?.includedContextIds.includes(upstreamId)) {
-      return true;
-    }
+  const resolvedTargetId =
+    targetLaneId ??
+    Object.values(execution.executionLanes).find(
+      (lane) => lane.kind === "session",
+    )?.laneId ??
+    SESSION_LANE_ID;
+  if (
+    execution.executionLanes[resolvedTargetId]?.includedContextIds.includes(
+      upstreamId,
+    )
+  ) {
+    return true;
   }
-
-  if (upstream.laneId === null) {
-    return targetLaneId === null;
-  }
-
-  const upstreamReachable = reachableLanesFrom(upstream.laneId, execution);
-
-  if (targetLaneId === null) {
-    for (const reachedId of upstreamReachable) {
-      if (execution.executionLanes[reachedId]?.kind === "session") return true;
-    }
-    return false;
-  }
-
-  if (upstream.laneId === targetLaneId) return true;
-
-  return upstreamReachable.has(targetLaneId);
+  return (
+    upstream.laneId === null &&
+    (targetLaneId === null ||
+      execution.executionLanes[resolvedTargetId]?.kind === "session")
+  );
 }
 
 /**
@@ -266,68 +244,18 @@ export function landGatedPublishSettlement(
   };
 }
 
-export function reachableLanesFrom(
-  laneId: string,
-  execution: GraphWorkflowExecution,
-): Set<string> {
-  const visited = new Set<string>([laneId]);
-  const queue: string[] = [laneId];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    for (const join of Object.values(execution.joins ?? {})) {
-      if (join.status !== "succeeded") continue;
-      if (!join.sourceLaneIds.includes(current)) continue;
-      if (!visited.has(join.targetLaneId)) {
-        visited.add(join.targetLaneId);
-        queue.push(join.targetLaneId);
-      }
-    }
-  }
-
-  return visited;
-}
-
-/**
- * Every context whose committed output is present in this lane's branch: the
- * contexts that ran on the lane, plus the contexts a succeeded join has
- * already merged into it, transitively through chained merges.
- *
- * A join moves commits into its target branch but never writes the merged
- * contexts into the target lane's `includedContextIds` — that field records
- * only what RAN on the lane. Reachability covers the gap in the source →
- * target direction, so a context still on the source lane can see the target.
- * It does not help a lane FORKED from the target afterwards: the fork's branch
- * carries the merged work, but it is neither a source nor a target of any
- * join, so nothing connects it to the merged upstream. Seeding a fork's
- * included set from this function closes that hole at fork time, when the
- * answer is a fact about the branch being copied.
- */
-export function contextsPresentInLane(
-  laneId: string,
+/** Deterministic fork candidates whose confirmed contents carry every input. */
+export function lanesCarryingContributions(
+  contextIds: readonly string[],
   execution: GraphWorkflowExecution,
 ): string[] {
-  const present = new Set<string>();
-  const visitedLanes = new Set<string>([laneId]);
-  const queue: string[] = [laneId];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    for (const contextId of execution.executionLanes[current]
-      ?.includedContextIds ?? []) {
-      present.add(contextId);
-    }
-    for (const join of Object.values(execution.joins ?? {})) {
-      if (join.targetLaneId !== current) continue;
-      for (const sourceLaneId of join.mergedSourceLaneIds) {
-        if (visitedLanes.has(sourceLaneId)) continue;
-        visitedLanes.add(sourceLaneId);
-        queue.push(sourceLaneId);
-      }
-    }
-  }
-
-  return [...present];
+  return Object.keys(execution.executionLanes)
+    .filter((laneId) =>
+      contextIds.every((contextId) =>
+        isUpstreamVisibleToLane(contextId, laneId, execution),
+      ),
+    )
+    .sort();
 }
 
 export type ContextSchedulability =
@@ -571,10 +499,7 @@ export function classifyContextSchedulability(
   if (workTreeSourceLaneIds.length >= 2) {
     // Several unmerged sources: no single branch carries all of the upstream
     // work, so there is nothing to fork from until a join converges them.
-    const commonTargets = intersectReachableLanes(
-      workTreeSourceLaneIds,
-      execution,
-    );
+    const commonTargets = lanesCarryingContributions(upstreamIds, execution);
     if (commonTargets.length === 0) {
       return { kind: "wait-for-join", sourceLaneIds: workTreeSourceLaneIds };
     }
@@ -677,28 +602,10 @@ function collectSourceLaneIds(
   return ordered;
 }
 
-function intersectReachableLanes(
-  laneIds: string[],
-  execution: GraphWorkflowExecution,
-): string[] {
-  if (laneIds.length === 0) return [];
-  const sets = laneIds.map((laneId) => reachableLanesFrom(laneId, execution));
-  const [first, ...rest] = sets;
-  if (!first) return [];
-  const result: string[] = [];
-  for (const candidate of first) {
-    if (rest.every((set) => set.has(candidate))) {
-      result.push(candidate);
-    }
-  }
-  return result;
-}
-
 /**
  * Returns true when a worktree context exists whose output has not been
  * published to the session worktree. In the lane-aware model, publication
- * means: the context's lane (or some transitively joined ancestor lane) is
- * session-kind. Legacy per-context worktrees publish via squash merge
+ * means the session lane carries that contribution. Legacy per-context worktrees publish via squash merge
  * (`mergeStatus === "merged-success"`) when no lane is assigned.
  */
 function hasUnpublishedUnrelatedWorktreeWork(
@@ -719,11 +626,7 @@ function isPublishedToSessionLane(
   if (state.laneId === null) {
     return state.mergeStatus === "merged-success";
   }
-  const reachable = reachableLanesFrom(state.laneId, execution);
-  for (const reachedId of reachable) {
-    if (execution.executionLanes[reachedId]?.kind === "session") return true;
-  }
-  return false;
+  return isUpstreamVisibleToLane(state.contextId, null, execution);
 }
 
 /**

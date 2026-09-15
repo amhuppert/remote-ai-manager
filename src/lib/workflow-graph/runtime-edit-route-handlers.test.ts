@@ -172,8 +172,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher: publisher,
     });
 

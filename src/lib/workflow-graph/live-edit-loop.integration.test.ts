@@ -216,8 +216,7 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher: publisher,
     });
 

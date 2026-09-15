@@ -1,4 +1,5 @@
-import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { changed, unchanged } from "@/lib/workflow-graph/execution-mutation";
+import { withArtifactPublication } from "./artifact-publication";
 
 import { createLogger } from "@/lib/logging";
 
@@ -51,7 +52,10 @@ import {
   buildInitialContextStates,
   buildInitialTaskStates,
 } from "./execution-state";
-import { IllegalContextStatusTransitionError } from "./context-transitions";
+import {
+  IllegalContextStatusTransitionError,
+  buildLifecycleSnapshot,
+} from "./context-transitions";
 import { toHaltReason } from "./errors";
 import {
   buildExecutionProvenance,
@@ -138,12 +142,6 @@ export interface GraphWorkflowExecutionRepository {
       execution: GraphWorkflowExecution,
     ) => ExecutionMutationDecision<Value, Refusal>,
   ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
-  markContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number>;
   /**
    * Settle any artifact debt the launch's reserving transaction recorded,
    * rewriting the charter and seeded documents from durable state. Null when
@@ -279,7 +277,10 @@ export interface GraphWorkflowExecutionRepositoryDeps {
     executionId: string,
   ): Promise<GraphWorkflowPendingArtifacts | null>;
   /** Settle one execution's outstanding-artifact record. */
-  clearGraphWorkflowPendingArtifacts(executionId: string): Promise<boolean>;
+  clearGraphWorkflowPendingArtifacts(
+    expected: GraphWorkflowPendingArtifacts,
+    owner: Pick<GraphWorkflowExecution, "loopEpoch" | "status">,
+  ): Promise<boolean>;
   /**
    * Move the active execution to the archived-executions table and null the
    * active blob (its events stay in `graph_workflow_events`).
@@ -291,16 +292,6 @@ export interface GraphWorkflowExecutionRepositoryDeps {
     guard?: (execution: GraphWorkflowExecution) => boolean,
     stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
   ): Promise<GraphWorkflowArchiveOutcome>;
-  /**
-   * Mark every persisted event for a context up to the current boundary as
-   * pre-reset, replacing the old in-memory `history.map` reset marking.
-   */
-  markGraphWorkflowContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number>;
   eventPublisher?: ReturnType<
     typeof createGraphWorkflowExecutionEventPublisher
   >;
@@ -511,7 +502,7 @@ async function createExecutionFromSeed(
   const contextStates = buildInitialContextStates(workingDefinition);
   const taskStates = buildInitialTaskStates(workingDefinition);
 
-  return graphWorkflowExecutionSchema.parse({
+  const execution = graphWorkflowExecutionSchema.parse({
     id: seed.executionId,
     // Provenance, recorded rather than left to be re-derived from the seed
     // projection columns later (D7 decision D2). The authoritative `origin` and
@@ -528,7 +519,7 @@ async function createExecutionFromSeed(
         : null,
     workingDefinition,
     charter: concrete.charter,
-    status: "pending",
+    status: concrete.approvalRequired === true ? "pending" : "running",
     activeContextIds: [],
     activeTaskId: null,
     contextStates,
@@ -539,6 +530,12 @@ async function createExecutionFromSeed(
     completedAt: null,
     haltReason: null,
   });
+  if (execution.status === "running") {
+    execution.machineSnapshot = buildLifecycleSnapshot(execution, {
+      hasLiveIteration: false,
+    });
+  }
+  return execution;
 }
 
 export function createGraphWorkflowExecutionRepository(
@@ -734,6 +731,7 @@ export function createGraphWorkflowExecutionRepository(
       projectPath,
       sessionName,
       executionId: reservation.execution.id,
+      expectedExecution: reservation.execution,
       worktreePath,
       seededDocuments,
     });
@@ -804,7 +802,8 @@ export function createGraphWorkflowExecutionRepository(
    *
    * Idempotent, so a retry over a run whose materialization was interrupted
    * converges rather than duplicating: the exclusion is already idempotent, and
-   * each document write replaces its file and its central-store copy.
+   * each delivered document atomically replaces its file while stored content
+   * keeps the identity referenced by its registration.
    *
    * A failure halts the LOCATED winner (`execution_loop_failed`, cause `io` —
    * resumable) rather than unwinding it. The lease is already won at this
@@ -817,67 +816,138 @@ export function createGraphWorkflowExecutionRepository(
     executionId: string;
     worktreePath?: string;
     seededDocuments: readonly SeededWorkflowDocument[];
+    expectedExecution?: Pick<
+      GraphWorkflowExecution,
+      "id" | "loopEpoch" | "status"
+    >;
+    capturedPending?: GraphWorkflowPendingArtifacts | null;
   }): Promise<GraphWorkflowExecution> {
     const { projectPath, sessionName, executionId } = input;
-    const worktreePath =
-      input.worktreePath ??
-      (await resolveSeedWorktreePath(projectPath, sessionName));
-    const reserved = await deps.getActiveGraphWorkflowExecution(
-      projectPath,
-      sessionName,
-    );
-    if (!reserved || reserved.id !== executionId) {
+    const captured =
+      input.expectedExecution ??
+      (await deps.getActiveGraphWorkflowExecution(projectPath, sessionName));
+    if (!captured || captured.id !== executionId) {
       throw new Error(
         `Cannot materialize graph workflow execution "${executionId}": it no longer holds the active row for session "${sessionName}"`,
       );
     }
+    const owner = {
+      id: captured.id,
+      loopEpoch: captured.loopEpoch,
+      status: captured.status,
+    };
+    const pending =
+      input.capturedPending === undefined
+        ? await deps.getGraphWorkflowPendingArtifacts(
+            projectPath,
+            sessionName,
+            executionId,
+          )
+        : input.capturedPending;
 
-    try {
-      // Keep CC's .cc artifact namespace git-ignored BEFORE any file lands in
-      // it, so the charter, materialized shared docs, and agent scratch (logs,
-      // live-run evidence) are never committed by a lane's `add -A` sweep and
-      // never churn the session worktree (which would trip the dirty-start gate
-      // and the final-join precondition).
-      //
-      // A failure here fails the whole materialization rather than being
-      // logged and stepped over. Continuing would write exactly the artifacts
-      // the exclusion exists to hide, into a worktree that will now commit
-      // them, and then settle the pending record — so the run proceeds with a
-      // dirty tree and no durable statement that anything is wrong. Halting the
-      // located winner leaves an operator something to see and retry, which is
-      // what the exclusion being ordered first was always for.
-      await (deps.ensureCcArtifactsExcluded ?? ensureCcArtifactsExcluded)(
-        worktreePath,
-      );
-
-      await charterService.writeCharterDocument({
-        charter: reserved.charter,
-        worktreePath,
-      });
-      await seededDocumentService.writeDocuments({
-        documents: input.seededDocuments,
-        worktreePath,
-        executionId,
-      });
-      // Settled LAST, and only on the success path: while the record stands,
-      // it is the durable statement that this run's artifacts may be missing,
-      // and it carries the only copy of the bytes needed to rewrite them.
-      // Clearing it before the writes land would trade a retryable run for an
-      // unrepairable one.
-      const clearPending = deps.clearGraphWorkflowPendingArtifacts;
-      if (clearPending !== undefined) {
-        await clearPending(executionId);
+    function assertOwner(
+      current: GraphWorkflowExecution | null,
+    ): asserts current is GraphWorkflowExecution {
+      assertLoopFence(projectPath, sessionName, current);
+      if (
+        !current ||
+        current.id !== owner.id ||
+        current.loopEpoch !== owner.loopEpoch
+      ) {
+        throw new StaleLoopFenceError(
+          {
+            projectPath,
+            sessionName,
+            executionId: owner.id,
+            loopEpoch: owner.loopEpoch,
+          },
+          current,
+        );
       }
-      return reserved;
-    } catch (err) {
-      await haltAfterMaterializationFailure(
+      if (
+        current.status !== owner.status ||
+        current.abandonment !== null ||
+        current.haltReason?.type === "aborted" ||
+        current.status === "completed"
+      ) {
+        throw new Error(
+          `Cannot materialize graph workflow execution "${executionId}": its lifecycle admission changed`,
+        );
+      }
+    }
+
+    return withArtifactPublication(projectPath, sessionName, async () => {
+      const reserved = await deps.getActiveGraphWorkflowExecution(
         projectPath,
         sessionName,
-        executionId,
-        err,
       );
-      throw err;
-    }
+      assertOwner(reserved);
+      try {
+        const worktreePath =
+          input.worktreePath ??
+          (await resolveSeedWorktreePath(projectPath, sessionName));
+        // Keep CC's .cc artifact namespace git-ignored BEFORE any file lands in
+        // it, so the charter, materialized shared docs, and agent scratch (logs,
+        // live-run evidence) are never committed by a lane's `add -A` sweep and
+        // never churn the session worktree (which would trip the dirty-start gate
+        // and the final-join precondition).
+        //
+        // A failure here fails the whole materialization rather than being
+        // logged and stepped over. Continuing would write exactly the artifacts
+        // the exclusion exists to hide, into a worktree that will now commit
+        // them, and then settle the pending record — so the run proceeds with a
+        // dirty tree and no durable statement that anything is wrong. Halting the
+        // located winner leaves an operator something to see and retry, which is
+        // what the exclusion being ordered first was always for.
+        await (deps.ensureCcArtifactsExcluded ?? ensureCcArtifactsExcluded)(
+          worktreePath,
+        );
+        await charterService.writeCharterDocument({
+          charter: reserved.charter,
+          worktreePath,
+        });
+        await seededDocumentService.writeDocuments({
+          documents: pending?.documents ?? input.seededDocuments,
+          worktreePath,
+          executionId,
+        });
+        const current = await deps.getActiveGraphWorkflowExecution(
+          projectPath,
+          sessionName,
+        );
+        assertOwner(current);
+        // A publisher acknowledges the exact reconstruction record it read.
+        // Identical retries can observe an already-settled record; newer debt
+        // must prevent dispatch until its own bytes have been prepared.
+        const settled =
+          pending === null
+            ? false
+            : await deps.clearGraphWorkflowPendingArtifacts(pending, owner);
+        if (
+          !settled &&
+          (await deps.getGraphWorkflowPendingArtifacts(
+            projectPath,
+            sessionName,
+            executionId,
+          )) !== null
+        ) {
+          throw new Error(
+            `Artifact reconstruction changed while preparing execution "${executionId}"; retry its current inputs`,
+          );
+        }
+        return current;
+      } catch (err) {
+        if (!(err instanceof StaleLoopFenceError)) {
+          await haltAfterMaterializationFailure(
+            projectPath,
+            sessionName,
+            owner,
+            err,
+          );
+        }
+        throw err;
+      }
+    });
   }
 
   /**
@@ -900,6 +970,16 @@ export function createGraphWorkflowExecutionRepository(
     sessionName: string;
     executionId: string;
   }): Promise<GraphWorkflowExecution | null> {
+    const expectedExecution = await deps.getActiveGraphWorkflowExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+    assertLoopFence(input.projectPath, input.sessionName, expectedExecution);
+    if (!expectedExecution || expectedExecution.id !== input.executionId) {
+      throw new Error(
+        `Cannot repair artifact debt for superseded execution "${input.executionId}"`,
+      );
+    }
     const readPending = deps.getGraphWorkflowPendingArtifacts;
     const pending = await readPending(
       input.projectPath,
@@ -920,33 +1000,31 @@ export function createGraphWorkflowExecutionRepository(
       sessionName: input.sessionName,
       executionId: input.executionId,
       seededDocuments: pending.documents,
+      expectedExecution,
+      capturedPending: pending,
     });
-  }
-
-  function assertStillReserved(
-    execution: GraphWorkflowExecution,
-    executionId: string,
-    sessionName: string,
-  ): void {
-    if (execution.id === executionId) return;
-    throw new Error(
-      `Cannot materialize graph workflow execution "${executionId}": it no longer holds the active row for session "${sessionName}"`,
-    );
   }
 
   async function haltAfterMaterializationFailure(
     projectPath: string,
     sessionName: string,
-    executionId: string,
+    owner: Pick<GraphWorkflowExecution, "id" | "loopEpoch" | "status">,
     cause: unknown,
   ): Promise<void> {
+    const executionId = owner.id;
     const haltReason = toHaltReason(cause, { cause: "io" });
     try {
       await mutateActive(projectPath, sessionName, (execution) => {
         // Locate the winner before halting: a concurrent transition may already
         // have moved on, and halting whatever happens to hold the row would end
         // a run this failure has nothing to do with.
-        assertStillReserved(execution, executionId, sessionName);
+        if (
+          execution.id !== owner.id ||
+          execution.loopEpoch !== owner.loopEpoch ||
+          execution.status !== owner.status
+        ) {
+          return unchanged();
+        }
         // The shared execution-level transition owner, not a local status
         // write: a second copy of "what halting means" here would drift from
         // every other halt in the engine.
@@ -1045,6 +1123,7 @@ export function createGraphWorkflowExecutionRepository(
     execution: GraphWorkflowExecution;
     events: GraphWorkflowExecutionEvent[];
     pushes: GraphWorkflowPushInfo[];
+    preResetContextIds?: readonly string[];
   } {
     const next = result.execution;
     const extraEvents = result.delivery?.events ?? [];
@@ -1068,6 +1147,9 @@ export function createGraphWorkflowExecutionRepository(
       execution: parsed,
       events: [...diffDelivery.events, ...extraEvents],
       pushes: [...diffDelivery.pushes, ...extraPushes],
+      ...(result.delivery?.preResetContextIds !== undefined && {
+        preResetContextIds: result.delivery.preResetContextIds,
+      }),
     };
   }
 
@@ -1211,20 +1293,6 @@ export function createGraphWorkflowExecutionRepository(
     return outcome;
   }
 
-  async function markContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number> {
-    return deps.markGraphWorkflowContextEventsPreReset(
-      projectPath,
-      sessionName,
-      executionId,
-      contextId,
-    );
-  }
-
   return {
     getActive,
     create,
@@ -1233,7 +1301,6 @@ export function createGraphWorkflowExecutionRepository(
     update,
     mutateActive,
     archiveActive,
-    markContextEventsPreReset,
   };
 }
 

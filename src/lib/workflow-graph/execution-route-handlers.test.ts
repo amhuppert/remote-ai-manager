@@ -186,7 +186,6 @@ describe("graph workflow execution route handlers", () => {
   const resumeExecution = vi.fn();
   const abortExecution = vi.fn();
   const archiveExecution = vi.fn();
-  const normalizeExecutionAfterRestart = vi.fn();
   const kickOffExecutionLoop = vi.fn();
   const resetExecutionContext = vi.fn();
   const resetExecutionContextAssignment = vi.fn();
@@ -228,7 +227,6 @@ describe("graph workflow execution route handlers", () => {
     resumeExecution,
     abortExecution,
     archiveExecution,
-    normalizeExecutionAfterRestart,
     kickOffExecutionLoop,
     resetExecutionContext,
     resetExecutionContextAssignment,
@@ -1961,7 +1959,6 @@ describe("graph workflow execution route handlers", () => {
         },
       }),
     );
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
 
     const response = await handlers.STATUS(
       makeRequest(
@@ -2024,7 +2021,6 @@ describe("graph workflow execution route handlers", () => {
         },
       }),
     );
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
 
     const response = await handlers.STATUS(
       makeRequest(
@@ -2103,7 +2099,6 @@ describe("graph workflow execution route handlers", () => {
         },
       }),
     );
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
 
     const response = await handlers.STATUS(
       makeRequest(
@@ -2173,7 +2168,6 @@ describe("graph workflow execution route handlers", () => {
         },
       }),
     );
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
 
     const response = await handlers.STATUS(
       makeRequest(
@@ -2206,7 +2200,7 @@ describe("graph workflow execution route handlers", () => {
     });
   });
 
-  it("normalizes an in-flight iteration before returning status", async () => {
+  it("reads an in-flight iteration without restart recovery", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(
       makeSession({
@@ -2237,9 +2231,9 @@ describe("graph workflow execution route handlers", () => {
         }),
       }),
     );
-    normalizeExecutionAfterRestart.mockResolvedValue(
+    getActiveExecution.mockResolvedValue(
       createWorkflowExecution({
-        status: "paused",
+        status: "running",
         activeContextIds: ["context-plan"],
         taskStates: {
           "task-plan-1": {
@@ -2257,7 +2251,7 @@ describe("graph workflow execution route handlers", () => {
         },
         machineSnapshot: {
           schemaVersion: 1,
-          lifecycleStatus: "paused",
+          lifecycleStatus: "running",
           activeContextId: "context-plan",
           recoveryMode: "restart_normalized",
           hasLiveIteration: false,
@@ -2273,13 +2267,10 @@ describe("graph workflow execution route handlers", () => {
       makeContext({ name: "repo", session: "session-1" }),
     );
 
-    expect(normalizeExecutionAfterRestart).toHaveBeenCalledWith(
-      "/repo",
-      "session-1",
-    );
+    expect(getActiveExecution).toHaveBeenCalledWith("/repo", "session-1");
     await expect(response.json()).resolves.toMatchObject({
       execution: {
-        status: "paused",
+        status: "running",
       },
     });
   });
@@ -2329,7 +2320,6 @@ describe("graph workflow execution route handlers", () => {
         id: "execution-settled",
         ...overrides,
       });
-      normalizeExecutionAfterRestart.mockResolvedValue(null);
       getActiveExecution.mockReset();
       getActiveExecution.mockResolvedValue(settled);
       listArchivedExecutions.mockResolvedValue([]);
@@ -2362,7 +2352,6 @@ describe("graph workflow execution route handlers", () => {
     // strand the run with no surface to resume it from.
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     getActiveExecution.mockReset();
     getActiveExecution.mockResolvedValue(
       createWorkflowExecution({
@@ -2415,16 +2404,15 @@ describe("graph workflow execution route handlers", () => {
     await expect(response.json()).resolves.toEqual({ execution: active });
   });
 
-  it("EXECUTION prefers the restart-normalized execution and returns null when absent", async () => {
+  it("EXECUTION reads the persisted active row without recovery and returns null when absent", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
     const normalized = createWorkflowExecution({
       id: "execution-normalized",
       status: "paused",
     });
-    normalizeExecutionAfterRestart.mockResolvedValue(normalized);
     getActiveExecution.mockReset();
-    getActiveExecution.mockResolvedValue(null);
+    getActiveExecution.mockResolvedValue(normalized);
 
     const present = await handlers.EXECUTION(
       makeRequest(
@@ -2433,15 +2421,11 @@ describe("graph workflow execution route handlers", () => {
       ),
       makeContext({ name: "repo", session: "session-1" }),
     );
-    expect(normalizeExecutionAfterRestart).toHaveBeenCalledWith(
-      "/repo",
-      "session-1",
-    );
     await expect(present.json()).resolves.toMatchObject({
       execution: { id: "execution-normalized" },
     });
 
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
+    getActiveExecution.mockResolvedValue(null);
     const absent = await handlers.EXECUTION(
       makeRequest(
         "/api/projects/repo/sessions/session-1/graph-workflow/execution",
@@ -2458,7 +2442,6 @@ describe("graph workflow execution route handlers", () => {
     // row, but it holds nothing — returning it as Current is what let the panel
     // render a finished run as the live one and drop it from History.
     resolveProjectPath.mockResolvedValue("/repo");
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     getSession.mockResolvedValue(
       makeSession({
         graphWorkflowExecution: createWorkflowExecution({
@@ -2585,7 +2568,6 @@ describe("graph workflow execution route handlers", () => {
   it("maps pause, resume, and abort control routes to the workflow manager", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     pauseExecution.mockResolvedValue(
       createWorkflowExecution({
         status: "paused",
@@ -2673,7 +2655,6 @@ describe("graph workflow execution route handlers", () => {
   it("returns a structured 409 when completion wins before pause", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     pauseExecution.mockRejectedValue(
       new GraphWorkflowTransitionConflictError(
         "pause",
@@ -2715,7 +2696,6 @@ describe("graph workflow execution route handlers", () => {
     getSession.mockResolvedValue(
       makeSession({ graphWorkflowExecution: pendingExecution }),
     );
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     resumeExecution.mockRejectedValue(
       new GraphWorkflowTransitionConflictError(
         "resume",
@@ -2747,7 +2727,6 @@ describe("graph workflow execution route handlers", () => {
     getSession.mockResolvedValue(
       makeSession({ graphWorkflowExecution: resumedExecution }),
     );
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     resumeExecution.mockResolvedValue(resumedExecution);
     kickOffExecutionLoop.mockRejectedValue(new Error("resume loop failed"));
     recordPendingHaltReason.mockResolvedValue({
@@ -2784,7 +2763,6 @@ describe("graph workflow execution route handlers", () => {
       makeSession({ graphWorkflowExecution: failedExecution }),
     );
     getActiveExecution.mockResolvedValue(replacementExecution);
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     resumeExecution.mockResolvedValue(failedExecution);
     kickOffExecutionLoop.mockRejectedValue(new Error("failed loop"));
 
@@ -2851,7 +2829,6 @@ describe("graph workflow execution route handlers", () => {
   it("threads conflict guidance from the resume body to the workflow manager", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
-    normalizeExecutionAfterRestart.mockResolvedValue(null);
     resumeExecution.mockResolvedValue(
       createWorkflowExecution({ status: "running" }),
     );
@@ -2889,29 +2866,9 @@ describe("graph workflow execution route handlers", () => {
     expect(resumeExecution).not.toHaveBeenCalled();
   });
 
-  it("normalizes stale running executions before resuming them", async () => {
+  it("resumes without attempting live restart recovery", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
-    normalizeExecutionAfterRestart.mockResolvedValue(
-      createWorkflowExecution({
-        status: "paused",
-        activeContextIds: ["context-plan"],
-        taskStates: {
-          "task-plan-1": {
-            taskId: "task-plan-1",
-            contextId: "context-plan",
-            order: 1,
-            status: "interrupted",
-            summary: null,
-            startedAt: "2026-03-27T12:05:00.000Z",
-            completedAt: null,
-            lastConversationId: "conversation-1",
-            failureMessage: null,
-            failureHistory: [],
-          },
-        },
-      }),
-    );
     resumeExecution.mockResolvedValue(
       createWorkflowExecution({
         status: "running",
@@ -2942,10 +2899,6 @@ describe("graph workflow execution route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(normalizeExecutionAfterRestart).toHaveBeenCalledWith(
-      "/repo",
-      "session-1",
-    );
     expect(resumeExecution).toHaveBeenCalledWith(
       "/repo",
       "session-1",
@@ -3255,8 +3208,7 @@ describe("graph workflow resolve-approval route handler", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher: createGraphWorkflowExecutionEventPublisher({
         broadcast: () => {},
         dispatchPush: () => {},
@@ -3274,9 +3226,6 @@ describe("graph workflow resolve-approval route handler", () => {
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
       recordApprovalDecision: approvalGateService.recordDecision,
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
@@ -3571,9 +3520,6 @@ describe("graph workflow approval-snapshot route handler", () => {
         ? { resolveApprovalSnapshot: overrides.resolveApprovalSnapshot }
         : {}),
       recordApprovalDecision: unusedDep("recordApprovalDecision"),
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
@@ -4019,7 +3965,7 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4107,7 +4053,7 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4216,9 +4162,6 @@ describe("graph workflow execution by-id and result routes", () => {
       getActiveExecution: store.getActiveGraphWorkflowExecution,
       getExecutionById: store.getGraphWorkflowExecutionById,
       getBoundaryResultAfter: store.getGraphWorkflowBoundaryResultAfter,
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
@@ -4428,9 +4371,6 @@ describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () 
       getActiveExecution: async () => null,
       getEventsTail: fixture.store.getGraphWorkflowEventsTail,
       getEventsPage: fixture.store.getGraphWorkflowEventsPage,
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
@@ -4619,9 +4559,6 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       awaitingDefinitionApproval,
       readRepoConfig: async () => null,
       readConfig: async () => makeGlobalConfig(),
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
       pauseExecution: unusedDep("pauseExecution"),
@@ -4926,9 +4863,6 @@ describe("graph workflow RUN route — inline one-off launch", () => {
             request.headers.get(CONVERSATION_CAPABILITY_HEADER),
             secret,
           ),
-        normalizeExecutionAfterRestart: unusedDep(
-          "normalizeExecutionAfterRestart",
-        ),
         startExecution: unusedDep("startExecution"),
         pauseExecution: unusedDep("pauseExecution"),
         resumeExecution: unusedDep("resumeExecution"),
@@ -5162,9 +5096,6 @@ describe("graph workflow RUN route — inline one-off launch", () => {
             request.headers.get(CONVERSATION_CAPABILITY_HEADER),
             secret,
           ),
-        normalizeExecutionAfterRestart: unusedDep(
-          "normalizeExecutionAfterRestart",
-        ),
         startExecution: unusedDep("startExecution"),
         pauseExecution: unusedDep("pauseExecution"),
         resumeExecution: unusedDep("resumeExecution"),
@@ -5508,8 +5439,7 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       reserveActiveGraphWorkflowExecution:
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution: archiveSeam,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
     });
     const manager = createGraphWorkflowManager({
@@ -5534,9 +5464,6 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
@@ -6185,8 +6112,7 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
     });
     const manager = createGraphWorkflowManager({
@@ -6220,9 +6146,6 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
@@ -7044,7 +6967,6 @@ describe("graph workflow mutation principals", () => {
       awaitingDefinitionApproval: vi.fn(async () => {}),
       readRepoConfig: async () => null,
       readConfig: async () => makeGlobalConfig(),
-      normalizeExecutionAfterRestart: vi.fn(async () => input.execution),
       archiveExecution: async () => {
         throw new Error("archiveExecution should not run in a principal test");
       },
@@ -8005,8 +7927,7 @@ describe("graph workflow mutation turnover — end to end", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher: createGraphWorkflowExecutionEventPublisher({
         broadcast: () => {},
         dispatchPush: () => {},
@@ -8060,7 +7981,6 @@ describe("graph workflow mutation turnover — end to end", () => {
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () =>
         makeSession({ conversations: [makeConversation(ORIGIN_CONV)] }),
-      normalizeExecutionAfterRestart: unusedRouteDep,
       startExecution: unusedRouteDep,
       runExecution: unusedRouteDep,
       launchSpecDeliveryExecution: unusedRouteDep,

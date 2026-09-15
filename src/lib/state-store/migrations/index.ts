@@ -1,3 +1,6 @@
+import { graphWorkflowLaneCoverage } from "./0047-graph-workflow-lane-coverage";
+import { graphWorkflowDocumentContent } from "./0048-graph-workflow-document-content";
+import { graphWorkflowReviewOrigin } from "./0049-graph-workflow-review-origin";
 import { mergeCompletionOption } from "./0046-merge-completion-option";
 import { addCheckpointForks } from "./0045-add-checkpoint-forks";
 import type { StateMigration } from "./types";
@@ -129,6 +132,9 @@ export const migrations: readonly StateMigration[] = [
   addConversationCheckpoints,
   addCheckpointForks,
   mergeCompletionOption,
+  graphWorkflowLaneCoverage,
+  graphWorkflowDocumentContent,
+  graphWorkflowReviewOrigin,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

@@ -197,8 +197,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
     });
   }
@@ -327,7 +326,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -510,7 +509,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 

@@ -41,16 +41,16 @@ import type {
 
 /**
  * The token a committer embeds in the commit message so the landing is
- * replayable from the branch alone. Derived from durable identifiers — never
- * random — and attempt-scoped so a reset-and-redispatch cannot adopt the
- * previous attempt's commit as its own evidence.
+ * replayable from the branch alone. The nonce is minted once when the intent
+ * is recorded and persisted with it: a reset may restart the attempt counter,
+ * but must never reuse an earlier intent's identity.
  */
 export function landingIntentToken(
   executionId: string,
   contextId: string,
   attempt: number,
 ): string {
-  return `cc-landing:${executionId}:${contextId}:${attempt}`;
+  return `cc-landing:${executionId}:${contextId}:${attempt}:${crypto.randomUUID()}`;
 }
 
 /** The trailer form the committers append; also what reconciliation greps for. */

@@ -1,3 +1,8 @@
+import {
+  publishWorkflowDocuments,
+  withArtifactPublication,
+} from "./artifact-publication";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { randomUUID } from "node:crypto";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import { getConfiguredQueryConcurrency } from "@/lib/shared/query-semaphore";
@@ -70,7 +75,6 @@ import {
   mutateActiveGraphWorkflowExecution,
   reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
-  markGraphWorkflowContextEventsPreReset,
   getGraphWorkflowPendingArtifacts,
   clearGraphWorkflowPendingArtifacts,
   findLatestGraphWorkflowContextEvent,
@@ -100,10 +104,7 @@ import { createValidatorRunner } from "./validator-runner";
 import { createScriptValidatorRunner } from "./script-validator-runner";
 import { createWorkflowStorageService } from "./storage";
 import { scopeForTier } from "./template-library-service";
-import {
-  abortExecutionLoop,
-  isExecutionLoopActive,
-} from "@/lib/workflow-graph/execution-loop";
+import { abortExecutionLoop } from "@/lib/workflow-graph/execution-loop";
 
 import { runRegisteredMergeJob } from "@/lib/jobs/queue";
 import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
@@ -202,19 +203,6 @@ function createProductionGraphWorkflowRuntime() {
           projectName,
           executionId,
         }) => {
-          // Fenced on the round's execution: normalize/resume/kick all address the
-          // session, and the run this repair examined may have been abandoned and
-          // replaced while its agent turn was open. Normalization is fenced FIRST
-          // because it is the step with side effects — it rewrites artifacts into the
-          // worktree and rewrites the running state — so an unfenced normalize has
-          // already touched the successor by the time the resume behind it refuses.
-          await workflowManager.normalizeAfterRestart(
-            projectPath,
-            sessionName,
-            {
-              expectedExecutionId: executionId,
-            },
-          );
           // The manager raises a transition conflict rather than resuming the
           // successor, which the supervisor records as an unresumed round. No human
           // is in this loop, so the resume declares itself automatic and the manager
@@ -300,7 +288,7 @@ function createProductionGraphWorkflowRuntime() {
         mutateActiveGraphWorkflowExecution,
         reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset,
+
         getGraphWorkflowPendingArtifacts,
         clearGraphWorkflowPendingArtifacts,
       }),
@@ -316,7 +304,6 @@ function createProductionGraphWorkflowRuntime() {
         ),
       loadDefinition: (projectPath, definitionId, tier) =>
         workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
-      isExecutionLoopActive,
       readSessionWorktreeDirtyPaths: (worktreePath) =>
         readWorktreeDirtyPaths(worktreePath),
       preflightService: createPreflightPrerequisiteService(),
@@ -511,7 +498,10 @@ function createProductionGraphWorkflowRuntime() {
             }
           },
           materializeWorkflowDocuments: (input) =>
-            sharedDocumentMaterializer.materialize(input).then(() => undefined),
+            publishWorkflowDocuments(input, {
+              getActive: executionRepository.getActive,
+              materialize: sharedDocumentMaterializer.materialize,
+            }),
         },
       };
     },
@@ -536,14 +526,56 @@ function createProductionGraphWorkflowRuntime() {
   };
 }
 
-let runtime:
-  | ReturnType<typeof createProductionGraphWorkflowRuntime>
-  | undefined;
+type GraphRuntime = ReturnType<typeof createProductionGraphWorkflowRuntime>;
 
-export function getGraphWorkflowRuntime() {
-  assertGraphExecutionContractRegistered();
-  assertGraphExecutionLifecycleCallbacksRegistered();
-  runtime ??= createProductionGraphWorkflowRuntime();
+function runtimeHost() {
+  return getGlobalSingleton<{
+    ready: GraphRuntime | null;
+    initializing: Promise<void> | null;
+  }>("__cc_graph_workflow_runtime", () => ({
+    ready: null,
+    initializing: null,
+  }));
+}
+
+export async function initializeGraphWorkflowRuntimeAtStartup(): Promise<void> {
+  const host = runtimeHost();
+  if (host.initializing !== null) return host.initializing;
+  host.initializing = (async () => {
+    assertGraphExecutionContractRegistered();
+    assertGraphExecutionLifecycleCallbacksRegistered();
+    const candidate = createProductionGraphWorkflowRuntime();
+    const executions = await listActiveGraphWorkflowExecutions();
+    for (const [address, execution] of executions) {
+      const separator = address.indexOf("\0");
+      if (separator < 0) throw new Error("Invalid persisted workflow address");
+      await candidate.workflowManager.normalizeAfterRestart(
+        address.slice(0, separator),
+        address.slice(separator + 1),
+        {
+          expectedExecutionId: execution.id,
+        },
+      );
+    }
+    host.ready = candidate;
+    logger.info("graph-workflow.runtime.ready", {
+      recoveredExecutionCount: executions.size,
+    });
+  })().catch((error: unknown) => {
+    logger.error("graph-workflow.runtime.recovery_failed", {
+      error: getErrorMessage(error),
+    });
+    throw error;
+  });
+  return host.initializing;
+}
+
+export function getGraphWorkflowRuntime(): GraphRuntime {
+  const runtime = runtimeHost().ready;
+  if (runtime === null)
+    throw new Error(
+      "Graph workflow runtime is unavailable until startup recovery completes",
+    );
   return runtime;
 }
 
@@ -553,29 +585,26 @@ export async function applyProductionGraphWorkflowLiveEdits(input: {
   request: LiveEditApplyRequest;
 }): Promise<LiveEditApplyOutcome> {
   const graphWorkflowRuntime = getGraphWorkflowRuntime();
-  return applyLiveEditsToActiveExecution(input, {
-    executionContract: createRegisteredGraphExecutionContract(),
-    getActiveExecution: getActiveGraphWorkflowExecution,
-    mutateActive: graphWorkflowRuntime.executionRepository.mutateActive,
-    buildLiveEditDeps: buildDefaultLiveEditDeps,
-    prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
-    publishLiveEditApplied:
-      graphWorkflowRuntime.eventPublisher.publishLiveEditApplied,
-    publishCharterUpdated:
-      graphWorkflowRuntime.eventPublisher.publishCharterUpdated,
-    getSession: defaultGetSession,
-    writeCharterDocument: defaultWriteCharterDocument,
-  });
+  return withArtifactPublication(input.projectPath, input.sessionName, () =>
+    applyLiveEditsToActiveExecution(input, {
+      executionContract: createRegisteredGraphExecutionContract(),
+      getActiveExecution: getActiveGraphWorkflowExecution,
+      mutateActive: graphWorkflowRuntime.executionRepository.mutateActive,
+      buildLiveEditDeps: buildDefaultLiveEditDeps,
+      prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
+      publishLiveEditApplied:
+        graphWorkflowRuntime.eventPublisher.publishLiveEditApplied,
+      publishCharterUpdated:
+        graphWorkflowRuntime.eventPublisher.publishCharterUpdated,
+      getSession: defaultGetSession,
+      writeCharterDocument: defaultWriteCharterDocument,
+    }),
+  );
 }
 
 export function createProductionGraphWorkflowLifecycleDeps(): GraphWorkflowLifecycleDeps {
   return {
     executionContract: createRegisteredGraphExecutionContract(),
-    normalizeExecutionAfterRestart: (projectPath, sessionName) =>
-      getGraphWorkflowRuntime().workflowManager.normalizeAfterRestart(
-        projectPath,
-        sessionName,
-      ),
     startExecution: (input) =>
       getGraphWorkflowRuntime().workflowManager.start(input),
     runExecution: (input) =>

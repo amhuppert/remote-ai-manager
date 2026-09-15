@@ -235,8 +235,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
     });
   }

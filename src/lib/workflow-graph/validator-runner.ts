@@ -1,3 +1,7 @@
+import {
+  resolveContextReviewOrigin,
+  type ReviewOriginResolution,
+} from "./review-origin";
 import { changed } from "./execution-mutation";
 import type { GraphWorkflowExecutionRepository } from "./execution-repository";
 import { z } from "zod";
@@ -108,7 +112,6 @@ import { sessionConversationTarget } from "@/lib/conversations/conversation-targ
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { getConversation as defaultGetConversation } from "@/lib/state-store";
 import {
-  candidateScopeForPlacement,
   computeValidationDiffScope as defaultComputeValidationDiffScope,
   diffScopeTreeHash,
   renderDiffScopeSection,
@@ -896,12 +899,13 @@ export interface ValidatorRunnerDeps {
   getProjectDisplayName?: (projectPath: string) => string;
   /**
    * Optional override for diff-scope computation. Defaults to the real
-   * working-tree-vs-HEAD computation, restricted to the reviewed context's
+   * review-origin-to-candidate computation, restricted to the reviewed context's
    * candidate scope. Injected in tests to avoid spawning git.
    */
   computeValidationDiffScope?: (
     worktreePath: string,
     candidateScope: CandidateScope,
+    baselineSha: string | null,
   ) => Promise<ValidationDiffScope>;
   /**
    * Read the post-turn pending-question state of the validator's lane
@@ -1133,7 +1137,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         : { costUsd: summary.costUsd, apiTurns: summary.apiTurns };
     });
   const computeValidationDiffScope =
-    deps.computeValidationDiffScope ?? defaultComputeValidationDiffScope;
+    deps.computeValidationDiffScope ??
+    ((worktreePath, scope, baselineSha) =>
+      defaultComputeValidationDiffScope(
+        worktreePath,
+        scope,
+        undefined,
+        baselineSha,
+      ));
   const composeLaneWriteEnvelope =
     deps.composeLaneWriteEnvelope ??
     ((input: ComposeValidatorLaneWriteEnvelopeInput) =>
@@ -1795,29 +1806,26 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     }
   }
 
-  /**
-   * Compute the context's uncommitted change set in the inspected worktree and
-   * render it as the "Changes under review" section, logging what was scoped.
-   * Any failure yields an "unavailable" scope rather than halting validation.
-   *
-   * The candidate scope comes from the reviewed context's own placement, which is
-   * the same source the round's freeze reads (R15). An enveloped context's
-   * validators are shown its owned subset and nothing a concurrent sibling wrote;
-   * a full-access member's still see the whole tree.
-   */
+  /** Render one retained-work snapshot for every reviewer in a round. */
   async function renderScopedDiffSection(params: {
     executionId: string;
     contextId: string;
-    candidateScope: CandidateScope;
+    review: ReviewOriginResolution;
     inspection: InspectionWorktree;
     contextLimitTokens?: number;
     execLogger: ReturnType<typeof getExecutionLogger>;
   }): Promise<{ section: string; treeHash: string | null }> {
-    const { executionId, contextId, candidateScope, inspection, execLogger } =
-      params;
+    const { executionId, contextId, review, inspection, execLogger } = params;
+    const { candidateScope } = review;
 
     let diffScope: ValidationDiffScope;
-    if (inspection.worktreePath === undefined) {
+    if (review.kind === "unavailable") {
+      diffScope = {
+        kind: "unavailable",
+        candidateScope,
+        reason: review.reason,
+      };
+    } else if (inspection.worktreePath === undefined) {
       diffScope = {
         kind: "unavailable",
         candidateScope,
@@ -1828,6 +1836,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         diffScope = await computeValidationDiffScope(
           inspection.worktreePath,
           candidateScope,
+          review.origin.baselineSha,
         );
       } catch (error) {
         diffScope = {
@@ -1916,9 +1925,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const rendered = await renderScopedDiffSection({
       executionId: input.execution.id,
       contextId: input.context.id,
-      candidateScope: candidateScopeForPlacement(input.context.placement, {
-        stableRead: input.context.outputSchema !== undefined,
-      }),
+      review: resolveContextReviewOrigin(input.execution, input.context.id),
       inspection: await resolveInspectionWorktree(input),
       ...(limits.length > 0 ? { contextLimitTokens: Math.min(...limits) } : {}),
       execLogger: getExecutionLogger(input.execution.id),
@@ -1982,9 +1989,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         await renderScopedDiffSection({
           executionId: input.execution.id,
           contextId: input.context.id,
-          candidateScope: candidateScopeForPlacement(input.context.placement, {
-            stableRead: input.context.outputSchema !== undefined,
-          }),
+          review: resolveContextReviewOrigin(input.execution, input.context.id),
           inspection,
           contextLimitTokens,
           execLogger,

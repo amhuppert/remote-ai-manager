@@ -123,7 +123,7 @@ function landAndIntegrate(
       status: "merged",
       worktreePath: "/repo",
       branchName: "csm/session",
-      includedContextIds: [],
+      includedContextIds: [CONTEXT_ID],
       lastCommittingContextId: null,
       commitSnapshots: [],
       createdAt: NOW,
@@ -274,6 +274,7 @@ describe("getAuthoredContextOutcome", () => {
     completeContext(execution);
     landAndIntegrate(execution, "commit");
     delete execution.joins.publish;
+    execution.executionLanes[SESSION_LANE_ID]!.includedContextIds = [];
 
     await expect(outcome(execution)).resolves.toMatchObject({
       status: "pending",
@@ -456,6 +457,7 @@ describe("getAuthoredContextOutcome", () => {
     completeContext(execution);
     landAndIntegrate(execution, "commit");
     execution.joins.publish!.status = "failed";
+    execution.executionLanes[SESSION_LANE_ID]!.includedContextIds = [];
     execution.joins.publish!.errorMessage = "Final merge validation failed";
 
     await expect(outcome(execution)).resolves.toMatchObject({
@@ -638,6 +640,7 @@ describe("getIntegrationReadyFinalCandidate", () => {
     completeContext(execution);
     landAndIntegrate(execution, "commit");
     execution.joins.publish!.status = "failed";
+    execution.executionLanes[SESSION_LANE_ID]!.includedContextIds = [];
 
     await expect(finalCandidate(execution)).resolves.toMatchObject({
       status: "failed",
@@ -689,6 +692,7 @@ describe("retained source proof", () => {
         service.getIntegrationReadyFinalCandidate(execution.id, [CONTEXT_ID]),
       ).resolves.toMatchObject({ status: "failed" });
       execution.joins = {};
+      execution.executionLanes[SESSION_LANE_ID]!.includedContextIds = [];
       await expect(
         service.getAuthoredContextOutcome(
           execution.id,

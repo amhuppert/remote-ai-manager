@@ -62,6 +62,7 @@ const FULL_ACCESS: ContextPlacement = { lane: "solo", mode: "full" };
 
 describe("scoped candidate identity and rendering over a shared lane worktree", () => {
   let worktreePath: string;
+  let reviewBaselineSha: string;
 
   async function git(...args: string[]): Promise<string> {
     const { stdout } = await execFileAsync("git", args, {
@@ -93,6 +94,19 @@ describe("scoped candidate identity and rendering over a shared lane worktree", 
     );
     if (!context) throw new Error(`fixture context ${contextId} missing`);
     context.placement = placement;
+    execution.contextStates[contextId]!.reviewOrigin = {
+      laneId: execution.contextStates[contextId]!.laneId,
+      baselineSha: reviewBaselineSha,
+      candidateScope:
+        placement.mode === "full"
+          ? { mode: "wholeTree" }
+          : {
+              mode: "owned",
+              ownedPaths:
+                placement.mode === "owned" ? [...placement.ownedPaths] : [],
+            },
+      capturedAt: "2026-09-15T12:00:00.000Z",
+    };
     context.contextValidator = {
       enabled: true,
       assignments: [seedAssignment(makeValidatorAssignment({ id: "general" }))],
@@ -175,6 +189,7 @@ describe("scoped candidate identity and rendering over a shared lane worktree", 
     );
     await git("add", "-A");
     await git("commit", "-m", "lane base");
+    reviewBaselineSha = (await git("rev-parse", "HEAD")).trim();
   });
 
   afterEach(async () => {

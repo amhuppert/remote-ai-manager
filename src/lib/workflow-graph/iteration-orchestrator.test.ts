@@ -324,6 +324,12 @@ function createExecutionWithPlanTasks(
       "context-plan": {
         skipReason: null,
         landingIntent: null,
+        reviewOrigin: {
+          laneId: null,
+          baselineSha: "review-base",
+          candidateScope: { mode: "wholeTree" },
+          capturedAt: "2026-09-15T12:00:00.000Z",
+        },
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-plan",
@@ -520,7 +526,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -592,7 +598,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -705,7 +711,7 @@ describe("graph workflow iteration orchestrator", () => {
     );
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -781,6 +787,7 @@ describe("graph workflow iteration orchestrator", () => {
       runAgentIteration,
       materializeWorkflowDocuments: async ({ execution, worktreePath }) => {
         materializeCalls.push({ executionId: execution.id, worktreePath });
+        return execution;
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -829,7 +836,7 @@ describe("graph workflow iteration orchestrator", () => {
       ensureDir,
       fileExists: (absolutePath) => files.has(absolutePath),
     });
-    await store.captureFromWorktree({
+    const { contentHash } = await store.captureFromWorktree({
       executionId: "execution-1",
       worktreePath: "/forked-lane",
       relativePath,
@@ -846,6 +853,7 @@ describe("graph workflow iteration orchestrator", () => {
     execution.sharedDocuments = [
       {
         id: "lane-plan",
+        contentHash,
         relativePath,
         kind: "shared",
         description: "Published implementation plan",
@@ -858,31 +866,35 @@ describe("graph workflow iteration orchestrator", () => {
     const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
     const bindTaskCompletion = vi.fn();
-    const runAgentIteration = vi.fn(async () => {
-      expect(files.get(`${sessionWorktree}/${relativePath}`)).toBe(
-        "Plan published from the forked lane",
-      );
-      const current = structuredClone(repository.read());
-      current.taskStates["task-plan-1"] = {
-        ...current.taskStates["task-plan-1"]!,
-        status: "completed",
-        summary: "done",
-        completedAt: "2026-03-27T16:02:00.000Z",
-      };
-      current.contextStates["context-plan"] = {
-        ...current.contextStates["context-plan"]!,
-        completedTaskCount: 1,
-      };
-      await repository
-        .mutateActive("/repo", "session-1", () => changed(current))
-        .then((mutation) => mutation.execution);
-      return {
-        conversationId: "conversation-1",
-        contextTokens: null,
-        contextWindowMax: null,
-        compacted: false,
-      };
-    });
+    const prompts: string[] = [];
+    const runAgentIteration = vi.fn(
+      async (input: GraphWorkflowRunAgentIterationInput) => {
+        prompts.push(input.prompt);
+        expect(files.get(`${sessionWorktree}/${relativePath}`)).toBe(
+          "Plan published from the forked lane",
+        );
+        const current = structuredClone(repository.read());
+        current.taskStates["task-plan-1"] = {
+          ...current.taskStates["task-plan-1"]!,
+          status: "completed",
+          summary: "done",
+          completedAt: "2026-03-27T16:02:00.000Z",
+        };
+        current.contextStates["context-plan"] = {
+          ...current.contextStates["context-plan"]!,
+          completedTaskCount: 1,
+        };
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
+        return {
+          conversationId: "conversation-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    );
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
@@ -896,7 +908,11 @@ describe("graph workflow iteration orchestrator", () => {
       bindTaskCompletion,
       runAgentIteration,
       materializeWorkflowDocuments: async (input) => {
-        await materializer.materialize(input);
+        const delivered = structuredClone(input.execution);
+        delivered.sharedDocuments[0]!.description =
+          "Delivered publication description";
+        await materializer.materialize({ ...input, execution: delivered });
+        return delivered;
       },
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -917,7 +933,76 @@ describe("graph workflow iteration orchestrator", () => {
     });
 
     expect(runAgentIteration).toHaveBeenCalled();
+    expect(prompts[0]).toContain("Delivered publication description");
+    expect(prompts[0]).not.toContain("Published implementation plan");
   });
+
+  it.each(["pending", "completed"] as const)(
+    "refuses %s task dispatch when registered inputs cannot be delivered",
+    async (taskStatus) => {
+      const execution = createExecutionWithPlanTasks({
+        "task-plan-1": taskStatus,
+        "task-plan-2": taskStatus,
+      });
+      execution.sharedDocuments = [
+        {
+          id: "missing-input",
+          relativePath: ".cc/graph-workflow-docs/missing.md",
+          kind: "shared",
+          description: "Required contract",
+          readWhen: "Before work",
+          createdAt: "2026-09-15",
+          updatedAt: "2026-09-15",
+          lastUpdatedByConversationId: null,
+        },
+      ];
+      const repository = createRepository(execution);
+      const materializer = createWorkflowDocumentMaterializer({
+        store: createSharedDocumentStore(),
+      });
+      const createConversation = vi.fn(async () => ({
+        id: "unwanted-conversation",
+      }));
+      const runAgentIteration = vi.fn(async () => {
+        throw new Error("Implementer must not dispatch");
+      });
+      const validateContextCompletion = vi.fn(async () => {
+        throw new Error("Validator must not dispatch");
+      });
+      const orchestrator = createContextIterationFixture({
+        ...createContextTestCapabilities(),
+        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionRepository: repository,
+        findLatestContextValidationEvent:
+          repository.findLatestContextValidationEvent,
+        createConversation,
+        runAgentIteration,
+        validationService: { validateContextCompletion },
+        materializeWorkflowDocuments: async (input) => {
+          await materializer.materialize(input);
+          return input.execution;
+        },
+      });
+      await expect(
+        orchestrator.runIteration({
+          projectPath: "/repo",
+          projectName: "repo",
+          sessionName: "session-1",
+          contextId: "context-plan",
+          executionTarget: {
+            worktreePath: "/repo/.worktrees/session-1",
+            branchName: "csm/session-1",
+            isolation: "session",
+            laneId: null,
+          },
+        }),
+      ).rejects.toThrow(/content unavailable/);
+      expect(createConversation).not.toHaveBeenCalled();
+      expect(runAgentIteration).not.toHaveBeenCalled();
+      expect(validateContextCompletion).not.toHaveBeenCalled();
+      expect(repository.read().taskStates).toEqual(execution.taskStates);
+    },
+  );
 
   it("handles interrupted tasks by presenting them first", async () => {
     const repository = createRepository(
@@ -954,7 +1039,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1020,7 +1105,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1090,7 +1175,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1160,7 +1245,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1282,7 +1367,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1464,7 +1549,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1555,7 +1640,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1630,7 +1715,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1714,7 +1799,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1802,7 +1887,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1848,7 +1933,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -1924,7 +2009,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2022,7 +2107,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2084,7 +2169,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2162,7 +2247,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2262,7 +2347,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2372,7 +2457,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2485,7 +2570,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2589,7 +2674,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2684,7 +2769,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2783,7 +2868,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2872,7 +2957,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -2965,7 +3050,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3029,7 +3114,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3135,7 +3220,7 @@ describe("task validation event publishing (fix-30388517)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3239,7 +3324,7 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3292,7 +3377,7 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3368,7 +3453,7 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3455,7 +3540,7 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3494,7 +3579,7 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3562,7 +3647,7 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3631,7 +3716,7 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3828,7 +3913,7 @@ describe("codex implementer continuity", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -3924,7 +4009,7 @@ describe("codex implementer continuity", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4001,7 +4086,7 @@ describe("codex implementer continuity", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4119,7 +4204,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4206,7 +4291,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4306,7 +4391,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4426,7 +4511,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4521,7 +4606,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4616,7 +4701,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4703,7 +4788,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4793,7 +4878,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4894,7 +4979,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -4984,7 +5069,7 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5060,7 +5145,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5131,7 +5216,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5204,7 +5289,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5276,7 +5361,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5346,7 +5431,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5483,7 +5568,7 @@ describe("script validator integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5546,7 +5631,7 @@ describe("script validator integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5588,6 +5673,10 @@ describe("script validator integration", () => {
       ownedPaths: ["src"],
     };
     context.scriptValidator = { commands: ["typecheck"] };
+    execution.contextStates["context-plan"]!.reviewOrigin!.candidateScope = {
+      mode: "owned",
+      ownedPaths: [...context.placement.ownedPaths],
+    };
     const repository = createRepository(execution);
     const { bindTaskCompletion, capturedCompleteTask } =
       createCompletionCapture();
@@ -5613,7 +5702,7 @@ describe("script validator integration", () => {
     });
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5675,7 +5764,7 @@ describe("script validator integration", () => {
     });
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5740,7 +5829,7 @@ describe("script validator integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5834,7 +5923,7 @@ describe("script validator integration", () => {
     );
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -5911,7 +6000,7 @@ describe("script validator integration", () => {
     const signalHalt = vi.fn();
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6010,9 +6099,6 @@ describe("script validator integration", () => {
         async archiveActive() {
           return { archived: false as const, reason: "no_active" as const };
         },
-        async markContextEventsPreReset() {
-          return 0;
-        },
       },
       async loadDefinition() {
         return null;
@@ -6024,7 +6110,7 @@ describe("script validator integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6114,7 +6200,7 @@ describe("script validator integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6206,7 +6292,7 @@ describe("script validator integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6279,7 +6365,7 @@ describe("iteration failure with partial turn progress", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6326,7 +6412,7 @@ describe("iteration failure with partial turn progress", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6448,7 +6534,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6545,7 +6631,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6630,7 +6716,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6702,7 +6788,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6772,7 +6858,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6907,7 +6993,7 @@ describe("human approval gate at finalization", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -6918,6 +7004,7 @@ describe("human approval gate at finalization", () => {
       bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: passingValidationService(),
+      validationRoundService: stubValidationRoundService(),
       eventPublisher,
       now: () => NOW,
     });
@@ -6938,9 +7025,11 @@ describe("human approval gate at finalization", () => {
       conversationId: "conversation-gate",
       requestedAt: NOW,
       decision: null,
-      // Full-access member: no ownership to scope to, so it parks on the
-      // whole-tree approval view (R15.2).
-      approvalScope: { kind: "whole_tree" },
+      approvalScope: {
+        kind: "whole_tree",
+        treeHash: "stub-tree",
+        headSha: "stub-head",
+      },
     });
     expect(persisted.activeContextIds).not.toContain("context-plan");
 
@@ -6963,7 +7052,11 @@ describe("human approval gate at finalization", () => {
       conversationId: "conversation-gate",
       requestedAt: NOW,
       decision: null,
-      approvalScope: { kind: "whole_tree" },
+      approvalScope: {
+        kind: "whole_tree",
+        treeHash: "stub-tree",
+        headSha: "stub-head",
+      },
     });
     expect(dispatchPush).toHaveBeenCalledExactlyOnceWith({
       kind: "approval-pending",
@@ -7019,6 +7112,10 @@ describe("human approval gate at finalization", () => {
       mode: "owned",
       ownedPaths: ["src/api", "docs/api.md"],
     };
+    execution.contextStates["context-plan"]!.reviewOrigin!.candidateScope = {
+      mode: "owned",
+      ownedPaths: [...planContext.placement.ownedPaths],
+    };
     const repository = createRepository(execution);
 
     // The SAME resolver a validation round freezes through, so the approval
@@ -7040,7 +7137,7 @@ describe("human approval gate at finalization", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7091,11 +7188,15 @@ describe("human approval gate at finalization", () => {
       mode: "owned",
       ownedPaths: ["src/api"],
     };
+    execution.contextStates["context-plan"]!.reviewOrigin!.candidateScope = {
+      mode: "owned",
+      ownedPaths: [...planContext.placement.ownedPaths],
+    };
     const repository = createRepository(execution);
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7154,7 +7255,7 @@ describe("human approval gate at finalization", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7230,7 +7331,7 @@ describe("human approval gate at finalization", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7378,7 +7479,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7506,7 +7607,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7619,7 +7720,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7719,7 +7820,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7801,7 +7902,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7880,7 +7981,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -7950,7 +8051,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8095,7 +8196,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8212,7 +8313,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8373,7 +8474,7 @@ describe("conversation telemetry emission", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8419,7 +8520,7 @@ describe("conversation telemetry emission", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8550,7 +8651,7 @@ describe("per-turn billing on agent_turn_completed", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8627,7 +8728,7 @@ describe("per-turn billing on agent_turn_completed", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8708,7 +8809,7 @@ describe("per-turn billing on agent_turn_completed", () => {
 
       const orchestrator = createContextIterationFixture({
         ...createContextTestCapabilities(),
-        materializeWorkflowDocuments: async () => {},
+        materializeWorkflowDocuments: async ({ execution }) => execution,
 
         executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8832,7 +8933,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8888,7 +8989,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -8993,7 +9094,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9083,7 +9184,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9144,7 +9245,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9213,7 +9314,7 @@ describe("context output capture (D2)", () => {
     const repository = createRepository(execution);
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9269,7 +9370,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9364,7 +9465,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9422,7 +9523,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9489,7 +9590,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9534,7 +9635,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9588,7 +9689,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9655,7 +9756,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -9695,7 +9796,7 @@ describe("context output capture (D2)", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 

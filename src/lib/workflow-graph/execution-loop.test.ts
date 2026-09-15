@@ -1251,6 +1251,40 @@ describe("execution loop", () => {
     }
   });
 
+  it("halts when completed work has no publishable carrier", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": completedWorktreeContext("ctx-1", "missing-lane"),
+      },
+      taskStates: {
+        "task-1": { ...baseTaskState("task-1", "ctx-1"), status: "completed" },
+      },
+    });
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration() {
+          throw new Error("completed context must not dispatch");
+        },
+      },
+    });
+    const result = await createExecutionLoopFixture(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "recovery_error",
+      message: expect.stringContaining(
+        "contributions have not reached the session branch (ctx-1)",
+      ),
+    });
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+  });
+
   it("halts instead of completing when a context is still incomplete and nothing is schedulable", async () => {
     // Regression for the premature-completion bug: a context stranded as
     // un-schedulable (here a scheduler that returns `none` while the context is
@@ -1457,6 +1491,90 @@ describe("execution loop", () => {
     expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
       type: "complete",
     });
+  });
+
+  it("halts its generation and releases registry ownership when initialization fails", async () => {
+    _resetActiveLoopsForTesting();
+    const initial = createRunningExecution(createSingleContextDefinition(5));
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => {
+        throw new Error("configuration unavailable");
+      },
+      iterationOrchestrator: {
+        async runIteration() {
+          throw new Error("turn must not start");
+        },
+      },
+    });
+    const result = await createExecutionLoopFixture(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "recovery_error",
+      message: "configuration unavailable",
+    });
+    expect(harness.getCurrent().status).toBe("halted");
+    expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
+    expect(abortExecutionLoop("/repo", "session-1")).toBe(false);
+  });
+
+  it("shares one iteration when the same generation is kicked off twice", async () => {
+    _resetActiveLoopsForTesting();
+    const initial = createRunningExecution(createSingleContextDefinition(5));
+    let entered = () => {};
+    let release = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let turns = 0;
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          turns += 1;
+          entered();
+          await blocked;
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            decision: { kind: "ready_to_land" },
+          };
+        },
+      },
+    });
+    const input = {
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    };
+    const first = createExecutionLoopFixture(harness.deps).run(input);
+    await started;
+    const duplicate = createExecutionLoopFixture(harness.deps).run(input);
+    await Promise.resolve();
+    release();
+    const [firstResult, duplicateResult] = await Promise.all([
+      first,
+      duplicate,
+    ]);
+    expect(turns).toBe(1);
+    expect(firstResult.status).toBe("completed");
+    expect(duplicateResult).toEqual(firstResult);
+    expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
   });
 
   it("registers as active while running and deregisters on completion", async () => {
@@ -5865,6 +5983,9 @@ describe("execution loop", () => {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           const next = structuredClone(harness.getCurrent());
           next.contextStates.terminal!.status = "completed";
+          next.executionLanes[
+            next.contextStates.terminal!.laneId!
+          ]!.includedContextIds.push("terminal");
           next.contextStates.terminal!.completedTaskCount = 1;
           next.contextStates.terminal!.iterationCount = 1;
           next.taskStates["task-terminal"]!.status = "completed";
@@ -6109,7 +6230,7 @@ describe("execution loop", () => {
     expect(result.status).toBe("halted");
   });
 
-  it("publishes multiple terminal lanes via a single final publish join", async () => {
+  it("publishes contributing lanes and omits empty lanes", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {
       contextStates: {
@@ -6203,7 +6324,7 @@ describe("execution loop", () => {
     const callArgs = joinRunSpy.mock.calls[0]![0];
     const joinFromState = result.joins[callArgs.joinId];
     expect(joinFromState!.kind).toBe("final_publish");
-    expect(joinFromState!.sourceLaneIds).toEqual(["lane-docs", "lane-plan"]);
+    expect(joinFromState!.sourceLaneIds).toEqual(["lane-plan"]);
     expect(joinFromState!.targetLaneId).toBe("__session__");
     expect(result.status).toBe("completed");
   });
@@ -8774,10 +8895,7 @@ describe("execution loop generation fencing", () => {
     ).toBe(0);
   });
 
-  it("keeps the session marked loop-active while a newer loop instance is still running", async () => {
-    // The registry must be instance-keyed: when a stale loop exits after a
-    // newer loop registered for the same session, the exit must not
-    // unregister the newer loop.
+  it("a delayed stale kickoff cannot replace the running successor owner", async () => {
     _resetActiveLoopsForTesting();
 
     const definition = createSingleContextDefinition(5);
@@ -8815,22 +8933,24 @@ describe("execution loop generation fencing", () => {
     const first = buildGatedHarness();
     const second = buildGatedHarness();
 
-    const firstRun = createExecutionLoopFixture(first.harness.deps).run({
-      projectPath: "/repo",
-      projectName: "test",
-      sessionName: "session-1",
-      execution: first.harness.getCurrent(),
-    });
-    // Let the first loop register and block inside its iteration.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(isExecutionLoopActive("/repo", "session-1")).toBe(true);
-
+    const secondExecution = second.harness.getCurrent();
+    secondExecution.loopEpoch = 1;
+    second.harness.setCurrent(secondExecution);
     const secondRun = createExecutionLoopFixture(second.harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
-      execution: second.harness.getCurrent(),
+      execution: secondExecution,
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const firstRun = createExecutionLoopFixture(first.harness.deps)
+      .run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: first.harness.getCurrent(),
+      })
+      .catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // The stale first loop exits while the second is still running.

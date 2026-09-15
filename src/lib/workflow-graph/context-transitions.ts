@@ -257,10 +257,10 @@ export function resetContextStateToInitial(
   }
   return {
     ...execution.contextStates,
-    [contextId]: buildInitialContextState(
-      context,
-      execution.workingDefinition.tasks,
-    ),
+    [contextId]: {
+      ...buildInitialContextState(context, execution.workingDefinition.tasks),
+      reviewOrigin: contextState.reviewOrigin ?? null,
+    },
   };
 }
 
@@ -314,6 +314,7 @@ export function buildLifecycleSnapshot(
 export interface ApplyJoinProgressPatch {
   status?: GraphWorkflowExecutionJoinState["status"];
   addMergedSourceLaneId?: string;
+  confirmedSourceCoverage?: { laneId: string; contextIds: readonly string[] };
   addValidationDebtSourceLaneId?: string;
   clearValidationDebt?: boolean;
   addValidationEvidence?: GraphWorkflowExecutionJoinValidationEvidence;
@@ -401,13 +402,60 @@ export function applyJoinProgress(
       ? now
       : join.completedAt;
 
+  let executionLanes = mergeSourceLane(
+    execution,
+    patch.addMergedSourceLaneId,
+    now,
+  );
+  const confirmedSource = patch.confirmedSourceCoverage;
+  if (
+    confirmedSource &&
+    confirmedSource.laneId === patch.addMergedSourceLaneId
+  ) {
+    const source = executionLanes[confirmedSource.laneId];
+    if (source) {
+      executionLanes = {
+        ...executionLanes,
+        [source.laneId]: {
+          ...source,
+          includedContextIds: [
+            ...new Set([
+              ...source.includedContextIds,
+              ...confirmedSource.contextIds,
+            ]),
+          ],
+          updatedAt: now,
+        },
+      };
+    }
+  }
+  const target = executionLanes[join.targetLaneId];
+  const confirmedSources =
+    status === "succeeded"
+      ? join.sourceLaneIds.filter((laneId) => laneId !== join.targetLaneId)
+      : patch.addMergedSourceLaneId
+        ? [patch.addMergedSourceLaneId]
+        : [];
+  const includedContextIds = new Set(target?.includedContextIds ?? []);
+  for (const sourceLaneId of confirmedSources) {
+    for (const contextId of join.sourceLaneContextIds?.[sourceLaneId] ?? []) {
+      includedContextIds.add(contextId);
+    }
+  }
+
   return {
     ...execution,
-    executionLanes: mergeSourceLane(
-      execution,
-      patch.addMergedSourceLaneId,
-      now,
-    ),
+    executionLanes:
+      target && includedContextIds.size !== target.includedContextIds.length
+        ? {
+            ...executionLanes,
+            [join.targetLaneId]: {
+              ...target,
+              includedContextIds: [...includedContextIds],
+              updatedAt: now,
+            },
+          }
+        : executionLanes,
     joins: {
       ...execution.joins,
       [joinId]: {

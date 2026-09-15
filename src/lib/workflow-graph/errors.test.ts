@@ -3,6 +3,7 @@ import {
   AgentTurnFailedError,
   ConversationTurnSettlementError,
   WorktreeCreationDirty,
+  WorkflowDocumentDeliveryError,
   isTypedWorkflowError,
   toHaltReason,
   type DirtyPath,
@@ -46,6 +47,21 @@ describe("errors module", () => {
       expect(err.engine).toBe("claude");
       expect(err.cause).toBe("sdk_error");
       expect(err.originalMessage).toBe("boom");
+    });
+  });
+
+  it("classifies document preparation as resumable I/O failure without blaming an agent turn", () => {
+    const error = new WorkflowDocumentDeliveryError(
+      "ctx-inputs",
+      new Error("registered input unavailable"),
+    );
+    expect(isTypedWorkflowError(error)).toBe(true);
+    expect(toHaltReason(error, { cause: "sdk_error" })).toMatchObject({
+      type: "execution_loop_failed",
+      contextId: "ctx-inputs",
+      cause: "io",
+      message:
+        "Workflow document preparation failed: registered input unavailable",
     });
   });
 

@@ -208,8 +208,7 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
       charterService: createWorkflowCharterService({
         writeFile: async () => {},
@@ -249,9 +248,6 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       // The loop never runs, so the started execution holds the slot with zero
       // lane conversations — exactly the state that stranded planners.
       kickOffExecutionLoop: async () => {},
-      normalizeExecutionAfterRestart: unusedResolverDep(
-        "normalizeExecutionAfterRestart",
-      ),
       pauseExecution: unusedResolverDep("pauseExecution"),
       resumeExecution: unusedResolverDep("resumeExecution"),
       abortExecution: unusedResolverDep("abortExecution"),

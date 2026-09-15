@@ -91,6 +91,7 @@ export function createWorkflowDocumentMaterializer(
       const content = await deps.store.read({
         executionId: execution.id,
         relativePath: entry.relativePath,
+        contentHash: entry.contentHash,
       });
       if (content === null) {
         missing.push(entry.relativePath);
@@ -106,6 +107,9 @@ export function createWorkflowDocumentMaterializer(
         worktreePath,
         missing,
       });
+      throw new Error(
+        `Registered document content unavailable: ${missing.join(", ")}`,
+      );
     }
     logger.info("graph-workflow.documents.materialized", {
       executionId: execution.id,

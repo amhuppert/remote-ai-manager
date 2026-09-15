@@ -73,7 +73,7 @@
     {
       "kind": "graph-workflow-status",
       "subject": null,
-      "detail": "pending"
+      "detail": "running"
     },
     {
       "kind": "graph-workflow-context-status",
@@ -99,11 +99,6 @@
       "kind": "graph-workflow-shared-documents-updated",
       "subject": null,
       "detail": "1"
-    },
-    {
-      "kind": "graph-workflow-status",
-      "subject": null,
-      "detail": "running"
     },
     {
       "kind": "graph-workflow-context-status",

@@ -237,7 +237,7 @@ function buildOrchestrator(
 
   return createContextIterationFixture({
     ...createContextTestCapabilities(),
-    materializeWorkflowDocuments: async () => {},
+    materializeWorkflowDocuments: async ({ execution }) => execution,
 
     executionContract: createNonParticipatingGraphExecutionContract(),
 

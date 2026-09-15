@@ -660,8 +660,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       setters.clearGraphWorkflowPendingArtifacts,
     archiveActiveGraphWorkflowExecution:
       setters.archiveActiveGraphWorkflowExecution,
-    markGraphWorkflowContextEventsPreReset:
-      setters.markGraphWorkflowContextEventsPreReset,
+
     mutateSessionWorkflowLanes: setters.mutateSessionWorkflowLanes,
     mutateSessionWorkflowEnvelopes: setters.mutateSessionWorkflowEnvelopes,
     claimGraphWorkflowResultDeliveries:

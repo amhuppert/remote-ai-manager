@@ -5,13 +5,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { GraphWorkflowApprovalSnapshotResponse } from "@/lib/workflow-graph/approval-snapshot-schemas";
 import { useGraphWorkflowApprovalSnapshotQuery } from "@/lib/workflows/approval-snapshot-query";
 
-/**
- * Map the approval API's answer onto what the panel renders. Every kind is an
- * explicit state, including `whole_tree`: that answer says the gate was frozen
- * WITHOUT an ownership envelope, which is a fact about the candidate rather
- * than an absence, and it never degrades into a whole-worktree diff — in a
- * shared lane that delta is partly a concurrent sibling's in-progress work.
- */
+/** Render the candidate the API verified, including unavailable or drifted evidence. */
 function toScopedChanges(
   response: GraphWorkflowApprovalSnapshotResponse,
 ): ApprovalScopedChanges {
@@ -30,7 +24,10 @@ function toScopedChanges(
     case "unavailable":
       return { status: "unavailable", reason: response.reason };
     case "whole_tree":
-      return { status: "ready", candidate: { scope: "whole_tree" } };
+      return {
+        status: "ready",
+        candidate: { scope: "whole_tree", diff: response.snapshot.diff },
+      };
   }
 }
 

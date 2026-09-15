@@ -399,8 +399,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher: publisher,
     });
     return createUserInputGateService({

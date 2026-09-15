@@ -270,7 +270,7 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
         archived: false as const,
         reason: "no_active" as const,
       }),
-    markGraphWorkflowContextEventsPreReset: () => Promise.resolve(0),
+
     eventPublisher,
   });
 

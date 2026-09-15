@@ -371,6 +371,7 @@ async function readScopeRawDiff(
   scope: CandidateScope,
   deps: ComputeDiffDeps,
   tmpOpts: TemporaryIndexOpts,
+  baselineSha: string = "HEAD",
 ): Promise<string> {
   // No pathspec means "every path" to git, so an empty owned subset must never
   // reach the command: a read-only context would be handed the shared
@@ -380,7 +381,7 @@ async function readScopeRawDiff(
     [
       "diff",
       "--cached",
-      "HEAD",
+      baselineSha,
       "--unified=3",
       ...(scope.mode === "owned"
         ? ["--", ...ownedPathspecs(scope.ownedPaths)]
@@ -466,7 +467,7 @@ export interface CandidateSnapshot {
 }
 
 /**
- * Read the candidate ONCE: the tree object and the patch against HEAD, both
+ * Read the candidate ONCE: its identity and patch against the supplied baseline, both
  * produced from a single temporary index.
  *
  * The pairing is the point. {@link computeDiff} is cached on HEAD plus a
@@ -489,12 +490,20 @@ export async function computeCandidateSnapshot(
   worktreePath: string,
   scope: CandidateScope = WHOLE_TREE_CANDIDATE_SCOPE,
   deps: ComputeDiffDeps = defaultComputeDiffDeps,
+  baselineSha: string = "HEAD",
 ): Promise<CandidateSnapshot | null> {
   const snapshot = await withTemporaryIndex(
     worktreePath,
     scope,
     deps,
     async (tmpOpts) => {
+      if (baselineSha !== "HEAD") {
+        await deps.gitClient.git(
+          ["merge-base", "--is-ancestor", baselineSha, "HEAD"],
+          worktreePath,
+          tmpOpts,
+        );
+      }
       const treeHash = await readScopeIdentity(
         worktreePath,
         scope,
@@ -506,6 +515,7 @@ export async function computeCandidateSnapshot(
         scope,
         deps,
         tmpOpts,
+        baselineSha,
       );
       return { treeHash: treeHash.trim(), rawDiff };
     },

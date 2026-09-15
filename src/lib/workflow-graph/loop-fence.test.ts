@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   StaleLoopFenceError,
@@ -17,6 +17,32 @@ const FENCE = {
 };
 
 describe("loop fence context", () => {
+  it("recognizes stale-generation errors from another loaded runtime module", async () => {
+    vi.resetModules();
+    const runtimeModule = await import("./loop-fence");
+    expect(new runtimeModule.StaleLoopFenceError(FENCE, null)).toBeInstanceOf(
+      StaleLoopFenceError,
+    );
+  });
+
+  it("enforces a route fence across independently loaded runtime modules", async () => {
+    vi.resetModules();
+    const routeModule = await import("./loop-fence");
+    await routeModule.runWithLoopFence(FENCE, async () => {
+      await Promise.resolve();
+      expect(() =>
+        assertLoopFence(
+          "/repo",
+          "session-1",
+          createWorkflowExecution({
+            id: FENCE.executionId,
+            loopEpoch: FENCE.loopEpoch + 1,
+          }),
+        ),
+      ).toThrow(StaleLoopFenceError);
+    });
+  });
+
   it("exposes the fence inside runWithLoopFence and clears it outside", async () => {
     expect(getCurrentLoopFence()).toBeNull();
 

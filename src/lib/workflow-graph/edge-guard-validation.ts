@@ -3,6 +3,7 @@ import type { WorkflowGraphValidationError } from "@/lib/workflow-graph/definiti
 // reason as `output-schema-validation.ts`: this file is reached from
 // `validation.ts`, which a `"use client"` builder component imports.
 import {
+  jsonSchemaTypesOverlap,
   joinSchemaPath,
   validateOutputSchemaDeclaration,
 } from "@/lib/workflows/primitives/output-schema-subset";
@@ -444,7 +445,7 @@ function checkTypeIntersection(
   const guardTypes = effectiveTypes(guard);
   const sourceTypes = effectiveTypes(source);
   if (guardTypes === null || sourceTypes === null) return;
-  if (guardTypes.some((name) => sourceTypes.includes(name))) return;
+  if (jsonSchemaTypesOverlap(guardTypes, sourceTypes)) return;
   issues.push({
     path: hasOwn(guard, "type") ? `${path}.type` : path,
     message: `the guard requires ${describeTypes(guardTypes)} but the source declares ${describeTypes(sourceTypes)}`,

@@ -95,9 +95,7 @@ function makeRepository(options?: {
       fixture.store.reserveActiveGraphWorkflowExecution,
     archiveActiveGraphWorkflowExecution:
       fixture.store.archiveActiveGraphWorkflowExecution,
-    async markGraphWorkflowContextEventsPreReset() {
-      return 0;
-    },
+
     eventPublisher,
   });
   return { repo, broadcast };

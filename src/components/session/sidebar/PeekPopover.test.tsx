@@ -666,7 +666,10 @@ describe("PeekPopover", () => {
         // peek offers live Approve/Reject, so it never renders one without.
         scopedChanges: {
           status: "ready",
-          candidate: { scope: "whole_tree" },
+          candidate: {
+            scope: "whole_tree",
+            diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+          },
         } satisfies ApprovalScopedChanges,
         onApprove: vi.fn(),
         onReject: vi.fn(),

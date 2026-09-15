@@ -161,7 +161,7 @@ const DB_FILE_NAME = "command-center.db";
  * ordinary turn against a conversation mid-retirement and establish a fresh
  * provider reference the pending seed can never be delivered into.
  */
-export const KNOWN_SCHEMA_VERSION = 16;
+export const KNOWN_SCHEMA_VERSION = 17;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -1627,6 +1627,12 @@ export const GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL = `
  * without a second hand-synced copy.
  */
 export const GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS graph_workflow_runtime_owner (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    pid INTEGER NOT NULL,
+    token TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS graph_workflow_pending_artifacts (
     execution_id   TEXT PRIMARY KEY,
     project_path   TEXT NOT NULL,

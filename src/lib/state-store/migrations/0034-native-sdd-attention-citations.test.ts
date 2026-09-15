@@ -427,6 +427,9 @@ describe("0034-native-sdd-attention-citations", () => {
       "0044-add-conversation-checkpoints",
       "0045-add-checkpoint-forks",
       "0046-merge-completion-option",
+      "0047-graph-workflow-lane-coverage",
+      "0048-graph-workflow-document-content",
+      "0049-graph-workflow-review-origin",
     ]);
   });
 

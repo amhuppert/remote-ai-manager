@@ -45,6 +45,7 @@ const FULL_ACCESS: ContextPlacement = { lane: "solo", mode: "full" };
 
 describe("scoped approval snapshot over a shared lane worktree", () => {
   let worktreePath: string;
+  let reviewBaselineSha: string;
 
   async function git(...args: string[]): Promise<string> {
     const { stdout } = await execFileAsync("git", args, {
@@ -83,6 +84,19 @@ describe("scoped approval snapshot over a shared lane worktree", () => {
     contextState.worktreePath = worktreePath;
     contextState.isolation = "worktree";
     contextState.laneId = "impl";
+    contextState.reviewOrigin = {
+      laneId: "impl",
+      baselineSha: reviewBaselineSha,
+      candidateScope:
+        placement.mode === "full"
+          ? { mode: "wholeTree" }
+          : {
+              mode: "owned",
+              ownedPaths:
+                placement.mode === "owned" ? [...placement.ownedPaths] : [],
+            },
+      capturedAt: "2026-09-15T12:00:00.000Z",
+    };
     contextState.pendingApproval = {
       conversationId: "conv-approval",
       requestedAt: "2026-08-08T09:00:00.000Z",
@@ -98,7 +112,6 @@ describe("scoped approval snapshot over a shared lane worktree", () => {
     placement: ContextPlacement,
   ): Promise<void> {
     const scope = candidateScopeForPlacement(placement);
-    if (scope.mode !== "owned") return;
     const tree = await roundService.resolveCandidateTree({
       projectPath: "/repo",
       sessionName: "session-1",
@@ -116,12 +129,19 @@ describe("scoped approval snapshot over a shared lane worktree", () => {
     }
     const pending = execution.contextStates[CONTEXT_ID]?.pendingApproval;
     if (!pending) throw new Error("fixture missing pending approval");
-    pending.approvalScope = {
-      kind: "scoped",
-      ownedPaths: [...scope.ownedPaths],
-      treeHash: tree.candidateTreeHash,
-      headSha: tree.headSha,
-    };
+    pending.approvalScope =
+      scope.mode === "wholeTree"
+        ? {
+            kind: "whole_tree",
+            treeHash: tree.candidateTreeHash,
+            headSha: tree.headSha,
+          }
+        : {
+            kind: "scoped",
+            ownedPaths: [...scope.ownedPaths],
+            treeHash: tree.candidateTreeHash,
+            headSha: tree.headSha,
+          };
   }
 
   function readApprovalView(execution: GraphWorkflowExecution) {
@@ -152,6 +172,7 @@ describe("scoped approval snapshot over a shared lane worktree", () => {
     );
     await git("add", "-A");
     await git("commit", "-m", "lane base");
+    reviewBaselineSha = (await git("rev-parse", "HEAD")).trim();
   });
 
   afterEach(async () => {
@@ -254,9 +275,10 @@ describe("scoped approval snapshot over a shared lane worktree", () => {
     );
     await freezeGate(execution, FULL_ACCESS);
 
-    expect(await readApprovalView(execution)).toEqual({
+    expect(await readApprovalView(execution)).toMatchObject({
       kind: "whole_tree",
       contextId: CONTEXT_ID,
+      snapshot: { diff: { files: [{ filePath: "a/owned.ts" }] } },
     });
   });
 });

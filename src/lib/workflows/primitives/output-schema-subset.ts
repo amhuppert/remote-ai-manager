@@ -143,6 +143,21 @@ function matchesJsonSchemaType(value: unknown, type: unknown): boolean {
   }
 }
 
+/** Whether two declared type unions admit a common value, ignoring other constraints. */
+export function jsonSchemaTypesOverlap(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.some((leftType) =>
+    right.some(
+      (rightType) =>
+        leftType === rightType ||
+        (leftType === "integer" && rightType === "number") ||
+        (leftType === "number" && rightType === "integer"),
+    ),
+  );
+}
+
 function describeJsonSchemaType(type: unknown): string {
   return Array.isArray(type) ? type.map(String).join(" or ") : String(type);
 }

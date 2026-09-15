@@ -44,7 +44,13 @@ function approvalGateProps(
     executionSuspended: false,
     // Every parked gate resolves a candidate state before Approve is live; the
     // whole-tree one is the minimum a production host hands the panel.
-    scopedChanges: { status: "ready", candidate: { scope: "whole_tree" } },
+    scopedChanges: {
+      status: "ready",
+      candidate: {
+        scope: "whole_tree",
+        diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+      },
+    },
     onApprove: vi.fn(),
     onReject: vi.fn(),
     ...overrides,

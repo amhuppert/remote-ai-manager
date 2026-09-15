@@ -8,6 +8,7 @@ import {
   computeValidationDiffScope,
   type ValidationDiffScope,
 } from "./validation-diff-scope";
+import { resolveContextReviewOrigin } from "./review-origin";
 
 /**
  * What the approval surface is fed for one parked context: the API's answer,
@@ -30,12 +31,13 @@ export interface ApprovalSnapshotDeps {
   computeDiffScope(
     worktreePath: string,
     scope: CandidateScope,
+    baselineSha: string,
   ): Promise<ValidationDiffScope>;
 }
 
 const defaultDeps: ApprovalSnapshotDeps = {
-  computeDiffScope: (worktreePath, scope) =>
-    computeValidationDiffScope(worktreePath, scope),
+  computeDiffScope: (worktreePath, scope, baselineSha) =>
+    computeValidationDiffScope(worktreePath, scope, undefined, baselineSha),
 };
 
 function emptyDiff(): SessionDiff {
@@ -99,19 +101,38 @@ export async function resolveApprovalSnapshot(
   // candidate could not be read — a distinction the placement cannot make after
   // the fact, and getting it wrong hands the human a sibling's in-progress work.
   const frozen = pending.approvalScope;
-  if (frozen.kind === "whole_tree") {
-    return { kind: "whole_tree", contextId: input.contextId };
-  }
   if (frozen.kind === "unreadable") {
     return { kind: "unavailable", reason: frozen.reason };
   }
 
   const worktreePath = contextState.worktreePath ?? input.sessionWorktreePath;
-  const scope: CandidateScope = {
-    mode: "owned",
-    ownedPaths: frozen.ownedPaths,
-  };
-  const observed = await deps.computeDiffScope(worktreePath, scope);
+  const review = resolveContextReviewOrigin(input.execution, input.contextId);
+  if (review.kind === "unavailable")
+    return { kind: "unavailable", reason: review.reason };
+  if (frozen.treeHash === undefined) {
+    return {
+      kind: "unavailable",
+      reason: "the approval gate has no frozen candidate identity",
+    };
+  }
+  const scope = review.candidateScope;
+  const scopeMatches =
+    frozen.kind === "whole_tree"
+      ? scope.mode === "wholeTree"
+      : scope.mode === "owned" &&
+        JSON.stringify(scope.ownedPaths) === JSON.stringify(frozen.ownedPaths);
+  if (!scopeMatches) {
+    return {
+      kind: "unavailable",
+      reason:
+        "the approval scope does not match the retained work's review origin",
+    };
+  }
+  const observed = await deps.computeDiffScope(
+    worktreePath,
+    scope,
+    review.origin.baselineSha,
+  );
   if (observed.kind === "unavailable") {
     return { kind: "unavailable", reason: observed.reason };
   }
@@ -122,6 +143,17 @@ export async function resolveApprovalSnapshot(
       contextId: input.contextId,
       frozenTreeHash: frozen.treeHash,
       observedTreeHash: observed.treeHash,
+    };
+  }
+
+  if (frozen.kind === "whole_tree") {
+    return {
+      kind: "whole_tree",
+      contextId: input.contextId,
+      snapshot: {
+        treeHash: observed.treeHash,
+        diff: observed.kind === "empty" ? emptyDiff() : observed.diff,
+      },
     };
   }
 

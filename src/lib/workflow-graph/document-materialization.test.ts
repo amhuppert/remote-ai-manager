@@ -36,10 +36,12 @@ function charterEntry(): GraphWorkflowSharedDocumentEntry {
 function sharedEntry(
   relativePath: string,
   id: string,
+  contentHash?: string,
 ): GraphWorkflowSharedDocumentEntry {
   return {
     id,
     relativePath,
+    contentHash,
     description: "shared",
     readWhen: "before work",
     kind: "shared",
@@ -76,7 +78,7 @@ describe("workflow document materializer", () => {
     await mkdir(path.dirname(published), { recursive: true });
     await writeFile(source, "Complete approved revision");
     await writeFile(published, "Complete prior revision");
-    await store.captureFromWorktree({
+    const { contentHash } = await store.captureFromWorktree({
       executionId: "execution-1",
       worktreePath: sourceWorktree,
       relativePath: PLAN_PATH,
@@ -85,7 +87,7 @@ describe("workflow document materializer", () => {
     try {
       await createWorkflowDocumentMaterializer({ store }).materialize({
         execution: createWorkflowExecution({
-          sharedDocuments: [sharedEntry(PLAN_PATH, "doc-plan")],
+          sharedDocuments: [sharedEntry(PLAN_PATH, "doc-plan", contentHash)],
         }),
         worktreePath: laneWorktree,
       });
@@ -107,7 +109,7 @@ describe("workflow document materializer", () => {
     const planAbsolute = path.join(sourceWorktree, PLAN_PATH);
     await mkdir(path.dirname(planAbsolute), { recursive: true });
     await writeFile(planAbsolute, "# Plan\nstep one", "utf-8");
-    await store.captureFromWorktree({
+    const { contentHash } = await store.captureFromWorktree({
       executionId: "execution-1",
       worktreePath: sourceWorktree,
       relativePath: PLAN_PATH,
@@ -115,7 +117,10 @@ describe("workflow document materializer", () => {
 
     const execution = createWorkflowExecution({
       id: "execution-1",
-      sharedDocuments: [charterEntry(), sharedEntry(PLAN_PATH, "doc-plan")],
+      sharedDocuments: [
+        charterEntry(),
+        sharedEntry(PLAN_PATH, "doc-plan", contentHash),
+      ],
     });
 
     const materializer = createWorkflowDocumentMaterializer({ store });
@@ -138,7 +143,7 @@ describe("workflow document materializer", () => {
     ).resolves.toBe("# Plan\nstep one");
   });
 
-  it("reports registered shared docs whose content was never captured as missing", async () => {
+  it("refuses delivery when a registered document has unavailable content", async () => {
     const store = createSharedDocumentStore({
       resolveConfigDir: () => configDir,
     });
@@ -148,16 +153,12 @@ describe("workflow document materializer", () => {
     });
 
     const materializer = createWorkflowDocumentMaterializer({ store });
-    const result = await materializer.materialize({
-      execution,
-      worktreePath: laneWorktree,
-    });
-
-    expect(result.charterWritten).toBe(true);
-    expect(result.sharedWritten).toBe(0);
-    expect(result.missing).toEqual([GHOST_PATH]);
+    await expect(
+      materializer.materialize({
+        execution,
+        worktreePath: laneWorktree,
+      }),
+    ).rejects.toThrow(/unavailable.*ghost|ghost.*unavailable/);
     expect(existsSync(path.join(laneWorktree, GHOST_PATH))).toBe(false);
-    // The charter is always materialized even when a sibling doc is missing.
-    expect(existsSync(path.join(laneWorktree, CHARTER_PATH))).toBe(true);
   });
 });

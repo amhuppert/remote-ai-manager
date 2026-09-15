@@ -54,7 +54,6 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
     return {
       executionContract: createNonParticipatingGraphExecutionContract(),
 
-      normalizeExecutionAfterRestart: unused("normalizeExecutionAfterRestart"),
       startExecution: unused("startExecution"),
       runExecution: unused("runExecution"),
       launchSpecDeliveryExecution: unused("launchSpecDeliveryExecution"),
@@ -328,8 +327,7 @@ describe("lifecycle contract: production slot auto-release", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
     });
     // Two distinct spies on purpose. The manager already stops lane dev servers
@@ -356,9 +354,6 @@ describe("lifecycle contract: production slot auto-release", () => {
     const handlers = createGraphWorkflowLifecycleService({
       executionContract: createNonParticipatingGraphExecutionContract(),
 
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
       launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
@@ -407,6 +402,58 @@ describe("lifecycle contract: production slot auto-release", () => {
       SESSION_NAME,
     );
   }
+
+  it("cannot halt a resumed generation when an earlier kickoff failure was blocked before its write", async () => {
+    const started = createWorkflowExecution({
+      status: "running",
+      loopEpoch: 3,
+    });
+    await seedActive(started);
+    let enterFailure!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enterFailure = resolve;
+    });
+    let releaseFailure!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseFailure = resolve;
+    });
+    let settleFailure!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settleFailure = resolve;
+    });
+    const stack = buildStack({
+      startExecution: async () => acceptedLaunch(started),
+      kickOffExecutionLoop: async () => {
+        throw new Error("old kickoff failed");
+      },
+      recordPendingHaltReason: async (input) => {
+        enterFailure();
+        await release;
+        try {
+          return await stack.manager.recordPendingHaltReason(input);
+        } finally {
+          settleFailure();
+        }
+      },
+      drainAndHalt: async (input) => stack.manager.drainAndHalt(input),
+    });
+    await stack.handlers.launchSavedRunning({
+      projectPath: PROJECT_PATH,
+      projectName: PROJECT_NAME,
+      sessionName: SESSION_NAME,
+      definitionId: "workflow",
+    });
+    await entered;
+    await seedActive({ ...started, loopEpoch: 4 });
+    releaseFailure();
+    await settled;
+    await new Promise((resolve) => setImmediate(resolve));
+    const observed = await readActive();
+    expect(observed?.loopEpoch).toBe(4);
+    expect(observed?.status).toBe("running");
+    expect(observed?.pendingHaltReason).toBeNull();
+    expect(observed?.haltReason).toBeNull();
+  });
 
   /**
    * The kickoff is fire-and-forget on every launch surface, so the completion

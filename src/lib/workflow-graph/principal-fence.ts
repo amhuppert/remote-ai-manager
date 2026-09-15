@@ -28,6 +28,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { WorkflowRequestPrincipal } from "./request-principal";
 import { resolveBoundConversationId } from "./lane-binding";
@@ -48,56 +49,73 @@ export interface GraphWorkflowPrincipalFence {
   principal: WorkflowRequestPrincipal;
 }
 
-export class ExecutionTurnoverError extends Error {
-  readonly fence: GraphWorkflowPrincipalFence;
-  readonly actualExecutionId: string | null;
+export const ExecutionTurnoverError = getGlobalSingleton(
+  "__cc_graph_workflow_ExecutionTurnoverError",
+  () =>
+    class ExecutionTurnoverError extends Error {
+      readonly fence: GraphWorkflowPrincipalFence;
+      readonly actualExecutionId: string | null;
 
-  constructor(
-    fence: GraphWorkflowPrincipalFence,
-    actual: Pick<GraphWorkflowExecution, "id"> | null,
-  ) {
-    super(
-      `Execution turnover: this act was authorized against execution "${fence.executionId}", but the session's active state is ${
-        actual ? `execution "${actual.id}"` : "no active execution"
-      }. The authorization does not carry to a different run, so nothing was written.`,
-    );
-    this.name = "ExecutionTurnoverError";
-    this.fence = fence;
-    this.actualExecutionId = actual?.id ?? null;
-  }
-}
+      constructor(
+        fence: GraphWorkflowPrincipalFence,
+        actual: Pick<GraphWorkflowExecution, "id"> | null,
+      ) {
+        super(
+          `Execution turnover: this act was authorized against execution "${fence.executionId}", but the session's active state is ${
+            actual ? `execution "${actual.id}"` : "no active execution"
+          }. The authorization does not carry to a different run, so nothing was written.`,
+        );
+        this.name = "ExecutionTurnoverError";
+        this.fence = fence;
+        this.actualExecutionId = actual?.id ?? null;
+      }
+    },
+);
+export type ExecutionTurnoverError = InstanceType<
+  typeof ExecutionTurnoverError
+>;
 
-export class LaneBindingTurnoverError extends Error {
-  readonly fence: GraphWorkflowPrincipalFence;
-  readonly actualConversationId: string | null;
+export const LaneBindingTurnoverError = getGlobalSingleton(
+  "__cc_graph_workflow_LaneBindingTurnoverError",
+  () =>
+    class LaneBindingTurnoverError extends Error {
+      readonly fence: GraphWorkflowPrincipalFence;
+      readonly actualConversationId: string | null;
 
-  constructor(
-    fence: GraphWorkflowPrincipalFence,
-    actualConversationId: string | null,
-  ) {
-    const principal = fence.principal;
-    if (principal.kind !== "lane") {
-      throw new Error("Lane binding turnover requires a lane principal");
-    }
-    super(
-      `Lane turnover: conversation "${principal.conversationId}" was authorized for context "${principal.contextId}", but that context is now driven by ${
-        actualConversationId === null
-          ? "no conversation"
-          : `conversation "${actualConversationId}"`
-      }. Nothing was written.`,
-    );
-    this.name = "LaneBindingTurnoverError";
-    this.fence = fence;
-    this.actualConversationId = actualConversationId;
-  }
-}
+      constructor(
+        fence: GraphWorkflowPrincipalFence,
+        actualConversationId: string | null,
+      ) {
+        const principal = fence.principal;
+        if (principal.kind !== "lane") {
+          throw new Error("Lane binding turnover requires a lane principal");
+        }
+        super(
+          `Lane turnover: conversation "${principal.conversationId}" was authorized for context "${principal.contextId}", but that context is now driven by ${
+            actualConversationId === null
+              ? "no conversation"
+              : `conversation "${actualConversationId}"`
+          }. Nothing was written.`,
+        );
+        this.name = "LaneBindingTurnoverError";
+        this.fence = fence;
+        this.actualConversationId = actualConversationId;
+      }
+    },
+);
+export type LaneBindingTurnoverError = InstanceType<
+  typeof LaneBindingTurnoverError
+>;
 
 interface PrincipalFenceState {
   fence: GraphWorkflowPrincipalFence;
   laneBindingValidated: boolean;
 }
 
-const fenceStorage = new AsyncLocalStorage<PrincipalFenceState>();
+const fenceStorage = getGlobalSingleton(
+  "__cc_graph_workflow_principal_fence_storage",
+  () => new AsyncLocalStorage<PrincipalFenceState>(),
+);
 
 /** Run `fn` with `fence` pinning which execution its writes may touch. */
 export function runWithExecutionPrincipalFence<T>(

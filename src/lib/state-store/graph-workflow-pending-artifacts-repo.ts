@@ -3,6 +3,7 @@ import { createLogger } from "@/lib/logging";
 import { emitOrDeferRepositoryLog } from "@/lib/state-store/deferred-repo-logging";
 import {
   graphWorkflowPendingArtifactsSchema,
+  type GraphWorkflowExecution,
   type GraphWorkflowPendingArtifacts,
 } from "@/lib/workflow-graph/schemas";
 import { PersistenceError } from "../shared/errors";
@@ -43,8 +44,11 @@ export interface GraphWorkflowPendingArtifactsRepo {
     sessionName: string,
     executionId: string,
   ): GraphWorkflowPendingArtifacts | null;
-  /** Settle one execution's record. Returns false when there was none. */
-  clear(executionId: string): boolean;
+  /** Settle exactly the captured debt; replacement records remain pending. */
+  clear(
+    expected: GraphWorkflowPendingArtifacts,
+    owner: Pick<GraphWorkflowExecution, "loopEpoch" | "status">,
+  ): boolean;
 }
 
 interface StorageRow {
@@ -139,7 +143,14 @@ export function createGraphWorkflowPendingArtifactsRepo(
       LIMIT 1`,
   );
   const clearStmt = db.prepare(
-    `DELETE FROM graph_workflow_pending_artifacts WHERE execution_id = ?`,
+    `DELETE FROM graph_workflow_pending_artifacts
+      WHERE execution_id = @executionId AND project_path = @projectPath AND session_name = @sessionName
+        AND recorded_at = @recordedAt AND documents_json = @documentsJson
+        AND EXISTS (
+          SELECT 1 FROM graph_workflow_executions
+          WHERE execution_id = @executionId AND project_path = @projectPath AND session_name = @sessionName
+            AND status = @status AND COALESCE(json_extract(runtime_json, '$.loopEpoch'), 0) = @loopEpoch
+        )`,
   );
 
   return {
@@ -166,8 +177,18 @@ export function createGraphWorkflowPendingArtifactsRepo(
       if (row === undefined) return null;
       return rowToDomain(row);
     },
-    clear(executionId) {
-      return clearStmt.run(executionId).changes > 0;
+    clear(expected, owner) {
+      return (
+        clearStmt.run({
+          executionId: expected.executionId,
+          projectPath: expected.projectPath,
+          sessionName: expected.sessionName,
+          recordedAt: expected.recordedAt,
+          documentsJson: stableStringify(expected.documents),
+          loopEpoch: owner.loopEpoch,
+          status: owner.status,
+        }).changes > 0
+      );
     },
   };
 }

@@ -117,11 +117,16 @@ export const ScopedChangesEmpty = {
   },
 } satisfies Story;
 
-/** A full-access member: its write surface is the lane worktree, so the gate
- *  froze no ownership-scoped change set to render under the state row. */
+/** Full-access review includes retained commits in the frozen lane snapshot. */
 export const WholeTreeCandidate = {
   args: {
-    scopedChanges: { status: "ready", candidate: { scope: "whole_tree" } },
+    scopedChanges: {
+      status: "ready",
+      candidate: {
+        scope: "whole_tree",
+        diff: ScopedChanges.args.scopedChanges.candidate.diff,
+      },
+    },
   },
 } satisfies Story;
 

@@ -4,7 +4,10 @@ import type { GraphWorkflowEventDelivery } from "./execution-events";
 export type ExecutionMutationDelivery = Pick<
   GraphWorkflowEventDelivery,
   "events" | "pushes"
->;
+> & {
+  /** Context history retired atomically before this mutation's events are appended. */
+  preResetContextIds?: readonly string[];
+};
 
 export type ExecutionMutationDecision<Value = void, Refusal = never> =
   | {
@@ -106,6 +109,7 @@ export type GraphWorkflowStorageMutation<Value> =
       execution: GraphWorkflowExecution;
       events: GraphWorkflowEventDelivery["events"];
       pushes?: GraphWorkflowEventDelivery["pushes"];
+      preResetContextIds?: readonly string[];
       value: Value;
     }
   | {

@@ -13,8 +13,7 @@ export function createPersistenceGraphRepository(fixture: PersistenceFixture) {
       fixture.store.reserveActiveGraphWorkflowExecution,
     archiveActiveGraphWorkflowExecution:
       fixture.store.archiveActiveGraphWorkflowExecution,
-    markGraphWorkflowContextEventsPreReset:
-      fixture.store.markGraphWorkflowContextEventsPreReset,
+
     getGraphWorkflowPendingArtifacts:
       fixture.store.getGraphWorkflowPendingArtifacts,
     clearGraphWorkflowPendingArtifacts:

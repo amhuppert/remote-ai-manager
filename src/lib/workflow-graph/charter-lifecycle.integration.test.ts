@@ -340,9 +340,7 @@ function setupObservability() {
         ? { archived: false as const, reason: "no_active" as const }
         : { archived: true as const, execution: archived };
     },
-    async markGraphWorkflowContextEventsPreReset() {
-      return 0;
-    },
+
     eventPublisher,
     charterService,
     readConfig: async () => ({}) as GlobalConfig,

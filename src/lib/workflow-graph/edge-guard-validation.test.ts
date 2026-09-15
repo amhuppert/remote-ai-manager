@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { OUTPUT_SCHEMA_SUPPORTED_KEYWORDS } from "@/lib/workflows/primitives/output-schema-subset";
+import {
+  OUTPUT_SCHEMA_SUPPORTED_KEYWORDS,
+  validateJsonSchemaSubset,
+} from "@/lib/workflows/primitives/output-schema-subset";
 import {
   GUARD_COMPATIBILITY_KEYWORD_ROLES,
   lintGuardEnumCoverage,
@@ -96,6 +99,39 @@ describe("validateEdgeGuards — dormant on unconditional edges", () => {
       ]),
     ).toEqual([]);
   });
+});
+
+describe("numeric guard overlap", () => {
+  it.each([
+    { sourceType: "integer", guardType: "number" },
+    { sourceType: "number", guardType: "integer" },
+    { sourceType: ["integer", "null"], guardType: ["number", "string"] },
+    { sourceType: ["number", "null"], guardType: "integer" },
+  ])(
+    "accepts an integer witness for $sourceType and $guardType",
+    ({ sourceType, guardType }) => {
+      const sourceSchema = {
+        type: "object",
+        properties: { score: { type: sourceType } },
+      };
+      const guardSchema = {
+        type: "object",
+        properties: { score: { type: guardType } },
+      };
+      expect(validateJsonSchemaSubset(sourceSchema, { score: 2 }).valid).toBe(
+        true,
+      );
+      expect(validateJsonSchemaSubset(guardSchema, { score: 2 }).valid).toBe(
+        true,
+      );
+      expect(
+        validateEdgeGuards(
+          [classifier({ outputSchema: sourceSchema }), { id: "approve" }],
+          [edge("numeric", { schema: guardSchema })],
+        ),
+      ).toEqual([]);
+    },
+  );
 });
 
 describe("validateEdgeGuards — source must declare an outputSchema", () => {

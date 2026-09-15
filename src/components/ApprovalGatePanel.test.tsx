@@ -22,7 +22,10 @@ describe("ApprovalGatePanel", () => {
     // minimum a production host can hand this panel.
     scopedChanges: {
       status: "ready",
-      candidate: { scope: "whole_tree" },
+      candidate: {
+        scope: "whole_tree",
+        diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+      },
     } satisfies ApprovalScopedChanges,
     onApprove: vi.fn(),
     onReject: vi.fn(),
@@ -308,22 +311,18 @@ describe("ApprovalGatePanel candidate states (E2 · R15.2)", () => {
     expect(changes).toHaveTextContent("export const handler = 2;");
   });
 
-  // A full-access member's write surface is the whole lane worktree, so its
-  // gate froze no ownership-scoped change set — but it is still a candidate the
-  // reviewer has to be told about, and it still has to travel through loading
-  // before Approve turns on.
-  it("names the whole worktree as the write surface for a full-access member", () => {
-    renderPanel({ status: "ready", candidate: { scope: "whole_tree" } });
-
+  it("renders the frozen baseline-relative patch for a full-access member", () => {
+    renderPanel({
+      status: "ready",
+      candidate: { scope: "whole_tree", diff: SCOPED_DIFF },
+    });
     const state = screen.getByTestId("approval-candidate-state");
     expect(state).toHaveAttribute("data-candidate-status", "ready");
     expect(state).toHaveTextContent("Candidate ready");
-    expect(state).toHaveTextContent("whole lane worktree · no ownership scope");
-    // No scoped change set exists to render, and the whole-worktree delta is
-    // deliberately not substituted for it.
-    expect(
-      screen.queryByTestId("approval-gate-scoped-changes"),
-    ).not.toBeInTheDocument();
+    expect(state).toHaveTextContent("whole lane worktree");
+    const changes = screen.getByTestId("approval-gate-scoped-changes");
+    expect(changes).toHaveTextContent("src/api/handler.ts");
+    expect(changes).toHaveTextContent("export const handler = 2;");
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
 

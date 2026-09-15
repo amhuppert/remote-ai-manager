@@ -6,7 +6,7 @@ import {
   freezeValidationCandidate,
   type ValidationCandidateTreeResolution,
 } from "@/lib/workflow-graph/validation-round";
-import { candidateScopeForPlacement } from "@/lib/workflow-graph/validation-diff-scope";
+import { resolveContextReviewOrigin } from "./review-origin";
 import type { CandidateScope } from "@/lib/git/diff";
 import type {
   GraphWorkflowContextOutput,
@@ -203,14 +203,15 @@ export async function observeContextValidationCandidate(
     };
   }
 
+  const review = resolveContextReviewOrigin(execution, input.contextId);
+  if (review.kind === "unavailable") return review;
+
   const tree: ValidationCandidateTreeResolution =
     await service.resolveCandidateTree({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
       contextId: input.contextId,
-      candidateScope: candidateScopeForPlacement(context.placement, {
-        stableRead: context.outputSchema !== undefined,
-      }),
+      candidateScope: review.candidateScope,
       ...(input.executionTarget
         ? { executionTarget: input.executionTarget }
         : {}),

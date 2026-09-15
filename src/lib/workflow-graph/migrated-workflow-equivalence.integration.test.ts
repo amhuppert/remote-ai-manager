@@ -46,6 +46,7 @@ import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-gra
  * proves the same deltas are cohort-size invariant.
  */
 import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
+import { captureContextReviewOrigin } from "./review-origin";
 
 import {
   mkdirSync,
@@ -380,6 +381,12 @@ function executionOver(
     contextStates: buildInitialContextStates(definition),
     taskStates: buildInitialTaskStates(definition),
   });
+  captureContextReviewOrigin(
+    execution,
+    CONTEXT_ID,
+    "stub-head",
+    "2026-08-04T10:00:00.000Z",
+  );
   execution.contextStates[CONTEXT_ID] = {
     ...execution.contextStates[CONTEXT_ID]!,
     status: "running",

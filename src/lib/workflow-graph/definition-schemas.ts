@@ -1078,6 +1078,12 @@ export const graphWorkflowSharedDocumentEntrySchema = z.object({
   relativePath: z.string().trim().min(1),
   description: z.string().trim().min(1),
   readWhen: z.string().trim().min(1),
+  // Missing references are unavailable evidence; charter bytes are rendered
+  // from the execution snapshot instead of read from the document store.
+  contentHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullish(),
   // Who authored the document, which decides whether an agent may rewrite it.
   // "shared" is agent-authored; "charter" and "seeded" are written by the
   // engine at launch from the launching tier and are read-only to agents — a

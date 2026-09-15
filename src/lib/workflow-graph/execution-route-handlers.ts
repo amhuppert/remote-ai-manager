@@ -897,16 +897,10 @@ export function createGraphWorkflowExecutionRouteHandlers(
       return resolved.error;
     }
 
-    const normalizedExecution = await deps.normalizeExecutionAfterRestart(
+    const execution = await deps.getActiveExecution(
       resolved.projectPath,
       resolved.sessionName,
     );
-    const execution =
-      normalizedExecution ??
-      (await deps.getActiveExecution(
-        resolved.projectPath,
-        resolved.sessionName,
-      ));
 
     // Current is a LEASE projection here exactly as it is on EXECUTION and
     // History (D7 decision D4). A settled run still physically occupying the
@@ -943,16 +937,10 @@ export function createGraphWorkflowExecutionRouteHandlers(
       return resolved.error;
     }
 
-    const normalizedExecution = await deps.normalizeExecutionAfterRestart(
+    const execution = await deps.getActiveExecution(
       resolved.projectPath,
       resolved.sessionName,
     );
-    const execution =
-      normalizedExecution ??
-      (await deps.getActiveExecution(
-        resolved.projectPath,
-        resolved.sessionName,
-      ));
 
     // Current is a LEASE projection, not a row-position one (D7 decision D4).
     // A settled run awaiting normalization still physically occupies the active

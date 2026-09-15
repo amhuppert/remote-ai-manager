@@ -252,7 +252,7 @@ describe("route and lane eligibility", () => {
           status: "active",
           worktreePath: "/tmp/down",
           branchName: "csm/test-down",
-          includedContextIds: [],
+          includedContextIds: ["context-plan"],
           lastCommittingContextId: null,
           commitSnapshots: [],
           createdAt: "2026-03-27T12:00:00.000Z",

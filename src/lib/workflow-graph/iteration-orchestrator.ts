@@ -1,4 +1,6 @@
 import type { ContextValidationCoordinator } from "./context-validation-coordinator";
+import { WorkflowDocumentDeliveryError } from "./errors";
+import { StaleLoopFenceError } from "./loop-fence";
 import { unchanged } from "./execution-mutation";
 import { accountContextAction } from "./context-accounting";
 import {
@@ -73,7 +75,7 @@ import { contextOwesOutput, resolveUpstreamInputs } from "./context-outputs";
 import { resolveLoopHistory } from "./loop-history";
 
 import { isValidationRoundOpen } from "@/lib/workflow-graph/validation-round";
-import { candidateScopeForPlacement } from "@/lib/workflow-graph/validation-diff-scope";
+import { resolveContextReviewOrigin } from "./review-origin";
 
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 
@@ -266,13 +268,16 @@ export interface GraphWorkflowIterationOrchestratorDeps {
    * Copies the execution's charter + shared documents into a
    * execution target before the agent runs. Shared documents can be published
    * from any lane and are distributed through the central store.
-   * Best-effort: a failure warns and continues,
-   * since the charter digest is also inlined into the prompt.
+   * Failure prevents dispatch of implementers and validators until every
+   * advertised input has been delivered for this execution generation. Returns
+   * the delivered snapshot so prompt metadata identifies those same inputs.
    */
   materializeWorkflowDocuments(input: {
+    projectPath: string;
+    sessionName: string;
     execution: GraphWorkflowExecution;
     worktreePath: string;
-  }): Promise<void>;
+  }): Promise<GraphWorkflowExecution>;
   /**
    * Summarize the lane conversation's transcript (true lineage cost, SDK turn
    * count, file re-read stats) for the `conversation.telemetry` iteration
@@ -558,21 +563,7 @@ export function createGraphWorkflowIterationOrchestrator(
     return execution;
   }
 
-  /**
-   * The durable reference an ENVELOPED context's human approval gate parks on
-   * (R15.2): the owned subset it declares, plus the identity that subset had the
-   * moment the gate opened.
-   *
-   * Frozen through `observeContextValidationCandidate`, the same reader a validation round
-   * freezes through, so the bytes the human is shown and the bytes the cohort
-   * certified are read under one definition of this context's change set.
-   *
-   * Null for a full-access member — it keeps the whole-tree approval view — and
-   * null when the candidate cannot be read. A gate must still open in that case
-   * (the human decision is not the engine's to skip), and the approval surface
-   * reports the missing artifact rather than silently widening to the shared
-   * lane worktree's whole-tree delta.
-   */
+  /** Freeze the same retained-work candidate for human and automated review. */
   async function freezeApprovalScope(
     input: GraphWorkflowIterationInput,
     execution: GraphWorkflowExecution,
@@ -582,15 +573,11 @@ export function createGraphWorkflowIterationOrchestrator(
     );
     if (context === undefined) return { kind: "whole_tree" };
     if (!context.humanApprovalGate.enabled) return { kind: "whole_tree" };
-    const scope = candidateScopeForPlacement(context.placement, {
-      stableRead: context.outputSchema !== undefined,
-    });
-    if (scope.mode !== "owned") return { kind: "whole_tree" };
+    const review = resolveContextReviewOrigin(execution, input.contextId);
+    if (review.kind === "unavailable")
+      return { kind: "unreadable", reason: review.reason };
+    const scope = review.candidateScope;
 
-    // Past this point the context IS enveloped, so every remaining path fails
-    // CLOSED. Returning the whole-tree scope for an enveloped member would let
-    // a gate that opens anyway inherit a view that is partly a sibling's work.
-    //
     // Only the finalize that actually parks needs a candidate: the gate branch
     // is reached with every task done and no output outstanding, so reading git
     // for anything else spends I/O on an iteration that keeps running. A scope
@@ -617,6 +604,13 @@ export function createGraphWorkflowIterationOrchestrator(
         reason: observed.reason,
       });
       return { kind: "unreadable", reason: observed.reason };
+    }
+    if (scope.mode === "wholeTree") {
+      return {
+        kind: "whole_tree",
+        treeHash: observed.candidate.candidateTreeHash,
+        headSha: observed.candidate.headSha,
+      };
     }
     return {
       kind: "scoped",
@@ -1070,30 +1064,35 @@ export function createGraphWorkflowIterationOrchestrator(
   async function runIteration(
     input: GraphWorkflowIterationInput,
   ): Promise<GraphWorkflowIterationResult> {
-    const initialExecution = await requireExecution(
+    let initialExecution = await requireExecution(
       input.projectPath,
       input.sessionName,
     );
-    const context = getContextDefinition(initialExecution, input.contextId);
-    const execLogger = getExecutionLogger(initialExecution.id);
 
     // Shared documents may have been published by another lane; the central
     // store carries those uncommitted files to every execution target.
     if (input.executionTarget) {
       try {
-        await deps.materializeWorkflowDocuments({
+        initialExecution = await deps.materializeWorkflowDocuments({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
           execution: initialExecution,
           worktreePath: input.executionTarget.worktreePath,
         });
       } catch (err) {
+        if (err instanceof StaleLoopFenceError) throw err;
         logger.warn("graph-workflow.iteration.materialize_failed", {
           executionId: initialExecution.id,
           contextId: input.contextId,
           worktreePath: input.executionTarget.worktreePath,
           error: getErrorMessage(err),
         });
+        throw new WorkflowDocumentDeliveryError(input.contextId, err);
       }
     }
+
+    const context = getContextDefinition(initialExecution, input.contextId);
+    const execLogger = getExecutionLogger(initialExecution.id);
 
     const incompleteTasks = getIncompleteTasks(
       initialExecution,
@@ -1496,7 +1495,7 @@ export function createGraphWorkflowIterationOrchestrator(
               context,
               tasks: initialTasks,
               taskStates: seededExecution.taskStates,
-              sharedDocuments: seededExecution.sharedDocuments,
+              sharedDocuments: initialExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
               charter: scopedCharter,
               // Scoped sources bind authored ids: a loop-instance context

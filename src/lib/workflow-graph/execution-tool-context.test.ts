@@ -163,6 +163,9 @@ function buildToolContext(
     createGraphWorkflowSharedDocumentRegistryService({
       now: () => "2026-03-27T12:00:00.000Z",
       createDocumentId: () => "doc-1",
+      async captureDocumentContent() {
+        return { contentHash: "a".repeat(64) };
+      },
     });
   const { broadcast, publishLiveEditApplied, deliver } =
     createTestLiveEditPublisher();
@@ -596,10 +599,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
   });
 
   it("refuses to re-register an engine-seeded document — and captures nothing over the engine's bytes", async () => {
-    // The seeded document is the pinned contract every OTHER lane materializes
-    // from the central store. If this lane's registration were accepted, the
-    // post-commit capture would overwrite the store with this lane's file, so
-    // the refusal has to land in the finalize, before capture runs.
+    // Engine-owned registrations refuse admission before staging agent bytes.
     const seededPath = ".cc/graph-workflow-docs/spec/native-sdd.md";
     const initial = withRunningContext(createWorkflowExecution(), [
       "context-plan",
@@ -624,6 +624,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
         createDocumentId: () => "doc-1",
         async captureDocumentContent(input) {
           captured.push(input.relativePath);
+          return { contentHash: "a".repeat(64) };
         },
       });
     const { publishLiveEditApplied, deliver } = createTestLiveEditPublisher();
@@ -679,6 +680,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const baseRegistry = createGraphWorkflowSharedDocumentRegistryService({
       async captureDocumentContent(input) {
         captured.push(input.relativePath);
+        return { contentHash: "a".repeat(64) };
       },
     });
     const sharedDocumentRegistry = {
@@ -732,14 +734,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
     expect(store.current.sharedDocuments).toEqual([]);
   });
 
-  it("refuses the shared-document finalize — and captures nothing — when the loop fence is superseded after reserve", async () => {
-    // Staged protocol (Design 3.1): a short sync RESERVE (fence + context check)
-    // runs FIRST, then the slow canonical-path resolution runs outside the write
-    // queue, then a short sync FINALIZE re-checks the fence and merges the entry.
-    // The only durable side effect — content capture — runs AFTER the finalize
-    // COMMITS, so a generation superseded during the slow work between reserve
-    // and finalize refuses the finalize AND captures nothing: there is no
-    // orphaned central-store write to restore or remove.
+  it("refuses publication when the loop fence changes after candidate capture", async () => {
+    // The captured object is unreachable until its reference commits.
     const initial = withRunningContext(createWorkflowExecution(), [
       "context-plan",
     ]);
@@ -751,6 +747,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       createDocumentId: () => "doc-1",
       async captureDocumentContent(input) {
         captured.push({ relativePath: input.relativePath });
+        return { contentHash: "a".repeat(64) };
       },
     });
     const sharedDocumentRegistry = {
@@ -821,9 +818,10 @@ describe("GraphWorkflowExecutionToolContext", () => {
       ),
     ).rejects.toBeInstanceOf(StaleLoopFenceError);
 
-    // The refused finalize committed nothing AND — because capture runs only
-    // after a committed finalize — no content was captured: no orphan to undo.
-    expect(captured).toEqual([]);
+    // The unreferenced object cannot change the published document set.
+    expect(captured).toEqual([
+      { relativePath: ".cc/graph-workflow-docs/plan.md" },
+    ]);
     expect(store.current.sharedDocuments).toEqual([]);
   });
 

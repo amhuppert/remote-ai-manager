@@ -6,6 +6,9 @@ import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-docum
 describe("graph workflow shared document registry service", () => {
   it("registers a shared document inside the known worktree directory", async () => {
     const service = createGraphWorkflowSharedDocumentRegistryService({
+      async captureDocumentContent() {
+        return { contentHash: "a".repeat(64) };
+      },
       now() {
         return "2026-03-27T18:00:00.000Z";
       },
@@ -32,6 +35,7 @@ describe("graph workflow shared document registry service", () => {
         description: "Shared implementation plan",
         readWhen: "Read before starting implementation work.",
         kind: "shared",
+        contentHash: "a".repeat(64),
         createdAt: "2026-03-27T18:00:00.000Z",
         updatedAt: "2026-03-27T18:00:00.000Z",
         lastUpdatedByConversationId: "conversation-2",
@@ -41,6 +45,9 @@ describe("graph workflow shared document registry service", () => {
 
   it("updates existing shared documents and rejects paths outside the shared directory", async () => {
     const service = createGraphWorkflowSharedDocumentRegistryService({
+      async captureDocumentContent() {
+        return { contentHash: "a".repeat(64) };
+      },
       now() {
         return "2026-03-27T18:10:00.000Z";
       },
@@ -73,6 +80,7 @@ describe("graph workflow shared document registry service", () => {
       description: "Latest plan",
       readWhen: "Read before editing runtime tasks.",
       kind: "shared",
+      contentHash: "a".repeat(64),
       createdAt: "2026-03-27T17:00:00.000Z",
       updatedAt: "2026-03-27T18:10:00.000Z",
       lastUpdatedByConversationId: "conversation-3",
@@ -89,6 +97,9 @@ describe("graph workflow shared document registry service", () => {
 
   it("normalizes equivalent shared-document paths so updates do not duplicate entries", async () => {
     const service = createGraphWorkflowSharedDocumentRegistryService({
+      async captureDocumentContent() {
+        return { contentHash: "a".repeat(64) };
+      },
       now() {
         return "2026-03-27T18:15:00.000Z";
       },
@@ -122,6 +133,7 @@ describe("graph workflow shared document registry service", () => {
         description: "Normalized plan",
         readWhen: "Read before the next iteration.",
         kind: "shared",
+        contentHash: "a".repeat(64),
         createdAt: "2026-03-27T17:00:00.000Z",
         updatedAt: "2026-03-27T18:15:00.000Z",
         lastUpdatedByConversationId: "conversation-4",
@@ -144,6 +156,7 @@ describe("graph workflow shared document registry service", () => {
       },
       async captureDocumentContent(input) {
         captured.push(input);
+        return { contentHash: "a".repeat(64) };
       },
     });
     const execution = createWorkflowExecution({ id: "execution-9" });
@@ -164,7 +177,7 @@ describe("graph workflow shared document registry service", () => {
     ]);
   });
 
-  it("still registers the document when content capture fails", async () => {
+  it("refuses publication when required content capture fails", async () => {
     const service = createGraphWorkflowSharedDocumentRegistryService({
       now() {
         return "2026-03-27T18:00:00.000Z";
@@ -178,17 +191,15 @@ describe("graph workflow shared document registry service", () => {
     });
     const execution = createWorkflowExecution({ id: "execution-9" });
 
-    const updated = await service.upsert("/worktree", execution, {
-      relativePath: ".cc/graph-workflow-docs/plan.md",
-      description: "Plan",
-      readWhen: "before work",
-      conversationId: "conversation-9",
-    });
-
-    expect(updated.sharedDocuments).toHaveLength(1);
-    expect(updated.sharedDocuments[0]?.relativePath).toBe(
-      ".cc/graph-workflow-docs/plan.md",
-    );
+    await expect(
+      service.upsert("/worktree", execution, {
+        relativePath: ".cc/graph-workflow-docs/plan.md",
+        description: "Plan",
+        readWhen: "before work",
+        conversationId: "conversation-9",
+      }),
+    ).rejects.toThrow("source file missing");
+    expect(execution.sharedDocuments).toEqual([]);
   });
 
   it("fails the workflow with ArtifactRequiredFailure when a required upsert path escapes the shared directory", async () => {
@@ -229,6 +240,9 @@ describe("graph workflow shared document registry service", () => {
 
   it("makes the registered shared document discoverable via list()", async () => {
     const service = createGraphWorkflowSharedDocumentRegistryService({
+      async captureDocumentContent() {
+        return { contentHash: "a".repeat(64) };
+      },
       now() {
         return "2026-04-01T10:00:00.000Z";
       },

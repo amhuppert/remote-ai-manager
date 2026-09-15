@@ -61,8 +61,7 @@ describe("durable graph mutation decisions", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       getGraphWorkflowPendingArtifacts:
         fixture.store.getGraphWorkflowPendingArtifacts,
       clearGraphWorkflowPendingArtifacts:

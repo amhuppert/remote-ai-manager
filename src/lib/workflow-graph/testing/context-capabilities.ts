@@ -10,7 +10,7 @@ export function createContextTestCapabilities(): Pick<
   | "advisoryResponseService"
 > {
   return {
-    materializeWorkflowDocuments: async () => {},
+    materializeWorkflowDocuments: async ({ execution }) => execution,
     scriptValidatorService: {
       runScriptValidator: async () => {
         throw new Error("Script validation is outside this fixture");

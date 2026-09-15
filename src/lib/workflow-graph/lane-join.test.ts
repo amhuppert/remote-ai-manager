@@ -271,6 +271,7 @@ describe("planContextJoin targets the authored lane (R3, decision D5)", () => {
     const plan = planContextJoin({
       contextId: "context-implement",
       execution: makeTargetedFixture({
+        downIncludes: ["context-plan"],
         extraUpstreamLaneId: "lane-side",
         joins: {
           "join-prior": makeJoin({
@@ -294,6 +295,7 @@ describe("planContextJoin targets the authored lane (R3, decision D5)", () => {
     const plan = planContextJoin({
       contextId: "context-implement",
       execution: makeTargetedFixture({
+        downIncludes: ["context-plan"],
         joins: {
           "join-prior": makeJoin({
             joinId: "join-prior",
@@ -1007,6 +1009,9 @@ describe("planContextJoin", () => {
       },
     };
 
+    execution.executionLanes["lane-a"]!.includedContextIds.push(
+      "context-implement",
+    );
     expect(
       planContextJoin({
         contextId: "context-verify",
@@ -1017,6 +1022,17 @@ describe("planContextJoin", () => {
     ).toBeNull();
   });
 });
+
+function assignFixtureLaneMembers(execution: GraphWorkflowExecution): void {
+  for (const lane of Object.values(execution.executionLanes)) {
+    if (lane.kind === "session") continue;
+    for (const contextId of lane.includedContextIds) {
+      const state = execution.contextStates[contextId];
+      if (state?.status === "completed" && state.laneId === null)
+        state.laneId = lane.laneId;
+    }
+  }
+}
 
 describe("planFinalPublishJoin", () => {
   it("returns null when no terminal worktree lanes need publishing", () => {
@@ -1069,6 +1085,7 @@ describe("planFinalPublishJoin", () => {
       },
     };
 
+    assignFixtureLaneMembers(execution);
     const plan = planFinalPublishJoin({
       execution,
       sessionLaneId,
@@ -1205,6 +1222,7 @@ describe("planFinalPublishJoin", () => {
       },
     });
 
+    base.contextStates["context-plan"]!.laneId = "lane-a";
     expect(
       planFinalPublishJoin({
         execution: withLoop("running"),
@@ -1455,6 +1473,7 @@ describe("planFinalPublishJoin", () => {
       },
     };
 
+    assignFixtureLaneMembers(execution);
     const plan = planFinalPublishJoin({
       execution,
       sessionLaneId,
@@ -1510,6 +1529,10 @@ describe("planFinalPublishJoin", () => {
       },
     };
 
+    execution.executionLanes[sessionLaneId]!.includedContextIds = [
+      "context-plan",
+    ];
+    assignFixtureLaneMembers(execution);
     const plan = planFinalPublishJoin({
       execution,
       sessionLaneId,
@@ -1540,7 +1563,7 @@ describe("planFinalPublishJoin", () => {
         "lane-b": makeLane({
           laneId: "lane-b",
           branchName: "csm/lane-b",
-          includedContextIds: ["context-impl"],
+          includedContextIds: ["context-implement"],
         }),
       },
       joins: {
@@ -1563,6 +1586,10 @@ describe("planFinalPublishJoin", () => {
       },
     };
 
+    execution.executionLanes["lane-a"]!.includedContextIds.push(
+      "context-implement",
+    );
+    assignFixtureLaneMembers(execution);
     const plan = planFinalPublishJoin({
       execution,
       sessionLaneId,
@@ -1627,6 +1654,12 @@ describe("planFinalPublishJoin", () => {
       },
     };
 
+    execution.executionLanes["lane-a"]!.includedContextIds = [
+      "context-plan",
+      "context-implement",
+      "context-verify",
+    ];
+    assignFixtureLaneMembers(execution);
     const plan = planFinalPublishJoin({
       execution,
       sessionLaneId,
@@ -1949,6 +1982,13 @@ describe("resolveLaneConversationId", () => {
     lane: GraphWorkflowExecutionLaneState,
   ): GraphWorkflowExecution {
     const base = createWorkflowExecution();
+    for (const contextId of lane.includedContextIds) {
+      base.contextStates[contextId] = {
+        ...base.contextStates["context-plan"]!,
+        contextId,
+        laneId: lane.laneId,
+      };
+    }
     return { ...base, executionLanes: { [lane.laneId]: lane } };
   }
 

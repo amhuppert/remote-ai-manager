@@ -1,7 +1,7 @@
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { stopAllForWorktree as defaultStopAllForWorktree } from "@/lib/dev-server/registry";
+import { captureStopForWorktree as defaultCaptureStopForWorktree } from "@/lib/dev-server/registry";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 const logger = createLogger("graph-workflow-dev-server-cleanup");
@@ -62,14 +62,14 @@ export function collectLaneWorktreePaths(
 }
 
 export interface StopExecutionLaneDevServersDeps {
-  stopDevServersForWorktree(input: {
+  captureStopForWorktree(input: {
     projectPath: string;
     worktreePath: string;
-  }): Promise<void>;
+  }): () => Promise<void>;
 }
 
 const defaultDeps: StopExecutionLaneDevServersDeps = {
-  stopDevServersForWorktree: defaultStopAllForWorktree,
+  captureStopForWorktree: defaultCaptureStopForWorktree,
 };
 
 /**
@@ -85,31 +85,47 @@ export async function stopExecutionLaneDevServers(
   },
   deps: StopExecutionLaneDevServersDeps = defaultDeps,
 ): Promise<void> {
-  const worktreePaths = collectLaneWorktreePaths(input.execution, {
-    contextIds: input.contextIds,
-  });
-  if (worktreePaths.length === 0) return;
+  await captureExecutionLaneDevServerCleanup(input, deps)();
+}
 
-  logger.info("graph-workflow.lane_dev_server_cleanup", {
-    executionId: input.execution.id,
-    worktreePaths,
-    contextIds: input.contextIds,
-  });
-
-  await Promise.all(
-    worktreePaths.map((worktreePath) =>
-      deps
-        .stopDevServersForWorktree({
-          projectPath: input.projectPath,
-          worktreePath,
-        })
-        .catch((err: unknown) => {
+export function captureExecutionLaneDevServerCleanup(
+  input: {
+    execution: GraphWorkflowExecution;
+    projectPath: string;
+    contextIds?: string[];
+  },
+  deps: StopExecutionLaneDevServersDeps = defaultDeps,
+): () => Promise<void> {
+  const executionId = input.execution.id;
+  const contextIds = input.contextIds?.slice();
+  const cleanups = collectLaneWorktreePaths(input.execution, {
+    contextIds,
+  }).map((worktreePath) => ({
+    worktreePath,
+    stop: deps.captureStopForWorktree({
+      projectPath: input.projectPath,
+      worktreePath,
+    }),
+  }));
+  return async () => {
+    if (cleanups.length === 0) return;
+    logger.info("graph-workflow.lane_dev_server_cleanup", {
+      executionId,
+      worktreePaths: cleanups.map(({ worktreePath }) => worktreePath),
+      contextIds,
+    });
+    await Promise.all(
+      cleanups.map(async ({ worktreePath, stop }) => {
+        try {
+          await stop();
+        } catch (error) {
           logger.warn("graph-workflow.lane_dev_server_cleanup_failed", {
-            executionId: input.execution.id,
+            executionId,
             worktreePath,
-            reason: getErrorMessage(err),
+            reason: getErrorMessage(error),
           });
-        }),
-    ),
-  );
+        }
+      }),
+    );
+  };
 }

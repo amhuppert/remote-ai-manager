@@ -6,15 +6,23 @@ import {
   createGraphWorkflowPendingArtifactsRepo,
   type GraphWorkflowPendingArtifactsRepo,
 } from "./graph-workflow-pending-artifacts-repo";
-import { graphWorkflowPendingArtifactsSchema } from "@/lib/workflow-graph/schemas";
+import {
+  graphWorkflowExecutionSchema,
+  graphWorkflowPendingArtifactsSchema,
+} from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowPendingArtifacts } from "@/lib/workflow-graph/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
-import { buildMaximalPendingArtifacts } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import {
+  buildMaximalGraphWorkflowExecution,
+  buildMaximalPendingArtifacts,
+} from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import { createGraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
 
 type Db = InstanceType<typeof Database>;
 
 const PROJECT_PATH = "/p1";
 const SESSION_NAME = "s1";
+const OWNER = { loopEpoch: 0, status: "running" as const };
 
 let db: Db;
 let repo: GraphWorkflowPendingArtifactsRepo;
@@ -58,6 +66,15 @@ function pending(
 beforeEach(() => {
   db = _createTestDb({ inMemory: true });
   seedSession();
+  const execution = graphWorkflowExecutionSchema.parse(
+    buildMaximalGraphWorkflowExecution(),
+  );
+  createGraphWorkflowExecutionsRepo(db).setActive(
+    PROJECT_PATH,
+    SESSION_NAME,
+    { ...execution, id: "exec-1", ...OWNER },
+    "2026-09-15",
+  );
   repo = createGraphWorkflowPendingArtifactsRepo(db);
 });
 
@@ -92,9 +109,25 @@ describe("graph-workflow-pending-artifacts-repo durability contract", () => {
 });
 
 describe("graph-workflow-pending-artifacts-repo settlement", () => {
+  it("retains captured debt if its execution generation changes before settlement", () => {
+    const captured = pending();
+    repo.record(captured);
+    const executions = createGraphWorkflowExecutionsRepo(db);
+    const resumed = executions.getActive(PROJECT_PATH, SESSION_NAME)!;
+    resumed.loopEpoch += 1;
+    executions.setActive(PROJECT_PATH, SESSION_NAME, resumed, "2026-09-15");
+    expect(repo.clear(captured, OWNER)).toBe(false);
+    expect(
+      createGraphWorkflowPendingArtifactsRepo(db).find(
+        PROJECT_PATH,
+        SESSION_NAME,
+        captured.executionId,
+      ),
+    ).toEqual(captured);
+  });
   it("stops reporting an execution once its record is cleared", () => {
     repo.record(pending());
-    expect(repo.clear("exec-1")).toBe(true);
+    expect(repo.clear(pending(), OWNER)).toBe(true);
 
     // Absence IS the durable statement that materialization succeeded, so it
     // has to survive the process that wrote it.
@@ -105,7 +138,7 @@ describe("graph-workflow-pending-artifacts-repo settlement", () => {
         "exec-1",
       ),
     ).toBeNull();
-    expect(repo.clear("exec-1")).toBe(false);
+    expect(repo.clear(pending(), OWNER)).toBe(false);
   });
 
   it("replaces a re-recorded execution rather than duplicating it", () => {
@@ -122,6 +155,27 @@ describe("graph-workflow-pending-artifacts-repo settlement", () => {
     expect(reloaded?.documents).toEqual([]);
     expect(reloaded?.recordedAt).toBe("2026-08-13T02:00:00.000Z");
   });
+
+  it.each(["contents", "recordedAt"])(
+    "preserves replacement debt when the captured %s no longer matches",
+    (field) => {
+      const captured = pending();
+      repo.record(captured);
+      const replacement =
+        field === "contents"
+          ? pending({ documents: [] })
+          : pending({ recordedAt: "2026-09-15T00:00:00.000Z" });
+      repo.record(replacement);
+      expect(repo.clear(captured, OWNER)).toBe(false);
+      const reloaded = createGraphWorkflowPendingArtifactsRepo(db).find(
+        PROJECT_PATH,
+        SESSION_NAME,
+        captured.executionId,
+      );
+      expect(reloaded).toEqual(replacement);
+      expect(repo.clear(replacement, OWNER)).toBe(true);
+    },
+  );
 
   it("never leaks a same-id record from another session into a scoped read", () => {
     seedSession("s2");

@@ -196,6 +196,7 @@ describe("resetExecutionContext", () => {
       pendingUserInputs: {},
       skipReason: null,
       landingIntent: null,
+      reviewOrigin: null,
     });
     expect(next.taskStates["task-implement-1"]).toEqual({
       taskId: "task-implement-1",

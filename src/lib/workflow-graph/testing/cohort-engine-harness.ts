@@ -1,4 +1,5 @@
 import { createGraphWorkflowGates } from "../engine-composition";
+import { captureContextReviewOrigin } from "../review-origin";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import { randomUUID } from "node:crypto";
 import { scheduleNextContext } from "../context-scheduler";
@@ -130,9 +131,7 @@ export function createRepository(initial: GraphWorkflowExecution) {
     async archiveActive(): Promise<GraphWorkflowArchiveOutcome> {
       throw new Error("the cohort harness never archives an execution");
     },
-    async markContextEventsPreReset(): Promise<number> {
-      throw new Error("the cohort harness never pre-resets context events");
-    },
+
     read() {
       return active;
     },
@@ -185,6 +184,7 @@ export function createCohortExecution(
     activeContextIds: ["context-plan"],
     workingDefinition: definition,
   });
+  captureContextReviewOrigin(execution, "context-plan", "head-1", NOW);
   execution.contextStates["context-plan"] = {
     ...execution.contextStates["context-plan"]!,
     status: "running",
@@ -584,7 +584,7 @@ export function createHarness(params: {
       readRepoConfig,
       readLaneConversation: async () => null,
       createTaskId: () => `task-${randomUUID()}`,
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
       executionContract: createNonParticipatingGraphExecutionContract(),
       signalHalt,
       ...(params.userInputGateService

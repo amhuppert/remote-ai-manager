@@ -140,9 +140,6 @@ function createRepository(initial: GraphWorkflowExecution) {
         release();
       }
     },
-    async markContextEventsPreReset(): Promise<number> {
-      return 0;
-    },
   };
 }
 
@@ -1419,7 +1416,6 @@ describe("same-lane visibility (R3.2)", () => {
     });
     expect(planned!.sourceLaneIds.sort()).toEqual(["impl", "plan"]);
 
-    // Once that join succeeds, the same downstream is schedulable on `impl`.
     const joined: GraphWorkflowExecution = {
       ...isolated,
       joins: {
@@ -1430,6 +1426,18 @@ describe("same-lane visibility (R3.2)", () => {
         },
       },
     };
+    expect(
+      classifyContextSchedulability({
+        contextId: "context-verify",
+        definition,
+        execution: joined,
+      }),
+    ).toEqual({ kind: "wait-for-join", sourceLaneIds: ["plan"] });
+
+    expect(planned!.sourceLaneContextIds?.plan).toEqual(["context-plan"]);
+    joined.executionLanes.impl!.includedContextIds = [
+      ...planned!.sourceLaneContextIds!.plan!,
+    ];
     expect(
       classifyContextSchedulability({
         contextId: "context-verify",

@@ -858,3 +858,75 @@ describe("loop-exit resolution carries both source ids (D1)", () => {
     ).toBe("inactive");
   });
 });
+
+describe("logical loop-exit cardinality", () => {
+  function concludedRoutes(
+    policy: RouteCardinalityPolicy,
+    verdict: string,
+    activation: RouteProjectionLoop["activation"] = "concluded",
+  ) {
+    return project({
+      contexts: [
+        { id: "work#1", status: "completed" },
+        {
+          id: "judge#1",
+          status: "completed",
+          outputSchema: VERDICT_SCHEMA,
+          cardinality: policy,
+        },
+        { id: "publish" },
+        { id: "notify" },
+      ],
+      edges: [
+        { from: "judge", to: "publish", when: verdictIs("done") },
+        { from: "judge", to: "notify", when: verdictIs("done") },
+      ],
+      outputs: { "judge#1": { verdict } },
+      loops: [
+        {
+          id: "refine",
+          exitContextId: "judge",
+          bodyContextIds: ["work", "judge"],
+          activationContextId: "work#1",
+          activation,
+          concludingExitContextId:
+            activation === "concluded" ? "judge#1" : null,
+        },
+      ],
+    });
+  }
+
+  it.each([
+    ["exactlyOne", "done", "over-selection", 2],
+    ["atLeastOne", "retry", "under-selection", 0],
+    ["atLeastOne", "done", "satisfied", 2],
+  ] as const)(
+    "applies %s to the concluding exit's %s routes",
+    (policy, verdict, outcome, count) => {
+      const projection = concludedRoutes(policy, verdict);
+      expect(projection.cardinality).toHaveLength(1);
+      expect(projection.cardinality[0]).toMatchObject({
+        sourceContextId: "judge",
+        policy,
+        outcome,
+      });
+      expect(projection.cardinality[0]?.activatedEdgeIds).toHaveLength(count);
+    },
+  );
+
+  it("keeps an unconcluded logical source unresolved", () => {
+    const projection = concludedRoutes("exactlyOne", "done", "running");
+    expect(projection.cardinality).toEqual([
+      expect.objectContaining({
+        sourceContextId: "judge",
+        outcome: "unresolved",
+      }),
+    ]);
+  });
+
+  it("exempts a skipped logical source", () => {
+    expect(
+      concludedRoutes("exactlyOne", "done", "skipped").cardinality,
+    ).toEqual([]);
+  });
+});

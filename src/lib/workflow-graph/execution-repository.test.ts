@@ -40,6 +40,7 @@ import type {
   GraphWorkflowPendingArtifacts,
 } from "@/lib/workflow-graph/schemas";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { withArtifactPublication } from "./artifact-publication";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 
 const WORKTREE_PATH = "/repo/.worktrees/session-1";
@@ -62,6 +63,7 @@ function createInMemoryRepo(
   options: {
     /** Reject the charter file write, standing in for any materialization I/O failure. */
     failCharterWrite?: boolean;
+    beforeCharterWrite?(): Promise<void>;
     /** Awaited inside the reservation seam, so a test can hold both racers at the CAS. */
     reserveBarrier?: () => Promise<void>;
     /** Reject the git-exclusion write that must precede every .cc file. */
@@ -100,6 +102,7 @@ function createInMemoryRepo(
   });
   const charterService = createWorkflowCharterService({
     writeFile: async (absolutePath, contents) => {
+      await options.beforeCharterWrite?.();
       operations.push(`write:${absolutePath}`);
       if (options.failCharterWrite === true) {
         throw new Error("charter write failed: disk is full");
@@ -117,8 +120,15 @@ function createInMemoryRepo(
     },
     ensureDir: async () => {},
     store: {
-      async captureFromWorktree({ executionId, relativePath }) {
-        capturedDocuments.set(`${executionId}:${relativePath}`, "captured");
+      async captureFromWorktree() {
+        return { contentHash: "a".repeat(64) };
+      },
+      async captureContent({ executionId, contents }) {
+        capturedDocuments.set(`${executionId}:${contents}`, contents);
+        return { contentHash: "a".repeat(64) };
+      },
+      async migrateLegacyDocument() {
+        return null;
       },
       async read() {
         return null;
@@ -234,9 +244,7 @@ function createInMemoryRepo(
         ? { archived: false as const, reason: "no_active" as const }
         : { archived: true as const, execution: active };
     },
-    async markGraphWorkflowContextEventsPreReset() {
-      return 0;
-    },
+
     async getGraphWorkflowPendingArtifacts(
       projectPath,
       sessionName,
@@ -249,8 +257,20 @@ function createInMemoryRepo(
         ? pending
         : null;
     },
-    async clearGraphWorkflowPendingArtifacts(executionId) {
-      return pendingArtifacts.delete(executionId);
+    async clearGraphWorkflowPendingArtifacts(expected, owner) {
+      const execution = getOrCreateSession(
+        expected.projectPath,
+        expected.sessionName,
+      ).graphWorkflowExecution;
+      if (
+        execution?.id !== expected.executionId ||
+        execution.loopEpoch !== owner.loopEpoch ||
+        execution.status !== owner.status
+      )
+        return false;
+      const current = pendingArtifacts.get(expected.executionId);
+      if (JSON.stringify(current) !== JSON.stringify(expected)) return false;
+      return pendingArtifacts.delete(expected.executionId);
     },
     eventPublisher,
     charterService,
@@ -437,7 +457,11 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     });
 
     expect(execution.id).toBe("exec-1");
-    expect(execution.status).toBe("pending");
+    expect(execution.status).toBe("running");
+    expect(execution.machineSnapshot).toMatchObject({
+      lifecycleStatus: "running",
+      hasLiveIteration: false,
+    });
   });
 
   it("rejects create when a non-terminal execution is already active, leaving it untouched", async () => {
@@ -1057,6 +1081,195 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     );
   });
 
+  it("does not halt a resumed generation when an earlier artifact write fails", async () => {
+    const options: {
+      beforeCharterWrite?: () => Promise<void>;
+      failCharterWrite?: boolean;
+    } = {};
+    const { repo, sessions } = createInMemoryRepo(
+      {} as GlobalConfig,
+      null,
+      options,
+    );
+    const definition = createWorkflowDefinition();
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
+      executionId: "exec-1",
+      startedAt: "2026-09-15T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+    });
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    options.beforeCharterWrite = async () => {
+      enter();
+      await blocked;
+    };
+    options.failCharterWrite = true;
+    const repair = repo.materializeArtifacts({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      seededDocuments: [],
+    });
+    const rejected = expect(repair).rejects.toThrow(/disk is full/);
+    await entered;
+    sessions.get("/repo:session-1")!.graphWorkflowExecution = {
+      ...execution,
+      loopEpoch: execution.loopEpoch + 1,
+      status: "running",
+    };
+    release();
+    await rejected;
+    expect(
+      sessions.get("/repo:session-1")!.graphWorkflowExecution,
+    ).toMatchObject({
+      status: "running",
+      loopEpoch: execution.loopEpoch + 1,
+      haltReason: null,
+    });
+  });
+
+  it("keeps a successor publisher behind an older successful filesystem write", async () => {
+    const options: { beforeCharterWrite?: () => Promise<void> } = {};
+    const { repo, sessions, writes } = createInMemoryRepo(
+      {} as GlobalConfig,
+      null,
+      options,
+    );
+    const definition = createWorkflowDefinition();
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
+      executionId: "exec-1",
+      startedAt: "2026-09-15T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+    });
+    writes.length = 0;
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    options.beforeCharterWrite = async () => {
+      enter();
+      await blocked;
+    };
+    const older = repo.materializeArtifacts({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      seededDocuments: [],
+    });
+    const retired = expect(older).rejects.toThrow(/Stale loop generation/);
+    await entered;
+    sessions.get("/repo:session-1")!.graphWorkflowExecution = {
+      ...execution,
+      loopEpoch: execution.loopEpoch + 1,
+    };
+    const successor = withArtifactPublication(
+      "/repo",
+      "session-1",
+      async () => {
+        writes.push({
+          absolutePath: `${WORKTREE_PATH}/.cc/graph-workflow-docs/charter.md`,
+          contents: "Successor contract",
+        });
+      },
+    );
+    await withArtifactPublication(
+      "/different-project",
+      "session-1",
+      async () => {},
+    );
+    expect(writes).toEqual([]);
+    release();
+    await retired;
+    await successor;
+    expect(writes.at(-1)?.contents).toBe("Successor contract");
+  });
+
+  it("preserves replacement artifact debt when a captured repair finishes", async () => {
+    const options: { beforeCharterWrite?: () => Promise<void> } = {};
+    const { repo, pendingArtifacts } = createInMemoryRepo(
+      {} as GlobalConfig,
+      null,
+      options,
+    );
+    const definition = createWorkflowDefinition();
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      source: {
+        kind: "template",
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(definition),
+      executionId: "exec-1",
+      startedAt: "2026-09-15T00:00:00.000Z",
+      inputs: {},
+      ownerConversationId: null,
+    });
+    const captured = {
+      executionId: execution.id,
+      projectPath: "/repo",
+      sessionName: "session-1",
+      documents: [],
+      recordedAt: "2026-09-15T00:00:00.000Z",
+    };
+    pendingArtifacts.set(execution.id, captured);
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    options.beforeCharterWrite = async () => {
+      enter();
+      await blocked;
+    };
+    const repair = repo.ensureArtifactsMaterialized({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+    });
+    const refused = expect(repair).rejects.toThrow(
+      /Artifact reconstruction changed/,
+    );
+    await entered;
+    const replacement = { ...captured, recordedAt: "2026-09-15T00:01:00.000Z" };
+    pendingArtifacts.set(execution.id, replacement);
+    release();
+    await refused;
+    expect(pendingArtifacts.get(execution.id)).toEqual(replacement);
+  });
+
   it("initializes context and task state to execution-start defaults", async () => {
     const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
@@ -1082,7 +1295,10 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     expect(execution.sharedDocuments).toHaveLength(1);
     expect(execution.sharedDocuments[0]?.kind).toBe("charter");
     expect(execution.laneStates).toEqual({});
-    expect(execution.machineSnapshot).toBeNull();
+    expect(execution.machineSnapshot).toMatchObject({
+      lifecycleStatus: "running",
+      hasLiveIteration: false,
+    });
 
     for (const context of execution.workingDefinition.executionContexts) {
       const state = execution.contextStates[context.id];
@@ -1858,7 +2074,7 @@ describe("createGraphWorkflowExecutionRepository.create dirty-worktree exemption
     );
 
     expect(execution.liveSessionReadOnlyPinned).toBe(false);
-    expect(execution.status).toBe("pending");
+    expect(execution.status).toBe("running");
   });
 });
 
@@ -2155,7 +2371,7 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
     });
 
     expect(execution.boundInputs).toEqual({});
-    expect(execution.status).toBe("pending");
+    expect(execution.status).toBe("running");
   });
 
   it("snapshots the seed's launchedTier onto the execution, parallel to boundInputs (R3.3)", async () => {
@@ -2506,8 +2722,7 @@ describe("createGraphWorkflowExecutionRepository.create replacement audit", () =
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
       charterService: createWorkflowCharterService({
         writeFile: async () => {},

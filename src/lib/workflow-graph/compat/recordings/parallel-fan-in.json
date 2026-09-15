@@ -96,9 +96,7 @@
       "joinKind": "final_publish",
       "contextId": null,
       "sourceLaneIds": [
-        "ctx-converge",
-        "ctx-left",
-        "ctx-root"
+        "ctx-converge"
       ],
       "targetLaneId": "__session__"
     },
@@ -199,7 +197,7 @@
     {
       "kind": "graph-workflow-status",
       "subject": null,
-      "detail": "pending"
+      "detail": "running"
     },
     {
       "kind": "graph-workflow-context-status",
@@ -245,11 +243,6 @@
       "kind": "graph-workflow-shared-documents-updated",
       "subject": null,
       "detail": "1"
-    },
-    {
-      "kind": "graph-workflow-status",
-      "subject": null,
-      "detail": "running"
     },
     {
       "kind": "graph-workflow-context-status",
@@ -478,6 +471,11 @@
     },
     {
       "kind": "graph-workflow-lane-status",
+      "subject": "ctx-left",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
       "subject": "ctx-right",
       "detail": "merged"
     },
@@ -588,27 +586,12 @@
     },
     {
       "kind": "graph-workflow-lane-status",
+      "subject": "__session__",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
       "subject": "ctx-converge",
-      "detail": "merged"
-    },
-    {
-      "kind": "graph-workflow-join-status",
-      "subject": "loop-job-2",
-      "detail": "final_publish:running"
-    },
-    {
-      "kind": "graph-workflow-lane-status",
-      "subject": "ctx-left",
-      "detail": "merged"
-    },
-    {
-      "kind": "graph-workflow-join-status",
-      "subject": "loop-job-2",
-      "detail": "final_publish:running"
-    },
-    {
-      "kind": "graph-workflow-lane-status",
-      "subject": "ctx-root",
       "detail": "merged"
     },
     {

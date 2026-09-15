@@ -6,7 +6,6 @@ import {
   isRouteSourceLanded,
   isUpstreamVisibleToLane,
   landGatedPublishSettlement,
-  reachableLanesFrom,
 } from "./lane-readiness";
 import {
   validationCertification,
@@ -126,12 +125,13 @@ function hasFailedIntegration(
 ): boolean {
   const laneId = execution.contextStates[authoredContextId]?.laneId;
   if (laneId === null || laneId === undefined) return false;
-  const reachableLaneIds = reachableLanesFrom(laneId, execution);
   return Object.values(execution.joins ?? {}).some(
     (join) =>
       (join.status === "failed" || join.status === "conflicts") &&
       join.sourceLaneIds.some((sourceLaneId) =>
-        reachableLaneIds.has(sourceLaneId),
+        (join.sourceLaneContextIds?.[sourceLaneId] ?? []).includes(
+          authoredContextId,
+        ),
       ),
   );
 }

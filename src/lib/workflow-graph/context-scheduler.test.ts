@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { changed } from "./execution-mutation";
 
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
@@ -1852,156 +1853,193 @@ describe("scheduleEligibleContexts", () => {
     expect(parallelWorktrees.provisionCalls).toEqual([]);
   });
 
-  it("forks the authored lane from the post-join common target once two upstreams are joined into it", async () => {
-    // Authored placement is the only lane authority: the converged lane is
-    // the fork BASE that carries both upstreams' work, never the destination.
-    const branchedDefinition = createResolvedWorkflowDefinition({
-      edges: [
-        {
-          id: "edge-plan-verify",
-          sourceContextId: "context-plan",
-          targetContextId: "context-verify",
-        },
-        {
-          id: "edge-implement-verify",
-          sourceContextId: "context-implement",
-          targetContextId: "context-verify",
-        },
-      ],
-    });
-    const laneA = {
-      laneId: "lane-a",
-      kind: "worktree" as const,
-      status: "merged" as const,
-      worktreePath: "/repo/.worktrees/feature-abc.lane-a",
-      branchName: "csm/feature-abc-lane-a",
-      includedContextIds: ["context-plan"],
-      lastCommittingContextId: "context-plan",
-      commitSnapshots: [],
-      createdAt: "2026-03-27T15:00:00.000Z",
-      updatedAt: "2026-03-27T15:00:00.000Z",
-    };
-    const laneB = {
-      laneId: "lane-b",
-      kind: "worktree" as const,
-      status: "merged" as const,
-      worktreePath: "/repo/.worktrees/feature-abc.lane-b",
-      branchName: "csm/feature-abc-lane-b",
-      includedContextIds: ["context-implement"],
-      lastCommittingContextId: "context-implement",
-      commitSnapshots: [],
-      createdAt: "2026-03-27T15:00:00.000Z",
-      updatedAt: "2026-03-27T15:00:00.000Z",
-    };
-    const laneTarget = {
-      laneId: "lane-target",
-      kind: "worktree" as const,
-      status: "active" as const,
-      worktreePath: "/repo/.worktrees/feature-abc.lane-target",
-      branchName: "csm/feature-abc-lane-target",
-      includedContextIds: [],
-      lastCommittingContextId: null,
-      commitSnapshots: [],
-      createdAt: "2026-03-27T15:00:00.000Z",
-      updatedAt: "2026-03-27T15:00:00.000Z",
-    };
-    const baseExecution = createWorkflowExecution({
-      workingDefinition: branchedDefinition,
-    });
-    const repository = createRepository(
-      createWorkflowExecution({
-        ...baseExecution,
-        status: "running",
+  it.each([false, true])(
+    "forks the authored lane with the captured converged membership (parent advances=%s)",
+    async (parentAdvances) => {
+      // Authored placement is the only lane authority: the converged lane is
+      // the fork BASE that carries both upstreams' work, never the destination.
+      const branchedDefinition = createResolvedWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+          {
+            id: "edge-implement-verify",
+            sourceContextId: "context-implement",
+            targetContextId: "context-verify",
+          },
+        ],
+      });
+      const laneA = {
+        laneId: "lane-a",
+        kind: "worktree" as const,
+        status: "merged" as const,
+        worktreePath: "/repo/.worktrees/feature-abc.lane-a",
+        branchName: "csm/feature-abc-lane-a",
+        includedContextIds: ["context-plan", "context-earlier-pass"],
+        lastCommittingContextId: "context-plan",
+        commitSnapshots: [],
+        createdAt: "2026-03-27T15:00:00.000Z",
+        updatedAt: "2026-03-27T15:00:00.000Z",
+      };
+      const laneB = {
+        laneId: "lane-b",
+        kind: "worktree" as const,
+        status: "merged" as const,
+        worktreePath: "/repo/.worktrees/feature-abc.lane-b",
+        branchName: "csm/feature-abc-lane-b",
+        includedContextIds: ["context-implement"],
+        lastCommittingContextId: "context-implement",
+        commitSnapshots: [],
+        createdAt: "2026-03-27T15:00:00.000Z",
+        updatedAt: "2026-03-27T15:00:00.000Z",
+      };
+      const laneTarget = {
+        laneId: "lane-target",
+        kind: "worktree" as const,
+        status: "active" as const,
+        worktreePath: "/repo/.worktrees/feature-abc.lane-target",
+        branchName: "csm/feature-abc-lane-target",
+        includedContextIds: ["context-plan", "context-implement"],
+        lastCommittingContextId: null,
+        commitSnapshots: [],
+        createdAt: "2026-03-27T15:00:00.000Z",
+        updatedAt: "2026-03-27T15:00:00.000Z",
+      };
+      const baseExecution = createWorkflowExecution({
         workingDefinition: branchedDefinition,
-        executionLanes: {
-          "lane-a": laneA,
-          "lane-b": laneB,
-          "lane-target": laneTarget,
-        },
-        joins: {
-          "join-1": {
-            joinId: "join-1",
-            kind: "context_merge",
-            contextId: null,
-            targetLaneId: "lane-target",
-            sourceLaneIds: ["lane-a", "lane-b"],
-            mergedSourceLaneIds: ["lane-a", "lane-b"],
-            validationDebtSourceLaneIds: [],
-            status: "succeeded",
-            errorMessage: null,
-            conflicts: null,
-            conflictGuidance: null,
-            createdAt: "2026-03-27T15:00:00.000Z",
-            updatedAt: "2026-03-27T15:00:00.000Z",
-            completedAt: "2026-03-27T15:00:00.000Z",
+      });
+      const repository = createRepository(
+        createWorkflowExecution({
+          ...baseExecution,
+          status: "running",
+          workingDefinition: branchedDefinition,
+          executionLanes: {
+            "lane-a": laneA,
+            "lane-b": laneB,
+            "lane-target": laneTarget,
           },
-        },
-        contextStates: {
-          ...baseExecution.contextStates,
-          "context-plan": {
-            ...baseExecution.contextStates["context-plan"]!,
-            status: "completed",
-            isolation: "worktree",
-            laneId: "lane-a",
-            worktreePath: laneA.worktreePath,
-            branchName: laneA.branchName,
-            mergeStatus: "merged-success",
-            completedTaskCount: 1,
-            iterationCount: 1,
+          joins: {
+            "join-1": {
+              joinId: "join-1",
+              kind: "context_merge",
+              contextId: null,
+              targetLaneId: "lane-target",
+              sourceLaneIds: ["lane-a", "lane-b"],
+              mergedSourceLaneIds: ["lane-a", "lane-b"],
+              validationDebtSourceLaneIds: [],
+              status: "succeeded",
+              errorMessage: null,
+              conflicts: null,
+              conflictGuidance: null,
+              createdAt: "2026-03-27T15:00:00.000Z",
+              updatedAt: "2026-03-27T15:00:00.000Z",
+              completedAt: "2026-03-27T15:00:00.000Z",
+            },
           },
-          "context-implement": {
-            ...baseExecution.contextStates["context-implement"]!,
-            status: "completed",
-            isolation: "worktree",
-            laneId: "lane-b",
-            worktreePath: laneB.worktreePath,
-            branchName: laneB.branchName,
-            mergeStatus: "merged-success",
-            completedTaskCount: 1,
-            iterationCount: 1,
+          contextStates: {
+            ...baseExecution.contextStates,
+            "context-earlier-pass": {
+              ...baseExecution.contextStates["context-plan"]!,
+              contextId: "context-earlier-pass",
+              status: "completed",
+              laneId: "lane-a",
+              isolation: "worktree",
+            },
+            "context-plan": {
+              ...baseExecution.contextStates["context-plan"]!,
+              status: "completed",
+              isolation: "worktree",
+              laneId: "lane-a",
+              worktreePath: laneA.worktreePath,
+              branchName: laneA.branchName,
+              mergeStatus: "merged-success",
+              completedTaskCount: 1,
+              iterationCount: 1,
+            },
+            "context-implement": {
+              ...baseExecution.contextStates["context-implement"]!,
+              status: "completed",
+              isolation: "worktree",
+              laneId: "lane-b",
+              worktreePath: laneB.worktreePath,
+              branchName: laneB.branchName,
+              mergeStatus: "merged-success",
+              completedTaskCount: 1,
+              iterationCount: 1,
+            },
           },
+        }),
+      );
+      const parallelWorktrees = createParallelWorktreesStub({
+        async onProvision() {
+          if (!parentAdvances) return;
+          await repository.mutateActive("/repo", "session-1", (current) =>
+            changed({
+              ...current,
+              executionLanes: {
+                ...current.executionLanes,
+                "lane-target": {
+                  ...current.executionLanes["lane-target"]!,
+                  includedContextIds: [
+                    ...current.executionLanes["lane-target"]!
+                      .includedContextIds,
+                    "context-earlier-pass",
+                  ],
+                },
+              },
+            }),
+          );
         },
-      }),
-    );
-    const parallelWorktrees = createParallelWorktreesStub();
+      });
 
-    const scheduler = createContextScheduler({
-      executionRepository: repository,
-      parallelWorktrees,
-      async getSession() {
-        return createSession({
-          worktreePath: "/repo/.worktrees/feature-abc",
-          branchName: "csm/feature-abc",
-        });
-      },
-    });
+      const scheduler = createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        async getSession() {
+          return createSession({
+            worktreePath: "/repo/.worktrees/feature-abc",
+            branchName: "csm/feature-abc",
+          });
+        },
+      });
 
-    const result = await scheduler.scheduleEligibleContexts({
-      projectPath: "/repo",
-      sessionName: "session-1",
-    });
+      const result = await scheduler.scheduleEligibleContexts({
+        projectPath: "/repo",
+        sessionName: "session-1",
+      });
 
-    expect(result.scheduled.kind).toBe("parallel");
-    if (result.scheduled.kind !== "parallel") return;
-    expect(result.scheduled.contextIds).toEqual(["context-verify"]);
+      expect(result.scheduled.kind).toBe("parallel");
+      if (result.scheduled.kind !== "parallel") return;
+      expect(result.scheduled.contextIds).toEqual(["context-verify"]);
 
-    const verifyState = result.execution.contextStates["context-verify"];
-    expect(verifyState?.status).toBe("running");
-    expect(verifyState?.laneId).toBe("verify");
-    expect(verifyState?.isolation).toBe("worktree");
+      const verifyState = result.execution.contextStates["context-verify"];
+      expect(verifyState?.status).toBe("running");
+      expect(verifyState?.laneId).toBe("verify");
+      expect(verifyState?.isolation).toBe("worktree");
 
-    // One worktree, branched off the converged lane so both upstreams are in
-    // its history — and the fork inherits their context ids for visibility.
-    expect(
-      parallelWorktrees.provisionCalls.map((call) => ({
-        contextId: call.contextId,
-        sessionBranch: call.sessionBranch,
-      })),
-    ).toEqual([{ contextId: "verify", sessionBranch: laneTarget.branchName }]);
-    expect(
-      result.execution.executionLanes.verify?.includedContextIds.sort(),
-    ).toEqual(["context-implement", "context-plan"]);
-  });
+      // One worktree, branched off the converged lane so both upstreams are in
+      // its history — and the fork inherits their context ids for visibility.
+      expect(
+        parallelWorktrees.provisionCalls.map((call) => ({
+          contextId: call.contextId,
+          sessionBranch: call.sessionBranch,
+        })),
+      ).toEqual([
+        { contextId: "verify", sessionBranch: laneTarget.branchName },
+      ]);
+      expect(
+        result.execution.executionLanes.verify?.includedContextIds.sort(),
+      ).toEqual(["context-implement", "context-plan"]);
+      expect(
+        result.execution.executionLanes[
+          "lane-target"
+        ]!.includedContextIds.includes("context-earlier-pass"),
+      ).toBe(parentAdvances);
+    },
+  );
 
   it("forks a fresh worktree when sessionLaneEnabled is false and the upstream landed in session", async () => {
     const baseExecution = createWorkflowExecution();

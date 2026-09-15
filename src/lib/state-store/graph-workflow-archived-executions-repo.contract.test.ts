@@ -1261,6 +1261,12 @@ function buildMaximalExecution(): unknown {
           ],
           at: "2026-01-02T06:00:00.000Z",
         },
+        reviewOrigin: {
+          laneId: "lane-1",
+          baselineSha: "1111111111111111111111111111111111111111",
+          candidateScope: { mode: "owned", ownedPaths: ["src/feature.ts"] },
+          capturedAt: "2026-01-01T00:01:00Z",
+        },
         // The D4 landing intent in its adopted-commit shape, which carries both
         // ends of the recorded SHA range.
         landingIntent: {
@@ -1458,6 +1464,7 @@ function buildMaximalExecution(): unknown {
       {
         id: "doc-1",
         relativePath: "docs/plan.md",
+        contentHash: "a".repeat(64),
         description: "the shared plan",
         readWhen: "before implementing",
         kind: "charter",

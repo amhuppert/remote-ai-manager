@@ -8,6 +8,7 @@ import type {
   ExecutionMutationOutcome as FixtureOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { buildLifecycleSnapshot } from "@/lib/workflow-graph/context-transitions";
 import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { createLifecycleRouteFixture } from "@/lib/workflow-graph/testing/lifecycle-route-fixture";
 import type { GraphWorkflowLifecycleDeps } from "@/lib/workflow-graph/lifecycle-service";
@@ -1344,6 +1345,8 @@ export function createSpecSpineWorld(
       );
       const created = createWorkflowExecution({
         id: seed.executionId,
+        status:
+          seed.definition.approvalRequired === true ? "pending" : "running",
         origin: provenance.origin,
         launchDocument: seed.launchDocument,
         seedDefinitionId: provenance.seedDefinitionId,
@@ -1359,6 +1362,9 @@ export function createSpecSpineWorld(
         contextStates: buildInitialContextStates(workingDefinition),
         taskStates: buildInitialTaskStates(workingDefinition),
         startedAt: seed.startedAt,
+      });
+      created.machineSnapshot = buildLifecycleSnapshot(created, {
+        hasLiveIteration: false,
       });
       seed.transactionAttachment?.({ executionId: created.id });
       activeWorkflowExecution = created;
@@ -1397,9 +1403,6 @@ export function createSpecSpineWorld(
       activeWorkflowExecution = execution;
     },
     mutateActive: mutateActiveImpl,
-    async markContextEventsPreReset(): Promise<number> {
-      return 0;
-    },
   };
   const workflowManager = createGraphWorkflowManager({
     abortConversation: () => {},
@@ -1485,7 +1488,6 @@ export function createSpecSpineWorld(
     // holder gone away" is asked against the fixture's timeline rather than the
     // wall clock — which would call every reservation here stranded.
     now,
-    normalizeExecutionAfterRestart: async () => activeWorkflowExecution,
     startExecution: (input) => workflowManager.start(input),
     runExecution: (input) => workflowManager.run(input),
     launchSpecDeliveryExecution: (input) =>

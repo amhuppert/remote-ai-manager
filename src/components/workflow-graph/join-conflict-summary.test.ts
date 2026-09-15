@@ -237,20 +237,23 @@ describe("deriveJoinConflictSummary", () => {
     });
   });
 
-  // The frozen membership map is what proves which members the intent covered;
-  // a lane whose contexts are only known from live lane state still has to be
-  // listed rather than dropped.
-  it("falls back to live lane membership when the join froze none", () => {
-    const summary = deriveJoinConflictSummary(
-      executionWithJoin(joinState({ sourceLaneContextIds: undefined })),
-      JOIN_FAILURE,
-    );
-
-    expect(summary?.members.map((member) => member.contextId)).toEqual([
-      "context-plan",
-      "context-implement",
-    ]);
-  });
+  it.each([undefined, { "lane-plan": [], "lane-implement": [] }])(
+    "reports unknown members when transfer coverage is absent or empty",
+    (sourceLaneContextIds) => {
+      const summary = deriveJoinConflictSummary(
+        executionWithJoin(joinState({ sourceLaneContextIds })),
+        JOIN_FAILURE,
+      );
+      expect(summary?.members.map((member) => member.contextId)).toEqual([
+        null,
+        null,
+      ]);
+      expect(summary?.members.map((member) => member.laneId)).toEqual([
+        "lane-plan",
+        "lane-implement",
+      ]);
+    },
+  );
 
   // Progress is on the join record, so a halt whose join row is gone can still
   // name the lanes the reason carries — but it must not invent merge outcomes.

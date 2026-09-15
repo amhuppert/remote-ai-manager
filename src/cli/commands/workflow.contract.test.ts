@@ -199,7 +199,6 @@ function makeExecutionDeps(
     getSession: async () => makeSession(),
     readRepoConfig: async () => null,
     readConfig: async () => VALIDATION_GLOBAL_CONFIG,
-    normalizeExecutionAfterRestart: async () => null,
     startExecution: notUsed,
     runExecution: notUsed,
     launchSpecDeliveryExecution: notUsed,

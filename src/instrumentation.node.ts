@@ -1,3 +1,5 @@
+import { claimGraphWorkflowRuntimeOwner } from "./lib/state-store/graph-workflow-runtime-owner";
+import { initializeGraphWorkflowRuntimeAtStartup } from "./lib/workflow-graph/production";
 import { stopAllConversationActors } from "./lib/workflows/conversation/manager";
 import { listSessionConversationListItems } from "./lib/state-store";
 import { getStateDb } from "./lib/state-store/store";
@@ -49,6 +51,7 @@ export interface StartupDeps {
   }>;
   runStateMigrations(): Promise<string[]>;
   registerSpecWorkflowComposition?(): void;
+  initializeGraphWorkflowRuntime?(): Promise<void>;
   initNotificationDb: typeof initializeNotifications;
   setConfigReader: typeof setConfigReader;
   readConfig: typeof readConfig;
@@ -100,9 +103,17 @@ const defaultStartupDeps: StartupDeps = {
   runStateMigrations: async () => {
     const configDir = getConfigDirPath();
     await runNativeSddV2CutoverBeforeStateDbOpen(configDir);
-    return runMigrations({ db: getDb(), configDir });
+    const db = getDb();
+    const claim = claimGraphWorkflowRuntimeOwner(db);
+    if (claim.kind === "occupied") {
+      throw new Error(
+        `Graph workflow runtime is already owned by process ${claim.owner.pid}; use a separate data directory for another server`,
+      );
+    }
+    return runMigrations({ db, configDir });
   },
   registerSpecWorkflowComposition: registerProductionSpecWorkflowComposition,
+  initializeGraphWorkflowRuntime: initializeGraphWorkflowRuntimeAtStartup,
   initNotificationDb: initializeNotifications,
   setConfigReader,
   readConfig,
@@ -204,6 +215,7 @@ export function createStartupRegistrar(
     }
 
     deps.registerSpecWorkflowComposition?.();
+    await deps.initializeGraphWorkflowRuntime?.();
 
     try {
       const recovered = await deps.recoverInterruptedConversationSnapshots();

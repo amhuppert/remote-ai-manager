@@ -47,7 +47,6 @@ import {
   mutateActiveGraphWorkflowExecution,
   reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
-  markGraphWorkflowContextEventsPreReset,
   getGraphWorkflowPendingArtifacts,
   clearGraphWorkflowPendingArtifacts,
 } from "@/lib/state-store";
@@ -471,7 +470,7 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   mutateActiveGraphWorkflowExecution,
   reserveActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
-  markGraphWorkflowContextEventsPreReset,
+
   getGraphWorkflowPendingArtifacts,
   clearGraphWorkflowPendingArtifacts,
   eventPublisher,

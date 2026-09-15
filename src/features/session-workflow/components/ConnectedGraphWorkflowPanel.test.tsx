@@ -2684,6 +2684,10 @@ describe("ConnectedGraphWorkflowPanel context approvals", () => {
           return jsonResponse({
             kind: "whole_tree",
             contextId: "context-plan",
+            snapshot: {
+              treeHash: "whole-tree",
+              diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+            },
           });
         }
         if (url.includes("/validation/commands")) {

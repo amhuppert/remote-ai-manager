@@ -510,8 +510,7 @@ describe("createApprovalGateService.recordDecision", () => {
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher: createGraphWorkflowExecutionEventPublisher({
         broadcast: () => {},
         dispatchPush: () => {},

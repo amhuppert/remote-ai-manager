@@ -1,4 +1,5 @@
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { captureContextReviewOrigin } from "./review-origin";
 import type {
   ExecutionMutationDecision,
   ExecutionMutationOutcome,
@@ -160,7 +161,7 @@ function createContextValidatorExecution(
     ],
   });
 
-  return createWorkflowExecution({
+  const execution = createWorkflowExecution({
     status: "running",
     activeContextIds: ["context-plan"],
     workingDefinition: definition,
@@ -202,6 +203,13 @@ function createContextValidatorExecution(
       },
     },
   });
+  captureContextReviewOrigin(
+    execution,
+    "context-plan",
+    "stub-head",
+    "2026-08-04T10:00:00.000Z",
+  );
+  return execution;
 }
 
 function createSignalHalt(
@@ -246,7 +254,7 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -330,7 +338,7 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -394,7 +402,7 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -480,7 +488,7 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -582,7 +590,7 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
-      materializeWorkflowDocuments: async () => {},
+      materializeWorkflowDocuments: async ({ execution }) => execution,
 
       executionContract: createNonParticipatingGraphExecutionContract(),
 

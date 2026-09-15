@@ -6,6 +6,7 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import {
   collectLaneWorktreePaths,
+  captureExecutionLaneDevServerCleanup,
   stopExecutionLaneDevServers,
 } from "./dev-server-lane-cleanup";
 
@@ -17,6 +18,7 @@ function ctx(
   return {
     skipReason: null,
     landingIntent: null,
+    reviewOrigin: null,
     pendingApproval: null,
     pendingUserInputs: {},
     contextId,
@@ -119,11 +121,16 @@ describe("stopExecutionLaneDevServers", () => {
       a: ctx("a", "worktree", "/proj/.worktrees/s.a"),
       c: ctx("c", "worktree", "/proj/.worktrees/s.c"),
     });
-    const stopDevServersForWorktree = vi.fn(async () => {});
+    const stopDevServersForWorktree = vi.fn(
+      async (_input: { projectPath: string; worktreePath: string }) => {},
+    );
 
     await stopExecutionLaneDevServers(
       { execution, projectPath: "/proj" },
-      { stopDevServersForWorktree },
+      {
+        captureStopForWorktree: (input) => () =>
+          stopDevServersForWorktree(input),
+      },
     );
 
     expect(stopDevServersForWorktree).toHaveBeenCalledTimes(2);
@@ -139,11 +146,16 @@ describe("stopExecutionLaneDevServers", () => {
 
   it("does nothing when there are no worktree lanes", async () => {
     const execution = buildExecution({ a: ctx("a", "session", null) });
-    const stopDevServersForWorktree = vi.fn(async () => {});
+    const stopDevServersForWorktree = vi.fn(
+      async (_input: { projectPath: string; worktreePath: string }) => {},
+    );
 
     await stopExecutionLaneDevServers(
       { execution, projectPath: "/proj" },
-      { stopDevServersForWorktree },
+      {
+        captureStopForWorktree: (input) => () =>
+          stopDevServersForWorktree(input),
+      },
     );
 
     expect(stopDevServersForWorktree).not.toHaveBeenCalled();
@@ -163,9 +175,39 @@ describe("stopExecutionLaneDevServers", () => {
     await expect(
       stopExecutionLaneDevServers(
         { execution, projectPath: "/proj" },
-        { stopDevServersForWorktree },
+        {
+          captureStopForWorktree: (input) => () =>
+            stopDevServersForWorktree(input),
+        },
       ),
     ).resolves.toBeUndefined();
     expect(stopDevServersForWorktree).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("captureExecutionLaneDevServerCleanup", () => {
+  it("captures resources before state changes and stops only when the accepted cleanup runs", async () => {
+    const execution = buildExecution({
+      a: ctx("a", "worktree", "/proj/.worktrees/s.a"),
+    });
+    const resources = new Map([["/proj/.worktrees/s.a", { running: true }]]);
+    const original = resources.get("/proj/.worktrees/s.a")!;
+    const cleanup = captureExecutionLaneDevServerCleanup(
+      { execution, projectPath: "/proj", contextIds: ["a"] },
+      {
+        captureStopForWorktree({ worktreePath }) {
+          const resource = resources.get(worktreePath);
+          return async () => {
+            if (resource) resource.running = false;
+          };
+        },
+      },
+    );
+    execution.contextStates.a!.worktreePath = null;
+    resources.set("/proj/.worktrees/s.a", { running: true });
+    expect(original.running).toBe(true);
+    await cleanup();
+    expect(original.running).toBe(false);
+    expect(resources.get("/proj/.worktrees/s.a")?.running).toBe(true);
   });
 });

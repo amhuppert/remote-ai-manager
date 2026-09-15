@@ -16,9 +16,9 @@ import {
 import {
   isUpstreamVisibleToLane,
   landGatedPublishSettlement,
-  reachableLanesFrom,
+  lanesCarryingContributions,
 } from "./lane-readiness";
-import { executionLaneIdFor } from "./lane-identity";
+import { executionLaneIdFor, SESSION_LANE_ID } from "./lane-identity";
 import { joinLeavesOpenLoop, openLoopLanes } from "./lane-lifecycle";
 import type { RoutePublishSettlement } from "./route-projection";
 import { findValidationCertificationDebt } from "./validation-certification";
@@ -158,9 +158,8 @@ export function planContextJoin(
     const upstream = execution.contextStates[upstreamId];
     if (!upstream || upstream.laneId === null) continue;
     if (targetExists) {
-      // Reachable-lane intersection is a VISIBILITY predicate now, never a
-      // placement chooser: it says whether this source's work already sits in
-      // the target's history, and nothing about where the downstream runs.
+      // Placement chooses the destination; membership answers whether it
+      // already carries this particular input.
       if (upstream.laneId === authoredTargetLaneId) continue;
       if (
         isUpstreamVisibleToLane(upstreamId, authoredTargetLaneId, execution)
@@ -175,21 +174,11 @@ export function planContextJoin(
   const laneIdsArray = [...sourceLaneIds];
   if (!targetExists) {
     // No lane to merge into: a single source is the fork base, so nothing is
-    // owed. Several sources converge only if no succeeded join already gives
-    // them a common reachable target for the fork to branch from.
+    // owed. Several sources converge only if no lane already carries all
+    // their required contributions for the fork to branch from.
     if (laneIdsArray.length < 2) return null;
-    const [first, ...rest] = laneIdsArray;
-    if (!first) return null;
-    const firstReachable = reachableLanesFrom(first, execution);
-    for (const candidate of firstReachable) {
-      if (
-        rest.every((laneId) =>
-          reachableLanesFrom(laneId, execution).has(candidate),
-        )
-      ) {
-        return null;
-      }
-    }
+    if (lanesCarryingContributions(upstreamIds, execution).length > 0)
+      return null;
   }
 
   const targetLaneId = pickJoinTarget(
@@ -382,29 +371,29 @@ export function findBusyJoinSourceLaneIds(
   return busyLaneIds;
 }
 
-/**
- * Plan the final publish join over the *terminal* unpublished worktree lanes.
- *
- * A non-session lane is **terminal** when no succeeded context_merge join has
- * consumed it as a source into a different target lane. Once `lane-b -> lane-a`
- * succeeds, lane-b's output already lives on lane-a, so the final publish
- * publishes only lane-a — re-merging lane-b would replay already-consumed work.
- *
- * A terminal lane is **unpublished** when it does not reach the session lane
- * via a succeeded prior join (final or context).
- *
- * Returns null when nothing terminal remains to publish, and refuses to plan
- * at all while any context still has unfinished tasks or required validation
- * certification debt: the final publish is the delivery point, so publishing
- * around outstanding work would deliver a candidate that structurally excludes
- * or has not certified it (ticket #28 / F25, ticket #8). A stuck context then
- * surfaces through the loop's completion invariant as a halt instead of an
- * incomplete delivery.
- *
- * Both refusals read the SAME land-gated publish settlement, derived once here
- * (D4 R4.1/R2.5, decision D1), so what the publish waits on and what it
- * excludes cannot disagree.
- */
+/** Completed contributions still absent from the session's confirmed contents. */
+export function unpublishedContributions(
+  execution: GraphWorkflowExecution,
+  sessionLaneId = SESSION_LANE_ID,
+): string[] {
+  const published = new Set(
+    execution.executionLanes[sessionLaneId]?.includedContextIds ?? [],
+  );
+  return landGatedPublishSettlement(execution).contributingContextIds.filter(
+    (contextId) => {
+      if (published.has(contextId)) return false;
+      const state = execution.contextStates[contextId];
+      if (!state) return false;
+      if (state.laneId !== null)
+        return execution.executionLanes[state.laneId]?.kind !== "session";
+      return (
+        state.isolation !== "session" && state.mergeStatus !== "merged-success"
+      );
+    },
+  );
+}
+
+/** Plan deterministic carriers of unpublished work, subject to quiescence gates. */
 export function planFinalPublishJoin(
   input: PlanFinalPublishJoinInput,
 ): GraphWorkflowExecutionJoinState | null {
@@ -416,15 +405,8 @@ export function planFinalPublishJoin(
   }
   if (findValidationCertificationDebt(execution).length > 0) return null;
 
-  const consumedLaneIds = new Set<string>();
-  for (const join of Object.values(execution.joins ?? {})) {
-    if (join.status !== "succeeded") continue;
-    if (join.kind !== "context_merge") continue;
-    for (const sourceLaneId of join.sourceLaneIds) {
-      if (sourceLaneId === join.targetLaneId) continue;
-      consumedLaneIds.add(sourceLaneId);
-    }
-  }
+  const remaining = new Set(unpublishedContributions(execution, sessionLaneId));
+  if (remaining.size === 0) return null;
 
   // An interrupted parallel wave reset to `ready` still occupies its forked
   // lane; publishing it would land half-finished work and let the loop
@@ -442,20 +424,29 @@ export function planFinalPublishJoin(
   // publish always leaves every loop, so a loop-open lane is never publishable.
   const loopOpen = openLoopLanes(execution).all;
 
+  const candidates = Object.values(execution.executionLanes).filter(
+    (lane) =>
+      lane.laneId !== sessionLaneId &&
+      lane.kind !== "session" &&
+      lane.worktreePath !== null &&
+      !lanesWithIncompleteWork.has(lane.laneId) &&
+      !loopOpen.has(lane.laneId),
+  );
   const unpublishedSources: string[] = [];
-  for (const lane of Object.values(execution.executionLanes)) {
-    if (lane.laneId === sessionLaneId) continue;
-    if (lane.kind === "session") continue;
-    if (consumedLaneIds.has(lane.laneId)) continue;
-    if (lanesWithIncompleteWork.has(lane.laneId)) continue;
-    if (loopOpen.has(lane.laneId)) continue;
-    const reachable = reachableLanesFrom(lane.laneId, execution);
-    if (reachable.has(sessionLaneId)) continue;
-    unpublishedSources.push(lane.laneId);
+  while (remaining.size > 0) {
+    candidates.sort(
+      (left, right) =>
+        right.includedContextIds.filter((id) => remaining.has(id)).length -
+          left.includedContextIds.filter((id) => remaining.has(id)).length ||
+        left.laneId.localeCompare(right.laneId),
+    );
+    const carrier = candidates.shift();
+    if (!carrier || !carrier.includedContextIds.some((id) => remaining.has(id)))
+      return null;
+    unpublishedSources.push(carrier.laneId);
+    for (const id of carrier.includedContextIds) remaining.delete(id);
   }
-  if (unpublishedSources.length === 0) return null;
 
-  unpublishedSources.sort();
   const timestamp = now();
   return {
     joinId: generateJoinId(),
@@ -565,6 +556,7 @@ export function resolveLaneConversationId(
   }
 
   for (const contextId of candidateContextIds) {
+    if (execution.contextStates[contextId]?.laneId !== laneId) continue;
     const conversationId = resolveContextConversationId(execution, contextId);
     if (conversationId !== null) return conversationId;
   }

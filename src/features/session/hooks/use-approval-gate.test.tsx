@@ -445,13 +445,20 @@ describe("useApprovalGate", () => {
     const calls = stubFetch({
       kind: "whole_tree",
       contextId: GATED_CONTEXT_ID,
+      snapshot: {
+        treeHash: "whole-tree",
+        diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+      },
     });
     const { result } = renderGateHook({ execution: gatedExecution() });
 
     await waitFor(() => {
       expect(result.current?.scopedChanges).toEqual({
         status: "ready",
-        candidate: { scope: "whole_tree" },
+        candidate: {
+          scope: "whole_tree",
+          diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
+        },
       });
     });
     expect(calls.some((c) => c.url.includes("/approval-snapshot"))).toBe(true);

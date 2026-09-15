@@ -381,8 +381,7 @@ describe("R13.3 — expansion decisions replay from durable records", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         eventPublisher,
       });
 
@@ -527,8 +526,7 @@ describe("R13.3 — loop decisions replay from durable records", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         eventPublisher,
       });
 

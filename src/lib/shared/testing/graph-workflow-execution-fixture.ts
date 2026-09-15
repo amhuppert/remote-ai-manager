@@ -1244,6 +1244,12 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         // A D4 landing intent recorded at dispatch and settled by an adopted
         // self-authored commit, which is the mode that carries BOTH ends of the
         // SHA range — the field a shallow round-trip would most easily drop.
+        reviewOrigin: {
+          laneId: "lane-1",
+          baselineSha: "1111111111111111111111111111111111111111",
+          candidateScope: { mode: "owned", ownedPaths: ["src/feature.ts"] },
+          capturedAt: "2026-01-01T00:01:00Z",
+        },
         landingIntent: {
           mode: "lane_commit",
           attempt: 2,
@@ -1458,6 +1464,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
     sharedDocuments: [
       {
         id: "doc-1",
+        contentHash: "a".repeat(64),
         relativePath: "docs/plan.md",
         description: "the shared plan",
         readWhen: "before implementing",
@@ -1468,6 +1475,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
       },
       {
         id: "doc-2",
+        contentHash: "b".repeat(64),
         relativePath: ".cc/graph-workflow-docs/notes.md",
         description: "lane-authored notes",
         readWhen: "before the join",

@@ -22,6 +22,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 export interface GraphWorkflowLoopFence {
@@ -43,29 +44,37 @@ export function loopFenceAppliesTo(
   return fence.projectPath === projectPath && fence.sessionName === sessionName;
 }
 
-export class StaleLoopFenceError extends Error {
-  readonly fence: GraphWorkflowLoopFence;
-  readonly actualExecutionId: string | null;
-  readonly actualLoopEpoch: number | null;
+export const StaleLoopFenceError = getGlobalSingleton(
+  "__cc_graph_workflow_StaleLoopFenceError",
+  () =>
+    class StaleLoopFenceError extends Error {
+      readonly fence: GraphWorkflowLoopFence;
+      readonly actualExecutionId: string | null;
+      readonly actualLoopEpoch: number | null;
 
-  constructor(
-    fence: GraphWorkflowLoopFence,
-    actual: Pick<GraphWorkflowExecution, "id" | "loopEpoch"> | null,
-  ) {
-    const observed = actual
-      ? `execution "${actual.id}" at loop epoch ${actual.loopEpoch}`
-      : "no active execution";
-    super(
-      `Stale loop generation: loop is fenced to execution "${fence.executionId}" at loop epoch ${fence.loopEpoch}, but the session's active state is ${observed}. This loop instance has been superseded and must exit without writing.`,
-    );
-    this.name = "StaleLoopFenceError";
-    this.fence = fence;
-    this.actualExecutionId = actual?.id ?? null;
-    this.actualLoopEpoch = actual?.loopEpoch ?? null;
-  }
-}
+      constructor(
+        fence: GraphWorkflowLoopFence,
+        actual: Pick<GraphWorkflowExecution, "id" | "loopEpoch"> | null,
+      ) {
+        const observed = actual
+          ? `execution "${actual.id}" at loop epoch ${actual.loopEpoch}`
+          : "no active execution";
+        super(
+          `Stale loop generation: loop is fenced to execution "${fence.executionId}" at loop epoch ${fence.loopEpoch}, but the session's active state is ${observed}. This loop instance has been superseded and must exit without writing.`,
+        );
+        this.name = "StaleLoopFenceError";
+        this.fence = fence;
+        this.actualExecutionId = actual?.id ?? null;
+        this.actualLoopEpoch = actual?.loopEpoch ?? null;
+      }
+    },
+);
+export type StaleLoopFenceError = InstanceType<typeof StaleLoopFenceError>;
 
-const fenceStorage = new AsyncLocalStorage<GraphWorkflowLoopFence>();
+const fenceStorage = getGlobalSingleton(
+  "__cc_graph_workflow_loop_fence_storage",
+  () => new AsyncLocalStorage<GraphWorkflowLoopFence>(),
+);
 
 /** Run `fn` with `fence` as the ambient loop generation. */
 export function runWithLoopFence<T>(

@@ -1,4 +1,6 @@
 import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
+import { captureContextReviewOrigin } from "./review-origin";
+import type { ContextPlacement } from "./definition-schemas";
 import type {
   ExecutionMutationDecision as FixtureDecision,
   ExecutionMutationOutcome as FixtureOutcome,
@@ -81,7 +83,7 @@ function createRepository(initial: GraphWorkflowExecution) {
  * round rather than about implementer turns.
  */
 function createCohortExecution(
-  options: { scriptValidator?: boolean } = {},
+  options: { scriptValidator?: boolean; placement?: ContextPlacement } = {},
 ): GraphWorkflowExecution {
   const base = createResolvedWorkflowDefinition();
   const definition = createResolvedWorkflowDefinition({
@@ -89,6 +91,7 @@ function createCohortExecution(
       context.id === "context-plan"
         ? {
             ...context,
+            placement: options.placement ?? context.placement,
             contextValidator: {
               enabled: true,
               assignments: [
@@ -109,6 +112,7 @@ function createCohortExecution(
     activeContextIds: ["context-plan"],
     workingDefinition: definition,
   });
+  captureContextReviewOrigin(execution, "context-plan", "head-1", NOW);
   execution.contextStates["context-plan"] = {
     ...execution.contextStates["context-plan"]!,
     status: "running",
@@ -205,7 +209,7 @@ function createHarness(params: {
 
   const orchestrator = createContextIterationFixture({
     ...createContextTestCapabilities(),
-    materializeWorkflowDocuments: async () => {},
+    materializeWorkflowDocuments: async ({ execution }) => execution,
 
     executionContract: createNonParticipatingGraphExecutionContract(),
 
@@ -331,16 +335,13 @@ describe("validation round: freeze at round start", () => {
     // has to ask for that subset — at the freeze and at every re-probe alike. A
     // whole-tree probe here would put a sibling's writes inside this context's
     // identity and its round could never hold.
-    const execution = createCohortExecution();
-    const planContext = execution.workingDefinition.executionContexts.find(
-      (entry) => entry.id === "context-plan",
-    );
-    if (!planContext) throw new Error("context-plan fixture missing");
-    planContext.placement = {
-      lane: "impl",
-      mode: "owned",
-      ownedPaths: ["src/a", "docs/a.md"],
-    };
+    const execution = createCohortExecution({
+      placement: {
+        lane: "impl",
+        mode: "owned",
+        ownedPaths: ["src/a", "docs/a.md"],
+      },
+    });
 
     const harness = createHarness({
       execution,

@@ -55,6 +55,15 @@ function parkedExecution(
   contextState.status = opts.status ?? "awaiting_approval";
   contextState.worktreePath =
     opts.worktreePath === undefined ? LANE_WORKTREE : opts.worktreePath;
+  contextState.reviewOrigin = {
+    laneId: contextState.laneId,
+    baselineSha: "review-base-sha",
+    candidateScope:
+      ownedPaths === null || ownedPaths === undefined
+        ? { mode: "wholeTree" }
+        : { mode: "owned", ownedPaths },
+    capturedAt: "2026-08-08T08:00:00.000Z",
+  };
   contextState.pendingApproval = {
     conversationId: "conv-1",
     requestedAt: "2026-08-08T09:00:00.000Z",
@@ -63,7 +72,11 @@ function parkedExecution(
       : null,
     approvalScope:
       ownedPaths === null || ownedPaths === undefined
-        ? { kind: "whole_tree" }
+        ? {
+            kind: "whole_tree",
+            treeHash: FROZEN_TREE_HASH,
+            headSha: "base-sha",
+          }
         : {
             kind: "scoped",
             ownedPaths,
@@ -79,7 +92,12 @@ function scopeReader(scope: ValidationDiffScope) {
   return {
     seen,
     deps: {
-      async computeDiffScope(worktreePath: string, candidateScope: unknown) {
+      async computeDiffScope(
+        worktreePath: string,
+        candidateScope: unknown,
+        baselineSha: string,
+      ) {
+        expect(baselineSha).toBe("review-base-sha");
         seen.push({ worktreePath, scope: candidateScope });
         return scope;
       },
@@ -225,11 +243,11 @@ describe("resolveApprovalSnapshot", () => {
     });
   });
 
-  it("leaves a full-access member on the whole-tree approval view", async () => {
+  it("renders a full-access member’s frozen whole-tree change set", async () => {
     const reader = scopeReader({
       kind: "available",
       candidateScope: { mode: "wholeTree" },
-      treeHash: "tree",
+      treeHash: FROZEN_TREE_HASH,
       diff: OWNED_DIFF,
       fileCount: 1,
       totalAdditions: 2,
@@ -245,9 +263,14 @@ describe("resolveApprovalSnapshot", () => {
       reader.deps,
     );
 
-    expect(resolution).toEqual({ kind: "whole_tree", contextId: CONTEXT_ID });
-    // Nothing is read: the whole-tree view is the one the session already has.
-    expect(reader.seen).toEqual([]);
+    expect(resolution).toEqual({
+      kind: "whole_tree",
+      contextId: CONTEXT_ID,
+      snapshot: { treeHash: FROZEN_TREE_HASH, diff: OWNED_DIFF },
+    });
+    expect(reader.seen).toEqual([
+      { worktreePath: LANE_WORKTREE, scope: { mode: "wholeTree" } },
+    ]);
   });
 
   it("falls back to the session worktree for an enveloped context with no lane worktree recorded", async () => {
@@ -314,6 +337,10 @@ describe("resolveApprovalSnapshot", () => {
     );
     if (!context) throw new Error("fixture context missing");
     context.placement = { lane: "session", mode: "readOnly" };
+    execution.contextStates[CONTEXT_ID]!.reviewOrigin!.candidateScope = {
+      mode: "owned",
+      ownedPaths: [],
+    };
     const pending = execution.contextStates[CONTEXT_ID]?.pendingApproval;
     if (!pending) throw new Error("fixture missing pending approval");
     pending.approvalScope = {

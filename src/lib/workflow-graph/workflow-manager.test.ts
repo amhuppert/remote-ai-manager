@@ -89,6 +89,8 @@ import {
 function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   return createProductionGraphWorkflowManager({
     assertSessionBranchReady: async () => {},
+    captureExecutionLaneDevServerCleanup: (input) => () =>
+      deps.stopExecutionLaneDevServers(input),
     ...deps,
   });
 }
@@ -315,7 +317,7 @@ describe("graph workflow manager", () => {
         requestedAt: "2026-07-18T10:00:00.000Z",
         approvedAt: null,
       },
-      machineSnapshot: null,
+      machineSnapshot: { lifecycleStatus: "pending", hasLiveIteration: false },
     });
 
     // Two humans approve at once. The RESERVATION is where that race is
@@ -466,8 +468,7 @@ describe("graph workflow manager", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         eventPublisher,
         charterService,
         readConfig: async () => ({}) as GlobalConfig,
@@ -670,8 +671,7 @@ describe("graph workflow manager", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         eventPublisher,
         charterService,
         readConfig: async () => ({}) as GlobalConfig,
@@ -896,8 +896,7 @@ describe("graph workflow manager", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         eventPublisher,
         charterService,
         readConfig: async () => repositoryGlobalConfig,
@@ -1726,8 +1725,7 @@ describe("graph workflow manager", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         eventPublisher,
         charterService: createWorkflowCharterService({
           writeFile: async () => {},
@@ -1841,7 +1839,15 @@ describe("graph workflow manager", () => {
         writeFile,
         ensureDir: async () => {},
         store: {
-          async captureFromWorktree() {},
+          async captureFromWorktree() {
+            return { contentHash: "a".repeat(64) };
+          },
+          async captureContent() {
+            return { contentHash: "a".repeat(64) };
+          },
+          async migrateLegacyDocument() {
+            return null;
+          },
           async read() {
             return null;
           },
@@ -1859,8 +1865,7 @@ describe("graph workflow manager", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         getGraphWorkflowPendingArtifacts:
           fixture.store.getGraphWorkflowPendingArtifacts,
         clearGraphWorkflowPendingArtifacts:
@@ -2096,7 +2101,15 @@ describe("graph workflow manager", () => {
         writeFile,
         ensureDir: async () => {},
         store: {
-          async captureFromWorktree() {},
+          async captureFromWorktree() {
+            return { contentHash: "a".repeat(64) };
+          },
+          async captureContent() {
+            return { contentHash: "a".repeat(64) };
+          },
+          async migrateLegacyDocument() {
+            return null;
+          },
           async read() {
             return null;
           },
@@ -2113,8 +2126,7 @@ describe("graph workflow manager", () => {
           fixture.store.reserveActiveGraphWorkflowExecution,
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         getGraphWorkflowPendingArtifacts:
           fixture.store.getGraphWorkflowPendingArtifacts,
         clearGraphWorkflowPendingArtifacts:
@@ -2863,8 +2875,7 @@ describe("graph workflow manager", () => {
         },
         archiveActiveGraphWorkflowExecution:
           fixture.store.archiveActiveGraphWorkflowExecution,
-        markGraphWorkflowContextEventsPreReset:
-          fixture.store.markGraphWorkflowContextEventsPreReset,
+
         getGraphWorkflowPendingArtifacts:
           fixture.store.getGraphWorkflowPendingArtifacts,
         clearGraphWorkflowPendingArtifacts:
@@ -4798,7 +4809,7 @@ describe("graph workflow manager", () => {
     },
   );
 
-  it("skips normalization when the execution loop is actively running", async () => {
+  it("recovers persisted live iteration state before startup opens admission", async () => {
     const repository = createRepository(
       createWorkflowExecution({
         status: "running",
@@ -4864,23 +4875,19 @@ describe("graph workflow manager", () => {
       async loadDefinition() {
         return null;
       },
-      isExecutionLoopActive() {
-        return true;
-      },
     });
 
     const result = await manager.normalizeAfterRestart("/repo", "session-1");
 
-    // Should return the execution unchanged — not paused
     expect(result).not.toBeNull();
-    expect(result?.status).toBe("running");
-    expect(result?.taskStates["task-plan-1"]?.status).toBe("running");
+    expect(result?.status).toBe("paused");
+    expect(result?.taskStates["task-plan-1"]?.status).toBe("interrupted");
     expect(result?.machineSnapshot).toEqual({
       schemaVersion: 1,
-      lifecycleStatus: "running",
+      lifecycleStatus: "paused",
       activeContextId: "context-plan",
-      recoveryMode: "none",
-      hasLiveIteration: true,
+      recoveryMode: "restart_normalized",
+      hasLiveIteration: false,
     });
   });
 
@@ -4949,9 +4956,6 @@ describe("graph workflow manager", () => {
       executionRepository: repository,
       async loadDefinition() {
         return null;
-      },
-      isExecutionLoopActive() {
-        return false;
       },
     });
 
@@ -5044,9 +5048,6 @@ describe("graph workflow manager", () => {
       executionRepository: repository,
       async loadDefinition() {
         return null;
-      },
-      isExecutionLoopActive() {
-        return false;
       },
     });
 
@@ -5151,9 +5152,6 @@ describe("graph workflow manager", () => {
         async loadDefinition() {
           return null;
         },
-        isExecutionLoopActive() {
-          return false;
-        },
         landingEvidenceProber: {
           async probe(targets) {
             probed.push(...targets.map((target) => target.contextId));
@@ -5195,9 +5193,6 @@ describe("graph workflow manager", () => {
         executionRepository: crashedLaneRepository(),
         async loadDefinition() {
           return null;
-        },
-        isExecutionLoopActive() {
-          return false;
         },
         landingEvidenceProber: {
           async probe() {
@@ -5292,9 +5287,6 @@ describe("graph workflow manager", () => {
       executionRepository: repository,
       async loadDefinition() {
         return null;
-      },
-      isExecutionLoopActive() {
-        return false;
       },
       now() {
         return "2026-04-02T08:08:08.000Z";
@@ -9868,8 +9860,7 @@ describe("abandon — the explicit, audited end of a resumable halt's tenure", (
         fixture.store.reserveActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
         fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
+
       eventPublisher,
       charterService,
       readConfig: async () => ({}) as GlobalConfig,
