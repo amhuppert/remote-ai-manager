@@ -343,8 +343,7 @@ export function renderDiffScopeSection(
     const fits =
       usedBytes + patchBytes <= byteBudget &&
       usedLines + patchLines <= HARD_MAX_PATCH_LINES;
-    // Always include the first file so a real change never renders hunk-less.
-    if (includedPatches.length === 0 || fits) {
+    if (fits) {
       includedPatches.push(patch);
       usedBytes += patchBytes;
       usedLines += patchLines;

@@ -39,6 +39,8 @@ import {
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import { appendFailureHistory } from "@/lib/workflow-graph/context-accounting";
 import { createContextIterationFixture } from "./testing/iteration-fixture";
+import { createWorkflowDocumentMaterializer } from "./document-materialization";
+import { createSharedDocumentStore } from "./shared-document-store";
 import { type GraphWorkflowRunAgentIterationInput } from "./iteration-orchestrator";
 
 import {
@@ -806,17 +808,60 @@ describe("graph workflow iteration orchestrator", () => {
     ]);
   });
 
-  it("does not materialize documents for a session-isolation lane", async () => {
-    const repository = createRepository(
-      createExecutionWithPlanTasks({
-        "task-plan-1": "pending",
-        "task-plan-2": "pending",
-      }),
-    );
+  it("delivers a forked lane's shared document before a session-isolation agent runs", async () => {
+    const relativePath = ".cc/graph-workflow-docs/plan.md";
+    const sessionWorktree = "/repo/.worktrees/session-1";
+    const files = new Map([
+      [`/forked-lane/${relativePath}`, "Plan published from the forked lane"],
+    ]);
+    const writeFile = async (absolutePath: string, contents: string) => {
+      files.set(absolutePath, contents);
+    };
+    const ensureDir = async () => {};
+    const store = createSharedDocumentStore({
+      resolveConfigDir: () => "/config",
+      async readFile(absolutePath) {
+        const contents = files.get(absolutePath);
+        if (contents === undefined) throw new Error(`Missing ${absolutePath}`);
+        return contents;
+      },
+      writeFile,
+      ensureDir,
+      fileExists: (absolutePath) => files.has(absolutePath),
+    });
+    await store.captureFromWorktree({
+      executionId: "execution-1",
+      worktreePath: "/forked-lane",
+      relativePath,
+    });
+    const materializer = createWorkflowDocumentMaterializer({
+      store,
+      writeFile,
+      ensureDir,
+    });
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    execution.sharedDocuments = [
+      {
+        id: "lane-plan",
+        relativePath,
+        kind: "shared",
+        description: "Published implementation plan",
+        readWhen: "Before the next context",
+        createdAt: "2026-03-27T16:00:00.000Z",
+        updatedAt: "2026-03-27T16:00:00.000Z",
+        lastUpdatedByConversationId: "forked-conversation",
+      },
+    ];
+    const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
     const bindTaskCompletion = vi.fn();
-    const materializeWorkflowDocuments = vi.fn(async () => {});
     const runAgentIteration = vi.fn(async () => {
+      expect(files.get(`${sessionWorktree}/${relativePath}`)).toBe(
+        "Plan published from the forked lane",
+      );
       const current = structuredClone(repository.read());
       current.taskStates["task-plan-1"] = {
         ...current.taskStates["task-plan-1"]!,
@@ -850,7 +895,9 @@ describe("graph workflow iteration orchestrator", () => {
       createConversation,
       bindTaskCompletion,
       runAgentIteration,
-      materializeWorkflowDocuments,
+      materializeWorkflowDocuments: async (input) => {
+        await materializer.materialize(input);
+      },
       now() {
         return "2026-03-27T16:00:00.000Z";
       },
@@ -862,14 +909,14 @@ describe("graph workflow iteration orchestrator", () => {
       sessionName: "session-1",
       contextId: "context-plan",
       executionTarget: {
-        worktreePath: "/repo/.worktrees/session-1",
+        worktreePath: sessionWorktree,
         branchName: "csm/session-1",
         isolation: "session",
         laneId: null,
       },
     });
 
-    expect(materializeWorkflowDocuments).not.toHaveBeenCalled();
+    expect(runAgentIteration).toHaveBeenCalled();
   });
 
   it("handles interrupted tasks by presenting them first", async () => {

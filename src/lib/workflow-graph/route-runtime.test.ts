@@ -699,6 +699,57 @@ describe("settleRoutes — route settlements (decision D4)", () => {
 });
 
 describe("settleRoutes — typed resumable halts", () => {
+  it.each([
+    { policy: "atLeastOne", status: "pending" },
+    { policy: "exactlyOne", status: "pending" },
+    { policy: "atLeastOne", status: "skipped" },
+    { policy: "exactlyOne", status: "skipped" },
+  ] as const)(
+    "settles a declined $status router without enforcing $policy cardinality",
+    ({ policy, status }) => {
+      const definition = classifierDefinition([
+        {},
+        {},
+        {
+          when: {
+            schema: {
+              ...VERDICT_SCHEMA,
+              properties: { verdict: { const: "fix" } },
+            },
+          },
+        },
+      ]);
+      const execution = classifierExecution({
+        verdict: "ship",
+        definition: {
+          ...definition,
+          executionContexts: definition.executionContexts.map((context) =>
+            context.id === "fix"
+              ? {
+                  ...context,
+                  outputSchema: VERDICT_SCHEMA,
+                  routing: { cardinality: policy },
+                }
+              : context,
+          ),
+        },
+        contextStates: {
+          classify: landedSource("classify"),
+          fix: contextState("fix", { status }),
+          ship: landedSource("ship"),
+          report: contextState("report"),
+        },
+      });
+
+      const outcome = settleRoutes(execution, { now: NOW });
+
+      expect(outcome.halt).toBeNull();
+      expect(execution.contextStates.fix?.status).toBe("skipped");
+      expect(execution.contextStates.report?.status).toBe("skipped");
+      expect(projectExecutionRoutes(execution).publish.settled).toBe(true);
+    },
+  );
+
   it("halts on a completed conditional source with no readable output (R2.4)", () => {
     const execution = classifierExecution({ classifyStatus: "completed" });
     const outcome = settleRoutes(execution, { now: NOW });

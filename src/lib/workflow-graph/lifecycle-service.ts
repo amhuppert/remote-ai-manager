@@ -386,7 +386,27 @@ export function createGraphWorkflowLifecycleService(
       // An operator-initiated abort carries its reason here: `aborted`
       // auto-releases, so this IS the release that ends the run's ownership,
       // and the reason belongs on its durable audit row rather than nowhere.
-      await deps.archiveExecution(projectPath, sessionName, audit);
+      const outcome = await deps.archiveExecution(
+        projectPath,
+        sessionName,
+        audit,
+        (execution) =>
+          execution.id === active.id &&
+          !holdsExecutionLease(
+            execution.status,
+            execution.haltReason,
+            execution.abandonment,
+          ),
+      );
+      if (!outcome.archived) {
+        logger.info("graph-workflow.execution.auto_release_skipped", {
+          projectPath,
+          sessionName,
+          executionId: active.id,
+          reason: outcome.reason,
+        });
+        return;
+      }
       logger.info("graph-workflow.execution.archived", {
         projectPath,
         sessionName,

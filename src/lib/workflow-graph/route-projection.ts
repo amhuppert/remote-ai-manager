@@ -514,6 +514,7 @@ export function projectRoutes<
   function computeCardinality(): RouteCardinalityOutcome[] {
     const outcomes: RouteCardinalityOutcome[] = [];
     for (const contextId of contextIds) {
+      if (settlementOf(contextId) === "skipped") continue;
       const conditional = (outgoing.get(contextId) ?? []).filter(
         (edge) => guardKind(edge) !== "none",
       );

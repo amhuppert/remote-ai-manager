@@ -264,9 +264,9 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   ) => CircuitBreakerGateResult;
   /**
    * Copies the execution's charter + shared documents into a
-   * lane worktree before the agent runs. Invoked only for worktree-isolation
-   * lanes (which fork from the committed session branch and therefore lack any
-   * uncommitted alignment docs). Best-effort: a failure warns and continues,
+   * execution target before the agent runs. Shared documents can be published
+   * from any lane and are distributed through the central store.
+   * Best-effort: a failure warns and continues,
    * since the charter digest is also inlined into the prompt.
    */
   materializeWorkflowDocuments(input: {
@@ -1077,11 +1077,9 @@ export function createGraphWorkflowIterationOrchestrator(
     const context = getContextDefinition(initialExecution, input.contextId);
     const execLogger = getExecutionLogger(initialExecution.id);
 
-    // Lane worktrees fork from the committed session branch, so charter +
-    // shared documents (often uncommitted) are absent until materialized.
-    // Session-lane contexts run in the session worktree where these files
-    // already live, so they are skipped to avoid dirtying it.
-    if (input.executionTarget?.isolation === "worktree") {
+    // Shared documents may have been published by another lane; the central
+    // store carries those uncommitted files to every execution target.
+    if (input.executionTarget) {
       try {
         await deps.materializeWorkflowDocuments({
           execution: initialExecution,

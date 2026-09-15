@@ -455,6 +455,35 @@ describe("lifecycle contract: production slot auto-release", () => {
     expect(archived.map((entry) => entry.id)).toEqual(["execution-live"]);
   });
 
+  it("preserves a successor admitted while the aborted run's cleanup is pending", async () => {
+    const successor = runningExecution({ id: "execution-successor" });
+    const stack = buildStack({
+      stopExecutionLaneDevServers: async () => {
+        await stack.repository.archiveActive(PROJECT_PATH, SESSION_NAME);
+        await seedActive(successor);
+      },
+    });
+    await seedActive(runningExecution());
+
+    const result = await stack.handlers.abort({
+      projectPath: PROJECT_PATH,
+      projectName: PROJECT_NAME,
+      sessionName: SESSION_NAME,
+    });
+
+    expect(result).toMatchObject({
+      kind: "accepted",
+      value: { id: "execution-live", status: "aborted" },
+    });
+    expect(await readActive()).toEqual(successor);
+    expect(
+      await fixture.store.listArchivedGraphWorkflowExecutions(
+        PROJECT_PATH,
+        SESSION_NAME,
+      ),
+    ).toMatchObject([{ id: "execution-live", status: "aborted" }]);
+  });
+
   it("delivery cleanup awaits notification and leaves the aborted row for its owner", async () => {
     const { handlers } = buildStack({
       executionAborted: async () => {

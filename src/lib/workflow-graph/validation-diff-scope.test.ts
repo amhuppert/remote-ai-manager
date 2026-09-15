@@ -186,6 +186,40 @@ describe("computeValidationDiffScope", () => {
 });
 
 describe("renderDiffScopeSection", () => {
+  it.each([
+    { name: "byte ceiling", lines: ["x".repeat(24_001)], budget: {} },
+    {
+      name: "line ceiling",
+      lines: Array.from({ length: 601 }, (_, index) => `line ${index}`),
+      budget: {},
+    },
+    {
+      name: "context window budget",
+      lines: ["const result = computeResult();"],
+      budget: { contextLimitTokens: 10 },
+    },
+  ])("omits an oversized first patch at the $name", ({ lines, budget }) => {
+    const scope: ValidationDiffScope = {
+      kind: "available",
+      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
+      treeHash: "tree-1",
+      diff: sessionDiff([fileDiff("src/oversized.ts", lines)]),
+      fileCount: 1,
+      totalAdditions: lines.length,
+      totalDeletions: 0,
+    };
+
+    const rendered = renderDiffScopeSection(scope, budget);
+
+    expect(rendered.truncated).toBe(true);
+    expect(rendered.includedFileCount).toBe(0);
+    expect(rendered.omittedFileCount).toBe(1);
+    expect(rendered.section).not.toContain("```diff");
+    expect(rendered.section).toContain("src/oversized.ts");
+    expect(rendered.section).toContain("read them directly in the worktree");
+    expect(Buffer.byteLength(rendered.section, "utf8")).toBeLessThan(2_000);
+  });
+
   it("renders the diffstat, instructions, and a fenced patch for an available scope", () => {
     const scope: ValidationDiffScope = {
       kind: "available",
@@ -233,8 +267,10 @@ describe("renderDiffScopeSection", () => {
       totalDeletions: 0,
     };
 
-    // Tiny budget: floor(10 * 4 * 0.25) = 10 bytes — forces truncation after file 1.
-    const rendered = renderDiffScopeSection(scope, { contextLimitTokens: 10 });
+    // The 3,000-byte budget holds one patch and omits the remaining two.
+    const rendered = renderDiffScopeSection(scope, {
+      contextLimitTokens: 3_000,
+    });
 
     expect(rendered.truncated).toBe(true);
     expect(rendered.includedFileCount).toBe(1);

@@ -13,8 +13,8 @@ const logger = createLogger("graph-workflow-document-materialization");
  * worktree so the agent running there can read them regardless of commit
  * state. Charter content is rendered from the execution's immutable charter
  * snapshot; shared-document content is pulled from the central
- * {@link SharedDocumentStore}. Call this before an agent iteration that runs
- * in a forked worktree lane.
+ * {@link SharedDocumentStore}. Call this before an agent iteration in any
+ * execution target, including the session worktree.
  *
  * The store holds the latest *registered* version of each shared document and
  * is the source of truth: re-materializing overwrites the worktree copy. An
