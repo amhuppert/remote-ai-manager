@@ -1756,7 +1756,7 @@ describe("CodexConversationRuntime", () => {
   // --------------------------------------------------------
 
   describe("sendTurn — structured output", () => {
-    it("uses the LAST agent_message for structured output, not the first", async () => {
+    it("returns the last agent message as final text for post-validation", async () => {
       setupThread([
         threadStarted(),
         agentMessageCompleted('{"version": 1}', "msg-1"),
@@ -1774,7 +1774,8 @@ describe("CodexConversationRuntime", () => {
       );
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.structuredOutput).toEqual({ version: 2 });
+      expect(result.finalText).toBe('{"version": 2}');
+      expect(result.structuredOutput).toBeUndefined();
     });
 
     it("returns undefined structuredOutput when text is not valid JSON", async () => {
@@ -1797,7 +1798,7 @@ describe("CodexConversationRuntime", () => {
       expect(result.structuredOutput).toBeUndefined();
     });
 
-    it("reads the null a required-and-nullable key comes back as into the omission the authored schema describes", async () => {
+    it("keeps provider nulls in final text for the shared gate to judge", async () => {
       setupThread([
         threadStarted(),
         agentMessageCompleted('{"summary": "clean", "planDefects": null}'),
@@ -1822,7 +1823,10 @@ describe("CodexConversationRuntime", () => {
       );
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.structuredOutput).toEqual({ summary: "clean" });
+      expect(result.finalText).toBe(
+        '{"summary": "clean", "planDefects": null}',
+      );
+      expect(result.structuredOutput).toBeUndefined();
     });
 
     it("returns undefined structuredOutput when outputFormat is not set", async () => {
@@ -1837,10 +1841,13 @@ describe("CodexConversationRuntime", () => {
       expect(result.structuredOutput).toBeUndefined();
     });
 
-    it("passes outputSchema to runStreamed when outputFormat is set", async () => {
+    it("carries the authored optional fields in the prompt on initial and resumed turns", async () => {
       const schema = {
         type: "object",
-        properties: { x: { type: "number" } },
+        properties: {
+          x: { type: "number" },
+          planDefects: { type: "array", items: { type: "string" } },
+        },
         required: ["x"],
       };
       const thread = makeCapturingThread(minimalSuccessEvents());
@@ -1853,13 +1860,22 @@ describe("CodexConversationRuntime", () => {
       await runtime.sendTurn(makeTurnInput());
 
       expect(thread.capturedTurnOptions).toBeDefined();
-      expect(thread.capturedTurnOptions!.outputSchema).toEqual({
-        ...schema,
-        additionalProperties: false,
-      });
+      expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
+      expect(thread.capturedInput).toContain(
+        renderStructuredOutputInstruction(schema),
+      );
+      resumeThreadFn.mockReturnValue(thread);
+      await runtime.sendTurn(
+        makeTurnInput({ promptText: "Correct the response" }),
+      );
+      expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
+      expect(thread.capturedInput).toContain(
+        renderStructuredOutputInstruction(schema),
+      );
+      expect(schema.required).toEqual(["x"]);
     });
 
-    it("routes a schema the strict dialect cannot express through the prompt contract instead of the provider wire", async () => {
+    it("carries a free-form schema in the prompt contract", async () => {
       const schema = { type: "object" };
       const thread = makeCapturingThread([
         threadStarted(),
@@ -1883,10 +1899,11 @@ describe("CodexConversationRuntime", () => {
           `Describe it\n\n${renderStructuredOutputInstruction(schema)}`,
         ),
       ).toBe(true);
-      expect(result.structuredOutput).toEqual({ free: "form" });
+      expect(result.finalText).toBe('{"free": "form"}');
+      expect(result.structuredOutput).toBeUndefined();
     });
 
-    it("adds the provider-required type to const-only schema nodes while retaining the authored output format", async () => {
+    it("preserves const-only schema nodes and images in the prompt contract", async () => {
       const schema = {
         type: "object",
         properties: {
@@ -1903,17 +1920,30 @@ describe("CodexConversationRuntime", () => {
         makeCreateInput({ outputFormat }),
         deps,
       );
-      await runtime.sendTurn(makeTurnInput());
+      await runtime.sendTurn(
+        makeTurnInput({
+          imageRefs: [
+            {
+              index: 1,
+              mediaType: "image/png",
+              path: "/test/image.png",
+              base64Data: "",
+            },
+          ],
+        }),
+      );
 
       expect(runtime.outputFormat).toBe(outputFormat);
-      expect(thread.capturedTurnOptions?.outputSchema).toEqual({
-        type: "object",
-        properties: {
-          marker: { const: "fixed", type: "string" },
+      expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
+      expect(thread.capturedInput).toEqual([
+        {
+          type: "text",
+          text: expect.stringContaining(
+            renderStructuredOutputInstruction(schema),
+          ),
         },
-        required: ["marker"],
-        additionalProperties: false,
-      });
+        { type: "local_image", path: "/test/image.png" },
+      ]);
       expect(schema.properties.marker).toEqual({ const: "fixed" });
     });
   });

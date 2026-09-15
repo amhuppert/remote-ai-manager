@@ -127,7 +127,7 @@ function capabilityFixture(backend: AgentBackendId): BackendCapabilityView {
   return {
     backend,
     continuationStrength: "synthetic_thread",
-    structuredOutputEnforcement: "backend_native",
+    structuredOutputEnforcement: "post_validation",
     mcpApplicationBoundary: "per_request",
     contextMetricsAvailable: true,
     nativeMidTurnAskUser: false,

@@ -62,8 +62,7 @@ function makeCompletedResult(
       backend,
       continuationStrength:
         backend === "claude" ? "precise_session" : "synthetic_thread",
-      structuredOutputEnforcement:
-        backend === "claude" ? "post_validation" : "backend_native",
+      structuredOutputEnforcement: "post_validation",
       mcpApplicationBoundary:
         backend === "claude" ? "between_turns" : "per_request",
       contextMetricsAvailable: backend === "claude",
@@ -83,8 +82,7 @@ function makeFailedResult(backend: Backend, message: string): AgentCallResult {
       backend,
       continuationStrength:
         backend === "claude" ? "precise_session" : "synthetic_thread",
-      structuredOutputEnforcement:
-        backend === "claude" ? "post_validation" : "backend_native",
+      structuredOutputEnforcement: "post_validation",
       mcpApplicationBoundary:
         backend === "claude" ? "between_turns" : "per_request",
       contextMetricsAvailable: backend === "claude",

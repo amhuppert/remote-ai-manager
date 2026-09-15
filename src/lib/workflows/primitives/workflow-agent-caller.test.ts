@@ -61,7 +61,7 @@ const claudeCapabilities: BackendCapabilityView = {
 const codexCapabilities: BackendCapabilityView = {
   backend: "codex",
   continuationStrength: "synthetic_thread",
-  structuredOutputEnforcement: "backend_native",
+  structuredOutputEnforcement: "post_validation",
   mcpApplicationBoundary: "per_request",
   contextMetricsAvailable: false,
   nativeMidTurnAskUser: false,

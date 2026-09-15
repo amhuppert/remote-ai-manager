@@ -86,7 +86,7 @@ export const codexConversationCapabilities: BackendConversationCapabilities = {
   queue: { acceptsWhileRunning: true, deliveryTiming: "next_turn" },
   continuationStrength: "synthetic_thread",
   fork: "synthetic",
-  structuredOutput: "backend_native",
+  structuredOutput: "post_validation",
   contextWindowMetrics: false,
   nativeMidTurnAskUser: false,
   externalTurns: false,
@@ -217,7 +217,7 @@ export function createCodexBackendDescriptor(
     tasks: {
       execution: codexTaskExecution,
       runner: deps.taskRunner,
-      structuredOutput: "backend_native",
+      structuredOutput: "post_validation",
       transcript: codexTaskTranscriptProjection,
       fsWriteRestriction: codexTaskFsWriteRestriction,
     },

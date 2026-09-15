@@ -91,7 +91,7 @@ describe("section 7.1 — capability view canonical identity", () => {
     expect(CODEX_CAPABILITY_VIEW).toEqual({
       backend: "codex",
       continuationStrength: "synthetic_thread",
-      structuredOutputEnforcement: "backend_native",
+      structuredOutputEnforcement: "post_validation",
       mcpApplicationBoundary: "per_request",
       contextMetricsAvailable: false,
       nativeMidTurnAskUser: false,
@@ -103,14 +103,14 @@ describe("section 7.1 — capability view canonical identity", () => {
     expect(capabilityViewForBackend("codex")).toEqual(CODEX_CAPABILITY_VIEW);
   });
 
-  it("Claude and Codex views differ on every meaningful dimension so workflows can branch", () => {
+  it("Claude and Codex share output enforcement while exposing their capability differences", () => {
     expect(CLAUDE_CAPABILITY_VIEW.backend).not.toBe(
       CODEX_CAPABILITY_VIEW.backend,
     );
     expect(CLAUDE_CAPABILITY_VIEW.continuationStrength).not.toBe(
       CODEX_CAPABILITY_VIEW.continuationStrength,
     );
-    expect(CLAUDE_CAPABILITY_VIEW.structuredOutputEnforcement).not.toBe(
+    expect(CLAUDE_CAPABILITY_VIEW.structuredOutputEnforcement).toBe(
       CODEX_CAPABILITY_VIEW.structuredOutputEnforcement,
     );
     expect(CLAUDE_CAPABILITY_VIEW.mcpApplicationBoundary).not.toBe(
@@ -170,7 +170,7 @@ describe("section 7.1 — lane continuity handles are opaque and backend-owned",
 });
 
 describe("section 7.1 — structured-output enforcement always flows through the shared gate", () => {
-  it("Codex's backend_native enforcement does not skip the shared structured-output gate on schema violations", async () => {
+  it("Codex raw JSON is rejected by the shared gate on schema violations", async () => {
     const requests: AgentTaskRequest[] = [];
     const runner: AgentTaskRunner = {
       backend: "codex",
@@ -178,8 +178,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         requests.push(request);
         return {
           backendRef: { backend: "codex", ref: "th-1" } as AgentSessionRef,
-          text: "shaped",
-          structuredOutput: { wrong: "shape" },
+          text: JSON.stringify({ wrong: "shape" }),
           usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
           error: null,
           timedOut: false,

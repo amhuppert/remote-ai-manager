@@ -30,7 +30,7 @@ describe("capabilityViewForBackend (descriptor-derived)", () => {
     expect(view).toEqual({
       backend: "codex",
       continuationStrength: "synthetic_thread",
-      structuredOutputEnforcement: "backend_native",
+      structuredOutputEnforcement: "post_validation",
       mcpApplicationBoundary: "per_request",
       contextMetricsAvailable: false,
       nativeMidTurnAskUser: false,

@@ -53,7 +53,7 @@ const CLAUDE_VIEW: BackendCapabilityView = {
 const CODEX_VIEW: BackendCapabilityView = {
   backend: "codex",
   continuationStrength: "synthetic_thread",
-  structuredOutputEnforcement: "backend_native",
+  structuredOutputEnforcement: "post_validation",
   mcpApplicationBoundary: "per_request",
   contextMetricsAvailable: false,
   nativeMidTurnAskUser: false,
@@ -344,10 +344,10 @@ describe("executeAgentCall — structured-output gate", () => {
     }
   });
 
-  it("still runs the shared gate even when the backend natively enforces the schema (codex)", async () => {
+  it("validates Codex raw JSON through the shared gate", async () => {
     let validatorCalls = 0;
     const runner = makeTaskRunner("codex", {
-      result: { structuredOutput: { ok: true } },
+      result: { text: JSON.stringify({ ok: true }) },
     });
     await executeAgentCall(
       {

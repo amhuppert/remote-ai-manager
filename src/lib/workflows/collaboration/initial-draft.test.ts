@@ -63,8 +63,7 @@ function makeBackendResult(
       backend,
       continuationStrength:
         backend === "claude" ? "precise_session" : "synthetic_thread",
-      structuredOutputEnforcement:
-        backend === "claude" ? "post_validation" : "backend_native",
+      structuredOutputEnforcement: "post_validation",
       mcpApplicationBoundary:
         backend === "claude" ? "between_turns" : "per_request",
       contextMetricsAvailable: backend === "claude",
@@ -435,7 +434,7 @@ describe("runInitialDraftsPhase alignment seen-version recording", () => {
           capabilities: {
             backend: "codex",
             continuationStrength: "synthetic_thread",
-            structuredOutputEnforcement: "backend_native",
+            structuredOutputEnforcement: "post_validation",
             mcpApplicationBoundary: "per_request",
             contextMetricsAvailable: false,
             nativeMidTurnAskUser: false,

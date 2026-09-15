@@ -45,13 +45,13 @@ Raw provider payloads may cross the seam only inside the lossless transcript env
 
 The caller supplies its authoritative JSON Schema through the neutral conversation/task request. It may be generated from Zod or authored independently; callers do not maintain provider-specific copies.
 
-- Claude declares `structuredOutput: "post_validation"`. Its adapters render the complete schema into a deterministic final-message contract appended to the prompt. No schema reaches the Claude SDK's `outputFormat` wire.
-- Codex declares `structuredOutput: "backend_native"` and enforces the schema natively on its final response. Its provider accepts only a strict JSON Schema dialect, so `codex/output-schema.ts` owns the whole Codex transport and nothing else may reshape a schema on the Codex path. Both Codex adapters call `resolveCodexStructuredOutput` once per authored schema and use the returned dispatch end-to-end (`prepareInput`, `outputSchema`, `restore`). A schema the dialect can express is projected on dispatch — a `type` beside a primitive `const`, `anyOf` for `oneOf`, and on every object a declared `type`, `additionalProperties: false`, and `required` naming every declared property with authored-optional keys widened to admit `null` — and the induced nulls are dropped from the response so the shared gate sees the authored shape. A schema the dialect cannot express (a free-form or explicitly open object, or a union root) rides the prompt as the neutral rendered contract instead, with the shared gate as the only enforcement — the same path Claude always takes — and the adapter logs `structured_output_prompt_contract` with the reason. A schema that reaches the provider outside this transport is refused with HTTP 400 `invalid_json_schema` at dispatch, identically on every retry, not a degraded turn.
+- Claude and Codex declare `structuredOutput: "post_validation"` on both task and conversation facets. Their adapters append the authored schema as a deterministic final-message contract using `structured-output-prompt.ts`, including on image-bearing prompts and repair turns. No schema reaches the Claude SDK's `outputFormat` or the Codex SDK's `outputSchema` wire.
+- Adapters return final-response text without projecting schemas or rewriting payloads. Optional properties remain optional, and provider-emitted nulls are judged against the authored schema by the shared gate.
 - The shared extractor tries native output, raw response JSON, then the last fenced JSON block. The AgentCall facade validates every candidate through the same post-turn gate regardless of backend capability.
 - A failed facade gate gets one bounded repair turn by default. Task runs repair in a fresh isolated one-shot; conversation turns use one corrective turn on the resolved runtime. Callers may explicitly set the repair budget to zero.
 - Domain Zod schemas remain authoritative for post-parse acceptance with `safeParse`.
 
-Keep this transport asymmetry below the backend seam. Neutral callers select behavior from declared capabilities and must not branch on provider identity.
+Keep structured-output transport below the backend seam. Neutral callers select behavior from declared capabilities and must not branch on provider identity.
 
 ## Model selection
 

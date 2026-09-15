@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { findProviderStrictSchemaViolations } from "@/lib/agent-backends/testing/provider-strict-schema";
 import { makeSeededValidatorAssignment } from "../test-fixtures";
 import {
   decodePlanRepairAgentOutput,
@@ -85,12 +84,6 @@ describe("planRepairVerdictSchema", () => {
     expect(Object.keys(schema.properties ?? {})).toEqual(
       expect.arrayContaining(["planningDefect", "diagnosis", "operations"]),
     );
-  });
-
-  it("stays inside the strict subset a provider-native backend accepts", () => {
-    expect(
-      findProviderStrictSchemaViolations(PLAN_REPAIR_VERDICT_JSON_SCHEMA),
-    ).toEqual([]);
   });
 
   it("decodes strict operation envelopes into domain operations", () => {

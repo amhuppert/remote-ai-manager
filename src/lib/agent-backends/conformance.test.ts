@@ -254,6 +254,13 @@ const codexDescriptor = createCodexBackendDescriptor({
   failureClassifier: createCodexFailureClassifier(),
 });
 
+it("Codex declares post-validation structured output on both facets", () => {
+  expect(codexDescriptor.tasks?.structuredOutput).toBe("post_validation");
+  expect(codexDescriptor.conversation?.capabilities.structuredOutput).toBe(
+    "post_validation",
+  );
+});
+
 describeBackendConformance(codexDescriptor, {
   continuity: continuityHarness,
   conversationTurn: {
@@ -264,6 +271,7 @@ describeBackendConformance(codexDescriptor, {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
       readForwardedSchema: () => codexProvider.lastTurnOptions?.outputSchema,
+      readDispatchedPrompt: () => codexProvider.lastPrompt,
     },
   },
   task: {
@@ -272,6 +280,7 @@ describeBackendConformance(codexDescriptor, {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
       readForwardedSchema: () => codexTaskPort.lastOutputSchema,
+      readDispatchedPrompt: () => codexTaskPort.lastPrompt,
     },
   },
 });

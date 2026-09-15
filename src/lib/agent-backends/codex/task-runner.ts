@@ -39,10 +39,8 @@ import {
   toSdkModelReasoningEffort,
   toStringEnv,
 } from "./shared";
-import {
-  resolveCodexStructuredOutput,
-  type CodexPromptInput,
-} from "./output-schema";
+import { appendStructuredOutputInstruction } from "../structured-output-prompt";
+import type { Input as CodexTaskInput } from "@openai/codex-sdk";
 import { createStallWatchdog } from "../stall-watchdog";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCodexFailureClassifier } from "./failure-classifier";
@@ -136,15 +134,13 @@ interface CodexTaskThread {
   readonly id: string | null;
   run(
     input: CodexTaskInput,
-    options?: { outputSchema?: unknown; signal?: AbortSignal },
+    options?: { signal?: AbortSignal },
   ): Promise<CodexTaskTurn>;
   runStreamed?(
     input: CodexTaskInput,
-    options?: { outputSchema?: unknown; signal?: AbortSignal },
+    options?: { signal?: AbortSignal },
   ): Promise<{ events: AsyncIterable<unknown> }>;
 }
-
-type CodexTaskInput = CodexPromptInput;
 
 interface CodexTaskRunnerClient {
   startThread(options?: ThreadOptions): CodexTaskThread;
@@ -216,9 +212,12 @@ function buildPrompt(
   input: AgentTaskRequest,
   relocatedFromWorktree: boolean,
 ): CodexTaskInput {
-  const prompt = relocatedFromWorktree
+  const authoredPrompt = relocatedFromWorktree
     ? `${workspaceNotice(input.workingDirectory)}\n\n${input.prompt}`
     : input.prompt;
+  const prompt = input.outputSchema
+    ? appendStructuredOutputInstruction(authoredPrompt, input.outputSchema)
+    : authoredPrompt;
   if (!input.imagePaths?.length) return prompt;
   return [
     { type: "text", text: prompt },
@@ -240,7 +239,6 @@ async function runCodexTurn(
   thread: CodexTaskThread,
   prompt: CodexTaskInput,
   options: {
-    outputSchema?: unknown;
     signal?: AbortSignal;
     onActivity?: () => void;
   },
@@ -641,19 +639,13 @@ export class CodexTaskRunner implements AgentTaskRunner {
       ),
     };
 
-    const authoredPrompt = buildPrompt(input, restricted !== null);
-    const structured = input.outputSchema
-      ? resolveCodexStructuredOutput(input.outputSchema)
-      : null;
-    if (structured?.transport === "prompt_contract") {
+    const prompt = buildPrompt(input, restricted !== null);
+    if (input.outputSchema) {
       logger.info("codex-task-runner.structured_output_prompt_contract", {
         workingDirectory: input.workingDirectory,
-        reason: structured.reason,
+        enforcement: "post_validation",
       });
     }
-    const prompt = structured
-      ? structured.prepareInput(authoredPrompt)
-      : authoredPrompt;
 
     let timedOut = false;
 
@@ -689,7 +681,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
     let threadId: string | null = null;
     let text: string | null = null;
-    let structuredOutput: unknown;
     let usageResult: AgentTaskResult["usage"] = null;
     let transcript: AgentTranscriptEntry[] | undefined;
     let error: string | null = null;
@@ -716,9 +707,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
       }
 
       const turn = await runCodexTurn(thread, prompt, {
-        ...(structured?.outputSchema
-          ? { outputSchema: structured.outputSchema }
-          : {}),
         signal: abortController.signal,
         onActivity: () => stallWatchdog.touch(),
       });
@@ -741,16 +729,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
       if (turn.finalResponse) {
         text = turn.finalResponse;
-
-        if (structured && !turn.error) {
-          try {
-            structuredOutput = structured.restore(
-              JSON.parse(turn.finalResponse),
-            );
-          } catch {
-            // finalResponse is not valid JSON despite outputSchema being set
-          }
-        }
       }
 
       if (turn.usage) {
@@ -830,7 +808,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
     return {
       backendRef,
       text,
-      structuredOutput,
       usage: usageResult,
       ...(transcript ? { transcript } : {}),
       error: finalError,

@@ -39,6 +39,8 @@ import { Codex } from "@openai/codex-sdk";
 import { CodexTaskRunner, type CodexTaskRunnerDeps } from "./task-runner";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type { AgentTaskRequest } from "../task";
+import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 function modelSelection(
@@ -921,88 +923,50 @@ describe("CodexTaskRunner", () => {
     expect(result.transcript).toBeUndefined();
   });
 
-  it("passes supported outputSchema keywords to Codex without stripping them (T3.3)", async () => {
-    const schema = {
-      type: "object",
-      properties: {
-        items: {
-          type: "array",
-          minItems: 1,
-          items: { type: "string", minLength: 2 },
+  it.each([false, true])(
+    "carries the authored schema in the prompt with images=%s",
+    async (images) => {
+      const schema = {
+        type: "object",
+        properties: {
+          summary: { type: "string", minLength: 1 },
+          planDefects: { type: "array", items: { type: "string" } },
+          marker: { const: "fixed" },
         },
-        count: { type: "integer", minimum: 0 },
-      },
-      required: ["items", "count"],
-      additionalProperties: false,
-    };
+        required: ["summary", "marker"],
+      };
+      const originalSchema = structuredClone(schema);
+      runMock.mockResolvedValue({
+        finalResponse: '{"summary":"clean","marker":"fixed"}',
+      });
 
-    await runner.run(makeRequest({ outputSchema: schema }));
+      const result = await runner.run(
+        makeRequest({
+          outputSchema: schema,
+          ...(images ? { imagePaths: ["/test/image.png"] } : {}),
+        }),
+      );
 
-    const runOptions = runMock.mock.calls[0]?.[1] as {
-      outputSchema?: unknown;
-    };
-    expect(runOptions.outputSchema).toEqual(schema);
-  });
+      const [prompt, options] = runMock.mock.calls[0]!;
+      expect(options).not.toHaveProperty("outputSchema");
+      const expectedText = `Do the thing\n\n${renderStructuredOutputInstruction(schema)}`;
+      expect(prompt).toEqual(
+        images
+          ? [
+              { type: "text", text: expectedText },
+              { type: "local_image", path: "/test/image.png" },
+            ]
+          : expectedText,
+      );
+      expect(schema).toEqual(originalSchema);
+      expect(result.text).toBe('{"summary":"clean","marker":"fixed"}');
+      expect(result.structuredOutput).toBeUndefined();
+    },
+  );
 
-  it("adds the provider-required type to const-only output schema nodes without mutating the authored schema", async () => {
-    const schema = {
-      type: "object",
-      properties: {
-        marker: { const: "D5-LIVE-READER-TWO-6385" },
-      },
-      required: ["marker"],
-      additionalProperties: false,
-    };
-
-    await runner.run(makeRequest({ outputSchema: schema }));
-
-    const runOptions = runMock.mock.calls[0]?.[1] as {
-      outputSchema?: unknown;
-    };
-    expect(runOptions.outputSchema).toEqual({
-      type: "object",
-      properties: {
-        marker: {
-          const: "D5-LIVE-READER-TWO-6385",
-          type: "string",
-        },
-      },
-      required: ["marker"],
-      additionalProperties: false,
-    });
-    expect(schema.properties.marker).toEqual({
-      const: "D5-LIVE-READER-TWO-6385",
-    });
-  });
-
-  it("closes required over an authored-optional key so the provider does not refuse the dispatch", async () => {
-    const schema = {
-      type: "object",
-      properties: {
-        summary: { type: "string" },
-        planDefects: { type: "array", items: { type: "string" } },
-      },
-      required: ["summary"],
-      additionalProperties: false,
-    };
-
-    await runner.run(makeRequest({ outputSchema: schema }));
-
-    const runOptions = runMock.mock.calls[0]?.[1] as {
-      outputSchema?: { required?: unknown };
-    };
-    expect(runOptions.outputSchema?.required).toEqual([
-      "summary",
-      "planDefects",
-    ]);
-    expect(schema.required).toEqual(["summary"]);
-  });
-
-  it("reads the null a required-and-nullable key comes back as into the omission the authored schema describes", async () => {
-    runMock.mockResolvedValue({
-      finalResponse: JSON.stringify({ summary: "clean", planDefects: null }),
-    });
-
+  it("keeps provider nulls in raw output for the shared gate to judge", async () => {
+    const text = '{"summary":"clean","planDefects":null}';
+    runMock.mockResolvedValue({ finalResponse: text });
     const result = await runner.run(
       makeRequest({
         outputSchema: {
@@ -1012,29 +976,21 @@ describe("CodexTaskRunner", () => {
             planDefects: { type: "array", items: { type: "string" } },
           },
           required: ["summary"],
-          additionalProperties: false,
         },
       }),
     );
-
-    expect(result.structuredOutput).toEqual({ summary: "clean" });
+    expect(result.text).toBe(text);
+    expect(result.structuredOutput).toBeUndefined();
   });
 
-  it("routes a schema the strict dialect cannot express through the prompt contract instead of the provider wire", async () => {
-    runMock.mockResolvedValue({
-      finalResponse: JSON.stringify({ anything: 1, note: null }),
-    });
+  it("carries a free-form schema in the prompt contract", async () => {
     const schema = { type: "object" };
-
+    runMock.mockResolvedValue({ finalResponse: '{"anything":1,"note":null}' });
     const result = await runner.run(makeRequest({ outputSchema: schema }));
-
-    const [prompt, runOptions] = runMock.mock.calls[0] as [
-      string,
-      { outputSchema?: unknown },
-    ];
-    expect(runOptions.outputSchema).toBeUndefined();
+    const [prompt, options] = runMock.mock.calls[0]!;
+    expect(options).not.toHaveProperty("outputSchema");
     expect(prompt).toContain(renderStructuredOutputInstruction(schema));
-    expect(result.structuredOutput).toEqual({ anything: 1, note: null });
+    expect(result.structuredOutput).toBeUndefined();
     expect(
       logState.entries.some(
         (entry) =>
@@ -1042,6 +998,101 @@ describe("CodexTaskRunner", () => {
       ),
     ).toBe(true);
   });
+
+  it("uses the prompt contract for streamed tasks and returns only the final message", async () => {
+    startThreadMock.mockReturnValue({
+      id: "thread-stream",
+      run: runMock,
+      runStreamed: runStreamedMock,
+    });
+    runStreamedMock.mockResolvedValue({
+      events: (async function* () {
+        yield {
+          type: "item.completed",
+          item: { type: "agent_message", text: "Reviewing" },
+        };
+        yield {
+          type: "item.completed",
+          item: { type: "agent_message", text: '{"summary":"clean"}' },
+        };
+        yield { type: "turn.completed", usage: null };
+      })(),
+    });
+    const schema = {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+    };
+    const result = await runner.run(makeRequest({ outputSchema: schema }));
+    const [prompt, options] = runStreamedMock.mock.calls[0]!;
+    expect(options).not.toHaveProperty("outputSchema");
+    expect(prompt).toContain(renderStructuredOutputInstruction(schema));
+    expect(result.text).toBe('{"summary":"clean"}');
+    expect(result.structuredOutput).toBeUndefined();
+  });
+
+  it.each(["valid", "null", "foreign-task"] as const)(
+    "gates optional fields and task scope through the real runner: %s",
+    async (firstResponse) => {
+      const valid = { summary: "clean", taskId: "task-1" };
+      const initial =
+        firstResponse === "null"
+          ? { ...valid, planDefects: null }
+          : firstResponse === "foreign-task"
+            ? { ...valid, taskId: "task-outside-context" }
+            : valid;
+      runMock.mockReset();
+      runMock.mockResolvedValueOnce({ finalResponse: JSON.stringify(initial) });
+      if (firstResponse !== "valid") {
+        runMock.mockResolvedValueOnce({ finalResponse: JSON.stringify(valid) });
+      }
+      const schema = {
+        type: "object",
+        properties: {
+          summary: { type: "string" },
+          taskId: { type: "string", enum: ["task-1"] },
+          planDefects: { type: "array", items: { type: "string" } },
+        },
+        required: ["summary", "taskId"],
+        additionalProperties: false,
+      };
+      const result = await executeAgentCall(
+        {
+          kind: "task_run",
+          executionClass: "nongoverned-task",
+          backend: "codex",
+          prompt: "Review task-1. Omit planDefects when there are none.",
+          outputSchema: schema,
+        },
+        {
+          resolveTaskRunner: () => ({
+            runner,
+            capabilityView: capabilityViewForBackend("codex"),
+            workingDirectory: "/test/workspace",
+            modelSelection: modelSelection("gpt-5.4"),
+          }),
+        },
+      );
+      expect(result.outcome.kind).toBe("completed");
+      if (result.outcome.kind !== "completed")
+        throw new Error("Expected a validated verdict");
+      expect(result.outcome.structuredOutput).toEqual(valid);
+      expect(runMock).toHaveBeenCalledTimes(firstResponse === "valid" ? 1 : 2);
+      for (const [prompt, options] of runMock.mock.calls) {
+        expect(options).not.toHaveProperty("outputSchema");
+        expect(prompt).toContain(renderStructuredOutputInstruction(schema));
+      }
+      if (firstResponse !== "valid") {
+        const repair = runMock.mock.calls[1]![0];
+        expect(repair).toContain(
+          firstResponse === "null" ? "$.planDefects" : "$.taskId",
+        );
+        expect(
+          repair.split(renderStructuredOutputInstruction(schema)),
+        ).toHaveLength(2);
+      }
+    },
+  );
 
   it("aborts the running thread when an external signal fires", async () => {
     const external = new AbortController();

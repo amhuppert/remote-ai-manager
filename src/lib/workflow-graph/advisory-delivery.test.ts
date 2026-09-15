@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { findProviderStrictSchemaViolations } from "@/lib/agent-backends/testing/provider-strict-schema";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 import type { WorkflowValidatorAdvisory } from "@/lib/workflow-graph/definition-schemas";
 import type {
@@ -216,10 +215,6 @@ describe("dispositions output schema", () => {
     advisories: [advisory({ title: "one" }), advisory({ title: "two" })],
   });
   const schema = buildAdvisoryDispositionsOutputSchema(advisories);
-
-  it("stays inside the strict subset a provider-native backend accepts", () => {
-    expect(findProviderStrictSchemaViolations(schema)).toEqual([]);
-  });
 
   function validate(dispositions: unknown[]): { valid: boolean } {
     return validateJsonSchemaSubset(schema, { dispositions });

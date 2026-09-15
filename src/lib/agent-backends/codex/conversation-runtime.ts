@@ -65,10 +65,7 @@ import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { toSdkModelReasoningEffort, toStringEnv } from "./shared";
-import {
-  resolveCodexStructuredOutput,
-  type CodexStructuredOutputDispatch,
-} from "./output-schema";
+import { appendStructuredOutputInstruction } from "../structured-output-prompt";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
   buildCodexMcpServersConfig,
@@ -180,9 +177,6 @@ export class CodexConversationRuntime
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
-  // Resolved once: the output format is fixed for the runtime's lifetime, so
-  // every turn (including a repair turn) dispatches the contract the same way.
-  private readonly structuredOutputDispatch: CodexStructuredOutputDispatch | null;
 
   /** The write envelope this runtime's turns execute under; undefined when unrestricted. */
   readonly fsWritePolicy: FsWritePolicy | undefined;
@@ -263,9 +257,6 @@ export class CodexConversationRuntime
     );
     this.modelSelection = this.resolvedModelSelection.modelSelection;
     this.outputFormat = input.outputFormat;
-    this.structuredOutputDispatch = input.outputFormat
-      ? resolveCodexStructuredOutput(input.outputFormat.schema)
-      : null;
 
     this.fsWritePolicy = input.fsWritePolicy;
     this.deps = deps;
@@ -315,14 +306,11 @@ export class CodexConversationRuntime
         );
       }
 
-      const authoredInput = this.buildPromptInput(input);
-      const promptInput = this.structuredOutputDispatch
-        ? this.structuredOutputDispatch.prepareInput(authoredInput)
-        : authoredInput;
-      if (this.structuredOutputDispatch?.transport === "prompt_contract") {
+      const promptInput = this.buildPromptInput(input);
+      if (this.outputFormat) {
         logger.info("codex-runtime.structured_output_prompt_contract", {
           conversationId: this.conversationId,
-          reason: this.structuredOutputDispatch.reason,
+          enforcement: "post_validation",
         });
       }
 
@@ -374,9 +362,6 @@ export class CodexConversationRuntime
       // nothing about the prompt reaching the agent.
       const streamed = await thread.runStreamed(promptInput, {
         signal: input.signal,
-        ...(this.structuredOutputDispatch?.outputSchema
-          ? { outputSchema: this.structuredOutputDispatch.outputSchema }
-          : {}),
       });
 
       // Acceptance is the FIRST ThreadEvent (mirrors Claude's first-raw-
@@ -556,18 +541,6 @@ export class CodexConversationRuntime
       });
     }
 
-    // Build structured output from last agent_message text
-    let structuredOutput: unknown;
-    if (this.structuredOutputDispatch && acc.lastAgentMessageText) {
-      try {
-        structuredOutput = this.structuredOutputDispatch.restore(
-          JSON.parse(acc.lastAgentMessageText),
-        );
-      } catch {
-        // Not valid JSON despite outputFormat being set
-      }
-    }
-
     const backendRef = acc.knownThreadId
       ? { backend: "codex" as const, ref: acc.knownThreadId }
       : null;
@@ -587,7 +560,7 @@ export class CodexConversationRuntime
       contextTokens: acc.usage?.input_tokens ?? null,
       contextWindowMax: null,
       contentBlocks,
-      structuredOutput,
+      finalText: acc.lastAgentMessageText,
       aborted: acc.aborted,
       // Codex reports cumulative thread counters rather than per-turn ones, so
       // it does not populate the neutral per-turn token record.
@@ -767,7 +740,13 @@ export class CodexConversationRuntime
     }
 
     textParts.push(input.promptText);
-    const finalPrompt = textParts.join("\n\n");
+    const authoredPrompt = textParts.join("\n\n");
+    const finalPrompt = this.outputFormat
+      ? appendStructuredOutputInstruction(
+          authoredPrompt,
+          this.outputFormat.schema,
+        )
+      : authoredPrompt;
 
     if (input.imageRefs.length === 0) {
       return finalPrompt;

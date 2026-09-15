@@ -85,17 +85,17 @@ export interface FakeCodexProvider {
   deps: CodexConversationRuntimeDeps;
   /** Turn options captured from the most recent `runStreamed` call. */
   readonly lastTurnOptions: TurnOptions | undefined;
+  readonly lastPrompt: string;
 }
 
 /**
- * @param config.structuredOutput when the turn requests an `outputSchema`,
- * the scripted agent message carries this value as JSON text — the Codex
- * native structured-output shape the runtime parses.
+ * @param config.structuredOutput scripted final-message JSON for schema prompts.
  */
 export function createFakeCodexProvider(
   config: { structuredOutput?: unknown } = {},
 ): FakeCodexProvider {
   let lastTurnOptions: TurnOptions | undefined;
+  let lastPrompt = "";
 
   function makeThread(): CodexThreadLike {
     return {
@@ -106,13 +106,14 @@ export function createFakeCodexProvider(
       ): Promise<{ events: AsyncGenerator<ThreadEvent> }> {
         lastTurnOptions = turnOptions;
         const text = extractInputText(input);
+        lastPrompt = text;
 
         if (text.includes(FAKE_CODEX_HANGING_PROMPT)) {
           return { events: hangingEventStream(turnOptions?.signal) };
         }
 
         const agentText =
-          turnOptions?.outputSchema !== undefined &&
+          text.includes("Your final message must be a single JSON object") &&
           config.structuredOutput !== undefined
             ? JSON.stringify(config.structuredOutput)
             : FAKE_CODEX_TURN_TEXT;
@@ -160,6 +161,9 @@ export function createFakeCodexProvider(
     get lastTurnOptions() {
       return lastTurnOptions;
     },
+    get lastPrompt() {
+      return lastPrompt;
+    },
   };
 }
 
@@ -174,16 +178,17 @@ export interface FakeCodexTaskPort {
   deps: CodexTaskRunnerDeps;
   /** `outputSchema` captured from the most recent thread run. */
   readonly lastOutputSchema: unknown;
+  readonly lastPrompt: string;
 }
 
 /**
- * @param config.structuredOutput final response carried as JSON text when the
- * task requests an `outputSchema` (the runner parses it natively).
+ * @param config.structuredOutput scripted final-message JSON for schema prompts.
  */
 export function createFakeCodexTaskPort(
   config: { structuredOutput?: unknown } = {},
 ): FakeCodexTaskPort {
   let lastOutputSchema: unknown;
+  let lastPrompt = "";
 
   const deps: CodexTaskRunnerDeps = {
     createCodex() {
@@ -194,14 +199,16 @@ export function createFakeCodexTaskPort(
         const thread = {
           id: initialId,
           async run(
-            _input: string,
+            input: Input,
             options?: { outputSchema?: unknown; signal?: AbortSignal },
           ) {
             thread.id = thread.id ?? FAKE_CODEX_TASK_THREAD_ID;
             lastOutputSchema = options?.outputSchema;
+            lastPrompt = extractInputText(input);
             const finalResponse =
-              options?.outputSchema !== undefined &&
-              config.structuredOutput !== undefined
+              lastPrompt.includes(
+                "Your final message must be a single JSON object",
+              ) && config.structuredOutput !== undefined
                 ? JSON.stringify(config.structuredOutput)
                 : FAKE_CODEX_TASK_TEXT;
             return {
@@ -241,6 +248,9 @@ export function createFakeCodexTaskPort(
     deps,
     get lastOutputSchema() {
       return lastOutputSchema;
+    },
+    get lastPrompt() {
+      return lastPrompt;
     },
   };
 }
