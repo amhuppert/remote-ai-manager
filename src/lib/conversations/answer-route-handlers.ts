@@ -83,6 +83,10 @@ import {
   type QueueMessageResult,
 } from "@/lib/prompt/queue";
 import { formatQuestionAnswersBlock } from "./question-answers-block";
+import {
+  isInTurnQuestionId,
+  type InTurnQuestionScope,
+} from "./in-turn-questions";
 
 const logger = createLogger("answer-route-handlers");
 
@@ -103,6 +107,10 @@ const LANE_ANSWER_ROLES = new Set<ConversationRole>(["iteration", "validator"]);
  * log line here can report it as a session identity (R1.3).
  */
 export interface AnswerDeliveryDeps {
+  answerInTurnQuestion?(
+    scope: InTurnQuestionScope,
+    reply: AnswerQuestionRequest,
+  ): Promise<boolean>;
   clearConversationQuestion(
     projectPath: string,
     sessionName: string,
@@ -220,6 +228,31 @@ async function deliverAnswers(
   // session identity.
   const storeSessionName = storeSessionNameFromScopeRef(scopeRef);
 
+  if (isInTurnQuestionId(body.questionId)) {
+    const answer =
+      deps.answerInTurnQuestion ??
+      (await import("./in-turn-question-service")).inTurnQuestionService.answer;
+    const delivered = await answer(
+      { projectPath, sessionName: storeSessionName, conversationId },
+      body,
+    );
+    deps.log.info("answer.in_turn", {
+      conversationId,
+      ...scopeRef,
+      questionId: body.questionId,
+      delivered,
+    });
+    return delivered
+      ? NextResponse.json({ ok: true })
+      : NextResponse.json(
+          {
+            error:
+              "The requesting run stopped, expired, or already received an answer",
+          },
+          { status: 410 },
+        );
+  }
+
   const backend =
     conversation.agentBackend ?? (await deps.readConfig()).defaultAgentBackend;
 
@@ -312,6 +345,16 @@ export function createAnswerHandlers(deps: AnswerRouteDeps) {
     const gate = await gateAnswerRequest(request, conversation);
     if (!gate.ok) return gate.response;
     const body = gate.body;
+
+    if (isInTurnQuestionId(body.questionId)) {
+      return deliverAnswers(deps, {
+        projectPath,
+        scopeRef: { scope: "session", sessionName },
+        conversationId,
+        conversation,
+        body,
+      });
+    }
 
     // Graph-workflow lane answer: record on the execution's context record and
     // clear the conversation marker via a machine transition. No message is

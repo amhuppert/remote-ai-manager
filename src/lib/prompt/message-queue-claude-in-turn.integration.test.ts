@@ -29,6 +29,7 @@ import {
 } from "@/lib/conversations/message-queue-service";
 
 import { queueMessage, type QueueMessageDeps } from "./queue";
+import { InputDeliveryUncertainError } from "@/lib/agent-backends/errors";
 
 const NOW = "2026-06-08T09:00:00.000Z";
 
@@ -137,6 +138,38 @@ function makeAcceptingClaudeRuntime(): {
 }
 
 describe("Claude in-turn live-delivery flow (integration)", () => {
+  it("holds a lost live acknowledgement for review without next-turn redelivery", async () => {
+    const store: FakeStore = { conversation: makeRunningClaudeConversation() };
+    const { deps: serviceDeps } = makeQueueServiceDeps(store);
+    const service = createMessageQueueService(serviceDeps);
+    const { runtime } = makeAcceptingClaudeRuntime();
+    runtime.queueUserInput = async () => {
+      throw new InputDeliveryUncertainError("acknowledgement lost");
+    };
+    const appended: TranscriptEntry[] = [];
+    await queueMessage({
+      ...KEY,
+      backend: "claude",
+      text: "only once",
+      deps: {
+        enqueue: service.enqueue,
+        claimLiveDelivery: service.claimLiveDelivery,
+        markPending: service.markPending,
+        markDelivered: service.markDelivered,
+        markUncertain: service.markUncertain,
+        getRuntime: () => runtime,
+        appendTranscriptEntry: async (_id, entry) => {
+          appended.push(entry);
+        },
+        getProjectDisplayName: () => "my-project",
+      },
+    });
+    expect(store.conversation?.pendingQueue).toMatchObject([
+      { status: "uncertain", error: "acknowledgement lost" },
+    ]);
+    expect(appended).toEqual([]);
+    expect(await service.claimNextTurnBatch(KEY)).toBeNull();
+  });
   it("queues during a running Claude turn, accepts live delivery, appends once after acceptance, and transitions pending -> delivered", async () => {
     // --- Compose the REAL queue service over an in-memory running Claude
     //     conversation, and the REAL queueMessage over that same service.

@@ -55,6 +55,7 @@ import {
   loadGeneratedCursorModelCatalog,
 } from "./cursor/model-catalog";
 import { createScriptedTransport } from "./cursor/testing/scripted-worker";
+import { CURSOR_IPC_CODEC_VERSION } from "./cursor/worker/ipc";
 import {
   claudeMcpCapabilities,
   codexMcpCapabilities,
@@ -280,17 +281,33 @@ describeBackendConformance(codexDescriptor, {
 // ============================================================
 
 const CURSOR_HANGING_PROMPT = "conformance: cursor hang";
+const CURSOR_QUEUE_HOLD_PROMPT = "conformance: cursor queue hold";
 
 let cursorRunCounter = 0;
+const cursorQueueReady = Promise.withResolvers<void>();
 
 // The scripted transport plays the worker's side of the IPC contract only, so
 // the runtime, continuity adapter, projections, classifier, and runtime-config
 // adapter under test are the production ones (spec D19).
 const cursorTransport = createScriptedTransport({
+  onSteer: (input, worker) => {
+    worker.send({
+      v: CURSOR_IPC_CODEC_VERSION,
+      type: "steerResult",
+      runId: input.runId,
+      requestId: input.requestId,
+      outcome: "complete_delivered",
+    });
+    worker.settle(input.runId, "completed");
+  },
   onTurn: (turn, worker) => {
     worker.sendInputAccepted(turn.runId);
     // The hanging prompt never settles on its own — cancellation has to.
     if (turn.input.promptText.includes(CURSOR_HANGING_PROMPT)) return;
+    if (turn.input.promptText.includes(CURSOR_QUEUE_HOLD_PROMPT)) {
+      cursorQueueReady.resolve();
+      return;
+    }
     if (turn.input.promptText.includes("conformance: cursor failure")) {
       worker.settle(turn.runId, "failed", {
         name: "AgentNotFoundError",
@@ -397,6 +414,8 @@ describeBackendConformance(cursorDescriptor, {
     buildCreateInput: () =>
       buildCreateInput("conformance-cursor-conv", CURSOR_MODEL_SELECTION),
     hangingPromptText: CURSOR_HANGING_PROMPT,
+    queueHoldPromptText: CURSOR_QUEUE_HOLD_PROMPT,
+    waitUntilQueueReady: () => cursorQueueReady.promise,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,

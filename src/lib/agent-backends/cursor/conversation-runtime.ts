@@ -17,6 +17,7 @@ import type {
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
+  ConversationQueuedUserInput,
 } from "../conversation";
 import type { AgentFailureClassification } from "../errors";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -26,6 +27,7 @@ import type { BackendModelSelection } from "../schemas";
 import { appendStructuredOutputInstruction } from "../structured-output-prompt";
 import type { FsWritePolicy } from "../task";
 import { CURSOR_BACKEND_ID } from "./backend-id";
+import { CursorSteering } from "./steering";
 import { appendCursorContentDelta } from "./content-deltas";
 import { mayForceExpire } from "./continuity";
 import {
@@ -77,6 +79,7 @@ const failureClassifier = createCursorFailureClassifier();
 const MAX_SEEN_EVENT_KEYS = 20_000;
 
 export interface CursorConversationRuntimeDeps {
+  steerTimeoutMs?: number;
   taskStore?(
     conversationId: string,
   ): import("./background-tasks").CursorTaskStore;
@@ -132,6 +135,9 @@ type TurnOutcome =
 type AttachOutcome = { ok: true } | { ok: false; error: unknown };
 
 interface ActiveTurn {
+  onUserQuestion: ConversationBackendTurnInput["onUserQuestion"];
+  questionController: AbortController;
+  questionIds: Set<string>;
   mcpConfigHash: string;
   runId: string;
   settlement: Deferred<TurnOutcome>;
@@ -174,6 +180,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   private readonly conversationCapability: string | undefined;
   private readonly deps: CursorConversationRuntimeDeps;
   private readonly workerOwnerToken = {};
+  private readonly steering: CursorSteering;
 
   private session: CursorWorkerSession | null = null;
   /** Resolves once the current session's agent is attached; null when none. */
@@ -250,6 +257,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       : null;
     this.instructionsPending = true;
     this.deps = deps;
+    this.steering = new CursorSteering(deps.steerTimeoutMs);
     this.taskStore = deps.taskStore?.(input.conversationId);
   }
 
@@ -263,6 +271,35 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
   get isTurnActive(): boolean {
     return this.activeTurn !== null;
+  }
+
+  async queueUserInput(input: ConversationQueuedUserInput): Promise<void> {
+    const turn = this.activeTurn;
+    const session = this.session;
+    if (
+      !turn ||
+      turn.settled ||
+      turn.aborted ||
+      !session ||
+      !this.acceptedThisPrompt
+    ) {
+      throw new Error("Cursor has no running turn ready for steering");
+    }
+    if (input.content.some((block) => block.type !== "text")) {
+      throw new Error(
+        "Cursor steering accepts text only; attachments require the next turn",
+      );
+    }
+    const text = input.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n\n");
+    if (!text.trim()) throw new Error("Cursor steering requires text");
+    await this.steering.deliver(
+      turn.runId,
+      (requestId) => session.steer(turn.runId, requestId, text),
+      input.signal,
+    );
   }
 
   async sendTurn(
@@ -376,6 +413,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     },
   ): Promise<{ state: ActiveTurn; outcome: TurnOutcome }> {
     const turn: ActiveTurn = {
+      onUserQuestion: input.onUserQuestion,
+      questionController: new AbortController(),
+      questionIds: new Set(),
       mcpConfigHash: computeEffectiveConfigHash(
         this.stagedPortableMcp ?? { servers: [] },
       ),
@@ -400,6 +440,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       input.signal.addEventListener("abort", onAbort, { once: true });
       this.armStallTimer(turn);
       session.startTurn({
+        allowQuestions: input.onUserQuestion !== undefined,
         runId: turn.runId,
         promptText: dispatch.promptText,
         images: dispatch.images,
@@ -425,6 +466,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   private async closeRuntime(): Promise<void> {
     if (this._status === "dead") return;
     this._status = "dead";
+    this.activeTurn?.questionController.abort();
+    this.steering.close();
     this.loseTasks("runtime_closed");
     const session = this.session;
     this.session = null;
@@ -759,6 +802,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
    * by the path that actually needs it.
    */
   private discardSession(reason: string): void {
+    this.steering.close();
     const session = this.session;
     this.session = null;
     this.attaching = null;
@@ -796,6 +840,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   }
 
   private handleExit(expected: boolean): void {
+    this.steering.close();
     this.session = null;
     this.attaching = null;
 
@@ -837,6 +882,46 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
   private handleFrame(frame: CursorWorkerFrame): void {
     switch (frame.type) {
+      case "steerResult":
+        this.steering.accept(frame);
+        return;
+      case "questionRequest":
+        this.forRun(frame.runId, (turn) => {
+          if (turn.questionIds.has(frame.requestId)) return;
+          turn.questionIds.add(frame.requestId);
+          const session = this.session;
+          if (!session) return;
+          this.touch(turn);
+          const answer = turn.onUserQuestion
+            ? turn.onUserQuestion(
+                frame.questions,
+                turn.questionController.signal,
+              )
+            : Promise.resolve({
+                status: "unavailable" as const,
+                message: "Questions are disabled for this run",
+              });
+          void answer.then(
+            (reply) => {
+              if (turn.settled || turn.aborted) return;
+              session.answerQuestion(frame.runId, frame.requestId, reply);
+              this.touch(turn);
+            },
+            () => {
+              if (turn.settled || turn.aborted) return;
+              logger.error("cursor-runtime.question_failed", {
+                conversationId: this.conversationId,
+                runId: frame.runId,
+                requestId: frame.requestId,
+              });
+              session.answerQuestion(frame.runId, frame.requestId, {
+                status: "unavailable",
+                message: "The question could not be completed",
+              });
+            },
+          );
+        });
+        return;
       case "attachResult": {
         const settlement = this.pendingAttach;
         this.pendingAttach = null;
@@ -1098,6 +1183,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     const turn = this.activeTurn;
     if (turn === null || turn.settled || turn.aborted) return;
     turn.aborted = true;
+    turn.questionController.abort();
     this.clearTurnTimers(turn);
     this.session?.cancel(turn.runId);
     // The worker's own settlement is preferred, but a cancelled turn resolves
@@ -1118,6 +1204,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   /** The single settlement door: a turn can pass through it exactly once. */
   private finishTurn(turn: ActiveTurn, outcome: TurnOutcome): void {
     if (turn.settled) return;
+    turn.questionController.abort();
     turn.settled = true;
     this.clearTurnTimers(turn);
     turn.settlement.resolve(turn.aborted ? { kind: "aborted" } : outcome);
@@ -1289,6 +1376,11 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
   private buildPromptText(input: ConversationBackendTurnInput): string {
     const parts: string[] = [];
+    if (input.onUserQuestion) {
+      parts.push(
+        "For questions that need an answer during this turn, use cc_question on the custom-user-tools MCP server. It waits up to five minutes and returns the user's answers in this run; continue after it returns. One question batch may wait at a time, including questions from subagents. Native askQuestion and await are unavailable. cctl ask remains a separate asynchronous next-turn option: follow its end-turn instruction when using it.",
+      );
+    }
     const skills = this.deps.capabilityDelivery?.snapshot;
     if (skills && !skills.delivered && skills.catalog)
       parts.push(skills.catalog);

@@ -10,10 +10,15 @@ import type {
   CursorWorkerSendOptions,
 } from "./entry";
 import { createLogger } from "@/lib/logging";
+import { z } from "zod";
+import { inTurnQuestionBatchSchema } from "@/lib/conversations/in-turn-question-schemas";
 
 import { openCursorMcpBridge, type CursorMcpBridge } from "./mcp-bridge";
 
 const logger = createLogger("cursor-worker");
+const questionInputSchema = z
+  .record(z.string(), z.json())
+  .parse(JSON.parse(JSON.stringify(z.toJSONSchema(inTurnQuestionBatchSchema))));
 
 /**
  * The real `@cursor/sdk` behind the worker's port (spec D2, D11, D18).
@@ -138,6 +143,7 @@ function toRunResult(
 
 function wrapRun(run: SdkRun): CursorWorkerRun {
   return {
+    ...(run.steer ? { steer: (text: string) => run.steer!(text) } : {}),
     stream: () => run.stream(),
     wait: async () => toRunResult(await run.wait()),
     cancel: () => run.cancel(),
@@ -176,9 +182,31 @@ export function wrapCursorSdkAgent(
               options.onTaskUpdate?.(update);
           },
           mcpServers: bridge.servers,
-          ...(options.forceExpirePersistedRun
-            ? { local: { force: true } }
-            : {}),
+          local: {
+            ...(options.forceExpirePersistedRun ? { force: true } : {}),
+            customTools: options.onQuestion
+              ? {
+                  cc_question: {
+                    description:
+                      "Ask the user one to three questions and wait for their reply in this turn. The request expires after five minutes. Concurrent questions share one panel. On cancellation or expiry, continue with best judgment. Use cctl ask for asynchronous next-turn questions.",
+                    inputSchema: questionInputSchema,
+                    execute: async (args, context) => {
+                      const parsed = inTurnQuestionBatchSchema.safeParse(args);
+                      if (!parsed.success)
+                        return {
+                          status: "unavailable",
+                          message:
+                            "Provide one to three questions with question text and options",
+                        };
+                      return options.onQuestion!(
+                        parsed.data.questions,
+                        context.toolCallId,
+                      );
+                    },
+                  },
+                }
+              : {},
+          },
         },
       );
       return wrapRun(run);

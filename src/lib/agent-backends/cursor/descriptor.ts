@@ -75,6 +75,7 @@ export const cursorNativeMemory: BackendNativeMemory = {
 export const cursorBackendMetadata: AgentBackendMetadata = {
   label: "Cursor",
   executionWarnings: [
+    "Live steering accepts text; attachments and rejected input wait for the next turn. Unconfirmed deliveries require review. Mid-turn questions use CC's question tool and expire after five minutes; native Cursor questions are unavailable.",
     ...listNativeMemoryExceptions([
       {
         id: CURSOR_BACKEND_ID,
@@ -105,8 +106,8 @@ export const cursorBackendMetadata: AgentBackendMetadata = {
 /**
  * Cursor conversation capabilities.
  *
- * - `queue`: Command Center durably accepts follow-ups while running and
- *   dispatches them on the next turn; interrupted deliveries require review.
+ * - `queue`: text can be steered into the running turn. Attachments and
+ *   provider refusals use the next turn; unconfirmed deliveries require review.
  * - `continuationStrength: "precise_session"`: a Cursor agent id is a real,
  *   probeable handle the SDK issues at create — resume returns to that exact
  *   session rather than replaying a reconstructed thread.
@@ -121,7 +122,7 @@ export const cursorBackendMetadata: AgentBackendMetadata = {
  *   metadata and explicit agent definitions while ambient settings stay off.
  */
 export const cursorConversationCapabilities: BackendConversationCapabilities = {
-  queue: { acceptsWhileRunning: true, deliveryTiming: "next_turn" },
+  queue: { acceptsWhileRunning: true, deliveryTiming: "in_turn" },
   continuationStrength: "precise_session",
   fork: "synthetic",
   structuredOutput: "post_validation",

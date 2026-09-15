@@ -17,6 +17,8 @@ import type { PortableMcpConfig, McpApplyResult } from "./portable-mcp";
 import type { McpDiscoveredTool } from "@/lib/mcp/schemas";
 import type { AgentTranscriptEntry } from "./transcript";
 import type { ProjectModelOptions } from "./project-model-options";
+import type { AskQuestionItem } from "@/lib/conversations/schemas";
+import type { InTurnQuestionReply } from "@/lib/conversations/in-turn-question-schemas";
 
 /**
  * Payload for `onBackgroundTasksLost`: the waitable background tasks that were
@@ -95,6 +97,10 @@ export interface BackgroundWaitSummary {
 }
 
 export interface ConversationBackendTurnInput {
+  onUserQuestion?(
+    questions: AskQuestionItem[],
+    signal: AbortSignal,
+  ): Promise<InTurnQuestionReply>;
   promptText: string;
   imageRefs: readonly ConversationImageRef[];
   sessionInstructions: string[];
@@ -239,6 +245,7 @@ export interface ConversationBackendRuntime {
    * absent method as `{ status: "ready" }`.
    */
   prepareForTurnStart?(): Promise<ReadyResult>;
+  /** Resolves on acceptance; ambiguous delivery rejects with InputDeliveryUncertainError. */
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
   supportedCommands?(): Promise<readonly { name: string }[]>;

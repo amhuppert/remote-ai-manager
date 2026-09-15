@@ -18,6 +18,7 @@ import {
 import type { BackendModelSelection } from "../../schemas";
 import { validateCursorWorkerModelSelection } from "./model-selection";
 import { createLogger } from "@/lib/logging";
+import { CursorWorkerQuestions } from "./question-bridge";
 import { CURSOR_NATIVE_MEMORY_INSTRUCTION } from "../native-memory";
 
 const logger = createLogger("cursor-worker");
@@ -93,6 +94,7 @@ export interface CursorWorkerAttachOptions {
  * where the SDK exposes it (`LocalSendOptions.force`).
  */
 export interface CursorWorkerSendOptions {
+  onQuestion?: CursorWorkerQuestions["ask"];
   onTaskUpdate?(update: unknown): void;
   modelSelection: BackendModelSelection;
   mcpServers: Record<string, CursorWorkerMcpServer>;
@@ -120,6 +122,7 @@ export interface CursorWorkerRunResult {
 }
 
 export interface CursorWorkerRun {
+  steer?(text: string): Promise<"complete_delivered" | "revert_to_followup">;
   /** Complete public SDK objects, in delivery order. */
   stream(): AsyncIterable<unknown>;
   wait(): Promise<CursorWorkerRunResult>;
@@ -236,6 +239,7 @@ interface WorkerConfig {
 interface ActiveRun {
   runId: string;
   run: CursorWorkerRun;
+  steerRequests: Set<string>;
 }
 
 function readProperty(value: unknown, key: string): unknown {
@@ -323,6 +327,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
   let agent: CursorWorkerAgent | null = null;
   let issuedRef: string | null = null;
   let activeRun: ActiveRun | null = null;
+  let activeQuestions: CursorWorkerQuestions | null = null;
   let ready = false;
   let stopping = false;
 
@@ -403,6 +408,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
   async function stop(reason: CursorWorkerStopReason): Promise<void> {
     if (stopping) return;
     stopping = true;
+    activeQuestions?.close();
     clearTimers();
 
     const graceMs =
@@ -764,6 +770,8 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       armIdleTimer();
     };
     let run: CursorWorkerRun;
+    const questions = new CursorWorkerQuestions(frame.runId, send);
+    activeQuestions = questions;
     try {
       logger.info("cursor-worker.native_memory_policy", {
         runId: frame.runId,
@@ -783,11 +791,20 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
           modelSelection: modelSelection.selection,
           mcpServers: frame.mcpServers,
           forceExpirePersistedRun: frame.forceExpirePersistedRun,
+          ...(frame.allowQuestions
+            ? {
+                onQuestion: (
+                  items: import("@/lib/conversations/schemas").AskQuestionItem[],
+                  toolCallId?: string,
+                ) => questions.ask(items, toolCallId),
+              }
+            : {}),
           onTaskUpdate: (update) =>
             forward({ type: "cursor_task_delta", update }),
         },
       );
     } catch (error) {
+      questions.close();
       forwarding = false;
       send({
         v: CURSOR_IPC_CODEC_VERSION,
@@ -799,13 +816,14 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       return;
     }
 
-    activeRun = { runId: frame.runId, run };
+    activeRun = { runId: frame.runId, run, steerRequests: new Set() };
     armIdleTimer();
     try {
       for await (const event of run.stream()) {
         forward(event);
       }
     } catch (error) {
+      questions.close();
       forwarding = false;
       activeRun = null;
       armIdleTimer();
@@ -823,6 +841,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     try {
       result = await run.wait();
     } catch (error) {
+      questions.close();
       forwarding = false;
       activeRun = null;
       armIdleTimer();
@@ -836,6 +855,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       return;
     }
     forwarding = false;
+    questions.close();
     activeRun = null;
     armIdleTimer();
 
@@ -862,9 +882,48 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     });
   }
 
+  async function handleSteer(
+    frame: Extract<CursorParentFrame, { type: "steer" }>,
+  ): Promise<void> {
+    const current = activeRun;
+    const reply = (
+      outcome: "complete_delivered" | "revert_to_followup" | "uncertain",
+    ) => {
+      logger.info("cursor-worker.steer_settled", {
+        runId: frame.runId,
+        requestId: frame.requestId,
+        outcome,
+      });
+      send({
+        v: CURSOR_IPC_CODEC_VERSION,
+        type: "steerResult",
+        runId: frame.runId,
+        requestId: frame.requestId,
+        outcome,
+      });
+    };
+    if (
+      stopping ||
+      !current ||
+      current.runId !== frame.runId ||
+      !current.run.steer
+    ) {
+      reply("revert_to_followup");
+      return;
+    }
+    if (current.steerRequests.has(frame.requestId)) return;
+    current.steerRequests.add(frame.requestId);
+    try {
+      reply(await current.run.steer(frame.text));
+    } catch {
+      reply("uncertain");
+    }
+  }
+
   async function handleCancel(
     frame: Extract<CursorParentFrame, { type: "cancel" }>,
   ): Promise<void> {
+    if (activeQuestions?.runId === frame.runId) activeQuestions.close();
     const current = activeRun;
     if (current === null || current.runId !== frame.runId) {
       send({
@@ -907,6 +966,11 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
         return handleAttach(frame);
       case "startTurn":
         return handleStartTurn(frame);
+      case "steer":
+        return handleSteer(frame);
+      case "questionReply":
+        activeQuestions?.answer(frame.runId, frame.requestId, frame.reply);
+        return;
       case "cancel":
         return handleCancel(frame);
       case "shutdown":

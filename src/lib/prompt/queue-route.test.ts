@@ -192,6 +192,26 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("POST .../conversations/[conversationId]/queue", () => {
+  it.each([
+    ["cc-in-turn-live", 200],
+    ["async-question", 409],
+  ])(
+    "admits steering while waiting for %s with status %s",
+    async (questionId, status) => {
+      vi.mocked(deps.getConversation).mockResolvedValue({
+        ...testConversation,
+        agentBackend: "cursor",
+        status: "waiting_for_input",
+        pendingQuestionId: questionId,
+      });
+      const response = await handlers.POST(
+        makeRequest({ text: "steer" }),
+        makeParams(),
+      );
+      expect(response.status).toBe(status);
+    },
+  );
+
   it("returns 404 when project not found", async () => {
     vi.mocked(deps.resolveProjectPath).mockResolvedValue(null);
     const response = await handlers.POST(

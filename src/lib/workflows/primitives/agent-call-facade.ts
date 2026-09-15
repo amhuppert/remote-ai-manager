@@ -86,6 +86,7 @@ import {
 const defaultLogger = createLogger("workflows.primitives.agent-call.facade");
 
 export interface ConversationRuntimeResolution {
+  onUserQuestion?: ConversationBackendTurnInput["onUserQuestion"];
   runtime: ConversationBackendRuntime;
   capabilityView: BackendCapabilityView;
   signal: AbortSignal;
@@ -493,6 +494,7 @@ async function executeConversationTurn(
     runtime: resolution.runtime,
     capabilityView: resolution.capabilityView,
     signal: resolution.signal,
+    onUserQuestion: resolution.onUserQuestion,
     modelSelection: resolution.modelSelection,
     ...(classifyFailure !== undefined ? { classifyFailure } : {}),
     ...(resolution.autonomous !== undefined

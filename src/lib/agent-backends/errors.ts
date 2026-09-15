@@ -84,6 +84,14 @@ export const turnContinuationSchema = z
  */
 const PROMPT_NOT_DELIVERED_MARK = "ccPromptNotDelivered";
 
+/** A dispatched live input has no definitive provider acknowledgement. */
+export class InputDeliveryUncertainError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InputDeliveryUncertainError";
+  }
+}
+
 export function markPromptNotDelivered<T extends Error>(error: T): T {
   Reflect.set(error, PROMPT_NOT_DELIVERED_MARK, true);
   return error;

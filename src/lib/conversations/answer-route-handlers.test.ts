@@ -201,6 +201,32 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     };
   }
 
+  it.each([null, "validator"] as const)(
+    "routes a live question reply to its callback before queue or lane handling (%s)",
+    async (role) => {
+      await fixture.seedConversation(
+        PROJECT,
+        SESSION,
+        seedConversation({ role, pendingQuestionId: "cc-in-turn-request" }),
+      );
+      let received = false;
+      const { deps, queueMessageSpy, recordLaneAnswers } = makeDeps({
+        answerInTurnQuestion: async (_scope, reply) => {
+          received = reply.questionId === "cc-in-turn-request";
+          return true;
+        },
+      });
+      const response = await createAnswerHandlers(deps).POST(
+        makeRequest({ questionId: "cc-in-turn-request", answers }),
+        { params },
+      );
+      expect(response.status).toBe(200);
+      expect(received).toBe(true);
+      expect(queueMessageSpy).not.toHaveBeenCalled();
+      expect(recordLaneAnswers).not.toHaveBeenCalled();
+    },
+  );
+
   describe("public session position", () => {
     it("refuses the internal project sentinel instead of accepting it as an alias", async () => {
       // A real project conversation with a pending batch exists, so the

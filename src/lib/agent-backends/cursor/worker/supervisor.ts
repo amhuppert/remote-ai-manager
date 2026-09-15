@@ -373,6 +373,7 @@ class SupervisedWorker implements CursorWorkerSession {
     this.send({
       v: CURSOR_IPC_CODEC_VERSION,
       type: "startTurn",
+      allowQuestions: input.allowQuestions ?? false,
       runId: input.runId,
       promptText: input.promptText,
       images: [...input.images],
@@ -385,6 +386,30 @@ class SupervisedWorker implements CursorWorkerSession {
 
   cancel(runId: string): void {
     this.send({ v: CURSOR_IPC_CODEC_VERSION, type: "cancel", runId });
+  }
+
+  steer(runId: string, requestId: string, text: string): void {
+    this.send({
+      v: CURSOR_IPC_CODEC_VERSION,
+      type: "steer",
+      runId,
+      requestId,
+      text,
+    });
+  }
+
+  answerQuestion(
+    runId: string,
+    requestId: string,
+    reply: import("@/lib/conversations/in-turn-question-schemas").InTurnQuestionReply,
+  ): void {
+    this.send({
+      v: CURSOR_IPC_CODEC_VERSION,
+      type: "questionReply",
+      runId,
+      requestId,
+      reply,
+    });
   }
 
   close(): Promise<CursorWorkerCloseOutcome> {

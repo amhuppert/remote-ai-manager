@@ -177,6 +177,7 @@ function admissionFailure(error: BackendAdmissionError): PromptActorResult {
 }
 
 interface DispatchTurnViaAgentCallInput {
+  onUserQuestion?: ConversationBackendTurnInput["onUserQuestion"];
   executionClass: ExecutionClass;
   executeAgentCall: ConversationActorDependencies["execution"]["executeAgentCall"];
   getRuntime: () => ConversationBackendRuntime;
@@ -257,6 +258,7 @@ async function dispatchTurnViaAgentCall(
   const facadeDeps: AgentCallFacadeDeps = {
     resolveConversationRuntime: () => {
       const resolution: ConversationRuntimeResolution = {
+        onUserQuestion: input.onUserQuestion,
         runtime: wrappedRuntime,
         capabilityView: capabilityViewForBackend(input.backend),
         signal: input.signal,
@@ -1451,6 +1453,22 @@ async function executePromptForMachine(
     // normalizes every failure through the backend's failure classifier, so
     // the actor consumes only the widened `AgentCallResult`.
     agentCallResult = await dispatchTurnViaAgentCall({
+      onUserQuestion:
+        (input.turn.askUserQuestionsEnabled ?? !input.turn.autonomous)
+          ? async (questions, signal) => {
+              const { inTurnQuestionService } =
+                await import("@/lib/conversations/in-turn-question-service");
+              return inTurnQuestionService.request(
+                {
+                  projectPath: input.projectPath,
+                  sessionName: conversationTargetStoreSessionName(input.target),
+                  conversationId: input.target.conversationId,
+                },
+                questions,
+                signal,
+              );
+            }
+          : undefined,
       executionClass,
       executeAgentCall: deps.execution.executeAgentCall,
       getRuntime: () => backendRuntime!,

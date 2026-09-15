@@ -119,6 +119,35 @@ function createHarness(
   };
 }
 
+describe("Cursor in-turn steering", () => {
+  it("accepts text in the running turn only after the provider acknowledgement", async () => {
+    const started = Promise.withResolvers<void>();
+    const harness = createHarness({
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          started.resolve();
+        },
+      },
+      deps: { stallTimeoutMs: 5000 },
+    });
+    const running = harness.send();
+    await started.promise;
+    try {
+      await expect(
+        harness.runtime.queueUserInput({
+          content: [{ type: "text", text: "Use blue" }],
+        }),
+      ).resolves.toBeUndefined();
+      expect(harness.runtime.isTurnActive).toBe(true);
+    } finally {
+      harness.transport.workers[0]?.settle("run-1", "completed");
+      await running;
+      await harness.runtime.close();
+    }
+  });
+});
+
 const ASSISTANT_TEXT = {
   type: "assistant",
   agent_id: "agent-1",
@@ -834,11 +863,13 @@ describe("turn configuration", () => {
     expect(second).toContain("- second-lesson [project, just now]");
   });
 
-  it("declares next-turn queueing by exposing no live delivery method", () => {
+  it("rejects live delivery when no turn is running", async () => {
     const harness = createHarness();
-    expect(
-      (harness.runtime as { queueUserInput?: unknown }).queueUserInput,
-    ).toBeUndefined();
+    await expect(
+      harness.runtime.queueUserInput({
+        content: [{ type: "text", text: "follow-up" }],
+      }),
+    ).rejects.toThrow("no running turn");
   });
 });
 

@@ -53,6 +53,7 @@ import type { ConversationSnapshotOwner } from "@/lib/state-store";
 // module. The `no-restricted-imports` startup-reader gate allowlists this file.
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { isInTurnQuestionId } from "@/lib/conversations/in-turn-questions";
 import { isActiveQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 
 // The `conversation-manager` module key is a stable log-query key: rehydration
@@ -79,9 +80,13 @@ const logger = createLogger("conversation-manager");
  */
 export function shouldRehydrateSnapshot(snapshot: Snapshot<unknown>): boolean {
   if (snapshot.status !== "active") return false;
-  const context = (snapshot as { context?: { pendingQuestion?: unknown } })
-    .context;
-  return context?.pendingQuestion != null;
+  const context = (
+    snapshot as { context?: { pendingQuestion?: { questionId?: string } } }
+  ).context;
+  return (
+    context?.pendingQuestion != null &&
+    !isInTurnQuestionId(context.pendingQuestion.questionId)
+  );
 }
 
 interface RehydrateOneActorArgs {
@@ -513,6 +518,26 @@ export async function rehydrateConversationActors(
     // the same section instead of racing this one.
     await resolved.host.exclusive(key, async () => {
       if (resolved.host.has(key)) return;
+      if (isInTurnQuestionId(conversation.pendingQuestionId)) {
+        await resolved.mutateConversation(
+          projectPath,
+          storeSessionName,
+          conversation.id,
+          "question.recover_stopped_run",
+          (record) => {
+            if (record.pendingQuestionId !== conversation.pendingQuestionId)
+              return;
+            record.pendingQuestionId = null;
+            record.pendingQuestions = null;
+            record.status = "awaiting";
+            record.activeTurnSource = null;
+          },
+        );
+        logger.info("question.recovered_stopped_run", {
+          conversationId: conversation.id,
+          ...scopeRef,
+        });
+      }
       let authority: CheckpointAuthorityHydration;
       try {
         authority = await resolved.hydrateCheckpointAuthority(

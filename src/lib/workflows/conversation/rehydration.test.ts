@@ -141,6 +141,53 @@ afterEach(() => {
 
 describe("collectRehydrationCandidates", () => {
   it.each(["session", "project"] as const)(
+    "retires a stopped in-turn question without queued messages (%s)",
+    async (scope) => {
+      const fixture = createPersistenceFixture();
+      const projectPath = "/question-startup";
+      const sessionName =
+        scope === "project" ? PROJECT_CONVERSATION_SESSION_SENTINEL : "session";
+      const conversation = makeConversationState({
+        id: "live-question",
+        scope,
+        status: "waiting_for_input",
+        activeTurnSource: "user",
+        pendingQuestionId: "cc-in-turn-stopped",
+        pendingQuestions: [],
+      });
+      try {
+        fixture.seedProject(projectPath);
+        if (scope === "project")
+          await fixture.seedProjectConversation(projectPath, conversation);
+        else {
+          fixture.seedSession(projectPath, sessionName);
+          await fixture.seedConversation(
+            projectPath,
+            sessionName,
+            conversation,
+          );
+        }
+        await runRehydration({
+          ...rehydrationInfrastructure(),
+          mutateConversation: fixture.store.mutateConversation,
+          readAllForStartup: () => readAllForStartupFromDb(fixture.db),
+          listAllProjectConversations:
+            fixture.store.listAllProjectConversations,
+          getProjectDisplayName: () => "question-startup",
+          getConversationMachineSnapshot: () => null,
+          validateRestoredSnapshot: () => null,
+        });
+        const reloaded = await fixture
+          .recreateStore()
+          .getConversation(projectPath, sessionName, conversation.id);
+        expect(reloaded?.pendingQuestionId).toBeNull();
+        expect(reloaded?.status).toBe("awaiting");
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+  it.each(["session", "project"] as const)(
     "recovers an ordinary %s queue even without a resumable snapshot",
     async (scope) => {
       const fixture = createPersistenceFixture();
@@ -638,6 +685,21 @@ describe("waitingForInput rehydration contract", () => {
 });
 
 describe("shouldRehydrateSnapshot", () => {
+  it("never rehydrates a callback whose provider run died", () => {
+    expect(
+      shouldRehydrateSnapshot(
+        fakeSnapshot({
+          status: "active",
+          context: {
+            pendingQuestion: {
+              questionId: "cc-in-turn-stopped",
+              questions: [],
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
   it("rehydrates active snapshots with a pending question", () => {
     expect(
       shouldRehydrateSnapshot(

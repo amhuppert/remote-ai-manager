@@ -8,11 +8,12 @@ import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
  * backend confirms acceptance. Enqueue NEVER writes a transcript entry. A
  * delivered transcript entry is appended only after `queueUserInput` resolves
  * (backend acceptance), and the queue row is marked delivered only after that
- * append succeeds. A failed live delivery leaves the row `pending` so the
- * conversation actor's next-turn drain can deliver it.
+ * append succeeds. A confirmed refusal leaves the row `pending` for the
+ * next-turn drain. An unconfirmed delivery stays `uncertain` for user review.
  */
 
 import { getRuntime as defaultGetRuntime } from "@/lib/agent-backends/runtime-registry";
+import { InputDeliveryUncertainError } from "@/lib/agent-backends/errors";
 import { messageQueueService } from "@/lib/conversations/message-queue-service";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
@@ -147,6 +148,13 @@ export interface QueueMessageDeps {
       error: string;
     },
   ): Promise<void>;
+  markUncertain(
+    input: ConversationKey & {
+      ids: string[];
+      deliveryAttemptId: string;
+      error: string;
+    },
+  ): Promise<void>;
   getRuntime(conversationId: string): ReturnType<typeof defaultGetRuntime>;
   appendTranscriptEntry(
     ...args: Parameters<typeof defaultAppendTranscriptEntry>
@@ -199,6 +207,7 @@ const defaultDeps: QueueMessageDeps = {
   claimLiveDelivery: messageQueueService.claimLiveDelivery,
   markDelivered: messageQueueService.markDelivered,
   markPending: messageQueueService.markPending,
+  markUncertain: messageQueueService.markUncertain,
   getRuntime: defaultGetRuntime,
   appendTranscriptEntry: defaultAppendTranscriptEntry,
   saveTranscriptImage: defaultSaveTranscriptImage,
@@ -521,7 +530,7 @@ export async function queueMessage(
       deliveryAttemptId,
       error,
     });
-    return { entry, deliveryTiming: "in_turn" };
+    return { entry, deliveryTiming: "next_turn" };
   }
 
   // Rendered references provide a local baseline until backend acceptance.
@@ -595,6 +604,20 @@ export async function queueMessage(
     });
   } catch (err) {
     const error = getErrorMessage(err);
+    if (err instanceof InputDeliveryUncertainError) {
+      await deps.markUncertain({
+        projectPath,
+        sessionName,
+        conversationId,
+        ids: [entry.id],
+        deliveryAttemptId,
+        error,
+      });
+      return {
+        entry: { ...claimed, status: "uncertain", error },
+        deliveryTiming: "in_turn",
+      };
+    }
     logger.warn("queue.failed", {
       projectName: deps.getProjectDisplayName(projectPath),
       ...scopeRef,
@@ -614,7 +637,7 @@ export async function queueMessage(
       deliveryAttemptId,
       error,
     });
-    return { entry, deliveryTiming: "in_turn" };
+    return { entry, deliveryTiming: "next_turn" };
   }
 
   if (deliveredNotepads.length > 0) {
@@ -638,7 +661,7 @@ export async function queueMessage(
     }
   }
   // `queueUserInput` resolving IS backend acceptance, and that is the settle
-  // gate (D17): a delivery that threw above left the row pending AND the
+  // gate (D17): a delivery that threw above left the row unsettled AND the
   // watermarks untouched, so the notice re-fires on the next message rather
   // than being lost.
   //

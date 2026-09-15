@@ -22,6 +22,7 @@ import { createLogger } from "@/lib/logging";
 // Imported from the submodule so span timing survives tests that stub the
 // `@/lib/logging` barrel with a partial vi.mock (createLogger/withTracing only).
 import { timed } from "@/lib/logging/timed";
+import { isInTurnQuestionId } from "@/lib/conversations/in-turn-questions";
 import {
   storeSessionNameFromScopeRef,
   type ConversationScopeRef,
@@ -203,7 +204,14 @@ export async function enqueueQueuedMessage(
     storeSessionName,
     conversationId,
   );
-  if (conversation.status !== "running" && !checkpointQueue) {
+  const awaitingInTurnAnswer =
+    conversation.status === "waiting_for_input" &&
+    isInTurnQuestionId(conversation.pendingQuestionId);
+  if (
+    conversation.status !== "running" &&
+    !awaitingInTurnAnswer &&
+    !checkpointQueue
+  ) {
     return queueError(
       "Conversation is not running — use the prompt endpoint to send a new message",
       "NOT_RUNNING",

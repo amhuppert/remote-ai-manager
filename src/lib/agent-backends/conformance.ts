@@ -96,6 +96,8 @@ export interface ConversationTurnConformanceHarness {
   hangingPromptText: string;
   /** Required when `queue.deliveryTiming === "in_turn"`. */
   queueHoldPromptText?: string;
+  /** Waits until an asynchronous provider has accepted the held prompt. */
+  waitUntilQueueReady?(): Promise<void>;
   /** Required when `externalTurns` is declared: makes the fake provider emit
    * one unsolicited out-of-turn provider turn. */
   triggerExternalTurn?(): void | Promise<void>;
@@ -225,6 +227,7 @@ export async function checkQueueCoherence(
           return result;
         });
 
+      await harness.waitUntilQueueReady?.();
       await runtime.queueUserInput!({
         content: [{ type: "text", text: "conformance queued input" }],
       });

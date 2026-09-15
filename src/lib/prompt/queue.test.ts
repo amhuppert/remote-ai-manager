@@ -71,6 +71,7 @@ const deps: QueueMessageDeps = {
   claimLiveDelivery: claimLiveDeliveryMock,
   markDelivered: markDeliveredMock,
   markPending: markPendingMock,
+  markUncertain: async () => {},
   getRuntime: getRuntimeMock,
   appendTranscriptEntry: appendTranscriptEntryMock,
   saveTranscriptImage: saveTranscriptImageMock,
@@ -618,7 +619,7 @@ describe("queueMessage in_turn", () => {
     });
     expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
     expect(markDeliveredMock).not.toHaveBeenCalled();
-    expect(result.deliveryTiming).toBe("in_turn");
+    expect(result.deliveryTiming).toBe("next_turn");
   });
 
   it("marks pending when there is no live runtime", async () => {
@@ -638,7 +639,7 @@ describe("queueMessage in_turn", () => {
       error: expect.stringContaining("no live runtime"),
     });
     expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
-    expect(result.deliveryTiming).toBe("in_turn");
+    expect(result.deliveryTiming).toBe("next_turn");
   });
 
   it("marks pending when the runtime cannot queue input", async () => {

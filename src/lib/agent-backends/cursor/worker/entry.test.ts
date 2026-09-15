@@ -129,6 +129,11 @@ class FakeProcessControl {
 }
 
 class FakeRun implements CursorWorkerRun {
+  streamGate: Promise<void> | null = null;
+  steering: string[] = [];
+  steerResult = Promise.resolve<"complete_delivered" | "revert_to_followup">(
+    "complete_delivered",
+  );
   cancelCalls = 0;
   cancelError: unknown = null;
 
@@ -138,6 +143,7 @@ class FakeRun implements CursorWorkerRun {
   ) {}
 
   async *stream(): AsyncIterable<unknown> {
+    if (this.streamGate) await this.streamGate;
     for (const event of this.events) {
       yield event;
     }
@@ -150,6 +156,11 @@ class FakeRun implements CursorWorkerRun {
   async cancel(): Promise<void> {
     this.cancelCalls += 1;
     if (this.cancelError !== null) throw this.cancelError;
+  }
+
+  steer(text: string): Promise<"complete_delivered" | "revert_to_followup"> {
+    this.steering.push(text);
+    return this.steerResult;
   }
 }
 
@@ -324,6 +335,47 @@ async function handshake(harness: Harness): Promise<CursorWorkerHandle> {
   await settle();
   return handle;
 }
+
+describe("worker steering", () => {
+  it("forwards once for duplicate requests and acknowledges only the provider outcome", async () => {
+    const harness = createHarness();
+    const gate = Promise.withResolvers<void>();
+    const ack = Promise.withResolvers<
+      "complete_delivered" | "revert_to_followup"
+    >();
+    harness.sdk.agent.run.streamGate = gate.promise;
+    harness.sdk.agent.run.steerResult = ack.promise;
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+    const frame = {
+      v: CURSOR_IPC_CODEC_VERSION,
+      type: "steer",
+      runId: "run-1",
+      requestId: "input-1",
+      text: "Use blue",
+    };
+    harness.channel.emit(frame);
+    harness.channel.emit(frame);
+    await settle();
+    expect(harness.sdk.agent.run.steering).toEqual(["Use blue"]);
+    expect(harness.channel.ofType("steerResult")).toEqual([]);
+    ack.resolve("complete_delivered");
+    await settle();
+    expect(harness.channel.ofType("steerResult")).toEqual([
+      {
+        v: CURSOR_IPC_CODEC_VERSION,
+        type: "steerResult",
+        runId: "run-1",
+        requestId: "input-1",
+        outcome: "complete_delivered",
+      },
+    ]);
+    gate.resolve();
+    await settle();
+  });
+});
 
 /**
  * Attach the way the supervisor does: a fresh credential immediately ahead of

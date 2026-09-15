@@ -1,4 +1,5 @@
 import type { CursorCapabilitySnapshot } from "./capability-delivery";
+import type { InTurnQuestionReply } from "@/lib/conversations/in-turn-question-schemas";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { BackendModelSelection } from "../schemas";
 import type {
@@ -100,6 +101,7 @@ export interface CursorAttachInput {
 }
 
 export interface CursorTurnInput {
+  allowQuestions?: boolean;
   runId: string;
   promptText: string;
   images: readonly { data: string; mimeType: string }[];
@@ -138,6 +140,12 @@ export interface CursorWorkerSession {
    */
   attach(input: CursorAttachInput): void;
   startTurn(input: CursorTurnInput): void;
+  steer(runId: string, requestId: string, text: string): void;
+  answerQuestion(
+    runId: string,
+    requestId: string,
+    reply: InTurnQuestionReply,
+  ): void;
   cancel(runId: string): void;
   /**
    * Run the verified teardown ladder. Resolves only once no supervised process

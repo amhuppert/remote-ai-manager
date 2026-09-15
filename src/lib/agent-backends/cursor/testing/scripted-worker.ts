@@ -40,6 +40,10 @@ export type ScriptedTurnScript = (
 ) => void | Promise<void>;
 
 export interface ScriptedWorkerOptions {
+  onSteer?(
+    input: { runId: string; requestId: string; text: string },
+    worker: ScriptedWorker,
+  ): void;
   /** Frames to play for each `startTurn`; defaults to an empty finished turn. */
   onTurn?: ScriptedTurnScript;
   /** Attach outcome; defaults to attaching and issuing `ref`. */
@@ -72,6 +76,13 @@ export class ScriptedWorker implements CursorWorkerSession {
   readonly attachments: CursorAttachInput[] = [];
   readonly turns: ScriptedTurn[] = [];
   readonly cancelledRunIds: string[] = [];
+  readonly steers: Array<{ runId: string; requestId: string; text: string }> =
+    [];
+  readonly questionReplies: Array<{
+    runId: string;
+    requestId: string;
+    reply: import("@/lib/conversations/in-turn-question-schemas").InTurnQuestionReply;
+  }> = [];
   closeCount = 0;
 
   private readonly emit: (frame: CursorWorkerFrame) => void;
@@ -256,6 +267,30 @@ export class ScriptedWorker implements CursorWorkerSession {
       outcome: "cancelled",
       message: null,
     });
+  }
+
+  steer(runId: string, requestId: string, text: string): void {
+    const input = { runId, requestId, text };
+    this.steers.push(input);
+    if (this.options.onSteer) {
+      this.options.onSteer(input, this);
+      return;
+    }
+    this.send({
+      v: CURSOR_IPC_CODEC_VERSION,
+      type: "steerResult",
+      runId,
+      requestId,
+      outcome: "complete_delivered",
+    });
+  }
+
+  answerQuestion(
+    runId: string,
+    requestId: string,
+    reply: import("@/lib/conversations/in-turn-question-schemas").InTurnQuestionReply,
+  ): void {
+    this.questionReplies.push({ runId, requestId, reply });
   }
 
   async close(): Promise<CursorWorkerCloseOutcome> {

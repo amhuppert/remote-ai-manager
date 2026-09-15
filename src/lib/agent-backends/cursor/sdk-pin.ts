@@ -8,7 +8,7 @@
 export const CURSOR_SDK_PACKAGE = "@cursor/sdk";
 
 /** Kept byte-identical to the exact `package.json` pin; asserted by contract test. */
-export const CURSOR_SDK_PINNED_VERSION = "1.0.28";
+export const CURSOR_SDK_PINNED_VERSION = "1.0.31";
 
 /**
  * Node floor the SDK's own `engines` field declares. It applies to the worker

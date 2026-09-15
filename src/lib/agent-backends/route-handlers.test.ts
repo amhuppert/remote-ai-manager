@@ -47,11 +47,12 @@ describe("GET /api/agent-backends", () => {
     expect(cursor.defaultModelId).toBe("composer-2.5");
     expect(cursor.capabilities?.queue).toEqual({
       acceptsWhileRunning: true,
-      deliveryTiming: "next_turn",
+      deliveryTiming: "in_turn",
     });
     expect(cursor.nativeMemory.mechanism).toBe("none");
     if (cursor.nativeMemory.mechanism !== "none") return;
     expect(cursor.executionWarnings).toEqual([
+      "Live steering accepts text; attachments and rejected input wait for the next turn. Unconfirmed deliveries require review. Mid-turn questions use CC's question tool and expire after five minutes; native Cursor questions are unavailable.",
       cursor.nativeMemory.reason,
       "Provider tasks continue within the current turn. Background completion after a turn ends is unavailable; interrupted task outcomes are unknown and are reported when the conversation next runs.",
       "Network and native tool-approval limits are not enforced.",

@@ -42,6 +42,7 @@ const defaultLogger = createLogger(
 );
 
 export interface DispatchConversationTurnDeps {
+  onUserQuestion?: ConversationBackendTurnInput["onUserQuestion"];
   runtime: ConversationBackendRuntime;
   capabilityView: BackendCapabilityView;
   signal: AbortSignal;
@@ -118,6 +119,7 @@ export async function dispatchConversationTurn(
   }
 
   const turnInput: ConversationBackendTurnInput = {
+    onUserQuestion: deps.onUserQuestion,
     promptText: request.prompt,
     imageRefs: deps.imageRefs ?? [],
     sessionInstructions: [...(deps.sessionInstructions ?? [])],

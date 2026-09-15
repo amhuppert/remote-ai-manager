@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { backendModelSelectionSchema } from "../../schemas";
+import {
+  inTurnQuestionBatchSchema,
+  inTurnQuestionReplySchema,
+} from "@/lib/conversations/in-turn-question-schemas";
 
 /**
  * The Cursor worker IPC contract: versioned Zod-validated frames plus the
@@ -15,7 +19,7 @@ import { backendModelSelectionSchema } from "../../schemas";
  * the channel already destroyed.
  */
 
-export const CURSOR_IPC_CODEC_VERSION = 4;
+export const CURSOR_IPC_CODEC_VERSION = 5;
 
 /**
  * Reserved wrapper key. An application object that already owns this key is
@@ -615,6 +619,7 @@ const startTurnFrameSchema = z
   .object({
     v: versionSchema,
     type: z.literal("startTurn"),
+    allowQuestions: z.boolean().optional(),
     runId: z.string().min(1),
     promptText: z.string(),
     /**
@@ -644,6 +649,26 @@ const cancelFrameSchema = z.object({
   runId: z.string().min(1),
 });
 
+const steerFrameSchema = z
+  .object({
+    v: versionSchema,
+    type: z.literal("steer"),
+    runId: z.string().min(1),
+    requestId: z.string().min(1),
+    text: z.string().min(1),
+  })
+  .strict();
+
+const questionReplyFrameSchema = z
+  .object({
+    v: versionSchema,
+    type: z.literal("questionReply"),
+    runId: z.string().min(1),
+    requestId: z.string().min(1),
+    reply: inTurnQuestionReplySchema,
+  })
+  .strict();
+
 const shutdownFrameSchema = z.object({
   v: versionSchema,
   type: z.literal("shutdown"),
@@ -655,6 +680,8 @@ export const cursorParentFrameSchema = z.union([
   credentialFrameSchema,
   attachAgentFrameSchema,
   startTurnFrameSchema,
+  steerFrameSchema,
+  questionReplyFrameSchema,
   cancelFrameSchema,
   shutdownFrameSchema,
 ]);
@@ -799,6 +826,26 @@ const cancelResultFrameSchema = z.object({
   message: z.string().nullable(),
 });
 
+const steerResultFrameSchema = z
+  .object({
+    v: versionSchema,
+    type: z.literal("steerResult"),
+    runId: z.string().min(1),
+    requestId: z.string().min(1),
+    outcome: z.enum(["complete_delivered", "revert_to_followup", "uncertain"]),
+  })
+  .strict();
+
+const questionRequestFrameSchema = z
+  .object({
+    v: versionSchema,
+    type: z.literal("questionRequest"),
+    runId: z.string().min(1),
+    requestId: z.string().min(1),
+    questions: inTurnQuestionBatchSchema.shape.questions,
+  })
+  .strict();
+
 const fatalFrameSchema = z.object({
   v: versionSchema,
   type: z.literal("fatal"),
@@ -817,6 +864,8 @@ export const cursorWorkerFrameSchema = z.union([
   usageFrameSchema,
   turnSettledFrameSchema,
   cancelResultFrameSchema,
+  steerResultFrameSchema,
+  questionRequestFrameSchema,
   fatalFrameSchema,
 ]);
 
@@ -834,6 +883,8 @@ const PARENT_FRAME_TYPES = new Set([
   "credential",
   "attachAgent",
   "startTurn",
+  "steer",
+  "questionReply",
   "cancel",
   "shutdown",
 ]);
@@ -849,6 +900,8 @@ const WORKER_FRAME_TYPES = new Set([
   "usage",
   "turnSettled",
   "cancelResult",
+  "steerResult",
+  "questionRequest",
   "fatal",
 ]);
 

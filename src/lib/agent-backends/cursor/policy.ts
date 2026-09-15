@@ -55,13 +55,12 @@ export const CURSOR_ENABLE_AGENT_RETRIES = true;
  * (shell, file operations, search, subagents through `task`, and the MCP
  * family) stays available, including tools the platform adds after this SDK.
  *
- * The two interactive tools are denied because no mid-turn approval UI exists.
+ * Native interactive tools have no supported reply transport. CC-owned
+ * questions use the SDK's custom-tool callbacks.
  * Per the SDK's documented semantics this denial is main-loop scope only —
  * subagents launched through `task` keep their own platform-curated toolsets,
- * so this is main-loop policy, not a complete-toolset guarantee. A subagent
- * that surfaces an interactive request anyway is never awaited (no approval
- * handler is registered), so the turn resolves through the stall and timeout
- * bounds as a bounded typed failure rather than hanging.
+ * so this is main-loop policy, not a complete-toolset guarantee. Local SDK
+ * question handlers reject native interactive questions in both scopes.
  */
 export const CURSOR_DISALLOWED_TOOLS: readonly ToolName[] = [
   "askQuestion",

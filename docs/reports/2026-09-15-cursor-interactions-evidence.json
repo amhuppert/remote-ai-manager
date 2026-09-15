@@ -1,0 +1,99 @@
+{
+  "sdkVersion": "1.0.31",
+  "model": "composer-2.5",
+  "conversationId": "09a2ff7f-60d1-4c39-a5a6-d47e6ce369af",
+  "steeringAndQuestion": {
+    "runId": "run-891a3504-9bcc-4478-8006-e34b3f44ab90",
+    "questionId": "cc-in-turn-b53a0be6-6811-490b-a2d7-6f5f755da9fc",
+    "steeringRequestId": "9ac8810a-e3a6-47c9-b33b-1a0a4813a504",
+    "acknowledgement": "complete_delivered",
+    "queueMessageId": "12189700-88da-4f48-8e40-44a6487dd196",
+    "result": {
+      "text": "Color: **Blue**\n\nCC_LIVE_123_S4_NOVEL7",
+      "status": "FINISHED"
+    },
+    "visibleSteeringTranscriptEntries": 1,
+    "answerTranscriptEntries": 1,
+    "answerHttpStatus": 200,
+    "steeringHttpStatus": 200
+  },
+  "cancellation": {
+    "questionId": "cc-in-turn-2fd2dde9-7670-4985-ba3b-8db650829dd3",
+    "abortHttpStatus": 200,
+    "staleReplyHttpStatus": 410,
+    "pendingQuestionId": null
+  },
+  "restart": {
+    "questionId": "cc-in-turn-93940448-bb56-4223-8a7e-c1c33d92e0b4",
+    "staleReplyHttpStatus": 410,
+    "pendingQuestionId": null,
+    "method": "cctl dev stop nextjs; cctl dev ensure nextjs"
+  },
+  "asynchronousQuestion": {
+    "questionId": "q_1e950aa2-66e6-406e-bf47-34c830645ef8",
+    "askingRunId": "run-3dd5c26f-6ea7-45e2-8338-046c14e5a713",
+    "answeringRunId": "run-cee4f4e8-e8fa-4a2f-889c-a054005211b5",
+    "result": {
+      "text": "CC_ASYNC_123:Orange",
+      "status": "FINISHED"
+    }
+  },
+  "finalDurableState": {
+    "status": "awaiting",
+    "agent_backend": "cursor",
+    "backend_ref": "{\"backend\":\"cursor\",\"ref\":\"agent-ac71d3cb-6f03-4e8d-a730-311edb71beda\"}",
+    "pending_question_id": null,
+    "pending_queue": "[]"
+  },
+  "nextjsErrors": {
+    "configErrors": [],
+    "sessionErrors": []
+  },
+  "validation": [
+    {
+      "commandName": "test",
+      "runId": "vrun-a5ae1aaa-38d3-41dc-824b-7dcc4e0a31fc",
+      "kind": "passed",
+      "filesMatched": 13,
+      "effectiveScope": "changed"
+    },
+    {
+      "commandName": "test",
+      "runId": "vrun-c8bc1c7f-880d-450a-abe1-815687ab2a0d",
+      "kind": "passed",
+      "filesMatched": 10,
+      "effectiveScope": "changed"
+    },
+    {
+      "commandName": "test",
+      "runId": "vrun-7f9e9283-accf-49ea-8c65-2be61687a886",
+      "kind": "passed",
+      "filesMatched": 3,
+      "effectiveScope": "changed"
+    },
+    {
+      "commandName": "typecheck",
+      "runId": "vrun-e61e2662-7cbd-473c-af0a-9f5e981c179c",
+      "kind": "passed",
+      "effectiveScope": "full"
+    },
+    {
+      "commandName": "lint",
+      "runId": "vrun-b5072b9b-c017-4800-8fa8-d043b0902a6e",
+      "kind": "passed",
+      "effectiveScope": "changed"
+    },
+    {
+      "commandName": "seams",
+      "runId": "vrun-b95a7d63-adaf-4072-903d-018d05811c60",
+      "kind": "passed",
+      "effectiveScope": "full"
+    },
+    {
+      "commandName": "format",
+      "runId": "vrun-cf381da6-8b90-4f40-a8a8-d16c3d50d727",
+      "kind": "passed",
+      "effectiveScope": "changed"
+    }
+  ]
+}
