@@ -1,9 +1,12 @@
 ---
 name: native-sdd-authoring
-description: Author and review native Command Center specs and managed graph delivery workflows. Use when drafting, linting, proposing, revising, approving, planning, starting, capturing discoveries for, or amending a native spec through cctl spec and graph-workflow execution.
+description: Author and review native Command Center specs and managed graph delivery workflows. Use when drafting, linting, proposing, revising, preparing human approval, planning, starting, capturing discoveries for, or amending a native spec through cctl spec and graph-workflow execution.
 ---
 
 # Native SDD Authoring
+
+Read `cctl spec --help` and the relevant leaf help before authoring payloads.
+Use `cctl spec schema guidance` for the current lint and evidence contract.
 
 ## Reading specs without flooding context
 
@@ -66,9 +69,9 @@ Inspect stage and return-path contracts with `cctl spec status --help`,
 
 ## Managed delivery workflow
 
-A delivery attempt (`cctl spec plan open <slug>`) owns one real project workflow definition. That definition is authored as an ordinary graph `plan.json` and written with `cctl workflow replace <definitionId>`, using the definition revision as its compare-and-swap token. What is specific to a spec delivery — the pinned revision, how criteria reach contexts, phase-scoped authoring, and the preflight that reports what would refuse a propose — is owned by the "Delivering a native spec" section of the graph-workflow-planning skill. Every receipt on this path names the act that follows it, so follow the hint rather than a sequence restated here. Workflow Builder is the human's review surface: the managed definition is reviewed there before sign-off, and pending reaffirmations are cleared there in one batch. The charter (mission, invariants, conventions, sources) is part of that same plan while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the server-owned pinned-spec, context-excerpt and claims sources are re-injected at propose, so leave them out of what you author. `cctl spec plan propose` freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
+A delivery attempt (`cctl spec plan open <slug>`) owns one real project workflow definition. That definition is authored as an ordinary graph `plan.json` and written with `cctl workflow replace <definitionId>`, using the definition revision as its compare-and-swap token. What is specific to a spec delivery — the pinned revision, how criteria reach contexts, phase-scoped authoring, and the preflight that reports what would refuse a propose — is owned by [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md). Every receipt on this path names the act that follows it, so follow the hint rather than a sequence restated here. Workflow Builder is the human's review surface: the managed definition is reviewed there before sign-off, and pending reaffirmations are cleared there in one batch. The charter (mission, invariants, conventions, sources) is part of that same plan while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the server-owned pinned-spec, context-excerpt and claims sources are re-injected at propose, so leave them out of what you author. `cctl spec plan propose` freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
 
-The version-4 binding contains dispositions only. Read it with `cctl spec plan get <slug>` and author criterion coverage in the linked workflow definition; the planning skill's "Delivering a native spec" section owns that contract. Keep payloads under `.cc/temp/`. Human disposition decisions stay on the review surface. Graph and binding revisions are independent; re-read the surface whose write was refused. Every unlaunched version-3 candidate must reopen, re-propose and receive fresh sign-off; historical snapshots remain readable.
+The version-4 binding contains dispositions only. Read it with `cctl spec plan get <slug>` and author criterion coverage in the linked workflow definition; [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md) owns that contract. Keep payloads under `.cc/temp/`. Human disposition decisions stay on the review surface. Graph and binding revisions are independent; re-read the surface whose write was refused. Every unlaunched version-3 candidate must reopen, re-propose and receive fresh sign-off; historical snapshots remain readable.
 
 Every open derives its scope from the delivery delta. A criterion the last delivery accepted and nothing invalidated becomes `delivered_elsewhere`; one whose governing content moved becomes `pending_reaffirmation`; undelivered, hard-stale, and deferred criteria are selected again. Only a human clears pending reaffirmations, as one batch on that review surface, against the binding revision they read.
 
@@ -116,7 +119,7 @@ Remove draft elements by handle with `cctl spec remove`. When a surviving elemen
 
 Treat removal as reversible history, not deletion. Reintroduce the same element id with `"reintroduceHistorical": true` and `"baseElementVersion": null`; this restores its original number and handle. Follow the exact recovery printed by the removal receipt.
 
-Inspect both acts with `cctl spec remove --help`, `cctl spec draft --help`, and `cctl spec schema element-batch`. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Inspect both acts with `cctl spec remove --help`, `cctl spec draft --help`, and `cctl spec schema element-batch`.
 
 ## Correcting obsolete questions and assumptions
 
@@ -124,7 +127,7 @@ A question or assumption the spec has outgrown gets corrected, not left to rot. 
 
 The division of labour is fixed: you correct the record, and the human answers a question and disposes an assumption. Answered, disposed, withdrawn, and superseded records are immutable history. Never answer or dispose on the user's behalf, and never open a question to hold work you should be authoring — record what you proceeded on with `cctl spec assume` and keep going.
 
-Inspect the compare-and-swap tokens each verb takes with `cctl spec attention --help`. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Inspect the compare-and-swap tokens each verb takes with `cctl spec attention --help`.
 
 ## Withdraw-proposal vs dismiss-superseded
 
@@ -134,7 +137,7 @@ Use dismiss-superseded only for a stranded proposal that a later approved lineag
 
 Reopening costs far less than a pending count suggests: approvals on unchanged subjects carry into the reopened draft under the same applicable gate, and only edited subjects need re-approval. `cctl spec status`, the propose and withdrawal receipts, and the Request Changes notice all print both sides of that ledger — satisfied, split into carried, current-revision, import-settled, and combined-act, beside pending — above the `carry rule:` line stating the mechanism. Price a repair round off that ledger rather than re-litigating settled content.
 
-Inspect the distinct guards and outcomes with `cctl spec withdraw-proposal --help` and `cctl spec dismiss-superseded --help`. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Inspect the distinct guards and outcomes with `cctl spec withdraw-proposal --help` and `cctl spec dismiss-superseded --help`.
 
 ## Element-id/handle/version semantics
 
@@ -144,7 +147,7 @@ Treat `elementVersion` as a compare-and-swap token local to one revision. Versio
 
 Because you mint element ids, one batch can create an element and cite it from a sibling's typed reference fields in the same write. Reference integrity is judged against the result of the whole batch rather than each item as it lands, so array order does not matter and a cross-reference never has to wait for a second call. Parentage is the exception to writability: `parentElementId` is fixed at creation, and an update naming a different parent is refused with `parent_immutable` — place content elsewhere by writing a new element under the parent you want and removing the old one.
 
-Inspect the write contract with `cctl spec draft --help` and the relevant `cctl spec schema <document>` leaf. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Inspect the write contract with `cctl spec draft --help` and the relevant `cctl spec schema <document>` leaf.
 
 ## Importing a spec authored outside CC
 
@@ -154,9 +157,9 @@ Run the act in one order. Check `cctl spec list` and `cctl spec search --all <qu
 
 Import creates new specs only; change an existing spec with `cctl spec amend` instead. Import is never an approval shortcut for work authored here — content drafted in conversation earns its approval through `cctl spec propose` and human sign-off. Once the imported spec is ready, use its ordinary managed delivery lifecycle.
 
-Author the bundle so a delivered import owes a human no review pass. `delivered` defaults to true and records external-delivery provenance rather than machine proof, which the delivery gate never reads; opt out with `"delivered": false` when the source carries no acceptance criterion to record delivery against. Import a question already answered when the source holds the answer, and import an assumption with its real disposition — confirmed included — when the source shows it held. Carrying a source's disposition across is provenance capture, not the human disposition act: disposing an assumption here stays a Spec Studio act, so never invent a disposition the source does not show. An import authored this way arrives with zero open review items.
+Author the bundle to preserve the source's actual state. `delivered` defaults to true and records external-delivery provenance rather than machine proof; the delivery gate never reads it. Set `"delivered": false` unless the source establishes that the work shipped. Delivered imports require at least one acceptance criterion to record delivery against; a criteria-less source must opt out of that claim. Import a question already answered when the source holds the answer, and import an assumption with its real disposition — confirmed included — when the source shows it held. Carrying a source's disposition across is provenance capture, not the human disposition act: disposing an assumption here stays a Spec Studio act. Preserve unresolved questions and assumptions as unresolved, and report any review items the import receipt lists.
 
-Inspect the act with `cctl spec import --help` and its document with `cctl spec schema import-bundle`. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Inspect the act with `cctl spec import --help` and its document with `cctl spec schema import-bundle`.
 
 ## Consistency sweep and `propose --notes` protocol
 
@@ -168,7 +171,7 @@ For every review repair round, write a bounded notes file that maps prior findin
 
 A successful propose files the gate-scoped approval request itself, so the human already has the entry. The receipt reports one outcome per consulted gate — filed, already filed, not needed, filed with notice delivery uncertain, or not filed — with the attention id the human's row carries. Do not re-file what it filed: `cctl spec request-approval` is the recovery for the last two outcomes only, and the receipt prints it as the next command when one occurs.
 
-Inspect the loop with `cctl spec lint --help`, `cctl spec diff --help`, and `cctl spec propose --help`. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Inspect the loop with `cctl spec lint --help`, `cctl spec diff --help`, and `cctl spec propose --help`.
 
 ## Finding classes and bounded terminal rounds
 
@@ -176,7 +179,7 @@ Classify each review finding as `new_risk`, `regression`, or `consistency_drift`
 
 Call a round terminal only when every consistency finding is repaired, the mechanical pass is clean, no new-risk or regression finding remains, and the repair diff contains no semantic expansion. A semantic expansion always receives another bounded changed-surface review.
 
-Inspect the current lint and diff surfaces with `cctl spec lint --help` and `cctl spec diff --help`. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Inspect the current lint and diff surfaces with `cctl spec lint --help` and `cctl spec diff --help`.
 
 ## Designed friction versus a defect
 
@@ -194,10 +197,10 @@ Three constraints on the delivery path are worth naming in advance, because each
 
 That last row is the one most often misread as a wall. Replace merges around those locks: a plan for a managed draft omits `origin`, `approvalRequired` and `lockedRegions`, and the two injected sources `native-sdd-pinned-spec` and `native-sdd-claims`, and the server fills them from the stored draft.
 
-The heuristic: friction protecting a human judgment or an audit property is designed, so absorb it; friction in a read path, a message, or a missing verb is incidental, so report it. For the current lint and evidence reference, run `cctl spec schema guidance`.
+The heuristic: friction protecting a human judgment or an audit property is designed, so absorb it; friction in a read path, a message, or a missing verb is incidental, so report it.
 
 ## Notify only from success receipts
 
 Notify the user that an act completed only after its success receipt proves the durable transition occurred. Treat a refusal, redirect, partial-progress receipt, or transport ambiguity as unfinished work: follow the named remedy, then notify only from the eventual success receipt.
 
-Use `cctl <command> --help` when a receipt redirects the flow, and use `cctl spec status --help` to re-read durable state. For the current lint and evidence reference, run `cctl spec schema guidance`.
+Use `cctl <command> --help` when a receipt redirects the flow, and use `cctl spec status --help` to re-read durable state.

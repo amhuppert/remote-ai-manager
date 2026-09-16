@@ -47,7 +47,7 @@ until a new run replaces them (the old one is then archived).
     `collaboration_failure`, `aborted`
   - `sharedDocuments[]`, `pendingCollaborations{}`, `collaborationContinuations{}`
 
-Canonical schema: `src/lib/workflows/schemas.ts` (`graphWorkflowExecutionSchema`).
+Canonical schema: `src/lib/workflow-graph/schemas.ts` (`graphWorkflowExecutionSchema`).
 
 ### `graph_workflow_archived_executions`
 Prior runs per session: `execution_id`, `archived_at`, `status`,
@@ -119,7 +119,7 @@ Written live by `src/lib/workflow-graph/execution-logger.ts`. Every record:
     - `context-validator.md` + `context-validator.json` — that specialist's
       prompt + response (`{raw, parsed, parsePath}`;
       `parsePath !== "structured_output"` means fallback parsing)
-    - `validation-transcript.jsonl` — that specialist's full reasoning:
+    - `validation-transcript.jsonl` — that specialist's recorded output:
       `validator.transcript_begin` (assignmentId, engine, attempt) +
       `validator.transcript_item` (verbatim backend payloads)
   - Runs that predate validator cohorts keep the flat layout:

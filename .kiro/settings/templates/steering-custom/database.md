@@ -1,5 +1,7 @@
 # Database Standards
 
+> Template prompts, not established project policy. Verify each applicable convention against current code and confirmed decisions; remove irrelevant examples. This template does not authorize new approval gates, compatibility layers, dependencies, or infrastructure.
+
 [Purpose: guide schema design, queries, migrations, and integrity]
 
 ## Philosophy
@@ -19,7 +21,7 @@
 - 1:1: FK + UNIQUE
 
 ## Migrations
-- Immutable migrations; always add rollback
+- Immutable migrations; document recovery or rollback appropriate to the storage model
 - Small, focused steps; test on non-prod first
 - Naming: `{seq}_{action}_{object}` (e.g., `002_add_email_index`)
 
@@ -29,8 +31,7 @@
 - Index FKs and frequently filtered/sorted columns
 
 ## Connection & Transactions
-- Use pooling (size/timeouts based on workload)
-- One connection per unit of work; close/return promptly
+- Follow the existing database connection lifecycle (pool or shared connection as appropriate)
 - Wrap multi-step changes in transactions
 
 ## Data Integrity

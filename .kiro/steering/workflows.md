@@ -167,45 +167,11 @@ These rows distinguish persisted decoding from valid current absence. The named 
 
 ## Testing
 
-```typescript
-// Factory helper
-function createTestMachine(overrides: Partial<ActorOverrides> = {}) {
-  return fooMachine.provide({
-    actors: { doWork: overrides.doWork ?? fromPromise(async () => defaultOutput) },
-  });
-}
+Use `.provide()` to inject actors and test production transitions. The conversation tests under `src/lib/workflows/conversation/` demonstrate the host and persistence boundaries.
 
-// Terminal assertion (job machines)
-const actor = createActor(testMachine, { input });
-actor.start();
-const output = await toPromise(actor);
-
-// Guard testing
-actor.send({ type: "CONFIRM" });
-expect(actor.getSnapshot().value).toBe("planning"); // blocked
-
-// Wait for intermediate state
-function waitForState(actor: AnyActorRef, state: string, timeoutMs = 5000) {
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timeout: ${state}`)), timeoutMs);
-    if (actor.getSnapshot().value === state) { clearTimeout(timer); resolve(); return; }
-    const sub = actor.subscribe((s) => {
-      if (s.value === state) { clearTimeout(timer); sub.unsubscribe(); resolve(); }
-    });
-  });
-}
-
-// Deferred resolvers for pause/resume
-const resolvers: Array<{ resolve: (v: Output) => void }> = [];
-const actor = startMachine({
-  doWork: fromPromise(() => new Promise(resolve => resolvers.push({ resolve }))),
-});
-// Later: resolvers[0]!.resolve(output);
-
-// Cleanup
-const activeActors: AnyActorRef[] = [];
-afterEach(() => { for (const a of activeActors) { try { a.stop(); } catch {} } activeActors.length = 0; });
-```
+- Use XState's `waitFor(actor, predicate, { timeout })` for intermediate states, and `toPromise(actor)` only for actors with terminal output. Stop test actors during cleanup.
+- Keep deferred actor completions under test control when verifying pause, cancellation, and settlement ordering.
+- Follow AGENTS.md for registered validation and test boundaries.
 
 ## Adding a new XState workflow
 
@@ -234,52 +200,13 @@ Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); the resolv
 never re-write the literal, or that surface silently substitutes stale defaults
 for real cascade values (`form-state.test.ts` pins the identity).
 
-```jsonc
-// config.json — global tier
-{
-  "workflowDefaults": {
-    "implementer":      { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "modelSelection": { "modelId": "opus", "parameters": { "effort": "medium" } } } },
-    "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "authority": "blocking", "agent": { "backend": "claude", "modelSelection": { "modelId": "sonnet", "parameters": { "effort": "medium" } } }, "continuity": { "enabled": true } } ] },
-    "scriptValidator":  { "commands": [] },
-    "humanApprovalGate": { "enabled": false },
-    "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
-    "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
-    "mutability":       { "allowAgentTaskAdd": false, "allowAgentContextAdd": false },
-    "planRepair":       { "enabled": true, "maxAttemptsPerContext": 2 },
-    "askUserQuestions": { "enabled": false },
-    "collaboration":    { "enabled": false, "secondAgent": { "backend": "claude", "modelSelection": { "modelId": "sonnet", "parameters": { "effort": "medium" } } }, "negotiationRounds": 3, "autonomousResolutionThreshold": "minor" }
-  }
-}
-```
+Read `SEEDED_WORKFLOW_DEFAULTS` for current shipped values and `config-schemas.ts` for override shapes. Copying a model tuple or a partial definition from prose can bypass the catalog or omit required placement.
 
-Workflow definitions should normally omit `workflowConfig` and per-context
-override blocks. Defaults cascade from global config unless Alex explicitly asks
-for non-default implementer or validator settings.
-
-```jsonc
-{
-  "executionContexts": [
-    {
-      "id": "plan",
-      "title": "Plan",
-      "acceptanceCriteria": [
-        { "id": "plan-is-followable", "statement": "A plan.md describes the approach in enough detail for an implementer to follow." }
-      ]
-    },
-    {
-      "id": "impl",
-      "title": "Implement",
-      "acceptanceCriteria": [
-        { "id": "behaves-end-to-end", "statement": "The feature behaves as described in the plan when exercised end-to-end." }
-      ]
-    }
-  ]
-}
-```
+Workflow definitions normally inherit defaults. Author overrides when the request or acceptance contract calls for them; preserve an explicitly chosen backend, model, or validator policy. The `graph-workflow-planning` skill owns authoring examples.
 
 ## `workflowDefaults` blocks
 
-Twelve blocks. Operational context blocks are individually overridable per tier;
+Operational context blocks are individually overridable per tier;
 `laneMergeValidation` resolves only from the global and workflow tiers because
 it protects their shared fan-in target. The list is closed by
 `workflowDefaultsSchema` (`src/lib/config/schemas.ts`) and seeded by
@@ -293,7 +220,7 @@ it protects their shared fan-in target. The list is closed by
 | `humanApprovalGate` | Whether a context pauses for operator approval before it lands. `{ enabled: boolean }`, default disabled |
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
 | `circuitBreaker` | `consecutiveFailureThreshold` |
-| `mutability` | `allowAgentTaskAdd` (agent may append tasks to its own context) and `allowAgentContextAdd` (D4 runtime graph expansion — the agent may append new contexts, tasks, and edges via `cctl workflow graph expand`). Both default `false`; both cascade identically |
+| `mutability` | `allowAgentTaskAdd` (agent may append tasks to its own context) and `allowAgentContextAdd` (D4 runtime graph expansion — the agent may append new contexts, tasks, and edges via `cctl workflow graph expand`). Seeded as `"allowAgentTaskAdd": false` and `"allowAgentContextAdd": false`; both cascade identically |
 | `askUserQuestions` | Whether lane agents may ask the operator questions mid-task via `cctl ask`. `{ enabled: boolean }`, default disabled; one value covers both the implementer and context-validator roles |
 | `planRepair` | Plan-repair agent on retry-exhaustion halts (docs/design/cc-cli/08). `{ enabled, maxAttemptsPerContext, agent? }`; **default enabled**, 2 attempts per context, repair agent defaults to claude/opus/high |
 | `collaboration` | Whether implementer agents may request a second opinion, plus the collaborator agent and negotiation policy. `enabled` defaults to `false`; when disabled, collaboration instructions and continuation results are omitted from agent prompts and the collaboration command is unavailable |
@@ -471,8 +398,7 @@ mirrors the human approval gate:
   restores the wait; answers recorded meanwhile apply immediately); abort
   withdraws all parked questions.
 
-Planner and collaboration conversations stay denied regardless of the toggle;
-Codex validator lanes have no real CC conversation and never see the tool.
+Planner and collaboration conversations stay denied regardless of the toggle. A validator may ask only when its strategy is `conversation`, the context enables `askUserQuestions`, and the backend declares `nativeMidTurnAskUser`. Task-strategy validators remain ask-disabled even when they have a durable CC conversation identity (`validator-runner.ts`).
 
 ## Planning source of truth
 
@@ -577,12 +503,7 @@ A cohort replaces the nearest tier's cohort WHOLE — assignments are never
 field-merged across tiers, so a context naming one reviewer replaces the
 workflow's three rather than adding a fourth.
 
-```jsonc
-{ "contextValidator": { "enabled": false, "assignments": [] } }
-{ "contextValidator": { "enabled": true, "assignments": [ { "id": "security", "profile": { "tier": "builtin", "id": "security-reviewer" }, "focus": "auth boundaries", "strategy": "task", "authority": "advisory", "agent": { "backend": "codex", "modelSelection": { "modelId": "gpt-5.4", "parameters": { "reasoning": "high", "fast": "false" } } }, "continuity": { "enabled": true } } ] } }
-```
-
-Model parameters are catalog-driven, and an assignment must contain one exact complete variant from the backend catalog.
+Read `config-schemas.ts` for the assignment shape and the backend's effective catalog for a complete model selection. An assignment must contain one exact catalog variant; prose examples are not runtime defaults.
 
 ## Validator authority and advisories
 

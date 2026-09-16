@@ -1,30 +1,24 @@
 ---
 name: dev-server-setup
 description: >-
-  This skill should be used when the user wants to add, modify, or
-  configure dev servers in Command Center: writing `devServers` entries
-  in `CommandCenter.json`, picking a base port, choosing a `cwd` for a
-  monorepo subdirectory, or wiring a custom server into CC. Triggered by
-  "add dev server", "set up dev server for CC", "configure dev servers",
-  "wire Next.js into CC", "wire Storybook into CC", "add CC dev server
-  entry", or "make Command Center manage a framework". For broader
-  project setup (init script, validation registration, test runner config), use the
-  `project-setup` skill instead.
+  Configure Command Center devServers entries: framework commands, assigned
+  ports, and monorepo working directories. For init scripts or validation
+  registration, use project-setup.
 ---
 
 # CC Dev Server Setup
 
 Add or update `devServers` entries in `CommandCenter.json` so Command Center can start, monitor, and stop dev servers for each session worktree.
 
-**Workflow: Detect → Propose entries → Approve → Write**
+**Outcome:** valid dev-server entries that preserve unrelated configuration and honor CC-assigned ports.
 
-Do NOT write any files until the user explicitly approves.
+A request to add or configure a server authorizes the local configuration edit. If the user asks only for a proposal, present it and stop. Ask through `cctl ask` only when a missing choice materially affects the result; follow its end-turn protocol. Existing authorization does not need reconfirmation.
 
 CC owns port assignment. CC scans a port range, picks an owned-or-free port, injects it via `$CC_ASSIGNED_PORT` (and `$PORT`), and waits for TCP readiness. No shell helper scripts are required.
 
 ## Step 1: Detect Frameworks
 
-Run silently. Do not ask questions during detection.
+Inspect the project before asking about facts its configuration can answer.
 
 ### 1.1 Read package.json
 
@@ -49,7 +43,7 @@ Check for:
 - `turbo.json` (Turborepo)
 - `nx.json` (Nx)
 
-If monorepo detected, list the candidate app directories (e.g., `apps/web`, `apps/admin`) by reading their `package.json` files. Ask the user (inside CC, via `cctl ask`) to confirm which subdirectory(ies) should get dev server entries — each entry will need a `cwd` field.
+If monorepo detected, list the candidate app directories (e.g., `apps/web`, `apps/admin`) by reading their `package.json` files. Use the directories named in the request or existing configuration; ask through `cctl ask` if several apps remain plausible targets. Each subdirectory entry needs a `cwd` field.
 
 ### 1.4 Existing Configuration
 
@@ -59,7 +53,7 @@ Check for an existing `CommandCenter.json`:
 
 ## Step 2: Load Reference
 
-Load `references/dev-servers.md` for the full schema, examples, and lifecycle details. Load `references/commandcenter-json.md` only if you need to refresh the top-level shape (usually unnecessary — this skill only touches `devServers`).
+Load `references/dev-servers.md` for the full schema, examples, and lifecycle details. Load [the top-level configuration reference](../project-setup/references/commandcenter-json.md) only if you need to refresh the top-level shape (usually unnecessary — this skill only touches `devServers`).
 
 ## Step 3: Propose Entries
 
@@ -95,15 +89,13 @@ If the project already has a `devServers` array, show:
 - Entry names must be unique. If a name collision exists in the existing config, suggest a suffix (e.g., `nextjs-web`, `nextjs-admin`) or ask the user.
 - Port ranges should not overlap between entries. If two frameworks want the same base port (rare), offer non-overlapping ranges (e.g., `base: 3000, range: 50` and `base: 3050, range: 50`).
 
-## Step 4: Get Approval
+## Step 4: Resolve Material Choices
 
-Ask the user to confirm (inside CC, via `cctl ask`). Offer:
-- **Approve all** — write the merged `CommandCenter.json`.
-- **Approve with changes** — user adjusts names, ports, ranges, commands, or `cwd` before writing.
+Use the request and detected project conventions to select names, commands, ranges, and `cwd`. If a consequential choice remains unresolved, present the concrete proposed entries through `cctl ask`, then end the turn until the answer arrives. Otherwise continue the authorized edit.
 
 ## Step 5: Write
 
-After approval:
+Within the authorized scope:
 
 1. If `CommandCenter.json` does not exist, create it with just `{ "devServers": [...] }` plus any preserved fields.
 2. If it exists, merge the new `devServers` entries into the existing object, preserving every other field.
@@ -116,11 +108,11 @@ No shell scripts are written — CC-assigned ports do not need any helper files.
 After writing:
 1. Read back `CommandCenter.json` to confirm the JSON is valid and the array is correct.
 2. Summarize the entries that were added or modified.
-3. Remind the user to commit the change.
-4. Remind the user that the dev server can be started from the session UI (Command Center will pick a port in the configured range the first time it is launched).
+3. If startup verification is in scope, run `cctl dev ensure <name>` and use its returned session URL; inspect the log on failure.
+4. Report which entries changed and whether startup was verified. Configuration is complete when the JSON and command/cwd/port contract are valid; a claimed working server also requires a successful start receipt.
 
 ## Edge Cases
 
-**Custom server with no framework:** Ask the user for the command and a base port. Default `range` is `100`. If the server only reads `PORT` (no flag), the command can omit the flag — CC always exports `PORT=$CC_ASSIGNED_PORT`.
+**Custom server with no framework:** Read its scripts or launcher for the command and port support; ask only when those cannot be inferred. Default `range` is `100`. If the server only reads `PORT` (no flag), the command can omit the flag — CC always exports `PORT=$CC_ASSIGNED_PORT`.
 
 **Framework that auto-picks its port and cannot accept a flag:** CC requires the framework to honor either `$CC_ASSIGNED_PORT` (via a flag or alias) or `$PORT` (via env). If the framework does neither, surface this as a blocker. Suggest opening an upstream issue or wrapping the framework with a small launcher that respects `$PORT`.

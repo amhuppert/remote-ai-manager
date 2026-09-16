@@ -1,12 +1,8 @@
 ---
 name: agent-context
 description: >-
-  This skill should be used when an agent running inside Command Center needs
-  to understand the CC-specific context of its environment. Use when the agent
-  asks "what is Command Center", "how does CC work", "what MCP tools do I
-  have", "what's my worktree", "how is this project configured", "what dev
-  servers are available", or needs
-  orientation about the CC environment it is running in.
+  Orient an agent running inside Command Center: identify its worktree,
+  session lifecycle, CLI capabilities, project configuration, and dev servers.
 ---
 
 # Command Center Agent Context
@@ -24,10 +20,10 @@ Your session runs in an isolated git worktree. CC created it when the session st
 | Property | Value |
 |---|---|
 | Working directory | A `.worktrees/<session-name>/` directory under the project root |
-| Branch | `csm/<session-name>` (branched from `main`) |
+| Branch | Read `git branch --show-current`; sessions may branch from the project base or a parent session. |
 | Dependencies | Installed by the project's init script (if configured) |
 
-The worktree is a full copy of the repository. You have complete read/write access. Other sessions have their own worktrees and cannot interfere with yours.
+The worktree has its own checked-out files and branch. Other sessions have separate working trees, but shared services and external resources still need correct session scoping. Workflow contexts may share a lane worktree under an explicit ownership policy.
 
 **Rules:**
 - Stay within your worktree. Never `cd` to the project root or another session's worktree.
@@ -36,7 +32,7 @@ The worktree is a full copy of the repository. You have complete read/write acce
 
 ### Permissions
 
-CC runs agents with permission prompts bypassed. You have full tool access without approval prompts. Use this responsibly — there is no safety net for destructive operations.
+Use the permissions and write scope declared by the current runtime. Interactive sessions and workflow roles can have different tool and filesystem restrictions. Bypassed tool prompts do not grant authorization beyond the user's request or the workflow contract.
 
 ### Session Objective
 
@@ -126,7 +122,7 @@ These happen automatically — no action needed from you:
 | Aspect | Direct CLI | Inside CC |
 |---|---|---|
 | Working directory | User's chosen directory | Isolated git worktree |
-| Permissions | User-configured | `bypassPermissions` (full access) |
+| Permissions | User-configured | Runtime- and role-specific; inspect the current policy |
 | Session persistence | Backend-local (e.g. `~/.claude/`, `~/.codex/`) | CC manages its own transcripts |
 | Dev servers | User starts manually | CC manages lifecycle and port allocation; agents run `cctl dev ensure` |
 | Validation | User invokes tools directly | Registered commands run through `cctl validate` and share the server-owned global budget |
@@ -137,4 +133,4 @@ These happen automatically — no action needed from you:
 - **Check `CommandCenter.json`** in the repo root to understand what's configured for this project.
 - **Use `cctl validate list` before validating** to discover the registered names, costs, scope support, policy, and live global capacity.
 - **Run `cctl dev ensure` before browser/Playwright/Next.js MCP work** — the printed `localUrl` is the only URL you should hit. A common port responding does not mean it belongs to your worktree.
-- **Your branch is `csm/<session-name>`** — commits go here. CC handles merging to `main` when the user requests it.
+- **Use the assigned branch** — CC handles merging to the configured target when the user requests it. Workflow agents follow their engine-managed landing policy.

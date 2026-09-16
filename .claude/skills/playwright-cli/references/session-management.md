@@ -28,6 +28,8 @@ Each browser session has independent:
 - Browsing history
 - Open tabs
 
+Manage only task-owned sessions. The global `close-all`/`kill-all` examples below require explicit authorization to affect every browser session.
+
 ## Browser Session Commands
 
 ```bash
@@ -77,8 +79,10 @@ playwright-cli -s=site1 snapshot
 playwright-cli -s=site2 snapshot
 playwright-cli -s=site3 snapshot
 
-# Cleanup
-playwright-cli close-all
+# Cleanup only these task-owned sessions
+playwright-cli -s=site1 close
+playwright-cli -s=site2 close
+playwright-cli -s=site3 close
 ```
 
 ### A/B Testing Sessions
@@ -210,11 +214,8 @@ playwright-cli -s=s1 open https://github.com
 playwright-cli -s=auth close
 playwright-cli -s=scrape close
 
-# Or stop all at once
-playwright-cli close-all
-
-# If browsers become unresponsive or zombie processes remain
-playwright-cli kill-all
+# Diagnose an unresponsive task-owned browser before broader cleanup.
+# close-all / kill-all require authorization for all sessions.
 ```
 
 ### 3. Delete Stale Browser Data

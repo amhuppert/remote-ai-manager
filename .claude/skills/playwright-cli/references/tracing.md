@@ -6,10 +6,11 @@ Capture detailed execution traces for debugging and analysis. Traces include DOM
 
 ```bash
 # Start trace recording
+playwright-cli open
 playwright-cli tracing-start
 
 # Perform actions
-playwright-cli open https://example.com
+playwright-cli goto https://example.com
 playwright-cli click e1
 playwright-cli fill e2 "test"
 
@@ -64,8 +65,9 @@ When you start tracing, Playwright creates a `traces/` directory with several fi
 ### Debugging Failed Actions
 
 ```bash
+playwright-cli open
 playwright-cli tracing-start
-playwright-cli open https://app.example.com
+playwright-cli goto https://app.example.com
 
 # This click fails - why?
 playwright-cli click e5
@@ -77,8 +79,9 @@ playwright-cli tracing-stop
 ### Analyzing Performance
 
 ```bash
+playwright-cli open
 playwright-cli tracing-start
-playwright-cli open https://slow-site.com
+playwright-cli goto https://slow-site.com
 playwright-cli tracing-stop
 
 # View network waterfall to identify slow resources
@@ -88,9 +91,10 @@ playwright-cli tracing-stop
 
 ```bash
 # Record a complete user flow for documentation
+playwright-cli open
 playwright-cli tracing-start
 
-playwright-cli open https://app.example.com/checkout
+playwright-cli goto https://app.example.com/checkout
 playwright-cli fill e1 "4111111111111111"
 playwright-cli fill e2 "12/25"
 playwright-cli fill e3 "123"
@@ -117,20 +121,16 @@ playwright-cli tracing-stop
 
 ```bash
 # Trace the entire flow, not just the failing step
+playwright-cli open
 playwright-cli tracing-start
-playwright-cli open https://example.com
+playwright-cli goto https://example.com
 # ... all steps leading to the issue ...
 playwright-cli tracing-stop
 ```
 
 ### 2. Clean Up Old Traces
 
-Traces can consume significant disk space:
-
-```bash
-# Remove traces older than 7 days
-find .playwright-cli/traces -mtime +7 -delete
-```
+Traces can consume significant disk space. Remove only disposable artifacts created by this task; preserve evidence requested for review and avoid age-based deletion across other sessions.
 
 ## Limitations
 

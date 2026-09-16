@@ -33,7 +33,7 @@ An edge may carry an activation guard over its source context's captured output,
 
 - `{ "schema": … }` — a JSON-Schema-subset document. The edge activates exactly when the source's captured output validates against it.
 - `{ "else": true }` — the fallback: active when no schema-guarded sibling from the same source activated. At most one per source, and it is resolved over the source's whole outgoing set, so declaration order does not matter.
-- No `when` at all — unconditional, which is every edge in a pre-D4 plan.
+- No `when` at all — unconditional, the default for ordinary dependencies.
 
 The guard document uses the same supported subset as `outputSchema`: `type`, `enum`, `const`, `oneOf` at any node; `properties` / `required` / `additionalProperties` on objects; `items` / `minItems` / `maxItems` on arrays; `minLength` / `maxLength` / `pattern` on strings; `minimum` / `maximum` on numbers. `$ref`, `anyOf`, `allOf`, `not`, and `if`/`then`/`else` are refused — express the branch positively.
 
@@ -109,7 +109,7 @@ Shape rules, all refused by `cctl workflow validate`:
 | `external-edge-bypasses-loop-entry` / `-exit` | edges from outside may enter only at the entry, and leave only from the exit |
 | `non-reconverging-loop-branch` | the exit must run on every path inside the body — a guarded branch that can skip the exit leaves a pass with no verdict |
 | `disconnected-loop-body` | every body context must be reachable from the entry through internal edges |
-| `nested-loop-body` / `overlapping-loop-bodies` | v1 has no nesting and no overlap: one context belongs to at most one loop |
+| `nested-loop-body` / `overlapping-loop-bodies` | loop bodies cannot nest or overlap: one context belongs to at most one loop |
 | `unknown-loop-body-context` | a `bodyContextIds` entry the definition does not declare |
 | `loop-entry-not-in-body` / `loop-exit-not-in-body` | `entryContextId` and `exitContextId` must both be members of `bodyContextIds` |
 | `duplicate-loop-group-id` | two groups share an `id` |
@@ -126,7 +126,7 @@ Budget the whole composition: implementer retries, each specialist's infrastruct
 
 Because a pass instance is a fresh context, per-context iteration and circuit-breaker budgets reset each pass, and validators and approval gates run on every pass exactly as they would on an ordinary context.
 
-Adjacent loops retain the logical upstream exit → downstream entry dependency. Downstream pass 1 stays blocked until the upstream loop concludes. Verify the deployed resolver before relying on this on an older server; an ordinary immutable-handoff barrier between loops preserves the boundary there. That barrier was verified at resolver level in the Rare Earth audit, not by a counterfactual production launch.
+Adjacent loops retain the logical upstream exit → downstream entry dependency. Downstream pass 1 stays blocked until the upstream loop concludes. Verify that dependency with the deployed workflow validator when authoring adjacent loops.
 
 ### Worker + judge bodies
 

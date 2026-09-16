@@ -42,7 +42,7 @@ Modal overlay:
 background: rgba(6, 9, 15, 0.8);
 ```
 
-Modal overlays use a flat semi-transparent fill (no `backdrop-filter`). Live blur on a fullscreen overlay forces a per-frame GPU recomposite of the underlying view, which starves the main thread's input dispatch queue whenever the overlay's contents (e.g. a textarea) are typed in. Use opacity to communicate "behind glass" instead.
+The current shared `Dialog`/`AlertDialog` recipe in `src/components/ui/dialog-recipe.ts` includes an 8px backdrop blur. Fullscreen blur has caused input-latency problems in CC, so prefer a flat translucent fill for custom overlays and measure affected interactions before adding blur. Reuse the shared primitive for ordinary dialogs; a change to its shared treatment needs scoped visual and performance verification.
 
 **Never frost content surfaces** — cards, panels, transcripts, sidebars all stay opaque.
 
@@ -109,7 +109,7 @@ Idle status uses `--text-tertiary` with no glow and no animation.
 
 ### Motion principles
 
-- **Press uses background, not transform.** Cards do `translateY(-1px)` on hover, then return to 0. The only positional motion in the system.
+- **Press uses background, not transform.** Cards do `translateY(-1px)` on hover, then return to 0. Keep press feedback static; entry and expansion animations are separate patterns described above.
 - **State communicated by background**, never by scale or transform.
 
 ---

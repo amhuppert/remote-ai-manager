@@ -1,90 +1,17 @@
-# Steering Principles
+# Steering principles
 
-Steering files are **project memory**, not exhaustive specifications.
+Steering records durable project rules and decision context. A feature's requirements and design belong to its spec; current commands, versions, and file inventories remain in their executable or structural sources.
 
----
+## Select useful guidance
 
-## Content Granularity
+Include conventions that change an agent's decisions: responsibility boundaries, naming/import patterns, architectural choices, and non-obvious constraints with their reasons. Use a small concrete example when it clarifies a convention. If new code follows an existing pattern, that alone does not require a steering update.
 
-### Golden Rule
-> "If new code follows existing patterns, steering shouldn't need updating."
+Keep one domain per document and one authoritative home per rule. Put detailed, conditional guidance in a reference and add a pointer stating when to read it. Do not copy exhaustive file/component/dependency lists, generic best practices, or agent tooling inventories. Link a tooling instruction when it is necessary for the domain.
 
-### ✅ Document
-- Organizational patterns (feature-first, layered)
-- Naming conventions (PascalCase rules)
-- Import strategies (absolute vs relative)
-- Architectural decisions (state management)
-- Technology standards (key frameworks)
+Use the actual repository as evidence. Templates suggest topics to investigate; they do not establish policies. Keep credentials and sensitive data out of guidance; use placeholders where an example needs them.
 
-### ❌ Avoid
-- Complete file listings
-- Every component description
-- All dependencies
-- Implementation details
-- Agent-specific tooling directories (e.g. `.cursor/`, `.gemini/`, `.claude/`)
-- Detailed documentation of `.kiro/` metadata directories (settings, automation)
+## Update without accumulating drift
 
-### Example Comparison
+Preserve valid user decisions and examples. Correct demonstrably stale claims, remove duplication, and retire obsolete guidance rather than appending contradictory layers. If the intended rule and current code disagree, identify which is authoritative before changing the policy. Record historical rationale in a dated report or lessons log when it matters, leaving steering about the current contract.
 
-**Bad** (Specification-like):
-```markdown
-- /components/Button.tsx - Primary button with variants
-- /components/Input.tsx - Text input with validation
-- /components/Modal.tsx - Modal dialog
-... (50+ files)
-```
-
-**Good** (Project Memory):
-```markdown
-## UI Components (`/components/ui/`)
-Reusable, design-system aligned primitives
-- Named by function (Button, Input, Modal)
-- Export component + TypeScript interface
-- No business logic
-```
-
----
-
-## Security
-
-Never include:
-- API keys, passwords, credentials
-- Database URLs, internal IPs
-- Secrets or sensitive data
-
----
-
-## Quality Standards
-
-- **Single domain**: One topic per file
-- **Concrete examples**: Show patterns with code
-- **Explain rationale**: Why decisions were made
-- **Maintainable size**: 100-200 lines typical
-
----
-
-## Preservation (when updating)
-
-- Preserve user sections and custom examples
-- Additive by default (add, don't replace)
-- Add `updated_at` timestamp
-- Note why changes were made
-
----
-
-## Notes
-
-- Templates are starting points, customize as needed
-- Follow same granularity principles as core steering
-- All steering files loaded as project memory
-- Light references to `.kiro/specs/` and `.kiro/steering/` are acceptable; avoid other `.kiro/` directories
-- Custom files equally important as core files
-
----
-
-## File-Specific Focus
-
-- **product.md**: Purpose, value, business context (not exhaustive features)
-- **tech.md**: Key frameworks, standards, conventions (not all dependencies)
-- **structure.md**: Organization patterns, naming rules (not directory trees)
-- **Custom files**: Specialized patterns (API, testing, security, etc.)
+Root instructions determine which steering loads automatically. For an on-demand file, provide a pointer with the condition for reading it; directory membership does not load it. Core files cover product purpose, technology decisions, and organization patterns. Custom files cover specialized domains at the same standard of accuracy.

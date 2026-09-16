@@ -7,6 +7,6 @@ Skills in this directory are consumed by agents launched through Command Center 
 - Package required references with the plugin or point to available CLI help. Do not require Command Center source files, internal reports, tickets, or commit history.
 - State guidance directly. Keep notes about incidents that earned a rule in repository design or report documents outside the shipped skills. Use examples only when they clarify the instruction and are useful across projects, without historical identifiers.
 
-<critical>
-When updating a plugin file, you MUST bump the version of the plugin in `.claude-plugin/plugin.json`.
-</critical>
+When changing the shipped Command Center plugin, bump `plugins/command-center/command-center/.claude-plugin/plugin.json` once for the change set. Plugin installation and global cache updates are separate from editing its source.
+
+The CLI command catalog and exit table are generated: after changing their registry or layout, run `bun scripts/cc-cli-skill-reference.ts`, then its `--check` mode. The generator owns the marked blocks in the `cc-cli` skill and its `references/command-reference.md`.

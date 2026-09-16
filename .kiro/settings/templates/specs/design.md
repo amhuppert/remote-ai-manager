@@ -1,5 +1,7 @@
 # Design Document Template
 
+> Scope: reference for work already governed by a Kiro spec. New specs use `cctl spec` and the native-sdd-authoring skill; these templates do not create an alternate approval or delivery workflow. Preserve approved artifacts and use the governing amendment process for changes to their requirements.
+
 ---
 **Purpose**: Provide sufficient detail to ensure implementation consistency across different implementers, preventing interpretation drift.
 
@@ -9,7 +11,7 @@
 - Match detail level to feature complexity
 - Use diagrams and tables over lengthy prose
 
-**Warning**: Approaching 1000 lines indicates excessive feature complexity that may require design simplification or splitting into multiple specs.
+**Disclosure**: If detail obscures the design decisions, move conditional reference material behind clear pointers. Split scope only when boundaries justify it, not to meet a line-count target.
 ---
 
 > Sections may be reordered (e.g., surfacing Requirements Traceability earlier or moving Data Models nearer Architecture) when it improves clarity. Within each section, keep the flow **Summary → Scope → Decisions → Impacts/Risks** so reviewers can scan consistently.
@@ -302,10 +304,12 @@ Error tracking, logging, and health monitoring implementation.
 ## Testing Strategy
 
 ### Default sections (adapt names/sections to fit the domain)
-- Unit Tests: 3–5 items from core functions/modules (e.g., auth methods, subscription logic)
-- Integration Tests: 3–5 cross-component flows (e.g., webhook handling, notifications)
-- E2E/UI Tests (if applicable): 3–5 critical user paths (e.g., forms, dashboards)
-- Performance/Load (if applicable): 3–4 items (e.g., concurrency, high-volume ops)
+- Unit: meaningful core logic and schema behavior.
+- Integration: affected persistence and cross-component contracts.
+- E2E/UI: changed user paths or live-only failure modes.
+- Performance/load: an explicit target or known bottleneck, when relevant.
+
+Choose coverage for the requirement and risk; do not invent a fixed number of tests per category.
 
 ## Optional Sections (include when relevant)
 

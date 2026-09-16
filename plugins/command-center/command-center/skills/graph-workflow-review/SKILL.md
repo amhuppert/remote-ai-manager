@@ -1,6 +1,6 @@
 ---
 name: graph-workflow-review
-description: Use when reviewing a graph workflow plan — judging a plan.json against its charter and cited sources before it is created or replaced, writing the findings artifact, or recording the terminal verdict with cctl workflow review. Triggers on "review this graph workflow plan", "review the plan.json", "record a plan review verdict", or checking which verdict a plan revision already carries.
+description: Review a graph workflow plan against its charter and sources, write actionable findings, and read or record the terminal verdict bound to that revision.
 ---
 
 # Graph Workflow Plan Review
@@ -14,7 +14,7 @@ Do not invent a checklist. The completeness rubric is already written:
 - The planning skill core's **Before submitting, confirm** list is the top-level pass. Every line is a checkable claim about the plan in front of you.
 - Each reference file carries its own checklist for the machinery it owns (placement, dynamic control flow, validation and staffing, revision and recovery). Read the reference for machinery the plan actually uses; skip the rest.
 
-Read, in order: the `plan.json`, its `definition.charter` (mission, invariants, sourcesOfTruth), and the sources it cites. A source locator you cannot open is itself a finding — no agent in a lane worktree will open it either.
+Read, in order: the `plan.json`, its `definition.charter` (mission, invariants, sourcesOfTruth), and the sources it cites. Verify each source from the substrate its context will read. A committed path must resolve from the lane's base; a seeded document can be inspected in `definition.seededDocuments` and is materialized at launch. Report an unavailable source when neither mechanism supplies it.
 
 Run `cctl workflow validate --file <plan.json>` before reading closely. Structural refusals and `warning:` lines are mechanical pre-clearing, and a plan too malformed to parse cannot be hashed — the review commands themselves reject it as an invalid plan. Spending review attention on what the validator already prints wastes the pass.
 
@@ -83,7 +83,7 @@ Read mode prints the verdict, the reviewer, when it was reached, the revision ha
 
 **Terminal verdicts only.** Record nothing until the review is finished. An aborted, interrupted, or partial review leaves NO record. There is no draft state or in-progress verdict; recording a verdict means the review of that revision is finished.
 
-**Hash binding.** The verdict binds to the exact plan content reviewed. Reformatting or reordering the same plan finds the same review; changing one word finds none. Any repair therefore invalidates the review — the repaired plan is a different revision, and the final revision the planner submits is the one that needs a verdict on it. Re-review that revision; a verdict never carries forward by hand.
+**Hash binding.** The verdict binds to the exact plan content reviewed. Reformatting or reordering the same plan finds the same review; changing one word finds none. Any repair therefore invalidates the review — the repaired plan is a different revision, and the final revision the planner submits is the one that needs a verdict on it. When review is requested for the revised plan, review that revision; a verdict never carries forward by hand.
 
 ## What the verdict does
 

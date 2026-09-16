@@ -92,4 +92,4 @@ If CC finds a process already listening on a candidate port that was not started
 - **Try again** — retry the start (useful if the conflicting process exited in the meantime).
 - **Stop server & retry** — kill the conflicting process (only allowed when CC can confirm the process was launched from the same worktree) and immediately retry.
 
-Operator output is captured to `<worktree>/.cc/dev-server-logs/<server>.log` and exposed via the MCP `logFilePath` field.
+Operator output is captured to `<worktree>/.cc/dev-server-logs/<server>.log` and reported by `cctl dev list --json` as `logFilePath`.

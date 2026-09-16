@@ -1,6 +1,6 @@
 # Jest Reference
 
-Load this reference when Jest is detected (`jest` in `dependencies` or `devDependencies`) and Vitest is not.
+Load this reference when Jest is detected (`jest` in `dependencies` or `devDependencies`) and its suite is part of the project's validation.
 
 Jest config covers AI-optimal output and may mirror a fixed resource profile. Separate full and changed wrappers share the same worker and heap enforcement. The changed wrapper scopes runs to affected tests or narrower TDD paths.
 

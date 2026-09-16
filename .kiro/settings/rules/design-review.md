@@ -1,11 +1,13 @@
 # Design Review Process
 
+> Scope: reference for work already governed by a Kiro spec. New specs use `cctl spec` and the native-sdd-authoring skill; these templates do not create an alternate approval or delivery workflow. Preserve approved artifacts and use the governing amendment process for changes to their requirements.
+
 ## Objective
 Conduct interactive quality review of technical design documents to ensure they are solid enough to proceed to implementation with acceptable risk.
 
 ## Review Philosophy
 - **Quality assurance, not perfection seeking**
-- **Critical focus**: Limit to 3 most important concerns
+- **Critical focus**: Lead with the most important concerns; include every material blocker
 - **Interactive dialogue**: Engage with designer, not one-way evaluation
 - **Balanced assessment**: Recognize strengths and weaknesses
 - **Clear decision**: Definitive GO/NO-GO with rationale
@@ -46,10 +48,10 @@ Conduct interactive quality review of technical design documents to ensure they 
 ### Step 1: Analyze
 Analyze design against all review criteria, focusing on critical issues impacting integration, maintainability, complexity, and requirements fulfillment.
 
-### Step 2: Identify Critical Issues (≤3)
+### Step 2: Identify Material Issues
 For each issue:
 ```
-🔴 **Critical Issue [1-3]**: [Brief title]
+🔴 **Issue [number]**: [Brief title]
 **Concern**: [Specific problem]
 **Impact**: [Why it matters]
 **Suggestion**: [Concrete improvement]
@@ -57,8 +59,8 @@ For each issue:
 **Evidence**: [Design doc section/heading]
 ```
 
-### Step 3: Recognize Strengths
-Acknowledge 1-2 strong aspects to maintain balanced feedback.
+### Step 3: Identify strengths
+Name verified design choices worth preserving when relevant; do not invent positive findings to satisfy a quota.
 
 ### Step 4: Decide GO/NO-GO
 - **GO**: No critical architectural misalignment, requirements addressed, clear implementation path, acceptable risks
@@ -75,14 +77,14 @@ Acknowledge 1-2 strong aspects to maintain balanced feedback.
 ### Design Review Summary
 2-3 sentences on overall quality and readiness.
 
-### Critical Issues (≤3)
+### Material Issues
 For each: Issue, Impact, Recommendation, Traceability (e.g., 1.1, 1.2), Evidence (design.md section).
 
 ### Design Strengths
-1-2 positive aspects.
+Verified choices worth preserving, where relevant.
 
 ### Final Assessment
-Decision (GO/NO-GO), Rationale (1-2 sentences), Next Steps.
+Reviewer recommendation (GO/NO-GO), rationale, and next steps. A GO recommendation does not perform human-only spec approval.
 
 ### Interactive Discussion
 Engage on designer's perspective, alternatives, clarifications, and necessary changes.
@@ -104,7 +106,7 @@ Engage on designer's perspective, alternatives, clarifications, and necessary ch
 
 ## Final Checklist
 
-- **Critical Issues ≤ 3** and each includes Impact and Recommendation
+- **Every material issue** includes Impact and Recommendation
 - **Traceability**: Each issue references requirement ID/section
 - **Evidence**: Each issue cites design doc location
 - **Decision**: GO/NO-GO with clear rationale and next steps

@@ -1,39 +1,13 @@
-# Running Playwright Tests
+# Running and debugging Playwright tests
 
-To run Playwright tests, use the `npx playwright test` command, or a package manager script. To avoid opening the interactive html report, use `PLAYWRIGHT_HTML_OPEN=never` environment variable.
+Use the project's registered validation command for ordinary test runs: discover it with `cctl validate list` and pass the supported selection flags through `cctl validate run <name> --json`. Require a match when claiming a focused test passed.
 
-```bash
-# Run all tests
-PLAYWRIGHT_HTML_OPEN=never npx playwright test
-
-# Run all tests through a custom npm script
-PLAYWRIGHT_HTML_OPEN=never npm run special-test-command
-```
-
-# Debugging Playwright Tests
-
-To debug a failing Playwright test, run it with `--debug=cli` option. This command will pause the test at the start and print the debugging instructions.
-
-**IMPORTANT**: run the command in the background and check the output until "Debugging Instructions" is printed. Make sure to stop the command after you have finished.
-
-Once instructions containing a session name are printed, use `playwright-cli` to attach the session and explore the page.
+For a failure that requires an interactive paused page, inspect the installed Playwright help for debug support. If the registered runner cannot express that diagnostic, state the narrow reason before invoking the single affected test directly under the root instruction's diagnostic exception:
 
 ```bash
-# Run the test
-PLAYWRIGHT_HTML_OPEN=never npx playwright test --debug=cli
-# ...
-# ... debugging instructions for "tw-abcdef" session ...
-# ...
-
-# Attach to the test
-playwright-cli attach tw-abcdef
+PLAYWRIGHT_HTML_OPEN=never npx playwright test <affected-file>:<line> --debug=cli
 ```
 
-Keep the test running in the background while you explore and look for a fix.
-The test is paused at the start, so you should step over or pause at a particular location
-where the problem is most likely to be.
+Use tracked background execution while the test is paused. Wait for the actual debugging instructions/session name, then attach with `playwright-cli attach <returned-name>`. The `--debug=cli`/attach interface is version-sensitive; if unavailable, use the installed debugger or browser diagnostics instead of upgrading the toolchain for this check.
 
-Every action you perform with `playwright-cli` generates corresponding Playwright TypeScript code.
-This code appears in the output and can be copied directly into the test. Most of the time, a specific locator or an expectation should be updated, but it could also be a bug in the app. Use your judgement.
-
-After fixing the test, stop the background test run. Rerun to check that test passes.
+Inspect the failing state and determine whether the test's mechanics are stale or the application violates its intended behavior. Preserve valid regression assertions. Stop the task-owned debug run when finished, then rerun the affected registered validation.

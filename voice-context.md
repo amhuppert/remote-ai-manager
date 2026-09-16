@@ -2,7 +2,7 @@
 
 ## Project
 
-Command Center (CC) is a web-based control plane for managing remote Claude Code sessions. Each session runs in its own git worktree and branch (`csm/<name>`); the UI provides create/monitor/interact across multiple parallel sessions, plus graph workflows for autonomous multi-context development.
+Command Center (CC) is a web-based control plane for managing coding-agent sessions. Each session runs in its own git worktree and branch (`csm/<name>`); the UI provides create/monitor/interact across multiple parallel sessions, plus graph workflows for autonomous multi-context development.
 
 ## Technologies
 
@@ -12,7 +12,7 @@ Command Center (CC) is a web-based control plane for managing remote Claude Code
 - **Zod** v4 — schema-first; types derived via `z.infer`
 - **Zustand** + **Immer** — client state
 - **TanStack Query** + **react-virtuoso** — server state + virtualized lists
-- **XState** — workflow orchestration
+- **XState** — conversation and git-job state machines; the graph engine is a deterministic execution loop
 - **better-sqlite3** / **SQLite** (WAL) — `command-center.db`, the source of truth
 - **Umzug** — database migrations
 - **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) — drives Claude Code
@@ -38,16 +38,16 @@ Command Center (CC) is a web-based control plane for managing remote Claude Code
 - **JSONL** / **NDJSON** - newline-delimited JSON (transcript and log format).
 - **Zod** - the schema-validation library ("zode"; not "god" or "sod").
 - **Zustand** - the client-state library (German, "TSOO-shtahnt").
-- **XState** - the state-machine library powering workflows.
+- **XState** - the state-machine library powering conversation actors and git jobs.
 - **Immer** - the immutable-update library.
 - **TanStack** - the org behind React Query and Virtual.
 - **Tiptap** - the rich-text editor.
 - **Umzug** - the SQLite migration runner.
-- **Codex** - OpenAI Codex (invoked via `run_codex`).
+- **Codex** - OpenAI Codex, one of CC's agent backends; one-shot delegation uses `cctl agent`.
 - **Whisper** - OpenAI speech-to-text used for CC's voice input.
 - **Tailscale** - VPN used to expose remote dev-server URLs.
 - **WAL** - Write-Ahead Logging (SQLite journal mode).
-- **single-flight locking** - per-session concurrency lock keyed by `projectPath::sessionName`.
+- **single-flight locking** - conversation turns key on project, session, and conversation; git operations use the session lock.
 - **graph workflow** - declarative multi-context execution with task graphs, validation, and retries.
 - **circuit breaker** - the workflow failure-halting mechanism.
 - **Shama** - the macOS voice-to-text app these files configure.
@@ -76,7 +76,7 @@ Command Center (CC) is a web-based control plane for managing remote Claude Code
 ### CC tooling skills (`.claude/skills/` + plugin)
 
 - **cc-design-system** - Design, build, or review CC UI against the design system (tokens, components, motion).
-- **cc-live-feature-test** - End-to-end live verification of a CC feature with Playwright + real LLM calls.
+- **cc-live-feature-test** - Live feature verification; use real LLM calls when agent execution is part of the behavior.
 - **cc-performance-log-analysis** - Diagnose CC performance issues from structured server logs.
 - **cc-rebuild-restart** - Rebuild CC in the main worktree and restart the running server.
 - **debug-logs** - Trace CC issues through logs and state (failures, lock contention, prompt errors).

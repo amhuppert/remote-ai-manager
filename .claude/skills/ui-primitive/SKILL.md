@@ -1,5 +1,5 @@
 ---
-description: Implement or update a reusable UI primitive in src/components/ui/ — Radix-backed, design-system-faithful, WAI-ARIA APG-correct, with Storybook stories and a real keyboard/axe verification pass. Use when building or changing a shared primitive (dropdown, select, dialog, tooltip, popover, tabs, switch, accordion, etc.) — NOT for page/feature UI (use ui-design for that).
+description: Implement or change shared UI primitives in src/components/ui/, with the appropriate accessibility pattern, Storybook states, and live keyboard/axe verification. For page UI, use the design system and ui-design-autonomy; /ui-design is the explicit proposal workflow.
 name: ui-primitive
 ---
 
@@ -11,22 +11,22 @@ Build or update a **reusable primitive** in `src/components/ui/` — the shared,
 
 ## Success criteria
 
-- Behavior comes from **Radix UI** (the unified `radix-ui` package); the wrapper owns only CC appearance.
+- Use **Radix UI** from the installed unified `radix-ui` package for supported interaction patterns; retain the existing implementation approach for primitives without a corresponding Radix behavior.
 - Implements the **correct WAI-ARIA APG pattern**, with the pattern's APG URL linked in a code comment, implemented to spec.
 - Faithful to the CC design system (`cc-design-system` skill) and the authoring contract (`docs/tailwind-conventions.md`): utility-first, `@theme` tokens, `data-*` state, `cn()`, `layoutClassName`-only escape hatch, **no new global CSS, no inline hex/rgb**.
 - Passes the `accessibility` skill review + an automated `axe` run + a real keyboard walkthrough.
 - Has Storybook stories covering every state/variant, and is **tested live in Storybook the way a user would use it** (keyboard, pointer, screen-reader semantics).
-- `bun run typecheck`, `bun run lint`, and the colocated tests are green.
+- The registered typecheck, lint, and focused test validations pass.
 
 ---
 
-## Phase 0 — Confirm the pattern and API BEFORE coding
+## Phase 0 — Resolve the pattern and API
 
-This is design-first, like `ui-design`. A wrong pattern or API choice is expensive to unwind — confirm it first.
+Establish the intended pattern from the user flow and existing consumers. Preserve an already approved API; routine updates within that contract do not require another design gate.
 
-1. **Pick the APG pattern from the actual UI need, not the word the user used.** "Dropdown" is ambiguous: it can mean a Menu Button, a Select/Listbox, or a Combobox — three different APG patterns with different Radix primitives. If the requested pattern doesn't match the need, **say so and propose the right one** (when this skill was first written, "dropdown adhering to the menubar pattern" was really the Menu Button pattern — menubar had no consumer in the app). See the pattern map below.
-2. **Choose the API shape.** Default to **composable styled parts** (re-export structural Radix parts as-is, wrap appearance parts) — it matches `Tabs`/`Button`, is idiomatic Radix, and expresses submenus/checkboxes/groups cleanly. A single config-object component is a poorer fit; only use it if the user asks.
-3. **Use `cctl ask`** to lock the pattern + API when there's any ambiguity. Present a brief proposal (parts list, visual contract in tokens, stories you'll write). Asking is async — end your turn after the call succeeds; answers arrive in your next message. Only build after the user confirms.
+1. **Pick the APG pattern from the actual UI need, not the word the user used.** "Dropdown" is ambiguous: it can mean a Menu Button, a Select/Listbox, or a Combobox — three different APG patterns with different Radix primitives. If the requested pattern doesn't match the need, **say so and propose the right one**. See the pattern map below.
+2. **Choose the API shape.** Default to **composable styled parts** (re-export structural Radix parts as-is, wrap appearance parts) — it matches `Tabs`/`Button`, is idiomatic Radix, and expresses submenus/checkboxes/groups cleanly. Use an existing config API where it already fits the consumers; introducing a new shape needs a concrete benefit.
+3. **Use `cctl ask`** when missing intent leaves a consequential choice between interaction patterns or public APIs. Present a concrete recommendation and the tradeoff, then follow the async end-turn instruction. If the user already settled the choice, continue implementation. The explicit `/ui-design` review gates apply only when that workflow is invoked.
 
 ### APG pattern → Radix primitive map
 
@@ -37,8 +37,8 @@ Read the linked APG page for the chosen pattern in full before implementing, and
 | Button opens a menu of **actions** | [Menu Button](https://www.w3.org/WAI/ARIA/apg/patterns/menu-button/) | `DropdownMenu` (right-click → `ContextMenu`) |
 | Persistent app menu bar (File/Edit/View) | [Menubar](https://www.w3.org/WAI/ARIA/apg/patterns/menubar/) | `Menubar` |
 | Pick **one value** from a list | [Combobox (select-only)](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/) / [Listbox](https://www.w3.org/WAI/ARIA/apg/patterns/listbox/) | `Select` |
-| Type-to-filter + pick | [Combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/) | ⚠️ no native Radix Combobox — escalate (community lib / `Command`) |
-| Modal dialog | [Dialog (Modal)](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) | `Dialog` (CC already has `ModalShell` — check first) |
+| Type-to-filter + pick | [Combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/) | No native Radix Combobox; inspect CC `Autocomplete` before choosing an implementation |
+| Modal dialog | [Dialog (Modal)](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) | `Dialog` (CC already has styled `Dialog` parts — check first) |
 | Confirm/destructive prompt | [Alert Dialog](https://www.w3.org/WAI/ARIA/apg/patterns/alertdialog/) | `AlertDialog` |
 | Hover/focus hint | [Tooltip](https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/) | `Tooltip` |
 | Show/hide one region | [Disclosure](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/) | `Collapsible` |
@@ -66,13 +66,9 @@ Read these together before writing anything — it's the efficient prep that avo
 
 ---
 
-## Phase 2 — Install Radix
+## Phase 2 — Use the installed Radix package
 
-Use the **unified package** (one dependency, all primitives) — not the many `@radix-ui/react-*` packages:
-
-```bash
-bun add radix-ui
-```
+CC already depends on the **unified `radix-ui` package**. Check the installed version/API; an ordinary primitive change does not require reinstalling or upgrading it.
 
 ```tsx
 import { DropdownMenu as RadixDropdownMenu } from "radix-ui";
@@ -94,7 +90,7 @@ Author per `docs/tailwind-conventions.md`. The non-negotiables for a `ui/` primi
 - **Overlay coordination:** for any open/close overlay, wire Radix's `onOpenChange` into **`useOverlayScope(open)`** (`@/hooks/useOverlayScope`) so CC's global page-hotkey suppression keeps working (Radix manages focus/Escape/outside-click; the overlay stack is separate). Support controlled + uncontrolled.
 - **Motion:** gate entrance animations with `motion-safe:` (e.g. `data-[state=open]:motion-safe:animate-[fadeIn_0.12s_ease]`) — there is no global reduced-motion reset to rely on. Keep it fast/restrained per the design system.
 - **Composition:** re-export **structural** parts unchanged (`Trigger`, `Portal`, `Group`, `RadioGroup`, `Sub`); wrap **appearance** parts (`Content`, `Item`, `Label`, `Separator`, `CheckboxItem`/`RadioItem`, `SubTrigger`/`SubContent`). Triggers compose existing primitives via `asChild` + `<Button>`/`<IconButton>` (React 19 forwards the merged ref through their `...rest` spread).
-- **Allowlists:** `src/components/ui/**` is **already** in all four allowlists (eslint `MIGRATED_UTILITY_FIRST`, `.prettierrc`, `tailwind-utility-collisions` `UTILITY_FIRST_PATHS`, and a primitive adds no global CSS). No allowlist edits needed — but run `lint` to confirm.
+- **Allowlists:** `src/components/ui/**` is **already** in all four allowlists (eslint `MIGRATED_UTILITY_FIRST`, `.prettierrc`, `tailwind-utility-collisions` `UTILITY_FIRST_PATHS`, and a primitive adds no global CSS). No allowlist edits needed — but run the registered lint validation to confirm.
 
 ### Link the pattern in code
 
@@ -109,22 +105,13 @@ The component's header comment must name the APG pattern, link its URL, and note
 
 ---
 
-## Phase 4 — Unit tests (class contract + genuinely-new logic)
+## Phase 4 — Focused behavior tests
 
-A styled wrapper over a behavior library is largely presentational, but still test the **class contract** (the primitive's guarantee) and any **new logic** (overlay-scope wiring, controlled/uncontrolled, asChild ref merge). Colocate as `ComponentName.test.tsx`.
+Test meaningful wrapper behavior: controlled/uncontrolled transitions, overlay-scope registration and cleanup, accessible naming, or composition/ref handling when changed. Reuse existing colocated test setup. Follow `docs/tailwind-conventions.md`: appearance is verified through Storybook and browser checks, not permanent tests that mirror Tailwind class strings.
 
-- The `unit` vitest project is **node env**; opt a DOM test file in with the first line `// @vitest-environment jsdom`.
-- `vitest.setup.ts` polyfills `ResizeObserver`/`IntersectionObserver`. Radix menus/popovers also need, at the top of the test file:
-  ```tsx
-  Element.prototype.scrollIntoView = () => {};
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-  ```
-- Render **controlled `open` + `modal={false}`** to assert the open content's class contract without simulating pointer/keyboard. Query the portalled content via `screen.getByRole("menu"|"menuitem"|…)` (it lands in `document.body`).
-- Assert: item recipe classes, `danger`/`disabled` mapping, checked tint (`data-[state=checked]:…`), `layoutClassName` appended last, **the `:focus-visible` outline class is present**, and the overlay-scope side effect (`isOverlayOpen()` true when open → false when closed). No `vi.mock` of internal modules.
+Ordinary tests run in Node; DOM tests opt in with `// @vitest-environment jsdom`. Follow `.kiro/steering/tech.md#test-execution-profiles` for profile membership. Add only browser API shims the tested interaction needs, following neighboring tests, and restore modified globals. Internal project modules use dependency injection rather than `vi.mock()`.
 
-Run: `NODE_ENV=test CLAUDECODE=1 npx vitest run src/components/ui/<Name>.test.tsx --project unit --no-color`
+Run the focused test file through the project's registered validation commands, requiring a match for a scoped run. A passing test with zero selected files proves nothing.
 
 ---
 
@@ -143,8 +130,8 @@ This is required, not optional. The Storybook a11y vitest project is disabled in
 1. **Get this worktree's Storybook URL** — never assume a port:
    run `cctl dev ensure storybook` → use the printed `localUrl`.
 2. Open a story iframe for clean screenshots: `http://localhost:<port>/iframe.html?id=<title-kebab>--<story-kebab>&viewMode=story` (e.g. `ui-dropdownmenu--selection`).
-3. **Exercise it as a user:** Tab to the trigger, Enter/Space/Arrow to open, Arrow/Home/End to navigate, type-ahead, Escape to close (verify focus returns to trigger), hover, click, select. Use `browser_press_key`, `browser_click`, `browser_hover`. Screenshot and `Read` the PNG to judge appearance. (Element-targeted screenshots **crop outlines** that sit outside the box — use a viewport screenshot to see focus rings.)
-4. **Introspect with `browser_evaluate`** — confirm real behavior, not just looks:
+3. **Exercise it as a user:** Tab to the trigger, Enter/Space/Arrow to open, Arrow/Home/End to navigate, type-ahead, Escape to close (verify focus returns to trigger), hover, click, select. Use the available browser tools or `playwright-cli` with their current schemas. Capture and open the screenshot to judge appearance. (Element-targeted screenshots **crop outlines** that sit outside the box — use a viewport screenshot to see focus rings.)
+4. **Introspect with a browser evaluation tool** — confirm real behavior, not just looks:
    ```js
    () => { const el = document.activeElement; const cs = getComputedStyle(el);
      return { role: el.getAttribute('role'), focusVisible: el.matches(':focus-visible'),
@@ -179,18 +166,11 @@ Invoke the **`accessibility` skill** and run its checklist against the component
 
 ## Phase 8 — Gates + review
 
-- `bun run typecheck` · `bun run lint` · the colocated tests — all green.
+- Discover the registered commands with `cctl validate list`; run the relevant typecheck, lint, and focused tests through `cctl validate run <name> --json`. For scoped tests, pass `--require-match` with the supported selection flags. Read current help for exact command syntax.
 - Present: the chosen APG pattern + why, the parts/API, tokens used, **before/after or live screenshots**, the axe result, and any deferred/out-of-scope findings (e.g. global or design-system issues). For a brand-new primitive, do **not** migrate existing call sites in the same pass unless asked — ship the primitive + stories for review first.
 
 ---
 
-## Hard-won gotchas (from the DropdownMenu build)
+## Completion boundary
 
-- Pattern mismatch is the #1 risk — resolve "which APG pattern" before anything else.
-- `radix-ui` unified package; `import { X as RadixX } from "radix-ui"`.
-- `fn` imports from **`storybook/test`**, not `@storybook/test`.
-- `no-dynamic-class` rejects `literal + variable` — inline the literal or use `cn()` args.
-- Tailwind silently drops malformed arbitrary variants — verify `data-*`/arbitrary variants actually emit (computed style or screenshot), don't assume.
-- `src/components/ui/**` is pre-registered in all four guardrail allowlists — no allowlist edits for a primitive (verify with `lint`).
-- Reuse tokens by value before minting; minting/palette changes are escalations, not in-primitive decisions.
-- Live-verify with Playwright + injected axe; the storybook vitest a11y project does not run in AI/headless mode.
+Keep verification proportional to the changed primitive: exercise affected states, the relevant keyboard pattern, live accessibility checks, and required project checks. Once these pass, repeat or broaden only for a change, failure, or unresolved concern. Report any unavailable browser or accessibility tooling as an explicit verification limit.

@@ -1,8 +1,8 @@
 # Tokens
 
-Full reference for color, typography, spacing, radii, and layout constants. SKILL.md has the at-a-glance version; this is the authoritative table.
+Design reference for color, typography, spacing, radii, and layout constants. Verify exact values and utility names in the current CSS sources before editing a token.
 
-The values below are the design source of truth. They are exposed to Tailwind through `@theme` in `src/features/_root/styles/theme.css` (which now carries the **literal** values directly — the alias bridge is collapsed), while the same values keep their legacy `var(--…)` names in `src/features/_root/styles/tokens.css` for the preserved CSS that still reads them.
+The executable token definitions are the source of truth for exact values. They are exposed to Tailwind through `@theme` in `src/features/_root/styles/theme.css` (which now carries the **literal** values directly — the alias bridge is collapsed), while the same values keep their legacy `var(--…)` names in `src/features/_root/styles/tokens.css` for the preserved CSS that still reads them.
 
 ---
 
@@ -103,7 +103,7 @@ Hover steps up exactly one level. Never skip.
 | `--text-tertiary` | `#738699` | Metadata, null em-dashes, tertiary labels. |
 | `--text-inverse` | `#06090f` | Text on cyan/colored backgrounds (e.g. primary buttons). |
 
-Never use secondary or tertiary as the rest state of interactive text — on hover, promote to primary.
+Follow the current primitive's state recipe and check contrast against its actual background. Subdued interactive text promotes on hover/focus; preserve a visible focus indicator.
 
 ### Rainbow gradient (reserved for `.cc-rainbow-*` surfaces only)
 
@@ -149,15 +149,13 @@ New and migrated UI sets type with **Tailwind utilities**: `font-display`/`font-
 .cc-meta-label  .cc-button-text    .cc-prose .cc-inline-code  .cc-code-block   — DELETED
 ```
 
-Two survive:
-- `.cc-section-label` (+ the rest of `.cc-section-*`) — kept as part of the retained `SectionHeader` recipe.
-- `.cc-diff` — kept (one production consumer).
+Use `SectionHeader` for section labels and inspect the CSS inventory before editing a retained legacy recipe.
 
 ### Utility classes
 
 - `font-display`, `font-body`, `font-mono` (Tailwind utilities from `--font-*`).
 - Text **color** is `text-text-primary/secondary/tertiary/inverse` and `text-cyan/amber/green/red/violet` (from `--color-*`).
-- The legacy `.text-primary/secondary/tertiary` and `.text-cyan/amber/…` **class recipes** in `typography.css` are utility-shaped names retained only until the R9 token/alias-collapse pass (they collide with the Tailwind color utilities; retiring them needs the showcase story + the utility-first allowlist updated together). Author new UI with the Tailwind `text-*` utilities, not these recipes.
+- The legacy `.text-primary/secondary/tertiary` and `.text-cyan/amber/…` **class recipes** in `typography.css` are utility-shaped names with legacy consumers; inspect their consumers and collision guard before changing them. Author new UI with the Tailwind `text-*` utilities, not these recipes.
 
 ---
 
@@ -176,7 +174,7 @@ Two survive:
 | `--space-2xl` | `32px` |
 | `--space-3xl` | `48px` |
 
-Always use `var(--space-*)`. Never literal pixel values in margin/padding.
+Use token-backed spacing utilities in JSX. Preserved CSS uses `var(--space-*)`; do not introduce arbitrary margin/padding scales.
 
 ### Semantic aliases
 
@@ -204,7 +202,7 @@ Always use `var(--space-*)`. Never literal pixel values in margin/padding.
 | `--radius-sm` | `4px` | Small inputs, badges, code spans. |
 | `--radius-md` | `6px` | Buttons, chips, smaller cards. |
 | `--radius-lg` | `10px` | Cards, modals, panels. |
-| (pills) | `9999px` | Not tokenized; applied inline. |
+| (pills) | `9999px` | Use the existing pill utility (`rounded-full` or `rounded-[9999px]`) from the component recipe. |
 
 No half-radius custom values.
 
@@ -236,7 +234,7 @@ No half-radius custom values.
 Before adding any new token:
 
 1. Check that no existing token already covers the use case (and that a `color-mix()` over an existing token won't do — see the parity-color note above).
-2. Check that the new token will be used in ≥3 places (otherwise inline the value, or for a one-off parity color reference it via `var(--cc-…)` in an arbitrary utility).
+2. Establish why an existing token or composition cannot express the required treatment. Do not inline a raw color to avoid adding a justified parity token.
 3. Follow the existing naming pattern: `--<category>-<variant>` (e.g. `--cyan-glow-strong`, not `--strong-cyan-glow`).
 4. Add the legacy `var(--…)` name to `src/features/_root/styles/tokens.css` **and** mirror its literal under the matching `@theme` namespace in `src/features/_root/styles/theme.css` (so a utility generates). Adding tokens is reserved to the foundation/token-owner context — feature waves consume tokens, they don't mint them.
 

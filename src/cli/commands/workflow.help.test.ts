@@ -1,4 +1,5 @@
 // @vitest-inputs plugins/command-center/command-center/skills/*/SKILL.md
+// @vitest-inputs plugins/command-center/command-center/skills/cc-cli/references/workflows.md
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,7 +48,7 @@ describe("workflow live-edit assignment help", () => {
     const skill = readFileSync(
       path.join(
         REPO_ROOT,
-        "plugins/command-center/command-center/skills/cc-cli/SKILL.md",
+        "plugins/command-center/command-center/skills/cc-cli/references/workflows.md",
       ),
       "utf8",
     );
@@ -144,14 +145,11 @@ describe("workflow create review-first help contract", () => {
     const skill = readFileSync(
       path.join(
         REPO_ROOT,
-        "plugins/command-center/command-center/skills/cc-cli/SKILL.md",
+        "plugins/command-center/command-center/skills/cc-cli/references/workflows.md",
       ),
       "utf8",
     );
-    const workflowSection = skill.match(
-      /## cctl workflow\n[\s\S]*?(?=\n## cctl charter)/,
-    )?.[0];
-    const normalizedSection = workflowSection?.replace(/\s+/g, " ");
+    const normalizedSection = skill.replace(/\s+/g, " ");
 
     expect(normalizedSection).toContain(
       "hints `review it in the visual builder, then start it with 'cctl workflow start <id>'`",

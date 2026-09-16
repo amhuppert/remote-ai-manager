@@ -81,7 +81,6 @@ describe("built-in agent profiles (R3.1)", () => {
       // Planning agents staff assignments by reading these descriptions, so a
       // placeholder description would be a silent staffing failure.
       expect(profile.description.trim().length, profile.id).toBeGreaterThan(30);
-      expect(profile.revision, profile.id).toBe(1);
     }
   });
 

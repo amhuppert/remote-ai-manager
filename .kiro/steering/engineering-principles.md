@@ -2,13 +2,7 @@
 
 ## Code Quality
 
-### Type safety — never bypass
-
-- No `any`, no `as unknown as T` to silence errors, no `@ts-ignore` / `@ts-expect-error` to make builds pass.
-- `as` only after a verified runtime check (e.g. post-`safeParse`) or a demonstrably-wrong external type.
-- Zod schemas are the source of truth; derive types via `z.infer`. No hand-written duplicates.
-- `safeParse` for external/untrusted input; `parse` for internal/trusted data.
-- `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters` are required. Don't loosen them.
+Type safety and test-boundary requirements live in [AGENTS.md](../../AGENTS.md). Read this document before behavioral implementation for the TDD procedure and before choosing dependency-injection or workflow-composition patterns.
 
 ### Red-Green-Refactor TDD by default
 
@@ -16,15 +10,15 @@
 2. Smallest implementation that passes.
 3. Refactor with tests green.
 
-Run loop tests scoped to the single test file being iterated on (`cctl validate run test --queue-if-busy -- <test-file>`), never a directory path. Changed-scope runs are strategic checkpoints, not part of the loop.
+Run loop tests scoped to the single test file being iterated on (`cctl validate run test --queue-if-busy --require-match --json -- <test-file>`), never a directory path. Changed-scope runs are strategic checkpoints, not part of the loop.
 
-Bug fixes: failing repro test first, fix second — always.
+For executable behavior bugs, confirm a failing reproduction before the fix. Documentation corrections use source verification; prompt wording changes use relevant contract checks without freezing prose in tests.
 
 Skip test-first only where there is no behavior to pin: pure scaffolding, type/config changes, mechanical renames/wiring, throwaway spikes and Storybook prototyping, visual-only UI tweaks. Say so when you skip.
 
 ### Dependency injection — never `vi.mock()` internal modules
 
-Mocking internal modules tests wiring between fakes, not behavior. Use DI.
+Use these dependency-injection patterns within the testing boundaries in AGENTS.md:
 
 | Pattern | When | Reference |
 |---|---|---|
@@ -32,8 +26,6 @@ Mocking internal modules tests wiring between fakes, not behavior. Use DI.
 | XState `.provide()` | Workflow actors/actions | `src/lib/workflows/conversation/actor-host.ts` |
 | Setter `setXxxDeps()` + `_resetDepsForTesting()` | Module-scoped singletons, many call sites | `src/lib/dev-server/liveness.ts`, `src/lib/workflows/conversation/persistence.ts` |
 | Fetch fixture + injectable QueryClient | Component/hook tests over React Query | `src/test/fetch-fixture.ts`, `src/test/component-mocks.tsx` (`renderWithQuery`/`createTestQueryClient`) |
-
-`vi.mock()` is acceptable **only** for module-load-time infrastructure (`@/lib/logging`'s `createLogger()`, `@/lib/sdk-env`). Anywhere else = wrong dependency boundary; extract a pure function.
 
 **Client (component/hook) tests never `vi.mock` internal query/mutation/store modules.** Run the real hooks — real React Query, real `src/lib/api/fetcher.ts` validation, real Zod schemas, real Zustand stores — and fake only the genuinely-external network boundary with `installFetchFixture()` from `@/test/fetch-fixture` (register routes, assert mutations by observing the wire). Client state (Zustand) is owned code, not a boundary: use the real store; seed or read its state, don't mock it. External framework modules (`next/link`, `next/navigation`) and browser-only integration hooks (voice/hotkey) may keep their `@/test/component-mocks` stubs — those are not internal seams.
 
@@ -100,4 +92,4 @@ Worked example: script validator runs **before** agent validator — if the tree
 
 ---
 
-_Principle conflicts: surface them, don't silently pick one._
+For a material conflict, identify the competing constraints and the decision needed. Resolve routine choices within the request using the initiative policy in AGENTS.md.

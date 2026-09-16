@@ -1,5 +1,7 @@
 # Full Discovery Process for Technical Design
 
+> Scope: reference for work already governed by a Kiro spec. New specs use `cctl spec` and the native-sdd-authoring skill; these templates do not create an alternate approval or delivery workflow. Preserve approved artifacts and use the governing amendment process for changes to their requirements.
+
 ## Objective
 Conduct comprehensive research and analysis to ensure the technical design is based on complete, accurate, and up-to-date information.
 
@@ -64,7 +66,7 @@ Conduct comprehensive research and analysis to ensure the technical design is ba
 ## Research Guidelines
 
 ### When to Search
-**Always search for**:
+**Consult current official sources when the design depends on**:
 - External API documentation and updates
 - Security best practices for authentication/authorization
 - Performance optimization techniques for identified bottlenecks
@@ -78,9 +80,9 @@ Conduct comprehensive research and analysis to ensure the technical design is ba
 
 ### Search Strategy
 1. Start with official sources (documentation, GitHub)
-2. Check recent blog posts and articles (last 6 months)
-3. Review Stack Overflow for common issues
-4. Investigate similar open-source implementations
+2. Use secondary sources only when official material leaves a relevant question unresolved.
+3. Check the installed or proposed version; recency alone does not establish applicability.
+4. Stop research once the consequential design decisions have adequate evidence.
 
 ## Output Requirements
 Capture all findings that impact design decisions in `research.md` using the shared template:

@@ -26,7 +26,7 @@ describe("native /spec command", () => {
     expect(parseConversationCommand("/spec durable audit log")).toBeNull();
   });
 
-  it("instructs the agent to author durably with non-blocking elicitation", async () => {
+  it("instructs the agent to author durably with an explicit elicitation handoff", async () => {
     const commandText = await readFile(COMMAND_PATH, "utf8");
 
     expect(commandText).toContain("cctl spec create");
@@ -38,10 +38,14 @@ describe("native /spec command", () => {
     expect(commandText).not.toContain("then immediately save");
     expect(commandText).toContain("slug_taken");
     expect(commandText).toContain("cctl ask");
-    expect(commandText).toMatch(/skippable/i);
-    expect(commandText).toMatch(/visible/i);
-    expect(commandText).toMatch(/prun/i);
-    expect(commandText).toMatch(/server never blocks/i);
+    expect(commandText).toContain("A skipped question permits best judgment");
+    expect(commandText).toMatch(
+      /After a successful ask[\s\S]{0,160}end the turn/i,
+    );
+    expect(commandText).toContain(
+      "elapsed time is neither an answer nor approval",
+    );
+    expect(commandText).toContain("cctl spec attention withdraw");
     expect(commandText).toMatch(/conversations author/i);
     expect(commandText).toMatch(/Studio reviews/i);
   });

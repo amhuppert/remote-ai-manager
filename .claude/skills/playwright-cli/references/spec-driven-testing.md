@@ -6,13 +6,15 @@ End-to-end workflow for authoring and maintaining Playwright tests using `playwr
 - **Generate** — turn a spec into Playwright test files. Update the spec if it's vague or stale.
 - **Heal** — diagnose failing tests, fix the code, reconcile the spec with reality.
 
-All three lean on the same mechanic: run `npx playwright test --debug=cli` in the background, then `playwright-cli attach tw-XXXX` to drive the paused page interactively. See [playwright-tests.md](playwright-tests.md) for the debug/attach mechanics and [test-generation.md](test-generation.md) for how every `playwright-cli` action emits Playwright TypeScript.
+For interactive diagnosis that the registered runner cannot express, and after stating that narrow reason, these phases can use this version-dependent mechanic: run `npx playwright test --debug=cli` in the background, then `playwright-cli attach tw-XXXX` to drive the paused page interactively. See [playwright-tests.md](playwright-tests.md) for the debug/attach mechanics and [test-generation.md](test-generation.md) for how every `playwright-cli` action emits Playwright TypeScript.
 
 ---
 
+These are supporting test plans, not a replacement for Command Center native specs or their human approvals. Keep expected behavior grounded in the user request and governing spec; observation alone does not establish intended behavior.
+
 ## 1. Planning
 
-Goal: produce a spec file (e.g. `specs/<feature>.plan.md`) that enumerates the scenarios to test. **Always** write the spec to a file.
+Goal: produce a spec file (e.g. `specs/<feature>.plan.md`) that enumerates the scenarios to test. Write a supporting test plan when it aids the requested work; a one-off verification does not require permanent tests or a new spec.
 
 ### 1.1 Prerequisite: workspace
 
@@ -24,11 +26,7 @@ test -f playwright.config.ts || test -f playwright.config.js
 npx --no-install playwright --version
 ```
 
-If there is no Playwright install, bootstrap one and let the user pick the defaults:
-
-```bash
-npm init playwright@latest
-```
+If no Playwright test setup exists, use the existing browser tools for the live check. Add a test runner or scaffold only when that is within the requested scope; do not bootstrap one solely because this reference suggests it.
 
 ### 1.2 Prerequisite: seed test
 
@@ -99,7 +97,7 @@ Map out:
 - Persistence: reload, local/session storage, URL fragments.
 - Navigation: which controls change the URL, back/forward behaviour.
 
-**Important**: Do not just open the app url with playwright-cli, always go through the test to capture any custom setup done there.
+Use the existing seed when it supplies required fixtures or authentication; direct navigation is sufficient for checks without test-specific setup.
 **Important**: Stop the background test when done exploring.
 
 ### 1.4 Write the spec file
@@ -161,7 +159,7 @@ Goal: take a spec file and produce Playwright test files. Optionally update the 
 
 ### 2.2 Generate one scenario
 
-For each target scenario, in sequence (never in parallel — scenarios share the seed session):
+Use a fresh seed per scenario. Scenarios sharing a browser or mutable fixtures run sequentially; isolated scenarios may run in parallel:
 
 ```bash
 PLAYWRIGHT_HTML_OPEN=never npx playwright test <seed-file> --debug=cli   # background
@@ -169,9 +167,9 @@ playwright-cli attach tw-XXXX
 # resume
 ```
 
-**Do not** just open the app url with playwright-cli, always go through the test to capture any custom setup done there.
+Run the seed when the scenario depends on its custom setup.
 
-Walk the scenario's `Steps:` one by one with `playwright-cli`, treating the spec as the plan and the live app as the source of truth. If a step is vague ("click the button" — which button?), references an element that no longer exists, or contradicts the app's actual behaviour, use your judgement: update the spec to match what the app really does, then keep going. Editing the spec mid-generation is expected.
+Walk the scenario's `Steps:` with `playwright-cli`. The governing spec/user request defines expected behavior; the live app provides observations. Correct stale locators or unambiguous test-plan wording, but investigate a behavior mismatch before changing expectations. Preserve a regression assertion when the app violates the requirement. Change governed spec content only through its authorized authoring workflow.
 
 Every action prints the equivalent Playwright TypeScript (see [test-generation.md](test-generation.md)):
 
@@ -212,22 +210,22 @@ test.describe('Singing in and out', () => {
 
 Rules:
 
-- **One test per file.** File path, describe name, and test name come verbatim from the spec (minus the ordinal).
-- Prefix each numbered step with a `// N. <step text>` comment before its actions.
+- Follow the repository's neighboring test organization; a file may contain cohesive scenarios. Keep scenario IDs traceable without forcing one test per file.
+- Use comments for non-obvious setup or constraints, not to repeat every action.
 - Use the describe group name verbatim from the spec (no `1.` ordinal).
 - Import from `./fixtures` if the project has one; otherwise `@playwright/test`.
 - **Important**: close the CLI session and stop the background test before moving to the next scenario.
 
 ### 2.3 Generate multiple scenarios
 
-Loop 2.2 over the targeted scenarios one at a time, restarting the seed between each so every test starts from a clean page. This is safe to parallelise due to unique generated session names - just make sure each test run is stopped.
+Repeat 2.2 with clean scenario state. Parallelize only when each run has its own browser and isolated mutable fixtures; a unique browser name alone does not isolate backend data. Stop every task-owned debug run.
 
 ### 2.4 Run generated tests
 
 After generation, run the new tests once:
 
 ```bash
-PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/<group>/<scenario>.spec.ts
+cctl validate run <registered-playwright-command> --json --require-match -- tests/<group>/<scenario>.spec.ts
 ```
 
 Any failure goes to Section 3.
@@ -241,7 +239,7 @@ Goal: fix failing tests, and update the spec if the app's intended behaviour cha
 ### 3.1 Find failing tests
 
 ```bash
-PLAYWRIGHT_HTML_OPEN=never npx playwright test
+cctl validate run <registered-playwright-command> --json
 ```
 
 Record the list of failing `<file>:<line>` entries and process them one at a time. Do not attempt parallel fixes — shared state and the single CLI session make that fragile.
@@ -261,7 +259,7 @@ The test is paused at the start. Step forward or run to until just before the fa
 ```bash
 playwright-cli snapshot                # did the element change / move / rename?
 playwright-cli console                 # app-side errors?
-playwright-cli network                 # failed request? wrong payload?
+playwright-cli requests                 # failed request? wrong payload?
 playwright-cli show --annotate         # ask the user to point somewhere
 ```
 
@@ -271,7 +269,7 @@ Rehearse the corrected interaction with `playwright-cli` — the generated code 
 
 ### 3.3 Apply the fix
 
-Edit the test file: update the locator, assertion, step order, or inputs to match the corrected behaviour. Stop the background debug run. Rerun the single test to confirm green.
+Fix the responsible layer: update stale test mechanics or implement the authorized application fix. Preserve assertions for intended behavior; do not weaken them merely to make the current app pass. Stop the background debug run. Rerun the single test to confirm green.
 
 Never skip hooks or add sleeps as a fix. Never use `networkidle`.
 
@@ -280,18 +278,18 @@ Never skip hooks or add sleeps as a fix. Never use `networkidle`.
 Open the spec referenced by the `// spec:` header in the test file and locate the scenario that matches the test.
 
 - **Fix was purely technical** (locator drift, better assertion shape) and the spec's user-level behaviour still matches the app → leave the spec alone.
-- **Fix changed user-visible steps, inputs, order, or expected outcomes** that the spec describes → update the spec to match reality. Keep the scenario id and file path stable; only the step / expect lines change.
-- **Unclear whether the app change is intentional** (spec is stale) **or a regression** (test was right, app is wrong) → **stop and ask the user**. Provide:
+- **Intended behavior changed with authorization** → update the supporting test plan and expectations to that decision. A native spec amendment follows the spec authoring workflow; do not rewrite approved requirements from observations alone.
+- **Unclear whether the app change is intentional** (spec is stale) **or a regression** (test was right, app is wrong) → **first inspect the governing requirements and existing decisions; ask only if intent remains consequentially unresolved**. Provide:
   - the scenario id (e.g. `2.3`),
   - the spec lines that no longer match,
   - the observed app behaviour (quote a snapshot excerpt or a concrete outcome).
 
-Only after the user answers, either update the spec (intentional change) or file/flag the test as covering a bug (regression).
+Once intent is established, apply the authorized fix or report the regression if implementation is outside scope.
 
 ### 3.5 Iteration and giving up
 
 - Fix failures one at a time; rerun after each.
-- If after thorough investigation you are confident the test is correct but the app is wrong *and* the user has confirmed it's a bug: mark the test `test.fixme(...)` with a comment pointing at the user's decision or issue link. Never silently skip.
+- If the app is wrong, fix it when authorized; otherwise report the failing regression with evidence. Use `test.fixme(...)` only when the user explicitly authorizes deferring that test, with an issue/decision reference.
 
 ---
 

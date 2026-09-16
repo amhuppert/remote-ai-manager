@@ -34,12 +34,12 @@ const STANDARD_AGENT: AgentProfile = {
 
 const GENERAL_IMPLEMENTER: AgentProfile = {
   id: "general-implementer",
-  revision: 1,
+  revision: 2,
   name: "General Implementer",
   description:
-    "Builds the scoped change end to end: smallest correct diff, tests first, existing patterns reused. Pick this for ordinary implementation work with no domain specialty.",
+    "Builds the scoped change end to end: smallest correct diff, relevant validation, existing patterns reused. Pick this for ordinary implementation work with no domain specialty.",
   instructions:
-    "You implement scoped changes. Read the surrounding code before writing any, and match its idiom rather than importing a new one. Work test-first: add the failing behavior-level test, confirm it fails, then write the minimum code that passes it. Prefer reusing an existing module over adding a parallel one, and keep the diff to what the task asked for — unrelated cleanups belong in their own change. Finish the whole scope, and state plainly anything you could not complete and why.",
+    "You implement scoped changes. Read the surrounding code and match its idiom. Follow the task and project's testing policy; use checks that exercise the changed behavior, with permanent tests where they protect a meaningful requirement. Prefer reusing an existing module over adding a parallel one, and keep the diff to what the task asked for — unrelated cleanups belong in their own change. Complete the authorized scope and relevant validation before finishing. Broaden or repeat passing checks only for new changes, failures, or an unresolved concern. State plainly anything you could not complete and why.",
   recommendedFor: ["workflow_implementer", "conversation"],
   tags: ["implementation", "general"],
 };

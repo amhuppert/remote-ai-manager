@@ -6,7 +6,7 @@ App Router routing layer is **isolated** in `src/app/`. All page-level UI lives 
 
 | Directory | Purpose | Pattern |
 |---|---|---|
-| `src/app/**/{page,layout,loading,error,not-found,route,template,default}.{tsx,ts}` | Next.js App Router shells ONLY. Each file is a thin re-export (two grandfathered exceptions — see "Grandfathered exceptions"). | No domain code, no helpers, no inline components. |
+| `src/app/**/{page,layout,loading,error,not-found,route,template,default}.{tsx,ts}` | Next.js App Router shells ONLY. Each file is a thin re-export (one grandfathered exception — see "Grandfathered exceptions"). | No domain code, no helpers, no inline components. |
 | `src/features/<feature>/` | Page-level UI for one route or sub-route. Owns its components, hooks, CSS, dialogs, and tests. | Files inside a feature MUST NOT be imported from another feature — promote to `src/components/` instead. |
 | `src/features/_root/` | Layout + global styles (tokens, reset, typography, shell, topbar; plus session/conversation/prompt/sidebar/dialogs styles that are consumed across multiple features). Leading underscore = not a route. | Imported by `src/app/layout.tsx` and `src/app/globals.css`. |
 | `src/components/` | Cross-feature shared UI. | Promote here only when reused by ≥2 features. |
@@ -47,7 +47,7 @@ Colocation applies fully **outside** `src/app/`. Inside `src/app/`, the Next.js 
 - `src/app/api/<resource>/route.ts` — `export { GET, POST, PUT, DELETE } from "@/lib/<domain>/route-handlers";`
 - `src/app/layout.tsx` — re-exports `RootLayout` from `@/features/_root/RootLayout`.
 
-No other code in `src/app/` (two grandfathered exceptions below). CSS imports in `globals.css` chain through `@/features/_root/styles/index.css`.
+No other code in `src/app/` (one grandfathered exception below). CSS imports in `globals.css` chain through `@/features/_root/styles/index.css`.
 
 ### Route resolution
 

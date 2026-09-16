@@ -4,7 +4,7 @@ Manage cookies, localStorage, sessionStorage, and browser storage state.
 
 ## Storage State
 
-Save and restore complete browser state including cookies and storage.
+Save and restore the storage types supported by the installed CLI (normally cookies and localStorage). SessionStorage is managed separately; verify IndexedDB support before depending on it.
 
 ### Save Storage State
 
@@ -22,8 +22,8 @@ playwright-cli state-save my-auth-state.json
 # Load storage state from file
 playwright-cli state-load my-auth-state.json
 
-# Reload page to apply cookies
-playwright-cli open https://example.com
+# Navigate the existing restored browser context
+playwright-cli goto https://example.com
 ```
 
 ### Storage State File Format
@@ -243,8 +243,9 @@ playwright-cli click e3
 playwright-cli state-save auth.json
 
 # Step 2: Later, restore state and skip login
+playwright-cli open
 playwright-cli state-load auth.json
-playwright-cli open https://app.example.com/dashboard
+playwright-cli goto https://app.example.com/dashboard
 # Already logged in!
 ```
 
@@ -261,15 +262,16 @@ playwright-cli state-save my-session.json
 # ... later, in a new session ...
 
 # Restore state
+playwright-cli open
 playwright-cli state-load my-session.json
-playwright-cli open https://example.com
+playwright-cli goto https://example.com
 # Cookies and localStorage are restored!
 ```
 
 ## Security Notes
 
 - Never commit storage state files containing auth tokens
-- Add `*.auth-state.json` to `.gitignore`
+- Store task-owned auth state in an existing ignored scratch directory; verify it is ignored before use
 - Delete state files after automation completes
 - Use environment variables for sensitive data
 - By default, sessions run in-memory mode which is safer for sensitive operations

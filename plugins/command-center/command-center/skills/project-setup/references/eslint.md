@@ -4,7 +4,7 @@ Load this reference when ESLint is detected (`eslint` in `dependencies` or `devD
 
 ## Changed wrapper invocation
 
-Scope ESLint to the JS/TS files this branch changes. Linting unchanged files burns time on code the branch can't break and surfaces violations the author didn't introduce.
+Scope ordinary source edits to changed supported files when the rules are file-local. Changes to lint configuration, plugins, dependencies, or cross-file rules can affect unchanged files; use full or affected-package linting for those changes. Adapt the example below to detect those project-specific inputs before selecting the changed-file branch.
 
 The shared wrapper setup in `references/pre-merge-script.md` populates `$lint_files` with changed JS/TS/JSX/TSX/MJS/CJS files that still exist.
 
@@ -39,5 +39,5 @@ run_quiet npx eslint . --fix --quiet --no-color --no-warn-ignored
 
 ## Parallelism
 
-ESLint has no fan-out problem to fix here — it's a single process. The scoping above is the win.
+The example invokes ESLint without worker concurrency. If the installed version or wrapper enables parallel workers, bound and price that profile explicitly.
 Register both wrappers under one logical profile with cost `1` unless project plugins make the maximum fixed resource profile materially heavier.

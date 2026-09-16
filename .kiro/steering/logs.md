@@ -117,7 +117,7 @@ rule:
 | State-store reads | `state-store/accessors.ts` | `state.read.timing` |
 | Conversation draft | `prompt/route-handlers.ts` (`persistPendingPromptText`) | `pending_prompt.{update_completed,compare_and_clear_completed,update_failed}` |
 
-Three traps this chain teaches:
+Traps in this chain:
 
 - **Fixing a module's own log statements is not enough.** A stage also hands
   identity to helpers that log from their own module. `withRuntimeReplacementRetry`
@@ -173,12 +173,9 @@ path a project conversation can reach, derive the scope ref instead.
 | `specs.delivery-plan` | `spec.plan.preflight` | **info**: one per evaluation of the delivery-plan draft-health projection. `slug`, `surface` (`validate`, `status` or `propose`), `blocking` (findings at `blocks_propose`) and `codes[]` (the distinct rule ids). `blocking` and `codes` disagree by design — one rule tripping six times is one code and six blockers. Emitted by `src/lib/specs/delivery-plan-service.ts` |
 | `specs.delivery-plan` | `spec.plan.propose.accepted` | **info**: coverage at freeze on a successful `spec plan propose`. `slug`, `covered` (selected criteria a stable authored source claims), `selected`, `contexts` (the frozen definition's execution contexts). Emitted by `src/lib/specs/delivery-plan-service.ts` |
 | `specs.delivery-plan` / `specs.execution-start-attachment` | `spec.plan.attempt.transition` | **info**: one per recorded delivery-plan attempt act — open, propose, approve, park, reopen, launch, abandon (including the abandon that retires a launched attempt). `slug`, `from` (`none` for a freshly opened attempt), `to`, `actor` (the actor's KIND only). Emitted by `src/lib/specs/delivery-plan-service.ts` and, for the launch a real spec execution start records, by `src/lib/specs/execution-start-attachment.ts` |
-
 | `workflow-graph` | `graph-workflow.start.documents_validated` | **debug**: the combined definition and launch seeded documents passed path and UTF-8 size checks before reservation. Fields: `projectPath`, `sessionName`, `count`, `bytes`; document contents are never logged |
-
-| `specs.delivery-plan.review_lookup_failed` | warn | Advisory review unavailable; proposal and sign-off remain available | `workflowDefinitionId`, `error` |
-
-| `specs.delivery-gate-v2.failure_details_unavailable` | warn | Frozen coverage failure details could not be loaded; outcome certification remains authoritative | `workflowExecutionId`, `error` |
+| `specs.delivery-plan` | `specs.delivery-plan.review_lookup_failed` | **warn**: advisory review unavailable; proposal and sign-off remain available. Fields: `workflowDefinitionId`, `error` |
+| `specs.delivery-gate-v2` | `specs.delivery-gate-v2.failure_details_unavailable` | **warn**: frozen coverage failure details could not be loaded; outcome certification remains authoritative. Fields: `workflowExecutionId`, `error` |
 
 ### Config
 
@@ -351,35 +348,11 @@ Three timing surfaces, not connection lifetime:
 
 ## Agent Log Analysis CLI
 
-Use `logs:analyze` as the first tool for performance diagnosis. It emits concise Markdown by default for an agent's own reading; select `--format json` only when the result feeds code.
+Start diagnosis with `cctl logs report`; use `cctl logs trace <traceId>` for a ranked trace and `cctl logs compare` for before/after evidence. Read the selected leaf's `--help` for filters and file output. The command reads local logs offline, so record filters are `--project-name` / `--session-name` / `--conversation-id`, not server identity flags.
 
-```bash
-bun run logs:analyze -- report
-bun run logs:analyze -- report --in path/to/log
-bun run logs:analyze -- report --since 2026-05-21T12:00:00Z --top 20
-bun run logs:analyze -- report --projectName NAME --sessionName SESSION
-bun run logs:analyze -- trace <traceId>
-bun run logs:analyze -- compare --before before.log --after after.log
-```
+The CLI calls the same engine as `bun run logs:analyze`. The `cc-performance-log-analysis` skill covers engine-only operations such as budget assertions and ad-hoc analysis. Before interpreting state-store counts or facade gaps, read **Reading `state.read.timing` aggregates** above: the counts sample only calls above the logging floor.
 
-`report` runs slow request ranking, operation hotspot aggregation, duplicate-work detection, state-store diagnostics (including `write_queue.hold_budget_exceeded` findings keyed by the holding mutation label, and `stateReadFloorMs` — read "Reading `state.read.timing` aggregates" above before drawing a conclusion from a slow-accessor or facade-gap finding), external command diagnostics, SSE broadcast diagnostics, client timing analysis when `--client-log` is provided, error correlation, convention checks (a `202` response with `durationMs > 1000` is a violation), instrumentation-gap detection, and performance-budget evaluation against `scripts/log-budgets.json` (advisory by default; `--assert-budgets` exits non-zero on breach). See `.claude/skills/cc-performance-log-analysis/SKILL.md` for the budget schema.
-
-`trace <traceId>` reconstructs timed operation intervals for one trace and reports inclusive time, exclusive time, duplicate work, warnings/errors, and unexplained request time. If unexplained time dominates, add `timed()` coverage before optimizing code.
-
-`compare` reports before/after endpoint p95 deltas, operation p95 deltas, new duplicate-work signatures, and new warnings/errors.
-
-Options shared across commands:
-
-```bash
---in <path> --format json|markdown --out <path> --markdown-out <path>
---speedscope-out <path> --since <iso> --until <iso>
---projectName <name> --sessionName <name> --conversationId <id>
---path <api-path> --action <action> --top <n>
---slow-ms <n> --hotspot-ms <n> --include-self --pretty
---budgets <path> --assert-budgets   # report only; budget config + CI gate
-```
-
-Default log path resolution (analysis CLI only) checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log` (legacy), `./.config/logs/global.log`, and `./.config/cc-debug.log` (legacy). Scoped files under `logs/sessions/` and `logs/projects/` ARE auto-discovered (`discoverScopedLogPaths` walks both trees). Rotated backups (`global.log.1`, `global.log.2`, …) are likewise not auto-discovered, so default discovery sees only the active file; pass the backups explicitly (or a glob) with `--in` to analyze across rotations.
+Default discovery includes global, session, and project logs; rotated backups require explicit `--in` paths. Confirm the selected files and time window before attributing a finding to this session.
 
 ## Speedscope Export (hotspot aggregation)
 
@@ -459,7 +432,7 @@ Background entrypoints (jobs, workflow execution, backend turns, SSE publication
 
 ## Workflow Execution Logs (`workflow-logs/{executionId}/`)
 
-Per-execution structured logs for graph workflow forensics. Separate from `logs/global.log` — captures full decision trail for AI agent post-hoc investigation.
+Per-execution structured logs for graph workflow forensics. Separate from `logs/global.log`, they capture orchestration decisions and provider-exposed transcript items. Reasoning items contain only what the provider exposes; they do not prove access to hidden reasoning.
 
 ```
 workflow-logs/<executionId>/
@@ -470,7 +443,7 @@ workflow-logs/<executionId>/
     ├── iterations.jsonl                  # Iteration lifecycle
     ├── tasks.jsonl                       # Task events (completion, reopening, agent-added, validation)
     ├── validation.jsonl                  # Validator invocations, results, remediation
-    ├── validation-transcript.jsonl       # Full validator agent transcripts (reasoning, tool/command items, messages)
+    ├── validation-transcript.jsonl       # Provider-exposed validator items (summaries, tools, messages)
     └── prompts/                          # iteration-<n>.md, *.md / *.json validator prompts/responses
 ```
 
@@ -497,11 +470,11 @@ Shared schema: `{ timestamp, event, executionId, ...data }`.
 ### jq queries
 
 ```bash
-jq 'select(.event == "validator.result_parsed" and .pass == false)' workflow-logs/<id>/contexts/<ctx>/validation.jsonl
-jq 'select(.itemType == "reasoning") | .raw' workflow-logs/<id>/contexts/<ctx>/validation-transcript.jsonl
-jq 'select(.event | test("circuit_breaker|retry"))' workflow-logs/<id>/decisions.jsonl
-jq 'select(.event == "task.reopened")' workflow-logs/<id>/contexts/<ctx>/tasks.jsonl
-jq 'select(.event | test("rotation|implementer"))' workflow-logs/<id>/decisions.jsonl
+jq 'select(.event == "validator.result_parsed" and .pass == false)' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/validation.jsonl'
+jq 'select(.itemType == "reasoning") | .raw' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/validation-transcript.jsonl'
+jq 'select(.event | test("circuit_breaker|retry"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
+jq 'select(.event == "task.reopened")' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/tasks.jsonl'
+jq 'select(.event | test("rotation|implementer"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
 ```
 
 ### Design

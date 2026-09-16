@@ -1,34 +1,28 @@
 ---
 name: project-setup
 description: >-
-  This skill should be used when the user wants to configure a project for
-  Command Center: create or update `CommandCenter.json`, write a worktree
-  init script, register granular validation commands, or optimize a test
-  runner config for AI agents. Triggered by "set up CC",
-  "configure for command center", "create CommandCenter.json",
-  "add CC config", "set up worktree init", "register validation commands",
-  "set up pre-merge validation", "initialize project for CC", "CC project
-  setup", or "set up command center config". For configuring dev servers,
-  use the `dev-server-setup` skill instead.
+  Configure a project for Command Center: CommandCenter.json, worktree init
+  scripts, registered validation wrappers, and bounded test-runner output.
+  Use dev-server-setup for devServers entries.
 ---
 
 # CC Project Setup
 
 Analyze the target project's tech stack and generate the non-dev-server portion of its Command Center setup: `CommandCenter.json` (sans `devServers`), a worktree init script, one registered wrapper per validation command, and any test-runner configuration needed for bounded, AI-readable validation.
 
-**Workflow: Analyze → Load tech-specific references → Propose → Approve → Write**
+**Outcome:** a valid project configuration and executable wrappers whose scope, resource limits, and output match their registration.
 
-Do NOT write any files until the user explicitly approves.
+A setup or configuration request authorizes local edits within that scope. For a proposal-only request, present the concrete files and stop. Ask through `cctl ask` only when a missing decision materially changes the result, then follow its end-turn protocol. Carry existing authorization forward.
 
 For dev-server configuration (the `devServers` field in `CommandCenter.json`), use the separate `dev-server-setup` skill.
 
 ## Step 1: Analyze the Project
 
-Run all detection steps silently. Do not ask questions during analysis.
+Inspect the project before asking about facts its files can answer.
 
 ### 1.1 Package Manager
 
-Check for lock files at the project root in this order:
+Read the `packageManager` field and existing CI/install scripts first, then corroborate with lock files. Multiple competing lock files require evidence of the intended manager rather than picking whichever appears first:
 
 | Lock File | Package Manager | Install Command |
 |---|---|---|
@@ -54,10 +48,10 @@ For each detected dependency, note which reference file to load in Step 2.
 | `prettier` | Granular format command | `references/prettier.md` |
 | `typescript` (or `tsconfig.json` present) | Granular typecheck command | `references/typescript.md` |
 | `vitest` | Granular test command | `references/vitest.md` |
-| `jest` (only if Vitest is absent) | Granular test command | `references/jest.md` |
+| `jest` (when its suite is used) | Granular test command | `references/jest.md` |
 | `@prisma/client` or `prisma` | Init-script code generation | `references/init-script.md` |
 
-Do not load references for absent tools. When both Vitest and Jest are present, prefer Vitest for the test-runner configuration and note both so the user can override.
+Do not load references for absent tools. When both Vitest and Jest are present, inspect their scripts and test ownership; configure the suites the project actually uses.
 
 ### 1.4 Existing Configuration
 
@@ -212,21 +206,18 @@ Set `initScriptPath` to `null` when no init script is needed. `command.full` and
 
 Use the matching tool reference to build each wrapper. The wrapper is authoritative: it must set the fixed worker count and inherited heap cap before invoking the runner, and its launcher must reapply a final worker `execArgv` when the runner gives that field precedence over the inherited cap. Test-runner config may mirror values only below that final override; do not present a cost that assumes fewer workers than the wrapper permits.
 
-## Step 4: Get Approval
+## Step 4: Resolve Material Choices
 
-Ask the user to approve the proposed configuration inside CC via `cctl ask`. Offer:
-
-- **Approve all** — write everything as proposed.
-- **Approve with changes** — incorporate requested modifications and show the updated proposal before writing.
+Use the request and existing project conventions to settle the proposed files. Ask through `cctl ask` when the setup would change a consequential policy the user has not decided, such as which checks gate merges or a materially heavier resource profile. Present the concrete choice and end the turn after submission. Continue directly when the request already settles it.
 
 ## Step 5: Write Files
 
-After approval:
+Within the authorized scope:
 
 1. Create `scripts/validate/` and `scripts/` as needed.
-2. Write each approved file.
+2. Write each selected file.
 3. Set executable permissions on `scripts/worktree-init.sh` and every `scripts/validate/*` wrapper.
-4. Merge approved test-runner changes without replacing unrelated configuration.
+4. Merge the selected test-runner changes without replacing unrelated configuration.
 
 ## Step 6: Verify
 
@@ -241,7 +232,7 @@ After writing:
 
 ## Step 7: Summary
 
-List all created and modified files, explain the selected cost and scoping for each command, and remind the user to verify the init script in a test session. If a test-runner config changed, ask them to confirm the fixed worker and heap profile fits the project. Suggest `dev-server-setup` when frameworks were detected.
+List all created and modified files, explain the selected cost and scoping for each command, and remind the user to verify the init script in a test session. Report the fixed worker and heap profile and any verification still pending. Mention `dev-server-setup` only when dev servers are relevant to the requested setup.
 
 ## Edge Cases
 
@@ -253,6 +244,6 @@ List all created and modified files, explain the selected cost and scoping for e
 
 **Existing test config with dynamic parallelism:** Make the canonical wrapper enforce a fixed command profile whose maximum worker count and inherited heap match its declared cost. When candidate worker `execArgv` can override the inherited heap, the wrapper-owned launcher must supply the final fixed `execArgv`. Runner config may mirror only beneath that override and cannot own the profile. A separate resource profile becomes a separate registered command.
 
-**Both Vitest and Jest:** Prefer Vitest for the configured `test` command and surface the choice. Register a separate Jest command only when the project genuinely needs both.
+**Both Vitest and Jest:** Preserve each runner's established suite ownership. Register separate commands when both suites are used; do not silently replace one with the other.
 
 **No validation tools detected:** Omit the `validation` block rather than registering placeholders.

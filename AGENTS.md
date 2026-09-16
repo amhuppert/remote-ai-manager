@@ -2,7 +2,15 @@
 
 Command Center is a Next.js control plane for running Claude and Codex agent sessions in isolated git worktrees. This file is the tool-agnostic engineering contract for every agent in this repository.
 
-Address the user as Alex. Be direct about uncertainty or technical disagreement, and ask before making a consequential choice that the request does not settle.
+Address the user as Alex. Be direct about uncertainty or technical disagreement. Lead with the result, use plain language, and include the evidence and limitations needed to assess it.
+
+## Initiative and completion
+
+- Treat requests to build or fix something as authorization to do the work. Use the conversation's existing decisions and make routine, reversible choices without asking again.
+- Ask when a missing answer materially changes scope, architecture, or an action's authorization. Prepare the authorized work up to a real approval boundary before presenting it for review. When a CC command requires ending the turn to deliver an answer, follow that protocol.
+- Apply skills in service of the request. Explicit user instructions override skill guidelines within the system/developer rules and tool permissions. If an instruction requires a pause, cite its file and exact rule, and distinguish an explicit restriction from your interpretation.
+- Delegate independent, bounded tasks when that improves quality or completion time. Give each agent clear ownership, continue useful work, then review and integrate its result.
+- Finish when the requested result is implemented or delivered, relevant checks pass, and unresolved limitations are reported. Repeat or broaden checks only for a new change, failure, or unresolved concern.
 
 ## Operating model
 
@@ -15,15 +23,17 @@ Run commands from the assigned session worktree root.
 ```bash
 bun install
 cctl validate list
-cctl validate run test --queue-if-busy
-cctl validate run test --queue-if-busy -- src/cli/commands/validate.test.ts
-cctl validate run test --scope full --queue-if-busy
-cctl validate run typecheck --queue-if-busy
-cctl validate run seams --queue-if-busy
-cctl validate run lint --queue-if-busy
+cctl validate run test --queue-if-busy --json
+cctl validate run test --queue-if-busy --require-match --json -- src/cli/commands/validate.test.ts
+cctl validate run test --scope full --queue-if-busy --json
+cctl validate run typecheck --queue-if-busy --json
+cctl validate run seams --queue-if-busy --json
+cctl validate run lint --queue-if-busy --json
 ```
 
 `test` defaults to `--scope changed`, narrowing to the diff against the target branch, so a green run speaks for the changed files rather than the branch.
+
+For explicit test paths, use `--require-match` and inspect the verdict and matched-file count. `--json` preserves the verdict and run ID; runner output may follow the envelope, so parse the first JSON object when automating. A client timeout leaves the server run active: recover it with `cctl validate status <runId>`.
 
 Registered command names are project configuration; use `cctl validate list` when a name above is absent. Run registered validation only through `cctl validate run <name>`. Do not invoke Vitest, ESLint, TypeScript, formatters, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
 
@@ -49,9 +59,18 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 ## Development process
 
-- Use red-green-refactor TDD: add a failing behavior-level test, confirm it fails for the right reason (the assertion, not an import error or broken setup — scaffold the minimal skeleton first when needed), implement the minimum fix, refactor with tests green, then run proportionate regression checks. Skip test-first only where there is no behavior to pin — pure scaffolding, type/config changes, mechanical renames or wiring, throwaway spikes, visual-only UI tweaks — and say so; bug fixes always start from a failing reproduction test. In the TDD loop, scope the test command to the single test file you are iterating on (`cctl validate run test --queue-if-busy -- <test-file>`) — a file path, never a directory path. Changed-scope runs are not part of the TDD loop; use them strategically at checkpoints.
+- For behavioral changes, follow the TDD procedure and exceptions in `.kiro/steering/engineering-principles.md`. Documentation and prompt wording changes need consistency and contract checks where applicable, not tests that merely pin prose.
 - For work governed by `.kiro/specs/`, preserve the Requirements → Design → Tasks → Implementation approvals. Check the active spec before implementation and write spec artifacts in the language declared by its `spec.json`.
-- Prefer small, focused changes. When a request is an audit or diagnosis, report findings without mutating external state or implementing an unrequested fix.
+- Prefer small, focused changes and early returns over nested conditionals. When a request is an audit or diagnosis, report findings without mutating external state or implementing an unrequested fix.
+
+### Native specifications
+
+New specifications use `cctl spec`; `.kiro/specs/` retains legacy governed work. Use the `native-sdd-authoring` skill for spec authoring and delivery, and read the relevant `cctl spec` leaf help before composing payloads.
+
+- Before creating a spec, run `cctl spec list` and `cctl spec search --all <query>` to find existing work. Use `cctl spec status <slug>` to check phase and gates for governed changes.
+- Author Requirements → Design → delivery plan, within the server's stage boundaries. `cctl spec propose` and `cctl spec plan propose` submit concrete artifacts for review.
+- Approvals, plan sign-off, and assumption disposition are human-only Spec Studio actions; an agent cannot perform them on Alex's behalf.
+- Write spec artifacts in the spec's configured language. Ordinary repository documentation and responses use English unless requested otherwise.
 
 ## Canonical architecture boundaries
 
@@ -65,8 +84,9 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 ## TypeScript, schemas, and persistence
 
-- Keep strict typing. Do not use `any`, `!`, `@ts-ignore`, unchecked external casts, or hand-written types that duplicate Zod schemas. Narrow `unknown` with runtime checks.
+- Keep strict typing. Do not use `any`, non-null assertions (`value!`), `@ts-ignore`, or `@ts-expect-error` to silence failures. Narrow `unknown` with runtime checks; a cast needs a verified invariant or a demonstrably incorrect external type. Const assertions (`as const`) preserve literal types and are appropriate.
 - Each domain owns its schemas in `src/lib/<domain>/schemas.ts`; derive types with `z.infer`. Shared primitives belong in `src/lib/shared/schemas.ts` only when genuinely cross-domain.
+- Use `safeParse` for external input and `parse` for trusted internal data. Preserve the strict compiler settings in `tsconfig.json`.
 - Persist through the state-store repositories and focused mutation APIs. Never instantiate a second state manager or write directly to the database from feature code.
 - A persisted-field change must update its repository mapping, maximal round-trip contract fixture, and migration/floor behavior as applicable.
 
@@ -84,11 +104,12 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 ## Logging and comments
 
 - Before adding or changing logging, read `.kiro/steering/logs.md`. Use `createLogger` from `@/lib/logging`, stable event names, and structured fields; never log secrets, tokens, or full prompt contents.
+- Add diagnostics at meaningful operation, failure, and state-transition boundaries. A pure function or wording-only change does not need logging solely because it was edited.
 - Comments explain constraints, business reasons, or non-obvious edge cases. Do not narrate visible code, describe prior versions, or add temporal claims. Preserve existing comments unless they are demonstrably false.
 
 ## Read on demand
 
-- `.kiro/steering/engineering-principles.md` — type safety, TDD, module depth, composition philosophy
+- `.kiro/steering/engineering-principles.md` — TDD procedure, dependency-injection examples, composition philosophy
 - `.kiro/steering/product.md` — current product scope and capabilities
 - `.kiro/steering/tech.md` — stack and version-sensitive constraints; read before changing dependencies, migrations, or test execution profiles
 - `.kiro/steering/structure.md` — directory, route, schema, and import boundaries
@@ -105,7 +126,7 @@ Read only the task-relevant steering documents listed in `AGENTS.md`; do not loa
 ## Skill Routing
 
 - For browser-driven UI verification, run `cctl dev ensure`, then use the `playwright-cli` skill. Use the `nextjs-mcp` skill for Next.js runtime/build diagnostics or Chrome DevTools-only profiling.
-- Use `ui-design` for feature UI and `ui-primitive` for reusable primitives. Both are design-first; obtain approval for the proposed interaction/API before implementation.
+- Use `ui-design` for feature design and `ui-primitive` for reusable primitives. An explicit `/ui-design` invocation starts with a proposal for review. Existing approval covers implementing that design; routine fixes within an approved interaction/API do not need a second design approval.
 - UI work follows `cc-design-system` and `docs/tailwind-conventions.md`.
 
 

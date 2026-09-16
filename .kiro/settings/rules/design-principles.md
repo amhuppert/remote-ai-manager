@@ -1,5 +1,7 @@
 # Technical Design Rules and Principles
 
+> Scope: reference for work already governed by a Kiro spec. New specs use `cctl spec` and the native-sdd-authoring skill; these templates do not create an alternate approval or delivery workflow. Preserve approved artifacts and use the governing amendment process for changes to their requirements.
+
 ## Core Design Principles
 
 ### 1. Type Safety is Mandatory
@@ -9,10 +11,9 @@
 - Specify generic constraints clearly
 
 ### 2. Design vs Implementation
-- **Focus on WHAT, not HOW**
-- Define interfaces and contracts, not code
-- Specify behavior through pre/post conditions
-- Document architectural decisions, not algorithms
+- Specify architecture, ownership, interfaces, and observable behavior.
+- Include algorithms or sequencing when they are necessary for correctness; leave routine implementation detail to the implementer.
+- State relevant preconditions, postconditions, and invariants.
 
 ### 3. Visual Communication
 - **Simple features**: Basic component diagram or none
@@ -71,7 +72,7 @@
 
 ### Requirement IDs
 - Reference requirements as `2.1, 2.3` without prefixes (no “Requirement 2.1”).
-- All requirements MUST have numeric IDs. If a requirement lacks a numeric ID, stop and fix `requirements.md` before continuing.
+- Use the existing Kiro requirement IDs. Resolve missing IDs in an editable draft; changing approved requirement identity follows its amendment process. Native specs keep their native handles.
 - Use `N.M`-style numeric IDs where `N` is the top-level requirement number from requirements.md (for example, Requirement 1 → 1.1, 1.2; Requirement 2 → 2.1, 2.2).
 - Every component, task, and traceability row must reference the same canonical numeric ID.
 
@@ -152,18 +153,14 @@ graph TB
 
 - **Plain Mermaid only** – avoid custom styling or unsupported syntax.
 - **Node IDs** – alphanumeric plus underscores only (e.g., `Client`, `ServiceA`). Do not use `@`, `/`, or leading `-`.
-- **Labels** – simple words. Do not embed parentheses `()`, square brackets `[]`, quotes `"`, or slashes `/`.
-  - ❌ `DnD[@dnd-kit/core]` → invalid ID (`@`).
-  - ❌ `UI[KanbanBoard(React)]` → invalid label (`()`).
-  - ✅ `DndKit[dnd-kit core]` → use plain text in labels, keep technology details in the accompanying description.
-  - ℹ️ Mermaid strict-mode will otherwise fail with errors like `Expecting 'SQE' ... got 'PS'`; remove punctuation from labels before rendering.
+- **Labels** – use quoted labels for punctuation, e.g. `DndKit["@dnd-kit/core"]` or `UI["KanbanBoard (React)"]`. Node IDs and displayed labels are different fields. Render non-trivial diagrams to check syntax.
 - **Edges** – show data or control flow direction.
 - **Groups** – using Mermaid subgraphs to cluster related components is allowed; use it sparingly for clarity.
 
 ## Quality Metrics
 ### Design Completeness Checklist
 - All requirements addressed
-- No implementation details leaked
+- Necessary correctness constraints are explicit without prescribing routine implementation
 - Clear component boundaries
 - Explicit error handling
 - Comprehensive test strategy

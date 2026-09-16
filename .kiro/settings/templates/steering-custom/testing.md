@@ -1,5 +1,7 @@
 # Testing Standards
 
+> Template prompts, not established project policy. Verify each applicable convention against current code and confirmed decisions; remove irrelevant examples. This template does not authorize new approval gates, compatibility layers, dependencies, or infrastructure.
+
 [Purpose: guide what to test, where tests live, and how to structure them]
 
 ## Philosophy
@@ -18,7 +20,7 @@ Naming:
 - Suites: what is under test; Cases: expected behavior
 
 ## Test Types
-- Unit: single unit, mocked dependencies, very fast
+- Unit: pure logic or an injected dependency boundary; exercise production behavior
 - Integration: multiple units together, mock externals only
 - E2E: full flows, minimal mocks, only for critical journeys
 
@@ -35,7 +37,7 @@ it('does X when Y', () => {
 ```
 
 ## Mocking & Data
-- Mock externals (API/DB); never mock the system under test
+- Use the project's dependency-injection conventions; verify database mappings against the real repository when persistence is the requirement
 - Use factories/fixtures; reset state between tests
 - Keep test data minimal and intention-revealing
 

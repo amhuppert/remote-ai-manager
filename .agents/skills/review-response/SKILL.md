@@ -5,7 +5,7 @@ description: Use when responding to adversarial review findings in Command Cente
 
 # Responding to Review Findings
 
-Alex provides review findings — a review conversation, a findings document, a validator report. The deliverable is a disposition for every finding, each with a stated reason. Dispositions end the turn; apply changes only to the findings Alex has approved, or when the request already authorized fixing.
+Alex provides review findings — a review conversation, a findings document, a validator report. The deliverable is a disposition for every finding, each with a stated reason. For an assessment request, finish with the dispositions. When the request or existing authorization includes fixes, apply the accepted remedies and run relevant validation before finishing; do not stop merely because the dispositions are ready.
 
 Reviews gate consequential changes, so the failure modes on both sides are costly: accepting everything inflates the design with complexity nobody needs, and rejecting everything defeats the review. The goal is calibration.
 
@@ -20,9 +20,9 @@ When a real defect deserves fixing, prefer the **smallest remedy that resolves i
 
 ## The single-operator model
 
-Command Center serves one operator running their own agent sessions on their own machine. There are no tenants, no untrusted users, no hostile insiders. This is the lens for every proportionality judgment:
+Command Center serves one operator running their own agent sessions on their own machine. Assess risk against that deployment and the actual inputs or integrations involved; one operator does not make repository content, external pages, tool output, or dependencies trusted. This is the lens for every proportionality judgment:
 
-- Findings that assume enterprise scale, concurrent operators, or adversarial actors are usually overweighted — say so and reject or reduce them.
+- Findings that assume enterprise scale or concurrent operators need evidence that those conditions apply. Evaluate adversarial-input findings against the actual trust boundary rather than dismissing them because there is one operator.
 - **Agent restrictions in CC are typically not security mechanisms.** They exist for reliability and workflow clarity. "An agent could bypass this" describes the design, not a vulnerability, unless the restriction was explicitly built as a security boundary.
 - Correctness stands regardless of scale: data loss, corruption, durability gaps, and genuine logic bugs deserve acceptance even with a single operator. Proportionality trims safeguards against imagined actors, never fixes for real defects.
 

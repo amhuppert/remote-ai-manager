@@ -11,11 +11,11 @@ import { validationCommandCostSchema } from "../src/lib/validation/schemas";
 /**
  * The documentation contract for `validation.commands[].cost`. Cost became a
  * union — a scalar or a per-scope table — and the surfaces that teach it are
- * spread across docs, steering, and two near-duplicate plugin skill references.
- * Every claim here is checked against the shipped schema or against the other
- * copy, never against a third copy of the same prose, so a doc that keeps
+ * spread across docs, steering, and the project-setup skill reference. Every
+ * claim here is checked against the shipped schema, so a doc that keeps
  * describing the old scalar-only field fails here instead of misleading the
- * next project setup.
+ * next project setup. The dev-server skill links to that canonical reference
+ * rather than carrying another copy of the validation contract.
  */
 
 const REPO_ROOT = path.resolve(
@@ -29,13 +29,12 @@ const COST_DOC_SURFACES = [
   "docs/ai-validation-output.md",
   ".kiro/steering/project-configuration.md",
   "plugins/command-center/command-center/skills/project-setup/references/commandcenter-json.md",
-  "plugins/command-center/command-center/skills/dev-server-setup/references/commandcenter-json.md",
 ] as const;
 
-const SKILL_REFERENCE_COPIES = [
-  "plugins/command-center/command-center/skills/project-setup/references/commandcenter-json.md",
-  "plugins/command-center/command-center/skills/dev-server-setup/references/commandcenter-json.md",
-] as const;
+const PROJECT_SETUP_REFERENCE =
+  "plugins/command-center/command-center/skills/project-setup/references/commandcenter-json.md";
+const DEV_SERVER_SETUP_REFERENCE =
+  "plugins/command-center/command-center/skills/dev-server-setup/references/commandcenter-json.md";
 
 function read(relativePath: string): string {
   return readFileSync(path.resolve(REPO_ROOT, relativePath), "utf8");
@@ -117,12 +116,15 @@ describe("validation cost documentation", () => {
     }
   });
 
-  it("keeps the ValidationCommand contract identical across skill copies", () => {
-    const [first, second] = SKILL_REFERENCE_COPIES;
+  it("routes dev-server setup to the canonical ValidationCommand contract", () => {
+    expectDocuments(
+      read(DEV_SERVER_SETUP_REFERENCE),
+      "../../project-setup/references/commandcenter-json.md",
+      "the dev-server reference must disclose the shared configuration owner",
+    );
     expect(
-      section(read(second), "### ValidationCommand"),
-      `${second} has drifted from ${first}; the copies differ only on dev-server wording`,
-    ).toBe(section(read(first), "### ValidationCommand"));
+      section(read(PROJECT_SETUP_REFERENCE), "### ValidationCommand"),
+    ).toContain("`cost`");
   });
 
   it("does not claim cost is shared across scope variants", () => {

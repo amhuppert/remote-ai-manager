@@ -1,11 +1,11 @@
 ---
 name: cc-performance-log-analysis
-description: Use when diagnosing Command Center performance issues from structured server logs, slow API requests, operation timing, state-store latency, duplicate work, SSE broadcast cost, external command latency, or before/after performance regressions. Triggers include "analyze performance logs", "find slow requests", "why is CC slow", "trace this request", "compare log performance", "identify bottlenecks", and ad-hoc SQL questions over the logs (DuckDB / `logs:duckdb`).
+description: Analyze Command Center performance logs for request latency, state-store contention, duplicate work, SSE cost, external-command time, or before/after regressions; use DuckDB for custom SQL questions over logs.
 ---
 
 # CC Performance Log Analysis
 
-Use `bun run logs:analyze` as the first tool for Command Center performance log diagnosis. It produces concise Markdown by default for an agent's own reading. Select JSON only when output feeds code, and use manual `jq` only for ad hoc checks after the CLI narrows the problem.
+For broad performance triage, start with `bun run logs:analyze`. For an already identified trace or a specific SQL question, use the relevant trace/query directly. It produces concise Markdown by default for an agent's own reading. Select JSON only when output feeds code, and use bounded manual `jq` checks when they answer the specific question.
 
 **Two tools.** `logs:analyze` answers the known questions with ranked, severity-tagged findings and trace reconstruction — start there. When you have a question its report does not surface (a custom grouping, a percentile distribution, a cross-cutting join, "is X correlated with Y"), use `bun run logs:duckdb` to query the raw log with SQL — see [Ad-hoc SQL with DuckDB](#ad-hoc-sql-with-duckdb-logsduckdb) below.
 

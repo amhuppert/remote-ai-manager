@@ -6,6 +6,10 @@ Vitest config covers AI-optimal output and may mirror the fixed worker count. Se
 
 AI detection uses the `CLAUDECODE` env var, which every generated validation wrapper exports explicitly.
 
+These examples target Vitest 3's `poolOptions.forks` API. Check the installed
+version and its configuration types before adapting them; other major versions
+can use different worker/heap fields. Preserve the project's supported version.
+
 ## Why bound parallelism
 
 Vitest's default `forks` pool spawns one worker per CPU core with no heap cap. Pin `maxForks` to a fixed count and cap each worker's heap so the registered cost describes the maximum fan-out on every machine. A different worker profile is a different registered command.
@@ -188,4 +192,4 @@ The wrapper overwrites `NODE_OPTIONS` rather than preserving a caller value, so 
 
 ## When the project also uses Storybook tests
 
-If `@storybook/addon-vitest/vitest-plugin` is wired into `vitest.config.ts`, the `pool`/`poolOptions` settings apply to the unit project only — Storybook's browser project uses its own pool. No additional config needed.
+If `@storybook/addon-vitest/vitest-plugin` is wired into `vitest.config.ts`, its browser project has separate concurrency and memory behavior. Select only the intended unit project in this profile, or register the browser suite separately with bounded browser concurrency and an honest cost. A fork-pool cap alone does not bound browser processes.

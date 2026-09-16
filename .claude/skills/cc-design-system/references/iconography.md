@@ -16,7 +16,7 @@ Defaults, sizing, the canonical icon set, unicode-glyph rules, and the substitut
 - **Exceptions for shape-fill icons** — the filled diamond for Codex identity, the filled star for pinned items.
 - **currentcolor inheritance** — icons pick up the parent text color: `--text-secondary` at rest, `--cyan` on hover for primary actions, semantic accents (`--amber` filled star, `--red` close-destructive) where meaning applies.
 - **Inline next to a label** — when an icon sits next to text (e.g. `Context` in the info strip), match cap-height: 14–16px at the body's font-size, with a 6–8px gap.
-- **Tooltips for icon-only buttons** — every icon-only control needs both `aria-label` and a `data-tooltip`.
+- **Tooltips for icon-only buttons** — every icon-only control needs an accessible name (`aria-label`) and a visible hint through the `WithTooltip`/`Tooltip` primitive. The legacy `data-tooltip` attribute is not the authoring path for new controls.
 
 ---
 
@@ -29,7 +29,7 @@ Defaults, sizing, the canonical icon set, unicode-glyph rules, and the substitut
 | Desktop icon-button | 30px | 18px |
 | Mobile touch target | 44px | 26px |
 
-Minimum visual icon size: **20px** (`--icon-size-min`).
+Standalone icon floor: **20px** (`--icon-size-min`). Inline glyphs and icons inside controls use the contextual sizes above and the existing primitive recipe; the floor is not a requirement to enlarge every glyph.
 
 ---
 
@@ -39,7 +39,7 @@ The icon set covers:
 
 **copy, success, refresh, close, back, forward, menu, settings (cog), star (pin on/off), plus (new), search, filter, chevron-down, terminal, claude-diamond, codex-diamond, return (⏎), arrow-up (send), trash.**
 
-Before adding a new icon, check this list. Most actions already have a glyph.
+Before adding an icon, inspect `src/components/icons.tsx`; it is the current inventory. This list is illustrative.
 
 ---
 
@@ -82,9 +82,4 @@ Never introduce filled glyph systems (Material, Heroicons-solid), emoji, or colo
 
 ## Asset locations
 
-Pre-built SVG assets ship with the design system:
-
-- `assets/cc-logo.svg` — `CC` wordmark, Anybody 800, cyan, with canonical text-shadow glow baked in as an SVG filter.
-- `assets/cc-favicon.svg` — square favicon mark.
-- `assets/icon-cog.svg` — system-cog used in chrome.
-- `assets/icon-layout-*.svg` — layout-switcher schematic rectangles (`conversation`, `default`, `split`, `diff`).
+Shared icon components live in `src/components/icons.tsx`. Locate any brand or image asset in the repository before referencing it; this skill does not bundle an `assets/` directory.

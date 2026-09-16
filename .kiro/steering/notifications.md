@@ -101,7 +101,7 @@ Jobs and notification services publish through `events/publication.ts` or an inj
 | `notification-created` | `createNotification()` | Invalidate notification cache + enqueue toast |
 | `notification-updated` | `markAsRead()` / `markAllAsRead()` | Invalidate cache |
 
-`NotificationListener` tracks `hadErrorRef` — on EventSource reconnect, refetches all notifications to recover missed events.
+`NotificationListener` registers `registerJobsReconnectReconciliation` from `src/lib/jobs/sse-reactions.ts`. After a connection error it invokes the shared `reconnectReconcile`, which invalidates notification queries and reconciles running jobs.
 
 ## API
 

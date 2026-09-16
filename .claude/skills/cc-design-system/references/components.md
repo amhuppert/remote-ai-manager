@@ -10,17 +10,18 @@ After the Tailwind migration, the contract for the canonical recipes is the set 
 |---|---|---|
 | `Button` | `.btn*` | variants primary/danger/success/ghost/warning + `-sm`; `layoutClassName` for external geometry. |
 | `IconButton` | `.btn-icon-only`, `.cc-ibtn`, pin-toggle | `square`/`pill`/`ghost`; `size="touch"`; `data-pressed` for toggles. Owns mobile 44px touch-enlarge. |
-| `Badge` | `.cc-badge*` (recipe **deleted**) | tier = `variant` (status/type/count/subtle), value = `data-status`/`data-type`/`data-backend`. |
+| `StatusChip` | Lifecycle/status pill | Preferred for tone-coded lifecycle and status labels; use its current schema-backed props. |
+| `Badge` | General badge | Type/count/subtle treatments; inspect current variants and attributes. |
 | `StatusDot` | `.status-dot`/`.status-indicator` | cyan/amber/green/idle; live states pulse. |
 | `Tabs` | `.cc-tabs`/`.cc-tab`/`.cc-tab-count` | active = cyan bg; mind the `data-[status=…]` underscore pitfall (use static maps). |
 | `SectionHeader` | `.cc-section-*` | header/chevron/label/count/actions. |
 | `EmptyState` | `.empty-state*` | icon/title/desc. |
 | `FormField` | `.form-*` | group/label/input/hint/error. |
-| `ModalShell` | `.modal-*` overlay/card | desktop modal shell (no mobile bottom-sheet — that path is still legacy CSS). |
+| `Dialog` / `AlertDialog` | Modal/dialog surface | Styled Radix parts with the shared `dialog-recipe.ts`, including mobile sheet treatment. |
 
-**Always build with the primitive, never a legacy recipe class.** The primitive-swap wave deleted the `.empty-state*`, `.cc-section-*`, `.form-*`, `.cc-primary`, `.cc-ibtn`, `.cc-checkbox`, `.cc-toast`, and `.btn-toggle` recipes (consumers now use the primitives or inline utilities); `.cc-badge*` and the `.cc-*` typography helpers were deleted earlier — use `Badge` and Tailwind `text-*` utilities. Five recipe families remain **only** because a few consumers need a primitive feature that does not exist yet (tracked in `docs/reports/leaf-recipe-swap-residual-report.md`): `.btn*` (needs a `Button` anchor/`as` + disabled variant), `.btn-icon-only*` (a 28px `IconButton` size), `.cc-tab*` (MobileBottomBar descendant overrides), `.status-dot*` (an 8px mobile dot), `.modal*` (a `ModalShell` mobile bottom-sheet). Do NOT author new markup against any of these — extend the primitive instead. Authoring rules (utilities, `cn()`, `data-*` state, `layoutClassName`) are in `docs/tailwind-conventions.md`.
+Build with current primitives rather than legacy recipe classes. Inspect the component's exports and stories for the actual API; authoring rules live in `docs/tailwind-conventions.md`.
 
-The tables below are the **visual contract** (colors/states) each primitive must reproduce — a spec, not an authoring guide. Most of the recipe class names they show (e.g. `.cc-badge--*`, `.modal-overlay`, `.cc-tabs`) are **deleted or parked** (see the list above); build with the `ui/` primitive, never author these classes.
+The historical class names in the tables below identify visual treatments, not public APIs or guarantees that those classes still exist. Use their colors and states through the current primitive or utilities.
 
 ---
 
@@ -29,11 +30,11 @@ The tables below are the **visual contract** (colors/states) each primitive must
 | Concept | Class(es) | Notes |
 |---|---|---|
 | Buttons | `.btn`, `.btn-primary`, `.btn-ghost`, `.btn-danger`, `.btn-sm` | Mono font; sentence-case text; never full-color background except `.btn-primary` (cyan) and `.btn-danger` (red). |
-| Icon-only buttons | `.btn-icon-only`, `.btn-icon-only.danger` | Always include `aria-label` + `data-tooltip`. |
+| Icon-only buttons | `.btn-icon-only`, `.btn-icon-only.danger` | Include `aria-label` and compose `WithTooltip`/`Tooltip` for the visible hint. |
 | Status dots | `.status-dot`, `.status-dot.cyan`, `.status-dot.amber`, `.status-dot.idle` | Live states animate via `pulse-dot 2.5s`. Idle uses `--text-tertiary` with no animation. |
 | Text input / textarea | `.prompt-input` | Cyan focus ring (border + glow). Sending state uses `.prompt-input.busy` with `pulse-border`. |
 | Empty state | `.empty-state`, `.empty-state-title`, `.empty-state-desc` | Two short lines; max ~320px width. No illustrations, no stacked CTAs. |
-| Modal / confirm dialog | `.modal-overlay`, `.modal-card`, `.modal-title`, `.modal-actions` | Overlay `rgba(6, 9, 15, 0.8)` + `blur(8px)`. |
+| Modal / confirm dialog | `.modal-overlay`, `.modal-card`, `.modal-title`, `.modal-actions` | Use the shared `dialog-recipe.ts`; it currently includes an 8px blur. See the motion reference before adding or changing fullscreen blur. |
 
 ---
 
@@ -67,11 +68,13 @@ The tables below are the **visual contract** (colors/states) each primitive must
 
 ### Badges
 
+For new lifecycle/status pills, use `StatusChip`. The historical `Badge` status treatment below describes existing styling rather than overriding the root primitive-selection rule.
+
 > The `.cc-badge*` CSS recipe was **deleted** in the migration; the `Badge` primitive (`ui/Badge.tsx`) now emits these styles as utilities. The API below is the primitive's contract: `variant` carries the tier, `data-*` carries the value.
 
 Tier via `variant` (was the BEM modifier); value within the tier via attribute selector. This scales without modifier-class explosion.
 
-**Tier** (always required — BEM modifier on `.cc-badge`):
+**Tier** (the `Badge` variant; historical class labels shown for reference):
 
 ```
 .cc-badge--status      status tier (semantic color bg + text)

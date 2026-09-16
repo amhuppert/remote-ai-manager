@@ -90,7 +90,7 @@ void fetch("{DEBUG_LOG_URL}", {
     hypothesisId: "H1",
     location: "src/lib/auth.ts:42",
     message: "Token validation result",
-    data: { tokenPrefix: token?.slice(0, 8), isValid, userId }
+    data: { tokenPresent: Boolean(token), isValid }
   })
 }).catch(() => {});
 // @debug-probe:H1:token-validation END

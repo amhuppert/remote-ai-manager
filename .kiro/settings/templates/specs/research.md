@@ -1,5 +1,7 @@
 # Research & Design Decisions Template
 
+> Scope: reference for work already governed by a Kiro spec. New specs use `cctl spec` and the native-sdd-authoring skill; these templates do not create an alternate approval or delivery workflow. Preserve approved artifacts and use the governing amendment process for changes to their requirements.
+
 ---
 **Purpose**: Capture discovery findings, architectural investigations, and rationale that inform the technical design.
 

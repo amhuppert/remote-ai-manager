@@ -1,11 +1,17 @@
 ---
 name: cc-rebuild-restart
-description: This skill should be used to rebuild Command Center in the MAIN worktree and restart the running CC server. Runs `bun install` + `bun run build`, and only on a successful build launches a fully-detached daemon that kills the running main-worktree server and restarts it. Triggers on "rebuild and restart Command Center", "rebuild CC and restart the server", "redeploy the main CC server", "pick up my merged changes and restart CC", or any request to apply the latest built code to the live CC instance. Operates on the MAIN worktree, not the session worktree.
+description: Rebuild and restart the live main-worktree Command Center server when the user explicitly requests production maintenance. Uses the bundled build/restart scripts; session dev servers use cctl dev instead.
 ---
 
 # Rebuild & Restart Command Center
 
 Rebuilds the production CC bundle in the **main worktree** and restarts the live server so it serves the freshly built code.
+
+## Authorization and target
+
+This workflow writes to the main worktree, runs installation/build steps, and restarts the managing server. Use it only when the user's request explicitly authorizes that production operation and leaving the assigned worktree. Existing authorization satisfies this boundary; ordinary feature implementation or verification does not. Before running, establish the intended checkout, port, and build configuration. The build inherits the caller's environment; only the restarted server gets the script's sanitized environment.
+
+An in-place build can replace live `.next` files while the old server is still serving them. A failed build leaves the server process running but does not guarantee the old app remains healthy. Include that concrete downtime risk in the maintenance handoff.
 
 ## The core problem this solves
 
@@ -44,9 +50,9 @@ If `bun install` or `bun run build` fails, the script exits non-zero and **nothi
 
 Because the server is the parent of this session, **the CC UI will briefly disconnect when the restart fires, then reconnect** once the new server is listening. Say this in your final message before the restart lands. Don't try to push a notification after scheduling the restart — that path goes through the server you're about to kill.
 
-## Preview without touching anything (dry run)
+## Preview the restart after a real install and build
 
-To see exactly which PIDs would be killed and how the server would be relaunched, without killing or restarting:
+The `CC_RESTART_DRY_RUN` option simulates only process termination/restart. It still writes dependency/build artifacts in the main worktree and can affect live `.next` files, so it requires the same checkout/build authorization:
 
 ```bash
 CC_RESTART_DRY_RUN=1 bash .claude/skills/cc-rebuild-restart/scripts/rebuild-and-restart.sh
@@ -63,10 +69,10 @@ The daemon logs every step. After scheduling:
 ```bash
 cat /tmp/command-center-restart.log        # daemon: kill targets, SUCCESS/WARNING line
 cat /tmp/command-center-server.log         # the restarted server's own stdout/stderr
-lsof -ti tcp:3000 -sTCP:LISTEN             # the new server's PID (port may differ if customized)
+lsof -ti tcp:<reported-port> -sTCP:LISTEN  # use the port printed by the script
 ```
 
-A successful run ends with `SUCCESS: Command Center is listening on port <port>` in the daemon log.
+The daemon's `SUCCESS` line proves that a process is listening on the port. Verify the returned application/build identity and a working page or health response before claiming the deployment is healthy.
 
 ## Knobs (env overrides)
 
@@ -86,4 +92,4 @@ A successful run ends with `SUCCESS: Command Center is listening on port <port>`
 ## Notes & boundaries
 
 - This skill deliberately operates on the **main worktree**. It never touches session-worktree dev servers: those run with their worktree as cwd, while the kill logic only targets processes whose cwd is the main root.
-- It kills by **PID**, never by process group, so other CC sessions' agent processes are orphaned (reparented to launchd) rather than terminated — CC handles their reconnection on restart.
+- It signals specific server PIDs rather than process groups. Do not infer that every active agent turn survives or reconnects from that alone; report observed post-restart state.

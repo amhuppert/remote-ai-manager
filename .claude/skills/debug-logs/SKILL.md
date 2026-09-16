@@ -1,11 +1,11 @@
 ---
-description: This skill should be used when diagnosing CC issues, analyzing failures, tracing user actions through logs, investigating state corruption, prompt execution errors, lock contention, or understanding what happened in recent runs. Use when asked to "check logs", "debug", "what went wrong", "trace request", "find errors", or "analyze recent activity".
+description: Diagnose Command Center failures using structured logs, including request tracing, prompt/runtime errors, session lifecycle, and state-store problems. For latency analysis, use cc-performance-log-analysis.
 name: debug-logs
 ---
 
 # CC Debug Log Analysis
 
-Structured NDJSON logs trace every user action from UI through API routes to the Claude Agent SDK. Each log line is a self-contained JSON object. All entries from one user action share a `traceId` UUID.
+Structured NDJSON logs trace every user action from UI through API routes to the selected agent backend. Each log line is a self-contained JSON object. Entries in one request trace share a `traceId` UUID; follow linked conversation/job identifiers across asynchronous boundaries.
 
 ## Log File Location
 
@@ -46,7 +46,7 @@ Auto-enriched context fields (from AsyncLocalStorage): `traceId`, `action`, `pro
 
 ## Quick Diagnosis (Start Here)
 
-Always start with error/warning summary to orient before diving deeper:
+For broad triage, start with the error/warning summary. When the request already identifies a trace or failure, inspect it directly:
 
 ```bash
 # Error summary by type (most common first)
@@ -88,7 +88,7 @@ grep '"sessionName":"SESSION_NAME"' "$LOG" | tail -1 | jq -r .traceId
 grep 'TRACE_ID' "$LOG" | jq '{timestamp,module,message,level,error,durationMs}'
 ```
 
-This shows the complete request lifecycle and every operation that happened within it.
+This shows recorded operations in the selected log. With scoped routing, include the session/conversation log and its rotations for the trace's module events; the global file alone need not contain them.
 
 ## Debugging by Scenario
 
@@ -111,7 +111,7 @@ grep '"message":"prompt.complete"' "$LOG" | jq 'select(.durationMs > 30000) | {s
 grep '"sessionName":"SESSION_NAME"' "$LOG" | grep '"module":"prompt"' | jq '{message,durationMs,error,backend}'
 ```
 
-Prompts run inside an XState conversation actor that drives the Claude Agent SDK; there is no Claude CLI subprocess. Errors surface as `prompt.sdk_error`, `prompt.timeout`, or `prompt.aborted` from the actor, plus `prompt.facade_error` / dispatcher events from the HTTP route layer.
+Prompts run through the selected backend and an XState conversation actor. The Claude Agent SDK launches its bundled CLI subprocess; inspect SDK/runtime lifecycle evidence when diagnosing process failures. Errors can surface as `prompt.sdk_error`, `prompt.timeout`, or `prompt.aborted` from the actor, plus `prompt.facade_error` / dispatcher events from the HTTP route layer.
 
 ### Session Lifecycle Issues
 
@@ -128,7 +128,7 @@ grep -E '"message":"session\.(create|delete)"' "$LOG" | jq '{message,sessionName
 
 ### State Store Issues
 
-State persistence lives in SQLite (`notifications.db`, WAL mode) accessed through a write queue.
+State persistence lives in SQLite (`command-center.db`, WAL mode) accessed through a write queue.
 
 ```bash
 # Schema validation failures (state on disk no longer matches Zod schemas)
@@ -198,7 +198,7 @@ Set `CC_LOG_LEVEL=debug` to include lock events (`lock.acquired`, `lock.released
 
 Warn/error entries also go to stderr (unless `CC_LOG_SILENT=1`) for immediate visibility.
 
-## Complete Log Message Catalog
+## Common log messages
 
 ### Request Lifecycle (module: tracing)
 
@@ -233,7 +233,7 @@ Warn/error entries also go to stderr (unless `CC_LOG_SILENT=1`) for immediate vi
 
 ### State Store (module: state-store)
 
-State persistence runs through a write queue over SQLite (`notifications.db`, WAL mode). Tracked events:
+State persistence runs through a write queue over SQLite (`command-center.db`, WAL mode). Tracked events:
 
 | Message                                            | Level | Key Fields                                  | Meaning                                                  |
 | -------------------------------------------------- | ----- | ------------------------------------------- | -------------------------------------------------------- |

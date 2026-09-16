@@ -5,7 +5,7 @@ description: Audit the performance of a completed (or halted) graph workflow exe
 
 # Graph Workflow Execution Audit
 
-Systematic review of one graph workflow execution to answer four questions,
+Systematic review of one graph workflow execution to answer three questions,
 in priority order:
 
 1. **Quality** — did the work meet intent? Where did agents get tripped up,
@@ -93,13 +93,13 @@ wait. Gap classifications: `halt_wait` (execution halted), `hung_turn`
 | `halt` | Execution stopped; classified `infrastructure` (config/env/merge — an LLM retry would never have fixed it), `agent`, or `user`. Infra halts are engine/config bugs, not agent failures. |
 | `validation_no_go` | Validator rejected work → extra iteration. Read the verdict AND the iteration that followed: was the finding real, or did the validator enforce a wrong/ambiguous AC? |
 | `circuit_breaker` / `task_failure` | Repeated failure; read `contexts/<id>/tasks.jsonl` failure messages for the root cause. |
-| `context_window_pressure` | Peak occupancy ≥ 70% of the model window — silent-compaction territory; quality degrades invisibly. Planning fix: split the context. |
+| `context_window_pressure` | Peak measurable occupancy ≥ 70% of the model window — a pressure signal. Inspect compaction and task continuity before attributing quality loss or recommending a split. |
 | `rotation_overrun` | An iteration peaked ≥ 1.5× the configured `contextLimitTokens`. Rotation is scheduled mid-turn but only takes effect at the iteration boundary, so one long turn outruns it — the endgame risks a hard "context limit" stop. Planning fix: put turn-heavy work (live verification) at the START of a fresh iteration/context. |
 | `cost_mismatch` | A conversation's DB `total_cost_usd` diverges from the transcript's lineage total. Rows written before the accrual fix are inflated (SDK cumulative was consumed as a per-turn delta). Use the transcript-corrected total for all cost conclusions. |
-| `background_task_kills` | Armed background tasks (watchers, dev servers, polls) were killed at turn boundaries. Expect orphaned live runs and cold re-setup in the transcript — this is real wasted spend, count it. |
+| `background_task_kills` | Background tasks were reported killed. Inspect whether this was intended cleanup or interrupted work; attribute wasted time only when the transcript supports it. |
 | `compaction_events` | The conversation was silently summarized mid-flight; verify nothing load-bearing was dropped around the boundary. |
-| `scratch_debris` | The final-publish commit carried scratch files (`.cc/`, `*.log`) into the session branch. Work-product hygiene defect; check what shipped. |
-| `prompt_growth` | Seed prompt grew ≥ 2× across iterations — feedback accumulating instead of resolving. |
+| `scratch_debris` | The final-publish commit includes paths resembling scratch files (`.cc/`, `*.log`). Inspect their purpose before calling them accidental debris; some artifacts may be intentional deliverables. |
+| `prompt_growth` | Seed prompt grew ≥ 2× across iterations. Check whether this is accumulating feedback, added scope, or required continuity. |
 | `parse_fallback` | Validator response needed fenced-JSON/raw fallback — structured output failed; check the raw response in `prompts/<n>.json`. |
 | `stall_gap` | Wall-clock gap covered by neither agent work, a human gate, a halt window, a hung turn, nor a validation run — orchestration dead air. Correlate with server logs (below). |
 | `human_wait` | Gate/question latency ≥ 10 min. Not agent friction, but it is calendar time; note it separately. |
@@ -124,13 +124,14 @@ turns.
   churn: the agent needed repeated re-prompting to finish its task list).
 - The per-conversation tool tallies rank hotspots: high `errored` counts,
   `bg task(s) killed`, and extreme `top re-read` counts (a file read 10+
-  times signals context-degradation churn) mark the transcripts worth
+  times may signal churn, but can also reflect successive edits) mark the transcripts worth
   deep-reading first.
 - `iterationCount` much larger than task count ÷ tasks-per-iteration
   suggests grinding; 1–2 iterations for a large task list suggests healthy
   flow.
-- Compare `agent turns` total vs wall clock: a large difference not
-  explained by `human waits` means scheduling/orchestration overhead.
+- Compare `agent turns` with wall clock using the gap classifications. Parallel
+  turns overlap, and validation/halt waits also consume wall time; subtraction
+  alone cannot establish scheduling overhead.
 
 ## Step 3 — Qualitative deep-dive (quality is priority 1)
 
@@ -138,10 +139,10 @@ Pick the 2–4 hotspots the extractor surfaced (NO-GO contexts, cost/time
 outliers, halts, kill/re-read-heavy conversations) and read the primary
 sources. Paths are in the report's "Where to dig deeper" section.
 
-**Delegate transcript deep-reads to subagents.** Hotspot transcripts run to
-thousands of JSONL entries — reading one in the main context will crowd out
-the audit itself. Spawn one background agent per hotspot transcript with a
-brief of this shape, and run them in parallel:
+**Delegate independent transcript deep-reads when agents are available.** Hotspot transcripts run to
+thousands of JSONL entries. Assign bounded hotspots and continue the audit
+while they run; without delegation, read bounded excerpts locally. Use a brief
+of this shape:
 
 > Read-only. Transcript: `<path>`. Context: <what this conversation was, its
 > cost/turns, what the extractor flagged>. Parse with python3 — tally first
@@ -167,7 +168,7 @@ brief of this shape, and run them in parallel:
    friction; whether ask-user-question pauses were used at genuine forks
    (and whether the agent guessed badly where it *should* have asked).
 3. **Validator evidence** — `validators/<assignmentId>/validation-transcript.jsonl`
-   (each cohort member's full reasoning) and `validation.jsonl` (the whole
+   (each cohort member's recorded output) and `validation.jsonl` (the whole
    cohort's verdict pipeline, with `assignmentId` on each entry). For every NO-GO ask
    the AeroTrainer question: *was the AC itself wrong?* A validator
    faithfully enforcing a bad spec is a planning defect, not an agent one.
@@ -181,7 +182,8 @@ brief of this shape, and run them in parallel:
    `bun run logs:duckdb sql "SELECT ..."` over `<config-dir>/logs/global.log`
    (see `cc-performance-log-analysis` skill), filtered to the stall window
    or the context's conversation ids.
-6. **Git evidence** — in the session/lane worktree: commit cadence
+6. **Git evidence** — run `git show`/`git log` from the assigned worktree against
+   the recorded commits; do not enter another lane's checkout without authorization. Inspect commit cadence
    (`Graph workflow context <contextId>` commits), diff size vs AC scope.
    For merged/deleted lanes, the commit SHAs live in the execution's lane
    `commitSnapshots`.
@@ -268,8 +270,9 @@ docs/reports/graph-workflow-improvement-report.md rather than re-inventing.>
   `occupancyMeasurable: false`). Never divide that counter by a window or
   rotation limit; the extractor suppresses occupancy findings for such
   contexts and lists them under "Telemetry confidence" as inconclusive.
-- **Long `agent_work` gaps are normal** (a single opus turn can run 45+
-  min). Only `unexplained` gaps are orchestration problems.
+- **Long `agent_work` gaps can be legitimate**, but classification alone
+  does not prove useful work. Inspect activity when the interval is an outlier;
+  likewise, an `unexplained` gap needs corroboration before blaming orchestration.
 - **`preReset` events**: a context that was reset keeps its pre-reset event
   stream flagged `pre_reset=1`; expect duplicated status sequences.
 - **Archived vs active**: completed executions may still sit in the active

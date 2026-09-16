@@ -1,5 +1,7 @@
 # API Standards
 
+> Template prompts, not established project policy. Verify each applicable convention against current code and confirmed decisions; remove irrelevant examples. This template does not authorize new approval gates, compatibility layers, dependencies, or infrastructure.
+
 [Purpose: consistent API patterns for naming, structure, auth, versioning, and errors]
 
 ## Philosophy

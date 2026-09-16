@@ -1,6 +1,6 @@
 # Data Fetching & SSE
 
-Ideal patterns for SSE, TanStack Query, optimistic updates, cache invalidation, and polling. This describes the target architecture — write new code to these rules and refactor existing code toward them.
+Read before changing query hooks, mutations, or SSE reactions. The conventions below guide changed behavior; they do not require an unrelated migration. `src/components/NotificationListener.tsx` owns connection assembly and each domain owns its `sse-reactions.ts`.
 
 ## Core Model
 
@@ -30,7 +30,7 @@ There is no rung 4. "Fire mutation → `invalidateQueries` → wait for the refe
 ### How this composes with SSE
 
 - The optimistic layer is presentation-only; the server stays authoritative. `onSettled` invalidation (or the SSE-driven `setQueryData`) overwrites the optimistic state with the real one.
-- Optimistic writes and SSE handlers touch the same caches, so SSE `setQueryData` handlers must be idempotent (delta application keyed by id, not blind replacement) — arrival order between the mutation response and the SSE event must not matter.
+- Optimistic writes and SSE handlers touch the same caches, so SSE `setQueryData` handlers must tolerate duplicate and out-of-order delivery. Upsert by stable id, use versions where order matters, or invalidate to refetch authoritative state. Applying a delta is not inherently idempotent (appending twice duplicates data).
 - Placeholder entries (rung 2) are reconciled by id: the success handler or SSE event replaces the `optimistic-*` entry rather than appending a duplicate.
 
 ### Pending-indicator conventions (rung 3)
@@ -51,22 +51,11 @@ There is no rung 4. "Fire mutation → `invalidateQueries` → wait for the refe
 
 ### Typed events, discriminator-driven
 
-Every SSE frame uses a typed event name and a Zod-validated payload:
+`src/lib/api/sse-events.ts` assembles the canonical discriminated union from domain-owned schemas. Read it for current event names and payloads rather than copying an illustrative shape.
 
-```typescript
-// Canonical union assembled in src/lib/api/sse-events.ts from per-domain event schemas
-type SSEEvent =
-  | { type: "conversation-status"; projectName: string; sessionName: string; conversationId: string; status: ConvStatus }
-  | { type: "message-appended"; projectName: string; sessionName: string; conversationId: string; message: Message }
-  | { type: "job-status"; jobId: string; status: JobStatus }
-  | { type: "notification-created"; notification: Notification }
-  | { type: "mcp-config-updated"; scope: McpScope; change: McpChange }
-  | { type: "dev-server-status"; projectName: string; sessionName: string; status: DevServerStatus };
-```
-
-- `event.type` is the discriminator clients switch on.
-- Each event's payload schema lives in its domain's `src/lib/<domain>/schemas.ts`; the `SSEEvent` union is assembled in `src/lib/api/sse-events.ts`; types via `z.infer`.
-- Listener parses with `safeParse` — invalid frames are logged and dropped, never thrown.
+- `event.type` selects the event schema and reaction.
+- Listener reactions validate frames with `safeParse`; invalid frames are logged and dropped.
+- Register a domain's reactions from `NotificationListener`; keep cache decisions in the domain module.
 
 ### Payload shape
 
@@ -75,13 +64,13 @@ Keep frames small. ≤1–2 KB per event is the target. Two valid shapes:
 1. **Inline data** — the change *is* the payload (status enum flip, rename, new notification record).
 2. **Identifier + change descriptor** — for anything larger than ~1 KB, send `{ entityId, changeType }` and let the client refetch the affected query or apply a delta.
 
-Never broadcast a full conversation transcript, full session list, or full diff. If a listener handler reaches for `invalidateQueries` on a large list because the SSE payload was too thin, the event needed to carry a delta instead.
+Keep full transcripts, session lists, and diffs on HTTP reads. For frequent updates to large caches, prefer a small keyed delta; a low-frequency id-only event may narrowly invalidate the affected query.
 
 ### Reconnect correctness
 
 - Server emits `id: <seq>\n` on every frame and a periodic `: heartbeat\n\n` comment every 15s.
-- Client uses native `EventSource` `Last-Event-ID` semantics; server replays any frames newer than the supplied seq from an in-memory ring buffer (configurable depth, default 256).
-- On reconnect, the client also issues `?since=<seq>` reconciliation requests for cursors it owns (active conversations, in-flight jobs, message tails). This catches anything older than the replay window.
+- `replayFramesSince` in `src/lib/events/broadcaster.ts` returns newer buffered frames only when the requested interval is complete. A gap or server restart requires reconciliation from durable reads.
+- `registerJobsReconnectReconciliation` invokes `reconnectReconcile` (`src/lib/events/sse-reconnect.ts`) after a connection error. Cached session transcript tails use `/messages?since=<transcriptSeq>`; other caches are invalidated, and running jobs reload from `/api/jobs`. Transcript sequence numbers and SSE event IDs are separate cursors.
 
 ### Publication path
 
@@ -129,36 +118,12 @@ type AgentProfileLibraryChangedEvent =
 
 ### Query Key Factories
 
-Follow the factory pattern from `tanstack-query-key-factory-reference.md`:
+Follow the production factories in `src/lib/sessions/query-keys.ts` and `src/lib/conversations/query-keys.ts`:
 
 - Keys are **hierarchical arrays**, structured most-generic → most-specific: `[entity, category, identifier, filters]`.
 - Use `as const` on every key definition for literal type inference.
 - One factory per entity, colocated with the hooks that consume it.
 - All parameters that vary the response **must** be in the key. Sensitive values (tokens, passwords) never enter keys; use identifiers.
-
-```typescript
-export const sessionKeys = {
-  all: ["sessions"] as const,
-  lists: () => [...sessionKeys.all, "list"] as const,
-  list: (projectName: string) => [...sessionKeys.lists(), { projectName }] as const,
-  details: () => [...sessionKeys.all, "detail"] as const,
-  detail: (projectName: string, sessionName: string) =>
-    [...sessionKeys.details(), projectName, sessionName] as const,
-  diff: (projectName: string, sessionName: string) =>
-    [...sessionKeys.detail(projectName, sessionName), "diff"] as const,
-} as const;
-
-export const conversationKeys = {
-  all: ["conversations"] as const,
-  lists: () => [...conversationKeys.all, "list"] as const,
-  active: (projectName: string, sessionName: string) =>
-    [...conversationKeys.lists(), "active", projectName, sessionName] as const,
-  detail: (projectName: string, sessionName: string, conversationId: string) =>
-    [...conversationKeys.all, "detail", projectName, sessionName, conversationId] as const,
-  messages: (projectName: string, sessionName: string, conversationId: string) =>
-    [...conversationKeys.detail(projectName, sessionName, conversationId), "messages"] as const,
-} as const;
-```
 
 Each domain owns its factories, colocated: keys in `src/lib/<domain>/query-keys.ts`, hooks in `src/lib/<domain>/queries.ts`, mutations in `src/lib/<domain>/mutations.ts` (which reference the keys for invalidation and optimistic updates).
 
@@ -272,7 +237,7 @@ Rules:
 - Always `cancelQueries` before snapshotting to avoid an in-flight refetch overwriting the optimistic value.
 - Always snapshot for rollback. Never assume success.
 - `onSettled` invalidates so the server's authoritative response wins eventually — even if the SSE event also fires.
-- If both the optimistic update and the SSE-driven invalidation race, the SSE handler's `setQueryData` should be idempotent (delta application, not replacement) so order doesn't matter.
+- Handle duplicate and out-of-order delivery using the cache reconciliation rules under Perceived Responsiveness.
 
 ---
 
@@ -283,7 +248,7 @@ SSE-first. Polling is a fallback, not a default.
 ### When polling is allowed
 
 - **External process liveness** that we cannot push from (dev server health, external job runners). Use `refetchInterval` with a sane cadence (≥5s).
-- **Bootstrap reconciliation** on tab focus when the SSE connection was offline. Sequenced *after* the reconnect `?since=<seq>` cursor sync — never as a substitute for it.
+- **Bootstrap reconciliation** on tab focus when the SSE connection was offline. Use the shared reconnect reconciliation path; a focus refetch is not a substitute for event recovery.
 
 ### When polling is forbidden
 
@@ -294,7 +259,7 @@ SSE-first. Polling is a fallback, not a default.
 ### `refetchOnWindowFocus`
 
 - Global default: `false`.
-- The global SSE bus + `?since=<seq>` reconciliation on reconnect cover the staleness window that focus-refetch would catch.
+- The global SSE bus and shared reconnect reconciliation recover event-driven caches.
 - Per-query opt-in (`refetchOnWindowFocus: true`) is allowed for queries that intentionally cannot be SSE-driven (e.g., external system status snapshots).
 
 ---
@@ -310,27 +275,6 @@ SSE-first. Polling is a fallback, not a default.
 | Medium (single record changed, can refetch cheaply) | Low | SSE id-only event → narrow `invalidateQueries` |
 | Large (list of N items, expensive to recompute) | Low | SSE id-only event → narrow `invalidateQueries`, ensure endpoint is paginated |
 | External system state (no server hook) | Slow-changing | TanStack polling with `refetchInterval` |
-
-### Reconnect sequence
-
-1. EventSource reconnects (browser-managed) with `Last-Event-ID`.
-2. Server replays buffered frames newer than the supplied seq.
-3. Client reconciliation: for each active cursor (in-flight jobs, open conversation tails), issue `GET /api/.../events?since=<lastSeq>` and apply returned deltas via `setQueryData`.
-4. Only after reconciliation completes does the client trust the cache for any feature that was open during the disconnect.
-
-### Anti-patterns
-
-- ❌ Broadcasting a full transcript on every assistant message.
-- ❌ `invalidateQueries({ queryKey: sessionKeys.all })` from a handler that knows `{ projectName, sessionName }`.
-- ❌ A `useQuery` with `refetchInterval` next to a feature whose state is already broadcast by SSE.
-- ❌ A mutation that writes via API and then waits for the SSE event to update local state with no optimistic step (visible UI lag for trivial operations).
-- ❌ A mutation whose only feedback is `onSuccess: () => invalidateQueries(...)` — the user sees nothing until the refetch lands. Add an optimistic update or a pending indicator.
-- ❌ A triggering control that only sets `disabled={isPending}` on a slow operation, with no visible in-progress state.
-- ❌ A second `new EventSource(...)` somewhere in feature code for "lifecycle" updates.
-- ❌ Per-feature route handlers calling `broadcaster.broadcast(...)` directly, bypassing typed SSE publication.
-- ❌ SSE handlers that re-fetch via `invalidateQueries` when the event payload already contained the delta.
-
----
 
 ## File Layout
 

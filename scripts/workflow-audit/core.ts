@@ -1844,7 +1844,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         kind: "context_window_pressure",
         severity: "high",
         contextId: context.contextId,
-        summary: `peak context occupancy ${context.peakOccupancyPct}% (${context.peakContextTokens ?? 0} of ${context.contextWindowMax ?? 0} tokens) — output quality degrades near the window limit`,
+        summary: `peak context occupancy ${context.peakOccupancyPct}% (${context.peakContextTokens ?? 0} of ${context.contextWindowMax ?? 0} tokens) — inspect outputs and validation findings near the peak; occupancy alone does not establish a quality loss`,
       });
     }
     if (context.parseFallbacks.length > 0) {
@@ -1854,7 +1854,9 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         contextId: context.contextId,
         summary: `${context.parseFallbacks.length} validator response(s) parsed via fallback (${context.parseFallbacks
           .map((f) => f.parsePath ?? "unreadable")
-          .join(", ")}) — structured output failed`,
+          .join(
+            ", ",
+          )}) — inspect the response and parse path to determine why fallback was needed`,
       });
     }
     const seedLengths = context.iterations
@@ -1872,7 +1874,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         kind: "prompt_growth",
         severity: "medium",
         contextId: context.contextId,
-        summary: `seed prompt grew ${firstSeed} → ${lastSeed} chars across iterations — feedback is accumulating instead of being resolved`,
+        summary: `seed prompt grew ${firstSeed} → ${lastSeed} chars across iterations — compare the seed prompts to identify added content and check whether any feedback remained unresolved`,
       });
     }
     for (const wait of [...context.approvalWaits, ...context.userInputWaits]) {
@@ -1954,7 +1956,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         kind: "background_task_kills",
         severity: "medium",
         contextId: context.contextId,
-        summary: `${contextKills} armed background task(s) killed at turn boundaries across ${scannedConversations} conversation(s) — orphaned watchers/dev servers force cold re-setup; check the transcript(s) for redone work`,
+        summary: `${contextKills} background-task update(s) reported killed across ${scannedConversations} conversation(s) — inspect task identities, timing, and later commands to determine the cause and whether work was repeated`,
       });
     }
     if (contextCompactions > 0) {
@@ -1962,7 +1964,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         kind: "compaction_events",
         severity: "medium",
         contextId: context.contextId,
-        summary: `${contextCompactions} compaction event(s) — the conversation was silently summarized mid-flight; verify nothing load-bearing was dropped`,
+        summary: `${contextCompactions} compaction event(s) — inspect the compaction summaries and subsequent work for any lost decisions, constraints, or unresolved tasks`,
       });
     }
   }
@@ -2026,7 +2028,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       kind: "scratch_debris",
       severity: "medium",
       contextId: null,
-      summary: `final publish commit ${publish.commitSha.slice(0, 8)} carried ${publish.scratchFiles.length} scratch file(s) (+${scratchAdditions} lines) into the session branch: ${shown}${publish.scratchFiles.length > SCRATCH_FILES_RENDER_CAP ? `, and ${publish.scratchFiles.length - SCRATCH_FILES_RENDER_CAP} more` : ""}`,
+      summary: `final publish commit ${publish.commitSha.slice(0, 8)} carried ${publish.scratchFiles.length} file(s) matching scratch-path heuristics (+${scratchAdditions} lines) into the session branch: ${shown}${publish.scratchFiles.length > SCRATCH_FILES_RENDER_CAP ? `, and ${publish.scratchFiles.length - SCRATCH_FILES_RENDER_CAP} more` : ""} — inspect their contents and intended role before classifying them as debris`,
     });
   }
 
@@ -2358,7 +2360,7 @@ export function renderMarkdown(report: AuditReport): string {
     lines.push(
       `- Final publish: \`${p.commitSha.slice(0, 8)}\` · ${p.fileCount} file(s) (+${p.totalAdditions}/−${p.totalDeletions})` +
         (p.scratchFiles.length > 0
-          ? ` · ⚠ ${p.scratchFiles.length} scratch file(s)`
+          ? ` · ⚠ ${p.scratchFiles.length} scratch-path match(es)`
           : ""),
     );
   }
@@ -2531,7 +2533,7 @@ export function renderMarkdown(report: AuditReport): string {
           `${scan.toolUseCount} tool call(s)${scan.toolErrorCount > 0 ? ` (${scan.toolErrorCount} errored)` : ""}`,
         );
         if (scan.backgroundTasksKilled > 0) {
-          parts.push(`${scan.backgroundTasksKilled} bg task(s) killed`);
+          parts.push(`${scan.backgroundTasksKilled} bg update(s): killed`);
         }
         if (scan.compactions > 0) {
           parts.push(`${scan.compactions} compaction(s)`);

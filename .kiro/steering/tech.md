@@ -50,18 +50,7 @@ Three bookkeeping tables, kept distinct: `applied_migrations` (Umzug ledger, by 
 
 ## Commands
 
-```bash
-bun install                                             # install dependencies
-bun run dev                                             # unmanaged local dev server; CC sessions use cctl dev ensure
-bun run build                                           # production Next.js + cctl builds
-cctl validate run test --scope full --queue-if-busy     # full registered unit suite
-cctl validate run test --queue-if-busy -- path/to/file.test.ts
-cctl validate run typecheck --queue-if-busy
-cctl validate run lint --queue-if-busy
-cctl validate run seams --queue-if-busy                 # architecture seams + test-profile inventory
-```
-
-`AGENTS.md` owns the canonical validation policy, including the narrow diagnostic exception for direct package-script invocation.
+[AGENTS.md](../../AGENTS.md#commands) owns validation commands, scope, and the narrow direct-diagnostic exception. Use `cctl dev ensure` for a session dev server. Before running a production build, inspect `package.json` and the task's deployment scope: Next.js build-time imports can open the configured database.
 
 ## Test execution profiles
 

@@ -1,5 +1,7 @@
 # Security Standards
 
+> Template prompts, not established project policy. Verify each applicable convention against current code and confirmed decisions; remove irrelevant examples. This template does not authorize new approval gates, compatibility layers, dependencies, or infrastructure.
+
 [Purpose: define security posture with patterns for validation, authz, secrets, and data]
 
 ## Philosophy

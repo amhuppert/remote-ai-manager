@@ -37,7 +37,7 @@ Place `CommandCenter.json` at the repository root. It is optional; projects with
     {
       "name": "nextjs",
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 }
+      "port": { "base": 3000, "range": 100 }
     }
   ]
 }
@@ -82,9 +82,9 @@ Because command paths resolve from the canonical project root, an unmerged branc
 
 ## Dev Server Entry
 
-Each dev-server entry requires a unique `name` and a `command`. Optional fields include `cwd`, `port`, and `readiness`. `cc-assigned` is the supported port strategy: CC picks a port from `[base, base+range)`, injects `$CC_ASSIGNED_PORT` and `$PORT`, and waits for readiness.
+Each dev-server entry requires a unique `name`, a `command`, and `port.base`. Optional fields are `cwd`, `port.range`, and `port.env`. CC picks a port from `[base, base+range)`, injects `$CC_ASSIGNED_PORT`, `$PORT`, and the optional alias, and waits for TCP readiness. Readiness has a fixed 60-second timeout; there is no `readiness` or `port.strategy` configuration field.
 
-For the complete dev-server schema and examples, use the `dev-server-setup` skill. This skill preserves existing `devServers` entries but does not create or change them.
+For the complete dev-server schema and examples, read [the dev-server reference](../../dev-server-setup/references/dev-servers.md). This skill preserves existing `devServers` entries but does not create or change them.
 
 ## Minimal Example
 

@@ -15,7 +15,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 - `src/lib/shared/child-env.ts` — `buildChildEnv()` strips `NODE_ENV`, `__NEXT_*`, `__TURBOPACK_*`
 - `docs/project-configuration.md` — user-facing docs
 
-## Three features
+## Configuration areas
 
 ### `initScriptPath` — Worktree init
 
@@ -42,7 +42,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 
 ### `devServers` — Dev server declarations
 
-- Array of `{ name, command, port: { base, range? }, cwd? }` — UI-started, not auto-started. `port` is required.
+- Array of `{ name, command, port: { base, range? }, cwd? }` — started on demand through the UI or `cctl dev ensure`, not automatically at session creation. `port` is required.
 - Spawned with `shell: true` (unlike init and validation wrappers)
 - **CC owns port assignment.** CC scans `port.base`‥`port.base + port.range − 1` (`range` default 100), picks the first port already owned by this worktree (adopt) or free, and injects it as `CC_ASSIGNED_PORT` and `PORT` (plus any optional `port.env` alias). The `command` references `$CC_ASSIGNED_PORT`/`$PORT` directly — there is no `CC_PORT` stdout protocol and no helper scripts.
 - Readiness = TCP connect on the assigned port; 60s timeout (`READINESS_TIMEOUT_MS` in `dev-server/config.ts`) → `error`

@@ -18,7 +18,7 @@ import {
 } from "./native-spec-command-doc";
 
 /**
- * The two documents that POINT at the owning section rather than restating it
+ * The two documents that POINT at the owning reference rather than restating it
  * (#80 design 3.6): the generated `/spec` guidance and the native-SDD skill.
  * Both are checked here because the defect is symmetric — a sequence copied
  * into either one drifts from the receipts that actually walk it.
@@ -29,7 +29,7 @@ const NATIVE_SDD_SKILL_PATH = path.resolve(
   "plugins/command-center/command-center/skills/native-sdd-authoring/SKILL.md",
 );
 
-const OWNING_SECTION = "Delivering a native spec";
+const OWNING_REFERENCE = "references/native-spec-delivery.md";
 const OWNING_SKILL = "graph-workflow-planning";
 
 const REGISTRY_KEYS = new Set(
@@ -106,13 +106,13 @@ const SEQUENCED_IMPERATIVE =
 const THEN_CONNECTOR =
   /,\s+then\s+(run|use|read|author|open|submit|edit|write|propose|start|replace|validate)\b/iu;
 
-describe("managed delivery routes to its owning section (#80 design 3.6)", () => {
+describe("managed delivery routes to its owning reference (#80 design 3.6)", () => {
   it.each(routingDocuments())(
-    "%s points at the owning section and names Workflow Builder once",
+    "%s points at the owning reference and names Workflow Builder once",
     (_name, document) => {
       const flat = document.replace(/\s+/gu, " ");
 
-      expect(flat).toContain(OWNING_SECTION);
+      expect(flat).toContain(OWNING_REFERENCE);
       expect(flat).toContain(OWNING_SKILL);
       // Named once, and only as the surface a human reviews on: two mentions
       // is how it became a second authoring path in the first place.

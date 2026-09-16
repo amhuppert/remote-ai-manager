@@ -337,7 +337,7 @@ A plan is a JSON object the validate, create, replace, and run endpoints all acc
 Run these from the session (the CLI reads its project/session identity from the environment):
 
 1. `cctl workflow validate --file .cc/temp/plan.json` — runs the exact create-path checks (schema parse, dependency cycles, unknown context refs, placement, guard/loop/parameter/prerequisite validation, invariant scopes) plus resolution of every agent profile reference the plan names, and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Fix the file and re-run until it prints the create hint; answer any `warning:` lines rather than ignoring them. Add `--tier global` when the plan is destined for the cross-project template library.
-2. `cctl workflow create --file .cc/temp/plan.json` — saves the definition and prints its id. The user reviews and edits it in the visual builder before starting.
+2. `cctl workflow create --file .cc/temp/plan.json` — saves the definition and prints its id. It is available in the visual builder for review. Stop here for a plan-only request; launch when execution is authorized and any configured human gate is satisfied.
 3. `cctl workflow start <id>` — starts execution. Pass declared parameter values with `--file .cc/temp/inputs.json` (a JSON object of `{{inputs.<name>}}` bindings). Track progress with `cctl workflow status`.
 
 For a single-use plan that should not become a saved definition, launch it directly: `cctl workflow run --file .cc/temp/plan.json` (add `--inputs .cc/temp/inputs.json` for declared parameters, `--wait --timeout 10m` for a bounded observation wait). The run is detached by default; follow it with `cctl workflow status` or `cctl workflow wait <executionId>`. Prefer `create` + `start` when the user should review the graph in the builder first or the plan will be reused.
@@ -375,10 +375,10 @@ Review is advisory and never required — an unreviewed plan validates, creates,
 
 **The acknowledgement gate** is the only blocking behavior in the whole mechanism. `create` and `replace` refuse a revision carrying an *unacknowledged changes-requested* review with the code `review-changes-requested-unacknowledged`; approved and unreviewed revisions are never gated, and `validate`, `run`, and `start` are never gated at all. The refusal names the revision hash, the reviewer, the review time, and the command that retrieves the findings. Two ways out:
 
-1. **Repair the plan** — the ordinary path. Read the findings (`cctl workflow review --file .cc/temp/plan.json`), fix what they name, re-validate. Repairing changes the plan's hash, so the gate clears on its own — and the new revision carries no verdict at all, so it needs its own review.
+1. **Repair the plan** — read the findings, assess each against the plan and sources, apply supported repairs, and re-validate. Repairing changes the plan's hash, so the gate clears and the revised plan carries no verdict. If review is part of the requested workflow, review that revision before relying on its approval.
 2. **Acknowledge and proceed** — re-run with `--acknowledge-review <hash>` (the flag exists on both `create` and `replace`), passing the hash the refusal printed. That is a read receipt, not an approval: it records that you saw the findings and submitted anyway.
 
-**Any repair invalidates the review.** A revised plan is a different revision and no verdict carries forward by hand, so the reviewer re-records against the exact final revision. Budget for that round trip instead of reviewing a draft you already know will change.
+**Any repair invalidates the review.** Review remains advisory: if the requested workflow includes review, get a verdict on the exact final revision; otherwise report that the changed revision is unreviewed.
 
 ### Before submitting, confirm
 
@@ -396,4 +396,4 @@ Review is advisory and never required — an unreviewed plan validates, creates,
 - No task instruction asks an implementer to commit, stash, rebase, or clean the tree.
 - If the plan uses guards, loops, or expansion: the checklist in [references/dynamic-control-flow.md](references/dynamic-control-flow.md) passes.
 - `cctl workflow validate` passes on the final `.cc/temp/plan.json`, and any warnings it prints are answered rather than ignored.
-- If the plan was reviewed, the revision being submitted is the revision that was reviewed — every repair since then invalidated the verdict and earns a re-review.
+- If claiming review approval, the submitted revision is exactly the reviewed revision. A changed revision needs another review only when review is part of the requested workflow; otherwise disclose that it is unreviewed.

@@ -2,11 +2,11 @@
 
 Load this reference when TypeScript is detected (`typescript` in `dependencies`/`devDependencies`, or a `tsconfig.json` at the project root).
 
-## Why full-project, always
+## Scope to the dependency graph
 
-Unlike linting, formatting, and tests, `tsc` MUST run over the whole project. A changed file can break type-checking in an unchanged dependent — a renamed export, a changed function signature, a removed field. Scoping `tsc` to changed files would let those breakages merge into main.
+A changed file can break type-checking in an unchanged dependent — a renamed export, changed signature, or removed field. Run the full project by default; use an established workspace/project-reference affected mode only when it includes those dependents. Passing changed source files directly to `tsc` does not provide that guarantee.
 
-This is the single deliberate exception in the validation pipeline. Linters and formatters scope to changed files; tests scope to the changed-file module graph; `tsc` runs against the full project.
+Use the compiler selected by the project (for example `tsc` or a configured native TypeScript compiler); preserve its build mode and cache location. The example below targets `tsc` without introducing a compiler migration.
 
 ## Validation wrapper invocation
 
@@ -29,4 +29,4 @@ Register this wrapper with cost `1` unless the project's fixed build profile is 
 
 ## Monorepo note
 
-For projects using TypeScript project references or a workspace `tsc --build`, replace the invocation with the project's existing build command (e.g. `npx tsc -b`). Keep it full-project; the rationale above still applies.
+For projects using TypeScript project references or a workspace `tsc --build`, replace the invocation with the project's existing build command (e.g. `npx tsc -b`). Preserve its project-reference dependency traversal; affected selection must include unchanged dependents.

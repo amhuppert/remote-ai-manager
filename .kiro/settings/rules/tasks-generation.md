@@ -1,5 +1,7 @@
 # Task Generation Rules
 
+> Scope: reference for work already governed by a Kiro spec. New specs use `cctl spec` and the native-sdd-authoring skill; these templates do not create an alternate approval or delivery workflow. Preserve approved artifacts and use the governing amendment process for changes to their requirements.
+
 ## Core Principles
 
 ### 1. Natural Language Descriptions
@@ -12,12 +14,7 @@ Focus on capabilities and outcomes, not code structure.
 - Domain language and concepts
 - Data relationships and workflows
 
-**Avoid**:
-- File paths and directory structure
-- Function/method names and signatures
-- Type definitions and interfaces
-- Class names and API contracts
-- Specific data structures
+**Reference the design for** detailed signatures and schemas. Include file ownership, boundary names, and stable contract references when they make a task independently executable; avoid copying the full design into every task.
 
 **Rationale**: Implementation details (files, methods, types) are defined in design.md. Tasks describe the functional work to be done.
 
@@ -32,13 +29,13 @@ Focus on capabilities and outcomes, not code structure.
 - Honor interface contracts documented in design.md
 - Use major task summaries sparingly—omit detail bullets if the work is fully captured by child tasks.
 
-**End with integration tasks** to wire everything together.
+Include the integration work needed to make the behavior usable, and validate important seams early enough to catch incompatible parts.
 
 ### 3. Flexible Task Sizing
 
 **Guidelines**:
 - **Major tasks**: As many sub-tasks as logically needed (group by cohesion)
-- **Sub-tasks**: 1-3 hours each, 3-10 details per sub-task
+- **Sub-tasks**: bounded by a cohesive observable outcome; include only the details needed to execute and verify it
 - Balance between too granular and too broad
 
 **Don't force arbitrary numbers** - let logical grouping determine structure.
@@ -47,21 +44,12 @@ Focus on capabilities and outcomes, not code structure.
 
 **End each task detail section with**:
 - `_Requirements: X.X, Y.Y_` listing **only numeric requirement IDs** (comma-separated). Never append descriptive text, parentheses, translations, or free-form labels.
-- For cross-cutting requirements, list every relevant requirement ID. All requirements MUST have numeric IDs in requirements.md. If an ID is missing, stop and correct requirements.md before generating tasks.
+- For cross-cutting requirements, list every relevant requirement ID. Use the governing requirement IDs. Missing IDs in an editable draft can be corrected; approved identity changes follow the amendment process.
 - Reference components/interfaces from design.md when helpful (e.g., `_Contracts: AuthService API`)
 
-### 5. Code-Only Focus
+### 5. Deliver the approved scope
 
-**Include ONLY**:
-- Coding tasks (implementation)
-- Testing tasks (unit, integration, E2E)
-- Technical setup tasks (infrastructure, configuration)
-
-**Exclude**:
-- Deployment tasks
-- Documentation tasks
-- User testing
-- Marketing/business activities
+Include implementation, configuration, documentation, and validation tasks when they are needed to satisfy the approved requirements. Deployment or external actions retain their existing authorization boundaries. Exclude unrelated improvements and business activities outside the requested delivery.
 
 ### Optional Test Coverage Tasks
 

@@ -11,7 +11,7 @@ UI copy rules: voice, casing, person & address, empty states, and microcopy patt
   - Buttons: `Merge`, `Commit`, `Archive`, `Delete session`.
   - Status: `Running`, `Awaiting input`, `Idle`, `Merged`.
 - **Domain words used precisely.** *Session, conversation, worktree, branch, prompt, diff, target branch, fork, finalize* — technical terms with exact meanings. Don't paraphrase.
-- **No hedging.** "This will reset your worktree" — not "This may reset your worktree."
+- **State consequences accurately.** Use "will" for guaranteed effects and explain the condition for effects that depend on state; terse copy must not hide uncertainty.
 
 ---
 

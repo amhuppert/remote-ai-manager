@@ -1,23 +1,23 @@
 # playwright-cli Recipes & Gotchas for CC
 
-Every claim here was verified live against a CC dev server. Pair with `routes-and-api.md` for URLs and fixture contracts.
+These recipes describe prior live checks; verify version-sensitive behavior against the installed CLI and current app. Pair with `routes-and-api.md` for URLs and fixture contracts.
 
 ## The known-good verification shape (use this by default)
 
 1. **Seed via API/`cctl fixture`, not by click-driving** — create the session/conversation over REST, get the ids from the response.
-2. **Deep-link straight to the target** (`/conversations?c=<id>`, `/projects/<p>/<s>`) — never navigate by clicking through pages.
-3. **Assert with one-line `eval` probes returning tiny strings**, not by reading snapshots:
+2. **Deep-link straight to the target** (`/conversations?c=<id>`, `/projects/<p>/<s>`) — use navigation controls when navigation itself is under test.
+3. **Assert with one-line `eval` probes returning tiny strings**, and use scoped snapshots to inspect structure when needed:
    ```bash
    playwright-cli -s=<name> eval "(() => { const rows = document.querySelectorAll('[data-testid=\"message-row\"]'); return rows.length + ' messages'; })()" --raw
    ```
-4. **Verify against backend state** (transcript JSONL, SQLite, API responses) — the UI is optimistic and lies.
+4. **Verify against backend state** (transcript JSONL, SQLite, API responses) — optimistic UI does not prove persistence.
 5. Clean up: delete fixture sessions, `playwright-cli -s=<name> close`.
 
 A tight verification round is ~7 browser calls: open → goto → 3–4 eval probes → screenshot (optional, for visual review) → close.
 
 ## Waiting (dev mode makes this mandatory)
 
-**Expect the first visit to any route to take 5–10s** in dev: Next compiles the page route (~5–6.5s) *and* each API route on demand (0.4–1.7s each). Warm loads are <600ms. This is not a bug; do not investigate unless a *warm* load stalls >30s.
+**Expect the first visit to any route to take 5–10s** in dev: Next compiles the page route (~5–6.5s) *and* each API route on demand (0.4–1.7s each). Warm loads are <600ms. Distinguish cold compilation from warm request latency and compare against the task's performance target; these timings are observations, not a fixed acceptance threshold.
 
 The wait idiom — `run-code` gives the full Playwright API:
 

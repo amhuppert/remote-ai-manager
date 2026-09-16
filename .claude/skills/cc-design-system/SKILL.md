@@ -1,13 +1,13 @@
 ---
 name: cc-design-system
-description: This skill should be used when designing, building, or reviewing any Command Center (CC) user interface — pages, components, screens, prototypes, or design changes. Covers visual tokens (colors, typography, spacing, radii, layout constants), component class contracts, iconography, motion, atmospherics, and content/voice rules. Triggers on phrases like "build a page", "design a component", "design system", "tokens", "what color/font/spacing should I use", "is this on-brand", "review the styling", or anytime new CSS / components / chrome is being written for CC.
+description: Apply Command Center visual conventions when designing, implementing, or reviewing UI; consult focused references for tokens, components, icons, motion, or UI copy.
 ---
 
 # Command Center Design System
 
 ## Vision
 
-Command Center is "air traffic control for Claude Code." The UI must feel like an operator's console: high signal, low ceremony, every pixel earning its place. Visual posture is **dense, technical, terse**. The void color sits flat under everything; atmosphere comes from two subtle overlays (noise grain + scan lines) and from accent glows, never from images or background gradients.
+Command Center is an operator console for AI coding agents. The UI must feel like an operator's console: high signal, low ceremony, every pixel earning its place. Visual posture is **dense, technical, terse**. The void color sits flat under everything; atmosphere comes from two subtle overlays (noise grain + scan lines) and from accent glows, never from images or background gradients.
 
 The system is **monochrome-dark with semantic accents** (cyan = active, amber = awaiting, green = success, red = destructive, violet = Codex agent identity). Surfaces step through six elevation levels; hover always moves up one level, never skipping. Typography is mono-by-default; body prose font is reserved for conversation messages only.
 
@@ -24,11 +24,8 @@ is `docs/tailwind-conventions.md`; the essentials:
 - **Utilities, not new CSS.** New and migrated UI is written as Tailwind utility
   classes (layout + appearance) backed by the CC tokens. Do **not** add feature
   CSS files; the `no-unapproved-global-css` guardrail rejects new stylesheets
-  outside the foundation/vendor areas. The migration is **ratchet-complete, not
-  literal "preserved-only"**: the CSS that remains is the preserved catalog (below),
-  the retained canonical recipes (below), and a third bucket of cross-owned / shell /
-  descendant-anchor residual blocked on surfaces deferred out of B-6
-  (`docs/tailwind-conventions.md §5.2`).
+  outside the foundation/vendor areas. Consult `docs/tailwind-conventions.md`
+  for migration boundaries and the CSS inventory for remaining owners.
 - **Tokens are `@theme`.** Every CC token is exposed in
   `src/features/_root/styles/theme.css` under a Tailwind namespace, so a utility
   generates for it: colors under `--color-*` → `bg-*`/`text-*`/`border-*`
@@ -39,7 +36,7 @@ is `docs/tailwind-conventions.md`; the essentials:
   `theme.css` holds literal values; the legacy `var(--…)` names stay in `tokens.css`
   for preserved CSS. See `references/tokens.md`.
 - **React primitives own canonical recipes.** `Button`, `Badge`, `StatusDot`,
-  `Tabs`, `SectionHeader`, `ModalShell`, `IconButton`, `EmptyState`, `FormField`
+  `Tabs`, `SectionHeader`, `Dialog`, `AlertDialog`, `IconButton`, `EmptyState`, `FormField`
   (`src/components/ui/`) emit pure utilities and **omit `className`/`style`** so a
   call site cannot inject appearance. Layout-only geometry goes through their
   `layoutClassName` escape hatch. See `references/components.md`.
@@ -60,44 +57,11 @@ is `docs/tailwind-conventions.md`; the essentials:
   zeroed explicitly (`border-x-0 border-b-0 border-t …`) because no global border
   reset is loaded.
 
-### Preserved CSS — the do-not-convert catalog
+### Existing CSS and migration boundaries
 
-Some DOM is not authored in CC's JSX, so its CSS stays scoped **forever** (never
-converted to utilities). "Migration complete" means Tailwind-backed tokens +
-component migration, **not** zero CSS files. The authoritative, regenerable list is
-`docs/reports/css-inventory.md` (`bun run css:inventory`):
+CSS for generated/vendor DOM, rendered markdown, base reset, and atmospheric pseudo-elements remains where utilities cannot own that DOM. Check `docs/tailwind-conventions.md` and `scripts/css-inventory.ts` and its generated `docs/reports/css-inventory.md` (`bun run css:inventory` when the report is absent) before converting a surface. Use current primitives for new JSX; the presence of a legacy recipe does not make it the authoring path.
 
-| Preserved category | Owner(s) |
-|---|---|
-| **React Flow vendor DOM** (`.react-flow*`/`.xyflow*`) + the graph `@keyframes` + the `.wb-markdown*` rendered-markdown selectors | `src/components/workflow-graph/workflow-graph.css` (floor ~58) |
-| **Tiptap `.ProseMirror` editor DOM** | `conversation.css`, `PeekPopover.css` |
-| **Markdown / syntax-highlighter / Mermaid render output** | `globals.css` (`.markdown-*`), `conversation.css` (`.mermaid*`) |
-| **Body atmospherics** (`body::before` noise, `body::after` scan lines) | `reset.css` |
-| **Scrollbars** (`::-webkit-scrollbar*`) | `globals.css`, `conversation.css`, `workflow-graph.css` |
-| **`@keyframes`** (graph/atmospheric/vendor; shared ones tokenized to `--animate-*`) | `globals.css`, `workflow-graph.css`, `conversation.css`, others |
-| **Portal / overlay positioning** (tooltip/modal/toast, AskQuestion scrim, dialog, diff slide-over, peek backdrop) | `globals.css`, `conversation.css`, `dialogs.css`, `cockpit.css`, `PeekPopover.css` |
-| **Base reset** (`*`, `html`, `body`) | `reset.css` (the reconciled base reset) |
-
-A second class of CSS is **deliberately retained**: the utility-shaped `.text-*`
-color helpers (load-bearing for the collision guard — they back the `text-*` tokens),
-plus **five** canonical recipe families that still have a consumer whose primitive
-lacks a needed feature — `.btn*` (Button needs an anchor/`as` + disabled variant),
-`.btn-icon-only*` (28px IconButton size), `.cc-tab*` (MobileBottomBar descendant
-overrides), `.status-dot*` (8px mobile dot), `.modal*` (ModalShell mobile
-bottom-sheet). New UI MUST use the primitive, never these recipes — extend the
-primitive to retire the last consumers (backlog in
-`docs/reports/leaf-recipe-swap-residual-report.md`). Every other recipe
-(`.empty-state*`, `.cc-section-*`, `.form-*`, `.cc-primary`, `.cc-ibtn`,
-`.cc-checkbox`, `.cc-toast`, `.btn-toggle`, `.cc-badge*`) has been **deleted**.
-
-A **third** class remains above floor: cross-owned / shell / descendant-anchor
-residual (the shell `.app`/`.main` grid, topbar injected-content anchors, the session
-content-area data-layout toggles owned by the conversation/right-pane context, the
-panes cascade-loss override, and floor-undercount cases). It is migratable in
-principle but blocked on surfaces deferred out of B-6, so the migration is
-**ratchet-complete, not literal preserved-only**. It is recorded as explicit
-remediation in `docs/tailwind-conventions.md §5.2` and
-`.cc/graph-workflow-docs/b-final-final-verification.md`.
+Keep an element under one styling owner. When migrating an element, account for legacy descendant selectors that still target it: unlayered legacy CSS wins over layered utilities even when the utility has greater specificity.
 
 ---
 
@@ -112,7 +76,7 @@ These are non-negotiable. Breaking any of them creates regressions.
 - **Never use Manrope (`--font-body`) outside conversation message prose.** Everything else — buttons, labels, metadata, chrome — is `--font-mono` (Geist Mono).
 - **Never use a full cyan background for "selected" states on rows or items.** Cyan-as-bg is reserved for primary buttons and active `.cc-tab`. Use elevation + border for selection elsewhere.
 - **Never use rainbow (`.cc-rainbow-*`) for anything other than max-class reasoning effort.** It signals "exceeds the scale" precisely because it doesn't belong to any agent or status.
-- **Never use `--text-secondary` or `--text-tertiary` as the rest state of interactive text.** On hover, promote to `--text-primary`.
+- **Match the primitive's text-state recipe and verify contrast on its actual surface.** Where subdued text is used at rest, promote it on hover/focus; color changes alone do not replace a visible focus indicator.
 - **Never use `--violet` for anything other than Codex agent identity.** It is brand-load-bearing.
 - **Never use `outline: none` without a replacement focus ring.** Keyboard focus is always visible — use the canonical cyan focus outline (see "Do"). Never leave the browser default (blue) outline on a control; it clashes with the control's own border.
 - **Never skip elevation levels on hover.** Bg moves up exactly one step.
@@ -125,11 +89,11 @@ These are non-negotiable. Breaking any of them creates regressions.
 ### Do
 
 - **Use `[data-*]` attributes for state.** `data-layout`, `data-agent`, `data-status`, `data-composer-focused`. Select them with Tailwind `data-*` variants (`data-[status=running]:…`) mapped through static class maps. Appearance is utilities; never compute a class string at runtime.
-- **Use Tailwind text utilities + primitives for new screens** — `font-display/body/mono`, the `text-text-*` colors, and the size tiers (`references/tokens.md`). The old `.cc-*` typography helpers (`.cc-page-title`, `.cc-prose`, …) were deleted in the migration; only `.cc-section-label`/`.cc-section-*` survive as part of the retained `SectionHeader` recipe.
+- **Use Tailwind text utilities + primitives for new screens** — `font-display/body/mono`, the `text-text-*` colors, and the size tiers (`references/tokens.md`). The old `.cc-*` typography helpers (`.cc-page-title`, `.cc-prose`, …) were deleted in the migration; use `SectionHeader` for section labels rather than depending on historical recipe classes.
 - **Use spacing utilities** (`p-*`/`m-*`/`gap-*`, backed by `--spacing-*`) in migrated/new UI; `var(--space-*)` remains only inside preserved CSS. Never literal pixel values for margin/padding.
-- **Use the `Badge` primitive** (`ui/Badge.tsx`) for badges — it emits the utilities for the tier (status/type/count/subtle) + value. The legacy `.cc-badge*` recipe was deleted.
-- **Make icon-only buttons accessible** — `aria-label` + `data-tooltip` on every one.
-- **Keyboard focus is a cyan outline.** The canonical `:focus-visible` indicator for interactive controls (buttons, icon buttons, menu/dropdown triggers, tabs) is a **2px solid `--cyan` outline at `outline-offset: 2px`** — the `Button`/`IconButton` primitives emit it (`focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2`). Two exceptions keep their established treatments: **inputs/textareas** show a cyan **border + glow** focused appearance (`focus:border-cyan` + `0 0 0 3px var(--cyan-glow)`), and **menu/listbox items** use the `data-highlighted` background (roving focus), not an outline.
+- **Use `StatusChip` for tone-coded lifecycle/status pills**, as required by the root UI contract. Use `Badge` for other badge treatments such as type/count/subtle; inspect current props rather than reviving legacy `.cc-badge*` classes.
+- **Make icon-only buttons accessible** — `aria-label` plus the `WithTooltip`/`Tooltip` primitive for its visible hint.
+- **Keyboard focus is a cyan outline.** The canonical `:focus-visible` indicator for interactive controls (buttons, icon buttons, menu/dropdown triggers, tabs) is a **2px solid `--cyan` outline at `outline-offset: 2px`** — the `Button`/`IconButton` primitives emit it (`focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2`). Two exceptions keep their established treatments: **inputs/textareas** show a cyan **border + glow** focused appearance (`focus:border-cyan` + `0 0 0 3px var(--cyan-glow)`), and **menu/listbox items** use an inset cyan focus outline alongside the `data-highlighted` background (see `src/components/ui/menu-recipe.ts`).
 - **Make actions imperative; state declarative.** Buttons say `Merge`, `Archive`. Status says `Running`, `Awaiting input`.
 
 ---
@@ -178,9 +142,9 @@ Semantic aliases: `--space-section` (xl), `--space-header-content` (sm), `--spac
 ## Layout & interaction rules
 
 - **Topbar-only navigation.** No persistent left-rail nav outside dedicated content panels.
-- **No toolbars.** Controls sit inside the contexts they apply to.
+- **Keep controls in context.** Toolbars and action groups belong with the content they operate on; the mobile bottom toolbar is an established layout pattern.
 - **Progressive density.** As viewport shrinks, hide ornament and metadata before structural elements.
-- **Press uses background, not transform.** Cards do `translateY(-1px)` on hover, then return. The only positional motion.
+- **Press uses background, not transform.** Cards do `translateY(-1px)` on hover, then return. Avoid adding unrelated positional motion; existing entry/expansion animations are documented in the motion reference.
 - **Animation is fast and restrained.** `0.15s ease` interactions, `0.2s ease` entries, `0.25s ease` layout. No bouncy easing, no spring overshoot.
 - **`prefers-reduced-motion` halts the rainbow gradient and degrades live-state pulses to static.**
 - **Responsive ≠ stripped.** Mobile views show the same information density per panel; just one panel at a time.
@@ -195,7 +159,7 @@ Load the relevant reference file when working on a specific surface. Don't load 
 |---|---|
 | [`docs/tailwind-conventions.md`](../../../docs/tailwind-conventions.md) | You're **authoring or migrating UI** — the operational contract for utilities, primitives, `cn()`, `data-*` state, `layoutClassName`, `max-*` breakpoints, the token-backed-arbitrary-utility parity pattern, the guardrails, and the preserved-CSS catalog. Read this before writing any new component. |
 | [`references/tokens.md`](references/tokens.md) | You need exact hex values, full color tables, complete size tiers, all spacing aliases, the rainbow gradient stops, or the **legacy-token → `@theme` namespace → utility** mapping. Also: token naming conventions for new additions. |
-| [`references/components.md`](references/components.md) | You're building or modifying a component. Covers the `ui/` primitives (Button/IconButton/Badge/Tabs/StatusDot/EmptyState/FormField/SectionHeader/ModalShell) and the visual contract (colors/states) they reproduce, composite surfaces (`.project-card`, `.sessions-table`, `.session-info-strip`, etc.), the card recipe, hover/press states, and the Codex agent variant. |
+| [`references/components.md`](references/components.md) | You're building or modifying a component. Covers the `ui/` primitives (Button/IconButton/Badge/Tabs/StatusDot/EmptyState/FormField/SectionHeader/Dialog/AlertDialog) and the visual contract (colors/states) they reproduce, composite surfaces (`.project-card`, `.sessions-table`, `.session-info-strip`, etc.), the card recipe, hover/press states, and the Codex agent variant. |
 | [`references/iconography.md`](references/iconography.md) | You're adding, replacing, or selecting an icon. Covers the canonical icon set, SVG conventions (1.5 stroke, currentcolor), sizing inside buttons, unicode-glyph rules, and the substitution policy (hand-drawn → Lucide → unicode). |
 | [`references/motion-and-atmospherics.md`](references/motion-and-atmospherics.md) | You're touching animation, hover effects, atmospheric overlays (noise/scan lines), frosted glass, shadows, glows, or the rainbow gradient surfaces. |
 | [`references/content-and-voice.md`](references/content-and-voice.md) | You're writing UI copy — button labels, empty states, dialog titles, confirmations, microcopy. Covers voice, casing rules (sentence case / UPPERCASE MONO / lowercase mono), person & address, microcopy patterns (IDs, counts, null values, time format). |

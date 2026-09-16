@@ -138,13 +138,7 @@ describe("native-sdd-authoring managed skill", () => {
     expect(
       sectionBody(loadedSkill, "Reading specs without flooding context"),
     ).toContain(READ_ENVELOPE_REFERENCE_COMMAND);
-    for (const section of EXPECTED_SECTIONS.filter(
-      (section) => section !== "Reading specs without flooding context",
-    )) {
-      expect(sectionBody(loadedSkill, section)).toContain(
-        GENERATED_REFERENCE_COMMAND,
-      );
-    }
+    expect(loadedSkill).toContain(GENERATED_REFERENCE_COMMAND);
     expect(loadedSkill).toContain("cctl spec start <slug> --inputs");
     expect(loadedSkill).toContain("cctl workflow live edit");
     expect(loadedSkill).toMatch(/destructive cutover/i);
@@ -262,7 +256,9 @@ describe("native-sdd-authoring managed skill", () => {
     // The delivery guidance points at its owner rather than carrying a second
     // copy, and `cctl workflow edit` is no longer the authoring path.
     const delivery = sectionBody(skill, "Managed delivery workflow");
-    expect(delivery).toContain("Delivering a native spec");
+    expect(delivery).toContain(
+      "../graph-workflow-planning/references/native-spec-delivery.md",
+    );
     expect(delivery).toContain("graph-workflow-planning");
     expect(delivery).not.toContain("cctl workflow edit");
 

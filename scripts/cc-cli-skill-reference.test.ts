@@ -1,4 +1,4 @@
-// @vitest-inputs plugins/command-center/command-center/skills/cc-cli/SKILL.md
+// @vitest-inputs plugins/command-center/command-center/skills/cc-cli/**
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { EXIT_TAXONOMY } from "../src/cli/exit-taxonomy";
@@ -6,6 +6,7 @@ import { allHelpEntries } from "../src/cli/help-registry";
 import type { CommandHelpEntry } from "../src/cli/help-types";
 import {
   BEGIN_MARKER,
+  COMMAND_REFERENCE_PATH,
   END_MARKER,
   EXIT_CODES_BEGIN_MARKER,
   EXIT_CODES_END_MARKER,
@@ -15,6 +16,7 @@ import {
   renderCommandReference,
   renderExitCodeTable,
   spliceBlock,
+  skillDocumentPaths,
 } from "./cc-cli-skill-reference";
 
 function entry(
@@ -189,18 +191,20 @@ describe("proseUsageFindings", () => {
     expect(proseUsageFindings(source, entries)).toEqual([]);
   });
 
-  it("keeps the committed SKILL.md prose resolvable against the registry", () => {
+  it("keeps the skill and reference prose resolvable against the registry", () => {
     // The hand-authored prose sections are the half no generator owns, and the
     // 2026-08 audit found three usage lines in them that no longer matched the
     // binary. This is the gate that makes a fourth fail here instead of
     // shipping.
-    const source = readFileSync(SKILL_MD_PATH, "utf8");
-    const found = proseUsageFindings(source, allHelpEntries()).map(
-      (finding) => `${finding.line}: ${finding.text} (${finding.reason})`,
+    const found = skillDocumentPaths().flatMap((filePath) =>
+      proseUsageFindings(readFileSync(filePath, "utf8"), allHelpEntries()).map(
+        (finding) =>
+          `${filePath}:${finding.line}: ${finding.text} (${finding.reason})`,
+      ),
     );
     expect(
       found,
-      "these SKILL.md usage lines disagree with the help registry — fix them, or delete them and point at the generated reference",
+      "skill usage lines must agree with the help registry",
     ).toEqual([]);
   });
 });
@@ -222,16 +226,16 @@ describe("committed SKILL.md stays in sync with the registry (the CI check)", ()
     // This is the drift gate: if a command's registry entry changes and the
     // generator is not re-run, the committed block no longer matches — exactly
     // the failure `bun scripts/cc-cli-skill-reference.ts --check` reports in CI.
-    const source = readFileSync(SKILL_MD_PATH, "utf8");
+    const source = readFileSync(COMMAND_REFERENCE_PATH, "utf8");
     const current = extractBlock(source, BEGIN_MARKER, END_MARKER);
     expect(
       current,
-      `SKILL.md is missing the ${BEGIN_MARKER}/${END_MARKER} markers`,
+      `Command reference is missing the ${BEGIN_MARKER}/${END_MARKER} markers`,
     ).not.toBeNull();
     const expected = renderCommandReference(allHelpEntries()).trim();
     expect(
       current,
-      "cc-cli SKILL.md command reference is stale — run `bun scripts/cc-cli-skill-reference.ts`",
+      "cc-cli command reference is stale — run `bun scripts/cc-cli-skill-reference.ts`",
     ).toBe(expected);
     expect(current).toContain(
       "cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]",

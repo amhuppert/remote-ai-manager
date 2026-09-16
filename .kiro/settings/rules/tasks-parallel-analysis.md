@@ -1,5 +1,7 @@
 # Parallel Task Analysis Rules
 
+> Scope: reference for work already governed by a Kiro spec. New specs use `cctl spec` and the native-sdd-authoring skill; these templates do not create an alternate approval or delivery workflow. Preserve approved artifacts and use the governing amendment process for changes to their requirements.
+
 ## Purpose
 Provide a consistent way to identify implementation tasks that can be safely executed in parallel while generating `tasks.md`.
 

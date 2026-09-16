@@ -1,28 +1,15 @@
 #!/usr/bin/env bun
 /**
- * Generate the cc-cli SKILL.md "Command reference" block from the help registry
- * (steering `cli.md` "single source of truth"; docs/design/cc-cli/04 §7.1 rule 6).
- *
- * The registry (`src/cli/help-registry.ts`) is the one source of every command's
- * path, summary, and usage shapes. The skill's command reference used to be a
- * hand-maintained mirror of that — the last item on the `cli.md` add-a-command
- * checklist ("Update the cc-cli SKILL.md command reference (manual sync until
- * generation exists)"). This closes that gap: a fenced block between two markers
- * in SKILL.md is rendered from the registry, and CI (`--check`) fails when the
- * committed block drifts from what the registry would produce.
- *
- * Scope: this generates ONLY the command-reference index (every portable command
- * path + summary + usage). Retired runtime compatibility nodes opt out in their
- * registry entry. The skill's rich per-group prose sections stay hand-authored —
- * the registry has no equivalent, and prose is where domain guidance lives.
+ * Generate the cc-cli command reference and exit-code table from the help
+ * registry and taxonomy. --check also checks hand-authored usage shapes in
+ * SKILL.md and its references against the registry.
  *
  * Usage:
- *   bun scripts/cc-cli-skill-reference.ts          # rewrite the block in place
- *   bun scripts/cc-cli-skill-reference.ts --check   # CI gate: read-only; non-zero
- *                                                    # exit if the block is stale
+ *   bun scripts/cc-cli-skill-reference.ts
+ *   bun scripts/cc-cli-skill-reference.ts --check
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { EXIT_TAXONOMY, type ExitCodeMeaning } from "../src/cli/exit-taxonomy";
@@ -40,6 +27,25 @@ export const SKILL_MD_PATH = path.join(
   "plugins/command-center/command-center/skills/cc-cli/SKILL.md",
 );
 
+export const REFERENCE_DIR = path.join(
+  path.dirname(SKILL_MD_PATH),
+  "references",
+);
+export const COMMAND_REFERENCE_PATH = path.join(
+  REFERENCE_DIR,
+  "command-reference.md",
+);
+
+export function skillDocumentPaths(): string[] {
+  return [
+    SKILL_MD_PATH,
+    ...readdirSync(REFERENCE_DIR)
+      .filter((name) => name.endsWith(".md"))
+      .sort()
+      .map((name) => path.join(REFERENCE_DIR, name)),
+  ];
+}
+
 export const BEGIN_MARKER = "<!-- BEGIN GENERATED COMMAND REFERENCE -->";
 export const END_MARKER = "<!-- END GENERATED COMMAND REFERENCE -->";
 export const EXIT_CODES_BEGIN_MARKER = "<!-- BEGIN GENERATED EXIT CODES -->";
@@ -54,9 +60,7 @@ export function renderExitCodeTable(
   taxonomy: readonly ExitCodeMeaning[] = EXIT_TAXONOMY,
 ): string {
   const lines = [
-    "_Generated from `EXIT_TAXONOMY` (`src/cli/exit-taxonomy.ts`) — do not edit" +
-      " by hand; run `bun scripts/cc-cli-skill-reference.ts`. `cctl exit-codes`" +
-      " prints the same table offline._",
+    "_Generated from the CLI exit taxonomy. `cctl exit-codes` prints the same table offline._",
     "",
     "| Code | Meaning | Recovery |",
     "|---|---|---|",
@@ -71,7 +75,7 @@ export function renderExitCodeTable(
 }
 
 export interface ProseUsageFinding {
-  /** 1-indexed line in the SKILL.md source. */
+  /** 1-indexed line in the source document. */
   line: number;
   text: string;
   reason: "unknown-command" | "usage-drift";
@@ -215,9 +219,7 @@ export function renderCommandReference(entries: CommandHelpEntry[]): string {
   const lines: string[] = [
     "### Command reference",
     "",
-    "_Generated from the `cctl` help registry — do not edit by hand; run" +
-      " `bun scripts/cc-cli-skill-reference.ts`. Every command's `--help` is the" +
-      " authoritative, always-current node._",
+    "_Generated from the `cctl` help registry. Read a command's `--help` for its current contract._",
     "",
   ];
 
@@ -240,7 +242,7 @@ export function renderCommandReference(entries: CommandHelpEntry[]): string {
 
 /**
  * Splice the fresh block between the named markers in `source`. Throws when
- * either marker is missing or they are out of order — the SKILL.md must declare
+ * either marker is missing or they are out of order — the document must declare
  * exactly where each generated block lives.
  */
 export function spliceBlock(
@@ -253,13 +255,13 @@ export function spliceBlock(
   const end = source.indexOf(endMarker);
   if (begin === -1 || end === -1) {
     throw new Error(
-      `SKILL.md is missing the ${begin === -1 ? beginMarker : endMarker} marker — ` +
+      `Document is missing the ${begin === -1 ? beginMarker : endMarker} marker — ` +
         "that generated block has no anchor.",
     );
   }
   if (end < begin) {
     throw new Error(
-      `SKILL.md markers are out of order (${endMarker} precedes ${beginMarker}).`,
+      `Document markers are out of order (${endMarker} precedes ${beginMarker}).`,
     );
   }
   const before = source.slice(0, begin + beginMarker.length);
@@ -268,7 +270,7 @@ export function spliceBlock(
 }
 
 /**
- * Extract the current block text (between the markers, trimmed) from a SKILL.md
+ * Extract the current block text (between the markers, trimmed) from a document
  * source, for the drift comparison. Returns null when a marker is missing.
  */
 export function extractBlock(
@@ -283,6 +285,7 @@ export function extractBlock(
 }
 
 interface GeneratedBlock {
+  filePath: string;
   label: string;
   beginMarker: string;
   endMarker: string;
@@ -292,12 +295,14 @@ interface GeneratedBlock {
 function generatedBlocks(): GeneratedBlock[] {
   return [
     {
+      filePath: COMMAND_REFERENCE_PATH,
       label: "command reference",
       beginMarker: BEGIN_MARKER,
       endMarker: END_MARKER,
       block: renderCommandReference(allHelpEntries()),
     },
     {
+      filePath: SKILL_MD_PATH,
       label: "exit-code table",
       beginMarker: EXIT_CODES_BEGIN_MARKER,
       endMarker: EXIT_CODES_END_MARKER,
@@ -308,64 +313,63 @@ function generatedBlocks(): GeneratedBlock[] {
 
 function main(): void {
   const checkMode = process.argv.includes("--check");
-  const source = readFileSync(SKILL_MD_PATH, "utf8");
   const blocks = generatedBlocks();
+  let stale = false;
+  let changed = false;
 
-  if (checkMode) {
-    let stale = false;
-    for (const generated of blocks) {
-      const current = extractBlock(
+  for (const generated of blocks) {
+    const source = readFileSync(generated.filePath, "utf8");
+    const current = extractBlock(
+      source,
+      generated.beginMarker,
+      generated.endMarker,
+    );
+    if (current === generated.block.trim()) continue;
+    if (checkMode) {
+      console.error(
+        `${path.relative(repoRoot, generated.filePath)} ${generated.label} is stale or missing markers. ` +
+          "Run `bun scripts/cc-cli-skill-reference.ts` and commit the result.",
+      );
+      stale = true;
+      continue;
+    }
+    writeFileSync(
+      generated.filePath,
+      spliceBlock(
         source,
         generated.beginMarker,
         generated.endMarker,
-      );
-      if (current === null) {
+        generated.block,
+      ),
+    );
+    changed = true;
+  }
+
+  if (checkMode) {
+    for (const filePath of skillDocumentPaths()) {
+      for (const finding of proseUsageFindings(
+        readFileSync(filePath, "utf8"),
+        allHelpEntries(),
+      )) {
         console.error(
-          `cc-cli SKILL.md is missing the ${generated.label} markers ` +
-            `(${generated.beginMarker} / ${generated.endMarker}). Run 'bun scripts/cc-cli-skill-reference.ts'.`,
+          `${path.relative(repoRoot, filePath)}:${finding.line} "${finding.text}" ${
+            finding.reason === "unknown-command"
+              ? "names a command the registry does not have"
+              : `does not match the registry usage: ${finding.expected.join(" | ")}`
+          }`,
         );
         stale = true;
-        continue;
       }
-      if (current !== generated.block.trim()) {
-        console.error(
-          `cc-cli SKILL.md ${generated.label} is stale — its source of truth changed.\n` +
-            "Regenerate it with `bun scripts/cc-cli-skill-reference.ts` and commit the result.",
-        );
-        stale = true;
-      }
-    }
-    for (const finding of proseUsageFindings(source, allHelpEntries())) {
-      console.error(
-        `cc-cli SKILL.md:${finding.line} "${finding.text}" ${
-          finding.reason === "unknown-command"
-            ? "names a command the registry does not have"
-            : `does not match the registry usage: ${finding.expected.join(" | ")}`
-        }`,
-      );
-      stale = true;
     }
     if (stale) process.exit(1);
-    console.log("cc-cli SKILL.md generated blocks and prose are up to date.");
+    console.log("cc-cli skill generated blocks and prose are up to date.");
     return;
   }
 
-  let next = source;
-  for (const generated of blocks) {
-    next = spliceBlock(
-      next,
-      generated.beginMarker,
-      generated.endMarker,
-      generated.block,
-    );
-  }
-  if (next === source) {
-    console.log("cc-cli SKILL.md generated blocks already up to date.");
-    return;
-  }
-  writeFileSync(SKILL_MD_PATH, next);
   console.log(
-    `Wrote the generated blocks into ${path.relative(repoRoot, SKILL_MD_PATH)}.`,
+    changed
+      ? "Updated cc-cli skill generated blocks."
+      : "cc-cli skill generated blocks already up to date.",
   );
 }
 

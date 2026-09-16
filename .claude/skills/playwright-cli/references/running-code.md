@@ -90,9 +90,9 @@ playwright-cli run-code "async page => {
 ## Wait Strategies
 
 ```bash
-# Wait for network idle
+# Wait for the application state that this check needs (CC keeps SSE open)
 playwright-cli run-code "async page => {
-  await page.waitForLoadState('networkidle');
+  await page.getByTestId('prompt-input').waitFor();
 }"
 
 # Wait for specific element

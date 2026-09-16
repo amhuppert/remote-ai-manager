@@ -51,7 +51,7 @@ POST /api/projects/<name>/sessions/<session>/conversations
 POST /api/projects/<name>/sessions/<session>/conversations/<cid>/prompt
 {"prompt":"<text>"}
 ```
-Response is a `text/event-stream`; execution continues server-side if you disconnect. To run-and-wait: POST with a short `--max-time`, ignore the curl exit code, then poll status (below).
+Response is a `text/event-stream`; execution continues server-side if you disconnect. Prefer `cctl fixture prompt --wait`, which observes the stream's done/error event. If a raw curl call intentionally times out, verify the HTTP response and durable turn identity before polling; do not discard auth, transport, or server failures as expected timeouts.
 
 ### Poll turn status
 ```

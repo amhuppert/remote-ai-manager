@@ -65,7 +65,7 @@ invariants. Do not copy the generic principle prose back into it.
 All command metadata lives in typed `CommandHelpEntry` objects (`src/cli/help-types.ts`), authored
 in colocated `src/cli/commands/<command>.help.ts` files and aggregated by `src/cli/help-registry.ts`.
 **Help text, per-command flag allowlists (`checkFlags`), the parse-time boolean-flag set, the
-top-level usage, group dispatch, and the SKILL.md command reference are all derived from it.**
+top-level usage, group dispatch, and the cc-cli generated command reference are all derived from it.**
 Hand-syncing any of these is a defect: the 2026-07-06 audit found real drift (`conversation read`
 flags missing from help) and derivation is what makes that class impossible.
 
@@ -103,10 +103,12 @@ hand-add a second flag for the same content — that pair is what drifts.
 5. Run the registry contract test (`help-registry.contract.test.ts`) — it enforces
    dispatch↔registry agreement (via `dispatchGroup`, see below), graph-edge resolution,
    skill-path existence, and boolean/value flag-name consistency.
-6. Regenerate the `cc-cli` SKILL.md generated blocks: `bun scripts/cc-cli-skill-reference.ts`
-   (the `GENERATED COMMAND REFERENCE` block derives from the registry, the `GENERATED EXIT CODES`
-   block from `EXIT_TAXONOMY`; `bun run cli:skill-ref` and `cc-cli-skill-reference.test.ts` fail if
-   either drifts). The rich per-group prose stays hand-authored, and the same test lints it: a
+6. Regenerate the `cc-cli` skill's generated blocks: `bun scripts/cc-cli-skill-reference.ts`
+   (the `GENERATED COMMAND REFERENCE` block in `skills/cc-cli/references/command-reference.md`
+   derives from the registry; the `GENERATED EXIT CODES` block in `skills/cc-cli/SKILL.md`
+   derives from `EXIT_TAXONOMY`; both paths are inside `plugins/command-center/command-center/`).
+   `bun run cli:skill-ref` and `cc-cli-skill-reference.test.ts` fail if either drifts. Per-group prose lives in the skill's references, and the same test lints
+   SKILL.md and every Markdown reference: a
    `cctl …` line inside a fenced block outside the generated markers must name a real command and,
    when it carries placeholders, be one of that command's registry usage shapes VERBATIM. Prefer
    deleting a restated shape and pointing at the generated reference — a hand-copied verb list

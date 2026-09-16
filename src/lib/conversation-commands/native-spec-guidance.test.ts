@@ -150,12 +150,15 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     ],
   },
   {
-    id: "delivery plans bind criteria to a managed version-3 workflow definition",
+    id: "version-4 delivery bindings hold dispositions and claims derive from graph coverage",
     required: [
-      /`schemaVersion: 3`/,
+      /`schemaVersion: 4`/,
+      /`acceptanceCriteria\[\]\.covers`/,
+      /binding dispositions only/,
+      /derives claims from graph coverage/,
       /managed workflow definition/i,
       /`cctl workflow replace <definitionId>`/,
-      /"Delivering a native spec" section of the graph-workflow-planning skill/,
+      /`references\/native-spec-delivery\.md`/,
       /`cctl spec plan edit <slug> --file <plan\.json>`/,
       /`binding`/,
       /stable source/i,

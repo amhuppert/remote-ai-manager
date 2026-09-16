@@ -19,7 +19,7 @@ locality); domain terms name the concepts the code is about.
   from a resolver producing a different `T`.
 
 - **Route resolver (adapter)** — a domain function that produces a
-  `RouteResolution` for one addressing shape. Three adapters exist:
+  `RouteResolution` for one addressing shape. Domain adapters include:
   `resolveSessionRoute` / `resolveSessionConversationRoute` (session-scoped,
   `src/lib/conversations/route-resolution.ts`) and
   `resolveProjectConversationRoute` (project-scoped,
@@ -55,7 +55,7 @@ locality); domain terms name the concepts the code is about.
   the ambient value. A session target carrying the sentinel is REFUSED rather than
   exported, the way `conversationTargetApiBase` refuses it for URLs — the agent env
   is a public surface because the agent routes with what it reads. Scope reaches
-  both backend runtimes as
+  backend runtimes as
   `ConversationBackendCreateInput.conversationTarget`, never re-derived from a
   session name or worktree path. In `cctl`, `readSessionEnv` is the one sanctioned
   env session read (a falsy check — `?? null` would pass `""` through and build
@@ -292,10 +292,11 @@ locality); domain terms name the concepts the code is about.
   inherits the originating conversation's stored snapshot verbatim, and each
   lane's stored rendered block is appended to its governing instructions at the
   `callPrimitive` seam. Collab config has no post-start edit surface, so the
-  snapshots are fixed at start by construction. Workflow assignments —
-  implementer staffing and specialist validator cohorts — belong to the
-  workflow-validator-cohorts spec; no graph-workflow path resolves a profile
-  yet.
+  snapshots are fixed at start by construction. Workflow assignments resolve through
+  `src/lib/workflow-graph/seed-assignment-snapshots.ts` at execution start,
+  after config resolution. It snapshots implementers and every validator
+  assignment, including dormant cohorts and frozen loop templates; later
+  turns replay those stored instructions without consulting the library.
 
 - **Adoption** — moving a turn's state from its provisional key onto the
   conversation the server named for it, and releasing the provisional key. The

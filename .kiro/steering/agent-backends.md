@@ -71,6 +71,6 @@ Neutral callers carry complete selections and do not interpret provider paramete
 3. Normalize failures and continuation disposition inside the adapter.
 4. Preserve native transcript bytes in the lossless envelope; expose only neutral operational events/results above it.
 5. Extend the parameterized conformance, consumer-locality, transcript-boundary, and capability-specific structured-output transport tests.
-6. Run `bun run seams:check`; a new provider must not require identity branches or deep provider imports in neutral consumers.
+6. Run the registered `seams` and `typecheck` validators through `cctl validate run`; a new provider must not require identity branches or deep provider imports in neutral consumers.
 
 Product policy may intentionally name a provider only at an explicit selection/pairing site. Mark such a survivor in the seam catalog with its policy reason and deletion condition; do not use it as precedent for domain branching.

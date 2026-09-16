@@ -13,7 +13,7 @@
 | Property | Value |
 |---|---|
 | Working directory | The newly created worktree path |
-| Timeout | 60 seconds |
+| Timeout | The init invocation sets no fixed timeout; keep work bounded and report failures. |
 | Execution method | Direct execution via `execFile` (NOT shell) — **must have a shebang line** |
 | Permissions | Must be executable (`chmod +x`) |
 | Exit 0 | Success — session becomes usable |
@@ -108,5 +108,5 @@ npx prisma generate
 
 - The script runs with cwd set to the worktree, so `npm ci` / `bun install` work automatically
 - Stdout and stderr are not shown to the user on success; on failure, the error is included in the response
-- Keep scripts fast — the 60-second timeout is strict
+- Keep scripts bounded; dependency installation and code generation should terminate on failure.
 - Use `set -euo pipefail` to fail fast on any error
