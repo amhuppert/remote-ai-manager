@@ -358,6 +358,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     markQueuedUncertain: async () => {},
     markQueuedPending: async () => {},
     markQueuedFailed: async () => {},
+    notifyRuntimeCleanup: async () => {},
   };
 
   return { deps, transcript, conversation, capabilityDiscoveryLookups };

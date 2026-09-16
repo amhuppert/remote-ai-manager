@@ -330,6 +330,16 @@ describe("claimLiveDeliveryTransform", () => {
     expect(next[0]?.status).toBe("delivering");
   });
 
+  it("does not let a later live input overtake an earlier pending row", () => {
+    const queue = [
+      makeEntry({ id: "first", status: "pending" }),
+      makeEntry({ id: "later", status: "pending" }),
+    ];
+    const result = claimLiveDeliveryTransform(queue, "later", "attempt-A", NOW);
+    expect(result.claimed).toBeNull();
+    expect(result.queue).toEqual(queue);
+  });
+
   it("returns null when the id is absent", () => {
     const queue: PendingQueuedMessage[] = [
       makeEntry({ id: "m1", status: "pending" }),

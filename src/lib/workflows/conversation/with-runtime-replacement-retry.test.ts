@@ -166,6 +166,44 @@ describe("shouldReplaceRuntimeAndRetry", () => {
 });
 
 describe("withRuntimeReplacementRetry", () => {
+  it.each([false, true])(
+    "makes cleanup failure visible before facade projection (aborted: %s)",
+    async (aborted) => {
+      const cleanupFailure = {
+        kind: "cleanup_unverified",
+        message: "Commands may remain; inspect before resuming.",
+      } as const;
+      const raw = makeTurnResult({ aborted, costUsd: 0.25, cleanupFailure });
+      const runtime = makeRuntime({ sendTurn: async () => raw });
+      const completed = vi.fn();
+      const replacement = vi.fn(async () => makeRuntime());
+      const wrapped = withRuntimeReplacementRetry({
+        getRuntime: () => runtime,
+        replaceRuntime: replacement,
+        classify: stubClassify(),
+        signal: new AbortController().signal,
+        meta: META,
+        log: createCapturingLogger(),
+        observe: { sending() {}, failed() {}, completed },
+      });
+      const result = await wrapped.sendTurn(makeTurnInput());
+      expect(result).toMatchObject({
+        aborted: false,
+        failure: {
+          kind: "backend_error",
+          retryable: false,
+          message: cleanupFailure.message,
+        },
+        cleanupFailure,
+        costUsd: 0.25,
+        contentBlocks: raw.contentBlocks,
+        backendRef: raw.backendRef,
+      });
+      expect(completed).toHaveBeenCalledExactlyOnceWith(result);
+      expect(replacement).not.toHaveBeenCalled();
+    },
+  );
+
   it("replaces the runtime and reattempts once on an undelivered prompt", async () => {
     const staleRuntime = makeRuntime({
       async sendTurn() {

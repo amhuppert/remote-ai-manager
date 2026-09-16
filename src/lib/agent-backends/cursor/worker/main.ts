@@ -5,7 +5,10 @@ import {
   type CursorWorkerProcessControl,
 } from "./entry";
 import type { CursorWorkerFrame } from "./ipc";
-import { errnoCode, readProcessGroupIdSync } from "./process-identity";
+import {
+  errnoCode,
+  readProcessGroupIdSync,
+} from "@/lib/shared/process-identity";
 import { loadCursorWorkerSdk } from "./sdk-port";
 
 /**

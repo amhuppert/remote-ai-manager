@@ -1,22 +1,13 @@
-/**
- * Fake Codex provider ports (test-only) for the backend conformance suite.
- *
- * Supplies `CodexConversationRuntimeDeps` and `CodexTaskRunnerDeps` whose
- * `createCodex` returns scripted threads, so the REAL
- * `CodexConversationRuntime` and `CodexTaskRunner` execute their full turn
- * pipelines (event interpretation, failure classification, continuation
- * disposition, cost estimation) without spawning a codex process.
- *
- * Turn behavior is keyed by prompt text: the hanging prompt yields a stream
- * that only terminates by rejecting with an `AbortError` when the turn's
- * signal aborts — the production cancellation shape.
- */
-
-import type { Input, ThreadEvent, TurnOptions, Usage } from "@openai/codex-sdk";
+/** Test provider ports: app-server conversations and SDK tasks stay independent. */
+import type { Input } from "@openai/codex-sdk";
+import { z } from "zod";
+import type { CodexConversationRuntimeDeps } from "../codex/conversation-runtime";
 import type {
-  CodexConversationRuntimeDeps,
-  CodexThreadLike,
-} from "../codex/conversation-runtime";
+  AppServerClientOptions,
+  AppServerClient,
+} from "../codex/app-server-client";
+import { parseAppServerFrame } from "../codex/app-server-protocol";
+import type { CodexInstructionRecord } from "../codex/instruction-state";
 import {
   CodexTaskRunner,
   type CodexTaskRunnerDeps,
@@ -29,16 +20,8 @@ export const FAKE_CODEX_INPUT_TOKENS = 777;
 
 /** Prompt the fake thread never completes — hangs until the signal aborts. */
 export const FAKE_CODEX_HANGING_PROMPT = "conformance: hang this codex turn";
-
-function buildUsage(): Usage {
-  return {
-    input_tokens: FAKE_CODEX_INPUT_TOKENS,
-    cached_input_tokens: 10,
-    cache_write_input_tokens: 0,
-    output_tokens: 42,
-    reasoning_output_tokens: 0,
-  };
-}
+export const FAKE_CODEX_QUEUE_HOLD_PROMPT =
+  "conformance: hold for codex queued input";
 
 function extractInputText(input: Input): string {
   if (typeof input === "string") return input;
@@ -48,100 +31,180 @@ function extractInputText(input: Input): string {
   return "";
 }
 
-function abortError(): Error {
-  const err = new Error("The operation was aborted");
-  err.name = "AbortError";
-  return err;
-}
-
-function successEvents(agentText: string): ThreadEvent[] {
-  return [
-    { type: "thread.started", thread_id: FAKE_CODEX_THREAD_ID },
-    { type: "turn.started" },
-    {
-      type: "item.completed",
-      item: { id: "item-1", type: "agent_message", text: agentText },
-    },
-    { type: "turn.completed", usage: buildUsage() },
-  ];
-}
-
-async function* hangingEventStream(
-  signal: AbortSignal | undefined,
-): AsyncGenerator<ThreadEvent> {
-  yield { type: "thread.started", thread_id: FAKE_CODEX_THREAD_ID };
-  await new Promise<void>((resolve) => {
-    if (!signal) return; // no signal — hang forever (callers always pass one)
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    signal.addEventListener("abort", () => resolve(), { once: true });
-  });
-  throw abortError();
-}
-
 export interface FakeCodexProvider {
   deps: CodexConversationRuntimeDeps;
-  /** Turn options captured from the most recent `runStreamed` call. */
-  readonly lastTurnOptions: TurnOptions | undefined;
+  readonly lastOutputSchema: unknown;
   readonly lastPrompt: string;
 }
 
-/**
- * @param config.structuredOutput scripted final-message JSON for schema prompts.
- */
 export function createFakeCodexProvider(
-  config: { structuredOutput?: unknown } = {},
+  config: { structuredOutput?: unknown; onQueueReady?(): void } = {},
 ): FakeCodexProvider {
-  let lastTurnOptions: TurnOptions | undefined;
+  let lastOutputSchema: unknown;
   let lastPrompt = "";
-
-  function makeThread(): CodexThreadLike {
+  const instructions = new Map<string, CodexInstructionRecord>();
+  let turnSequence = 0;
+  function createAppServer(options: AppServerClientOptions): AppServerClient {
+    let chain = Promise.resolve();
+    let closed = false;
+    let turnId = "";
+    let barrier = Promise.resolve();
+    function emit(method: string, params: unknown): void {
+      if (closed) return;
+      const raw = JSON.stringify({ method, params });
+      const frame = parseAppServerFrame(raw, Buffer.byteLength(raw));
+      if (frame.message.kind === "notification")
+        options.onNotification?.(frame.message);
+      chain = chain.then(async () => {
+        await barrier;
+        await options.onFrame(frame);
+      });
+      void chain.catch((error) =>
+        options.onFailure(
+          error instanceof Error ? error : new Error(String(error)),
+        ),
+      );
+    }
+    function complete(status: string): void {
+      emit("turn/completed", {
+        threadId: FAKE_CODEX_THREAD_ID,
+        turn: { id: turnId, status, error: null, items: [] },
+      });
+    }
     return {
-      id: FAKE_CODEX_THREAD_ID,
-      async runStreamed(
-        input: Input,
-        turnOptions?: TurnOptions,
-      ): Promise<{ events: AsyncGenerator<ThreadEvent> }> {
-        lastTurnOptions = turnOptions;
-        const text = extractInputText(input);
-        lastPrompt = text;
-
-        if (text.includes(FAKE_CODEX_HANGING_PROMPT)) {
-          return { events: hangingEventStream(turnOptions?.signal) };
+      async request(method, unknownParams) {
+        const params = z.record(z.string(), z.unknown()).parse(unknownParams);
+        if (method === "initialize") return { userAgent: "fake-codex" };
+        if (method === "thread/start" || method === "thread/resume")
+          return {
+            thread: { id: FAKE_CODEX_THREAD_ID, turns: [] },
+            model: params.model,
+            modelProvider: "openai",
+            cwd: params.cwd,
+            approvalPolicy: params.approvalPolicy,
+            sandbox: { type: "dangerFullAccess" },
+            reasoningEffort: "medium",
+            serviceTier: null,
+          };
+        if (method === "thread/inject_items") return {};
+        if (method === "turn/interrupt") {
+          complete("interrupted");
+          return {};
         }
-
-        const agentText =
-          text.includes("Your final message must be a single JSON object") &&
-          config.structuredOutput !== undefined
-            ? JSON.stringify(config.structuredOutput)
-            : FAKE_CODEX_TURN_TEXT;
-
+        if (method === "turn/steer") {
+          if (lastPrompt.includes(FAKE_CODEX_QUEUE_HOLD_PROMPT)) {
+            emit("item/completed", {
+              threadId: FAKE_CODEX_THREAD_ID,
+              turnId,
+              item: {
+                id: `${turnId}-queued-item`,
+                type: "agentMessage",
+                text: FAKE_CODEX_TURN_TEXT,
+                phase: "final_answer",
+              },
+            });
+            complete("completed");
+          }
+          return { turnId };
+        }
+        if (method !== "turn/start")
+          throw new Error(`Unexpected fake app-server method: ${method}`);
+        turnId = `conformance-turn-${++turnSequence}`;
+        lastOutputSchema = params.outputSchema;
+        const inputs = z
+          .array(
+            z.looseObject({ type: z.string(), text: z.string().optional() }),
+          )
+          .parse(params.input);
+        lastPrompt = inputs
+          .filter((item) => item.type === "text")
+          .map((item) => item.text ?? "")
+          .join("\n");
+        const active = {
+          id: turnId,
+          status: "inProgress",
+          error: null,
+          items: [],
+        };
+        emit("turn/started", { threadId: FAKE_CODEX_THREAD_ID, turn: active });
+        if (lastPrompt.includes(FAKE_CODEX_QUEUE_HOLD_PROMPT)) {
+          void chain.then(
+            () => config.onQueueReady?.(),
+            () => {},
+          );
+        } else if (!lastPrompt.includes(FAKE_CODEX_HANGING_PROMPT)) {
+          const text =
+            lastPrompt.includes(
+              "Your final message must be a single JSON object",
+            ) && config.structuredOutput !== undefined
+              ? JSON.stringify(config.structuredOutput)
+              : FAKE_CODEX_TURN_TEXT;
+          emit("item/completed", {
+            threadId: FAKE_CODEX_THREAD_ID,
+            turnId,
+            item: {
+              id: `${turnId}-item`,
+              type: "agentMessage",
+              text,
+              phase: "final_answer",
+            },
+          });
+          const total = {
+            inputTokens: FAKE_CODEX_INPUT_TOKENS,
+            cachedInputTokens: 10,
+            cacheWriteInputTokens: 0,
+            outputTokens: 42,
+            reasoningOutputTokens: 0,
+            totalTokens: FAKE_CODEX_INPUT_TOKENS + 42,
+          };
+          emit("thread/tokenUsage/updated", {
+            threadId: FAKE_CODEX_THREAD_ID,
+            turnId,
+            tokenUsage: { last: total, total },
+          });
+          complete("completed");
+        }
+        return { turn: active };
+      },
+      notify() {},
+      barrier() {
+        const pending = Promise.withResolvers<void>();
+        barrier = barrier.then(() => pending.promise);
         return {
-          events: (async function* () {
-            for (const event of successEvents(agentText)) {
-              yield event;
-            }
-          })(),
+          release: pending.resolve,
+          fail(error) {
+            pending.resolve();
+            options.onFailure(error);
+          },
         };
       },
+      async flush() {
+        await chain;
+      },
+      async close() {
+        closed = true;
+        await chain;
+      },
+      stderrTail: "",
     };
   }
-
   const deps: CodexConversationRuntimeDeps = {
-    createCodex() {
+    createAppServer,
+    createInstructionStore(conversationId) {
       return {
-        startThread: () => makeThread(),
-        resumeThread: () => makeThread(),
+        async readLatest(threadRef) {
+          return instructions.get(`${conversationId}:${threadRef}`) ?? null;
+        },
+        async write(record) {
+          instructions.set(`${conversationId}:${record.threadRef}`, record);
+        },
       };
     },
     buildChildEnv: () => ({ NODE_ENV: "test" }),
     toStringEnv(env) {
       const result: Record<string, string> = {};
-      for (const [key, value] of Object.entries(env)) {
+      for (const [key, value] of Object.entries(env))
         if (value !== undefined) result[key] = value;
-      }
       return result;
     },
     getServerUrl: () => null,
@@ -155,11 +218,10 @@ export function createFakeCodexProvider(
     readPersistedCostBaseline: async () => null,
     now: () => Date.now(),
   };
-
   return {
     deps,
-    get lastTurnOptions() {
-      return lastTurnOptions;
+    get lastOutputSchema() {
+      return lastOutputSchema;
     },
     get lastPrompt() {
       return lastPrompt;

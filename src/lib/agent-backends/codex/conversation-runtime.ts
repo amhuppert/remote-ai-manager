@@ -1,29 +1,34 @@
 /**
- * Codex ConversationBackendRuntime — wraps the Codex SDK behind the
- * backend-neutral conversation runtime interface using per-turn instance
- * creation with persistent threadId.
+ * Codex conversations use one bounded app-server process per CC turn,
+ * retaining only the opaque thread reference between turns.
  */
 
-import type {
-  AgentMessageItem,
-  CodexOptions,
-  ThreadOptions,
-  Input,
-  TurnOptions,
-  ThreadEvent,
-  Usage,
-  McpToolCallItem,
-  FileChangeItem,
-  TodoListItem,
-} from "@openai/codex-sdk";
-import { Codex } from "@openai/codex-sdk";
-import { isAdvisoryCodexDiagnostic } from "./stream-diagnostics";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { z } from "zod";
+import type { CodexOptions, ThreadOptions } from "@openai/codex-sdk";
+import {
+  createCodexAppServerClient,
+  type AppServerClient,
+  type AppServerClientOptions,
+} from "./app-server-client";
+import {
+  AppServerRequestError,
+  AppServerTransportError,
+} from "./app-server-protocol";
+import { CodexAppServerEvents, CodexAppServerUsage } from "./app-server-events";
+import {
+  CodexInstructionState,
+  createCodexInstructionStore,
+  composeCodexGoverningInstructions,
+  type CodexInstructionStore,
+} from "./instruction-state";
+import { InputDeliveryUncertainError } from "../errors";
+import { CODEX_IN_TURN_DELIVERY_ENABLED } from "./rollout-policy";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type {
-  MessageContentBlock,
-  ToolResultMetrics,
-} from "@/lib/conversations/schemas";
-import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   ConversationBackendRuntime,
@@ -31,6 +36,7 @@ import type {
   ConversationBackendTurnResult,
   ConversationBackendCreateInput,
   ConversationBackendFactory,
+  ConversationQueuedUserInput,
 } from "../conversation";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
 import type { PortableMcpToCodexResult } from "../mcp-translation";
@@ -40,9 +46,9 @@ import type {
 } from "@/lib/agent-backends/schemas";
 import {
   estimateCodexCostUsd,
+  type CodexUsageTokens,
   resolveConfiguredCodexPricingOverrides,
 } from "./pricing";
-import type { AgentFailureClassification } from "../errors";
 import type { FsWritePolicy } from "../task";
 import {
   buildCodexConversationFsWriteEnvelope,
@@ -97,25 +103,88 @@ const logger = createLogger("codex:conversation-runtime");
 
 const codexFailureClassifier = createCodexFailureClassifier();
 
+type CodexUserInput =
+  | { type: "text"; text: string }
+  | { type: "localImage"; path: string };
+const notificationScopeSchema = z.object({
+  threadId: z.string(),
+  turnId: z.string().optional(),
+});
+const turnSchema = z.object({
+  id: z.string(),
+  status: z.enum(["inProgress", "completed", "failed", "interrupted"]),
+  error: z.object({ message: z.string() }).nullish(),
+});
+const contextCompactionSchema = z.object({
+  item: z.object({ type: z.literal("contextCompaction") }),
+});
+const turnNotificationSchema = z.object({
+  threadId: z.string(),
+  turn: turnSchema,
+});
+const turnResponseSchema = z.object({ turn: turnSchema });
+const steerResponseSchema = z.object({ turnId: z.string() });
+const threadResponseSchema = z.object({
+  thread: z.object({ id: z.string() }),
+  model: z.string(),
+  cwd: z.string(),
+  approvalPolicy: z.string(),
+  sandbox: z.looseObject({ type: z.string() }),
+});
+const workspaceSandboxSchema = z.object({
+  writableRoots: z.array(z.string()),
+  excludeTmpdirEnvVar: z.boolean(),
+  excludeSlashTmp: z.boolean(),
+});
+interface CodexTurnState {
+  client: AppServerClient | null;
+  threadId: string | null;
+  turnId: string | null;
+  terminal: boolean;
+  completion: PromiseWithResolvers<void>;
+  released: PromiseWithResolvers<void>;
+  acceptance: Promise<void> | null;
+  startRequested: boolean;
+  failure: Error | null;
+  failureOverridesAbort: boolean;
+  suppressOutput: boolean;
+  aborted: boolean;
+  stopped: Promise<void> | null;
+  steer: Promise<void>;
+}
+async function withinDeadline(
+  promise: Promise<void>,
+  milliseconds: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function isDefiniteSteerRefusal(error: AppServerRequestError): boolean {
+  return (
+    error.rpcError?.code === -32600 &&
+    /(?:no active turn|expected active turn id|turn.*mismatch|not steerable)/i.test(
+      error.rpcError.message,
+    )
+  );
+}
+
 // ============================================================
 // Injectable dependency surface
 // ============================================================
 
-interface CodexClientLike {
-  startThread(options?: ThreadOptions): CodexThreadLike;
-  resumeThread(id: string, options?: ThreadOptions): CodexThreadLike;
-}
-
-export interface CodexThreadLike {
-  readonly id: string | null;
-  runStreamed(
-    input: Input,
-    turnOptions?: TurnOptions,
-  ): Promise<{ events: AsyncGenerator<ThreadEvent> }>;
-}
-
 export interface CodexConversationRuntimeDeps {
-  createCodex(options: CodexOptions): CodexClientLike;
+  inTurnDeliveryEnabled?: boolean;
+  createAppServer(options: AppServerClientOptions): AppServerClient;
+  createInstructionStore(conversationId: string): CodexInstructionStore;
   buildChildEnv(): NodeJS.ProcessEnv;
   toStringEnv(env: Record<string, string | undefined>): Record<string, string>;
   /** Server base URL recorded at boot; null when startup has not resolved one. */
@@ -150,7 +219,9 @@ export interface CodexConversationRuntimeDeps {
 }
 
 const defaultDeps: CodexConversationRuntimeDeps = {
-  createCodex: (options) => new Codex(options) as unknown as CodexClientLike,
+  inTurnDeliveryEnabled: CODEX_IN_TURN_DELIVERY_ENABLED,
+  createAppServer: createCodexAppServerClient,
+  createInstructionStore: createCodexInstructionStore,
   buildChildEnv,
   toStringEnv,
   getServerUrl: getServerBaseUrl,
@@ -173,6 +244,9 @@ export class CodexConversationRuntime
   implements ConversationBackendRuntime, CodexCapabilityApplyTarget
 {
   readonly backend: AgentBackendId = "codex";
+  readonly queueUserInput?: (
+    input: ConversationQueuedUserInput,
+  ) => Promise<void>;
   readonly modelSelection: BackendModelSelection;
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
@@ -183,7 +257,6 @@ export class CodexConversationRuntime
 
   private _status: "alive" | "dead" = "alive";
   private threadId: string | null;
-  private isFirstTurn: boolean;
   private stagedPortableMcp: PortableMcpConfig | null;
   private stagedCapabilityConfig: CodexRuntimeCapabilityConfig | null;
   private readonly sessionInstructions: string[];
@@ -215,29 +288,19 @@ export class CodexConversationRuntime
   private readonly workflowLaneCapability: string | undefined;
   private readonly deps: CodexConversationRuntimeDeps;
   private readonly resolvedModelSelection: ResolvedCodexModelSelection;
-  /**
-   * Codex `turn.completed` usage is CUMULATIVE for the thread (across exec
-   * process invocations), so each turn's attributable cost is the delta
-   * against the last cumulative estimate. Summing raw snapshots instead
-   * inflated recorded conversation costs by up to ~4x (audit 1beec403).
-   */
-  private attributedCostBaseline: {
-    threadId: string;
-    cumulativeCostUsd: number;
-  } | null = null;
-  /** Thread ref this runtime resumed from, if any — the only case where a
-   * persisted baseline can exist in the transcript. */
-  private readonly persistedBaselineRef: string | null;
-  private persistedBaselineChecked = false;
+  private active: CodexTurnState | null = null;
+  private cleanupError: Error | null = null;
+  private costLedger: number | null = null;
+  private costLedgerLoaded = false;
+  private readonly instructions: CodexInstructionState;
+  private readonly inputDirectories = new Set<string>();
 
   constructor(
     input: ConversationBackendCreateInput,
-    deps: CodexConversationRuntimeDeps = defaultDeps,
+    deps: Partial<CodexConversationRuntimeDeps> = {},
   ) {
     this.threadId =
       input.persistedRef?.backend === "codex" ? input.persistedRef.ref : null;
-    this.isFirstTurn = this.threadId == null;
-    this.persistedBaselineRef = this.threadId;
     this.stagedPortableMcp = input.tooling.portableMcp ?? null;
     this.stagedCapabilityConfig = input.tooling.capabilities
       ? translateCodexRuntimeCapabilities(input.tooling.capabilities)
@@ -259,7 +322,12 @@ export class CodexConversationRuntime
     this.outputFormat = input.outputFormat;
 
     this.fsWritePolicy = input.fsWritePolicy;
-    this.deps = deps;
+    this.deps = { ...defaultDeps, ...deps };
+    if (this.deps.inTurnDeliveryEnabled)
+      this.queueUserInput = this.steerInput.bind(this);
+    this.instructions = new CodexInstructionState(
+      this.deps.createInstructionStore(input.conversationId),
+    );
 
     logger.info("codex-runtime.created", {
       conversationId: input.conversationId,
@@ -273,393 +341,650 @@ export class CodexConversationRuntime
     return this._status;
   }
 
+  private isClosed(): boolean {
+    return this._status === "dead";
+  }
+
   async sendTurn(
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult> {
     const startedAt = this.deps.now();
-    const wasFirstTurn = this.isFirstTurn;
-
-    // Mutable accumulator — mutated from inside event callbacks, so must be
-    // an object to avoid TypeScript's closure narrowing dropping assignments.
-    const acc = {
-      knownThreadId: null as string | null,
-      lastAgentMessageText: null as string | null,
-      usage: null as Usage | null,
-      errorMessage: null as string | null,
-      failure: null as AgentFailureClassification | null,
-      processFailed: false,
-      aborted: false,
+    if (this._status === "dead" || this.cleanupError !== null) {
+      return this.refusedResult(
+        startedAt,
+        this.cleanupError ?? new Error("Codex runtime is closed"),
+      );
+    }
+    if (this.active !== null)
+      return this.refusedResult(
+        startedAt,
+        new Error("Codex already has an active turn"),
+      );
+    const state: CodexTurnState = {
+      client: null,
+      threadId: this.threadId,
+      turnId: null,
+      terminal: false,
+      completion: Promise.withResolvers<void>(),
+      released: Promise.withResolvers<void>(),
+      acceptance: null,
+      startRequested: false,
+      failure: null,
+      failureOverridesAbort: false,
+      suppressOutput: false,
+      aborted: input.signal.aborted,
+      stopped: null,
+      steer: Promise.resolve(),
     };
-    const contentBlocks: MessageContentBlock[] = [];
-    let pendingAgentMessage: AgentMessageItem | null = null;
-
+    this.active = state;
+    const projector = new CodexAppServerEvents();
+    const usage = new CodexAppServerUsage();
+    const blocks: MessageContentBlock[] = [];
+    let sequence = 0;
+    const unsupportedRequests = new Set<string | number>();
+    const wasFresh = this.threadId === null;
+    const accept = (): Promise<void> => {
+      state.acceptance ??= Promise.resolve().then(() =>
+        input.onEvent({ type: "input_accepted" }),
+      );
+      return state.acceptance;
+    };
+    const emitBlocks = async (content: MessageContentBlock[]) => {
+      for (const block of content) {
+        blocks.push(block);
+        await input.onEvent({ type: "content", block });
+      }
+    };
+    const fail = (error: Error) => {
+      if (
+        error instanceof AppServerTransportError &&
+        error.code === "cleanup_unverified"
+      )
+        this.cleanupError = error;
+      if (error instanceof AppServerTransportError) {
+        state.failureOverridesAbort = true;
+        if (error.code === "consumer_failed") state.suppressOutput = true;
+      }
+      state.failure ??= error;
+      state.completion.resolve();
+    };
+    const onAbort = () => {
+      state.aborted = true;
+      void this.stopTurn(state).catch(fail);
+    };
+    input.signal.addEventListener("abort", onAbort, { once: true });
     try {
-      const turnModelSelection = projectAdmittedCodexModelSelection(
+      if (state.aborted)
+        throw new DOMException("Turn cancelled before dispatch", "AbortError");
+      const selection = projectAdmittedCodexModelSelection(
         input.modelSelection,
       );
       if (
-        modelSelectionKey(turnModelSelection.modelSelection) !==
+        modelSelectionKey(selection.modelSelection) !==
         modelSelectionKey(this.modelSelection)
       ) {
         throw new Error(
           "Codex model selection changed without recreating the conversation runtime.",
         );
       }
-
-      const promptInput = this.buildPromptInput(input);
-      if (this.outputFormat) {
-        logger.info("codex-runtime.structured_output_prompt_contract", {
-          conversationId: this.conversationId,
-          enforcement: "post_validation",
-        });
-      }
-
-      // Reconcile the managed skill bundle link before every turn so resumed
-      // sessions, lane worktrees, and project-scoped conversations self-heal.
-      // A conflict degrades to skill-less and never blocks the turn.
-      const bridgeResult = await this.deps.ensureManagedSkillsBridge(
+      const bridge = await this.deps.ensureManagedSkillsBridge(
         this.worktreePath,
       );
-      if (bridgeResult.status === "conflict") {
+      if (bridge.status === "conflict")
         logger.warn("codex-runtime.managed_skills_degraded", {
           conversationId: this.conversationId,
-          detail: bridgeResult.detail,
+          detail: bridge.detail,
         });
-      }
-
-      // Build per-turn Codex client options
-      const codexOptions = await this.buildCodexOptions();
-
-      // Create Codex client and thread
-      const codex = this.deps.createCodex(codexOptions);
+      const options = await this.buildCodexOptions();
       const threadOptions = this.buildThreadOptions();
-
-      const isResume = this.threadId != null;
-      const thread = isResume
-        ? codex.resumeThread(this.threadId!, threadOptions)
-        : codex.startThread(threadOptions);
-
-      logger.info("codex-runtime.turn_start", {
-        conversationId: this.conversationId,
-        isResume,
-        threadIdDigest: providerRefDigest(this.threadId),
-        threadOptions,
-        modelId: this.modelSelection.modelId,
-        reasoningEffort: this.resolvedModelSelection.reasoningEffort,
-        hasOutputFormat: !!this.outputFormat,
-        codexFastMode: this.resolvedModelSelection.fastMode,
-        hasMcpServers: codexOptions.config?.mcp_servers !== undefined,
-        promptLength:
-          typeof promptInput === "string"
-            ? promptInput.length
-            : Array.isArray(promptInput)
-              ? promptInput.length
-              : 0,
-      });
-
-      // Start streaming. `runStreamed` returns a LAZY generator — the codex
-      // process only spawns on the first iteration — so its resolution says
-      // nothing about the prompt reaching the agent.
-      const streamed = await thread.runStreamed(promptInput, {
-        signal: input.signal,
-      });
-
-      // Acceptance is the FIRST ThreadEvent (mirrors Claude's first-raw-
-      // provider-message gate): the process is running with the prompt. A
-      // spawn/resume failure yields no event, so acceptance never fires and
-      // the actor returns queued rows to `pending` for retry instead of
-      // falsely marking them delivered (req 4.2).
-      let inputAccepted = false;
-
-      // Process events
-      for await (const event of streamed.events) {
-        if (!inputAccepted) {
-          inputAccepted = true;
-          await input.onEvent({ type: "input_accepted" });
-          logger.debug("codex-runtime.input_accepted", {
+      const governing = composeCodexGoverningInstructions(
+        this.sessionInstructions,
+      );
+      if (state.aborted || this.isClosed())
+        throw new DOMException("Turn cancelled before dispatch", "AbortError");
+      const client = this.deps.createAppServer({
+        cwd: threadOptions.workingDirectory ?? this.worktreePath,
+        env: options.env ?? {},
+        onFailure: fail,
+        onServerRequest: async (message) => {
+          logger.warn("codex-runtime.server_request_refused", {
             conversationId: this.conversationId,
-            isResume,
-            threadIdDigest: providerRefDigest(this.threadId),
+            method: message.method,
           });
-        }
-
+          switch (message.method) {
+            case "item/commandExecution/requestApproval":
+            case "item/fileChange/requestApproval":
+              return { result: { decision: "decline" } };
+            case "item/permissions/requestApproval":
+              return { result: { permissions: {}, scope: "turn" } };
+            case "mcpServer/elicitation/request":
+              return { result: { action: "decline" } };
+            case "item/tool/call":
+              return {
+                result: {
+                  success: false,
+                  contentItems: [
+                    {
+                      type: "inputText",
+                      text: "Command Center has not registered this dynamic tool",
+                    },
+                  ],
+                },
+              };
+            default:
+              state.failureOverridesAbort = true;
+              state.suppressOutput = true;
+              state.failure = new Error(
+                `Unsupported Codex operation: ${message.method}`,
+              );
+              unsupportedRequests.add(message.id);
+              return {
+                error: { code: -32601, message: state.failure.message },
+              };
+          }
+        },
+        onNotification: (message) => {
+          if (!state.startRequested) return;
+          const lifecycle = turnNotificationSchema.safeParse(message.params);
+          if (!lifecycle.success || lifecycle.data.threadId !== state.threadId)
+            return;
+          if (message.method === "turn/started" && state.turnId === null)
+            state.turnId = lifecycle.data.turn.id;
+          if (
+            message.method === "turn/completed" &&
+            lifecycle.data.turn.id === state.turnId
+          )
+            state.terminal = true;
+        },
+        onFrame: async (frame) => {
+          await input.onEvent({
+            type: "transcript_entry",
+            entry: {
+              seq: sequence++,
+              backend: "codex",
+              type: "codex_app_server",
+              raw: {
+                timestamp: new Date(this.deps.now()).toISOString(),
+                type: "codex_app_server",
+                raw: { record: frame.raw },
+              },
+            },
+          });
+          const message = frame.message;
+          if (
+            message.kind === "server_request" &&
+            unsupportedRequests.delete(message.id)
+          ) {
+            state.completion.resolve();
+          }
+          if (message.kind !== "notification") return;
+          const scope = notificationScopeSchema.safeParse(message.params);
+          if (!scope.success || scope.data.threadId !== state.threadId) return;
+          if (message.method === "thread/tokenUsage/updated") {
+            if (!state.startRequested || scope.data.turnId === state.turnId)
+              usage.observe(message.params, !state.startRequested);
+            return;
+          }
+          const compaction =
+            message.method === "thread/compacted" ||
+            ((message.method === "item/started" ||
+              message.method === "item/completed") &&
+              contextCompactionSchema.safeParse(message.params).success);
+          if (
+            compaction &&
+            (!state.startRequested ||
+              scope.data.turnId === undefined ||
+              scope.data.turnId === state.turnId)
+          ) {
+            projector.consume(message.method, message.params);
+            await this.instructions.invalidate();
+            return;
+          }
+          if (
+            scope.data.turnId !== undefined &&
+            scope.data.turnId !== state.turnId
+          )
+            return;
+          if (
+            message.method === "turn/started" ||
+            message.method === "turn/completed"
+          ) {
+            const lifecycle = turnNotificationSchema.parse(message.params);
+            if (lifecycle.turn.id !== state.turnId || !state.startRequested)
+              return;
+            await accept();
+            if (message.method === "turn/completed") {
+              if (lifecycle.turn.status === "failed")
+                state.failure = new Error(
+                  lifecycle.turn.error?.message ?? "Codex turn failed",
+                );
+              if (lifecycle.turn.status === "interrupted") state.aborted = true;
+              state.terminal = true;
+              state.completion.resolve();
+            }
+            return;
+          }
+          if (!state.startRequested) return;
+          if (message.method === "error") {
+            logger.warn("codex-runtime.provider_diagnostic", {
+              conversationId: this.conversationId,
+            });
+            return;
+          }
+          if (state.acceptance === null) return;
+          await state.acceptance;
+          const wasCompacted = projector.compacted;
+          await emitBlocks(projector.consume(message.method, message.params));
+          if (!wasCompacted && projector.compacted)
+            await this.instructions.invalidate();
+        },
+      });
+      state.client = client;
+      if (state.aborted || this.isClosed())
+        throw new DOMException("Turn cancelled before dispatch", "AbortError");
+      await client.request("initialize", {
+        clientInfo: { name: "command-center", version: "1.0.0" },
+        capabilities: { experimentalApi: false },
+      });
+      client.notify("initialized");
+      const request = {
+        model: this.resolvedModelSelection.modelId,
+        cwd: threadOptions.workingDirectory,
+        approvalPolicy: "never",
+        sandbox: threadOptions.sandboxMode,
+        config: {
+          ...options.config,
+          web_search: "disabled",
+          model_reasoning_effort: this.resolvedModelSelection.reasoningEffort,
+        },
+        ...(wasFresh
+          ? { developerInstructions: governing }
+          : { threadId: this.threadId, excludeTurns: true }),
+      };
+      const thread = threadResponseSchema.parse(
+        await client.request(
+          wasFresh ? "thread/start" : "thread/resume",
+          request,
+        ),
+      );
+      this.verifyEffectiveThread(thread, threadOptions);
+      state.threadId = thread.thread.id;
+      this.threadId = thread.thread.id;
+      await input.onEvent({
+        type: "backend_init",
+        backendRef: { backend: "codex", ref: thread.thread.id },
+      });
+      await this.loadCostLedger(thread.thread.id, wasFresh);
+      await this.instructions.establish(
+        thread.thread.id,
+        governing,
+        wasFresh,
+        async (text) => {
+          await client.request("thread/inject_items", {
+            threadId: thread.thread.id,
+            items: [
+              {
+                type: "message",
+                role: "developer",
+                content: [{ type: "input_text", text }],
+              },
+            ],
+          });
+        },
+      );
+      await client.flush();
+      if (state.aborted || this.isClosed())
+        throw new DOMException("Turn cancelled before dispatch", "AbortError");
+      state.startRequested = true;
+      const started = turnResponseSchema.parse(
+        await client.request("turn/start", {
+          threadId: thread.thread.id,
+          input: this.buildPromptInput(input),
+          model: this.resolvedModelSelection.modelId,
+          effort: this.resolvedModelSelection.reasoningEffort,
+          summary: "detailed",
+        }),
+      );
+      if (state.turnId !== null && state.turnId !== started.turn.id)
+        throw new Error("Codex start acknowledgement named a different turn");
+      state.turnId = started.turn.id;
+      await accept();
+      await state.completion.promise;
+      await state.steer;
+      await client.flush();
+      if (!state.suppressOutput) await emitBlocks(projector.finish());
+      if (state.failure !== null) throw state.failure;
+    } catch (error) {
+      if (
+        input.signal.aborted ||
+        (error instanceof Error && error.name === "AbortError")
+      )
+        state.aborted = true;
+      else
+        state.failure ??=
+          error instanceof Error ? error : new Error(getErrorMessage(error));
+    } finally {
+      input.signal.removeEventListener("abort", onAbort);
+      try {
+        if (!state.terminal && state.startRequested) await this.stopTurn(state);
+        else await state.client?.close();
+      } catch (error) {
+        const failure =
+          error instanceof Error ? error : new Error(getErrorMessage(error));
         if (
-          event.type === "item.completed" &&
-          event.item.type === "agent_message"
-        ) {
-          // Codex exec emits commentary and the final response with the same
-          // item type. Holding one message lets subsequent work identify
-          // commentary while turn completion identifies the final response.
-          if (pendingAgentMessage) {
-            const commentary = pendingAgentMessage;
-            pendingAgentMessage = null;
-            await this.emitAgentMessage(
-              commentary,
-              "thinking",
-              input,
-              contentBlocks,
-            );
-          }
-          pendingAgentMessage = event.item;
-          acc.lastAgentMessageText = event.item.text;
-          continue;
-        }
-
-        const preservesPendingAgentMessage = isTodoListCompletion(event);
-        if (pendingAgentMessage && preservesPendingAgentMessage) {
-          logger.debug("codex-runtime.pending_agent_message_retained", {
-            conversationId: this.conversationId,
-            followingItemId: event.item.id,
-            followingItemType: event.item.type,
-          });
-        }
-
-        if (pendingAgentMessage && !preservesPendingAgentMessage) {
-          const message = pendingAgentMessage;
-          pendingAgentMessage = null;
-          await this.emitAgentMessage(
-            message,
-            event.type === "turn.completed" ||
-              event.type === "turn.failed" ||
-              event.type === "error"
-              ? "text"
-              : "thinking",
-            input,
-            contentBlocks,
-          );
-        }
-
-        await this.processEvent(event, input, contentBlocks, {
-          setThreadId: (id) => {
-            acc.knownThreadId = id;
-            this.threadId = id;
-            this.isFirstTurn = false;
-          },
-          setLastAgentMessageText: (text) => {
-            acc.lastAgentMessageText = text;
-          },
-          setUsage: (u) => {
-            acc.usage = u;
-          },
-          setErrorMessage: (msg) => {
-            acc.errorMessage = msg;
-          },
+          error instanceof AppServerTransportError &&
+          error.code === "cleanup_unverified"
+        )
+          this.cleanupError = failure;
+        state.failure ??= failure;
+      }
+      await state.steer;
+      const cleanup = await Promise.allSettled(
+        [...this.inputDirectories].map((directory) =>
+          rm(directory, { recursive: true, force: true }),
+        ),
+      );
+      if (cleanup.some((entry) => entry.status === "rejected"))
+        logger.warn("codex-runtime.input_files_cleanup_failed", {
+          conversationId: this.conversationId,
         });
-      }
-
-      if (pendingAgentMessage) {
-        const message = pendingAgentMessage;
-        pendingAgentMessage = null;
-        await this.emitAgentMessage(message, "text", input, contentBlocks);
-      }
-    } catch (err) {
-      if (pendingAgentMessage) {
-        const message = pendingAgentMessage;
-        pendingAgentMessage = null;
-        try {
-          await this.emitAgentMessage(message, "text", input, contentBlocks);
-        } catch (emitError) {
-          err = emitError;
-        }
-      }
-
-      if (isAbortError(err) || input.signal.aborted) {
-        acc.aborted = true;
-      } else {
-        acc.processFailed = true;
-        // Single capture point for thrown provider failures: the classifier
-        // decides the failure kind from the raw error, and both the reported
-        // `failure` and the continuation disposition below consume that one
-        // typed classification — no message re-grepping here.
-        const classification = codexFailureClassifier.classify(err);
-        if (classification.kind === "stale_resume_ref") {
-          acc.failure = {
-            ...classification,
-            message:
-              this.threadId != null
-                ? `Failed to resume Codex thread ${this.threadId}: ${classification.message}`
-                : classification.message,
+      this.inputDirectories.clear();
+      this.active = null;
+      state.released.resolve();
+    }
+    const cleanupFailure =
+      this.cleanupError === null
+        ? undefined
+        : {
+            kind: "cleanup_unverified" as const,
+            message: this.cleanupError.message,
           };
-          logger.warn("codex-runtime.stale_resume_ref", {
-            conversationId: this.conversationId,
-            threadIdDigest: providerRefDigest(this.threadId),
-            error: acc.failure.message,
-          });
-        } else {
-          // Preserve error from turn.failed event if already captured —
-          // it contains more useful detail than the generic process exit
-          // error.
-          if (acc.errorMessage == null) {
-            acc.failure = classification;
-          }
-          logger.error("codex-runtime.turn_error", {
-            conversationId: this.conversationId,
-            error: acc.errorMessage ?? classification.message,
-            rawError: classification.message,
-            threadIdDigest: providerRefDigest(acc.knownThreadId),
-            modelId: this.modelSelection.modelId,
-            reasoningEffort: this.resolvedModelSelection.reasoningEffort,
-            wasFirstTurn,
-          });
+    const failure = cleanupFailure
+      ? {
+          kind: "backend_error" as const,
+          message: cleanupFailure.message,
+          retryable: false,
         }
-      }
-    }
-
-    // Abort honesty: a cancelled turn is aborted even when the codex process
-    // answers the interrupt "gracefully" — a turn.failed event (e.g.
-    // "Aborted: user") followed by a clean stream end, with no throw. Without
-    // this, an external cancellation (pause, safety-net, stall watchdog)
-    // misclassifies as a provider sdk_error.
-    if (input.signal.aborted) {
-      acc.aborted = true;
-    }
-
-    const failure = acc.aborted
-      ? null
-      : (acc.failure ??
-        (acc.errorMessage != null
-          ? codexFailureClassifier.classify(acc.errorMessage)
-          : null));
-
-    // A missing rollout proves the ref unusable. A local process crash only
-    // invalidates a first-turn rollout; graceful provider failures and crashes
-    // while resuming can leave the server-side thread viable.
-    const continuationDisposition =
-      failure?.kind === "stale_resume_ref" ||
-      (failure != null && acc.processFailed && wasFirstTurn)
-        ? "clear"
-        : "retain";
-
-    if (continuationDisposition === "clear") {
-      this.threadId = null;
-      this.isFirstTurn = true;
-      acc.knownThreadId = null;
-      logger.info("codex-runtime.continuation_cleared_after_failure", {
-        conversationId: this.conversationId,
-        failureKind: failure?.kind ?? null,
-        wasFirstTurn,
-      });
-    }
-
-    const backendRef = acc.knownThreadId
-      ? { backend: "codex" as const, ref: acc.knownThreadId }
-      : null;
-
-    const cumulativeCostUsd = await this.estimateTurnCost(acc.usage);
-    const costUsd = await this.attributeTurnCost(
-      acc.knownThreadId ?? this.threadId,
-      cumulativeCostUsd,
-    );
-
+      : state.aborted && !state.failureOverridesAbort
+        ? null
+        : state.failure === null
+          ? null
+          : codexFailureClassifier.classify(
+              state.failure instanceof AppServerRequestError &&
+                state.failure.rpcError
+                ? new Error(state.failure.rpcError.message)
+                : state.failure,
+            );
+    const clear = failure?.kind === "stale_resume_ref";
+    if (clear) this.threadId = null;
+    const costUsd = await this.estimateTurnCost(usage.tokens);
+    if (state.startRequested)
+      this.costLedger =
+        this.costLedger !== null && costUsd !== null
+          ? this.costLedger + costUsd
+          : null;
     const result: ConversationBackendTurnResult = {
-      backendRef,
+      backendRef:
+        this.threadId === null
+          ? null
+          : { backend: "codex", ref: this.threadId },
       costUsd,
-      cumulativeCostUsd,
+      cumulativeCostUsd: this.costLedger,
       durationMs: this.deps.now() - startedAt,
-      numTurns: 1,
-      contextTokens: acc.usage?.input_tokens ?? null,
+      numTurns: state.acceptance === null ? 0 : 1,
+      contextTokens: null,
       contextWindowMax: null,
-      contentBlocks,
-      finalText: acc.lastAgentMessageText,
-      aborted: acc.aborted,
-      // Codex reports cumulative thread counters rather than per-turn ones, so
-      // it does not populate the neutral per-turn token record.
+      contentBlocks: blocks,
+      finalText: projector.finalText,
+      aborted: state.aborted,
       tokenUsage: null,
-      // Codex never surfaces an SDK compaction under CC's view.
-      compacted: false,
+      compacted: projector.compacted,
       failure,
-      continuationDisposition,
+      continuationDisposition: clear ? "clear" : "retain",
+      ...(cleanupFailure ? { cleanupFailure } : {}),
     };
-
     logger.info("codex-runtime.turn_end", {
       conversationId: this.conversationId,
-      threadIdDigest: providerRefDigest(acc.knownThreadId),
-      aborted: acc.aborted,
-      hasError: failure != null,
-      failureKind: result.failure?.kind ?? null,
-      continuationDisposition: result.continuationDisposition,
-      contentBlockCount: contentBlocks.length,
-      costUsd: result.costUsd,
-      cumulativeCostUsd,
-      // Codex reports CUMULATIVE processed input tokens for the thread, not
-      // window occupancy — that is why contextWindowMax stays null.
-      cumulativeInputTokens: acc.usage?.input_tokens ?? null,
+      threadIdDigest: providerRefDigest(this.threadId),
+      failureKind: failure?.kind ?? null,
+      costUsd,
+      cumulativeCostUsd: result.cumulativeCostUsd,
     });
-
     return result;
   }
 
-  /**
-   * Convert the thread-cumulative cost estimate into this turn's attributable
-   * delta. The baseline advances only when a turn actually reports a cost, so
-   * an unpriced turn's spend rides into the next attributed one. A cumulative
-   * below the baseline means the thread's counters reset (server-side thread
-   * restart) — the new cumulative is attributed in full. After a CC restart
-   * the in-memory baseline is recovered from the conversation transcript's
-   * last codex result frame for the resumed thread.
-   */
-  private async attributeTurnCost(
-    threadId: string | null,
-    cumulativeCostUsd: number | null,
-  ): Promise<number | null> {
-    if (cumulativeCostUsd === null) return null;
-    if (threadId === null) return cumulativeCostUsd;
-
+  private async steerInput(input: ConversationQueuedUserInput): Promise<void> {
+    const state = this.active;
+    const threadId = state?.threadId;
+    const turnId = state?.turnId;
     if (
-      this.attributedCostBaseline === null &&
-      !this.persistedBaselineChecked &&
-      this.persistedBaselineRef !== null
+      !state ||
+      !threadId ||
+      !turnId ||
+      state.terminal ||
+      state.aborted ||
+      this._status === "dead" ||
+      !state.client
     ) {
-      this.persistedBaselineChecked = true;
-      try {
-        const persisted = await this.deps.readPersistedCostBaseline(
-          this.conversationId,
-          this.persistedBaselineRef,
-        );
-        if (persisted !== null && persisted.threadRef === threadId) {
-          this.attributedCostBaseline = {
-            threadId: persisted.threadRef,
-            cumulativeCostUsd: persisted.cumulativeCostUsd,
-          };
-        }
-      } catch (err) {
-        logger.warn("codex-runtime.cost_baseline_unavailable", {
-          conversationId: this.conversationId,
-          threadIdDigest: providerRefDigest(threadId),
-          error: getErrorMessage(err),
-        });
-      }
+      throw new Error("Codex has no active turn ready for steering");
     }
-
-    const baseline = this.attributedCostBaseline;
-    const delta =
-      baseline !== null &&
-      baseline.threadId === threadId &&
-      cumulativeCostUsd >= baseline.cumulativeCostUsd
-        ? cumulativeCostUsd - baseline.cumulativeCostUsd
-        : cumulativeCostUsd;
-    this.attributedCostBaseline = { threadId, cumulativeCostUsd };
-    return delta;
+    const client = state.client;
+    const delivery = state.steer.then(async () => {
+      if (
+        this.active !== state ||
+        state.terminal ||
+        state.aborted ||
+        this._status === "dead" ||
+        input.signal?.aborted
+      )
+        throw new Error("Codex turn ended before steering");
+      const content = await this.prepareLiveInput(input);
+      if (state.terminal || state.aborted || input.signal?.aborted)
+        throw new Error("Codex turn ended before steering");
+      const barrier = client.barrier();
+      let accepted = false;
+      try {
+        const reply = steerResponseSchema.parse(
+          await client.request("turn/steer", {
+            threadId,
+            expectedTurnId: turnId,
+            input: content,
+            clientUserMessageId: randomUUID(),
+          }),
+        );
+        if (reply.turnId !== turnId)
+          throw new InputDeliveryUncertainError(
+            "Codex steering acknowledgement named a different turn",
+          );
+        accepted = true;
+        await input.onAccepted?.();
+        barrier.release();
+      } catch (error) {
+        if (accepted) {
+          const failure = new InputDeliveryUncertainError(
+            `Accepted input could not be archived: ${getErrorMessage(error)}`,
+          );
+          state.failure = failure;
+          state.failureOverridesAbort = true;
+          state.suppressOutput = true;
+          barrier.fail(failure);
+          await this.stopTurn(state);
+          throw failure;
+        }
+        barrier.release();
+        if (
+          error instanceof AppServerRequestError &&
+          (!error.requestMayHaveBeenWritten || isDefiniteSteerRefusal(error))
+        )
+          throw error;
+        throw error instanceof InputDeliveryUncertainError
+          ? error
+          : new InputDeliveryUncertainError(
+              `Codex input delivery could not be confirmed: ${getErrorMessage(error)}`,
+            );
+      }
+    });
+    state.steer = delivery.catch(() => {});
+    return delivery;
   }
 
-  /**
-   * Estimated USD for the turn's token usage (Codex reports tokens, never
-   * USD). Best-effort: an unreadable config falls back to default rates
-   * rather than dropping the estimate.
-   */
-  private async estimateTurnCost(usage: Usage | null): Promise<number | null> {
-    if (usage === null) return null;
+  private async prepareLiveInput(
+    input: ConversationQueuedUserInput,
+  ): Promise<CodexUserInput[]> {
+    const content: CodexUserInput[] = [];
+    let directory: string | undefined;
+    for (const block of input.content) {
+      if (block.type === "text")
+        content.push({ type: "text", text: block.text });
+      else if (block.type === "image") {
+        directory ??= await mkdtemp(
+          path.join(
+            this.buildWriteEnvelope()?.tmpDir ?? tmpdir(),
+            "cc-codex-input-",
+          ),
+        );
+        this.inputDirectories.add(directory);
+        const file = path.join(
+          directory,
+          `${content.length}.${block.mediaType.split("/")[1]}`,
+        );
+        await writeFile(file, Buffer.from(block.base64Data, "base64"));
+        content.push({ type: "localImage", path: file });
+      } else throw new Error(`Codex live input does not support ${block.type}`);
+    }
+    return content;
+  }
 
+  private async stopTurn(state: CodexTurnState): Promise<void> {
+    state.stopped ??= (async () => {
+      const client = state.client;
+      if (!client) return;
+      if (!state.terminal && state.threadId && state.turnId) {
+        await withinDeadline(
+          (async () => {
+            await client.request("turn/interrupt", {
+              threadId: state.threadId,
+              turnId: state.turnId,
+            });
+            await state.completion.promise;
+          })().catch(() => {}),
+          5_000,
+        );
+      }
+      try {
+        await client.close();
+      } finally {
+        state.completion.resolve();
+      }
+    })();
+    return state.stopped;
+  }
+
+  private async loadCostLedger(
+    threadId: string,
+    fresh: boolean,
+  ): Promise<void> {
+    if (fresh) {
+      this.costLedger = 0;
+      this.costLedgerLoaded = true;
+      return;
+    }
+    if (this.costLedgerLoaded) return;
+    this.costLedgerLoaded = true;
+    try {
+      const prior = await this.deps.readPersistedCostBaseline(
+        this.conversationId,
+        threadId,
+      );
+      this.costLedger =
+        prior?.threadRef === threadId ? prior.cumulativeCostUsd : null;
+    } catch {
+      this.costLedger = null;
+    }
+  }
+
+  private verifyEffectiveThread(
+    thread: z.infer<typeof threadResponseSchema>,
+    requested: ThreadOptions,
+  ): void {
+    const sandbox =
+      requested.sandboxMode === "workspace-write"
+        ? "workspaceWrite"
+        : "dangerFullAccess";
+    if (
+      thread.model !== requested.model ||
+      thread.cwd !== requested.workingDirectory ||
+      thread.approvalPolicy !== "never" ||
+      thread.sandbox.type !== sandbox
+    ) {
+      throw new Error(
+        "Codex app-server did not apply the requested model, working directory, approval, and sandbox policy",
+      );
+    }
+    if (this.fsWritePolicy && sandbox === "workspaceWrite") {
+      const effective = workspaceSandboxSchema.parse(thread.sandbox);
+      const writableRoots = new Set([thread.cwd, ...effective.writableRoots]);
+      const requestedRoots = new Set(this.fsWritePolicy.allowWrite);
+      if (
+        effective.excludeTmpdirEnvVar !== true ||
+        effective.excludeSlashTmp !== true ||
+        writableRoots.size !== requestedRoots.size ||
+        [...requestedRoots].some((root) => !writableRoots.has(root))
+      ) {
+        throw new Error(
+          "Codex app-server did not apply the requested writable roots",
+        );
+      }
+    }
+  }
+
+  private refusedResult(
+    startedAt: number,
+    error: Error,
+  ): ConversationBackendTurnResult {
+    return {
+      backendRef: this.threadId
+        ? { backend: "codex", ref: this.threadId }
+        : null,
+      costUsd: null,
+      cumulativeCostUsd: this.costLedger,
+      durationMs: this.deps.now() - startedAt,
+      numTurns: 0,
+      contextTokens: null,
+      contextWindowMax: null,
+      contentBlocks: [],
+      aborted: false,
+      compacted: false,
+      failure: {
+        kind: "backend_error",
+        message: error.message,
+        retryable: false,
+      },
+      continuationDisposition: "retain",
+      ...(this.cleanupError
+        ? {
+            cleanupFailure: {
+              kind: "cleanup_unverified",
+              message: this.cleanupError.message,
+            } as const,
+          }
+        : {}),
+    };
+  }
+
+  private async estimateTurnCost(
+    usage: CodexUsageTokens | null,
+  ): Promise<number | null> {
+    if (usage === null) return null;
     let pricingOverrides: CodexPricingTable | null = null;
     try {
       pricingOverrides = await this.deps.getCodexPricingOverrides();
-    } catch (err) {
+    } catch (error) {
       logger.warn("codex-runtime.pricing_overrides_unavailable", {
         conversationId: this.conversationId,
-        error: getErrorMessage(err),
+        error: getErrorMessage(error),
       });
     }
-
     return estimateCodexCostUsd(
       usage,
       this.modelSelection.modelId,
@@ -710,55 +1035,31 @@ export class CodexConversationRuntime
   }
 
   async close(): Promise<void> {
-    if (this._status === "dead") return;
     this._status = "dead";
-    this.threadId = null;
-    this.stagedPortableMcp = null;
-
-    logger.info("codex-runtime.close", {
-      conversationId: this.conversationId,
-    });
+    const state = this.active;
+    if (state) {
+      await this.stopTurn(state);
+      await state.released.promise;
+    }
+    if (this.cleanupError !== null) throw this.cleanupError;
   }
 
-  // ============================================================
-  // Private helpers
-  // ============================================================
-
-  private buildPromptInput(input: ConversationBackendTurnInput): Input {
-    const textParts: string[] = [];
-
-    if (this.isFirstTurn && this.sessionInstructions.length > 0) {
-      textParts.push(
-        "```\n## System Instructions\n" +
-          this.sessionInstructions.join("\n\n") +
-          "\n```",
-      );
-    }
-
-    if (input.syntheticForkSeed) {
-      textParts.push(input.syntheticForkSeed);
-    }
-
-    textParts.push(input.promptText);
-    const authoredPrompt = textParts.join("\n\n");
-    const finalPrompt = this.outputFormat
-      ? appendStructuredOutputInstruction(
-          authoredPrompt,
-          this.outputFormat.schema,
-        )
-      : authoredPrompt;
-
-    if (input.imageRefs.length === 0) {
-      return finalPrompt;
-    }
-
-    const imageInputs: Array<{ type: "local_image"; path: string }> =
-      input.imageRefs.map((ref) => ({
-        type: "local_image",
+  private buildPromptInput(
+    input: ConversationBackendTurnInput,
+  ): CodexUserInput[] {
+    const text = [input.syntheticForkSeed, input.promptText]
+      .filter(Boolean)
+      .join("\n\n");
+    const prompt = this.outputFormat
+      ? appendStructuredOutputInstruction(text, this.outputFormat.schema)
+      : text;
+    return [
+      { type: "text", text: prompt },
+      ...input.imageRefs.map((ref) => ({
+        type: "localImage" as const,
         path: ref.path,
-      }));
-
-    return [{ type: "text", text: finalPrompt }, ...imageInputs];
+      })),
+    ];
   }
 
   /**
@@ -917,341 +1218,6 @@ export class CodexConversationRuntime
 
     return options;
   }
-
-  private async processEvent(
-    event: ThreadEvent,
-    input: ConversationBackendTurnInput,
-    contentBlocks: MessageContentBlock[],
-    acc: {
-      setThreadId(id: string): void;
-      setLastAgentMessageText(text: string): void;
-      setUsage(u: Usage): void;
-      setErrorMessage(msg: string): void;
-    },
-  ): Promise<void> {
-    switch (event.type) {
-      case "thread.started":
-        acc.setThreadId(event.thread_id);
-        await input.onEvent({
-          type: "backend_init",
-          backendRef: { backend: "codex", ref: event.thread_id },
-        });
-        break;
-
-      case "item.started":
-        await this.processItemStarted(event, input, contentBlocks);
-        break;
-
-      case "item.completed":
-        await this.processItemCompleted(event, input, contentBlocks, acc);
-        break;
-
-      case "turn.completed":
-        acc.setUsage(event.usage);
-        break;
-
-      case "turn.failed":
-        acc.setErrorMessage(event.error.message);
-        break;
-
-      case "error":
-        if (isAdvisoryCodexDiagnostic(event.message)) {
-          logger.warn("codex-runtime.stream_advisory", {
-            conversationId: this.conversationId,
-            detail: event.message,
-          });
-          break;
-        }
-        acc.setErrorMessage(event.message);
-        break;
-
-      case "turn.started":
-        break;
-
-      case "item.updated":
-        logger.debug("codex-runtime.item_updated", {
-          conversationId: this.conversationId,
-          itemId: event.item.id,
-          itemType: event.item.type,
-        });
-        break;
-
-      default:
-        logger.warn("codex-runtime.event_unhandled", {
-          conversationId: this.conversationId,
-          eventType: (event as { type?: unknown }).type,
-        });
-    }
-  }
-
-  private async emitAgentMessage(
-    item: AgentMessageItem,
-    type: "text" | "thinking",
-    input: ConversationBackendTurnInput,
-    contentBlocks: MessageContentBlock[],
-  ): Promise<void> {
-    const block: MessageContentBlock = { type, text: item.text };
-    contentBlocks.push(block);
-    await input.onEvent({ type: "content", block });
-  }
-
-  private async processItemStarted(
-    event: ItemStartedEvent,
-    input: ConversationBackendTurnInput,
-    contentBlocks: MessageContentBlock[],
-  ): Promise<void> {
-    const { item } = event;
-    switch (item.type) {
-      case "command_execution": {
-        const block: MessageContentBlock = {
-          type: "tool_use",
-          id: item.id,
-          name: "Bash",
-          input: { command: unwrapBashCommand(item.command) },
-        };
-        contentBlocks.push(block);
-        await input.onEvent({ type: "content", block });
-        break;
-      }
-      case "mcp_tool_call": {
-        const block: MessageContentBlock = {
-          type: "tool_use",
-          id: item.id,
-          name: item.tool,
-          input: {
-            server: item.server,
-            arguments: item.arguments,
-          } as Record<string, unknown>,
-        };
-        contentBlocks.push(block);
-        await input.onEvent({ type: "content", block });
-        break;
-      }
-      case "web_search": {
-        const block: MessageContentBlock = {
-          type: "tool_use",
-          id: item.id,
-          name: "WebSearch",
-          input: { query: item.query },
-        };
-        contentBlocks.push(block);
-        await input.onEvent({ type: "content", block });
-        break;
-      }
-      case "agent_message":
-      case "reasoning":
-      case "file_change":
-      case "todo_list":
-      case "error":
-        logger.debug("codex-runtime.item_started_deferred", {
-          conversationId: this.conversationId,
-          itemId: item.id,
-          itemType: item.type,
-        });
-        break;
-      default:
-        logger.warn("codex-runtime.item_unhandled", {
-          conversationId: this.conversationId,
-          lifecycle: "started",
-          itemId: (item as { id?: unknown }).id,
-          itemType: (item as { type?: unknown }).type,
-        });
-        break;
-    }
-  }
-
-  private async processItemCompleted(
-    event: ItemCompletedEvent,
-    input: ConversationBackendTurnInput,
-    contentBlocks: MessageContentBlock[],
-    acc: {
-      setLastAgentMessageText(text: string): void;
-      setErrorMessage(msg: string): void;
-    },
-  ): Promise<void> {
-    const { item } = event;
-    switch (item.type) {
-      case "agent_message": {
-        const block: MessageContentBlock = { type: "text", text: item.text };
-        contentBlocks.push(block);
-        acc.setLastAgentMessageText(item.text);
-        await input.onEvent({ type: "content", block });
-        break;
-      }
-      case "command_execution": {
-        const exitCode = item.exit_code;
-        const isError =
-          item.status === "failed" ||
-          (typeof exitCode === "number" && exitCode !== 0);
-        if (item.aggregated_output || isError) {
-          const metrics: ToolResultMetrics = {};
-          if (typeof exitCode === "number") metrics.exitCode = exitCode;
-          const block: MessageContentBlock = {
-            type: "tool_result",
-            tool_use_id: item.id,
-            content: item.aggregated_output || undefined,
-            ...(isError ? { isError: true } : {}),
-            ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
-          };
-          contentBlocks.push(block);
-          await input.onEvent({ type: "content", block });
-        }
-        break;
-      }
-      case "mcp_tool_call": {
-        const mcpItem = item as McpToolCallItem;
-        const content = extractMcpToolResultContent(mcpItem);
-        const isError = mcpItem.status === "failed" || mcpItem.error != null;
-        const metrics = parseToolResultMetrics(mcpItem.tool, content);
-        const block: MessageContentBlock = {
-          type: "tool_result",
-          tool_use_id: item.id,
-          content,
-          ...(isError ? { isError: true } : {}),
-          ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
-        };
-        contentBlocks.push(block);
-        await input.onEvent({ type: "content", block });
-        break;
-      }
-      case "file_change": {
-        const blocks = fileChangeContentBlocks(item);
-        logger.debug("codex-runtime.file_change_completed", {
-          conversationId: this.conversationId,
-          itemId: item.id,
-          status: item.status,
-          changeCount: item.changes.length,
-          changeKinds: item.changes.map((change) => change.kind),
-        });
-        for (const block of blocks) {
-          contentBlocks.push(block);
-          await input.onEvent({ type: "content", block });
-        }
-        break;
-      }
-      case "error": {
-        acc.setErrorMessage(item.message);
-        break;
-      }
-      case "reasoning": {
-        const block: MessageContentBlock = {
-          type: "thinking",
-          text: item.text,
-        };
-        contentBlocks.push(block);
-        await input.onEvent({ type: "content", block });
-        break;
-      }
-      case "todo_list": {
-        const block: MessageContentBlock = {
-          type: "tool_use",
-          id: item.id,
-          name: "TodoWrite",
-          input: { todos: item.items },
-        };
-        contentBlocks.push(block);
-        await input.onEvent({ type: "content", block });
-        break;
-      }
-      case "web_search":
-        logger.debug("codex-runtime.web_search_completed", {
-          conversationId: this.conversationId,
-          itemId: item.id,
-          query: item.query,
-        });
-        break;
-      default:
-        logger.warn("codex-runtime.item_unhandled", {
-          conversationId: this.conversationId,
-          lifecycle: "completed",
-          itemId: (item as { id?: unknown }).id,
-          itemType: (item as { type?: unknown }).type,
-        });
-        break;
-    }
-  }
-}
-
-// ============================================================
-// Helpers
-// ============================================================
-
-type ItemStartedEvent = Extract<ThreadEvent, { type: "item.started" }>;
-type ItemCompletedEvent = Extract<ThreadEvent, { type: "item.completed" }>;
-
-function isTodoListCompletion(
-  event: ThreadEvent,
-): event is ItemCompletedEvent & { item: TodoListItem } {
-  return event.type === "item.completed" && event.item.type === "todo_list";
-}
-
-function fileChangeToolName(
-  kind: FileChangeItem["changes"][number]["kind"],
-): "Write" | "Edit" | "Delete" {
-  switch (kind) {
-    case "add":
-      return "Write";
-    case "update":
-      return "Edit";
-    case "delete":
-      return "Delete";
-  }
-}
-
-function fileChangeContentBlocks(item: FileChangeItem): MessageContentBlock[] {
-  const blocks: MessageContentBlock[] = [];
-  for (const [index, change] of item.changes.entries()) {
-    const id = `${item.id}:${index}`;
-    blocks.push({
-      type: "tool_use",
-      id,
-      name: fileChangeToolName(change.kind),
-      input: { file_path: change.path },
-    });
-    if (item.status === "failed") {
-      blocks.push({ type: "tool_result", tool_use_id: id, isError: true });
-    }
-  }
-  return blocks;
-}
-
-/** Strip the shell `-lc '...'` wrapper Codex adds around commands. */
-const SHELL_WRAPPER_RE = /^\/bin\/(?:ba|z)?sh\s+-lc\s+(['"])(.*)\1$/s;
-function unwrapBashCommand(raw: string): string {
-  const m = SHELL_WRAPPER_RE.exec(raw);
-  return m ? m[2]! : raw;
-}
-
-function isAbortError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return err.name === "AbortError" || err.name === "TimeoutError";
-}
-
-function extractMcpToolResultContent(
-  item: McpToolCallItem,
-): string | undefined {
-  // Prefer text content blocks from result
-  if (item.result?.content) {
-    const textParts = item.result.content
-      .filter(
-        (block): block is { type: "text"; text: string } =>
-          (block as { type: string }).type === "text",
-      )
-      .map((block) => block.text);
-    if (textParts.length > 0) return textParts.join("\n");
-  }
-
-  // Fall back to structured content as JSON
-  if (item.result?.structured_content != null) {
-    return JSON.stringify(item.result.structured_content);
-  }
-
-  // Fall back to error message
-  if (item.error?.message) {
-    return item.error.message;
-  }
-
-  return undefined;
 }
 
 // ============================================================

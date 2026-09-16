@@ -86,9 +86,10 @@ function makeDeps(
 describe("enqueueConversationMessage", () => {
   it.each([
     { backend: "claude" as const, deliveryTiming: "in_turn" as const },
+    { backend: "codex" as const, deliveryTiming: "in_turn" as const },
     { backend: "codex" as const, deliveryTiming: "next_turn" as const },
   ])(
-    "ensures the conversation actor after enqueuing so the turn drains ($backend)",
+    "ensures the conversation actor after enqueuing so the turn drains ($backend, $deliveryTiming)",
     async ({ backend, deliveryTiming }) => {
       const recorder: Recorder = {
         calls: [],
@@ -115,7 +116,7 @@ describe("enqueueConversationMessage", () => {
 
       // The resolved conversation backend flows into the durable enqueue.
       expect(recorder.queuedBackend).toBe(backend);
-      // Backend-agnostic: both the in_turn (claude) and next_turn (codex)
+      // Backend-agnostic: both in-turn and explicit next-turn
       // delivery paths must end with the actor ensured — that is the only thing
       // that starts a turn for /align on an otherwise-idle conversation.
       expect(recorder.ensuredWith).toEqual({

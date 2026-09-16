@@ -49,14 +49,14 @@ describe("queueCapabilityForBackend", () => {
     },
   );
 
-  it("declares in-turn delivery for claude and cursor and next-turn for codex", () => {
+  it("declares in-turn delivery for every production backend", () => {
     expect(queueCapabilityForBackend("claude")).toEqual({
       acceptsWhileRunning: true,
       deliveryTiming: "in_turn",
     });
     expect(queueCapabilityForBackend("codex")).toEqual({
       acceptsWhileRunning: true,
-      deliveryTiming: "next_turn",
+      deliveryTiming: "in_turn",
     });
     expect(queueCapabilityForBackend("cursor")).toEqual({
       acceptsWhileRunning: true,

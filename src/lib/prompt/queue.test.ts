@@ -1,3 +1,4 @@
+import type { ConversationQueuedUserInput } from "@/lib/agent-backends/conversation";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   queueMessage,
@@ -341,9 +342,12 @@ describe("queueMessage in_turn", () => {
 
   it("confirms delivery: claim -> queueUserInput -> append (once) -> markDelivered", async () => {
     const order: string[] = [];
-    const queueUserInputMock = vi.fn().mockImplementation(async () => {
-      order.push("queueUserInput");
-    });
+    const queueUserInputMock = vi
+      .fn()
+      .mockImplementation(async (input: ConversationQueuedUserInput) => {
+        order.push("queueUserInput");
+        await input.onAccepted?.();
+      });
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
     claimLiveDeliveryMock.mockImplementation(async () => {
       order.push("claim");
@@ -374,6 +378,7 @@ describe("queueMessage in_turn", () => {
     ]);
 
     expect(queueUserInputMock).toHaveBeenCalledWith({
+      onAccepted: expect.any(Function),
       content: [{ type: "text", text: "live message" }],
     });
     expect(appendTranscriptEntryMock).toHaveBeenCalledTimes(1);
@@ -387,7 +392,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("appends a user transcript entry with project/session meta", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     await queueMessage({
@@ -410,7 +417,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("expands an in-turn /spec command only for the backend and preserves the raw transcript", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
     const rawPrompt = "/spec Add an operator status endpoint";
 
@@ -427,6 +436,7 @@ describe("queueMessage in_turn", () => {
       content: [{ type: "text", text: rawPrompt }],
     });
     expect(queueUserInputMock).toHaveBeenCalledWith({
+      onAccepted: expect.any(Function),
       content: [
         {
           type: "text",
@@ -445,7 +455,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("delivers a feedback message as backend-safe prose (no document_feedback block) and records the card in the transcript", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     const documentFeedback = {
@@ -501,7 +513,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("delivers a notepad dispatch as backend-safe prose and records the typed block in the transcript", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     const notepadFeedback = {
@@ -556,7 +570,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("persists images and writes image_ref blocks (no base64 in transcript)", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
     getNextImageIndexMock.mockResolvedValue(3);
     saveTranscriptImageMock.mockResolvedValue("/disk/conv-123/3.png");
@@ -571,6 +587,7 @@ describe("queueMessage in_turn", () => {
 
     // Runtime gets the base64 image block.
     expect(queueUserInputMock).toHaveBeenCalledWith({
+      onAccepted: expect.any(Function),
       content: [
         { type: "text", text: "see this" },
         { type: "image", mediaType: "image/png", base64Data: "BIN" },
@@ -657,7 +674,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("never live-delivers a /commit command: row stays pending for next-turn handling", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
     enqueueMock.mockResolvedValue(
       makePendingEntry({ content: [{ type: "text", text: "/commit" }] }),
@@ -685,7 +704,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("never live-delivers a /merge command with hint text", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     const result = await queueMessage({
@@ -701,7 +722,9 @@ describe("queueMessage in_turn", () => {
   });
 
   it("still live-delivers near-miss command text like /committed", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     const result = await queueMessage({
@@ -712,6 +735,7 @@ describe("queueMessage in_turn", () => {
     });
 
     expect(queueUserInputMock).toHaveBeenCalledWith({
+      onAccepted: expect.any(Function),
       content: [{ type: "text", text: "/committed the fix already" }],
     });
     expect(result.deliveryTiming).toBe("in_turn");
@@ -719,7 +743,9 @@ describe("queueMessage in_turn", () => {
 
   it("returns without delivering when the claim is lost (row no longer pending)", async () => {
     claimLiveDeliveryMock.mockResolvedValue(null);
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     const result = await queueMessage({
@@ -775,7 +801,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("captures current entity state only at claimed live delivery and leaves queued text unchanged", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
     const ref =
       '<ticket-ref project-name="cc" ticket-number="90" identifier="cc#90" title="Captured" read-command="cctl ticket get cc#90" />';
@@ -807,7 +835,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("delivers full notepad content while the durable row and transcript keep the reference", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     await queueMessage({
@@ -854,7 +884,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("injects a not-found block naming the id for a deleted notepad", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     const result = await queueMessage({
@@ -871,7 +903,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("delivers the un-expanded text when the notepad read fails", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     await queueMessage({
@@ -890,7 +924,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("does not read notepads for a prompt with no notepad reference", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
     const readNotepadForInjection = vi.fn(async () => null);
 
@@ -930,7 +966,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("records the notepad as delivered to the conversation whose reference it expanded", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     await queueMessage({
@@ -967,7 +1005,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("records nothing when the message carried no notepad reference", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     await queueMessage({
@@ -981,7 +1021,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("records nothing for a dangling reference — a deleted notepad was never delivered", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     await queueMessage({
@@ -1021,7 +1063,9 @@ describe("queueMessage notepad injection", () => {
     }
 
     it("carries the notice a live turn would, while the durable row and transcript keep the user's text", async () => {
-      const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+      const queueUserInputMock = vi.fn(
+        async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+      );
       getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
       await queueMessage({
@@ -1051,7 +1095,9 @@ describe("queueMessage notepad injection", () => {
     });
 
     it("prepends nothing when no tracked notepad changed", async () => {
-      const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+      const queueUserInputMock = vi.fn(
+        async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+      );
       getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
       await queueMessage({
@@ -1066,9 +1112,12 @@ describe("queueMessage notepad injection", () => {
 
     it("advances the watermarks only after the backend accepts the input", async () => {
       const settleNotepadChangeNotice = vi.fn(async () => {});
-      const queueUserInputMock = vi.fn().mockImplementation(async () => {
-        expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
-      });
+      const queueUserInputMock = vi
+        .fn()
+        .mockImplementation(async (input: ConversationQueuedUserInput) => {
+          expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
+          await input.onAccepted?.();
+        });
       getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
       await queueMessage({
@@ -1107,12 +1156,14 @@ describe("queueMessage notepad injection", () => {
     });
 
     it("settles the notice even when transcript persistence fails after acceptance", async () => {
-      // queueUserInput resolving IS backend acceptance: the agent has the
+      // The acceptance callback confirms the agent has the
       // notice. Failing to write the transcript afterwards must not strand the
       // watermark and re-deliver the same notice on the next message.
       const settleNotepadChangeNotice = vi.fn(async () => {});
       getRuntimeMock.mockReturnValue({
-        queueUserInput: vi.fn().mockResolvedValue(undefined),
+        queueUserInput: vi.fn(async (input: ConversationQueuedUserInput) =>
+          input.onAccepted?.(),
+        ),
       });
       appendTranscriptEntryMock.mockRejectedValueOnce(
         new Error("transcript write failed"),
@@ -1133,7 +1184,9 @@ describe("queueMessage notepad injection", () => {
     });
 
     it("delivers the message without a notice when preparing one fails", async () => {
-      const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+      const queueUserInputMock = vi.fn(
+        async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+      );
       getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
       await queueMessage({
@@ -1154,7 +1207,9 @@ describe("queueMessage notepad injection", () => {
   });
 
   it("still delivers the message when recording the watermark fails", async () => {
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    const queueUserInputMock = vi.fn(
+      async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+    );
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
 
     await queueMessage({

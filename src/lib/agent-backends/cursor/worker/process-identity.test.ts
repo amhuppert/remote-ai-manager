@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   readProcessGroupIdSync,
   readProcessStartTicks,
-} from "./process-identity";
+} from "@/lib/shared/process-identity";
 
 /**
  * Reads the real operating-system process table these functions exist to read.

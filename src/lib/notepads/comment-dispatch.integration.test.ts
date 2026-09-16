@@ -280,14 +280,21 @@ describe("notepad comment dispatch (real store)", () => {
       const body = JSON.parse(String(options.body)) as {
         notepadFeedback: NotepadFeedbackPayload;
       };
-      await queueMessage({
+      const queued = await queueMessage({
         projectPath: PROJECT_PATH,
         sessionName: SESSION,
         conversationId: "conv-queued",
         notepadFeedback: body.notepadFeedback,
         backend: "codex",
-        deps: { enqueue: queueSvc.enqueue },
+        deps: {
+          enqueue: queueSvc.enqueue,
+          queueCapabilityForBackend: () => ({
+            acceptsWhileRunning: true,
+            deliveryTiming: "next_turn",
+          }),
+        },
       });
+      expect(queued.deliveryTiming).toBe("next_turn");
       return new Response(null, { status: 200 });
     };
 

@@ -217,7 +217,15 @@ export function claimLiveDeliveryTransform(
   claimed: PendingQueuedMessage | null;
   refused: PendingQueuedMessage | null;
 } {
-  if (queue.some((entry) => queuedMessageNeedsReview(entry.status))) {
+  if (
+    queue.some(
+      (entry) =>
+        entry.status === "delivering" || queuedMessageNeedsReview(entry.status),
+    )
+  ) {
+    return { queue: [...queue], claimed: null, refused: null };
+  }
+  if (queue.find((entry) => entry.status === "pending")?.id !== id) {
     return { queue: [...queue], claimed: null, refused: null };
   }
   let claimed: PendingQueuedMessage | null = null;

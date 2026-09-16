@@ -19,7 +19,10 @@ import type {
 import { CURSOR_IPC_CODEC_VERSION, parseWorkerFrame } from "./ipc";
 import type { CursorParentFrame, CursorWorkerFrame } from "./ipc";
 import { createCursorProcessHost } from "./process-host";
-import { errnoCode, readProcessGroupIdSync } from "./process-identity";
+import {
+  errnoCode,
+  readProcessGroupIdSync,
+} from "@/lib/shared/process-identity";
 import { createCursorWorkerSupervisor } from "./supervisor";
 
 /**

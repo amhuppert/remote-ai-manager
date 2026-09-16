@@ -213,6 +213,7 @@ export function createActorDependenciesFixture(
       },
     }),
     confirmQueuedDelivery: vi.fn(async () => 0),
+    notifyRuntimeCleanup: vi.fn(async () => {}),
     markQueuedPending: vi.fn(async () => {}),
     markQueuedFailed: vi.fn(async () => {}),
     markQueuedUncertain: vi.fn(async () => {}),
@@ -282,6 +283,7 @@ export function groupActorFixtureDependencies(
       getRuntime: getConversationRuntime,
     },
     effects: {
+      notifyRuntimeCleanup: deps.notifyRuntimeCleanup,
       mutateConversation: deps.mutateConversation,
       recordMemoryIndexDeliveries: deps.recordMemoryIndexDeliveries,
       resetMemoryIndexDelivery: deps.resetMemoryIndexDelivery,

@@ -4,7 +4,7 @@ import {
   errnoCode,
   readProcessGroupIdSync,
   readProcessStartTicks,
-} from "./process-identity";
+} from "@/lib/shared/process-identity";
 
 /**
  * The operating-system surface the Cursor supervisor uses, as one injectable

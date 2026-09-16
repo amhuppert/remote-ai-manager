@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import type {
+  AppServerClient,
+  AppServerClientOptions,
+} from "./app-server-client";
+import { parseAppServerFrame } from "./app-server-protocol";
+import type { CodexInstructionRecord } from "./instruction-state";
 import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import type {
   ThreadEvent,
@@ -8,8 +15,6 @@ import type {
   ItemStartedEvent,
   ItemCompletedEvent,
   Usage,
-  Input,
-  TurnOptions,
   AgentMessageItem,
   CommandExecutionItem,
   McpToolCallItem,
@@ -34,7 +39,6 @@ import {
   codexConversationBackendFactory,
   createCodexConversationBackendFactory,
   type CodexConversationRuntimeDeps,
-  type CodexThreadLike,
 } from "./conversation-runtime";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type {
@@ -117,76 +121,267 @@ function makeTurnInput(
   };
 }
 
+type NativeInput =
+  | { type: "text"; text: string }
+  | { type: "localImage"; path: string };
+interface ScriptedTurn {
+  events: ThreadEvent[];
+  setupError?: Error;
+  terminalError?: Error;
+  capturedInput: NativeInput[] | null;
+  capturedTurnOptions: Record<string, unknown> | undefined;
+}
+
+/** Existing scenario data is translated to native wire notifications only in this fixture. */
 function makeThread(
   events: ThreadEvent[],
   opts?: { runStreamedThrows?: Error },
-): CodexThreadLike {
+): ScriptedTurn {
   return {
-    id: null,
-    async runStreamed(
-      _input: Input,
-      _turnOptions?: TurnOptions,
-    ): Promise<{ events: AsyncGenerator<ThreadEvent> }> {
-      if (opts?.runStreamedThrows) {
-        throw opts.runStreamedThrows;
-      }
-      return {
-        events: (async function* () {
-          for (const event of events) {
-            yield event;
-          }
-        })(),
-      };
-    },
-  };
-}
-
-function makeAbortingThread(eventsBeforeAbort: ThreadEvent[]): CodexThreadLike {
-  return {
-    id: null,
-    async runStreamed(): Promise<{ events: AsyncGenerator<ThreadEvent> }> {
-      return {
-        events: (async function* () {
-          for (const event of eventsBeforeAbort) {
-            yield event;
-          }
-          const err = new Error("The operation was aborted");
-          err.name = "AbortError";
-          throw err;
-        })(),
-      };
-    },
-  };
-}
-
-/** Capture the Input and TurnOptions passed to runStreamed */
-function makeCapturingThread(events: ThreadEvent[]): CodexThreadLike & {
-  capturedInput: Input | null;
-  capturedTurnOptions: TurnOptions | undefined;
-} {
-  const thread: CodexThreadLike & {
-    capturedInput: Input | null;
-    capturedTurnOptions: TurnOptions | undefined;
-  } = {
-    id: null,
+    events,
+    setupError: opts?.runStreamedThrows,
     capturedInput: null,
     capturedTurnOptions: undefined,
-    async runStreamed(
-      input: Input,
-      turnOptions?: TurnOptions,
-    ): Promise<{ events: AsyncGenerator<ThreadEvent> }> {
-      thread.capturedInput = input;
-      thread.capturedTurnOptions = turnOptions;
-      return {
-        events: (async function* () {
-          for (const event of events) {
-            yield event;
-          }
-        })(),
-      };
-    },
   };
-  return thread;
+}
+function makeAbortingThread(events: ThreadEvent[]): ScriptedTurn {
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return {
+    ...makeThread(events),
+    ...(events.length ? { terminalError: error } : { setupError: error }),
+  };
+}
+function makeCapturingThread(events: ThreadEvent[]): ScriptedTurn {
+  return makeThread(events);
+}
+function capturedText(script: ScriptedTurn): string {
+  return (
+    script.capturedInput
+      ?.filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("\n") ?? ""
+  );
+}
+const requestObject = z.record(z.string(), z.unknown());
+const nativeInputSchema = z.array(
+  z.discriminatedUnion("type", [
+    z.object({ type: z.literal("text"), text: z.string() }),
+    z.object({ type: z.literal("localImage"), path: z.string() }),
+  ]),
+);
+
+function makeScriptedAppServer(
+  options: AppServerClientOptions,
+  select: (
+    method: string,
+    params: Record<string, unknown>,
+  ) => ScriptedTurn | undefined,
+  requests: { method: string; params: Record<string, unknown> }[],
+): AppServerClient {
+  let script: ScriptedTurn | undefined;
+  let threadId = "thread-123";
+  const turnId = "native-turn";
+  let drain = Promise.resolve();
+  let terminated = false;
+  let transportFailed = false;
+  async function emit(method: string, params: unknown): Promise<void> {
+    const raw = JSON.stringify({ method, params });
+    const frame = parseAppServerFrame(raw, Buffer.byteLength(raw));
+    if (frame.message.kind === "notification")
+      options.onNotification?.(frame.message);
+    drain = drain.then(() => options.onFrame(frame));
+    await drain;
+  }
+  async function finish(status: string, message?: string): Promise<void> {
+    terminated = true;
+    await emit("turn/completed", {
+      threadId,
+      turn: { id: turnId, status, error: message ? { message } : null },
+    });
+  }
+  async function replay(turn: ScriptedTurn): Promise<void> {
+    try {
+      for (const event of turn.events) {
+        if (event.type === "thread.started") continue;
+        if (event.type === "turn.started") {
+          await emit("turn/started", {
+            threadId,
+            turn: { id: turnId, status: "inProgress" },
+          });
+        } else if (event.type === "turn.completed") {
+          const usage = event.usage;
+          await emit("thread/tokenUsage/updated", {
+            threadId,
+            turnId,
+            tokenUsage: {
+              total: {
+                inputTokens: usage.input_tokens,
+                cachedInputTokens: usage.cached_input_tokens,
+                cacheWriteInputTokens: usage.cache_write_input_tokens ?? 0,
+                outputTokens: usage.output_tokens,
+                reasoningOutputTokens: usage.reasoning_output_tokens ?? 0,
+                totalTokens: usage.input_tokens + usage.output_tokens,
+              },
+            },
+          });
+          await finish("completed");
+        } else if (event.type === "turn.failed")
+          await finish("failed", event.error.message);
+        else if (event.type === "error") {
+          if (event.message.includes("Skill descriptions were shortened")) {
+            await emit("configWarning", { threadId, summary: event.message });
+          } else {
+            await emit("error", {
+              threadId,
+              turnId,
+              willRetry: false,
+              error: { message: event.message },
+            });
+            await finish("failed", event.message);
+          }
+        } else if (
+          event.type === "item.started" ||
+          event.type === "item.completed" ||
+          event.type === "item.updated"
+        ) {
+          const item = event.item;
+          const method =
+            event.type === "item.started" ? "item/started" : "item/completed";
+          let native: Record<string, unknown>;
+          switch (item.type) {
+            case "agent_message":
+              native = { id: item.id, type: "agentMessage", text: item.text };
+              break;
+            case "command_execution":
+              native = {
+                id: item.id,
+                type: "commandExecution",
+                command: item.command,
+                aggregatedOutput: item.aggregated_output,
+                exitCode: item.exit_code,
+                status:
+                  item.status === "in_progress" ? "inProgress" : item.status,
+              };
+              break;
+            case "mcp_tool_call":
+              native = {
+                ...item,
+                type: "mcpToolCall",
+                status:
+                  item.status === "in_progress" ? "inProgress" : item.status,
+              };
+              break;
+            case "file_change":
+              native = {
+                ...item,
+                type: "fileChange",
+                changes: item.changes.map((change) => ({
+                  ...change,
+                  kind: { type: change.kind },
+                })),
+              };
+              break;
+            case "reasoning":
+              native = {
+                id: item.id,
+                type: "reasoning",
+                summary: [item.text],
+                content: [],
+              };
+              break;
+            case "todo_list":
+              await emit("turn/plan/updated", {
+                threadId,
+                turnId,
+                plan: item.items.map((step) => ({
+                  step: step.text,
+                  status: step.completed ? "completed" : "pending",
+                })),
+              });
+              continue;
+            case "web_search":
+              native = { ...item, type: "webSearch" };
+              break;
+            case "error":
+              await finish("failed", item.message);
+              continue;
+          }
+          await emit(method, { threadId, turnId, item: native });
+        }
+      }
+      if (turn.terminalError?.name === "AbortError")
+        await finish("interrupted");
+      else if (turn.terminalError) throw turn.terminalError;
+      else if (!terminated)
+        throw new Error("Codex process closed without a terminal turn");
+    } catch (error) {
+      transportFailed = true;
+      options.onFailure(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+  return {
+    async request(method, value) {
+      if (transportFailed)
+        throw new Error("Scripted native transport is closed");
+      const params = requestObject.parse(value);
+      requests.push({ method, params });
+      if (method === "initialize" || method === "thread/inject_items")
+        return {};
+      if (method === "thread/start" || method === "thread/resume") {
+        script = select(method, params);
+        if (!script)
+          throw new Error(`No scripted native response for ${method}`);
+        if (script.setupError) throw script.setupError;
+        const opened = script.events.find(
+          (event) => event.type === "thread.started",
+        );
+        threadId =
+          opened?.thread_id ??
+          (typeof params.threadId === "string"
+            ? params.threadId
+            : "thread-123");
+        return {
+          thread: { id: threadId },
+          model: params.model,
+          cwd: params.cwd,
+          approvalPolicy: params.approvalPolicy,
+          sandbox: {
+            type:
+              params.sandbox === "workspace-write"
+                ? "workspaceWrite"
+                : "dangerFullAccess",
+          },
+        };
+      }
+      if (method === "turn/start") {
+        if (!script) throw new Error("No scripted thread");
+        script.capturedInput = nativeInputSchema.parse(params.input);
+        script.capturedTurnOptions = params;
+        const turn = script;
+        queueMicrotask(() => {
+          void replay(turn);
+        });
+        return { turn: { id: turnId, status: "inProgress" } };
+      }
+      if (method === "turn/interrupt") {
+        await finish("interrupted");
+        return {};
+      }
+      throw new Error(`Unexpected native request ${method}`);
+    },
+    notify() {},
+    barrier() {
+      throw new Error(
+        "In-turn delivery is covered by app-server-runtime.test.ts",
+      );
+    },
+    flush: () => drain,
+    close: async () => {},
+    stderrTail: "",
+  };
 }
 
 function threadStarted(threadId = "thread-123"): ThreadStartedEvent {
@@ -324,22 +519,10 @@ function webSearchCompleted(
  * Makes a thread that yields some events then crashes with the given error
  * (simulating the Codex process exiting with a non-zero code after partial output).
  */
-function makeCrashingThread(
-  eventsBeforeCrash: ThreadEvent[],
-  crashError: Error,
-): CodexThreadLike {
+function makeCrashingThread(events: ThreadEvent[], error: Error): ScriptedTurn {
   return {
-    id: null,
-    async runStreamed(): Promise<{ events: AsyncGenerator<ThreadEvent> }> {
-      return {
-        events: (async function* () {
-          for (const event of eventsBeforeCrash) {
-            yield event;
-          }
-          throw crashError;
-        })(),
-      };
-    },
+    ...makeThread(events),
+    ...(events.length ? { terminalError: error } : { setupError: error }),
   };
 }
 
@@ -364,17 +547,42 @@ describe("CodexConversationRuntime", () => {
   let deps: CodexConversationRuntimeDeps;
   let startThreadFn: ReturnType<typeof vi.fn>;
   let resumeThreadFn: ReturnType<typeof vi.fn>;
+  let nativeRequests: { method: string; params: Record<string, unknown> }[];
+  function creationInstructions(index = 0): string {
+    return z
+      .string()
+      .parse(startThreadFn.mock.calls[index]?.[0].developerInstructions);
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
     startThreadFn = vi.fn();
     resumeThreadFn = vi.fn();
+    nativeRequests = [];
 
     deps = {
-      createCodex: vi.fn().mockReturnValue({
-        startThread: startThreadFn,
-        resumeThread: resumeThreadFn,
-      }),
+      createAppServer: vi.fn((options: AppServerClientOptions) =>
+        makeScriptedAppServer(
+          options,
+          (method, params) => {
+            return method === "thread/start"
+              ? startThreadFn(params)
+              : resumeThreadFn(params);
+          },
+          nativeRequests,
+        ),
+      ),
+      createInstructionStore: () => {
+        const records: CodexInstructionRecord[] = [];
+        return {
+          readLatest: async (threadRef) =>
+            records.findLast((record) => record.threadRef === threadRef) ??
+            null,
+          write: async (record) => {
+            records.push(record);
+          },
+        };
+      },
       buildChildEnv: vi.fn().mockReturnValue({}),
       toStringEnv: vi.fn().mockImplementation((env: NodeJS.ProcessEnv) => {
         const result: Record<string, string> = {};
@@ -439,7 +647,7 @@ describe("CodexConversationRuntime", () => {
       expect(result.tokenUsage).toBeNull();
     });
 
-    it("prepends session instructions and the requested synthetic fork seed", async () => {
+    it("uses privileged constructor instructions and keeps the synthetic seed in user input", async () => {
       const thread = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread);
 
@@ -457,21 +665,15 @@ describe("CodexConversationRuntime", () => {
         }),
       );
 
-      const inputStr = thread.capturedInput as string;
-      expect(typeof inputStr).toBe("string");
-      // Instructions should appear before the fork seed and prompt
-      expect(inputStr).toContain("## System Instructions");
-      expect(inputStr).toContain("Rule A");
-      expect(inputStr).toContain("Rule B");
-      expect(inputStr).toContain("Previous context here");
-      expect(inputStr).toContain("Do the thing");
-
-      // Verify order: instructions → fork seed → prompt
-      const instructionsIdx = inputStr.indexOf("## System Instructions");
-      const forkSeedIdx = inputStr.indexOf("Previous context here");
-      const promptIdx = inputStr.indexOf("Do the thing");
-      expect(instructionsIdx).toBeLessThan(forkSeedIdx);
-      expect(forkSeedIdx).toBeLessThan(promptIdx);
+      const instructions = creationInstructions();
+      const inputStr = capturedText(thread);
+      expect(instructions).toContain("Rule A");
+      expect(instructions).toContain("Rule B");
+      expect(instructions.indexOf("Rule A")).toBeLessThan(
+        instructions.indexOf("Rule B"),
+      );
+      expect(inputStr).toBe("Previous context here\n\nDo the thing");
+      expect(inputStr).not.toContain("Rule A");
     });
 
     it("delivers a pending synthetic seed to an eagerly created thread", async () => {
@@ -489,7 +691,7 @@ describe("CodexConversationRuntime", () => {
           syntheticForkSeed: "anchored history",
         }),
       );
-      expect(thread.capturedInput).toBe(
+      expect(capturedText(thread)).toBe(
         "anchored history\n\nretry first prompt",
       );
     });
@@ -523,19 +725,12 @@ describe("CodexConversationRuntime", () => {
       await runtime.sendTurn(
         makeTurnInput({ promptText: `${indexTurnOne}\n\nDo the thing` }),
       );
-      const first = thread.capturedInput as string;
-      const instructionsStart = first.indexOf("## System Instructions");
-      const instructionsEnd = first.indexOf("\n```", instructionsStart);
-      expect(instructionsStart).toBeGreaterThanOrEqual(0);
-      expect(first.slice(instructionsStart, instructionsEnd)).toContain(
-        MEMORY_ADVISORY_CONTRACT,
-      );
-      expect(first.slice(instructionsStart, instructionsEnd)).not.toContain(
-        "first-lesson",
-      );
-      expect(
-        first.indexOf("- first-lesson [project, just now]", instructionsEnd),
-      ).toBeGreaterThan(instructionsEnd);
+      const first = capturedText(thread);
+      const governing = creationInstructions();
+      expect(governing).toContain(MEMORY_ADVISORY_CONTRACT);
+      expect(governing).not.toContain("first-lesson");
+      expect(first).not.toContain(MEMORY_ADVISORY_CONTRACT);
+      expect(first).toContain("- first-lesson [project, just now]");
 
       const resumedThread = makeCapturingThread(
         minimalSuccessEvents("thread-123"),
@@ -544,7 +739,7 @@ describe("CodexConversationRuntime", () => {
       await runtime.sendTurn(
         makeTurnInput({ promptText: `${indexTurnTwo}\n\nDo the next thing` }),
       );
-      const second = resumedThread.capturedInput as string;
+      const second = capturedText(resumedThread);
       expect(second).not.toContain("## System Instructions");
       expect(second).not.toContain(MEMORY_ADVISORY_CONTRACT);
       expect(second).toContain("- second-lesson [project, just now]");
@@ -563,13 +758,14 @@ describe("CodexConversationRuntime", () => {
 
       expect(startThreadFn).toHaveBeenCalledWith(
         expect.objectContaining({
-          workingDirectory: "/test/worktree",
-          sandboxMode: "danger-full-access",
+          cwd: "/test/worktree",
+          sandbox: "danger-full-access",
           approvalPolicy: "never",
-          webSearchMode: "disabled",
-          skipGitRepoCheck: true,
           model: "o3-pro",
-          modelReasoningEffort: "high",
+          config: expect.objectContaining({
+            web_search: "disabled",
+            model_reasoning_effort: "high",
+          }),
         }),
       );
     });
@@ -582,7 +778,7 @@ describe("CodexConversationRuntime", () => {
 
       const threadOpts = startThreadFn.mock.calls[0]![0];
       expect(threadOpts.model).toBe("gpt-5.4");
-      expect(threadOpts.modelReasoningEffort).toBe("high");
+      expect(threadOpts.config.model_reasoning_effort).toBe("high");
     });
 
     it("disables Codex's native memories on every launched conversation", async () => {
@@ -595,8 +791,7 @@ describe("CodexConversationRuntime", () => {
 
       await runtime.sendTurn(makeTurnInput());
 
-      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0];
+      const codexCall = startThreadFn.mock.calls[0]?.[0];
       expect(codexCall.config).toMatchObject({
         memories: {
           dedicated_tools: false,
@@ -612,11 +807,12 @@ describe("CodexConversationRuntime", () => {
 
       await runtime.sendTurn(makeTurnInput());
 
-      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0];
+      const codexCall = startThreadFn.mock.calls[0]?.[0];
       expect(codexCall.config).toMatchObject({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        model_reasoning_effort: "high",
+        web_search: "disabled",
       });
     });
 
@@ -638,10 +834,10 @@ describe("CodexConversationRuntime", () => {
   // --------------------------------------------------------
 
   describe("sendTurn — cctl env contract", () => {
-    /** Read the env handed to the Codex SDK on the first createCodex call. */
+    /** Read the exact environment passed to the first app-server process. */
     function envOfFirstTurn(): Record<string, string> {
-      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0];
+      const codexCall = vi.mocked(deps.createAppServer).mock.calls[0]?.[0];
+      if (!codexCall) throw new Error("No app-server process launch");
       return codexCall.env as Record<string, string>;
     }
 
@@ -794,8 +990,9 @@ describe("CodexConversationRuntime", () => {
       setupThread(minimalSuccessEvents("thread-123"));
       await runtime.sendTurn(makeTurnInput());
 
-      const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
-        .mock.calls;
+      const createCodexCalls = (
+        deps.createAppServer as ReturnType<typeof vi.fn>
+      ).mock.calls;
       const firstEnv = createCodexCalls[0]![0].env as Record<string, string>;
       const secondEnv = createCodexCalls[1]![0].env as Record<string, string>;
       expect("CC_SERVER_URL" in firstEnv).toBe(false);
@@ -820,8 +1017,10 @@ describe("CodexConversationRuntime", () => {
       await runtime.sendTurn(makeTurnInput());
 
       expect(resumeThreadFn).toHaveBeenCalledWith(
-        "thread-existing",
-        expect.any(Object),
+        expect.objectContaining({
+          threadId: "thread-existing",
+          excludeTurns: true,
+        }),
       );
       expect(startThreadFn).not.toHaveBeenCalled();
     });
@@ -842,7 +1041,7 @@ describe("CodexConversationRuntime", () => {
 
       await runtime.sendTurn(makeTurnInput({ promptText: "Next prompt" }));
 
-      const inputStr = thread.capturedInput as string;
+      const inputStr = capturedText(thread);
       expect(inputStr).not.toContain("## System Instructions");
       expect(inputStr).not.toContain("Rule A");
       expect(inputStr).toBe("Next prompt");
@@ -862,7 +1061,7 @@ describe("CodexConversationRuntime", () => {
       resumeThreadFn.mockReturnValue(thread2);
       await runtime.sendTurn(makeTurnInput({ promptText: "Second prompt" }));
 
-      const inputStr = thread2.capturedInput as string;
+      const inputStr = capturedText(thread2);
       expect(inputStr).not.toContain("## System Instructions");
       expect(inputStr).toBe("Second prompt");
     });
@@ -990,8 +1189,8 @@ describe("CodexConversationRuntime", () => {
       );
 
       expect(observed).toEqual([
-        "accepted",
         "init",
+        "accepted",
         "thinking:First progress",
         "text:Second progress",
       ]);
@@ -1285,9 +1484,9 @@ describe("CodexConversationRuntime", () => {
         { type: "thinking", text: "Thinking hard..." },
         {
           type: "tool_use",
-          id: "todo-1",
+          id: "codex-plan",
           name: "TodoWrite",
-          input: { todos: [{ text: "Step 1", completed: false }] },
+          input: { todos: [{ content: "Step 1", status: "pending" }] },
         },
         { type: "text", text: "Done" },
       ]);
@@ -1328,7 +1527,7 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.contextTokens).toBe(200);
+      expect(result.contextTokens).toBeNull();
       expect(result.numTurns).toBe(1);
     });
 
@@ -1407,13 +1606,10 @@ describe("CodexConversationRuntime", () => {
   // --------------------------------------------------------
 
   describe("sendTurn — input acceptance", () => {
-    // The SDK's runStreamed returns a LAZY generator — the codex process only
-    // spawns on the first iteration. Acceptance must therefore be signaled by
-    // the first ThreadEvent, never by runStreamed resolving: a false
-    // acceptance marks queued rows delivered for a message the agent never
-    // received (req 4.2).
+    // Thread initialization establishes continuity, while correlated turn start
+    // establishes user acceptance before normalized output is delivered.
 
-    it("emits input_accepted exactly once, before any other backend event", async () => {
+    it("emits input_accepted exactly once after initialization and before content", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const onEvent = vi.fn();
@@ -1423,7 +1619,13 @@ describe("CodexConversationRuntime", () => {
         ([e]) => (e as { type: string }).type === "input_accepted",
       );
       expect(acceptedCalls).toHaveLength(1);
-      expect(onEvent.mock.calls[0]?.[0]).toEqual({ type: "input_accepted" });
+      const emitted = onEvent.mock.calls.map(([event]) => event.type);
+      expect(emitted.indexOf("backend_init")).toBeLessThan(
+        emitted.indexOf("input_accepted"),
+      );
+      expect(emitted.indexOf("input_accepted")).toBeLessThan(
+        emitted.indexOf("content"),
+      );
     });
 
     it("does not emit input_accepted when the process dies before producing any event", async () => {
@@ -1454,9 +1656,7 @@ describe("CodexConversationRuntime", () => {
       const onEvent = vi.fn();
       const result = await runtime.sendTurn(makeTurnInput({ onEvent }));
 
-      expect(result.failure?.message).toContain(
-        "Failed to resume Codex thread",
-      );
+      expect(result.failure?.message).toContain("no rollout found");
       expect(onEvent).not.toHaveBeenCalledWith({ type: "input_accepted" });
     });
 
@@ -1530,7 +1730,7 @@ describe("CodexConversationRuntime", () => {
       // isFirstTurn should remain true so next attempt can retry
     });
 
-    it("keeps isFirstTurn true when thread.started never arrived", async () => {
+    it("reapplies privileged creation instructions after pre-thread failure", async () => {
       // First attempt fails before thread.started
       const failThread = makeThread([], {
         runStreamedThrows: new Error("Spawn failed"),
@@ -1543,13 +1743,14 @@ describe("CodexConversationRuntime", () => {
       );
       await runtime.sendTurn(makeTurnInput());
 
-      // Second attempt should still prepend instructions (isFirstTurn still true)
+      // A creation failure still requires privileged governing instructions on retry.
       const thread2 = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread2);
       await runtime.sendTurn(makeTurnInput({ promptText: "Retry" }));
 
-      const inputStr = thread2.capturedInput as string;
-      expect(inputStr).toContain("## System Instructions");
+      const inputStr = capturedText(thread2);
+      expect(creationInstructions(1)).toContain("Rule A");
+      expect(inputStr).not.toContain("Rule A");
     });
 
     it("returns clear error for missing resumed thread without falling back to startThread", async () => {
@@ -1568,9 +1769,7 @@ describe("CodexConversationRuntime", () => {
       );
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.failure?.message).toContain(
-        "Failed to resume Codex thread",
-      );
+      expect(result.failure?.message).toContain("no rollout found");
       expect(result.failure?.message).toContain("thread-gone");
       expect(result.failure?.kind).toBe("stale_resume_ref");
       expect(startThreadFn).not.toHaveBeenCalled();
@@ -1617,9 +1816,8 @@ describe("CodexConversationRuntime", () => {
       expect(resumeThreadFn).toHaveBeenCalledTimes(1);
       expect(startThreadFn).toHaveBeenCalledTimes(1);
       // Effectively a fresh start — instructions are delivered again.
-      expect(freshThread.capturedInput as string).toContain(
-        "## System Instructions",
-      );
+      expect(creationInstructions()).toContain("Be helpful");
+      expect(capturedText(freshThread)).toBe("Try again");
       expect(result.failure).toBeNull();
       expect(result.backendRef).toEqual({
         backend: "codex",
@@ -1627,16 +1825,16 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
-    it("does not rethrow SDK errors — returns them as result.failure", async () => {
+    it("does not rethrow provider errors — returns them as result.failure", async () => {
       const thread = makeThread([], {
-        runStreamedThrows: new Error("Unexpected SDK failure"),
+        runStreamedThrows: new Error("Unexpected provider failure"),
       });
       startThreadFn.mockReturnValue(thread);
 
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       // Should not throw
       const result = await runtime.sendTurn(makeTurnInput());
-      expect(result.failure?.message).toContain("Unexpected SDK failure");
+      expect(result.failure?.message).toContain("Unexpected provider failure");
     });
 
     it("preserves turn.failed error when process also crashes with exit code", async () => {
@@ -1664,8 +1862,11 @@ describe("CodexConversationRuntime", () => {
       expect(result.failure?.message).not.toContain(
         "Reading prompt from stdin",
       );
-      expect(result.continuationDisposition).toBe("clear");
-      expect(result.backendRef).toBeNull();
+      expect(result.continuationDisposition).toBe("retain");
+      expect(result.backendRef).toEqual({
+        backend: "codex",
+        ref: "thread-123",
+      });
     });
 
     it("retains a resumed thread when the local Codex process crashes", async () => {
@@ -1691,7 +1892,7 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
-    it("resets to fresh state after thread.started received but turn crashes", async () => {
+    it("resumes the known thread after a process crash without replaying governing input", async () => {
       // First turn: thread starts but then crashes
       const crashThread = makeCrashingThread(
         [threadStarted("thread-dead")],
@@ -1707,34 +1908,36 @@ describe("CodexConversationRuntime", () => {
       );
       const result1 = await runtime.sendTurn(makeTurnInput());
       expect(result1.failure).toBeTruthy();
-      expect(result1.continuationDisposition).toBe("clear");
+      expect(result1.continuationDisposition).toBe("retain");
 
-      // Second turn: should start a fresh thread, not try to resume the dead one
-      const thread2 = makeCapturingThread(minimalSuccessEvents("thread-new"));
-      startThreadFn.mockReturnValue(thread2);
+      // The next explicit turn resumes the preserved provider history.
+      const thread2 = makeCapturingThread(minimalSuccessEvents("thread-dead"));
+      resumeThreadFn.mockReturnValue(thread2);
 
       const result2 = await runtime.sendTurn(
         makeTurnInput({ promptText: "Try again" }),
       );
 
-      // Should have called startThread (not resumeThread)
-      expect(startThreadFn).toHaveBeenCalledTimes(2);
-      expect(resumeThreadFn).not.toHaveBeenCalled();
+      // Fresh creation occurs once; subsequent work resumes its reference.
+      expect(startThreadFn).toHaveBeenCalledTimes(1);
+      expect(resumeThreadFn).toHaveBeenCalledTimes(1);
 
-      // Should re-include session instructions since it's effectively a fresh start
-      const inputStr = thread2.capturedInput as string;
-      expect(inputStr).toContain("## System Instructions");
-      expect(inputStr).toContain("Be helpful");
+      // Static governing instructions remain out of ordinary user input.
+      const inputStr = capturedText(thread2);
+      expect(inputStr).toBe("Try again");
+      expect(resumeThreadFn).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: "thread-dead" }),
+      );
 
       // Second turn should succeed
       expect(result2.failure).toBeNull();
       expect(result2.backendRef).toEqual({
         backend: "codex",
-        ref: "thread-new",
+        ref: "thread-dead",
       });
     });
 
-    it("returns null backendRef when thread started but turn failed", async () => {
+    it("retains the created backendRef when the native process fails", async () => {
       const crashThread = makeCrashingThread(
         [threadStarted("thread-dead")],
         new Error(
@@ -1746,8 +1949,11 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      // Should NOT return the dead thread's ID as backendRef
-      expect(result.backendRef).toBeNull();
+      // A failed local process does not establish that provider history is lost.
+      expect(result.backendRef).toEqual({
+        backend: "codex",
+        ref: "thread-dead",
+      });
     });
   });
 
@@ -1861,7 +2067,7 @@ describe("CodexConversationRuntime", () => {
 
       expect(thread.capturedTurnOptions).toBeDefined();
       expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
-      expect(thread.capturedInput).toContain(
+      expect(capturedText(thread)).toContain(
         renderStructuredOutputInstruction(schema),
       );
       resumeThreadFn.mockReturnValue(thread);
@@ -1869,7 +2075,7 @@ describe("CodexConversationRuntime", () => {
         makeTurnInput({ promptText: "Correct the response" }),
       );
       expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
-      expect(thread.capturedInput).toContain(
+      expect(capturedText(thread)).toContain(
         renderStructuredOutputInstruction(schema),
       );
       expect(schema.required).toEqual(["x"]);
@@ -1893,9 +2099,9 @@ describe("CodexConversationRuntime", () => {
       );
 
       expect(thread.capturedTurnOptions?.outputSchema).toBeUndefined();
-      expect(typeof thread.capturedInput).toBe("string");
+      expect(typeof capturedText(thread)).toBe("string");
       expect(
-        String(thread.capturedInput).endsWith(
+        capturedText(thread).endsWith(
           `Describe it\n\n${renderStructuredOutputInstruction(schema)}`,
         ),
       ).toBe(true);
@@ -1942,7 +2148,7 @@ describe("CodexConversationRuntime", () => {
             renderStructuredOutputInstruction(schema),
           ),
         },
-        { type: "local_image", path: "/test/image.png" },
+        { type: "localImage", path: "/test/image.png" },
       ]);
       expect(schema.properties.marker).toEqual({ const: "fixed" });
     });
@@ -1983,7 +2189,7 @@ describe("CodexConversationRuntime", () => {
         text?: string;
       }>;
       expect(Array.isArray(input)).toBe(true);
-      const localImages = input.filter((i) => i.type === "local_image");
+      const localImages = input.filter((i) => i.type === "localImage");
       expect(localImages).toHaveLength(2);
       expect(localImages[0]?.path).toBe(
         "/cfg/transcripts/images/conv-123/1.png",
@@ -2083,11 +2289,8 @@ describe("CodexConversationRuntime", () => {
   });
 
   describe("sendTurn — cumulative cost attribution", () => {
-    // Codex `turn.completed` usage is CUMULATIVE for the thread (across
-    // separate exec processes), so per-turn cost must be the delta between
-    // consecutive cumulative estimates — summing snapshots inflates totals
-    // (audit 1beec403: regenerate-api DB row = sum of its two cumulative
-    // snapshots, ~1.8x real).
+    // App-server counters accumulate only inside one process. CC carries the
+    // lineage ledger forward independently of each process's token counters.
     const cumulativeUsage1: Usage = {
       input_tokens: 100,
       cached_input_tokens: 10,
@@ -2107,7 +2310,7 @@ describe("CodexConversationRuntime", () => {
     const COST_1 = 0.0009775; // 90*2.5 + 10*0.25 + 50*15 (per 1M)
     const COST_2 = 0.0024825; // 270*2.5 + 30*0.25 + 120*15 (per 1M)
 
-    it("attributes only the delta when a later turn reports thread-cumulative usage", async () => {
+    it("prices the full process-local total on each later turn", async () => {
       setupThread([
         threadStarted("thread-123"),
         agentMessageCompleted("first"),
@@ -2126,10 +2329,10 @@ describe("CodexConversationRuntime", () => {
       );
       const second = await runtime.sendTurn(makeTurnInput());
 
-      expect(second.costUsd).toBeCloseTo(COST_2 - COST_1, 10);
+      expect(second.costUsd).toBeCloseTo(COST_2, 10);
     });
 
-    it("reports the thread-cumulative estimate separately on each result", async () => {
+    it("accumulates independently measured process costs into the CC lineage", async () => {
       setupThread([
         threadStarted("thread-123"),
         agentMessageCompleted("first"),
@@ -2148,11 +2351,11 @@ describe("CodexConversationRuntime", () => {
       );
       const second = await runtime.sendTurn(makeTurnInput());
 
-      expect(second.cumulativeCostUsd).toBeCloseTo(COST_2, 10);
-      expect(second.costUsd).toBeCloseTo(COST_2 - COST_1, 10);
+      expect(second.cumulativeCostUsd).toBeCloseTo(COST_1 + COST_2, 10);
+      expect(second.costUsd).toBeCloseTo(COST_2, 10);
     });
 
-    it("re-attributes in full when the thread's cumulative counters reset", async () => {
+    it("prices a lower fresh-process counter without treating it as a reset", async () => {
       setupThread([
         threadStarted("thread-123"),
         agentMessageCompleted("first"),
@@ -2198,8 +2401,8 @@ describe("CodexConversationRuntime", () => {
         "conv-123",
         "thread-existing",
       );
-      expect(result.costUsd).toBeCloseTo(COST_2 - COST_1, 10);
-      expect(result.cumulativeCostUsd).toBeCloseTo(COST_2, 10);
+      expect(result.costUsd).toBeCloseTo(COST_2, 10);
+      expect(result.cumulativeCostUsd).toBeCloseTo(COST_1 + COST_2, 10);
     });
 
     it("ignores a persisted cost record for a different thread", async () => {
@@ -2277,7 +2480,7 @@ describe("CodexConversationRuntime", () => {
       await runtime.sendTurn(makeTurnInput());
 
       // createCodex should have been called with config containing mcp_servers
-      expect(deps.createCodex).toHaveBeenCalledWith(
+      expect(startThreadFn).toHaveBeenCalledWith(
         expect.objectContaining({
           config: expect.objectContaining({
             mcp_servers: { "test-server": { command: "node" } },
@@ -2323,12 +2526,13 @@ describe("CodexConversationRuntime", () => {
       setupThread(minimalSuccessEvents("thread-123"));
       await runtime.sendTurn(makeTurnInput());
 
-      const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
-        .mock.calls;
+      const createCodexCalls = (
+        deps.createAppServer as ReturnType<typeof vi.fn>
+      ).mock.calls;
       expect(createCodexCalls).toHaveLength(2);
 
-      const firstConfig = createCodexCalls[0]![0].config;
-      const secondConfig = createCodexCalls[1]![0].config;
+      const firstConfig = startThreadFn.mock.calls[0]?.[0].config;
+      const secondConfig = resumeThreadFn.mock.calls[0]?.[0].config;
       expect(firstConfig.mcp_servers).toEqual({ "srv-a": { command: "a" } });
       expect(secondConfig.mcp_servers).toEqual({ "srv-b": { command: "b" } });
     });
@@ -2347,12 +2551,13 @@ describe("CodexConversationRuntime", () => {
       await runtime.applyPortableMcpConfig!({ servers: [] });
       await runtime.sendTurn(makeTurnInput());
 
-      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0];
+      const codexCall = startThreadFn.mock.calls[0]?.[0];
       expect(codexCall).toHaveProperty("config");
       expect(codexCall.config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        model_reasoning_effort: "high",
+        web_search: "disabled",
         memories: {
           dedicated_tools: false,
           generate_memories: false,
@@ -2423,11 +2628,12 @@ describe("CodexConversationRuntime", () => {
         cwd: "/test/worktree",
         env: expect.any(Object),
       });
-      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0];
+      const codexCall = startThreadFn.mock.calls[0]?.[0];
       expect(codexCall.config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        model_reasoning_effort: "high",
+        web_search: "disabled",
         memories: {
           dedicated_tools: false,
           generate_memories: false,
@@ -2461,11 +2667,12 @@ describe("CodexConversationRuntime", () => {
 
       await runtime.sendTurn(makeTurnInput());
 
-      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0];
+      const codexCall = startThreadFn.mock.calls[0]?.[0];
       expect(codexCall.config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        model_reasoning_effort: "high",
+        web_search: "disabled",
         memories: {
           dedicated_tools: false,
           generate_memories: false,
@@ -2478,7 +2685,7 @@ describe("CodexConversationRuntime", () => {
   });
 
   describe("Codex fast mode", () => {
-    it("builds SDK options from fast mode in the complete selection", async () => {
+    it("builds native thread configuration from fast mode in the complete selection", async () => {
       setupThread(minimalSuccessEvents());
       const selectedFastMode = modelSelection("gpt-5.4", "high", "true");
       const runtime = new CodexConversationRuntime(
@@ -2490,11 +2697,11 @@ describe("CodexConversationRuntime", () => {
         makeTurnInput({ modelSelection: selectedFastMode }),
       );
 
-      const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
-        .mock.calls;
-      expect(createCodexCalls[0]![0].config).toEqual({
+      expect(startThreadFn.mock.calls[0]?.[0].config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        model_reasoning_effort: "high",
+        web_search: "disabled",
         memories: {
           dedicated_tools: false,
           generate_memories: false,
@@ -2511,8 +2718,7 @@ describe("CodexConversationRuntime", () => {
 
       await runtime.sendTurn(makeTurnInput());
 
-      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0];
+      const codexCall = startThreadFn.mock.calls[0]?.[0];
       expect(codexCall.config).toMatchObject({
         service_tier: "default",
         features: { fast_mode: false },
@@ -2539,10 +2745,8 @@ describe("CodexConversationRuntime", () => {
   // --------------------------------------------------------
 
   /**
-   * Codex delivers session instructions inside a fenced "## System Instructions"
-   * header on the first turn — weaker, textual semantics than Claude's system
-   * prompt. Containment of the profile layer has to hold against THAT framing,
-   * so these drive the real first-turn prompt build.
+   * The profile remains subordinate inside native developerInstructions;
+   * user prompts and synthetic context travel in separate turn/start input.
    */
   describe("agent profile delivery", () => {
     const CHARTER_LAYER =
@@ -2576,10 +2780,8 @@ describe("CodexConversationRuntime", () => {
       );
       await runtime.sendTurn(makeTurnInput({ promptText: "Review the diff" }));
 
-      const captured = thread.capturedInput;
-      if (typeof captured !== "string") {
-        throw new Error("expected a string prompt input");
-      }
+      const captured = creationInstructions();
+      expect(capturedText(thread)).toBe("Review the diff");
       return { input: captured, snapshot };
     }
 
@@ -2616,16 +2818,13 @@ describe("CodexConversationRuntime", () => {
         }),
       );
 
-      expect(input).toContain("## System Instructions");
+      expect(input).not.toContain("Review the diff");
       expect(input).toContain(CHARTER_LAYER);
       expect(input).toContain("cannot expand your scope");
       expect(input.indexOf(CHARTER_LAYER)).toBeLessThan(
         input.indexOf(PROFILE_BLOCK_BEGIN),
       );
-      // The user request stays in its own channel, after the instruction frame.
-      expect(input.indexOf(PROFILE_BLOCK_END)).toBeLessThan(
-        input.indexOf("Review the diff"),
-      );
+      // User text is checked on the separate native turn input by deliverProfile.
       // What reached the transport is byte-identical to the stored block, and
       // resolvedInstructionHash covers exactly those delivered bytes.
       expect(deliveredProfileLayer(input)).toBe(

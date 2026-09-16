@@ -11,11 +11,12 @@ import nextConfig from "../next.config";
  * bundling preference.
  */
 describe("next.config serverExternalPackages", () => {
-  it("keeps both agent SDKs out of the Turbopack server bundle", () => {
+  it("keeps native agent runtimes and SDKs out of the Turbopack server bundle", () => {
     expect(nextConfig.serverExternalPackages).toEqual(
       expect.arrayContaining([
         "@anthropic-ai/claude-agent-sdk",
         "@openai/codex-sdk",
+        "@openai/codex",
       ]),
     );
   });

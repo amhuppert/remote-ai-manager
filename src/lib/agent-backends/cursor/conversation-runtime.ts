@@ -19,7 +19,10 @@ import type {
   ConversationBackendTurnResult,
   ConversationQueuedUserInput,
 } from "../conversation";
-import type { AgentFailureClassification } from "../errors";
+import {
+  InputDeliveryUncertainError,
+  type AgentFailureClassification,
+} from "../errors";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { McpApplyResult, PortableMcpConfig } from "../portable-mcp";
 import type { ConversationTokenUsage } from "../schemas";
@@ -170,6 +173,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
   private _status: "alive" | "dead" = "alive";
+  private liveInputBarrier: Promise<void> = Promise.resolve();
+  private liveInputArchiveFailure: Error | null = null;
   private readonly conversationId: string;
   private readonly conversationTarget: ConversationTarget;
   private readonly worktreePath: string;
@@ -295,11 +300,33 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       .map((block) => block.text)
       .join("\n\n");
     if (!text.trim()) throw new Error("Cursor steering requires text");
-    await this.steering.deliver(
-      turn.runId,
-      (requestId) => session.steer(turn.runId, requestId, text),
-      input.signal,
-    );
+    const previous = this.liveInputBarrier;
+    const barrier = Promise.withResolvers<void>();
+    this.liveInputBarrier = previous.then(() => barrier.promise);
+    try {
+      await previous;
+      if (turn.settled || turn.aborted) {
+        throw new Error("Cursor turn ended before steering");
+      }
+      await this.steering.deliver(
+        turn.runId,
+        (requestId) => session.steer(turn.runId, requestId, text),
+        input.signal,
+      );
+      try {
+        await input.onAccepted?.();
+      } catch (error) {
+        this.liveInputArchiveFailure = new InputDeliveryUncertainError(
+          `Accepted input could not be archived: ${getErrorMessage(error)}`,
+        );
+        // close drains the event chain, so release its suppressed events first.
+        barrier.resolve();
+        await this.close();
+        throw this.liveInputArchiveFailure;
+      }
+    } finally {
+      barrier.resolve();
+    }
   }
 
   async sendTurn(
@@ -388,12 +415,15 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       this.loseTasks("run_ended");
     }
     await this.discarding;
-    // Every event emitted for this turn has been handled before the caller
-    // sees the result, so a transcript append cannot land after the turn row.
+    // Every accepted input and event is durable before the caller sees the result.
+    await this.liveInputBarrier;
     await this.emitChain;
     if (this.acceptedThisPrompt)
       await this.deps.capabilityDelivery?.markDelivered();
 
+    if (this.liveInputArchiveFailure !== null) {
+      return this.settleWithFailure(this.liveInputArchiveFailure, startedAt);
+    }
     return this.buildResult(turn.state, turn.outcome, startedAt);
   }
 
@@ -1214,7 +1244,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     const handler = this.onEvent;
     if (handler === null) return;
     this.emitChain = this.emitChain
-      .then(() => handler(event))
+      .then(async () => {
+        await this.liveInputBarrier;
+        if (this.liveInputArchiveFailure === null) await handler(event);
+      })
       .catch((error: unknown) => {
         logger.warn("cursor-runtime.event_handler_failed", {
           conversationId: this.conversationId,

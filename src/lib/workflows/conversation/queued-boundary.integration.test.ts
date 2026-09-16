@@ -140,3 +140,78 @@ it.each(["preparation", "readiness", "transcript", "receipt"] as const)(
     }
   },
 );
+
+it.each(["missing acknowledgement", "queue settlement"] as const)(
+  "retains the durable claim without redelivery after %s failure",
+  async (phase) => {
+    let dispatches = 0;
+    let answerProduced = false;
+    const transcript: TranscriptEntry[] = [];
+    fixture = await createLifecycleFixture({
+      actorDeps: {
+        getConversationBackendFactory: () => ({
+          backend: "claude",
+          validateModelSelection() {},
+          createRuntime: async () =>
+            createMockBackendRuntime({
+              sendTurn: async (input) => {
+                dispatches += 1;
+                if (phase === "missing acknowledgement")
+                  return {
+                    ...result,
+                    failure: {
+                      kind: "backend_error",
+                      message: "Written start acknowledgement lost",
+                      retryable: false,
+                    },
+                  };
+                await input.onEvent({ type: "input_accepted" });
+                await input.onEvent({
+                  type: "content",
+                  block: { type: "text", text: "completed answer" },
+                });
+                answerProduced = true;
+                return result;
+              },
+            }),
+        }),
+        appendTranscriptEntryOnce: async (_id, entry) => {
+          transcript.push(entry);
+        },
+        confirmQueuedDelivery: async () => {
+          throw new Error("Queue settlement unavailable");
+        },
+      },
+    });
+    await fixture.manager.ensureConversationLifecycle(fixture.binding);
+    const entry = await fixture.queue.enqueue({
+      ...fixture.identity,
+      content: [{ type: "text", text: `queued-${phase}` }],
+    });
+    const claim = await fixture.queue.claimNextTurnBatch(fixture.identity);
+    if (!claim) throw new Error("Claim missing");
+    const admission = await fixture.manager.submitConversationTurn({
+      binding: fixture.binding,
+      turn: { promptText: `queued-${phase}`, queuedDelivery: claim },
+    });
+    if (admission.kind !== "accepted") throw new Error(admission.message);
+    await admission.turn.completed;
+    expect(answerProduced).toBe(phase === "queue settlement");
+    expect(transcript.filter((stored) => stored.role === "user")).toHaveLength(
+      phase === "queue settlement" ? 1 : 0,
+    );
+    const row = await fixture.persistence
+      .recreateStore()
+      .getConversation(
+        fixture.identity.projectPath,
+        fixture.identity.sessionName,
+        fixture.identity.conversationId,
+      );
+    expect(row?.pendingQueue).toMatchObject([
+      { id: entry.id, status: "uncertain" },
+    ]);
+    expect(await fixture.queue.claimNextTurnBatch(fixture.identity)).toBeNull();
+    await fixture.manager.ensureConversationLifecycle(fixture.binding);
+    expect(dispatches).toBe(1);
+  },
+);

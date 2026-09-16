@@ -76,6 +76,7 @@ import {
 } from "../structured-output-prompt";
 import { createClaudeFailureClassifier } from "./failure-classifier";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { InputDeliveryUncertainError } from "../errors";
 import {
   resolveClaudeModelSelection,
   type ResolvedClaudeModelSelection,
@@ -198,6 +199,8 @@ class ClaudeConversationRuntime
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
   private _status: "alive" | "dead" = "alive";
+  private liveInputBarrier: Promise<void> = Promise.resolve();
+  private liveInputArchiveFailure: Error | null = null;
   private querySession: QuerySession;
   private readonly onPortableMcpApplied: (
     config: PortableMcpConfig | null,
@@ -351,7 +354,10 @@ class ClaudeConversationRuntime
     let inputAcceptedEmitted = false;
 
     const interpreter = createClaudeMessageInterpreter({
-      onEvent: input.onEvent,
+      onEvent: async (event) => {
+        await this.liveInputBarrier;
+        if (this.liveInputArchiveFailure === null) await input.onEvent(event);
+      },
     });
 
     const emit = (event: string, data: unknown) => {
@@ -414,7 +420,11 @@ class ClaudeConversationRuntime
       // Drain barrier: every emitted event's handler (queued-user acceptance,
       // transcript appends) must settle before the turn is reported complete,
       // so a reader observing completion sees the full ordered transcript.
+      await this.liveInputBarrier;
       await interpreter.flush();
+      if (this.liveInputArchiveFailure !== null) {
+        throw this.liveInputArchiveFailure;
+      }
 
       const result: ConversationBackendTurnResult = {
         ...resolveClaudeContinuation(backendRef, turnResult.error),
@@ -445,7 +455,8 @@ class ClaudeConversationRuntime
       });
 
       return result;
-    } catch (err) {
+    } catch (caught) {
+      const err = this.liveInputArchiveFailure ?? caught;
       const errorMsg = getErrorMessage(err);
       const wasAborted = input.signal.aborted;
       const classification = wasAborted
@@ -522,7 +533,24 @@ class ClaudeConversationRuntime
     // consumed by the SDK: that is the live input-acceptance signal. A
     // rejection (tagged promptNotDelivered — the session died before
     // consuming it) propagates so the caller leaves the row pending.
-    await this.querySession.queueUserInput(input.content);
+    const previous = this.liveInputBarrier;
+    const barrier = Promise.withResolvers<void>();
+    this.liveInputBarrier = previous.then(() => barrier.promise);
+    try {
+      await previous;
+      await this.querySession.queueUserInput(input.content);
+      try {
+        await input.onAccepted?.();
+      } catch (error) {
+        this.liveInputArchiveFailure = new InputDeliveryUncertainError(
+          `Accepted input could not be archived: ${getErrorMessage(error)}`,
+        );
+        await this.close();
+        throw this.liveInputArchiveFailure;
+      }
+    } finally {
+      barrier.resolve();
+    }
   }
 
   async applyPortableMcpConfig(

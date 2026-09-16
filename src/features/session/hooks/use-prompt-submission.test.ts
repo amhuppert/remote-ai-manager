@@ -519,32 +519,39 @@ describe("usePromptSubmission", () => {
       };
     }
 
-    it("queues with the text when an in-turn backend (claude) is running", async () => {
-      const h = renderQueueHook({
-        sending: true,
-        selectedBackend: "claude",
-        serialized: { prompt: "  follow up  ", images: [] },
-      });
+    it.each(["claude", "codex"] as const)(
+      "queues with the text when the in-turn backend %s is running",
+      async (backend) => {
+        const h = renderQueueHook({
+          sending: true,
+          selectedBackend: backend,
+          serialized: { prompt: "  follow up  ", images: [] },
+        });
 
-      await act(async () => {
-        await h.result.current.handleSendPrompt();
-      });
+        await act(async () => {
+          await h.result.current.handleSendPrompt();
+        });
 
-      expect(h.queueMessage).toHaveBeenCalledTimes(1);
-      expect(h.queueMessage).toHaveBeenCalledWith(
-        "follow up",
-        undefined,
-        "  follow up  ",
-        CLAUDE_SELECTION,
-      );
-      expect(h.sendPrompt).not.toHaveBeenCalled();
-    });
+        expect(h.queueMessage).toHaveBeenCalledTimes(1);
+        expect(h.queueMessage).toHaveBeenCalledWith(
+          "follow up",
+          undefined,
+          "  follow up  ",
+          selectionForBackend(backend),
+        );
+        expect(h.sendPrompt).not.toHaveBeenCalled();
+      },
+    );
 
-    it("queues when a next-turn backend (codex) is running", async () => {
+    it("queues when an explicit next-turn capability is supplied", async () => {
       const h = renderQueueHook({
         sending: true,
         selectedBackend: "codex",
         serialized: { prompt: "later", images: [] },
+        queueCapabilityForBackend: () => ({
+          acceptsWhileRunning: true,
+          deliveryTiming: "next_turn",
+        }),
       });
 
       await act(async () => {
@@ -562,8 +569,8 @@ describe("usePromptSubmission", () => {
     });
 
     it("queues when the conversation is running server-side even though this tab did not start the turn", async () => {
-      // Codex next-turn delivery: the drained queued turn runs server-side with
-      // no client stream, so `sending` is false while status is "running".
+      // A reload or drained queued turn can leave this tab without a client
+      // stream, so `sending` is false while status is "running".
       const h = renderQueueHook({
         sending: false,
         selectedBackend: "codex",

@@ -36,7 +36,6 @@ const DOUBLE_ASSERTION_ALLOWLIST: ReadonlyMap<string, number> = new Map([
   // @openai/codex-sdk client/usage types diverge from observed runtime
   // shapes; both casts adapt the SDK object to the locally-typed port.
   ["codex/task-runner.ts", 2],
-  ["codex/conversation-runtime.ts", 1],
 ]);
 
 function listSeamSourceFiles(dir: string): string[] {

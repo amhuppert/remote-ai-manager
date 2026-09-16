@@ -77,6 +77,8 @@ export function createQueuedDeliveryAccounting(
   // separate facts. Retain ownership until both have completed.
   let userEntry: Promise<void> | undefined;
   let deliveryRecorded = false;
+  let reviewRecorded = false;
+  let settlementError: string | undefined;
   let acceptance: Promise<void> | undefined;
 
   function appendQueuedUserEntryOnce(): Promise<void> {
@@ -87,6 +89,37 @@ export function createQueuedDeliveryAccounting(
         throw error;
       });
     return userEntry;
+  }
+
+  async function holdForReview(): Promise<void> {
+    if (!input.queuedDelivery || deliveryRecorded || reviewRecorded) return;
+    try {
+      await deps.markQueuedUncertain({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        ids: input.queuedDelivery.messageIds,
+        deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        error:
+          settlementError ??
+          "Delivery may have reached the agent, but its acknowledgement was not durably completed. Review before retrying or discarding.",
+      });
+      reviewRecorded = true;
+      logger.warn("queue.delivery_review_required", {
+        ...scopeRefFromStoreSessionName(input.sessionName),
+        conversationId: input.conversationId,
+        messageIds: input.queuedDelivery.messageIds,
+        deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+      });
+    } catch (err) {
+      logger.error("queue.delivery_review_failed", {
+        ...scopeRefFromStoreSessionName(input.sessionName),
+        conversationId: input.conversationId,
+        messageIds: input.queuedDelivery.messageIds,
+        deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        error: getErrorMessage(err),
+      });
+    }
   }
 
   return {
@@ -105,21 +138,33 @@ export function createQueuedDeliveryAccounting(
       acceptance = (async () => {
         if (!input.queuedDelivery || deliveryRecorded) return;
         await appendQueuedUserEntryOnce();
-        const released = await deps.confirmQueuedDelivery({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          ids: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-        });
-        deliveryRecorded = true;
-        logger.info("queue.accepted", {
-          ...scopeRefFromStoreSessionName(input.sessionName),
-          conversationId: input.conversationId,
-          messageIds: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-          released,
-        });
+        try {
+          const released = await deps.confirmQueuedDelivery({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+            ids: input.queuedDelivery.messageIds,
+            deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+          });
+          deliveryRecorded = true;
+          logger.info("queue.accepted", {
+            ...scopeRefFromStoreSessionName(input.sessionName),
+            conversationId: input.conversationId,
+            messageIds: input.queuedDelivery.messageIds,
+            deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+            released,
+          });
+        } catch (error) {
+          settlementError = getErrorMessage(error);
+          logger.error("queue.acceptance_settlement_failed", {
+            ...scopeRefFromStoreSessionName(input.sessionName),
+            conversationId: input.conversationId,
+            messageIds: input.queuedDelivery.messageIds,
+            deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+            error: settlementError,
+          });
+          await holdForReview();
+        }
       })();
       void acceptance.catch(() => {
         acceptance = undefined;
@@ -127,33 +172,6 @@ export function createQueuedDeliveryAccounting(
       return acceptance;
     },
 
-    async settleAfterTurn(): Promise<void> {
-      if (!input.queuedDelivery || deliveryRecorded) return;
-      try {
-        await deps.markQueuedUncertain({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
-          ids: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-          error:
-            "Delivery may have reached the agent, but its acknowledgement was not durably completed. Review before retrying or discarding.",
-        });
-        logger.warn("queue.delivery_review_required", {
-          ...scopeRefFromStoreSessionName(input.sessionName),
-          conversationId: input.conversationId,
-          messageIds: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-        });
-      } catch (err) {
-        logger.error("queue.delivery_review_failed", {
-          ...scopeRefFromStoreSessionName(input.sessionName),
-          conversationId: input.conversationId,
-          messageIds: input.queuedDelivery.messageIds,
-          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-          error: getErrorMessage(err),
-        });
-      }
-    },
+    settleAfterTurn: holdForReview,
   };
 }

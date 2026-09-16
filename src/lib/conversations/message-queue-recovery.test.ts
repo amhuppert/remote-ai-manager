@@ -91,10 +91,12 @@ describe("durable queue recovery", () => {
           },
         },
       );
-      if (failure !== "missing acknowledgement")
+      if (failure === "transcript failure")
         await expect(accounting.handleInputAccepted()).rejects.toThrow(
           "disk unavailable",
         );
+      if (failure === "queue acknowledgement failure")
+        await expect(accounting.handleInputAccepted()).resolves.toBeUndefined();
       await accounting.settleAfterTurn();
       const reloaded = await fixture
         .recreateStore()

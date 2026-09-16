@@ -7,6 +7,7 @@
  * in production.
  */
 
+import { createFakeCodexProvider } from "./fake-codex-provider";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "../schemas";
@@ -14,7 +15,6 @@ import type { ConversationBackendTurnResult } from "../conversation";
 import {
   CodexConversationRuntime,
   type CodexConversationRuntimeDeps,
-  type CodexThreadLike,
 } from "../codex/conversation-runtime";
 
 export const STALE_CODEX_RESUME_REF: AgentSessionRef = {
@@ -28,33 +28,24 @@ const STALE_CODEX_MODEL_SELECTION = {
 } satisfies BackendModelSelection;
 
 function makeStaleResumeDeps(): CodexConversationRuntimeDeps {
-  const staleThread: CodexThreadLike = {
-    id: STALE_CODEX_RESUME_REF.ref,
-    async runStreamed() {
-      throw new Error(
-        `thread/resume: no rollout found for thread id "${STALE_CODEX_RESUME_REF.ref}"`,
-      );
-    },
-  };
+  const { deps } = createFakeCodexProvider();
   return {
-    createCodex: () => ({
-      startThread: () => {
-        throw new Error("stale resume must not fall back to startThread");
-      },
-      resumeThread: () => staleThread,
-    }),
-    buildChildEnv: () => ({ NODE_ENV: "test" }),
-    toStringEnv: () => ({}),
-    getServerUrl: () => null,
-    getApiToken: () => null,
-    getConfigDir: () => "/cfg",
-    ensureManagedSkillsBridge: async () =>
-      ({ status: "skipped", reason: "no_bundle" }) as const,
-    translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
-    listNativeCodexMcpServers: async () => [],
-    getCodexPricingOverrides: async () => null,
-    readPersistedCostBaseline: async () => null,
-    now: () => 1000,
+    ...deps,
+    createAppServer(options) {
+      const client = deps.createAppServer(options);
+      return {
+        ...client,
+        async request(method, params) {
+          if (method === "thread/resume")
+            throw new Error(
+              `thread/resume: no rollout found for thread id "${STALE_CODEX_RESUME_REF.ref}"`,
+            );
+          if (method === "thread/start")
+            throw new Error("stale resume must not fall back to thread/start");
+          return client.request(method, params);
+        },
+      };
+    },
   };
 }
 

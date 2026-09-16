@@ -173,10 +173,11 @@ const DRAIN_CONTEXT: Pick<ConversationContext, "projectPath" | "target"> = {
   ),
 };
 
-describe("Codex next-turn coalescing flow (integration)", () => {
+describe("Deferred Codex queue coalescing flow (integration)", () => {
   it("queues two messages, drains exactly one coalesced turn, and clears the pending entries on delivery", async () => {
-    // Compose the REAL queue service over an in-memory running Codex
-    // conversation, and the REAL drain over the same service instance.
+    // Direct enqueue deliberately creates deferred rows; this exercises the
+    // shared drain independently of whether the backend supports live input.
+    // Compose the real queue service and drain over the same stored state.
     const store: FakeStore = { conversation: makeRunningConversation() };
     const { deps, broadcasts } = makeQueueDeps(store);
     const service = createMessageQueueService(deps);

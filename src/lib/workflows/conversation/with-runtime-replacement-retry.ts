@@ -66,11 +66,13 @@ export interface RuntimeReplacementRetryDeps {
    * actually invoked, and the raw failure each invocation threw before it was
    * classified. A checkpoint delivery classifies its own outcome from these
    * rather than from the normalized result, which has lost the adapter's
-   * prompt-not-delivered mark.
+   * prompt-not-delivered mark. The completed observer lets the runtime owner
+   * retain typed cleanup failures before the facade projects the turn.
    */
   observe?: {
     sending(): void;
     failed(error: unknown): void;
+    completed?(result: ConversationBackendTurnResult): void;
   };
 }
 
@@ -150,10 +152,23 @@ export function withRuntimeReplacementRetry(
     while (true) {
       try {
         deps.observe?.sending();
-        return enforceContinuationConsistency(
+        let result = enforceContinuationConsistency(
           await current.sendTurn(turnInput),
           deps,
         );
+        if (result.cleanupFailure) {
+          result = {
+            ...result,
+            aborted: false,
+            failure: {
+              kind: "backend_error",
+              message: result.cleanupFailure.message,
+              retryable: false,
+            },
+          };
+        }
+        deps.observe?.completed?.(result);
+        return result;
       } catch (err) {
         deps.observe?.failed(err);
         const classification = deps.classify(err);

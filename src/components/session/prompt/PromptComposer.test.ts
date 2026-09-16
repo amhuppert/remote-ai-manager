@@ -49,9 +49,24 @@ describe("computeSendButtonState", () => {
     ).toEqual({ disabled: false, title: "Queue for this turn" });
   });
 
-  it("labels next-turn delivery when sending into a Codex conversation", () => {
+  it("labels in-turn delivery when sending into a Codex conversation", () => {
     expect(
       computeSendButtonState({ ...base, sending: true, backend: "codex" }),
+    ).toEqual({ disabled: false, title: "Queue for this turn" });
+  });
+
+  it("labels next-turn delivery when that capability is explicitly supplied", () => {
+    const nextTurn: QueueCapability = {
+      acceptsWhileRunning: true,
+      deliveryTiming: "next_turn",
+    };
+    expect(
+      computeSendButtonState({
+        ...base,
+        sending: true,
+        backend: "codex",
+        queueCapabilityForBackend: () => nextTurn,
+      }),
     ).toEqual({ disabled: false, title: "Queue for next turn" });
   });
 
@@ -73,8 +88,8 @@ describe("computeSendButtonState", () => {
   });
 
   it("labels queue delivery when the conversation runs server-side without a local stream", () => {
-    // Drained Codex next-turn delivery / reload / another client: `sending`
-    // is false but the conversation's turn is running.
+    // A drained turn, reload, or another client can leave `sending` false
+    // while the conversation's turn is running.
     expect(
       computeSendButtonState({
         ...base,
@@ -82,7 +97,7 @@ describe("computeSendButtonState", () => {
         conversationRunning: true,
         backend: "codex",
       }),
-    ).toEqual({ disabled: false, title: "Queue for next turn" });
+    ).toEqual({ disabled: false, title: "Queue for this turn" });
   });
 
   it("disables when the backend cannot accept and the turn runs server-side", () => {

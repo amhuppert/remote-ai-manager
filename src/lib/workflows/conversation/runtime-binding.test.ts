@@ -30,6 +30,33 @@ function fixture(close: () => Promise<void>) {
 }
 
 describe("managed conversation backend lifetime", () => {
+  it("retains cleanup ownership despite close success, reconciliation, and attempted replacement", async () => {
+    const close = vi.fn(async () => {});
+    const f = fixture(close);
+    const failure = {
+      kind: "cleanup_unverified",
+      message: "Inspect surviving commands; protection ends at restart.",
+    } as const;
+    f.owner.recordCleanupFailure(failure);
+    expect(f.owner.cleanupFailure).toEqual(failure);
+    expect(f.owner.recordCleanupFailure(failure)).toBe(false);
+    await expect(f.owner.close()).rejects.toThrow("Inspect surviving commands");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(f.owner.backend).toBe(f.backend);
+    expect(f.index.get("conv-1")).toBe(f.backend);
+    f.owner.reconcileClose();
+    await expect(f.owner.close()).rejects.toThrow("Inspect surviving commands");
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(() => f.owner.beginCreation()).toThrow("Inspect surviving commands");
+    expect(() =>
+      f.owner.install(f.incarnation, f.backend, f.configuration, {
+        register() {},
+        unregister() {},
+      }),
+    ).toThrow("Inspect surviving commands");
+    expect(f.owner.backend).toBe(f.backend);
+  });
+
   it("joins concurrent closes and keeps the handle indexed until owned work drains", async () => {
     const shutdown = deferred();
     const effect = deferred();

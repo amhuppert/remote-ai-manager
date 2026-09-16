@@ -11,6 +11,9 @@ import type {
 } from "@/lib/notepads/change-notices";
 
 export interface ConversationDurableEffects {
+  notifyRuntimeCleanup(
+    input: import("./runtime-cleanup-notification").RuntimeCleanupNotificationInput,
+  ): Promise<void>;
   // State mutations
   mutateConversation(
     projectPath: string,
@@ -128,6 +131,7 @@ export interface ConversationDurableEffects {
 }
 
 export const ephemeralConversationEffects = {
+  notifyRuntimeCleanup: async () => {},
   mutateConversation: async () => {},
   createReferenceDocument: async () => ({}),
   confirmQueuedDelivery: async () => 0,

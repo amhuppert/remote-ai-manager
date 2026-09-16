@@ -40,6 +40,8 @@ const nextConfig: NextConfig = {
   // undefined inside the bundle and the native-memory launch guard refuses
   // every Claude launch.
   serverExternalPackages: [
+    // Native executable resolution needs a real package path, not a bundle module id.
+    "@openai/codex",
     "@openai/codex-sdk",
     "@anthropic-ai/claude-agent-sdk",
   ],

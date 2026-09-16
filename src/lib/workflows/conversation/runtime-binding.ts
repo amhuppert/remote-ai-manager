@@ -1,4 +1,7 @@
-import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationBackendRuntime,
+  ConversationBackendTurnResult,
+} from "@/lib/agent-backends/conversation";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
@@ -8,6 +11,9 @@ import type {
 import type { ExternalTurnHandler } from "./external-turn-handler";
 
 const logger = createLogger("conversation-runtime");
+type CleanupFailure = NonNullable<
+  ConversationBackendTurnResult["cleanupFailure"]
+>;
 
 export interface BackendRuntimeIndex {
   register(conversationId: string, backend: ConversationBackendRuntime): void;
@@ -28,11 +34,22 @@ export class ManagedConversationRuntime {
   /** Activity of handlers already retired, so the epoch never runs backwards. */
   private retiredActivity = 0;
   private trackedRegistrations = 0;
+  private unverifiedCleanup?: CleanupFailure;
 
   constructor(private readonly conversationId: string) {}
 
   get backend(): ConversationBackendRuntime | undefined {
     return this.handle;
+  }
+
+  get cleanupFailure(): ConversationBackendTurnResult["cleanupFailure"] {
+    return this.unverifiedCleanup;
+  }
+
+  recordCleanupFailure(failure: CleanupFailure): boolean {
+    if (this.unverifiedCleanup) return false;
+    this.unverifiedCleanup = { ...failure };
+    return true;
   }
 
   get configurationSnapshot(): RecreateRuntimeSnapshot | undefined {
@@ -44,6 +61,7 @@ export class ManagedConversationRuntime {
   }
 
   beginCreation(): symbol {
+    if (this.unverifiedCleanup) throw new Error(this.unverifiedCleanup.message);
     this.incarnation = Symbol("conversation-backend");
     return this.incarnation;
   }
@@ -59,6 +77,7 @@ export class ManagedConversationRuntime {
     index: BackendRuntimeIndex,
     external?: ExternalTurnHandler,
   ): void {
+    if (this.unverifiedCleanup) throw new Error(this.unverifiedCleanup.message);
     if (!this.isCurrent(incarnation))
       throw new Error("Backend creation lost its host incarnation");
     if (this.handle && this.handle !== backend)
@@ -128,6 +147,9 @@ export class ManagedConversationRuntime {
         await backend?.close();
         await this.external?.stopAndDrain();
         while (this.work.size > 0) await Promise.allSettled([...this.work]);
+        // A server exit cannot prove its ordinary tool children were reaped.
+        if (this.unverifiedCleanup)
+          throw new Error(this.unverifiedCleanup.message);
         if (backend) this.index?.unregister(this.conversationId, backend);
         this.retiredActivity += this.external?.activity ?? 0;
         this.handle = undefined;

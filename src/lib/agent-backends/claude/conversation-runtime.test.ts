@@ -2560,6 +2560,89 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
     runtime.close();
   });
 
+  it.each([false, true])(
+    "holds fast output until archival settles (failure: %s)",
+    async (archiveFails) => {
+      const mock = createControllableMockQuery();
+      queryMock.mockReturnValue(mock.query);
+      const runtime = await createRuntimeWithFakeDeps({
+        executionClass: "ordinary-conversation",
+        conversationId: "conv-queue-barrier",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      });
+      const channel = queryMock.mock.calls[0]?.[0]
+        .prompt as AsyncGenerator<SDKUserMessage>;
+      const events: ConversationBackendEvent[] = [];
+      const turn = runtime.sendTurn({
+        promptText: "initial",
+        imageRefs: [],
+        sessionInstructions: [],
+        autonomous: false,
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          events.push(event);
+        },
+      });
+      await channel.next();
+      const archive = Promise.withResolvers<void>();
+      let callbacks = 0;
+      const queue = runtime.queueUserInput;
+      if (!queue) throw new Error("missing live input support");
+      const delivery = queue.call(runtime, {
+        content: [textBlock],
+        onAccepted: async () => {
+          callbacks += 1;
+          await archive.promise;
+        },
+      });
+      await channel.next();
+      void channel.next();
+      mock.pushMessage({
+        type: "assistant",
+        session_id: "s",
+        uuid: "fast",
+        message: { content: [{ type: "text", text: "fast response" }] },
+      } as unknown as SDKMessage);
+      mock.pushMessage({
+        type: "result",
+        subtype: "success",
+        session_id: "s",
+        uuid: "done",
+        total_cost_usd: 0,
+        duration_ms: 1,
+        num_turns: 1,
+        result: "fast response",
+        is_error: false,
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(callbacks).toBe(1);
+      expect(events.some((event) => event.type === "content")).toBe(false);
+      if (archiveFails) {
+        archive.reject(new Error("archive unavailable"));
+        await expect(delivery).rejects.toThrow("could not be archived");
+      } else {
+        archive.resolve();
+        await delivery;
+      }
+      const result = await turn;
+      expect(events.some((event) => event.type === "content")).toBe(
+        !archiveFails,
+      );
+      if (archiveFails) {
+        expect(runtime.status).toBe("dead");
+        expect(result.contentBlocks).toEqual([]);
+        expect(result.failure).toMatchObject({ retryable: false });
+      }
+      await runtime.close();
+    },
+  );
+
   it("rejects without delivering into the channel when the runtime is dead", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

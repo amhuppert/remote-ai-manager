@@ -75,6 +75,7 @@ import {
   createFakeCodexProvider,
   createFakeCodexTaskPort,
   FAKE_CODEX_HANGING_PROMPT,
+  FAKE_CODEX_QUEUE_HOLD_PROMPT,
 } from "./testing/fake-codex-provider";
 
 const continuityHarness: ContinuityConformanceHarness = {
@@ -228,7 +229,9 @@ describeBackendConformance(claudeDescriptor, {
 // Codex — real runner class over fake provider deps
 // ============================================================
 
+const codexQueueReady = Promise.withResolvers<void>();
 const codexProvider = createFakeCodexProvider({
+  onQueueReady: codexQueueReady.resolve,
   structuredOutput: STRUCTURED_OUTPUT_VALUE,
 });
 const codexTaskPort = createFakeCodexTaskPort({
@@ -267,10 +270,12 @@ describeBackendConformance(codexDescriptor, {
     buildCreateInput: () =>
       buildCreateInput("conformance-codex-conv", CODEX_MODEL_SELECTION),
     hangingPromptText: FAKE_CODEX_HANGING_PROMPT,
+    queueHoldPromptText: FAKE_CODEX_QUEUE_HOLD_PROMPT,
+    waitUntilQueueReady: () => codexQueueReady.promise,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
-      readForwardedSchema: () => codexProvider.lastTurnOptions?.outputSchema,
+      readForwardedSchema: () => codexProvider.lastOutputSchema,
       readDispatchedPrompt: () => codexProvider.lastPrompt,
     },
   },

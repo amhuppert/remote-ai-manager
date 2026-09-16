@@ -13,15 +13,14 @@
  * writes — adapter-owned on both ends.
  */
 
-import { readFile } from "node:fs/promises";
 import { getTranscriptPath } from "@/lib/prompt/transcript";
-import { parseJsonl } from "@/lib/shared/read-jsonl";
+import { readCodexTranscriptRecords } from "./transcript-records";
 
 export interface CodexPersistedCostBaseline {
   /** Thread the cumulative belongs to (`backendRef.ref` of the result frame). */
   threadRef: string;
   /** Thread-cumulative cost recorded by the latest result frame for it. */
-  cumulativeCostUsd: number;
+  cumulativeCostUsd: number | null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -33,24 +32,31 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /**
  * Latest persisted cumulative cost for `threadRef` in the conversation's
  * transcript, or null when no frame records one. Never throws — an unreadable
- * transcript degrades to full re-attribution, not a failed turn.
+ * transcript leaves cumulative accounting unknown, not a fresh zero lineage.
  */
 export async function readCodexPersistedCostBaseline(
   conversationId: string,
   threadRef: string,
+  configDir?: string,
 ): Promise<CodexPersistedCostBaseline | null> {
   try {
-    const transcriptPath = await getTranscriptPath(conversationId);
-    const jsonlText = await readFile(transcriptPath, "utf-8");
+    const transcriptPath = await getTranscriptPath(conversationId, configDir);
     let latest: CodexPersistedCostBaseline | null = null;
-    for (const parsed of parseJsonl(jsonlText)) {
+    for await (const parsed of readCodexTranscriptRecords(transcriptPath)) {
       const entry = asRecord(parsed);
       if (!entry || entry.type !== "result") continue;
       const raw = asRecord(entry.raw);
       if (!raw || raw.backend !== "codex") continue;
       if (asRecord(raw.backendRef)?.ref !== threadRef) continue;
-      if (typeof raw.costUsd !== "number") continue;
-      latest = { threadRef, cumulativeCostUsd: raw.costUsd };
+      latest = {
+        threadRef,
+        cumulativeCostUsd:
+          typeof raw.costUsd === "number" &&
+          Number.isFinite(raw.costUsd) &&
+          raw.costUsd >= 0
+            ? raw.costUsd
+            : null,
+      };
     }
     return latest;
   } catch {

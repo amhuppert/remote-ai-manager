@@ -11,10 +11,10 @@ import { settledConversationTurn } from "@/lib/workflows/conversation/testing/tu
  *    is where a policy's absence would be invisible, because absent means
  *    unrestricted everywhere downstream;
  *  - the PROVIDER boundary: the options the real Claude and Codex conversation
- *    runtimes hand their SDKs. That is where "CC believes it confined the lane"
- *    turns into "the backend was actually asked to".
+ *    runtimes hand the Claude SDK and Codex app-server. That is where
+ *    "CC believes it confined the lane" becomes "the backend was asked to".
  *
- * Only the provider SDKs are substituted — no turn needs to reach a model. The
+ * Only the provider ports are substituted — no turn needs to reach a model. The
  * composer, the runner, the runtimes, and both translations are production
  * code. What the OPERATING SYSTEM then does about the delivered policy is a
  * different claim, proven against the real installed CLIs in
@@ -42,46 +42,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 }));
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
-/** The `ThreadOptions` and `CodexOptions` the fake Codex SDK was constructed with. */
-const codexCapture = vi.hoisted(() => ({
-  options: undefined as unknown,
-  threadOptions: undefined as unknown,
-}));
-
-vi.mock("@openai/codex-sdk", () => ({
-  Codex: class {
-    constructor(options: unknown) {
-      codexCapture.options = options;
-    }
-    startThread(threadOptions: unknown) {
-      codexCapture.threadOptions = threadOptions;
-      return {
-        id: "thread-1",
-        runStreamed: () =>
-          Promise.resolve({
-            events: (async function* () {
-              yield {
-                type: "item.completed",
-                item: { id: "item-1", type: "agent_message", text: "done" },
-              };
-              yield {
-                type: "turn.completed",
-                usage: {
-                  input_tokens: 1,
-                  cached_input_tokens: 0,
-                  output_tokens: 1,
-                },
-              };
-            })(),
-          }),
-      };
-    }
-    resumeThread(id: string) {
-      return this.startThread({ resumed: id });
-    }
-  },
-}));
-
+import { createCodexWriteEnvelopeFixture } from "@/lib/agent-backends/testing/codex-write-envelope-fixture";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -94,6 +55,8 @@ import {
 } from "@/lib/agent-gateway/server-url";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+
+let codexFixture: ReturnType<typeof createCodexWriteEnvelopeFixture>;
 
 let fixtureRoot: string;
 let worktreePath: string;
@@ -175,8 +138,7 @@ beforeEach(() => {
     reloadPlugins: vi.fn(),
     mcpServerStatus: vi.fn(),
   }));
-  codexCapture.options = undefined;
-  codexCapture.threadOptions = undefined;
+  codexFixture = createCodexWriteEnvelopeFixture();
 
   fixtureRoot = realpathSync(
     mkdtempSync(path.join(os.tmpdir(), "cc-implementer-envelope-int-")),
@@ -617,11 +579,9 @@ describe("both conversation runtimes establish the delivered policy natively", (
 
   it("codex enumerates the writable roots and moves the run out of the worktree", async () => {
     const policy = policyFor();
-    const runtime = await conversationFactory("codex").createRuntime(
-      createInput(policy, "codex"),
-    );
+    const runtime = codexFixture.createRuntime(createInput(policy, "codex"));
 
-    await runtime.sendTurn({
+    const result = await runtime.sendTurn({
       promptText: "go",
       modelSelection: {
         modelId: "gpt-5.4",
@@ -634,31 +594,28 @@ describe("both conversation runtimes establish the delivered policy natively", (
       onEvent: () => {},
     });
 
-    const threadOptions = codexCapture.threadOptions as {
-      sandboxMode: string;
-      workingDirectory: string;
-    };
-    const config = (codexCapture.options as { config: Record<string, unknown> })
-      .config;
-    expect(threadOptions.sandboxMode).toBe("workspace-write");
+    expect(result.failure).toBeNull();
+    const threadPolicy = codexFixture.readThreadPolicy();
+    expect(threadPolicy.sandboxMode).toBe("workspace-write");
     // `workspace-write` makes the working directory writable by construction,
     // so a run left in the worktree would be writable throughout it.
-    expect(threadOptions.workingDirectory).not.toBe(realpathSync(worktreePath));
-    expect(threadOptions.workingDirectory).toBe(policy.allowWrite[0]);
-    expect(config["sandbox_workspace_write"]).toEqual({
-      writable_roots: policy.allowWrite,
-      exclude_tmpdir_env_var: true,
-      exclude_slash_tmp: true,
-      network_access: true,
+    expect(threadPolicy.workingDirectory).not.toBe(realpathSync(worktreePath));
+    expect(threadPolicy.workingDirectory).toBe(policy.allowWrite[0]);
+    expect(codexFixture.launch?.cwd).toBe(policy.allowWrite[0]);
+    expect(codexFixture.launch?.env.TMPDIR).toBe(policy.allowWrite.at(-1));
+    expect(codexFixture.launch?.env.PATH).toBeTruthy();
+    expect(threadPolicy.workspaceWrite).toEqual({
+      writableRoots: policy.allowWrite,
+      excludeTmpdirEnvVar: true,
+      excludeSlashTmp: true,
+      networkAccess: true,
     });
   });
 
   it("codex leaves an unrestricted conversation on full access in the worktree", async () => {
-    const runtime = await conversationFactory("codex").createRuntime(
-      createInput(undefined, "codex"),
-    );
+    const runtime = codexFixture.createRuntime(createInput(undefined, "codex"));
 
-    await runtime.sendTurn({
+    const result = await runtime.sendTurn({
       promptText: "go",
       modelSelection: {
         modelId: "gpt-5.4",
@@ -671,12 +628,11 @@ describe("both conversation runtimes establish the delivered policy natively", (
       onEvent: () => {},
     });
 
-    const threadOptions = codexCapture.threadOptions as {
-      sandboxMode: string;
-      workingDirectory: string;
-    };
-    expect(threadOptions.sandboxMode).toBe("danger-full-access");
-    expect(threadOptions.workingDirectory).toBe(worktreePath);
+    expect(result.failure).toBeNull();
+    const threadPolicy = codexFixture.readThreadPolicy();
+    expect(threadPolicy.sandboxMode).toBe("danger-full-access");
+    expect(threadPolicy.workingDirectory).toBe(worktreePath);
+    expect(codexFixture.launch?.cwd).toBe(worktreePath);
   });
 
   it("refuses to create a claude runtime for a policy it cannot establish", async () => {
@@ -695,7 +651,7 @@ describe("both conversation runtimes establish the delivered policy natively", (
   });
 
   it("fails a codex turn for a policy it cannot establish, rather than running it unconfined", async () => {
-    const runtime = await conversationFactory("codex").createRuntime(
+    const runtime = codexFixture.createRuntime(
       createInput(
         {
           mode: "allowlist",
@@ -720,6 +676,7 @@ describe("both conversation runtimes establish the delivered policy natively", (
     });
 
     expect(result.failure).not.toBeNull();
-    expect(codexCapture.threadOptions).toBeUndefined();
+    expect(codexFixture.launch).toBeUndefined();
+    expect(codexFixture.requestCount).toBe(0);
   });
 });

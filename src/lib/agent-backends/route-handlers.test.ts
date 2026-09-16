@@ -40,7 +40,7 @@ describe("GET /api/agent-backends", () => {
     expect(codex.toneToken).toBe("violet");
     expect(codex.skillTriggerPrefix).toBe("$");
     expect(codex.defaultModelId).toBe("gpt-5.4");
-    expect(codex.capabilities?.queue.deliveryTiming).toBe("next_turn");
+    expect(codex.capabilities?.queue.deliveryTiming).toBe("in_turn");
 
     const cursor = elementAt(parsed.backends, 2);
     expect(cursor.label).toBe("Cursor");

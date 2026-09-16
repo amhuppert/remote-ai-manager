@@ -131,6 +131,7 @@ function makeAcceptingClaudeRuntime(): {
     queueUserInput: vi.fn(async (input: ConversationQueuedUserInput) => {
       callOrder.push("queueUserInput");
       received.push(input);
+      await input.onAccepted?.();
     }),
     close: vi.fn(async () => {}),
   };

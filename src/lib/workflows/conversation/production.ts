@@ -170,6 +170,18 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
       readConversationMessages: transcriptMod.readConversationMessages,
     },
     effects: {
+      notifyRuntimeCleanup: async (input) => {
+        const [{ notifyRuntimeCleanup }, { dispatchAgentNotification }] =
+          await Promise.all([
+            import("./runtime-cleanup-notification"),
+            import("@/lib/push-notification/dispatcher"),
+          ]);
+        await notifyRuntimeCleanup(input, {
+          appendNotice: transcriptMod.appendNotice,
+          push: dispatchAgentNotification,
+          log: logger,
+        });
+      },
       mutateConversation: stateMod.mutateConversation,
       recordNotepadDeliveries: (input) =>
         notepadServiceFactoryMod

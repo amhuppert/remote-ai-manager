@@ -580,6 +580,7 @@ function makeFakeBackendActorDeps(
     markQueuedUncertain: async () => {},
     markQueuedPending: async () => {},
     markQueuedFailed: async () => {},
+    notifyRuntimeCleanup: async () => {},
   };
 }
 

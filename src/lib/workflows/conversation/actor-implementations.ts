@@ -1487,12 +1487,37 @@ async function executePromptForMachine(
       outputFormat: input.turn.outputFormat,
       onEvent,
       syntheticForkSeed,
-      observe: checkpoint
-        ? {
-            sending: () => checkpoint.markDispatched(),
-            failed: (error) => checkpoint.markDispatchFailure(error),
-          }
-        : undefined,
+      observe: {
+        sending: () => checkpoint?.markDispatched(),
+        failed: (error) => checkpoint?.markDispatchFailure(error),
+        completed: (result) => {
+          if (
+            !result.cleanupFailure ||
+            !runtimeState.managed.recordCleanupFailure(result.cleanupFailure)
+          )
+            return;
+          deps.log.error("conversation.cleanup_unverified", {
+            ...input.target,
+            worktreePath: input.worktreePath,
+            message: result.cleanupFailure.message,
+          });
+          void runtimeState.managed.track(
+            Promise.resolve()
+              .then(() =>
+                deps.effects.notifyRuntimeCleanup({
+                  target: input.target,
+                  worktreePath: input.worktreePath,
+                }),
+              )
+              .catch((error: unknown) => {
+                deps.log.error("conversation.cleanup_notification_failed", {
+                  ...input.target,
+                  error: getErrorMessage(error),
+                });
+              }),
+          );
+        },
+      },
       fsWritePolicy: input.turn.fsWritePolicy,
     });
     runtimeState.attempt?.recordResult(
@@ -1658,7 +1683,10 @@ async function executePromptForMachine(
           ? { interruption: { reason: "stalled", timeoutMs: stallTimeoutMs } }
           : {}),
     },
-    { fallbackContentBlocks: contentBlocks, suppressAbortError: true },
+    {
+      fallbackContentBlocks: contentBlocks,
+      suppressAbortError: !runtimeState.managed.cleanupFailure,
+    },
   );
   const {
     aborted: turnAborted,

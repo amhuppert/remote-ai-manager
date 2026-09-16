@@ -1,3 +1,4 @@
+import { CODEX_IN_TURN_DELIVERY_ENABLED } from "./rollout-policy";
 import type {
   ConversationExecutionPolicy,
   TaskExecutionPolicy,
@@ -38,7 +39,7 @@ function codexModel(
 
 export const codexConversationExecution: ConversationExecutionPolicy = {
   classes: ["ordinary-conversation", "governed-execution"],
-  instructionDelivery: "user-message",
+  instructionDelivery: "privileged",
 };
 
 export const codexTaskExecution: TaskExecutionPolicy = {
@@ -83,7 +84,10 @@ export const codexBackendMetadata: AgentBackendMetadata = {
 };
 
 export const codexConversationCapabilities: BackendConversationCapabilities = {
-  queue: { acceptsWhileRunning: true, deliveryTiming: "next_turn" },
+  queue: {
+    acceptsWhileRunning: true,
+    deliveryTiming: CODEX_IN_TURN_DELIVERY_ENABLED ? "in_turn" : "next_turn",
+  },
   continuationStrength: "synthetic_thread",
   fork: "synthetic",
   structuredOutput: "post_validation",
@@ -125,7 +129,10 @@ export const codexConversationTranscriptProjection: BackendConversationTranscrip
         contextWindowMax: input.contextWindowMax,
         // Thread-cumulative, matching every pre-existing codex frame — the
         // usage projector reads this as cumulative-per-lineage.
-        costUsd: input.cumulativeCostUsd ?? input.costUsd,
+        costUsd:
+          input.cumulativeCostUsd === undefined
+            ? input.costUsd
+            : input.cumulativeCostUsd,
         turnCostUsd: input.costUsd,
         aborted: input.aborted,
         error: input.error,

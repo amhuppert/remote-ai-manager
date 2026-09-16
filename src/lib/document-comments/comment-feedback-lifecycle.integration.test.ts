@@ -43,7 +43,7 @@ import {
   type FeedbackFetch,
 } from "@/features/session/document-viewer/use-send-document-feedback";
 import { formatDocumentFeedbackPrompt } from "./format-feedback";
-import { queueMessage } from "@/lib/prompt/queue";
+import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
 import { queuedBatchToSubmitPrompt } from "@/lib/conversations/message-queue-drain";
 import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
@@ -70,6 +70,11 @@ const DOC_SESSION = "doc-sess";
 const TARGET_SESSION = "target-sess";
 const DOC_PATH = "docs/guide.md";
 const NOW = "2026-03-03T00:00:00.000Z";
+
+// These cases exercise durable next-turn feedback and drain conversion.
+// Live backend eligibility is outside their persistence fixture.
+const nextTurnQueueCapability: QueueMessageDeps["queueCapabilityForBackend"] =
+  () => ({ acceptsWhileRunning: true, deliveryTiming: "next_turn" });
 
 function anchor(overrides: Partial<CommentAnchor> = {}): CommentAnchor {
   return {
@@ -472,15 +477,19 @@ describe("document comment + feedback lifecycle (real store)", () => {
         text: string;
         documentFeedback: DocumentFeedbackPayload;
       };
-      await queueMessage({
+      const queued = await queueMessage({
         projectPath: PROJECT_PATH,
         sessionName: TARGET_SESSION,
         conversationId: "running-conv",
         text: body.text,
         documentFeedback: body.documentFeedback,
         backend: "codex",
-        deps: { enqueue: queueSvc.enqueue },
+        deps: {
+          enqueue: queueSvc.enqueue,
+          queueCapabilityForBackend: nextTurnQueueCapability,
+        },
       });
+      expect(queued?.deliveryTiming).toBe("next_turn");
       return new Response(null, { status: 200 });
     };
 
@@ -743,16 +752,21 @@ describe("document comment + feedback lifecycle (real store)", () => {
       ],
     };
 
-    // Real enqueue orchestration (codex → next_turn, no live runtime needed).
-    await queueMessage({
+    // Real enqueue orchestration with an explicitly deferred delivery capability.
+    const queued = await queueMessage({
       projectPath: PROJECT_PATH,
       sessionName: DOC_SESSION,
       conversationId: "conv-queue",
       text: formatDocumentFeedbackPrompt(payload.items),
       documentFeedback: payload,
       backend: "codex",
-      deps: { enqueue: queueSvc.enqueue },
+      deps: {
+        enqueue: queueSvc.enqueue,
+        queueCapabilityForBackend: nextTurnQueueCapability,
+      },
     });
+
+    expect(queued?.deliveryTiming).toBe("next_turn");
 
     // Persisted: the durable entry carries the structured block (no duplicate
     // prose text block) and survives the reload from SQLite.
@@ -794,15 +808,19 @@ describe("document comment + feedback lifecycle (real store)", () => {
       newId: () => `q-${(idCounter += 1)}`,
     });
 
-    await queueMessage({
+    const queued = await queueMessage({
       projectPath: PROJECT_PATH,
       sessionName: DOC_SESSION,
       conversationId: "conv-plain",
       text: "an ordinary follow-up",
       backend: "codex",
-      deps: { enqueue: queueSvc.enqueue },
+      deps: {
+        enqueue: queueSvc.enqueue,
+        queueCapabilityForBackend: nextTurnQueueCapability,
+      },
     });
 
+    expect(queued?.deliveryTiming).toBe("next_turn");
     const batch = await queueSvc.claimNextTurnBatch({
       projectPath: PROJECT_PATH,
       sessionName: DOC_SESSION,

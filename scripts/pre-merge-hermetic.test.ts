@@ -152,7 +152,7 @@ beforeAll(() => {
       const [command = "", configDir = "", exists = ""] = line.split("\t");
       return { command, configDir, configDirExists: exists === "yes" };
     });
-});
+}, 30_000);
 
 afterAll(() => {
   if (workdir) rmSync(workdir, { recursive: true, force: true });

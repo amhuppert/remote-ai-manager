@@ -101,7 +101,7 @@ export function computeSendButtonState({
   sending: boolean;
   /**
    * The conversation's server-side status says a turn is running. Covers turns
-   * this tab did not start — a drained queued turn (Codex next-turn delivery),
+   * this tab did not start — a drained queued turn,
    * a turn started before a reload, or one started from another client —
    * where `sending` is false but a submitted message will still be queued.
    */

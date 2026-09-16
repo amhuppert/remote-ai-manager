@@ -8,7 +8,10 @@ import {
   type CursorWorkerSdk,
 } from "../entry";
 import type { CursorWorkerFrame } from "../ipc";
-import { errnoCode, readProcessGroupIdSync } from "../process-identity";
+import {
+  errnoCode,
+  readProcessGroupIdSync,
+} from "@/lib/shared/process-identity";
 
 /**
  * A spawnable Cursor worker with the SDK scripted instead of loaded.

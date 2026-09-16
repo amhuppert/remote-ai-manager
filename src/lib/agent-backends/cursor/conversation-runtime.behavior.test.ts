@@ -1075,3 +1075,73 @@ it("preserves native transcript and reports accounting failure when the task led
   ).toContain("Task recovery after restart is unavailable");
   await harness.runtime.close();
 });
+
+describe("live input archive barrier", () => {
+  it.each([false, true])(
+    "awaits one acceptance callback before fast output (failure: %s)",
+    async (archiveFails) => {
+      const archive = Promise.withResolvers<void>();
+      const ready = deferredSignal();
+      let callbacks = 0;
+      const harness = createPersistingHarness({
+        deps: { stallTimeoutMs: 10_000 },
+        worker: {
+          onTurn: (turn, worker) => {
+            worker.sendInputAccepted(turn.runId);
+            ready.resolve();
+          },
+          onSteer: (input, worker) => {
+            const frame = {
+              v: CURSOR_IPC_CODEC_VERSION,
+              type: "steerResult",
+              runId: input.runId,
+              requestId: input.requestId,
+              outcome: "complete_delivered",
+            } as const;
+            worker.send(frame);
+            worker.send(frame);
+            worker.sendNativeEvent(input.runId, 0, ASSISTANT("after steering"));
+            worker.settle(input.runId, "completed");
+          },
+        },
+      });
+      let completed = false;
+      const turn = harness.send().then((result) => {
+        completed = true;
+        return result;
+      });
+      await ready.promise;
+      const delivery = harness.runtime.queueUserInput({
+        content: [{ type: "text", text: "steer" }],
+        onAccepted: async () => {
+          callbacks += 1;
+          await archive.promise;
+        },
+      });
+      await settleMicrotasks();
+      expect(callbacks).toBe(1);
+      expect(harness.events.some((event) => event.type === "content")).toBe(
+        false,
+      );
+      expect(completed).toBe(false);
+      if (archiveFails) {
+        archive.reject(new Error("archive unavailable"));
+        await expect(delivery).rejects.toThrow("could not be archived");
+      } else {
+        archive.resolve();
+        await delivery;
+      }
+      const result = await turn;
+      expect(callbacks).toBe(1);
+      expect(harness.events.some((event) => event.type === "content")).toBe(
+        !archiveFails,
+      );
+      if (archiveFails) {
+        expect(harness.runtime.status).toBe("dead");
+        expect(result.contentBlocks).toEqual([]);
+        expect(result.failure).toMatchObject({ retryable: false });
+      }
+      await harness.runtime.close();
+    },
+  );
+});

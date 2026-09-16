@@ -179,10 +179,19 @@ export interface ConversationBackendTurnResult {
    * turn. Absent where a backend has not adopted the record at all.
    */
   tokenUsage?: ConversationTokenUsage | null;
+  /** Workspace ownership remains live when process cleanup cannot be verified. */
+  cleanupFailure?: { kind: "cleanup_unverified"; message: string };
 }
 
 export interface ConversationQueuedUserInput {
   content: MessageContentBlock[];
+  /**
+   * Invoke exactly once after provider acceptance, before releasing subsequent
+   * output. Rejection means archival failed: stop the turn without retrying the
+   * accepted input. Confirmed archival with failed queue settlement resolves;
+   * the queue owns that review outcome and prohibits automatic redelivery.
+   */
+  onAccepted?(): Promise<void>;
   signal?: AbortSignal;
 }
 

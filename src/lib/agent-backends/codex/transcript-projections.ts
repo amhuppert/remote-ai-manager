@@ -17,7 +17,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  * Project a persisted Codex result frame into neutral usage counters. The
  * frame's `costUsd` is the THREAD-cumulative estimate as of that turn, so the
  * thread ref is the lineage id and aggregation (final-cumulative-per-lineage)
- * stays with the caller. Declines every non-Codex or costless payload.
+ * stays with the caller. Unknown cost must survive replay as an unknown ledger.
  */
 export function projectCodexUsageFrame(
   raw: unknown,
@@ -26,10 +26,16 @@ export function projectCodexUsageFrame(
   if (record === null || record.backend !== "codex") return null;
   const ref = asRecord(record.backendRef)?.ref;
   if (typeof ref !== "string" || ref.length === 0) return null;
-  if (typeof record.costUsd !== "number") return null;
+  if (record.costUsd !== null && typeof record.costUsd !== "number")
+    return null;
   return {
     lineageId: ref,
-    cumulativeCostUsd: record.costUsd,
+    cumulativeCostUsd:
+      typeof record.costUsd === "number" &&
+      Number.isFinite(record.costUsd) &&
+      record.costUsd >= 0
+        ? record.costUsd
+        : null,
     numTurns: typeof record.numTurns === "number" ? record.numTurns : null,
   };
 }

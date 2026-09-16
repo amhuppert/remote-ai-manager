@@ -597,6 +597,7 @@ export function createConversationManager(
       runtime.stopping ||
       runtime.disposing ||
       runtime.durabilityFailure ||
+      runtime.managed.cleanupFailure ||
       // A provider-initiated turn owns the host; its completion re-enters
       // idle, whose entry drains.
       runtime.managed.externalTurnActive
@@ -617,6 +618,7 @@ export function createConversationManager(
         runtime.stopping ||
         runtime.disposing ||
         runtime.durabilityFailure ||
+        runtime.managed.cleanupFailure ||
         runtime.managed.externalTurnActive
       )
         return;
@@ -1101,6 +1103,12 @@ export function createConversationManager(
           message: "Conversation host changed during admission",
         };
       }
+      if (runtime.managed.cleanupFailure)
+        return {
+          kind: "refused",
+          code: "busy",
+          message: runtime.managed.cleanupFailure.message,
+        };
       if (runtime.durabilityFailure)
         return {
           kind: "refused",
@@ -1842,6 +1850,7 @@ export function createConversationManager(
         runtime.command ||
         runtime.reconciliation ||
         runtime.durabilityFailure ||
+        runtime.managed.cleanupFailure ||
         runtime.stopFailure,
       ),
       trackedWork: runtime.managed.hasTrackedWork,

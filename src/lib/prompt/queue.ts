@@ -6,8 +6,7 @@ import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
  *
  * The durable queue — not the JSONL transcript — owns the message until the
  * backend confirms acceptance. Enqueue NEVER writes a transcript entry. A
- * delivered transcript entry is appended only after `queueUserInput` resolves
- * (backend acceptance), and the queue row is marked delivered only after that
+ * delivered transcript entry is appended inside the acceptance callback, and the queue row is marked delivered only after that
  * append succeeds. A confirmed refusal leaves the row `pending` for the
  * next-turn drain. An unconfirmed delivery stays `uncertain` for user review.
  */
@@ -38,7 +37,7 @@ import {
 } from "@/lib/notepads/service-factory";
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { formatNotepadFeedbackPrompt } from "@/lib/notepads/format-feedback";
-import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
+import { appendTranscriptEntryOnce as defaultAppendTranscriptEntry } from "./transcript";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type {
   DocumentFeedbackPayload,
@@ -340,15 +339,10 @@ export async function queueMessage(
     modelSelection,
     metadata,
     consumePendingQuestionId,
-    deliveryPolicy,
     deps: depsOverride,
   } = params;
 
   const deps: QueueMessageDeps = { ...defaultDeps, ...depsOverride };
-
-  // Diagnostic identity (R1.3): the queue is session-keyed storage, so
-  // `sessionName` is the sentinel for a project conversation.
-  const scopeRef = scopeRefFromStoreSessionName(sessionName);
 
   // Durable content carries the structured feedback block (the drain re-derives
   // its prose) and omits the redundant feedback prose text — so the pending
@@ -362,52 +356,7 @@ export async function queueMessage(
         })
       : buildQueueContent({ text, images });
 
-  // Backend-delivery content (in-turn live delivery): the agent receives prose,
-  // never a `document_feedback` block (not a valid SDK block). Derive the prose
-  // from the items when feedback is present.
-  // Agent-facing only: `content` above (the durable row) and the transcript
-  // entry below both keep the un-expanded text, so notepad chips still render.
-  // A notepad read failure degrades to the un-expanded text rather than losing
-  // delivery.
-  let specExpandedText = text;
-  let agentFacingText = text;
-  let deliveredNotepads: readonly NotepadInjectionSource[] = [];
-  if (text && !documentFeedback && !notepadFeedback) {
-    specExpandedText = expandNativeSpecCommandForAgent(text);
-    agentFacingText = specExpandedText;
-    try {
-      const expansion = await expandNotepadRefsForAgent(specExpandedText, {
-        readForInjection: (notepadId) =>
-          deps.readNotepadForInjection(notepadId),
-      });
-      agentFacingText = expansion.text;
-      deliveredNotepads = expansion.delivered;
-    } catch (err) {
-      logger.warn("queue.notepad_expansion_failed", {
-        projectName: deps.getProjectDisplayName(projectPath),
-        ...scopeRef,
-        conversationId,
-        error: getErrorMessage(err),
-      });
-    }
-  }
-
-  const deliveryContent =
-    documentFeedback || notepadFeedback
-      ? buildQueueContent({
-          text: [
-            ...(documentFeedback
-              ? [formatDocumentFeedbackPrompt(documentFeedback.items)]
-              : []),
-            ...(notepadFeedback
-              ? [formatNotepadFeedbackPrompt(notepadFeedback)]
-              : []),
-          ].join("\n\n"),
-          images,
-        })
-      : buildQueueContent({ text: agentFacingText, images });
-
-  const entry = await deps.enqueue({
+  const enqueued = deps.enqueue({
     backend,
     projectPath,
     sessionName,
@@ -419,9 +368,55 @@ export async function queueMessage(
       ? { consumePendingQuestionId }
       : {}),
   });
-  if (!entry) {
-    return null;
+
+  // Observe an enqueue failure while an earlier dispatch is still pending;
+  // queueMessageInOrder rethrows it when this operation reaches the head.
+  void enqueued.catch(() => {});
+  const key = JSON.stringify([projectPath, sessionName, conversationId]);
+  const previous = liveDispatches.get(key) ?? Promise.resolve();
+  const operation = previous.then(() =>
+    queueMessageInOrder(params, deps, enqueued),
+  );
+  const settled = operation.then(
+    () => {},
+    () => {},
+  );
+  liveDispatches.set(key, settled);
+  try {
+    return await operation;
+  } finally {
+    if (liveDispatches.get(key) === settled) liveDispatches.delete(key);
   }
+}
+
+// Reserve dispatch order before asynchronous preparation; enqueue remains prompt.
+const liveDispatches = new Map<string, Promise<void>>();
+
+async function queueMessageInOrder(
+  params: QueueMessageParams,
+  deps: QueueMessageDeps,
+  enqueued: Promise<PendingQueuedMessage | null>,
+): Promise<QueueMessageResult | null> {
+  const {
+    projectPath,
+    sessionName,
+    conversationId,
+    text,
+    images,
+    documentFeedback,
+    notepadFeedback,
+    backend,
+    modelSelection,
+    consumePendingQuestionId,
+    deliveryPolicy,
+  } = params;
+
+  // Diagnostic identity (R1.3): the queue is session-keyed storage, so
+  // `sessionName` is the sentinel for a project conversation.
+  const scopeRef = scopeRefFromStoreSessionName(sessionName);
+
+  const entry = await enqueued;
+  if (!entry) return null;
 
   if (deliveryPolicy === "next_turn") {
     logger.info("queue.delivery_deferred", {
@@ -533,6 +528,51 @@ export async function queueMessage(
     return { entry, deliveryTiming: "next_turn" };
   }
 
+  // Backend-delivery content (in-turn live delivery): the agent receives prose,
+  // never a `document_feedback` block (not a valid SDK block). Derive the prose
+  // from the items when feedback is present.
+  // Agent-facing only: `content` above (the durable row) and the transcript
+  // entry below both keep the un-expanded text, so notepad chips still render.
+  // A notepad read failure degrades to the un-expanded text rather than losing
+  // delivery.
+  let specExpandedText = text;
+  let agentFacingText = text;
+  let deliveredNotepads: readonly NotepadInjectionSource[] = [];
+  if (text && !documentFeedback && !notepadFeedback) {
+    specExpandedText = expandNativeSpecCommandForAgent(text);
+    agentFacingText = specExpandedText;
+    try {
+      const expansion = await expandNotepadRefsForAgent(specExpandedText, {
+        readForInjection: (notepadId) =>
+          deps.readNotepadForInjection(notepadId),
+      });
+      agentFacingText = expansion.text;
+      deliveredNotepads = expansion.delivered;
+    } catch (err) {
+      logger.warn("queue.notepad_expansion_failed", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  const deliveryContent =
+    documentFeedback || notepadFeedback
+      ? buildQueueContent({
+          text: [
+            ...(documentFeedback
+              ? [formatDocumentFeedbackPrompt(documentFeedback.items)]
+              : []),
+            ...(notepadFeedback
+              ? [formatNotepadFeedbackPrompt(notepadFeedback)]
+              : []),
+          ].join("\n\n"),
+          images,
+        })
+      : buildQueueContent({ text: agentFacingText, images });
+
   // Rendered references provide a local baseline until backend acceptance.
   let notepadChangeNotice: PreparedNotepadChangeNotice | null = null;
   try {
@@ -565,6 +605,138 @@ export async function queueMessage(
       error: getErrorMessage(err),
     });
   }
+
+  let accepted = false;
+  let acceptance: Promise<void> | undefined;
+  let settlementError: string | null = null;
+  const holdForReview = async (error: string): Promise<void> => {
+    try {
+      await deps.markUncertain({
+        projectPath,
+        sessionName,
+        conversationId,
+        ids: [entry.id],
+        deliveryAttemptId,
+        error,
+      });
+    } catch (failure) {
+      // The original delivering claim remains the durable no-redelivery guard.
+      logger.error("queue.acceptance_review_failed", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        messageIds: [entry.id],
+        deliveryAttemptId,
+        error: getErrorMessage(failure),
+      });
+    }
+  };
+  const onAccepted = (): Promise<void> => {
+    accepted = true;
+    acceptance ??= (async () => {
+      if (deliveredNotepads.length > 0) {
+        try {
+          await deps.recordNotepadDeliveries({
+            conversationId,
+            notepads: deliveredNotepads.map(
+              ({ id, revision, openComments }) => ({
+                notepadId: id,
+                revision,
+                openComments,
+              }),
+            ),
+          });
+        } catch (err) {
+          logger.warn("queue.notepad_delivery_record_failed", {
+            projectName: deps.getProjectDisplayName(projectPath),
+            ...scopeRef,
+            conversationId,
+            count: deliveredNotepads.length,
+            error: getErrorMessage(err),
+          });
+        }
+      }
+      // The runtime invokes this callback on backend acceptance, which is the settle
+      // gate (D17): a delivery that threw above left the row unsettled AND the
+      // watermarks untouched, so the notice re-fires on the next message rather
+      // than being lost.
+      //
+      // Settled here rather than after the transcript write below: the agent has
+      // already been handed the notice, so a later failure in the transcript or
+      // image work must not strand the watermark and re-deliver the same notice.
+      if (notepadChangeNotice !== null && notepadChangeNotice.block !== null) {
+        try {
+          await deps.settleNotepadChangeNotice(notepadChangeNotice);
+          logger.info("queue.notepad_change_notice_settled", {
+            projectName: deps.getProjectDisplayName(projectPath),
+            ...scopeRef,
+            conversationId,
+            messageIds: [entry.id],
+            deliveryAttemptId,
+            count: notepadChangeNotice.advances.length,
+          });
+        } catch (err) {
+          logger.warn("queue.notepad_change_notice_settle_failed", {
+            projectName: deps.getProjectDisplayName(projectPath),
+            ...scopeRef,
+            conversationId,
+            messageIds: [entry.id],
+            deliveryAttemptId,
+            error: getErrorMessage(err),
+          });
+        }
+      }
+
+      // Append exactly one delivered user transcript entry (the sole JSONL
+      // writer), then mark the row delivered.
+      const transcriptBlocks = await buildDeliveredTranscriptBlocks(
+        deps,
+        conversationId,
+        text ?? "",
+        images ?? [],
+        documentFeedback,
+        notepadFeedback,
+      );
+
+      await deps.appendTranscriptEntry(
+        conversationId,
+        {
+          id: entry.id,
+          timestamp: new Date().toISOString(),
+          type: "user",
+          role: "user",
+          content: transcriptBlocks,
+        },
+        undefined,
+        {
+          projectName: deps.getProjectDisplayName(projectPath),
+          storeSessionName: sessionName,
+        },
+      );
+
+      try {
+        await deps.markDelivered({
+          projectPath,
+          sessionName,
+          conversationId,
+          ids: [entry.id],
+          deliveryAttemptId,
+        });
+      } catch (error) {
+        settlementError = getErrorMessage(error);
+        logger.error("queue.acceptance_settlement_failed", {
+          projectName: deps.getProjectDisplayName(projectPath),
+          ...scopeRef,
+          conversationId,
+          messageIds: [entry.id],
+          deliveryAttemptId,
+          error: settlementError,
+        });
+        await holdForReview(settlementError);
+      }
+    })();
+    return acceptance;
+  };
 
   try {
     if (text && specExpandedText !== text) {
@@ -601,18 +773,12 @@ export async function queueMessage(
       : deliveryContent;
     await runtime.queueUserInput({
       content: withNotepadChangeNotice(summarizedContent, notepadChangeNotice),
+      onAccepted,
     });
   } catch (err) {
     const error = getErrorMessage(err);
-    if (err instanceof InputDeliveryUncertainError) {
-      await deps.markUncertain({
-        projectPath,
-        sessionName,
-        conversationId,
-        ids: [entry.id],
-        deliveryAttemptId,
-        error,
-      });
+    if (accepted || err instanceof InputDeliveryUncertainError) {
+      await holdForReview(error);
       return {
         entry: { ...claimed, status: "uncertain", error },
         deliveryTiming: "in_turn",
@@ -640,90 +806,12 @@ export async function queueMessage(
     return { entry, deliveryTiming: "next_turn" };
   }
 
-  if (deliveredNotepads.length > 0) {
-    try {
-      await deps.recordNotepadDeliveries({
-        conversationId,
-        notepads: deliveredNotepads.map(({ id, revision, openComments }) => ({
-          notepadId: id,
-          revision,
-          openComments,
-        })),
-      });
-    } catch (err) {
-      logger.warn("queue.notepad_delivery_record_failed", {
-        projectName: deps.getProjectDisplayName(projectPath),
-        ...scopeRef,
-        conversationId,
-        count: deliveredNotepads.length,
-        error: getErrorMessage(err),
-      });
-    }
+  if (settlementError !== null) {
+    return {
+      entry: { ...claimed, status: "uncertain", error: settlementError },
+      deliveryTiming: "in_turn",
+    };
   }
-  // `queueUserInput` resolving IS backend acceptance, and that is the settle
-  // gate (D17): a delivery that threw above left the row unsettled AND the
-  // watermarks untouched, so the notice re-fires on the next message rather
-  // than being lost.
-  //
-  // Settled here rather than after the transcript write below: the agent has
-  // already been handed the notice, so a later failure in the transcript or
-  // image work must not strand the watermark and re-deliver the same notice.
-  if (notepadChangeNotice !== null && notepadChangeNotice.block !== null) {
-    try {
-      await deps.settleNotepadChangeNotice(notepadChangeNotice);
-      logger.info("queue.notepad_change_notice_settled", {
-        projectName: deps.getProjectDisplayName(projectPath),
-        ...scopeRef,
-        conversationId,
-        messageIds: [entry.id],
-        deliveryAttemptId,
-        count: notepadChangeNotice.advances.length,
-      });
-    } catch (err) {
-      logger.warn("queue.notepad_change_notice_settle_failed", {
-        projectName: deps.getProjectDisplayName(projectPath),
-        ...scopeRef,
-        conversationId,
-        messageIds: [entry.id],
-        deliveryAttemptId,
-        error: getErrorMessage(err),
-      });
-    }
-  }
-
-  // Append exactly one delivered user transcript entry (the sole JSONL
-  // writer), then mark the row delivered.
-  const transcriptBlocks = await buildDeliveredTranscriptBlocks(
-    deps,
-    conversationId,
-    text ?? "",
-    images ?? [],
-    documentFeedback,
-    notepadFeedback,
-  );
-
-  await deps.appendTranscriptEntry(
-    conversationId,
-    {
-      timestamp: new Date().toISOString(),
-      type: "user",
-      role: "user",
-      content: transcriptBlocks,
-    },
-    undefined,
-    {
-      projectName: deps.getProjectDisplayName(projectPath),
-      storeSessionName: sessionName,
-    },
-  );
-
-  await deps.markDelivered({
-    projectPath,
-    sessionName,
-    conversationId,
-    ids: [entry.id],
-    deliveryAttemptId,
-  });
 
   logger.info("queue.accepted", {
     projectName: deps.getProjectDisplayName(projectPath),

@@ -163,7 +163,7 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
     expect(deps.confirmQueuedDelivery).toHaveBeenCalledTimes(1);
   });
 
-  it("does not re-append when marking delivered fails after the append", async () => {
+  it("continues the turn with one accepted archive when queue settlement fails", async () => {
     const deps = makeDeps();
     const appendUserEntry = vi.fn(async () => {});
     deps.confirmQueuedDelivery.mockRejectedValueOnce(new Error("db down"));
@@ -173,10 +173,29 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
       appendUserEntry,
     });
 
-    await expect(accounting.handleInputAccepted()).rejects.toThrow("db down");
+    await expect(accounting.handleInputAccepted()).resolves.toBeUndefined();
+    await expect(accounting.handleInputAccepted()).resolves.toBeUndefined();
+    expect(deps.confirmQueuedDelivery).toHaveBeenCalledTimes(1);
     await accounting.settleAfterTurn();
 
     expect(appendUserEntry).toHaveBeenCalledTimes(1);
+    expect(deps.markQueuedUncertain).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects archival failure and retains the original claim for review", async () => {
+    const deps = makeDeps();
+    const accounting = createQueuedDeliveryAccounting(deps, {
+      ...identity,
+      queuedDelivery,
+      appendUserEntry: async () => {
+        throw new Error("archive unavailable");
+      },
+    });
+    await expect(accounting.handleInputAccepted()).rejects.toThrow(
+      "archive unavailable",
+    );
+    await accounting.settleAfterTurn();
+    expect(deps.confirmQueuedDelivery).not.toHaveBeenCalled();
     expect(deps.markQueuedUncertain).toHaveBeenCalledTimes(1);
   });
 

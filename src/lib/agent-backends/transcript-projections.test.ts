@@ -186,7 +186,7 @@ describe("projectTranscriptUsage", () => {
     });
   });
 
-  it("declines Codex frames without a thread ref or numeric cost", () => {
+  it("declines frames without a thread ref and preserves explicit unknown cost", () => {
     expect(
       projectTranscriptUsage({
         raw: { backend: "codex", backendRef: null, costUsd: 1.5 },
@@ -200,7 +200,11 @@ describe("projectTranscriptUsage", () => {
           costUsd: null,
         },
       }),
-    ).toBeNull();
+    ).toEqual({
+      lineageId: "thread-abc",
+      cumulativeCostUsd: null,
+      numTurns: null,
+    });
     expect(
       projectTranscriptUsage({
         raw: {
