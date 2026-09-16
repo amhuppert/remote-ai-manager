@@ -34,6 +34,29 @@ async function connect(bridge: CursorMcpBridge) {
 }
 
 describe("Cursor MCP enforcing bridge", () => {
+  it("keeps healthy tools usable when other servers fail to start", async () => {
+    const unavailable = await fixture("http");
+    await unavailable.close();
+    const healthy = await fixture("http");
+    const bridge = await openCursorMcpBridge({
+      "figma-desktop": { type: "http", url: unavailable.url },
+      fixture: { type: "http", url: healthy.url },
+      broken: {
+        command: process.execPath,
+        args: ["-e", "process.exit(1)"],
+        env: {},
+      },
+    });
+    const client = await connect(bridge);
+    expect(Object.keys(bridge.servers)).toEqual(["fixture"]);
+    expect(bridge.startupFailures).toEqual([
+      expect.stringMatching(/figma-desktop: startup failed/),
+      expect.stringMatching(/broken: startup failed/),
+    ]);
+    expect(await client.callTool({ name: "allowed" })).toMatchObject({
+      content: [{ text: "executed:allowed" }],
+    });
+  });
   it.each(["http", "sse"] as const)(
     "connects authenticated %s, filters inventory and rejects direct denied calls",
     async (type) => {
@@ -61,14 +84,19 @@ describe("Cursor MCP enforcing bridge", () => {
       expect(upstream.calls).toEqual(["allowed"]);
     },
   );
-  it("returns an actionable authentication failure without upstream response or credentials", async () => {
+  it("omits an unauthenticated server and reports a sanitized diagnostic", async () => {
     const upstream = await fixture("http", { auth: true });
-    const error = await openCursorMcpBridge({
+    const bridge = await openCursorMcpBridge({
       fixture: { type: "http", url: upstream.url },
-    }).catch((error: unknown) => error);
-    expect(error).toBeInstanceOf(Error);
-    expect(String(error)).toMatch(/authentication.*headers/i);
-    expect(String(error)).not.toContain("fixture-secret");
+    });
+    cleanup.push(() => bridge.close());
+    expect(bridge.servers).toEqual({});
+    expect(bridge.startupFailures).toEqual([
+      expect.stringMatching(/authentication.*headers/i),
+    ]);
+    expect(JSON.stringify(bridge.startupFailures)).not.toContain(
+      "fixture-secret",
+    );
   });
   it("sanitizes protocol tool errors that include credentials", async () => {
     const upstream = await fixture("http", { toolError: true });
@@ -100,11 +128,14 @@ describe("Cursor MCP enforcing bridge", () => {
   });
   it("enforces startup deadlines against a server that never initializes", async () => {
     const upstream = await fixture("http", { hang: true });
-    await expect(
-      openCursorMcpBridge({
-        fixture: { type: "http", url: upstream.url, startupTimeoutSec: 0.05 },
-      }),
-    ).rejects.toThrow(/startup.*timed out/i);
+    const bridge = await openCursorMcpBridge({
+      fixture: { type: "http", url: upstream.url, startupTimeoutSec: 0.05 },
+    });
+    cleanup.push(() => bridge.close());
+    expect(bridge.servers).toEqual({});
+    expect(bridge.startupFailures).toEqual([
+      expect.stringMatching(/startup.*timed out/i),
+    ]);
   });
   it("enforces tool deadlines after discovery", async () => {
     const upstream = await fixture("http");

@@ -170,9 +170,19 @@ export function wrapCursorSdkAgent(
         bridge = await openCursorMcpBridge(options.mcpServers);
         configKey = nextKey;
       }
+      let text = message.text;
+      if (bridge.startupFailures.length > 0) {
+        configKey = null;
+        text += `\n\nSome configured MCP servers are unavailable for this turn. Continue with available tools and report any resulting limitation:\n${bridge.startupFailures.join("\n")}`;
+        logger.warn("cursor-worker.mcp_unavailable", {
+          agentId: agent.agentId,
+          failedServerCount: bridge.startupFailures.length,
+          availableServerCount: Object.keys(bridge.servers).length,
+        });
+      }
       const run = await agent.send(
         {
-          text: message.text,
+          text,
           ...(message.images.length > 0 ? { images: [...message.images] } : {}),
         },
         {

@@ -115,6 +115,91 @@ describe("abandoned local run recovery", () => {
 });
 
 describe("SDK port MCP replacement lifecycle", () => {
+  it("runs with a sanitized MCP warning and retries unavailable servers on the next turn", async () => {
+    const { startMcpRemoteFixture } =
+      await import("../testing/mcp-remote-fixture");
+    const { openCursorMcpBridge } = await import("./mcp-bridge");
+    const { Client } =
+      await import("@modelcontextprotocol/sdk/client/index.js");
+    const { StreamableHTTPClientTransport } =
+      await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const availability = { auth: true };
+    const upstream = await startMcpRemoteFixture("http", availability);
+    const config = { fixture: { type: "http" as const, url: upstream.url } };
+    const messages: string[] = [];
+    const inventories: string[][] = [];
+    const bridge = await openCursorMcpBridge(config);
+    const wrapped = wrapCursorSdkAgent(
+      {
+        agentId: "fixture-agent",
+        async send(message, options) {
+          messages.push(typeof message === "string" ? message : message.text);
+          inventories.push(Object.keys(options?.mcpServers ?? {}));
+          const endpoint = options?.mcpServers?.fixture;
+          if (endpoint && "url" in endpoint) {
+            const client = new Client({ name: "sdk-consumer", version: "1" });
+            try {
+              await client.connect(
+                new StreamableHTTPClientTransport(new URL(endpoint.url), {
+                  requestInit: { headers: endpoint.headers },
+                }),
+              );
+              await client.callTool({ name: "allowed" });
+            } finally {
+              await client.close();
+            }
+          }
+          return {
+            id: "run-1",
+            agentId: "fixture-agent",
+            status: "finished" as const,
+            supports: () => true,
+            unsupportedReason: () => undefined,
+            async *stream() {},
+            async conversation() {
+              return [];
+            },
+            async wait() {
+              return { id: "run-1", status: "finished" as const };
+            },
+            async cancel() {},
+            onDidChangeStatus: () => () => {},
+          };
+        },
+        async [Symbol.asyncDispose]() {},
+      },
+      bridge,
+      { mcpServers: config },
+    );
+    const send = () =>
+      wrapped.send(
+        { text: "Investigate the table button", images: [] },
+        {
+          modelSelection: { modelId: "default", parameters: {} },
+          mcpServers: config,
+          forceExpirePersistedRun: false,
+        },
+      );
+    try {
+      const first = await send();
+      expect(await first.wait()).toEqual({ status: "finished" });
+      expect(messages[0]).toContain("Investigate the table button");
+      expect(messages[0]).toMatch(/MCP server fixture: authentication failed/);
+      expect(messages[0]).not.toContain("fixture-secret");
+      expect(inventories).toEqual([[]]);
+
+      availability.auth = false;
+      const second = await send();
+      expect(await second.wait()).toEqual({ status: "finished" });
+      expect(inventories).toEqual([[], ["fixture"]]);
+      expect(upstream.calls).toEqual(["allowed"]);
+      expect(messages[1]).toBe("Investigate the table button");
+    } finally {
+      await wrapped.dispose();
+      await upstream.close();
+    }
+  });
+
   it("replaces authenticated endpoints and removes them on an explicit empty send", async () => {
     const { startMcpRemoteFixture } =
       await import("../testing/mcp-remote-fixture");
@@ -226,7 +311,7 @@ it("forwards public nested task deltas without duplicating parent content", asyn
       },
       async [Symbol.asyncDispose]() {},
     },
-    { servers: {}, async close() {} },
+    { servers: {}, startupFailures: [], async close() {} },
     { mcpServers: {} },
   );
   await expect(

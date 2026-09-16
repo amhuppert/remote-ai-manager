@@ -23,6 +23,7 @@ const logger = createLogger("cursor-mcp-bridge");
 
 export interface CursorMcpBridge {
   servers: Record<string, McpServerConfig>;
+  startupFailures: readonly string[];
   close(): Promise<void>;
 }
 
@@ -110,9 +111,11 @@ export async function openCursorMcpBridge(
       );
     return { id, config: parsed.data };
   });
-  if (!entries.length) return { servers: {}, async close() {} };
+  if (!entries.length)
+    return { servers: {}, startupFailures: [], async close() {} };
 
   const upstreams: Upstream[] = [];
+  const startupFailures: string[] = [];
   const requests = new Set<Server>();
   const secret = randomUUID();
   const http = createServer(async (req, res) => {
@@ -223,7 +226,6 @@ export async function openCursorMcpBridge(
         version: "1",
       });
       const upstream: Upstream = { id, config, client, tools: [] };
-      upstreams.push(upstream);
       try {
         await deadline(
           (config.startupTimeoutSec ?? 10) * 1000,
@@ -250,20 +252,25 @@ export async function openCursorMcpBridge(
           },
         );
       } catch (error) {
-        throw safeFailure(id, "startup", error);
+        startupFailures.push(safeFailure(id, "startup", error).message);
+        await client.close();
+        continue;
       }
+      upstreams.push(upstream);
       logger.info("mcp.bridge.ready", {
         serverId: id,
         transport: "command" in config ? "stdio" : config.type,
         toolCount: upstream.tools.length,
       });
     }
+    if (!upstreams.length) return { servers: {}, startupFailures, close };
     http.listen(0, "127.0.0.1");
     await once(http, "listening");
     const address = http.address();
     if (!address || typeof address === "string")
       throw new Error("MCP bridge listener unavailable");
     return {
+      startupFailures,
       servers: Object.fromEntries(
         upstreams.map((upstream, index) => [
           upstream.id,
