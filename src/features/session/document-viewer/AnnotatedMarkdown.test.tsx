@@ -675,6 +675,25 @@ describe("AnnotatedMarkdown composition", () => {
     });
   });
 
+  it("dismisses an unopened selection affordance when a background press lands outside it", async () => {
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    // A browser collapses a selection only when the press lands on selectable
+    // text: pressing a button or `user-select: none` chrome leaves the selection
+    // live, which is why the stub keeps reporting it after the background press.
+    stubSelectionOverPassage(container, "agent-produced markdown");
+    fireEvent.pointerUp(document);
+    expect(screen.getByRole("button", { name: "Comment" })).toBeInTheDocument();
+
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Comment" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("keeps selection commenting unavailable when no create handler is provided", async () => {
     const { container } = renderAnnotated({ composer: undefined });
     await findSourceRoot(container);

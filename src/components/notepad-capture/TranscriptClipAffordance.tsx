@@ -17,9 +17,9 @@ export interface TranscriptClipAffordanceProps {
 
 /**
  * The floating Clip trigger over transcript selections: owns the selection
- * hook, renders the trigger at the selection rect, and dismisses on selection
- * collapse. Mount once per transcript surface; the landing wiring supplies
- * `onClip`.
+ * hook, renders the trigger at the selection rect, and dismisses when the
+ * selection ends or a press lands elsewhere. Mount once per transcript surface;
+ * the landing wiring supplies `onClip`.
  */
 export function TranscriptClipAffordance({
   onClip,

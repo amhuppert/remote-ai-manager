@@ -293,6 +293,26 @@ function SelectionAffordanceLayer({
     return () => window.removeEventListener("scroll", onScroll, true);
   }, [clear, draft, open, pending]);
 
+  // A press anywhere but the affordance ends the selection it belongs to. The
+  // browser collapses a selection only when the press lands on selectable text,
+  // so pressing chrome — a button, any `user-select: none` surface — leaves the
+  // trigger floating over a passage the user has moved on from: dismiss on the
+  // press rather than on a collapse that never arrives. An open composer owns
+  // its own outside-interaction dismissal, and a pending write keeps its draft.
+  useEffect(() => {
+    if (!draft || open || pending) return;
+    const onBackgroundPress = (event: PointerEvent): void => {
+      const target = event.target;
+      if (target instanceof Node && triggerRef.current?.contains(target)) {
+        return;
+      }
+      clear();
+    };
+    document.addEventListener("pointerdown", onBackgroundPress, true);
+    return () =>
+      document.removeEventListener("pointerdown", onBackgroundPress, true);
+  }, [clear, draft, open, pending]);
+
   if (!draft) return null;
 
   function closeAndRestoreSource(): void {

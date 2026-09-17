@@ -460,6 +460,27 @@ describe("TranscriptClipAffordance — dismissal", () => {
     expect(clipTrigger()).toBeNull();
   });
 
+  it("dismisses when a background press lands outside it", () => {
+    renderHarness();
+    const { removeAllRanges } = stubSelection(
+      rangeOverText(screen.getByTestId("prose-0"), 0, 5),
+    );
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+    expect(clipTrigger()).not.toBeNull();
+
+    // A browser collapses a selection only when the press lands on selectable
+    // text: pressing a control or `user-select: none` chrome leaves it live, so
+    // the stub still reports the selection after the background press.
+    act(() => {
+      fireEvent.pointerDown(screen.getByTestId("code-copy"));
+    });
+
+    expect(clipTrigger()).toBeNull();
+    expect(removeAllRanges).toHaveBeenCalled();
+  });
+
   it("keeps the draft when the pointer lands on the affordance itself", () => {
     renderHarness();
     stubSelection(rangeOverText(screen.getByTestId("prose-0"), 0, 5));
@@ -469,9 +490,11 @@ describe("TranscriptClipAffordance — dismissal", () => {
     const trigger = clipTrigger()!;
 
     // Interacting with the trigger collapses the selection in some browsers;
-    // the completion listener must not treat that as a dismissal.
+    // neither the background press nor the completion listener may treat the
+    // affordance's own press as a dismissal.
     stubSelection(null);
     act(() => {
+      fireEvent.pointerDown(trigger);
       fireEvent.pointerUp(trigger);
     });
 

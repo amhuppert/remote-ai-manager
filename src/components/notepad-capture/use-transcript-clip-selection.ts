@@ -98,6 +98,8 @@ function sameDraft(a: TranscriptClipDraft, b: TranscriptClipDraft): boolean {
 
 const CLIP_CHROME_SELECTOR =
   'button, [role="button"], [aria-hidden="true"], [hidden], script, style';
+/** The floating trigger's own subtree — its presses are never a dismissal. */
+const CLIP_AFFORDANCE_SELECTOR = "[data-clip-affordance]";
 const TEXT_BLOCK_SELECTOR =
   "p, pre, h1, h2, h3, h4, h5, h6, blockquote, div, ul, ol";
 
@@ -209,10 +211,10 @@ function messagesInRange(
  * selections (Shift+Arrow) never fire a pointer event — it maps the selection
  * to the gated message content elements it crosses and exposes them as a draft.
  * Selections across transcript roots, outside message content, or over a row
- * without the clip-source contract yield no draft. A collapsed selection
- * dismisses the draft, except when the event comes from the affordance itself
- * (clicking the trigger may collapse the selection before its click handler
- * runs).
+ * without the clip-source contract yield no draft. A collapsed selection or a
+ * press outside the affordance dismisses the draft; events from the affordance
+ * itself are exempt, because pressing the trigger may collapse the selection
+ * before its click handler runs.
  *
  * Mirrors the shape of the document viewer's selection-comment hook — the
  * precedent for keyboard-complete selections and draft identity — without
@@ -236,7 +238,7 @@ export function useTranscriptClipSelection(
       const target = event.target;
       if (
         target instanceof Element &&
-        target.closest("[data-clip-affordance]")
+        target.closest(CLIP_AFFORDANCE_SELECTOR)
       ) {
         return;
       }
@@ -279,11 +281,38 @@ export function useTranscriptClipSelection(
     };
   }, [within]);
 
-  const clear = useCallback((): void => {
-    log.debug("clip.selection_consumed");
+  const dismiss = useCallback((): void => {
     setDraft(null);
     window.getSelection()?.removeAllRanges();
   }, []);
+
+  const clear = useCallback((): void => {
+    log.debug("clip.selection_consumed");
+    dismiss();
+  }, [dismiss]);
+
+  // A press anywhere but the affordance ends the selection it belongs to. The
+  // browser collapses a selection only when the press lands on selectable text,
+  // so pressing chrome — a control, any `user-select: none` surface — leaves the
+  // trigger floating over a passage the user has moved on from, which the
+  // collapse branch above never sees.
+  useEffect(() => {
+    if (draft === null) return;
+    const onBackgroundPress = (event: PointerEvent): void => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(CLIP_AFFORDANCE_SELECTOR)
+      ) {
+        return;
+      }
+      log.debug("clip.selection_dismissed");
+      dismiss();
+    };
+    document.addEventListener("pointerdown", onBackgroundPress, true);
+    return () =>
+      document.removeEventListener("pointerdown", onBackgroundPress, true);
+  }, [dismiss, draft]);
 
   return { draft, clear };
 }
