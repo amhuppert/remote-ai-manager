@@ -1735,6 +1735,17 @@ async function executePromptForMachine(
     }
   }
 
+  // Queued turns have no browser prompt stream, and transient error events
+  // cannot explain a stopped turn after the conversation is reloaded.
+  if (effectiveError && !turnAborted) {
+    await safeAppendWithMeta(input.target.conversationId, {
+      timestamp: new Date().toISOString(),
+      type: "notice",
+      role: "notice",
+      content: [{ type: "text", text: `Turn stopped: ${effectiveError}` }],
+    });
+  }
+
   // Persist a typed `debug_structured` block when a debug-mode turn produced
   // a structured output. Backend-agnostic — the shared gate populates the
   // value from accepted final-response text or a backend-native payload. The

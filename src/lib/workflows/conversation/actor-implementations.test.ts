@@ -128,6 +128,7 @@ import path from "node:path";
 import {
   safeAppendTranscriptEntry as realSafeAppendTranscriptEntry,
   safeAppendTranscriptEntryOnce as realSafeAppendTranscriptEntryOnce,
+  readConversationMessages as readPersistedConversationMessages,
   setTranscriptDeps,
   _resetTranscriptDepsForTesting,
 } from "@/lib/prompt/transcript";
@@ -4376,7 +4377,7 @@ describe("executePromptForMachine", () => {
     expect((alienAppend![1] as { raw?: unknown }).raw).toBe(alienPayload);
   });
 
-  describe("id-bearing backend frames through the real append path", () => {
+  describe("durable backend turn transcripts", () => {
     let transcriptRoot: string;
     let broadcasts: SSEEvent[];
 
@@ -4424,6 +4425,14 @@ describe("executePromptForMachine", () => {
               transcriptRoot,
               meta,
             ),
+          appendTranscriptEntryOnce: (conversationId, entry, meta) =>
+            realSafeAppendTranscriptEntryOnce(
+              conversationId,
+              entry,
+              undefined,
+              transcriptRoot,
+              meta,
+            ),
         }),
       );
     });
@@ -4432,6 +4441,130 @@ describe("executePromptForMachine", () => {
       _resetTranscriptDepsForTesting();
       await rm(transcriptRoot, { recursive: true, force: true });
     });
+
+    it.each([
+      { scope: "session", emitsError: false },
+      { scope: "project", emitsError: true },
+    ])(
+      "keeps a queued turn failure visible after reload ($scope, error event: $emitsError)",
+      async ({ scope, emitsError }) => {
+        const error =
+          "Selected model is at capacity. Please try a different model.";
+        const progress = { type: "thinking" as const, text: "Checking work" };
+        mockFactory.createRuntime.mockResolvedValue(
+          createMockBackendRuntime({ backend: "codex" }),
+        );
+        mockSendTurn.mockImplementation(
+          async (turn: ConversationBackendTurnInput) => {
+            await turn.onEvent({ type: "input_accepted" });
+            if (emitsError)
+              await turn.onEvent({ type: "error", message: error });
+            return {
+              ...defaultTurnResult,
+              backendRef: { backend: "codex", ref: "thread-1" },
+              contentBlocks: [progress],
+              failure: {
+                kind: "backend_error",
+                message: error,
+                retryable: false,
+              },
+            };
+          },
+        );
+        const makeInput =
+          scope === "project"
+            ? makeProjectExecutePromptInput
+            : makeExecutePromptInput;
+        const input = makeInput({
+          agentBackend: "codex",
+          turn: {
+            queuedDelivery: {
+              messageIds: ["answer-1"],
+              deliveryAttemptId: "answer-attempt-1",
+            },
+          },
+        });
+        const key = conversationRuntimeKey(
+          input.projectPath,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
+        );
+        // Answer-driven turns have no browser prompt stream attached.
+        registerConversationRuntime(key, {
+          managed: createManagedRuntimeFixture(key),
+          abortController: new AbortController(),
+        });
+
+        const result = await conversationActors.executePromptForMachine(input);
+        expect(result.error).toBe(error);
+        const messages = await readPersistedConversationMessages(
+          path.join(
+            transcriptRoot,
+            "transcripts",
+            `${input.target.conversationId}.jsonl`,
+          ),
+        );
+        expect(messages.map((message) => message.role)).toEqual([
+          "user",
+          "assistant",
+          "notice",
+        ]);
+        expect(messages.at(-2)?.content).toEqual([progress]);
+        expect(messages.at(-1)?.content).toEqual([
+          { type: "text", text: `Turn stopped: ${error}` },
+        ]);
+        expect(
+          broadcasts.filter(
+            (event) =>
+              event.type === "message-appended" &&
+              event.message.role === "notice",
+          ),
+        ).toHaveLength(1);
+      },
+    );
+
+    it.each([false, true])(
+      "does not persist a failure notice for a successful or cancelled turn (aborted: %s)",
+      async (aborted) => {
+        mockFactory.createRuntime.mockResolvedValue(
+          createMockBackendRuntime({ backend: "codex" }),
+        );
+        mockSendTurn.mockResolvedValue({
+          ...defaultTurnResult,
+          backendRef: { backend: "codex", ref: "thread-1" },
+          aborted,
+          failure: aborted
+            ? { kind: "aborted", message: "Cancelled", retryable: false }
+            : null,
+        });
+        const input = makeExecutePromptInput({ agentBackend: "codex" });
+        const key = conversationRuntimeKey(
+          input.projectPath,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
+        );
+        registerConversationRuntime(key, {
+          managed: createManagedRuntimeFixture(key),
+          abortController: new AbortController(),
+        });
+
+        const result = await conversationActors.executePromptForMachine(input);
+        expect(result.aborted).toBe(aborted);
+        const messages = await readPersistedConversationMessages(
+          path.join(
+            transcriptRoot,
+            "transcripts",
+            `${input.target.conversationId}.jsonl`,
+          ),
+        );
+        expect(messages.some((message) => message.role === "assistant")).toBe(
+          true,
+        );
+        expect(messages.filter((message) => message.role === "notice")).toEqual(
+          [],
+        );
+      },
+    );
 
     async function persistedEntries(
       conversationId: string,
