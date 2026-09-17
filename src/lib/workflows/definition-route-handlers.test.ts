@@ -1,3 +1,4 @@
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -188,6 +189,7 @@ describe("workflow definition route handlers", () => {
   const deleteDefinition = vi.fn();
 
   const handlers = createWorkflowDefinitionRouteHandlers({
+    getExecutionContract: createTestGraphExecutionContract,
     resolveProjectPath,
     readConfig,
     readRepoConfig,
@@ -367,6 +369,7 @@ describe("workflow definition route handlers", () => {
       proposeBlockingCount: async () => null,
     };
     const managedHandlers = createWorkflowDefinitionRouteHandlers({
+      getExecutionContract: createTestGraphExecutionContract,
       resolveProjectPath,
       readConfig,
       readRepoConfig,
@@ -952,6 +955,7 @@ describe("create/replace review advisory", () => {
 
   function handlersWith(planReviews: PlanReviewLookup) {
     return createWorkflowDefinitionRouteHandlers({
+      getExecutionContract: createTestGraphExecutionContract,
       resolveProjectPath,
       readConfig,
       readRepoConfig,
@@ -1518,6 +1522,7 @@ describe("managed draft replace (one write path)", () => {
     log?: CapturingLogger,
   ) {
     return createWorkflowDefinitionRouteHandlers({
+      getExecutionContract: createTestGraphExecutionContract,
       ...(log === undefined ? {} : { log }),
       resolveProjectPath: async () => "/repo",
       readConfig: async () => MOCK_CONFIG,

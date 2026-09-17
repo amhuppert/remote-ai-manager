@@ -54,7 +54,7 @@ function withContextWorktree(
 }
 
 describe("ExecutionTargetResolver", () => {
-  it("returns the per-context worktree target when both worktreePath and branchName are populated", () => {
+  it("refuses a worktree context without a lane even when its worktree path is recorded", () => {
     const baseExecution = createWorkflowExecution();
     const execution = withContextWorktree(
       baseExecution,
@@ -65,19 +65,9 @@ describe("ExecutionTargetResolver", () => {
     const session = createSession();
     const resolver = createExecutionTargetResolver();
 
-    const result = resolver.resolve({
-      execution,
-      contextId: "context-plan",
-      session,
-    });
-
-    const expected: ExecutionTarget = {
-      worktreePath: "/repo/.worktrees/session-1.context-plan",
-      branchName: "csm/session-1-context-plan",
-      isolation: "worktree",
-      laneId: null,
-    };
-    expect(result).toEqual(expected);
+    expect(() =>
+      resolver.resolve({ execution, contextId: "context-plan", session }),
+    ).toThrow('Worktree context "context-plan" has no assigned lane');
   });
 
   it("falls back to the session target when the context has no per-context worktree", () => {
@@ -358,24 +348,18 @@ describe("ExecutionTargetResolver", () => {
     ).toThrow(/lane-missing/);
   });
 
-  it("returns laneId: null when no lane is assigned (legacy per-context worktree)", () => {
-    const baseExecution = createWorkflowExecution();
-    const execution = withContextWorktree(
-      baseExecution,
-      "context-plan",
-      "/repo/.worktrees/session-1.context-plan",
-      "csm/session-1-context-plan",
-    );
-    const session = createSession();
-    const resolver = createExecutionTargetResolver();
+  it("refuses a worktree context without a lane when its worktree path is absent", () => {
+    const execution = createWorkflowExecution();
+    const context = execution.contextStates["context-plan"];
+    if (!context) throw new Error("fixture missing context-plan");
+    context.isolation = "worktree";
 
-    const result = resolver.resolve({
-      execution,
-      contextId: "context-plan",
-      session,
-    });
-
-    expect(result.laneId).toBeNull();
-    expect(result.isolation).toBe("worktree");
+    expect(() =>
+      createExecutionTargetResolver().resolve({
+        execution,
+        contextId: "context-plan",
+        session: createSession(),
+      }),
+    ).toThrow('Worktree context "context-plan" has no assigned lane');
   });
 });

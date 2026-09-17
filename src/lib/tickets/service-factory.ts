@@ -59,10 +59,6 @@ import {
   type TicketAttachmentService,
 } from "./attachment-service";
 import {
-  createLegacyRelatedTicketAdapter,
-  type LegacyRelatedTicketAdapter,
-} from "./legacy-related-ticket-adapter";
-import {
   createCreateAttachmentPlanner,
   type CreateAttachmentPlanner,
 } from "./create-attachment-planner";
@@ -324,17 +320,6 @@ export function getTicketRelationshipService(): TicketRelationshipService {
       generateId() {
         return randomUUID();
       },
-    }),
-  );
-}
-
-/** Compatibility bridge for the retired related-ticket attachment wire shape. */
-export function getLegacyRelatedTicketAdapter(): LegacyRelatedTicketAdapter {
-  return getGlobalSingleton("__cc_legacy_related_ticket_adapter", () =>
-    createLegacyRelatedTicketAdapter({
-      repo: getTicketsRepo(),
-      ticketService: getTicketService(),
-      relationshipService: getTicketRelationshipService(),
     }),
   );
 }

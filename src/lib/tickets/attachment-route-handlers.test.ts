@@ -35,7 +35,6 @@ import {
   createTicketContentStore,
   type TicketContentStore,
 } from "./content-store";
-import type { LegacyRelatedTicketAdapter } from "./legacy-related-ticket-adapter";
 import { createTicketService, type TicketService } from "./service";
 import type { TicketDetail } from "./schemas";
 
@@ -120,37 +119,14 @@ function buildHandlers(
   overrides: {
     auth?: AgentAuth;
     attachmentService?: TicketAttachmentService;
-    legacyRelatedTicketAdapter?: LegacyRelatedTicketAdapter;
   } = {},
 ): TicketAttachmentRouteHandlers {
   return createTicketAttachmentRouteHandlers({
     getTicketService: () => ticketService,
     getAttachmentService: () =>
       overrides.attachmentService ?? attachmentService,
-    getLegacyRelatedTicketAdapter: () =>
-      overrides.legacyRelatedTicketAdapter ??
-      missingLegacyRelatedTicketAdapter(),
     auth: overrides.auth ?? grantedAuth(),
   });
-}
-
-function missingLegacyRelatedTicketAdapter(): LegacyRelatedTicketAdapter {
-  const missing = (input: { attachmentId: string }) =>
-    Promise.resolve({
-      ok: false as const,
-      error: {
-        code: "attachment_not_found" as const,
-        identifier: `${PROJECT_NAME}#1`,
-        attachmentId: input.attachmentId,
-      },
-    });
-  return {
-    add: () => missing({ attachmentId: "relationship" }),
-    resolve: missing,
-    update: missing,
-    remove: missing,
-    isRelationshipHandle: async () => ({ ok: true, value: false }),
-  };
 }
 
 beforeEach(async () => {
@@ -331,60 +307,6 @@ describe("add POST — JSON kinds", () => {
 
     const detail = await repo.find(PROJECT_PATH, ticket.number);
     expect(detail?.attachments).toHaveLength(payloads.length);
-  });
-
-  it("adapts a legacy related-ticket add to a relationship response handle", async () => {
-    const ticket = await createTicket();
-    const related = await createTicket();
-    const add = vi.fn<LegacyRelatedTicketAdapter["add"]>(async () => ({
-      ok: true,
-      value: {
-        id: "relationship-1",
-        ticketId: ticket.id,
-        description: "Related ticket",
-        payload: {
-          kind: "related_ticket",
-          ticketId: related.id,
-          identifierSnapshot: `${PROJECT_NAME}#${related.number}`,
-        },
-        createdAt: "2026-07-10T00:00:00.001Z",
-        updatedAt: "2026-07-10T00:00:00.001Z",
-      },
-    }));
-    const handlers = buildHandlers({
-      legacyRelatedTicketAdapter: {
-        ...missingLegacyRelatedTicketAdapter(),
-        add,
-      },
-    });
-
-    const response = await handlers.addPOST(
-      jsonRequest(`${BASE_URL}/${ticket.number}/attachments`, "POST", {
-        description: "",
-        payload: {
-          kind: "related_ticket",
-          projectName: PROJECT_NAME,
-          number: related.number,
-        },
-      }),
-      routeContext(ticket.number),
-    );
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
-      id: "relationship-1",
-      description: "Related ticket",
-      payload: {
-        kind: "related_ticket",
-        identifierSnapshot: `${PROJECT_NAME}#${related.number}`,
-      },
-    });
-    expect(add).toHaveBeenCalledWith({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-      description: "",
-      target: { projectName: PROJECT_NAME, number: related.number },
-    });
   });
 
   it("rejects a JSON file add with 400 pointing at multipart", async () => {
@@ -662,71 +584,6 @@ describe("resolve GET", () => {
       details: { attachmentId: "missing" },
     });
   });
-
-  it("falls back to migrated relationship aliases while canonical attachments win", async () => {
-    const ticket = await createTicket();
-    const related = await createTicket();
-    const note = await attachmentService.add({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-      description: "Canonical note",
-      payload: { kind: "note", markdown: "Canonical content" },
-    });
-    if (!note.ok) throw new Error("add failed");
-    const resolve = vi.fn<LegacyRelatedTicketAdapter["resolve"]>(
-      async (input) => ({
-        ok: true,
-        value: {
-          kind: "related_ticket",
-          attachment: {
-            id: input.attachmentId,
-            ticketId: ticket.id,
-            description: "Depends on upstream",
-            payload: {
-              kind: "related_ticket",
-              ticketId: related.id,
-              identifierSnapshot: `${PROJECT_NAME}#${related.number}`,
-            },
-            createdAt: "2026-07-10T00:00:00.001Z",
-            updatedAt: "2026-07-10T00:00:00.002Z",
-          },
-          available: true,
-          ticket: related,
-          followCommand: `cctl ticket get ${PROJECT_NAME}#${related.number}`,
-        },
-      }),
-    );
-    const handlers = buildHandlers({
-      legacyRelatedTicketAdapter: {
-        ...missingLegacyRelatedTicketAdapter(),
-        resolve,
-      },
-    });
-
-    const aliasResponse = await handlers.resolveGET(
-      new Request(
-        `${BASE_URL}/${ticket.number}/attachments/legacy-attachment-9`,
-      ),
-      routeContext(ticket.number, "legacy-attachment-9"),
-    );
-    expect(aliasResponse.status).toBe(200);
-    await expect(aliasResponse.json()).resolves.toMatchObject({
-      kind: "related_ticket",
-      attachment: { id: "legacy-attachment-9" },
-      available: true,
-    });
-
-    const canonicalResponse = await handlers.resolveGET(
-      new Request(`${BASE_URL}/${ticket.number}/attachments/${note.value.id}`),
-      routeContext(ticket.number, note.value.id),
-    );
-    expect(canonicalResponse.status).toBe(200);
-    await expect(canonicalResponse.json()).resolves.toMatchObject({
-      kind: "note",
-      attachment: { id: note.value.id },
-    });
-    expect(resolve).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("edit PATCH and remove DELETE", () => {
@@ -786,98 +643,5 @@ describe("edit PATCH and remove DELETE", () => {
       routeContext(ticket.number, added.value.id),
     );
     expect(resolved.status).toBe(404);
-  });
-
-  it("edits and removes a migrated relationship through its legacy alias", async () => {
-    const ticket = await createTicket();
-    const update = vi.fn<LegacyRelatedTicketAdapter["update"]>(
-      async (input) => ({
-        ok: true,
-        value: {
-          id: input.attachmentId,
-          ticketId: ticket.id,
-          description: input.description,
-          payload: {
-            kind: "related_ticket",
-            ticketId: "ticket-2",
-            identifierSnapshot: `${PROJECT_NAME}#2`,
-          },
-          createdAt: "2026-07-10T00:00:00.001Z",
-          updatedAt: "2026-07-10T00:00:00.003Z",
-        },
-      }),
-    );
-    const remove = vi.fn<LegacyRelatedTicketAdapter["remove"]>(
-      async (input) => ({
-        ok: true,
-        value: {
-          attachmentId: input.attachmentId,
-          ticketId: ticket.id,
-          kind: "related_ticket",
-          ticketUpdatedAt: "2026-07-10T00:00:00.004Z",
-        },
-      }),
-    );
-    const handlers = buildHandlers({
-      legacyRelatedTicketAdapter: {
-        ...missingLegacyRelatedTicketAdapter(),
-        update,
-        remove,
-        isRelationshipHandle: async () => ({ ok: true, value: true }),
-      },
-    });
-
-    const edited = await handlers.editPATCH(
-      jsonRequest(
-        `${BASE_URL}/${ticket.number}/attachments/legacy-9`,
-        "PATCH",
-        {
-          description: "Revised rationale",
-        },
-      ),
-      routeContext(ticket.number, "legacy-9"),
-    );
-    expect(edited.status).toBe(200);
-    await expect(edited.json()).resolves.toMatchObject({
-      id: "legacy-9",
-      description: "Revised rationale",
-      payload: { kind: "related_ticket" },
-    });
-    expect(update).toHaveBeenCalledWith({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-      attachmentId: "legacy-9",
-      description: "Revised rationale",
-    });
-
-    const markdownEdit = await handlers.editPATCH(
-      jsonRequest(
-        `${BASE_URL}/${ticket.number}/attachments/legacy-9`,
-        "PATCH",
-        {
-          markdown: "not supported",
-        },
-      ),
-      routeContext(ticket.number, "legacy-9"),
-    );
-    expect(markdownEdit.status).toBe(400);
-    expect(update).toHaveBeenCalledTimes(1);
-
-    const removed = await handlers.removeDELETE(
-      new Request(`${BASE_URL}/${ticket.number}/attachments/legacy-9`, {
-        method: "DELETE",
-      }),
-      routeContext(ticket.number, "legacy-9"),
-    );
-    expect(removed.status).toBe(200);
-    await expect(removed.json()).resolves.toMatchObject({
-      attachmentId: "legacy-9",
-      kind: "related_ticket",
-    });
-    expect(remove).toHaveBeenCalledWith({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-      attachmentId: "legacy-9",
-    });
   });
 });

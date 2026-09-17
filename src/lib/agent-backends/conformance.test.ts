@@ -34,7 +34,6 @@ import { claudeConversationBackendFactory } from "./claude/conversation-runtime"
 import { createClaudeContinuityAdapter } from "./claude/continuity";
 import { createClaudeRuntimeConfigAdapter } from "./claude/runtime-config/adapter";
 import { ClaudeTaskRunner } from "./claude/task-runner";
-import { _setClaudeSettingsResolverForTesting } from "./claude/native-memory";
 import { createClaudeFailureClassifier } from "./claude/failure-classifier";
 import { _setSdkQueryForTesting } from "./claude/query-session";
 import { createCodexBackendDescriptor } from "./codex/descriptor";
@@ -55,7 +54,6 @@ import {
   loadGeneratedCursorModelCatalog,
 } from "./cursor/model-catalog";
 import { createScriptedTransport } from "./cursor/testing/scripted-worker";
-import { CURSOR_IPC_CODEC_VERSION } from "./cursor/worker/ipc";
 import {
   claudeMcpCapabilities,
   codexMcpCapabilities,
@@ -158,18 +156,8 @@ const claudeSdk = createFakeClaudeSdkController({
   structuredOutput: STRUCTURED_OUTPUT_VALUE,
 });
 _setSdkQueryForTesting(claudeSdk.createSdkQuery);
-// The Claude launch paths refuse to start unless they can confirm no managed
-// policy re-enables native auto-memory. Stub the cascade so conformance does
-// not read the host's real MDM policy — which would make these pass or fail by
-// machine (see claude/native-memory.ts).
-_setClaudeSettingsResolverForTesting(async () => ({
-  effective: {},
-  provenance: {},
-  sources: [],
-}));
 afterAll(() => {
   _setSdkQueryForTesting(null);
-  _setClaudeSettingsResolverForTesting(null);
 });
 
 const claudeTaskPort = createFakeClaudeTaskPort({
@@ -306,7 +294,6 @@ const cursorQueueReady = Promise.withResolvers<void>();
 const cursorTransport = createScriptedTransport({
   onSteer: (input, worker) => {
     worker.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "steerResult",
       runId: input.runId,
       requestId: input.requestId,

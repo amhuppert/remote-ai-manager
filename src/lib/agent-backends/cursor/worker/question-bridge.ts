@@ -5,7 +5,7 @@ import {
   IN_TURN_QUESTION_TIMEOUT_MS,
   type InTurnQuestionReply,
 } from "@/lib/conversations/in-turn-question-schemas";
-import { CURSOR_IPC_CODEC_VERSION, type CursorWorkerFrame } from "./ipc";
+import { type CursorWorkerFrame } from "./ipc";
 
 const logger = createLogger("cursor-worker:questions");
 
@@ -61,7 +61,6 @@ export class CursorWorkerQuestions {
       questionCount: questions.length,
     });
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "questionRequest",
       runId: this.runId,
       requestId,

@@ -16,9 +16,6 @@ describe("createStartupRegistrar", () => {
       initializeGraphWorkflowRuntime: async () => {
         calls.push("graph-recovery");
       },
-      registerSpecWorkflowComposition: () => {
-        calls.push("spec-composition");
-      },
       initNotificationDb: () => {},
       setConfigReader: () => {},
       readConfig: async () => ({}) as never,
@@ -53,15 +50,11 @@ describe("createStartupRegistrar", () => {
       calls.indexOf("verify-url"),
     );
     expect(calls).toContain("graph-recovery");
-    expect(calls.indexOf("spec-composition")).toBeLessThan(
-      calls.indexOf("graph-recovery"),
-    );
     expect(calls.indexOf("graph-recovery")).toBeLessThan(
       calls.indexOf("record-url"),
     );
-    expect(calls).toContain("spec-composition");
     expect(calls.indexOf("migrations")).toBeLessThan(
-      calls.indexOf("spec-composition"),
+      calls.indexOf("graph-recovery"),
     );
   });
 

@@ -49,8 +49,8 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
    * production inherits the registered verifiers and tests inject their own.
    */
   auth?: WorkflowMutationGuardDeps["auth"];
-  verifyConversationCapability?: WorkflowMutationGuardDeps["verifyConversationCapability"];
-  verifyLaneCapability?: WorkflowMutationGuardDeps["verifyLaneCapability"];
+  readConversationIdentity?: WorkflowMutationGuardDeps["readConversationIdentity"];
+  readLaneIdentity?: WorkflowMutationGuardDeps["readLaneIdentity"];
 }
 
 const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {

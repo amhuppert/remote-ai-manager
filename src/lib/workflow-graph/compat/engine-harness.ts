@@ -12,7 +12,7 @@ import type {
   GraphWorkflowAdvisoryResponseOutcome,
 } from "../advisory-response-runner";
 import type { DirtyPath } from "../errors";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { createGraphWorkflowEngine } from "../engine-composition";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -611,8 +611,7 @@ export async function runEngineScenario<T>(
       },
     };
     const executionContract =
-      harnessHooks.executionContract ??
-      createNonParticipatingGraphExecutionContract();
+      harnessHooks.executionContract ?? createTestGraphExecutionContract();
     const {
       executionRepository: repository,
       eventPublisher: publisher,
@@ -727,7 +726,6 @@ export async function runEngineScenario<T>(
         parallelWorktrees: worktrees,
         mergeMutex,
         sessionGitLock,
-        mergeRunner,
         joinRunner: recordingJoinRunner,
         soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
         laneCommitter: {

@@ -269,7 +269,8 @@ describe("frozen execution charter with legacy sources", () => {
     fixture.close();
   });
 
-  it("stores the legacy charter shape and loads it back verbatim, with no migration flagged", () => {
+  it("stores the legacy charter shape and loads it back verbatim without rewriting it", () => {
+    const before = readStoredRow();
     // The fixture actually carries the pre-cutover shape on disk — without
     // this, every assertion below would hold vacuously.
     expect(readStoredRow().definitionJson).toContain("external-readonly");
@@ -289,13 +290,7 @@ describe("frozen execution charter with legacy sources", () => {
         (context) => context.id === FROZEN_CONTEXT_ID,
       )?.charter,
     ).toEqual(makeLegacyFrozenCharter());
-    // The tolerant parse is not the legacy-upgrade path: nothing was migrated,
-    // so nothing is waiting to be rewritten on the next ordinary write.
-    expect(
-      capturedLogs.filter(
-        (log) => log.message === "graph-workflow.parallel.legacy_migrated",
-      ),
-    ).toHaveLength(0);
+    expect(readStoredRow()).toEqual(before);
   });
 
   it("renders the loaded frozen charter with legacy sources as global and no permission-gated text", () => {

@@ -367,8 +367,9 @@ describe("Task 5.3 — workflow envelope cross-boundary invariants", () => {
       expect(workflow.resolvedConfig.secondAgent.source).toBe("global");
     });
 
-    it("parses a captured user-origin snapshot lacking the origin field as the user variant via the schema preprocess fallback", () => {
-      const capturedLegacyUserSnapshot = {
+    it("parses a migrated user-origin snapshot with its explicit discriminator", () => {
+      const capturedUserSnapshot = {
+        origin: "user",
         prompt: "Should we adopt Postgres?",
         autonomousResolutionThreshold: "minor",
         negotiationRounds: 3,
@@ -377,9 +378,8 @@ describe("Task 5.3 — workflow envelope cross-boundary invariants", () => {
         capturedAt: "2026-04-12T10:00:00.000Z",
       };
 
-      const parsed = collaborationFeatureSnapshotSchema.parse(
-        capturedLegacyUserSnapshot,
-      );
+      const parsed =
+        collaborationFeatureSnapshotSchema.parse(capturedUserSnapshot);
       expect(parsed.origin).toBe("user");
       const userVariant = parsed as CollaborationFeatureSnapshotUser;
       expect((userVariant as unknown as Record<string, unknown>).prompt).toBe(

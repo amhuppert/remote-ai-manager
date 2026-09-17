@@ -82,9 +82,9 @@ export const liveOutlineHeaderSchema = z
 
     status: graphWorkflowStatusSchema,
 
-    seedDefinitionId: z.string(),
+    seedDefinitionId: z.string().nullable(),
 
-    seedDefinitionRevision: z.number(),
+    seedDefinitionRevision: z.number().nullable(),
     /**
      * Whether the execution accepts live edits at all. A terminal/non-resumable
      * execution surfaces its read-only-ness HERE (doc 06: "not-editable … shown in

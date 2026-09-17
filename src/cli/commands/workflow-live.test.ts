@@ -9,20 +9,17 @@ import {
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
 import {
-  CONVERSATION_CAPABILITY_ENV_VAR,
-  CONVERSATION_CAPABILITY_HEADER,
-} from "@/lib/agent-gateway/conversation-capability";
-import {
-  LANE_CAPABILITY_ENV_VAR,
-  LANE_CAPABILITY_HEADER,
-} from "@/lib/agent-gateway/lane-capability";
+  CONVERSATION_IDENTITY_ENV_VAR,
+  CONVERSATION_IDENTITY_HEADER,
+} from "@/lib/agent-gateway/conversation-identity";
+import { LANE_IDENTITY_HEADER } from "@/lib/agent-gateway/lane-identity";
 
 const baseEnv: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:3000",
   CC_API_TOKEN: "env-token",
   CC_PROJECT: "cc",
   CC_SESSION: "my-session",
-  [CONVERSATION_CAPABILITY_ENV_VAR]: "conversation-capability",
+  [CONVERSATION_IDENTITY_ENV_VAR]: "conversation-identity",
 };
 
 interface RecordedRequest {
@@ -348,52 +345,15 @@ describe("cctl workflow live (dispatch + aliases)", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("rewrites 'workflow execution get' to the live-outline endpoint", async () => {
-    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
-    const result = await runCli(
-      ["workflow", "execution", "get"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
-      "/api/projects/cc/sessions/my-session/graph-workflow/live-outline",
-    );
-  });
-
-  it("rewrites 'workflow exec get' to the live-outline endpoint", async () => {
-    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
-    const result = await runCli(["workflow", "exec", "get"], baseEnv, host);
-    expect(result.exitCode).toBe(0);
-    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
-      "/api/projects/cc/sessions/my-session/graph-workflow/live-outline",
-    );
-  });
-
-  it("resolves 'workflow execution --help' to the live group help node", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["workflow", "execution", "--help"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(host.requests).toHaveLength(0);
-    expect(result.stdout).toContain("workflow live");
-    expect(result.stdout).toContain("workflow live get");
-  });
-
-  it("resolves 'workflow exec edit --help' to the live edit leaf help", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["workflow", "exec", "edit", "--help"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("workflow live edit");
-    expect(result.stdout).toContain("baseLiveRevision");
-  });
+  it.each(["execution", "exec"])(
+    "rejects the retired %s alias",
+    async (alias) => {
+      const host = makeHost(() => jsonResponse(OUTLINE_BODY));
+      const result = await runCli(["workflow", alias, "get"], baseEnv, host);
+      expect(result.exitCode).toBe(2);
+      expect(host.requests).toHaveLength(0);
+    },
+  );
 });
 
 describe("cctl workflow live get", () => {
@@ -1064,8 +1024,11 @@ describe("cctl workflow live edit", () => {
     expect(body.executionId).toBe("exec-7");
     expect(body.baseLiveRevision).toBe(4);
     expect(body.dryRun).toBeUndefined();
-    expect(request?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
-      "conversation-capability",
+    expect(request?.init.headers[CONVERSATION_IDENTITY_HEADER]).toBe(
+      JSON.stringify({
+        sessionName: "my-session",
+        conversationId: "conversation-identity",
+      }),
     );
     expect(result.stdout).toContain("applied 1 operation");
     expect(result.stdout).toContain("liveRev 5");
@@ -1182,8 +1145,11 @@ describe("cctl workflow live pause / resume", () => {
     expect(new URL(request?.url ?? "").pathname).toBe(
       "/api/projects/cc/sessions/my-session/graph-workflow/pause",
     );
-    expect(request?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
-      "conversation-capability",
+    expect(request?.init.headers[CONVERSATION_IDENTITY_HEADER]).toBe(
+      JSON.stringify({
+        sessionName: "my-session",
+        conversationId: "conversation-identity",
+      }),
     );
   });
 
@@ -1196,8 +1162,11 @@ describe("cctl workflow live pause / resume", () => {
     expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
       "/api/projects/cc/sessions/my-session/graph-workflow/resume",
     );
-    expect(host.requests[0]?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
-      "conversation-capability",
+    expect(host.requests[0]?.init.headers[CONVERSATION_IDENTITY_HEADER]).toBe(
+      JSON.stringify({
+        sessionName: "my-session",
+        conversationId: "conversation-identity",
+      }),
     );
   });
 
@@ -1209,18 +1178,25 @@ describe("cctl workflow live pause / resume", () => {
       ["workflow", "live", "pause"],
       {
         ...baseEnv,
-        [CONVERSATION_CAPABILITY_ENV_VAR]: undefined,
-        [LANE_CAPABILITY_ENV_VAR]: "lane-capability",
+        [CONVERSATION_IDENTITY_ENV_VAR]: undefined,
+        CC_WORKFLOW_EXECUTION_ID: "exec-1",
+        CC_WORKFLOW_CONTEXT_ID: "context-1",
+        CC_CONVERSATION_ID: "lane-conversation",
       },
       host,
     );
 
     expect(result.exitCode).toBe(0);
-    expect(host.requests[0]?.init.headers[LANE_CAPABILITY_HEADER]).toBe(
-      "lane-capability",
+    expect(host.requests[0]?.init.headers[LANE_IDENTITY_HEADER]).toBe(
+      JSON.stringify({
+        laneKind: "implementer",
+        executionId: "exec-1",
+        contextId: "context-1",
+        conversationId: "lane-conversation",
+      }),
     );
     expect(
-      host.requests[0]?.init.headers[CONVERSATION_CAPABILITY_HEADER],
+      host.requests[0]?.init.headers[CONVERSATION_IDENTITY_HEADER],
     ).toBeUndefined();
   });
 
@@ -1261,8 +1237,11 @@ describe("cctl workflow live abort", () => {
     expect(JSON.parse(String(request?.init.body))).toEqual({
       reason: "superseded",
     });
-    expect(request?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
-      "conversation-capability",
+    expect(request?.init.headers[CONVERSATION_IDENTITY_HEADER]).toBe(
+      JSON.stringify({
+        sessionName: "my-session",
+        conversationId: "conversation-identity",
+      }),
     );
     // `aborted` releases the lease on its own, and no release verb exists to
     // point at — a receipt naming one would send the operator nowhere.
@@ -1327,8 +1306,11 @@ describe("cctl workflow abandon", () => {
       executionId: "exec-halted-7",
       reason: "superseded",
     });
-    expect(host.requests[0]?.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
-      "conversation-capability",
+    expect(host.requests[0]?.init.headers[CONVERSATION_IDENTITY_HEADER]).toBe(
+      JSON.stringify({
+        sessionName: "my-session",
+        conversationId: "conversation-identity",
+      }),
     );
     expect(JSON.parse(result.stdout)).toEqual({
       ok: true,

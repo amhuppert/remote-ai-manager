@@ -4240,7 +4240,6 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
           return settledConversationTurn({ usage: {}, compacted: false });
         },
         getConversation: async () => null,
-        mintLaneCapability: () => null,
       });
 
       await runner.runIteration({
@@ -4338,7 +4337,6 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
           return settledConversationTurn({ usage: {}, compacted: false });
         },
         getConversation: async () => null,
-        mintLaneCapability: () => null,
       });
 
       await runner.runIteration({

@@ -120,11 +120,7 @@ describe("exit taxonomy", () => {
     expect(result.stderr).toContain(rowFor(EXIT_CONNECTION).recovery ?? "");
   });
 
-  it("exits 4 on build skew and scopes the nothing-changed claim to reads", async () => {
-    // A read that reaches a skewed server is hard-failed and its response
-    // discarded, so "nothing changed" holds. The row cannot promise the same
-    // for every path — a server that predates the mutation gate runs the
-    // handler before stamping the header — so it defers to the failure text.
+  it("exits 4 on build skew with no change", async () => {
     const result = await runCli(
       ["dev", "list"],
       env,
@@ -136,8 +132,6 @@ describe("exit taxonomy", () => {
     expect(result.exitCode).toBe(EXIT_VERSION_MISMATCH);
     expect(result.stdout, "a refused command reports no result").toBe("");
     expect(result.stderr).toContain("nothing changed");
-    expect(rowFor(EXIT_VERSION_MISMATCH).meaning).toContain(
-      "unless the failure text warns",
-    );
+    expect(rowFor(EXIT_VERSION_MISMATCH).meaning).toContain("nothing changed");
   });
 });

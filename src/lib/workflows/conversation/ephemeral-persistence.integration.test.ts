@@ -509,7 +509,6 @@ function makeFakeBackendActorDeps(
     getConversationCapabilities: () => undefined,
     registerBackendRuntime: () => {},
     unregisterBackendRuntime: () => {},
-    mintConversationCapability: () => null,
     buildChildEnv: () => process.env,
     resolvePluginPaths: async () => [],
     getCodexToolPromptHint: () => "",

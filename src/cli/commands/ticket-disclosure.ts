@@ -12,11 +12,6 @@ import {
 import { relationshipDescriptionPreview } from "@/lib/tickets/relationship-index";
 import { compareRelationshipViews } from "@/lib/tickets/relationship-semantics";
 import {
-  legacyDeletedRelatedTicketAttachmentSchema,
-  legacyRelatedTicketAttachmentSchema as legacyRelatedTicketWireAttachmentSchema,
-  legacyResolvedRelatedTicketSchema as legacyResolvedRelatedTicketWireSchema,
-} from "@/lib/tickets/legacy-related-ticket-wire";
-import {
   ticketDetailSchema,
   ticketRelationshipPageSchema,
   ticketRelationshipViewSchema,
@@ -182,18 +177,6 @@ export const ticketGetProjectionSchema = z
   })
   .strict();
 export type TicketGetProjection = z.infer<typeof ticketGetProjectionSchema>;
-
-export const legacyRelatedTicketAttachmentSchema =
-  legacyRelatedTicketWireAttachmentSchema;
-export type LegacyRelatedTicketAttachment = z.infer<
-  typeof legacyRelatedTicketAttachmentSchema
->;
-
-export const legacyResolvedRelatedTicketSchema =
-  legacyResolvedRelatedTicketWireSchema;
-
-export const legacyRemovedRelatedTicketSchema =
-  legacyDeletedRelatedTicketAttachmentSchema;
 
 export const ticketArtifactReceiptSchema = z
   .object({

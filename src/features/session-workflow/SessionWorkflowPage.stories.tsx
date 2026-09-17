@@ -46,7 +46,7 @@ const eventPage = graphWorkflowExecutionEventPageResponseSchema.parse({
   nextCursor: null,
 });
 
-function createStoryQueryClient(): QueryClient {
+function createStoryQueryClient(oneOff: boolean): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -60,7 +60,14 @@ function createStoryQueryClient(): QueryClient {
 
   queryClient.setQueryData(
     graphWorkflowExecutionKeys.detail(PROJECT_NAME, SESSION_NAME),
-    artemisBugReporterExecution,
+    oneOff
+      ? {
+          ...artemisBugReporterExecution,
+          origin: { kind: "one_off", planName: "Bug reporter repair" },
+          seedDefinitionId: null,
+          seedDefinitionRevision: null,
+        }
+      : artemisBugReporterExecution,
   );
   queryClient.setQueryData(
     graphWorkflowHistoryKeys.list(PROJECT_NAME, SESSION_NAME),
@@ -163,8 +170,14 @@ function mockEventPageFetch() {
   };
 }
 
-function WithSourceExecution({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(createStoryQueryClient);
+function WithSourceExecution({
+  children,
+  oneOff,
+}: {
+  children: React.ReactNode;
+  oneOff: boolean;
+}) {
+  const [queryClient] = useState(() => createStoryQueryClient(oneOff));
   useLayoutEffect(() => {
     const sidebarWasCollapsed =
       useSessionDetailStore.getState().sidebarCollapsed;
@@ -186,8 +199,8 @@ const meta = {
   title: "Session Workflow/Workflow Execution Page",
   component: SessionWorkflowPage,
   decorators: [
-    (Story) => (
-      <WithSourceExecution>
+    (Story, context) => (
+      <WithSourceExecution oneOff={context.parameters.oneOff === true}>
         <Story />
       </WithSourceExecution>
     ),
@@ -205,3 +218,5 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const BugReporterExecution: Story = {};
+
+export const OneOffExecution: Story = { parameters: { oneOff: true } };

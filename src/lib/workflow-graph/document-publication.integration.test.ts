@@ -8,7 +8,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
 import { applyFixtureMutation } from "./testing/execution-mutation-fixture";
-import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import {
   createGraphWorkflowExecutionToolContext,
   type GraphWorkflowExecutionToolContextDeps,
@@ -223,7 +223,7 @@ describe("shared document publication", () => {
         };
       const tool = createGraphWorkflowExecutionToolContext({
         executionRepository: { mutateActive },
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         sharedDocumentRegistry: registry,
         runtimeEditService: createGraphWorkflowRuntimeEditService(),
         publishLiveEditApplied:

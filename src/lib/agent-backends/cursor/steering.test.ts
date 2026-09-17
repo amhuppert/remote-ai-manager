@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InputDeliveryUncertainError } from "../errors";
-import { CURSOR_IPC_CODEC_VERSION } from "./worker/ipc";
 import { CursorSteering } from "./steering";
 
 afterEach(() => vi.useRealTimers());
@@ -18,7 +17,6 @@ describe("Cursor steering acknowledgements", () => {
         accepted = true;
       });
     const reply = {
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "steerResult",
       requestId: id,
       runId: "old-run",
@@ -43,7 +41,6 @@ describe("Cursor steering acknowledgements", () => {
       const steering = new CursorSteering();
       const delivery = steering.deliver("run-1", (requestId) =>
         steering.accept({
-          v: CURSOR_IPC_CODEC_VERSION,
           type: "steerResult",
           requestId,
           runId: "run-1",

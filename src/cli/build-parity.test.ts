@@ -101,23 +101,6 @@ describe("cctl build parity", () => {
     const result = await runCli(["dev", "list"], baseEnv, host);
     expect(result.exitCode).toBe(0);
   });
-
-  // A server that predates the middleware refusal stamps the header on every
-  // method but still RUNS the handler, so a mutation that reaches this arm may
-  // already be committed — claiming "nothing changed" here invites a re-run
-  // that double-commits.
-  it("hedges on a mutation an un-gated server may have committed", async () => {
-    const host = hostReturning({
-      [BUILD_MISMATCH_HEADER]: `server=${SERVER_BUILD} cli=${CLI_BUILD}`,
-    });
-
-    const result = await runCli(["notify", "hello"], baseEnv, host);
-
-    expect(result.exitCode).toBe(4);
-    expect(result.stderr).toContain("may have committed");
-    expect(result.stderr).toContain("verify");
-    expect(result.stderr).not.toContain("nothing changed");
-  });
 });
 
 describe("cctl build skew — the server's pre-execution mutation refusal", () => {

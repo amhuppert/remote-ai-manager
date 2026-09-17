@@ -1,3 +1,4 @@
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it, vi } from "vitest";
 import {
   createWorkflowDefinition,
@@ -29,10 +30,51 @@ function persistSpy(record: WorkflowDefinitionRecord) {
 }
 
 describe("runDefinitionEditRequest", () => {
+  it("honors the injected contract before persisting changed task membership", async () => {
+    const record = createWorkflowDefinitionRecord({ revision: 3 });
+    const { persist } = persistSpy(record);
+    const response = await runDefinitionEditRequest({
+      executionContract: {
+        ...createTestGraphExecutionContract(),
+        deriveContextAcceptanceCriteria: () => ({
+          ok: false,
+          code: "fixture_contract_refused",
+          issues: [
+            { code: "fixture-contract", message: "Task membership is fixed" },
+          ],
+          instruction: "Amend the source contract",
+        }),
+      },
+      rawBody: {
+        expectedRevision: 3,
+        operations: [
+          {
+            type: "move-task",
+            taskId: "task-plan-1",
+            contextId: "context-implement",
+          },
+        ],
+      },
+      notFoundError: "Workflow not found",
+      loadRecord: async () => record,
+      persist,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      issues: [
+        expect.objectContaining({
+          message: expect.stringContaining("Task membership is fixed"),
+        }),
+      ],
+    });
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("rejects a malformed body at 400 without persisting", async () => {
     const record = createWorkflowDefinitionRecord({ revision: 7 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: { operations: [] },
       notFoundError: "Workflow not found",
       loadRecord: async () => record,
@@ -44,6 +86,7 @@ describe("runDefinitionEditRequest", () => {
 
   it("returns 404 for an unknown definition", async () => {
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 1,
         operations: [{ type: "update-workflow", name: "x" }],
@@ -62,6 +105,7 @@ describe("runDefinitionEditRequest", () => {
     const record = createWorkflowDefinitionRecord({ revision: 8 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 7,
         operations: [{ type: "update-workflow", name: "x" }],
@@ -83,6 +127,7 @@ describe("runDefinitionEditRequest", () => {
     const record = createWorkflowDefinitionRecord({ revision: 3 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 3,
         operations: [{ type: "update-task", taskId: "missing", title: "x" }],
@@ -116,6 +161,7 @@ describe("runDefinitionEditRequest", () => {
     const { persist } = persistSpy(record);
 
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 3,
         operations: [
@@ -144,6 +190,7 @@ describe("runDefinitionEditRequest", () => {
     const record = createWorkflowDefinitionRecord({ revision: 3 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 3,
         dryRun: true,
@@ -172,6 +219,7 @@ describe("runDefinitionEditRequest", () => {
     const record = createWorkflowDefinitionRecord({ revision: 3 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 3,
         operations: [
@@ -216,6 +264,7 @@ describe("runDefinitionEditRequest", () => {
     const record = createWorkflowDefinitionRecord({ revision: 3 });
     const { persist, calls } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 3,
         operations: [
@@ -244,6 +293,7 @@ describe("runDefinitionEditRequest", () => {
     const record = createWorkflowDefinitionRecord({ revision: 3 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 3,
         operations: [
@@ -274,6 +324,7 @@ describe("runDefinitionEditRequest", () => {
     const record = createWorkflowDefinitionRecord({ revision: 3 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: {
         expectedRevision: 3,
         operations: [{ type: "update-charter" }],
@@ -301,6 +352,7 @@ describe("runDefinitionEditRequest receipt fields", () => {
     }));
 
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: rename,
       notFoundError: "Workflow not found",
       loadRecord: async () => record,
@@ -324,6 +376,7 @@ describe("runDefinitionEditRequest receipt fields", () => {
     const receiptFields = vi.fn(async () => ({ proposeGate: {} }));
 
     const response = await runDefinitionEditRequest({
+      executionContract: createTestGraphExecutionContract(),
       rawBody: { ...rename, dryRun: true },
       notFoundError: "Workflow not found",
       loadRecord: async () => record,

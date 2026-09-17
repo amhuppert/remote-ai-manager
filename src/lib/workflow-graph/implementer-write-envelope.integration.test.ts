@@ -101,7 +101,6 @@ async function runIterationCapturingOptions(
       return settledConversationTurn({ usage: {}, compacted: false }) as never;
     },
     getConversation: (async () => null) as never,
-    mintLaneCapability: () => null,
     composeWriteEnvelope: (input) =>
       composeImplementerLaneWriteEnvelope(input, { scratchRootDir }),
   });
@@ -308,7 +307,6 @@ describe("the implementer dispatch path composes the envelope before dispatching
         throw new Error("dispatched to a backend that cannot confine writes");
       }) as never,
       getConversation: (async () => null) as never,
-      mintLaneCapability: () => null,
       composeWriteEnvelope: (input) => {
         composed = true;
         return composeImplementerLaneWriteEnvelope(input, { scratchRootDir });
@@ -349,7 +347,6 @@ describe("the implementer dispatch path composes the envelope before dispatching
         throw new Error("dispatched to a backend that cannot confine writes");
       }) as never,
       getConversation: (async () => null) as never,
-      mintLaneCapability: () => null,
       composeWriteEnvelope: (input) =>
         composeImplementerLaneWriteEnvelope(input, { scratchRootDir }),
       conversationFsWriteRestriction: () => "unsupported",
@@ -383,7 +380,6 @@ describe("the implementer dispatch path composes the envelope before dispatching
           throw new Error("dispatched despite an unestablishable envelope");
         }) as never,
         getConversation: (async () => null) as never,
-        mintLaneCapability: () => null,
         composeWriteEnvelope: () => {
           throw new Error("worktree root is unresolvable");
         },

@@ -103,17 +103,6 @@ export interface TurnExecutionDependencies {
     expected: ConversationBackendRuntime,
   ): void;
 
-  /**
-   * Mint the signed conversation capability for a launch-eligible runtime
-   * (D7 D11/D12). Null when the server provisioned no signing key, which leaves
-   * the conversation unable to claim a launch origin — the correct fail-closed
-   * outcome rather than a reason to block the turn.
-   */
-  mintConversationCapability(scope: {
-    sessionName: string;
-    conversationId: string;
-  }): string | null;
-
   // Child environment and plugins (passed to backend factory)
   buildChildEnv(): NodeJS.ProcessEnv;
 

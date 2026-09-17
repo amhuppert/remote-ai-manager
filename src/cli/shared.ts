@@ -28,13 +28,14 @@ import { fileSourceFlagName } from "./help-types";
 import { flattenDiagnosticText } from "@/lib/shared/diagnostic-text";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
-  CONVERSATION_CAPABILITY_ENV_VAR,
-  CONVERSATION_CAPABILITY_HEADER,
-} from "@/lib/agent-gateway/conversation-capability";
+  CONVERSATION_IDENTITY_ENV_VAR,
+  CONVERSATION_IDENTITY_HEADER,
+  encodeConversationIdentity,
+} from "@/lib/agent-gateway/conversation-identity";
 import {
-  LANE_CAPABILITY_ENV_VAR,
-  LANE_CAPABILITY_HEADER,
-} from "@/lib/agent-gateway/lane-capability";
+  LANE_IDENTITY_HEADER,
+  encodeLaneIdentity,
+} from "@/lib/agent-gateway/lane-identity";
 
 const logger = createLogger("cli.shared");
 
@@ -47,21 +48,36 @@ export interface CliResult {
 /** Environment as the CLI sees it — a plain record so tests inject it directly. */
 export type CliEnv = Record<string, string | undefined>;
 
-export interface CliPrincipalCapabilities {
+export interface CliPrincipalIdentity {
   conversation?: string;
   lane?: string;
 }
 
-/** Signed principal credentials distributed to this agent's environment. */
-export function resolveCliPrincipalCapabilities(
-  env: CliEnv,
-): CliPrincipalCapabilities {
-  const conversation = env[CONVERSATION_CAPABILITY_ENV_VAR];
-  const lane = env[LANE_CAPABILITY_ENV_VAR];
-  return {
-    ...(conversation ? { conversation } : {}),
-    ...(lane ? { lane } : {}),
-  };
+/** Caller identity comes only from the environment, independently of CLI target flags. */
+export function resolveCliPrincipalIdentity(env: CliEnv): CliPrincipalIdentity {
+  const conversationId = env[CONVERSATION_IDENTITY_ENV_VAR];
+  const sessionName = readSessionEnv(env);
+  const executionId = env["CC_WORKFLOW_EXECUTION_ID"];
+  const contextId = env["CC_WORKFLOW_CONTEXT_ID"];
+  const laneConversationId = env["CC_CONVERSATION_ID"];
+  if (executionId || contextId) {
+    return {
+      lane: encodeLaneIdentity({
+        laneKind: "implementer",
+        executionId: executionId ?? "",
+        contextId: contextId ?? "",
+        conversationId: laneConversationId ?? "",
+      }),
+    };
+  }
+  return conversationId && sessionName
+    ? {
+        conversation: encodeConversationIdentity({
+          sessionName,
+          conversationId,
+        }),
+      }
+    : {};
 }
 
 /**
@@ -1196,13 +1212,7 @@ export function issueDetailLines(issues: readonly RequestIssue[]): string[] {
   );
 }
 
-/**
- * A gated server refuses skewed mutations before the handler runs
- * (`src/middleware.ts`), which is what lets that refusal state that nothing
- * changed. The post-response header check still covers reads — and mutations
- * against a server that predates the gate, where the handler already ran and
- * the effect may have committed, so that path must hedge instead.
- */
+/** Build parity refuses mutations before dispatch and discards mismatched reads. */
 export { BUILD_SKEW_CODE };
 
 export interface BuildSkewCliErrorDetails {
@@ -1239,12 +1249,6 @@ export type CliRequestResult =
       kind: "version_mismatch";
       serverBuild: string;
       cliBuild: string;
-      /**
-       * The HTTP method of the discarded request. A header-only mismatch means
-       * the server ran the handler (a gated server refuses with `build_skew`
-       * instead), so the method decides whether "nothing changed" is true.
-       */
-      method: string;
     }
   | {
       kind: "error";
@@ -1278,8 +1282,8 @@ export interface CliRequestParams {
   rawBody?: Uint8Array<ArrayBuffer>;
   /** Extra request headers (e.g. the caller-conversation audit header). */
   headers?: Record<string, string>;
-  /** Server-signed caller authority; values are never logged. */
-  principalCapabilities?: CliPrincipalCapabilities;
+  /** Environment-derived caller identity, independent of target flags. */
+  principalIdentity?: CliPrincipalIdentity;
   /** Bound the complete HTTP operation; the real host aborts at this deadline. */
   timeoutMs?: number;
   /**
@@ -1413,14 +1417,13 @@ function buildRequestInit(params: CliRequestParams): FetchInit {
       : { "x-cc-cli-build": formatBuildStamp(BUILD_INFO) }),
     "content-type": "application/json",
     ...(params.headers ?? {}),
-    ...(params.principalCapabilities?.conversation
+    ...(params.principalIdentity?.conversation
       ? {
-          [CONVERSATION_CAPABILITY_HEADER]:
-            params.principalCapabilities.conversation,
+          [CONVERSATION_IDENTITY_HEADER]: params.principalIdentity.conversation,
         }
       : {}),
-    ...(params.principalCapabilities?.lane
-      ? { [LANE_CAPABILITY_HEADER]: params.principalCapabilities.lane }
+    ...(params.principalIdentity?.lane
+      ? { [LANE_IDENTITY_HEADER]: params.principalIdentity.lane }
       : {}),
   };
   if (params.token !== null)
@@ -1496,13 +1499,12 @@ function classifyErrorBody(
  */
 function readBuildMismatch(
   response: Response,
-  method: string,
 ): Extract<CliRequestResult, { kind: "version_mismatch" }> | null {
   const header = response.headers.get(BUILD_MISMATCH_HEADER);
   if (header === null) return null;
   const parsed = parseBuildMismatchHeader(header);
   if (parsed === null) return null;
-  return { kind: "version_mismatch", method, ...parsed };
+  return { kind: "version_mismatch", ...parsed };
 }
 
 /**
@@ -1516,13 +1518,13 @@ export async function cliRequest(
 ): Promise<CliRequestResult> {
   const url = new URL(params.path, params.server);
   const init = buildRequestInit(params);
-  if (params.principalCapabilities !== undefined) {
+  if (params.principalIdentity !== undefined) {
     logger.debug("cli.request_principal_attached", {
       method: params.method,
       path: params.path,
       hasConversationCapability:
-        params.principalCapabilities.conversation !== undefined,
-      hasLaneCapability: params.principalCapabilities.lane !== undefined,
+        params.principalIdentity.conversation !== undefined,
+      hasLaneCapability: params.principalIdentity.lane !== undefined,
     });
   }
 
@@ -1552,12 +1554,12 @@ export async function cliRequest(
   }
 
   if (response.ok) {
-    const skew = readBuildMismatch(response, params.method);
+    const skew = readBuildMismatch(response);
     if (skew !== null) return skew;
     return { kind: "ok", status: response.status, body };
   }
 
-  return classifySkewedErrorBody(response, body, params.method);
+  return classifySkewedErrorBody(response, body);
 }
 
 /**
@@ -1569,11 +1571,10 @@ export async function cliRequest(
 function classifySkewedErrorBody(
   response: Response,
   body: unknown,
-  method: string,
 ): Exclude<CliRequestResult, { kind: "ok" }> {
   const classified = classifyErrorBody(response.status, body);
   if (classified.code === BUILD_SKEW_CODE) return classified;
-  return readBuildMismatch(response, method) ?? classified;
+  return readBuildMismatch(response) ?? classified;
 }
 
 export type CliTextRequestResult =
@@ -1612,7 +1613,7 @@ export async function cliRequestText(
 
   const text = await response.text();
   if (response.ok) {
-    const skew = readBuildMismatch(response, params.method);
+    const skew = readBuildMismatch(response);
     if (skew !== null) return skew;
     return { kind: "ok", status: response.status, text };
   }
@@ -1623,7 +1624,7 @@ export async function cliRequestText(
   } catch {
     body = undefined;
   }
-  return classifySkewedErrorBody(response, body, params.method);
+  return classifySkewedErrorBody(response, body);
 }
 
 export type CliBytesRequestResult =
@@ -1666,7 +1667,7 @@ export async function cliRequestBytes(
   }
 
   if (response.ok) {
-    const skew = readBuildMismatch(response, params.method);
+    const skew = readBuildMismatch(response);
     if (skew !== null) return skew;
     const buffer = await response.arrayBuffer();
     return {
@@ -1685,7 +1686,7 @@ export async function cliRequestBytes(
   } catch {
     body = undefined;
   }
-  return classifySkewedErrorBody(response, body, params.method);
+  return classifySkewedErrorBody(response, body);
 }
 
 /**
@@ -1838,18 +1839,10 @@ export function failureFromRequest(
     });
   }
   if (result.kind === "version_mismatch") {
-    // Header-only skew means the server RAN the handler (a gated server
-    // refuses mutations with `build_skew` instead, handled below). A discarded
-    // read changed nothing; a mutation may already be committed server-side,
-    // and claiming otherwise invites a re-run that double-commits.
-    const isRead = result.method === "GET" || result.method === "HEAD";
-    const outcome = isRead
-      ? "so the response was discarded unread; nothing changed"
-      : "and this server ran the request before reporting the skew — the mutation may have committed; verify server state before retrying";
     return failure({
       exitCode: EXIT_VERSION_MISMATCH,
       message: `this cctl is build ${result.cliBuild}; the server is build ${result.serverBuild}`,
-      detail: `  every CC server publishes its own cctl at <its configDir>/bin/cctl — a binary from one server reads a\n  command surface the other does not have, ${outcome}`,
+      detail: `  every CC server publishes its own cctl at <its configDir>/bin/cctl — a binary from one server reads a\n  command surface the other does not have, so the response was discarded unread; nothing changed`,
       hint: "run `cctl doctor --server <url>` to print that server's cctl path, then invoke that binary",
       json,
     });

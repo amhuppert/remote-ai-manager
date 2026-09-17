@@ -6,7 +6,7 @@ import {
 } from "./test-fixtures";
 
 import { isUpstreamVisibleToDownstream } from "./lane-readiness";
-import { getEligibleContextIds, isContextLanded } from "./lane-readiness";
+import { getEligibleContextIds } from "./lane-readiness";
 
 describe("route and lane eligibility", () => {
   it("finds all currently eligible contexts for MVP scheduling", () => {
@@ -45,27 +45,6 @@ describe("route and lane eligibility", () => {
     });
 
     expect(getEligibleContextIds(definition, execution)).toEqual([]);
-  });
-
-  it("unlocks downstream once worktree-isolation upstream reports merged-success", () => {
-    const definition = createWorkflowDefinition();
-    const baseExecution = createWorkflowExecution();
-    const execution = createWorkflowExecution({
-      contextStates: {
-        ...baseExecution.contextStates,
-        "context-plan": {
-          ...baseExecution.contextStates["context-plan"]!,
-          status: "completed",
-          completedTaskCount: 1,
-          isolation: "worktree",
-          mergeStatus: "merged-success",
-        },
-      },
-    });
-
-    expect(getEligibleContextIds(definition, execution)).toEqual([
-      "context-implement",
-    ]);
   });
 
   it("keeps a lane-placed downstream eligible when its upstream landed on a lane the join has not merged yet", () => {
@@ -190,10 +169,25 @@ describe("route and lane eligibility", () => {
 
     const merged = createWorkflowExecution({
       ...blocked,
+      executionLanes: {
+        "lane-plan": {
+          laneId: "lane-plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/tmp/lane-plan",
+          branchName: "csm/lane-plan",
+          includedContextIds: ["context-plan"],
+          lastCommittingContextId: "context-plan",
+          commitSnapshots: [],
+          createdAt: "2026-08-04T10:00:00.000Z",
+          updatedAt: "2026-08-04T10:00:00.000Z",
+        },
+      },
       contextStates: {
         ...blocked.contextStates,
         "context-plan": {
           ...blocked.contextStates["context-plan"]!,
+          laneId: "lane-plan",
           mergeStatus: "merged-success",
         },
       },
@@ -201,31 +195,6 @@ describe("route and lane eligibility", () => {
     expect(getEligibleContextIds(merged.workingDefinition, merged)).toEqual([
       "context-implement",
     ]);
-  });
-
-  it("isContextLanded treats session isolation as landed when completed", () => {
-    const baseExecution = createWorkflowExecution();
-    const state = {
-      ...baseExecution.contextStates["context-plan"]!,
-      status: "completed" as const,
-      isolation: "session" as const,
-      mergeStatus: "not-applicable" as const,
-    };
-    expect(isContextLanded(state)).toBe(true);
-  });
-
-  it("isContextLanded requires merged-success for worktree isolation", () => {
-    const baseExecution = createWorkflowExecution();
-    const state = {
-      ...baseExecution.contextStates["context-plan"]!,
-      status: "completed" as const,
-      isolation: "worktree" as const,
-      mergeStatus: "pending" as const,
-    };
-    expect(isContextLanded(state)).toBe(false);
-    expect(
-      isContextLanded({ ...state, mergeStatus: "merged-success" as const }),
-    ).toBe(true);
   });
 
   it("makes a lane-pinned downstream's upstream visible once a join merges the upstream lane into it", () => {

@@ -1,3 +1,5 @@
+import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 import {
   publishWorkflowDocuments,
   withArtifactPublication,
@@ -13,10 +15,6 @@ import {
 import { clearConversationQuestion } from "@/lib/workflows/conversation/manager";
 import { createLandingEvidenceProber } from "./landing-evidence";
 import { createLaneDriftAuditor } from "./lane-drift";
-import {
-  createRegisteredGraphExecutionContract,
-  assertGraphExecutionContractRegistered,
-} from "./execution-contract-port";
 import {
   createGraphWorkflowLifecycleService,
   type GraphWorkflowLifecycleDeps,
@@ -45,11 +43,7 @@ import {
   type ClaimDefinitionApprovalResult,
 } from "@/lib/workflow-graph/workflow-manager";
 
-import {
-  createRegisteredGraphExecutionLifecycleCallbacks,
-  assertGraphExecutionLifecycleCallbacksRegistered,
-  type DefinitionApprovalGateDecision,
-} from "@/lib/workflow-graph/execution-lifecycle-port";
+import { type DefinitionApprovalGateDecision } from "@/lib/workflow-graph/execution-lifecycle-port";
 
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 
@@ -107,7 +101,6 @@ import { scopeForTier } from "./template-library-service";
 import { abortExecutionLoop } from "@/lib/workflow-graph/execution-loop";
 
 import { runRegisteredMergeJob } from "@/lib/jobs/queue";
-import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
 
 import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflight-prerequisite-service";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
@@ -140,7 +133,9 @@ import {
 const logger = createLogger("graph-workflow-production");
 const GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT = 500;
 
-function createProductionGraphWorkflowRuntime() {
+function createProductionGraphWorkflowRuntime(
+  composition: WorkflowComposition,
+) {
   const workflowStorage = createWorkflowStorageService();
   const parallelWorktrees = createParallelWorktrees();
 
@@ -149,10 +144,10 @@ function createProductionGraphWorkflowRuntime() {
   // user commit/merge jobs on the same session.
   const sessionGitLock = createSessionGitLock({ acquireSessionLock });
   const mergeRunner = createGraphWorkflowMergeRunner({
-    deliveryGate: createRegisteredDeliveryGateEvaluator(),
-    markDelivered:
-      createRegisteredGraphExecutionLifecycleCallbacks().markDelivered,
-    runMachine: runRegisteredMergeJob,
+    deliveryGate: composition.deliveryGate,
+    markDelivered: composition.lifecycleCallbacks.markDelivered,
+    runMachine: (input) =>
+      runRegisteredMergeJob(input, composition.mergeDeliveryLifecycle),
   });
   const soloContextCommitter = createSoloContextCommitter();
   const laneCommitter = createLaneCommitter();
@@ -172,7 +167,7 @@ function createProductionGraphWorkflowRuntime() {
     executionLoop,
   } = createGraphWorkflowEngine({
     clearConversationQuestion,
-    executionContract: createRegisteredGraphExecutionContract(),
+    executionContract: composition.executionContract,
     repair({
       workflowManager,
       executionRepository,
@@ -185,7 +180,7 @@ function createProductionGraphWorkflowRuntime() {
         mutateActive: executionRepository.mutateActive,
         applyLiveEdits: (input) =>
           applyLiveEditsToActiveExecution(input, {
-            executionContract: createRegisteredGraphExecutionContract(),
+            executionContract: composition.executionContract,
             getActiveExecution: getActiveGraphWorkflowExecution,
             mutateActive: executionRepository.mutateActive,
             buildLiveEditDeps: buildDefaultLiveEditDeps,
@@ -334,7 +329,6 @@ function createProductionGraphWorkflowRuntime() {
       parallelWorktrees,
       mergeMutex,
       sessionGitLock,
-      mergeRunner,
       soloContextCommitter,
       laneCommitter,
       joinRunner,
@@ -345,7 +339,6 @@ function createProductionGraphWorkflowRuntime() {
       laneDriftAuditor: createLaneDriftAuditor(),
       resyncSharedIndex: resyncSharedIndexToHead,
       buildLiveEditDeps: buildDefaultLiveEditDeps,
-      readRepoConfig,
       getMaxConcurrentQueries: getConfiguredQueryConcurrency,
       isConversationBusy,
       acquireConversationLock,
@@ -355,7 +348,7 @@ function createProductionGraphWorkflowRuntime() {
     },
     context({ executionRepository, continuityService }) {
       const validatorRunner = createValidatorRunner({
-        executionContract: createRegisteredGraphExecutionContract(),
+        executionContract: composition.executionContract,
         async resolveWorktreePath(projectPath, sessionName) {
           const session = await defaultGetSession(projectPath, sessionName);
           if (!session) throw new Error("Session not found");
@@ -514,8 +507,9 @@ function createProductionGraphWorkflowRuntime() {
 
   return {
     lifecycle: createGraphWorkflowLifecycleService(
-      createProductionGraphWorkflowLifecycleDeps(),
+      createProductionGraphWorkflowLifecycleDeps(composition),
     ),
+    composition,
     eventPublisher,
     executionRepository,
     workflowManager,
@@ -542,9 +536,9 @@ export async function initializeGraphWorkflowRuntimeAtStartup(): Promise<void> {
   const host = runtimeHost();
   if (host.initializing !== null) return host.initializing;
   host.initializing = (async () => {
-    assertGraphExecutionContractRegistered();
-    assertGraphExecutionLifecycleCallbacksRegistered();
-    const candidate = createProductionGraphWorkflowRuntime();
+    const candidate = createProductionGraphWorkflowRuntime(
+      getProductionWorkflowComposition(),
+    );
     const executions = await listActiveGraphWorkflowExecutions();
     for (const [address, execution] of executions) {
       const separator = address.indexOf("\0");
@@ -587,7 +581,7 @@ export async function applyProductionGraphWorkflowLiveEdits(input: {
   const graphWorkflowRuntime = getGraphWorkflowRuntime();
   return withArtifactPublication(input.projectPath, input.sessionName, () =>
     applyLiveEditsToActiveExecution(input, {
-      executionContract: createRegisteredGraphExecutionContract(),
+      executionContract: getProductionWorkflowComposition().executionContract,
       getActiveExecution: getActiveGraphWorkflowExecution,
       mutateActive: graphWorkflowRuntime.executionRepository.mutateActive,
       buildLiveEditDeps: buildDefaultLiveEditDeps,
@@ -602,24 +596,23 @@ export async function applyProductionGraphWorkflowLiveEdits(input: {
   );
 }
 
-export function createProductionGraphWorkflowLifecycleDeps(): GraphWorkflowLifecycleDeps {
+export function createProductionGraphWorkflowLifecycleDeps(
+  composition: WorkflowComposition = getProductionWorkflowComposition(),
+): GraphWorkflowLifecycleDeps {
   return {
-    executionContract: createRegisteredGraphExecutionContract(),
+    executionContract: composition.executionContract,
     startExecution: (input) =>
       getGraphWorkflowRuntime().workflowManager.start(input),
     runExecution: (input) =>
       getGraphWorkflowRuntime().workflowManager.run(input),
     launchSpecDeliveryExecution: (input) =>
       getGraphWorkflowRuntime().workflowManager.launchSpecDelivery(input),
-    markRunning: createRegisteredGraphExecutionLifecycleCallbacks().markRunning,
+    markRunning: composition.lifecycleCallbacks.markRunning,
     awaitingDefinitionApproval:
-      createRegisteredGraphExecutionLifecycleCallbacks()
-        .awaitingDefinitionApproval,
+      composition.lifecycleCallbacks.awaitingDefinitionApproval,
     admitDefinitionApproval:
-      createRegisteredGraphExecutionLifecycleCallbacks()
-        .admitDefinitionApproval,
-    executionAborted:
-      createRegisteredGraphExecutionLifecycleCallbacks().executionAborted,
+      composition.lifecycleCallbacks.admitDefinitionApproval,
+    executionAborted: composition.lifecycleCallbacks.executionAborted,
     recordDefinitionApproval: (input) =>
       getGraphWorkflowRuntime().workflowManager.recordDefinitionApproval(input),
     claimDefinitionApproval: (input) =>

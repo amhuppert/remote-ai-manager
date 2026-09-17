@@ -5,7 +5,7 @@ import type {
   ExecutionMutationOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
@@ -256,7 +256,7 @@ describe("graph workflow iteration context validation integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -340,7 +340,7 @@ describe("graph workflow iteration context validation integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -404,7 +404,7 @@ describe("graph workflow iteration context validation integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -490,7 +490,7 @@ describe("graph workflow iteration context validation integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -592,7 +592,7 @@ describe("graph workflow iteration context validation integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,

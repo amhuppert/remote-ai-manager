@@ -98,6 +98,14 @@ function postRequest(body: unknown): Request {
 
 function makeDeps(overrides: Partial<GitRouteDeps> = {}): GitRouteDeps {
   return {
+    getMergePolicy: () => ({
+      mergeAssociation: { resolve: () => ({ kind: "none" }) },
+      deliveryGate: {
+        async evaluate() {
+          throw new Error("An unassociated merge cannot reach the gate");
+        },
+      },
+    }),
     resolveProjectPath: vi.fn().mockResolvedValue("/repo"),
     getSession: vi.fn().mockResolvedValue(makeSession()),
     getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue(null),
@@ -349,6 +357,39 @@ describe("commitSession", () => {
 });
 
 describe("mergeSession", () => {
+  it("uses the injected delivery association to refuse an ambiguous merge", async () => {
+    const deps = makeDeps();
+    const handlers = createGitRouteHandlers({
+      ...deps,
+      getMergePolicy: () => ({
+        mergeAssociation: {
+          resolve: () => ({
+            kind: "refused" as const,
+            reason: "Ambiguous delivery association.",
+            instruction: "Choose the delivery execution.",
+          }),
+        },
+        deliveryGate: {
+          async evaluate() {
+            throw new Error("An ambiguous association cannot reach the gate");
+          },
+        },
+      }),
+    });
+
+    const response = await handlers.mergeSession(
+      postRequest({ autoResolve: true }),
+      routeContext(sessionParams),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "SPEC_DELIVERY_REVIEW_REQUIRED",
+      details: { blockers: ["Ambiguous delivery association."] },
+    });
+    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+  });
+
   /**
    * Session delivery follows the lease (R13). The route's advisory check is the
    * first of two — the publish actor repeats it under the project lock — so what

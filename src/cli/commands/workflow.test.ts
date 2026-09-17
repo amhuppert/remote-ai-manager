@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONVERSATION_CAPABILITY_ENV_VAR,
-  CONVERSATION_CAPABILITY_HEADER,
-} from "@/lib/agent-gateway/conversation-capability";
+  CONVERSATION_IDENTITY_ENV_VAR,
+  CONVERSATION_IDENTITY_HEADER,
+} from "@/lib/agent-gateway/conversation-identity";
 import { runCli } from "../core";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
 
@@ -511,7 +511,7 @@ describe("cctl workflow status", () => {
     );
     const explicitEnv = {
       ...baseEnv,
-      [CONVERSATION_CAPABILITY_ENV_VAR]: "must-not-be-used-for-a-read",
+      [CONVERSATION_IDENTITY_ENV_VAR]: "must-not-be-used-for-a-read",
     };
     const argv = [
       "workflow",
@@ -539,7 +539,7 @@ describe("cctl workflow status", () => {
         "/api/projects/another-project/sessions/archived-session/graph-workflow/executions/exec-history-7",
       );
       expect(
-        request?.init.headers[CONVERSATION_CAPABILITY_HEADER],
+        request?.init.headers[CONVERSATION_IDENTITY_HEADER],
       ).toBeUndefined();
     }
   });
@@ -1321,8 +1321,11 @@ describe("cctl workflow run", () => {
           plan,
           inputs: { target: "staging" },
         });
-        expect(request.init.headers[CONVERSATION_CAPABILITY_HEADER]).toBe(
-          "signed-conversation-capability",
+        expect(request.init.headers[CONVERSATION_IDENTITY_HEADER]).toBe(
+          JSON.stringify({
+            sessionName: "my-session",
+            conversationId: "conv-origin",
+          }),
         );
         return jsonResponse({ receipt }, 202);
       },
@@ -1344,7 +1347,7 @@ describe("cctl workflow run", () => {
       {
         ...baseEnv,
         CC_CONVERSATION_ID: "conv-origin",
-        [CONVERSATION_CAPABILITY_ENV_VAR]: "signed-conversation-capability",
+        [CONVERSATION_IDENTITY_ENV_VAR]: "conv-origin",
       },
       host,
     );
@@ -3892,7 +3895,7 @@ describe("cctl workflow graph expand", () => {
   const files = { [payloadFile]: JSON.stringify(payload) };
   const capabilityEnv: CliEnv = {
     ...laneEnv,
-    CC_WORKFLOW_LANE_CAPABILITY: "cclc1.payload.signature",
+    CC_CONVERSATION_ID: "lane-conversation",
   };
 
   it("posts the payload to the lane expand endpoint with the capability header", async () => {
@@ -3920,8 +3923,13 @@ describe("cctl workflow graph expand", () => {
     expect(new URL(request?.url ?? "").pathname).toBe(
       "/api/projects/cc/sessions/my-session/graph-workflow/contexts/context-plan/expand",
     );
-    expect(request?.init.headers?.["x-cc-lane-capability"]).toBe(
-      "cclc1.payload.signature",
+    expect(request?.init.headers?.["x-cc-lane-identity"]).toBe(
+      JSON.stringify({
+        laneKind: "implementer",
+        executionId: "exec-7",
+        contextId: "context-plan",
+        conversationId: "lane-conversation",
+      }),
     );
     expect(JSON.parse(request?.init.body ?? "{}")).toEqual({
       executionId: "exec-7",
@@ -3959,17 +3967,17 @@ describe("cctl workflow graph expand", () => {
     expect(result.stdout).toContain("context-plan-xdeadbeef-candidate-a");
   });
 
-  it("exits 2 naming the capability variable when the lane has none", async () => {
+  it("exits 2 naming the lane context when the caller is not a lane", async () => {
     const host = makeHost(() => jsonResponse({ ok: true }), files);
 
     const result = await runCli(
       ["workflow", "graph", "expand", "--file", payloadFile],
-      laneEnv,
+      baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("CC_WORKFLOW_LANE_CAPABILITY");
+    expect(result.stderr).toContain("CC_WORKFLOW_EXECUTION_ID");
     expect(host.requests).toHaveLength(0);
   });
 

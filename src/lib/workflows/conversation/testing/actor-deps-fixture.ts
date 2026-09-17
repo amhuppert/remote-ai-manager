@@ -144,7 +144,6 @@ export function createActorDependenciesFixture(
     unregisterBackendRuntime: vi.fn(),
     // Defaults to the unprovisioned-server outcome, so a test that cares about
     // launch authority has to opt in and say which identity it expects.
-    mintConversationCapability: vi.fn(() => null),
     buildChildEnv: vi.fn(() => ({
       HOME: "/home/test",
       NODE_ENV: "test" as const,
@@ -271,7 +270,6 @@ export function groupActorFixtureDependencies(
       getConversationCapabilities: deps.getConversationCapabilities,
       registerBackendRuntime: deps.registerBackendRuntime,
       unregisterBackendRuntime: deps.unregisterBackendRuntime,
-      mintConversationCapability: deps.mintConversationCapability,
       buildChildEnv: deps.buildChildEnv,
       resolvePluginPaths: deps.resolvePluginPaths,
       getCodexToolPromptHint: deps.getCodexToolPromptHint,

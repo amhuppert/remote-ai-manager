@@ -7,7 +7,6 @@ import {
   CURSOR_WORKER_TERMINATION_GRACE_MS,
 } from "./bounds";
 import {
-  CURSOR_IPC_CODEC_VERSION,
   encodeNativePayload,
   parseParentFrame,
   type CursorParentFrame,
@@ -377,7 +376,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       // Nothing arrived on the one channel that can carry a credential, so the
       // worker reports the absence itself rather than waiting to be reaped.
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "preflightFailed",
         reason: "missing_credential",
         message: "no credential arrived within the handshake bound",
@@ -497,7 +495,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       // parent cannot already read from static preflight, so only the class
       // crosses.
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "preflightFailed",
         reason: "sdk_load_failed",
         message: "the Cursor SDK could not be loaded in the worker",
@@ -512,7 +509,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     const handshakeKey = vault.take();
     if (handshakeKey === null) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "preflightFailed",
         reason: "missing_credential",
         message: "the credential frame carried no usable key",
@@ -532,7 +528,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
           ? "credential_timeout"
           : credentialFailureReason(error);
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "preflightFailed",
         reason,
         // The verification response can echo the key back in a message body, so
@@ -545,7 +540,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
 
     ready = true;
     send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "ready",
       pid: deps.process.pid,
       pgid: deps.process.processGroupId(),
@@ -586,7 +580,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     const loaded = sdk;
     if (current === null || loaded === null || !ready) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "attachResult",
         outcome: "failed",
         ref: null,
@@ -606,7 +599,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     const apiKey = vault.take();
     if (apiKey === null) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "attachResult",
         outcome: "failed",
         ref: null,
@@ -625,7 +617,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     );
     if (!modelSelection.valid) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "attachResult",
         outcome: "failed",
         ref: null,
@@ -647,7 +638,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
           : await loaded.create(options);
     } catch (error) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "attachResult",
         outcome: "failed",
         ref: null,
@@ -658,7 +648,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
 
     issueRef(agent.agentId, null);
     send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "attachResult",
       outcome: "attached",
       ref: agent.agentId,
@@ -670,7 +659,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
   function issueRef(ref: string, runId: string | null): void {
     if (issuedRef === ref) return;
     issuedRef = ref;
-    send({ v: CURSOR_IPC_CODEC_VERSION, type: "refIssued", runId, ref });
+    send({ type: "refIssued", runId, ref });
   }
 
   function forwardEvent(
@@ -682,7 +671,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     const encoded = encodeNativePayload(eventType, event);
     if (!encoded.ok) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "nativeEventRejected",
         runId,
         eventIndex,
@@ -694,7 +682,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       return;
     }
     send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "nativeEvent",
       runId,
       eventIndex,
@@ -705,7 +692,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
 
   function sendUsage(runId: string, usage: CursorWorkerRunUsage): void {
     send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "usage",
       runId,
       inputTokens: usage.inputTokens,
@@ -725,7 +711,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     const current = agent;
     if (current === null) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
         runId: frame.runId,
         outcome: "failed",
@@ -744,7 +729,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     );
     if (!modelSelection.valid) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
         runId: frame.runId,
         outcome: "failed",
@@ -760,7 +744,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       // The earliest provable receipt (D6): the agent answered on this run.
       if (eventIndex === 0)
         send({
-          v: CURSOR_IPC_CODEC_VERSION,
           type: "inputAccepted",
           runId: frame.runId,
         });
@@ -807,7 +790,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       questions.close();
       forwarding = false;
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
         runId: frame.runId,
         outcome: "failed",
@@ -828,7 +810,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       activeRun = null;
       armIdleTimer();
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
         runId: frame.runId,
         outcome: "failed",
@@ -846,7 +827,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       activeRun = null;
       armIdleTimer();
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
         runId: frame.runId,
         outcome: "failed",
@@ -861,7 +841,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
 
     if (result.usage !== undefined) sendUsage(frame.runId, result.usage);
     send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "turnSettled",
       runId: frame.runId,
       outcome:
@@ -895,7 +874,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
         outcome,
       });
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "steerResult",
         runId: frame.runId,
         requestId: frame.requestId,
@@ -927,7 +905,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     const current = activeRun;
     if (current === null || current.runId !== frame.runId) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "cancelResult",
         runId: frame.runId,
         outcome: "not_active",
@@ -938,7 +915,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     try {
       await current.run.cancel();
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "cancelResult",
         runId: frame.runId,
         outcome: "cancelled",
@@ -946,7 +922,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       });
     } catch (error) {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "cancelResult",
         runId: frame.runId,
         outcome: "failed",
@@ -985,7 +960,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       // rejection names the reason and, only when it is a known discriminant,
       // the frame type.
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "fatal",
         code: `protocol_${parsed.reason}`,
         message: `rejected a parent frame (${parsed.frameType ?? "unknown type"})`,
@@ -994,7 +968,6 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     }
     void dispatch(parsed.frame).catch((error: unknown) => {
       send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "fatal",
         code: "worker_unhandled",
         message: describeSdkError(error).message,

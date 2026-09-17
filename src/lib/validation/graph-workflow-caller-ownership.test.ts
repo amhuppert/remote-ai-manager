@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -18,14 +18,14 @@ import {
   OWNER_CONVERSATION_HEADER,
 } from "@/lib/workflow-graph/execution-route-handlers";
 import {
-  CONVERSATION_CAPABILITY_HEADER,
-  mintConversationCapability,
-  verifyConversationCapability,
-} from "@/lib/agent-gateway/conversation-capability";
+  CONVERSATION_IDENTITY_HEADER,
+  encodeConversationIdentity,
+  readConversationIdentity,
+} from "@/lib/agent-gateway/conversation-identity";
 import {
-  LANE_CAPABILITY_HEADER,
-  verifyLaneCapability,
-} from "@/lib/agent-gateway/lane-capability";
+  LANE_IDENTITY_HEADER,
+  readLaneIdentity,
+} from "@/lib/agent-gateway/lane-identity";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import {
   createWorkflowDefinitionRecord,
@@ -144,7 +144,6 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
   const PROJECT_PATH = "/repo";
   const SESSION_NAME = "session-1";
   /** Stands in for the server-only key; deliberately not the instance token. */
-  const CAPABILITY_SECRET = "server-only-capability-key";
   const OWNER_CONVERSATION_ID = "conv-owner";
   const OTHER_CONVERSATION_ID = "conv-other";
   const FORGED_CONVERSATION_ID = "conv-forged";
@@ -222,7 +221,7 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       getSession: fixture.store.getSession,
@@ -237,7 +236,7 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       createExecutionId: () => "execution-started",
     });
     const handlers = createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
@@ -268,16 +267,12 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
             ? ({ kind: "absent" } as const)
             : ({ kind: "valid" } as const),
       },
-      verifyConversationCapability: async (request: Request) =>
-        verifyConversationCapability(
-          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
+      readConversationIdentity: async (request: Request) =>
+        readConversationIdentity(
+          request.headers.get(CONVERSATION_IDENTITY_HEADER),
         ),
-      verifyLaneCapability: async (request: Request) =>
-        verifyLaneCapability(
-          request.headers.get(LANE_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
-        ),
+      readLaneIdentity: async (request: Request) =>
+        readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
     });
 
     const response = await handlers.START(
@@ -297,14 +292,10 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
               ? {}
               : {
                   authorization: "Bearer instance-token",
-                  [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-                    {
-                      sessionName: SESSION_NAME,
-                      conversationId: input.capabilityFor,
-                    },
-                    CAPABILITY_SECRET,
-                    1_760_000_000_000,
-                  ),
+                  [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+                    sessionName: SESSION_NAME,
+                    conversationId: input.capabilityFor,
+                  }),
                 }),
             ...(input.header === undefined
               ? {}

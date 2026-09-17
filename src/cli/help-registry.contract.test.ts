@@ -116,22 +116,6 @@ describe("help registry contract", () => {
     );
   });
 
-  it("documents attach ticket as a compatibility alias and migrated ids as readable", () => {
-    const attachTicket = ENTRIES.find(
-      (entry) => pathKey(entry.path) === "ticket attach ticket",
-    );
-    const attachment = ENTRIES.find(
-      (entry) => pathKey(entry.path) === "ticket attachment",
-    );
-    expect(`${attachTicket?.summary} ${attachTicket?.description}`).toMatch(
-      /compatibility alias/i,
-    );
-    expect(attachTicket?.description).toContain(
-      "ticket relation add --role related",
-    );
-    expect(attachment?.description).toMatch(/migrated relationship ids/i);
-  });
-
   it("teaches the atomic model selection accepted by agent run", () => {
     const entry = ENTRIES.find(
       (candidate) => pathKey(candidate.path) === "agent run",

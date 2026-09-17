@@ -6,7 +6,7 @@ import type {
 } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
 
 import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
@@ -239,7 +239,7 @@ function buildOrchestrator(
     ...createContextTestCapabilities(),
     materializeWorkflowDocuments: async ({ execution }) => execution,
 
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     executionRepository: repository,
     findLatestContextValidationEvent:

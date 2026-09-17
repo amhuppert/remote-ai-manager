@@ -1,3 +1,4 @@
+import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
 import { createDeliveryApprovalService } from "./delivery-approval";
 import { createDeliveryReviewService } from "./delivery-review-service";
 import { createDeliveryContinuationService } from "./delivery-continuation";
@@ -9,7 +10,7 @@ import type {
 } from "@/lib/workflow-graph/execution-mutation";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { buildLifecycleSnapshot } from "@/lib/workflow-graph/context-transitions";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { createLifecycleRouteFixture } from "@/lib/workflow-graph/testing/lifecycle-route-fixture";
 import type { GraphWorkflowLifecycleDeps } from "@/lib/workflow-graph/lifecycle-service";
 import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
@@ -44,7 +45,6 @@ import type {
   WorkflowDefinitionRecord,
 } from "@/lib/workflow-graph/definition-schemas";
 import { graphWorkflowExecutionEventSchema } from "@/lib/workflow-graph/event-schemas";
-import { createRegisteredGraphExecutionLifecycleCallbacks } from "@/lib/workflow-graph/execution-lifecycle-port";
 import { createGraphWorkflowLifecycleService } from "@/lib/workflow-graph/lifecycle-service";
 import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
@@ -91,7 +91,6 @@ import type {
   ClassifyWorktreeInput,
   ClassifyWorktreeOutput,
 } from "@/lib/workflows/merge/actors";
-import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
 import {
   mergeMachine,
   type MergeMachineType,
@@ -153,16 +152,15 @@ import {
   SPEC_CALLER_CONVERSATION_HEADER,
   type SpecMutationServices,
 } from "./route-handlers";
-import { registerSpecWorkflowComposition } from "./workflow-composition";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import {
-  CONVERSATION_CAPABILITY_HEADER,
-  verifyConversationCapability,
-} from "@/lib/agent-gateway/conversation-capability";
+  CONVERSATION_IDENTITY_HEADER,
+  readConversationIdentity,
+} from "@/lib/agent-gateway/conversation-identity";
 import {
-  LANE_CAPABILITY_HEADER,
-  verifyLaneCapability,
-} from "@/lib/agent-gateway/lane-capability";
+  LANE_IDENTITY_HEADER,
+  readLaneIdentity,
+} from "@/lib/agent-gateway/lane-identity";
 import type { OptionalTokenValidation } from "@/lib/agent-gateway/token";
 import type { GraphWorkflowExecutionSeed } from "@/lib/workflow-graph/execution-repository";
 import { buildExecutionProvenance } from "@/lib/workflow-graph/execution-origin";
@@ -183,7 +181,6 @@ export const SPINE_BEARER_TOKEN = "contract-token";
  * instance token cannot mint a capability with it, and a fixture that reused
  * the token would prove the opposite of what the routes enforce.
  */
-const SPINE_CAPABILITY_SECRET = "spine-server-only-capability-key";
 
 class InMemoryWorkflowDefinitions {
   records: WorkflowDefinitionRecord[] = [];
@@ -316,7 +313,7 @@ export interface SpecSpineWorld {
   linkCommit(sha: string, parents?: string[]): void;
   /** `git merge-base --is-ancestor` over the modeled lineage (reflexive). */
   isCommitAncestor(ancestorSha: string, descendantSha: string): boolean;
-  registerMergeComposition(): void;
+  composeMerge(): void;
   runMerge(jobId: string, scenario: MergeScenario): Promise<unknown>;
   postAction(
     slug: string,
@@ -337,7 +334,7 @@ export interface SpecSpineWorld {
   /**
    * Drive the REAL graph-workflow route handlers (start, definition approval,
    * status) composed over the real workflow manager. Start and approval report
-   * through the registered lifecycle port — the production spec↔workflow
+   * through the injected lifecycle callback — the production spec↔workflow
    * handoff — so tests never link spec executions by hand.
    */
   postWorkflowRoute(
@@ -524,6 +521,7 @@ export function createSpecSpineWorld(
     currentGlobalAllowAgentTaskAdd?: boolean;
   } = {},
 ): SpecSpineWorld {
+  let composition: WorkflowComposition;
   const db = _createTestDb({ inMemory: true });
   _installTestDb(db);
   db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
@@ -901,7 +899,7 @@ export function createSpecSpineWorld(
             bindings: bindingRepo,
             delivery,
             review,
-            gate: createRegisteredDeliveryGateEvaluator(),
+            gate: composition.deliveryGate,
           },
           spec,
           executionId,
@@ -941,7 +939,7 @@ export function createSpecSpineWorld(
           bindings: bindingRepo,
           delivery,
           review,
-          gate: createRegisteredDeliveryGateEvaluator(),
+          gate: composition.deliveryGate,
         },
         spec,
         executionId,
@@ -1060,7 +1058,7 @@ export function createSpecSpineWorld(
     findEventsBySpecId: (specId) => eventsRepo.findBySpecId(specId),
   });
 
-  function registerMergeComposition(): void {
+  function composeMerge(): void {
     const deliveryGate = createDeliveryGate({
       bindingPort: createSpecExecutionBindingPorts(bindingRepo).delivery,
       outcomePort: createAuthoredContextOutcomeService({
@@ -1144,7 +1142,7 @@ export function createSpecSpineWorld(
           }),
       },
     });
-    registerSpecWorkflowComposition({
+    composition = {
       executionContract: createSpecExecutionBindingGraphContract(
         createSpecExecutionBindingPorts(bindingRepo),
         { loadRevisionSnapshot: (id) => specs.getRevisionSnapshot(id) },
@@ -1164,16 +1162,17 @@ export function createSpecSpineWorld(
             specExecutionId,
           ),
       },
-    });
+    };
   }
 
   async function runMerge(jobId: string, scenario: MergeScenario) {
-    const lifecycle = createRegisteredGraphExecutionLifecycleCallbacks();
+    const lifecycle = composition.lifecycleCallbacks;
     const runner = createGraphWorkflowMergeRunner({
       buildMachine: () => scenarioMachine(scenario),
-      deliveryGate: createRegisteredDeliveryGateEvaluator(),
+      deliveryGate: composition.deliveryGate,
       markDelivered: lifecycle.markDelivered,
-      runMachine: runRegisteredMergeJob,
+      runMachine: (input) =>
+        runRegisteredMergeJob(input, composition.mergeDeliveryLifecycle),
     });
     return runner.run({
       jobId,
@@ -1246,7 +1245,7 @@ export function createSpecSpineWorld(
 
   // ---- Production workflow gate: the REAL graph-workflow manager + route
   // handlers drive definition review and workflow start, so the spec side is
-  // linked exclusively through the registered lifecycle port — the same seam
+  // linked exclusively through the injected lifecycle callback — the same seam
   // production uses. Only the lane/agent execution loop is inert.
   let activeWorkflowExecution: GraphWorkflowExecution | null = null;
   /**
@@ -1339,10 +1338,7 @@ export function createSpecSpineWorld(
         now,
         options.currentGlobalAllowAgentTaskAdd ?? false,
       );
-      const provenance = buildExecutionProvenance(
-        seed.source,
-        seed.executionId,
-      );
+      const provenance = buildExecutionProvenance(seed.source);
       const created = createWorkflowExecution({
         id: seed.executionId,
         status:
@@ -1411,7 +1407,7 @@ export function createSpecSpineWorld(
     getSession: async () => null,
     stopExecutionLaneDevServers: async () => {},
 
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     executionRepository: workflowExecutionRepository,
     loadDefinition: async (_projectPath, definitionId) =>
@@ -1470,19 +1466,15 @@ export function createSpecSpineWorld(
    * machine runs the suite.
    */
   const spineCapabilityVerifiers = {
-    verifyConversationCapability: async (request: Request) =>
-      verifyConversationCapability(
-        request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-        SPINE_CAPABILITY_SECRET,
+    readConversationIdentity: async (request: Request) =>
+      readConversationIdentity(
+        request.headers.get(CONVERSATION_IDENTITY_HEADER),
       ),
-    verifyLaneCapability: async (request: Request) =>
-      verifyLaneCapability(
-        request.headers.get(LANE_CAPABILITY_HEADER),
-        SPINE_CAPABILITY_SECRET,
-      ),
+    readLaneIdentity: async (request: Request) =>
+      readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
   };
   const workflowLifecycleDeps: GraphWorkflowLifecycleDeps = {
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     // Same clock the manager stamps reservations with, so "has this decision's
     // holder gone away" is asked against the fixture's timeline rather than the
@@ -1493,19 +1485,19 @@ export function createSpecSpineWorld(
     launchSpecDeliveryExecution: (input) =>
       workflowManager.launchSpecDelivery(input),
     markRunning: (context, workflowExecutionId, origin) =>
-      createRegisteredGraphExecutionLifecycleCallbacks().markRunning(
+      composition.lifecycleCallbacks.markRunning(
         context,
         workflowExecutionId,
         origin,
       ),
     awaitingDefinitionApproval: (context, workflowExecutionId, origin) =>
-      createRegisteredGraphExecutionLifecycleCallbacks().awaitingDefinitionApproval?.(
+      composition.lifecycleCallbacks.awaitingDefinitionApproval?.(
         context,
         workflowExecutionId,
         origin,
       ) ?? Promise.resolve(),
     admitDefinitionApproval: (context, workflowExecutionId, origin) =>
-      createRegisteredGraphExecutionLifecycleCallbacks().admitDefinitionApproval?.(
+      composition.lifecycleCallbacks.admitDefinitionApproval?.(
         context,
         workflowExecutionId,
         origin,
@@ -1723,7 +1715,7 @@ export function createSpecSpineWorld(
     },
   });
   const liveEditApplyDeps: LiveEditApplyServiceDeps = {
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
     getSession: async (projectPath, sessionName) =>
       projectPath === SPINE_PROJECT_PATH && sessionName === SPINE_SESSION_NAME
         ? spineSession
@@ -1771,6 +1763,8 @@ export function createSpecSpineWorld(
     });
   }
 
+  composeMerge();
+
   return {
     db,
     publishedSse,
@@ -1797,7 +1791,7 @@ export function createSpecSpineWorld(
     treeByCommit,
     linkCommit,
     isCommitAncestor,
-    registerMergeComposition,
+    composeMerge,
     runMerge,
     postAction,
     getRoute,
@@ -2369,7 +2363,7 @@ export async function startSpineExecution(
   const binding = spineExecutionBinding(authored);
   const definition = await world.definitions.create(launch);
 
-  world.registerMergeComposition();
+  world.composeMerge();
   await postJson(
     world.postWorkflowRoute("START", {
       definitionId: definition.id,

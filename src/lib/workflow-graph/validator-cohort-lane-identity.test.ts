@@ -4,7 +4,7 @@ import type {
 } from "@/lib/workflow-graph/execution-mutation";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 /**
  * R8.1: two assignments of the SAME profile reviewing one context are two
  * lanes.
@@ -189,7 +189,7 @@ function buildHarness(): Harness {
   });
 
   const runner = createValidatorRunner({
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
     async resolveWorktreePath() {
       return worktreeDir;
     },

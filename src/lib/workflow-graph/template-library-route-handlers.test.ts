@@ -1,3 +1,4 @@
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -67,6 +68,7 @@ function realHandlers() {
   });
   const library = createTemplateLibraryService({ storage });
   return createTemplateLibraryRouteHandlers({
+    getExecutionContract: createTestGraphExecutionContract,
     resolveProjectPath: async (name) => (name === "repo" ? PROJECT_PATH : null),
     readConfig: async () => MOCK_CONFIG,
     list: (projectPath) => library.list(projectPath),

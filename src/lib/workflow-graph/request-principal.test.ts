@@ -1,21 +1,7 @@
-/**
- * The shared request-principal classifier and mutation policy (D7 R9/R10).
- *
- * Two questions live here, and keeping them apart is the point. Classification
- * asks WHO is calling and answers it only from things the server can check for
- * itself — token presence, and a signature under a key no agent holds. Policy
- * asks WHETHER that principal may act on this execution, and answers it from
- * the execution's own recorded origin and live lane binding.
- *
- * The failure this design exists to prevent is a claimed id becoming authority.
- * A conversation id in a header, a body, or a capability payload the signature
- * did not cover is a claim; the classifier never promotes one, so naming
- * another conversation requires forging a signature rather than typing an id.
- */
-
+/** Coordinates trusted agents against session membership and current lane bindings. */
 import { describe, expect, it } from "vitest";
-import type { ConversationCapabilityVerification } from "@/lib/agent-gateway/conversation-capability";
-import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
+import type { ConversationIdentityReading } from "@/lib/agent-gateway/conversation-identity";
+import type { LaneIdentityReading } from "@/lib/agent-gateway/lane-identity";
 import type { OptionalTokenValidation } from "@/lib/agent-gateway/token";
 import {
   authorizeExecutionMutation,
@@ -31,17 +17,17 @@ const request = (): Request => new Request("http://localhost/api/x");
 
 function deps(overrides: {
   transport?: OptionalTokenValidation["kind"];
-  conversation?: ConversationCapabilityVerification;
-  lane?: LaneCapabilityVerification;
+  conversation?: ConversationIdentityReading;
+  lane?: LaneIdentityReading;
   conversationIds?: readonly string[];
 }): WorkflowPrincipalDeps {
   return {
     validateOptionalToken: async () => ({
       kind: overrides.transport ?? "absent",
     }),
-    verifyConversationCapability: async () =>
+    readConversationIdentity: async () =>
       overrides.conversation ?? { kind: "absent" },
-    verifyLaneCapability: async () => overrides.lane ?? { kind: "absent" },
+    readLaneIdentity: async () => overrides.lane ?? { kind: "absent" },
   };
 }
 
@@ -53,20 +39,18 @@ const membership = (ids: readonly string[]) => ({
 const validConversation = (
   conversationId: string,
   sessionName: string = SESSION,
-): ConversationCapabilityVerification => ({
+): ConversationIdentityReading => ({
   kind: "valid",
   scope: { sessionName, conversationId },
-  issuedAt: 1,
 });
 
 const validLane = (
   executionId: string,
   contextId: string,
   conversationId: string,
-): LaneCapabilityVerification => ({
+): LaneIdentityReading => ({
   kind: "valid",
   scope: { laneKind: "implementer", executionId, contextId, conversationId },
-  issuedAt: 1,
 });
 
 const facts = (
@@ -103,7 +87,7 @@ describe("classifyWorkflowRequestPrincipal", () => {
     expect(result).toEqual({ kind: "invalid_token" });
   });
 
-  it("derives an agent's conversation principal from the signature", async () => {
+  it("derives an agent's conversation principal from the environment identity", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv", "sibling-conv"]),
@@ -119,21 +103,17 @@ describe("classifyWorkflowRequestPrincipal", () => {
     });
   });
 
-  it("refuses an agent that presents no capability at all", async () => {
+  it("refuses an agent that presents no identity at all", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv"]),
       deps({ transport: "valid" }),
     );
 
-    expect(result).toEqual({ kind: "unverified", reason: "unsigned" });
+    expect(result).toEqual({ kind: "unverified", reason: "missing_identity" });
   });
 
-  it("honours a capability presented without an instance token", async () => {
-    // The capability is signed with a key no agent holds, so it proves identity
-    // on its own. Falling through to human_ui here would mean presenting a
-    // credential granted SESSION-WIDE authority — strictly more than the
-    // credential names, which is an escalation, not a fallback.
+  it("honours a identity presented without an instance token", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv"]),
@@ -149,7 +129,7 @@ describe("classifyWorkflowRequestPrincipal", () => {
     });
   });
 
-  it("honours a lane capability presented without an instance token", async () => {
+  it("honours a lane identity presented without an instance token", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["lane-conv"]),
@@ -170,32 +150,23 @@ describe("classifyWorkflowRequestPrincipal", () => {
     });
   });
 
-  it("refuses a forged LANE capability rather than falling back to human authority", async () => {
-    // The cheapest escalation available to anything that can reach the port:
-    // send a junk lane header, no token, no conversation capability. Falling
-    // through to human_ui would answer a failed authentication with
-    // SESSION-WIDE authority — strictly more than the credential even claimed,
-    // and enough to launch a run.
+  it("refuses a malformed LANE identity rather than falling back to human authority", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv"]),
       deps({
         transport: "absent",
-        lane: { kind: "invalid", reason: "bad_signature" },
+        lane: { kind: "invalid", reason: "malformed" },
       }),
     );
 
     expect(result).toEqual({
       kind: "unverified",
-      reason: "lane_invalid:bad_signature",
+      reason: "lane_invalid:malformed",
     });
   });
 
-  it("refuses a lane capability naming a conversation this session does not have", async () => {
-    // A lane capability signs no session, so membership is the only thing
-    // binding it to one: without this check a lane credential from session A
-    // replays against session B, and a lane whose conversation was deleted
-    // keeps acting.
+  it("refuses a lane identity naming a conversation this session does not have", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv"]),
@@ -211,27 +182,23 @@ describe("classifyWorkflowRequestPrincipal", () => {
     });
   });
 
-  it("refuses a forged capability even from a token-free caller", async () => {
-    // Otherwise the cheapest forgery would be to send a bad capability with no
-    // token and be handed human authority for failing to authenticate.
+  it("refuses a malformed identity even from a token-free caller", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv"]),
       deps({
         transport: "absent",
-        conversation: { kind: "invalid", reason: "bad_signature" },
+        conversation: { kind: "invalid", reason: "malformed" },
       }),
     );
 
     expect(result).toEqual({
       kind: "unverified",
-      reason: "invalid:bad_signature",
+      reason: "invalid:malformed",
     });
   });
 
-  it("refuses a capability minted for a different session", async () => {
-    // A capability is a bearer credential; without the session in the signed
-    // payload it would replay from one session into another.
+  it("refuses a identity injected for a different session", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv"]),
@@ -244,7 +211,7 @@ describe("classifyWorkflowRequestPrincipal", () => {
     expect(result).toEqual({ kind: "unverified", reason: "session_mismatch" });
   });
 
-  it("refuses a signed capability whose conversation no longer exists", async () => {
+  it("refuses a signed identity whose conversation no longer exists", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["someone-else"]),
@@ -260,23 +227,23 @@ describe("classifyWorkflowRequestPrincipal", () => {
     });
   });
 
-  it("reports a bad signature as unverified rather than reading its payload", async () => {
+  it("reports a bad environment identity as unverified rather than reading its payload", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["origin-conv"]),
       deps({
         transport: "valid",
-        conversation: { kind: "invalid", reason: "bad_signature" },
+        conversation: { kind: "invalid", reason: "malformed" },
       }),
     );
 
     expect(result).toEqual({
       kind: "unverified",
-      reason: "invalid:bad_signature",
+      reason: "invalid:malformed",
     });
   });
 
-  it("derives a lane principal from a lane capability", async () => {
+  it("derives a lane principal from a lane identity", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["lane-conv"]),
@@ -297,10 +264,7 @@ describe("classifyWorkflowRequestPrincipal", () => {
     });
   });
 
-  it("prefers the lane capability when a caller somehow presents both", async () => {
-    // A lane is minted no conversation capability, so holding both means one of
-    // them was carried in from elsewhere. Reading the lane one keeps the
-    // narrower principal — a lane can only act on its own execution.
+  it("prefers the lane identity when a caller somehow presents both", async () => {
     const result = await classifyWorkflowRequestPrincipal(
       request(),
       membership(["lane-conv", "origin-conv"]),
@@ -371,10 +335,6 @@ describe("authorizeExecutionMutation", () => {
   });
 
   it("refuses an agent whose origin conversation was deleted", () => {
-    // The origin id survives the conversation's deletion, so the run keeps an
-    // origin no live caller can be. Classification already refuses the deleted
-    // conversation's own capability; this is the second half — nobody inherits
-    // the vacancy.
     expect(
       authorizeExecutionMutation({
         principal: { kind: "conversation", conversationId: "successor-conv" },
@@ -426,8 +386,6 @@ describe("authorizeExecutionMutation", () => {
   });
 
   it("refuses a lane whose binding has moved on", () => {
-    // A signature proves issuance, not currency: a replaced lane still holds a
-    // perfectly valid capability.
     expect(
       authorizeExecutionMutation({
         principal: {
@@ -447,7 +405,7 @@ describe("authorizeExecutionMutation", () => {
     });
   });
 
-  it("refuses a lane capability scoped to a different execution", () => {
+  it("refuses a lane identity scoped to a different execution", () => {
     expect(
       authorizeExecutionMutation({
         principal: {
@@ -551,7 +509,7 @@ describe("authorizeExecutionMutation under any_session_conversation authority", 
     });
   });
 
-  it("still refuses a lane capability scoped to a different execution", () => {
+  it("still refuses a lane identity scoped to a different execution", () => {
     expect(
       authorizeExecutionMutation({
         principal: {
@@ -590,8 +548,6 @@ describe("authorizeWorkflowLaunch", () => {
   });
 
   it("refuses a workflow lane as nesting, whatever the lease says", () => {
-    // The lease is a separate question. A lane holding a valid, current
-    // capability still must not launch a run from inside a run.
     expect(
       authorizeWorkflowLaunch({
         kind: "lane",

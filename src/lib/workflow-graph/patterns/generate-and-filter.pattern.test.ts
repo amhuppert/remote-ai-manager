@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,14 +8,14 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   createAgentAuth,
-  createLaneCapabilityVerifier,
-  ensureCapabilitySigningKey,
   ensureInstanceToken,
-  mintImplementerLaneCapability,
-  _resetCapabilitySigningKeyCacheForTesting,
   _resetInstanceTokenCacheForTesting,
 } from "@/lib/agent-gateway/token";
-import { LANE_CAPABILITY_HEADER } from "@/lib/agent-gateway/lane-capability";
+import {
+  LANE_IDENTITY_HEADER,
+  encodeLaneIdentity,
+  readLaneIdentity as readLaneHeader,
+} from "@/lib/agent-gateway/lane-identity";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
 import { structuralWarningsOf } from "./pattern-plan-warnings";
 import { workflowSemanticDefinitionSchema } from "../definition-schemas";
@@ -249,9 +249,9 @@ async function runPattern(options: {
   const configDir = await mkdtemp(path.join(tmpdir(), "cc-pattern-token-"));
   const token = await ensureInstanceToken(configDir);
   // The lane capability is signed with the server-only key, not this token.
-  await ensureCapabilitySigningKey(configDir);
   const auth = createAgentAuth({ configDir });
-  const verifyLaneCapability = createLaneCapabilityVerifier({ configDir });
+  const readLaneIdentity = async (request: Request) =>
+    readLaneHeader(request.headers.get(LANE_IDENTITY_HEADER));
 
   const attempts: ExpansionAttempt[] = [];
   const refusalCodes: string[] = [];
@@ -289,7 +289,7 @@ async function runPattern(options: {
           if (turn.contextId !== GENERATOR || turn.turn !== 1) return;
 
           const expansionService = createGraphWorkflowExpansionService({
-            executionContract: createNonParticipatingGraphExecutionContract(),
+            executionContract: createTestGraphExecutionContract(),
             getActiveExecution: turn.repository.getActive,
             mutateActive: turn.repository.mutateActive,
             buildLiveEditDeps: async () => harnessLiveEditDeps(),
@@ -301,7 +301,7 @@ async function runPattern(options: {
 
           const deps: LaneRouteDeps = {
             auth,
-            verifyLaneCapability,
+            readLaneIdentity,
             expandGraph: (input) => expansionService.expand(input),
             publishExpansionRefusal: (notice) => {
               refusalCodes.push(notice.refusalCode);
@@ -385,7 +385,8 @@ async function runPattern(options: {
           // Minted the way `implementer-runner` mints it at dispatch, from the
           // instance token this run provisioned — so the route's verifier is
           // checking a real signature, not a stubbed verdict.
-          const capability = mintImplementerLaneCapability({
+          const capability = encodeLaneIdentity({
+            laneKind: "implementer",
             executionId: turn.executionId,
             contextId: turn.contextId,
             conversationId: turn.conversationId,
@@ -404,7 +405,7 @@ async function runPattern(options: {
                   headers: {
                     "content-type": "application/json",
                     authorization: `Bearer ${token}`,
-                    [LANE_CAPABILITY_HEADER]: capability,
+                    [LANE_IDENTITY_HEADER]: capability,
                   },
                   body: JSON.stringify({
                     executionId: turn.executionId,
@@ -443,7 +444,6 @@ async function runPattern(options: {
     );
   } finally {
     _resetInstanceTokenCacheForTesting();
-    _resetCapabilitySigningKeyCacheForTesting();
     await rm(configDir, { recursive: true, force: true });
   }
 }

@@ -54,7 +54,11 @@ function headerLine(header: LiveOutlineData["header"]): string {
       : header.planRepairRoundCount > 0
         ? `  plan-repair ×${header.planRepairRoundCount}`
         : "";
-  const base = `execution ${header.executionId}  status=${header.status}  liveRev=${header.liveRevision}  seed=${header.seedDefinitionId}@${header.seedDefinitionRevision}${amended}${repaired}`;
+  const seed =
+    header.seedDefinitionId === null
+      ? "inline plan"
+      : `${header.seedDefinitionId}@${header.seedDefinitionRevision}`;
+  const base = `execution ${header.executionId}  status=${header.status}  liveRev=${header.liveRevision}  seed=${seed}${amended}${repaired}`;
   if (header.editable) return base;
   const reason = header.notEditableReason ?? "not editable";
   return `${base}  read-only (${reason})`;

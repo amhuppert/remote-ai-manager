@@ -1710,7 +1710,7 @@ describe("conversations-repo backend-ref canonical encoding (raw bytes)", () => 
     });
   });
 
-  it("decodes a legacy-shape row written by an old build back to the canonical ref", () => {
+  it("quarantines a noncanonical backend_ref without dropping its conversation", () => {
     repo.upsert(
       PROJECT_PATH,
       SESSION_NAME,
@@ -1726,10 +1726,8 @@ describe("conversations-repo backend-ref canonical encoding (raw bytes)", () => 
       SESSION_NAME,
       "c-legacy-writer",
     );
-    expect(loaded?.backendRef).toEqual({
-      backend: "codex",
-      ref: "thr-old-build",
-    });
+    expect(loaded?.id).toBe("c-legacy-writer");
+    expect(loaded?.backendRef).toBeNull();
   });
 });
 

@@ -6,23 +6,16 @@ import {
   requireCurrentExecution,
   type GraphWorkflowExecutionRepository,
 } from "./execution-repository";
-import type { ParallelWorktrees } from "./parallel-worktrees";
 import type { LaneCommitter } from "./lane-committer";
 import type { SoloContextCommitter } from "./solo-context-committer";
 import type { JoinRunner } from "./join-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
 import type { SessionGitLock } from "@/lib/shared/lock-retry";
-import type { GraphMergeRunner } from "./graph-merge-runner";
 import type {
   RecordPendingHaltReasonInput,
   RecordPendingHaltReasonResult,
 } from "./workflow-manager";
 import type { SessionState } from "@/lib/sessions/schemas";
-import {
-  resolveLaneMergeRunValidationMode,
-  type ReadLaneMergeRepoConfig,
-} from "./lane-merge-validation";
-import { resolveContextConversationId } from "./lane-join";
 import type { LaneDriftAuditor, LaneDriftVerdict } from "./lane-drift";
 /** Matches the halt schema's cap on `unattributedPaths`. */
 const MAX_REPORTED_UNATTRIBUTED_PATHS = 50;
@@ -47,7 +40,6 @@ import type {
 import type { LaneCommitterResult } from "./lane-committer";
 import type { SoloContextCommitterResult } from "./solo-context-committer";
 import type { JoinRunResult } from "./join-runner";
-import type { MergeOutput } from "@/lib/workflows/merge/types";
 
 export interface ContextLandingIdentity {
   executionId: string;
@@ -96,13 +88,6 @@ export type LandingOutcome =
       join: GraphWorkflowExecutionJoinState;
       result: Extract<JoinRunResult, { status: "succeeded" }>;
     }
-  | (ContextLandingIdentity & {
-      kind: "joined";
-      via: "fan_in";
-      branchName: string;
-      worktreePath: string;
-      output: MergeOutput;
-    })
   | {
       kind: "failed";
       executionId: string;
@@ -123,12 +108,6 @@ export type LandingOutcome =
               | { status: "session_missing" };
           }
         | {
-            mode: "fan_in";
-            identity: ContextLandingIdentity;
-            output: MergeOutput | null;
-            errorMessage: string | null;
-          }
-        | {
             mode: "join";
             join: GraphWorkflowExecutionJoinState;
             result: Extract<JoinRunResult, { status: "failed" }>;
@@ -141,7 +120,7 @@ export function settleContextLanding(
 ): ExecutionMutationDecision {
   if (execution.id !== outcome.executionId) return unchanged();
   if (outcome.kind === "read_only") return unchanged();
-  if (outcome.kind === "joined" && outcome.via === "join") return unchanged();
+  if (outcome.kind === "joined") return unchanged();
   if (outcome.kind === "failed" && outcome.evidence.mode === "join")
     return unchanged();
 
@@ -206,19 +185,7 @@ export function settleContextLanding(
           now: outcome.settledAt,
         });
       }
-    } else if (outcome.evidence.mode === "fan_in") {
-      setMergeStatus(
-        outcome.evidence.output?.status === "conflicts"
-          ? "conflicts"
-          : "merged-failed",
-        outcome.evidence.errorMessage,
-      );
     }
-    return didChange ? changed(next) : unchanged();
-  }
-
-  if (outcome.kind === "joined") {
-    setMergeStatus("merged-success", null);
     return didChange ? changed(next) : unchanged();
   }
 
@@ -289,10 +256,8 @@ export interface ContextLandingDeps {
   recordPendingHaltReason(
     input: RecordPendingHaltReasonInput,
   ): Promise<RecordPendingHaltReasonResult>;
-  parallelWorktrees: ParallelWorktrees;
   mergeMutex: PerSessionMergeMutex;
   sessionGitLock: SessionGitLock;
-  mergeRunner: GraphMergeRunner;
   laneCommitter: LaneCommitter;
   soloContextCommitter: SoloContextCommitter;
   joinRunner: JoinRunner;
@@ -305,8 +270,6 @@ export interface ContextLandingDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
-  readRepoConfig: ReadLaneMergeRepoConfig;
-  createJobId(): string;
 }
 
 export interface ContextLandingInput {
@@ -472,212 +435,6 @@ export function createContextLanding(deps: ContextLandingDeps) {
     async function persistOutcome(result: LandingOutcome): Promise<void> {
       outcome = result;
       execution = await persistLandingOutcome(input, result);
-    }
-
-    async function runFanInMerge(
-      contextId: string,
-      featureWorktreePath: string,
-      featureBranchName: string,
-    ): Promise<void> {
-      execLogger?.iteration(contextId, "merge.queued", {
-        branchName: featureBranchName,
-        worktreePath: featureWorktreePath,
-      });
-      logger.info("graph-workflow.merge.queued", {
-        executionId: execution.id,
-        contextId,
-        branchName: featureBranchName,
-      });
-
-      await deps.mergeMutex.withMergeMutex(
-        {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-        },
-        async () => {
-          await deps.executionRepository
-            .mutateActive(input.projectPath, input.sessionName, (e) => {
-              const next = structuredClone(e);
-              if (next.contextStates[contextId]) {
-                transitionContextMergeStatus(next, contextId, "in-progress", {
-                  reason: "merge.started",
-                });
-              }
-              return changed(next);
-            })
-            .then((mutation) => mutation.execution);
-
-          execLogger?.iteration(contextId, "merge.started", {
-            branchName: featureBranchName,
-          });
-          logger.info("graph-workflow.merge.started", {
-            executionId: execution.id,
-            contextId,
-            branchName: featureBranchName,
-          });
-
-          const session = await deps.getSession(
-            input.projectPath,
-            input.sessionName,
-          );
-          if (!session) {
-            const reason: GraphWorkflowHaltReason = {
-              type: "merge_failure",
-              contextId,
-              message: `Session "${input.sessionName}" not found during fan-in merge`,
-              conflictFiles: [],
-            };
-            await persistOutcome({
-              kind: "failed",
-              executionId: execution.id,
-              settledAt: new Date().toISOString(),
-              reason,
-              evidence: {
-                mode: "fan_in",
-                identity: identity(),
-                output: null,
-                errorMessage: reason.message,
-              },
-            });
-            logger.error("graph-workflow.merge.failed", {
-              executionId: execution.id,
-              contextId,
-              reason: reason.message,
-            });
-            return;
-          }
-
-          let mergeOutput: MergeOutput | null = null;
-          let mergeStatus:
-            | "completed"
-            | "failed"
-            | "conflicts"
-            | "ready-to-land"
-            | "discarded";
-          let mergeError: string | null = null;
-          let mergeConflictFiles: string[] = [];
-          try {
-            const output = await deps.sessionGitLock.withSessionGitLock(
-              {
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-              },
-              async () => {
-                const validationMode = await resolveLaneMergeRunValidationMode({
-                  projectPath: input.projectPath,
-                  config: execution.workingDefinition.laneMergeValidation,
-                  readRepoConfig: deps.readRepoConfig,
-                });
-                // The context's own implementer conversation: without it the
-                // merge's agent sub-turns fall back to the session's
-                // most-recently-active conversation, which in a parallel
-                // workflow can belong to a context still running in a
-                // different worktree.
-                const conversationId = resolveContextConversationId(
-                  execution,
-                  contextId,
-                );
-                return deps.mergeRunner.run({
-                  jobId: deps.createJobId(),
-                  projectPath: input.projectPath,
-                  projectName: input.projectName,
-                  sessionName: input.sessionName,
-                  contextId,
-                  branchName: featureBranchName,
-                  featureWorktreePath,
-                  targetBranch: session.branchName,
-                  targetWorktreePath: session.worktreePath,
-                  message: `Graph workflow context ${contextId}`,
-                  workflowExecutionId: execution.id,
-                  ...(conversationId !== null ? { conversationId } : {}),
-                  validationMode,
-                });
-              },
-            );
-            mergeOutput = output;
-            mergeStatus = output.status;
-            mergeError = output.error;
-            mergeConflictFiles = output.conflictFiles;
-          } catch (error) {
-            mergeStatus = "failed";
-            mergeError = getErrorMessage(error);
-            mergeConflictFiles = [];
-          }
-
-          if (mergeStatus === "completed") {
-            if (!mergeOutput)
-              throw new Error("Completed fan-in has no merge evidence");
-            await persistOutcome({
-              ...identity(),
-              kind: "joined",
-              via: "fan_in",
-              branchName: session.branchName,
-              worktreePath: session.worktreePath,
-              output: mergeOutput,
-            });
-
-            execLogger?.iteration(contextId, "merge.completed", {
-              branchName: featureBranchName,
-            });
-            logger.info("graph-workflow.merge.completed", {
-              executionId: execution.id,
-              contextId,
-              branchName: featureBranchName,
-            });
-
-            const dispose = await deps.parallelWorktrees.dispose({
-              projectPath: input.projectPath,
-              worktreePath: featureWorktreePath,
-              branchName: featureBranchName,
-            });
-            await deps.executionRepository
-              .mutateActive(input.projectPath, input.sessionName, (e) => {
-                const next = structuredClone(e);
-                const cs = next.contextStates[contextId];
-                if (cs) {
-                  cs.cleanupStatus =
-                    dispose.status === "removed" ? "removed" : "failed";
-                }
-                return changed(next);
-              })
-              .then((mutation) => mutation.execution);
-            execLogger?.lifecycle("parallel.cleanup_attempted", {
-              contextId,
-              status: dispose.status,
-              reason: dispose.status === "failed" ? dispose.reason : undefined,
-            });
-            return;
-          }
-
-          const finalMergeStatus =
-            mergeStatus === "conflicts" ? "conflicts" : "merged-failed";
-          const haltReason: GraphWorkflowHaltReason = {
-            type: "merge_failure",
-            contextId,
-            message: mergeError ?? "Fan-in merge failed",
-            conflictFiles: mergeConflictFiles,
-          };
-          await persistOutcome({
-            kind: "failed",
-            executionId: execution.id,
-            settledAt: new Date().toISOString(),
-            reason: haltReason,
-            evidence: {
-              mode: "fan_in",
-              identity: identity(),
-              output: mergeOutput,
-              errorMessage: mergeError,
-            },
-          });
-          logger.error("graph-workflow.merge.failed", {
-            executionId: execution.id,
-            contextId,
-            mergeStatus: finalMergeStatus,
-            error: mergeError,
-            conflictFiles: mergeConflictFiles.length,
-          });
-        },
-      );
     }
 
     /**
@@ -1147,10 +904,8 @@ export function createContextLanding(deps: ContextLandingDeps) {
         input.preTurnHeadSha,
       );
     } else {
-      await runFanInMerge(
-        input.contextId,
-        input.target.worktreePath,
-        input.target.branchName,
+      throw new Error(
+        `Worktree context "${input.contextId}" has no assigned lane`,
       );
     }
     if (outcome === null)

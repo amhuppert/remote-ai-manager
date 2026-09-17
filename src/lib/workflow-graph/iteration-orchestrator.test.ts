@@ -6,7 +6,7 @@ import type {
 } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assignmentFingerprint } from "./lane-identity";
 import type {
@@ -528,7 +528,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -600,7 +600,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -713,7 +713,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -777,7 +777,7 @@ describe("graph workflow iteration orchestrator", () => {
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -899,7 +899,7 @@ describe("graph workflow iteration orchestrator", () => {
     const orchestrator = createContextIterationFixture({
       ...createContextTestCapabilities(),
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -971,7 +971,7 @@ describe("graph workflow iteration orchestrator", () => {
       });
       const orchestrator = createContextIterationFixture({
         ...createContextTestCapabilities(),
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         executionRepository: repository,
         findLatestContextValidationEvent:
           repository.findLatestContextValidationEvent,
@@ -1041,7 +1041,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1107,7 +1107,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1177,7 +1177,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1247,7 +1247,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1369,7 +1369,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1551,7 +1551,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1642,7 +1642,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1801,7 +1801,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1889,7 +1889,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -1935,7 +1935,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2011,7 +2011,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2109,7 +2109,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2171,7 +2171,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2249,7 +2249,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2349,7 +2349,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2459,7 +2459,7 @@ describe("graph workflow iteration orchestrator", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2572,7 +2572,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2676,7 +2676,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2771,7 +2771,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2870,7 +2870,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -2959,7 +2959,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3052,7 +3052,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3116,7 +3116,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3222,7 +3222,7 @@ describe("task validation event publishing (fix-30388517)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3326,7 +3326,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3379,7 +3379,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3455,7 +3455,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3542,7 +3542,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3581,7 +3581,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3649,7 +3649,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3718,7 +3718,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -3915,7 +3915,7 @@ describe("codex implementer continuity", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4011,7 +4011,7 @@ describe("codex implementer continuity", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4088,7 +4088,7 @@ describe("codex implementer continuity", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4206,7 +4206,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4293,7 +4293,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4393,7 +4393,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4513,7 +4513,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4608,7 +4608,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4703,7 +4703,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4790,7 +4790,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4880,7 +4880,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -4981,7 +4981,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -5071,7 +5071,7 @@ describe("mid-iteration halt via signalHalt", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -5147,7 +5147,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -5218,7 +5218,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -5291,7 +5291,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -5363,7 +5363,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -5433,7 +5433,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -5570,7 +5570,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -5633,7 +5633,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -5704,7 +5704,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -5766,7 +5766,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       // A selected script gate opens a validation round, so the candidate tree
       // has to be resolvable for the gate to be reached at all.
@@ -5831,7 +5831,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -5925,7 +5925,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -6002,7 +6002,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       // A selected script gate opens a validation round, so the candidate tree
       // has to be resolvable for the gate to be reached at all.
@@ -6088,7 +6088,7 @@ describe("script validator integration", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: {
         ensureArtifactsMaterialized: async () => null,
@@ -6112,7 +6112,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -6202,7 +6202,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -6294,7 +6294,7 @@ describe("script validator integration", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
@@ -6367,7 +6367,7 @@ describe("iteration failure with partial turn progress", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -6414,7 +6414,7 @@ describe("iteration failure with partial turn progress", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -6536,7 +6536,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -6633,7 +6633,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -6718,7 +6718,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -6790,7 +6790,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -6860,7 +6860,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -6995,7 +6995,7 @@ describe("human approval gate at finalization", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7139,7 +7139,7 @@ describe("human approval gate at finalization", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7198,7 +7198,7 @@ describe("human approval gate at finalization", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7257,7 +7257,7 @@ describe("human approval gate at finalization", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7333,7 +7333,7 @@ describe("human approval gate at finalization", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7481,7 +7481,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7609,7 +7609,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7722,7 +7722,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7822,7 +7822,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7904,7 +7904,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -7983,7 +7983,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8053,7 +8053,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8198,7 +8198,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8315,7 +8315,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8476,7 +8476,7 @@ describe("conversation telemetry emission", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8522,7 +8522,7 @@ describe("conversation telemetry emission", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8653,7 +8653,7 @@ describe("per-turn billing on agent_turn_completed", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8730,7 +8730,7 @@ describe("per-turn billing on agent_turn_completed", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8811,7 +8811,7 @@ describe("per-turn billing on agent_turn_completed", () => {
         ...createContextTestCapabilities(),
         materializeWorkflowDocuments: async ({ execution }) => execution,
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         findLatestContextValidationEvent:
@@ -8935,7 +8935,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -8991,7 +8991,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9096,7 +9096,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9186,7 +9186,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9247,7 +9247,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9316,7 +9316,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9372,7 +9372,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9467,7 +9467,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9525,7 +9525,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9592,7 +9592,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9637,7 +9637,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9691,7 +9691,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9758,7 +9758,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:
@@ -9798,7 +9798,7 @@ describe("context output capture (D2)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent:

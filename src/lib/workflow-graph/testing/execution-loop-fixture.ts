@@ -7,7 +7,6 @@ import { createGraphWorkflowExecutionEventPublisher } from "../execution-events"
 import { createLandingEvidenceProber } from "../landing-evidence";
 import { createLaneDriftAuditor } from "../lane-drift";
 import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
-import { readRepoConfig } from "@/lib/projects/repo-config";
 import { buildDefaultLiveEditDeps } from "../live-edit-apply";
 import { getConfiguredQueryConcurrency } from "@/lib/shared/query-semaphore";
 import {
@@ -21,7 +20,6 @@ type FixtureDefaultKeys =
   | "laneDriftAuditor"
   | "resyncSharedIndex"
   | "buildLiveEditDeps"
-  | "readRepoConfig"
   | "getMaxConcurrentQueries"
   | "eventPublisher"
   | "approvalGateService"
@@ -40,7 +38,6 @@ export function createExecutionInfrastructureFixture() {
     laneDriftAuditor: createLaneDriftAuditor(),
     resyncSharedIndex: resyncSharedIndexToHead,
     buildLiveEditDeps: buildDefaultLiveEditDeps,
-    readRepoConfig,
     getMaxConcurrentQueries: getConfiguredQueryConcurrency,
     isConversationBusy,
     acquireConversationLock,
@@ -68,7 +65,6 @@ export function createExecutionLoopFixture(deps: ExecutionLoopFixtureDeps) {
     laneDriftAuditor: deps.laneDriftAuditor ?? createLaneDriftAuditor(),
     resyncSharedIndex: deps.resyncSharedIndex ?? resyncSharedIndexToHead,
     buildLiveEditDeps: deps.buildLiveEditDeps ?? buildDefaultLiveEditDeps,
-    readRepoConfig: deps.readRepoConfig ?? readRepoConfig,
     getMaxConcurrentQueries:
       deps.getMaxConcurrentQueries ?? getConfiguredQueryConcurrency,
     isConversationBusy: deps.isConversationBusy ?? isConversationBusy,

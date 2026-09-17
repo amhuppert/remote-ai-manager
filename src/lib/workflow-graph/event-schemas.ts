@@ -753,8 +753,8 @@ export const graphWorkflowCharterRegisteredEventSchema = z.object({
   projectName: z.string(),
   sessionName: z.string(),
   executionId: z.string(),
-  definitionId: z.string(),
-  definitionRevision: z.number().int().min(1),
+  definitionId: z.string().nullable(),
+  definitionRevision: z.number().int().min(1).nullable(),
   charterHash: z.string(),
 });
 export type GraphWorkflowCharterRegisteredEvent = z.infer<
@@ -769,8 +769,8 @@ export const graphWorkflowCharterUpdatedEventSchema = z.object({
   // definition-level update), so the updated event carries a nullable
   // executionId — unlike the registered event, which is always seeded with one.
   executionId: z.string().nullable(),
-  definitionId: z.string(),
-  definitionRevision: z.number().int().min(1),
+  definitionId: z.string().nullable(),
+  definitionRevision: z.number().int().min(1).nullable(),
   charterHash: z.string(),
 });
 export type GraphWorkflowCharterUpdatedEvent = z.infer<

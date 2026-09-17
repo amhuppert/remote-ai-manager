@@ -125,10 +125,7 @@ describe("parseCollabFeatureSnapshot", () => {
     });
   });
 
-  it("decodes legacy backend-keyed agentModelSettings into the per-agent view via the opposite pairing", () => {
-    // Base snapshot has primaryAgentBackend claude, so agent_one=claude,
-    // agent_two=codex under the pairing rule the legacy envelope was written
-    // with. The legacy codexFastMode flag belonged to the codex lane.
+  it("does not reconstruct agents from retired backend-keyed settings", () => {
     const parsed = parseCollabFeatureSnapshot({
       ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
       agentModelSettings: {
@@ -138,22 +135,7 @@ describe("parseCollabFeatureSnapshot", () => {
       codexFastMode: true,
     });
     expect(parsed).not.toBeNull();
-    expect(parsed!.agents).toEqual({
-      agent_one: {
-        backend: "claude",
-        modelSelection: {
-          modelId: "fable",
-          parameters: { effort: "max" },
-        },
-      },
-      agent_two: {
-        backend: "codex",
-        modelSelection: {
-          modelId: "gpt-5.5",
-          parameters: { fast: "true" },
-        },
-      },
-    });
+    expect(parsed!.agents).toBeUndefined();
   });
 
   it("reduces a lane's profile snapshot to its display name and omits the Standard Agent default", () => {

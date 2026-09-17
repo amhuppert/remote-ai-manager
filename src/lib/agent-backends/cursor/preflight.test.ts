@@ -8,6 +8,7 @@ import type {
 } from "./preflight";
 import {
   createCursorPackageProbe,
+  createCachedCursorPreflight,
   runCursorStaticPreflight,
 } from "./preflight";
 import {
@@ -431,5 +432,39 @@ describe("cursor static preflight against the installed SDK", () => {
     expect(result.diagnostics.installedPlatformVersion).toBe(
       CURSOR_SDK_PINNED_VERSION,
     );
+  });
+});
+
+describe("cached Cursor preflight", () => {
+  it("shares the check until package identity changes, preserving each launch model", async () => {
+    const install = healthyInstall();
+    let identity = "/sdk/package.json:1";
+    let checks = 0;
+    const check = createCachedCursorPreflight({
+      ...depsFor(install),
+      packageIdentity: async () => identity,
+      workerNodeVersion: async () => {
+        checks += 1;
+        return "v22.13.0";
+      },
+    });
+    const results = await Promise.all([
+      check({ model: "first" }),
+      check({ model: "second" }),
+    ]);
+    expect(checks).toBe(1);
+    expect(results.map((result) => result.diagnostics.model)).toEqual([
+      "first",
+      "second",
+    ]);
+    install.versions.set(CURSOR_SDK_PACKAGE, "broken");
+    expect((await check({ model: MODEL })).ok).toBe(true);
+    identity = "/sdk/package.json:2";
+    expect((await check({ model: MODEL })).ok).toBe(false);
+    expect((await check({ model: MODEL })).ok).toBe(false);
+    expect(checks).toBe(2);
+    identity = "/other-sdk/package.json:2";
+    await check({ model: MODEL });
+    expect(checks).toBe(3);
   });
 });

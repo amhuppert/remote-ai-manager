@@ -99,14 +99,12 @@ _Generated from the CLI exit taxonomy. `cctl exit-codes` prints the same table o
 | `1` | the server refused the operation, or a server-side job it started failed | — |
 | `2` | a local flag, identity, or payload check failed before any request was sent | `cctl <command> --help` |
 | `3` | the CC server could not be reached, or it rejected the API token | `cctl doctor` |
-| `4` | this binary and the server are different builds — nothing changed unless the failure text warns the mutation may have committed | `cctl doctor --server <url>` |
+| `4` | this binary and the server are different builds — nothing changed | `cctl doctor --server <url>` |
 
 <!-- END GENERATED EXIT CODES -->
 
 Errors lead with an actionable line on stderr. Exit `4` is a build mismatch:
-run `cctl doctor` and use the binary the intended server publishes. If the
-failure warns that a mutation may have committed, read durable state before
-retrying. Diagnose `3` with `cctl doctor`; inspect leaf help and payload issues
+run `cctl doctor` and use the binary the intended server publishes. Diagnose `3` with `cctl doctor`; inspect leaf help and payload issues
 for `2`. An exit `0` can still represent a documented no-op or a status read of
 a failed job, so verify the command-specific outcome before reporting success.
 

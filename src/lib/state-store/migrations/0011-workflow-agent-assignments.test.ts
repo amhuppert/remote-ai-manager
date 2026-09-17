@@ -45,6 +45,7 @@ import { _createTestDbAtPath } from "../state-db";
 import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
 import { scriptValidatorCommands } from "./0013-script-validator-commands";
 import { generalizedModelSelection } from "./0035-generalized-model-selection";
+import { retireStoredShapeReaders } from "./0051-retire-stored-shape-readers";
 
 type Db = InstanceType<typeof BetterSqlite3>;
 
@@ -996,7 +997,12 @@ describe("0011-workflow-agent-assignments", () => {
       summary: expect.stringContaining("agent assignments"),
     });
 
-    // Read-only decode floor: the archived record still loads.
+    // The later ledgered archive migration supplies the current read shape.
+    await retireStoredShapeReaders.up({
+      name: retireStoredShapeReaders.name,
+      context: { db: world.db, configDir: null },
+    });
+    const migratedRow = archivedRow(world.db, SESSION_NAME, "exec-running");
     const repo = createGraphWorkflowArchivedExecutionsRepo(world.db);
     const decoded = repo.findByExecution(
       PROJECT_PATH,
@@ -1009,7 +1015,9 @@ describe("0011-workflow-agent-assignments", () => {
     ).toMatchObject({ enabled: true, assignments: [{ id: "general" }] });
 
     // The row is never rewritten by the read.
-    expect(archivedRow(world.db, SESSION_NAME, "exec-running")).toEqual(row);
+    expect(archivedRow(world.db, SESSION_NAME, "exec-running")).toEqual(
+      migratedRow,
+    );
   });
 
   it("aborts a halted-but-resumable execution and leaves no resume path", async () => {

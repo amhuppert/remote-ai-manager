@@ -9,7 +9,7 @@ import type {
   ExecutionMutationOutcome,
 } from "../execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { createGraphWorkflowContextServices } from "../engine-composition";
 /**
  * The engine driving the REAL cohort machinery: the orchestrator's round, the
@@ -488,7 +488,7 @@ export function createHarness(params: {
     getSession: async () => null,
     stopExecutionLaneDevServers: async () => {},
 
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     executionRepository: repository,
     async loadDefinition() {
@@ -585,7 +585,7 @@ export function createHarness(params: {
       readLaneConversation: async () => null,
       createTaskId: () => `task-${randomUUID()}`,
       materializeWorkflowDocuments: async ({ execution }) => execution,
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       signalHalt,
       ...(params.userInputGateService
         ? { userInputGateService: params.userInputGateService }

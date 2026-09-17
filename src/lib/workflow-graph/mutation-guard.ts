@@ -1,3 +1,4 @@
+/** Coordinates trusted agents against session membership and current lane bindings. */
 /**
  * The HTTP half of workflow mutation authority (D7 R9.1/R9.4).
  *
@@ -18,8 +19,16 @@
 
 import { NextResponse } from "next/server";
 import { createAgentAuth } from "@/lib/agent-gateway/token";
-import type { ConversationCapabilityVerification } from "@/lib/agent-gateway/conversation-capability";
-import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
+import {
+  readConversationIdentity,
+  CONVERSATION_IDENTITY_HEADER,
+  type ConversationIdentityReading,
+} from "@/lib/agent-gateway/conversation-identity";
+import {
+  readLaneIdentity,
+  LANE_IDENTITY_HEADER,
+  type LaneIdentityReading,
+} from "@/lib/agent-gateway/lane-identity";
 import type { OptionalTokenValidation } from "@/lib/agent-gateway/token";
 import { createLogger } from "@/lib/logging";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -51,10 +60,10 @@ export interface WorkflowMutationGuardDeps {
   auth?: {
     validateOptionalToken(request: Request): Promise<OptionalTokenValidation>;
   };
-  verifyConversationCapability?(
+  readConversationIdentity?(
     request: Request,
-  ): Promise<ConversationCapabilityVerification>;
-  verifyLaneCapability?(request: Request): Promise<LaneCapabilityVerification>;
+  ): Promise<ConversationIdentityReading>;
+  readLaneIdentity?(request: Request): Promise<LaneIdentityReading>;
 }
 
 /** The 401 for a presented instance token that is not the expected one. */
@@ -73,21 +82,15 @@ export function invalidTokenResponse(): Response {
 export function unverifiedPrincipalResponse(verb: string): Response {
   return NextResponse.json(
     {
-      error: `This agent cannot ${verb} a workflow: it presented no verified conversation capability.`,
+      error: `This agent cannot ${verb} a workflow: it presented no recognized conversation identity.`,
       code: "unverified_principal",
       instruction:
-        "Run this from an ordinary session conversation, or act from the Command Center UI. The planner and collaboration runtimes are minted no capability and cannot act on a run.",
+        "Run this from an ordinary session conversation, or act from the Command Center UI. The planner and collaboration runtimes receive no workflow caller identity and cannot act on a run.",
     },
     { status: 403 },
   );
 }
 
-/**
- * The refusal for a verified agent acting on a run it does not own. It NAMES
- * the origin, because the caller's next move depends on knowing which
- * conversation may act — and that id is not a secret from a caller already
- * holding a capability for this session.
- */
 export function nonOriginPrincipalResponse(input: {
   verb: string;
   code:
@@ -129,12 +132,6 @@ export function nonOriginPrincipalResponse(input: {
   );
 }
 
-/**
- * Classify the caller against a resolved session. Membership is read from that
- * session, so a capability naming a conversation the session no longer has is
- * unverified rather than trusted — which is what closes the deleted-origin
- * path.
- */
 export function classifyRoutePrincipal(
   request: Request,
   session: SessionState,
@@ -150,8 +147,8 @@ export function classifyRoutePrincipal(
     },
     {
       validateOptionalToken: (req) => validateTransport(req, deps),
-      verifyConversationCapability: (req) => verifyConversation(req, deps),
-      verifyLaneCapability: (req) => verifyLane(req, deps),
+      readConversationIdentity: (req) => verifyConversation(req, deps),
+      readLaneIdentity: (req) => verifyLane(req, deps),
     },
   );
 }
@@ -166,34 +163,27 @@ function validateTransport(
 function verifyConversation(
   request: Request,
   deps: WorkflowMutationGuardDeps,
-): Promise<ConversationCapabilityVerification> {
-  return deps.verifyConversationCapability !== undefined
-    ? deps.verifyConversationCapability(request)
-    : defaultVerifyConversationCapability(request);
+): Promise<ConversationIdentityReading> {
+  return deps.readConversationIdentity !== undefined
+    ? deps.readConversationIdentity(request)
+    : Promise.resolve(
+        readConversationIdentity(
+          request.headers.get(CONVERSATION_IDENTITY_HEADER),
+        ),
+      );
 }
 
 function verifyLane(
   request: Request,
   deps: WorkflowMutationGuardDeps,
-): Promise<LaneCapabilityVerification> {
-  return deps.verifyLaneCapability !== undefined
-    ? deps.verifyLaneCapability(request)
-    : defaultVerifyLaneCapability(request);
+): Promise<LaneIdentityReading> {
+  return deps.readLaneIdentity !== undefined
+    ? deps.readLaneIdentity(request)
+    : Promise.resolve(
+        readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
+      );
 }
 
-/**
- * The gate for the acts no agent may perform at all — definition approval and
- * rejection, which are human review, not workflow authority.
- *
- * Human-only has to mean the absence of EVERY agent credential rather than the
- * absence of the instance token alone. An agent holds its capability in the
- * same environment as the token, so it can present one without the other; a
- * token-only check would read that caller as the browser and hand it the
- * review act it is barred from. This is the same ordering rule the principal
- * classifier follows, kept in one place so the two cannot drift.
- *
- * Returns the refusal to return, or null when the caller is the human UI.
- */
 export async function guardHumanOnlyAct(input: {
   request: Request;
   deps: WorkflowMutationGuardDeps;
@@ -217,31 +207,6 @@ export async function guardHumanOnlyAct(input: {
     },
     { status: 403 },
   );
-}
-
-let conversationVerifier:
-  | ((request: Request) => Promise<ConversationCapabilityVerification>)
-  | null = null;
-let laneVerifier:
-  | ((request: Request) => Promise<LaneCapabilityVerification>)
-  | null = null;
-
-async function defaultVerifyConversationCapability(
-  request: Request,
-): Promise<ConversationCapabilityVerification> {
-  const { createConversationCapabilityVerifier } =
-    await import("@/lib/agent-gateway/token");
-  conversationVerifier ??= createConversationCapabilityVerifier();
-  return conversationVerifier(request);
-}
-
-async function defaultVerifyLaneCapability(
-  request: Request,
-): Promise<LaneCapabilityVerification> {
-  const { createLaneCapabilityVerifier } =
-    await import("@/lib/agent-gateway/token");
-  laneVerifier ??= createLaneCapabilityVerifier();
-  return laneVerifier(request);
 }
 
 /**

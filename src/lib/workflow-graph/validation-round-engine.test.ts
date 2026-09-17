@@ -8,7 +8,7 @@ import type {
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -211,7 +211,7 @@ function createHarness(params: {
     ...createContextTestCapabilities(),
     materializeWorkflowDocuments: async ({ execution }) => execution,
 
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     executionRepository: repository,
     signalHalt,

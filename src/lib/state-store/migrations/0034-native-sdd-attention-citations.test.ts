@@ -430,6 +430,8 @@ describe("0034-native-sdd-attention-citations", () => {
       "0047-graph-workflow-lane-coverage",
       "0048-graph-workflow-document-content",
       "0049-graph-workflow-review-origin",
+      "0050-remove-execution-seed-filler",
+      "0051-retire-stored-shape-readers",
     ]);
   });
 

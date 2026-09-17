@@ -1081,25 +1081,13 @@ async function executePromptForMachine(
     // subprocess's snapshot must not survive the swap.
     clearBackgroundActivity();
 
-    // Launch-capability eligibility is decided HERE (D11/D12), the one place
-    // that holds every fact it turns on: the conversation's role, whether the
-    // engine bound this turn to a lane, whether the runtime is durable, and the
-    // conversation's OWN id. Deciding it downstream would read a REDIRECTED id
-    // — a collaboration runtime deliberately points its CC-side id at the
-    // originating conversation — and would therefore mint that human's
-    // authority for a lane. Each condition rules out a runtime that otherwise
-    // looks identical here: a lane and the planner both name a real session and
-    // a real conversation, and an ephemeral runtime names one CC state cannot
-    // resolve as an origin at all.
-    const conversationCapability =
+    // A collaboration runtime routes to its parent, but must not act as that parent.
+    const workflowCallerConversationId =
       runtimeState.workflowContext === undefined &&
       !isProjectConversation &&
       input.persistence === "durable" &&
       isOrdinaryConversationRole(input.role)
-        ? deps.execution.mintConversationCapability({
-            sessionName: conversationTargetStoreSessionName(input.target),
-            conversationId: input.target.conversationId,
-          })
+        ? input.target.conversationId
         : null;
 
     const newRuntime = await factory.createRuntime({
@@ -1110,7 +1098,9 @@ async function executePromptForMachine(
       // Scope is decided here, where it is known authoritatively, and passed
       // forward as declared input (D4) — the runtimes never re-derive it.
       conversationTarget: input.target,
-      ...(conversationCapability !== null ? { conversationCapability } : {}),
+      ...(workflowCallerConversationId !== null
+        ? { workflowCallerConversationId }
+        : {}),
       worktreePath: input.worktreePath,
       persistedRef: resumeRef,
       modelSelection: effectiveModelSelection,
@@ -1132,12 +1122,6 @@ async function executePromptForMachine(
         ? {
             workflowExecutionId: runtimeState.workflowContext.executionId,
             workflowContextId: runtimeState.workflowContext.contextId,
-            ...(runtimeState.workflowContext.laneCapability !== undefined
-              ? {
-                  workflowLaneCapability:
-                    runtimeState.workflowContext.laneCapability,
-                }
-              : {}),
           }
         : {}),
       ...(externalTurnHandler

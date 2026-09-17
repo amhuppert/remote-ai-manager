@@ -4,8 +4,9 @@ import {
   type CollaborationFeatureSnapshot,
 } from "./feature-snapshot";
 
-function buildUserSnapshotWithoutOrigin(): Record<string, unknown> {
+function buildUserSnapshot(): Record<string, unknown> {
   return {
+    origin: "user",
     mode: "asymmetric",
     brief: "Should we adopt Postgres?",
     primaryAgentBackend: "claude",
@@ -46,17 +47,18 @@ function buildWorkflowSnapshot(): Record<string, unknown> {
 }
 
 describe("collaborationFeatureSnapshotSchema", () => {
-  it("parses a user-shaped snapshot that omits origin (defaults to user)", () => {
-    const snapshot = buildUserSnapshotWithoutOrigin();
+  it("rejects a user snapshot whose origin was not persisted", () => {
+    const snapshot = buildUserSnapshot();
+    delete snapshot.origin;
     const result = collaborationFeatureSnapshotSchema.safeParse(snapshot);
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.data.origin).toBe("user");
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(["origin"]);
   });
 
   it("parses a user-shaped snapshot that explicitly sets origin to user", () => {
     const snapshot = {
-      ...buildUserSnapshotWithoutOrigin(),
+      ...buildUserSnapshot(),
       origin: "user",
     };
     const result = collaborationFeatureSnapshotSchema.safeParse(snapshot);
@@ -66,7 +68,7 @@ describe("collaborationFeatureSnapshotSchema", () => {
   });
 
   it("preserves all fields on the user-shaped snapshot after round-trip", () => {
-    const snapshot = buildUserSnapshotWithoutOrigin();
+    const snapshot = buildUserSnapshot();
     const result = collaborationFeatureSnapshotSchema.safeParse(snapshot);
     expect(result.success).toBe(true);
     if (!result.success) return;
@@ -90,7 +92,7 @@ describe("collaborationFeatureSnapshotSchema", () => {
       activeTicketBlock: "<active-ticket>\n</active-ticket>",
     };
     const result = collaborationFeatureSnapshotSchema.safeParse({
-      ...buildUserSnapshotWithoutOrigin(),
+      ...buildUserSnapshot(),
       sessionContext,
     });
     expect(result.success).toBe(true);
@@ -99,9 +101,8 @@ describe("collaborationFeatureSnapshotSchema", () => {
   });
 
   it("still decodes a user snapshot captured before session context existed", () => {
-    const result = collaborationFeatureSnapshotSchema.safeParse(
-      buildUserSnapshotWithoutOrigin(),
-    );
+    const result =
+      collaborationFeatureSnapshotSchema.safeParse(buildUserSnapshot());
     expect(result.success).toBe(true);
     if (!result.success || result.data.origin !== "user") return;
     expect(result.data.sessionContext).toBeUndefined();
@@ -109,7 +110,7 @@ describe("collaborationFeatureSnapshotSchema", () => {
 
   it("rejects a user snapshot whose captured session context is malformed", () => {
     const result = collaborationFeatureSnapshotSchema.safeParse({
-      ...buildUserSnapshotWithoutOrigin(),
+      ...buildUserSnapshot(),
       sessionContext: { alignment: { version: "three" } },
     });
     expect(result.success).toBe(false);
@@ -197,9 +198,8 @@ describe("collaborationFeatureSnapshotSchema", () => {
     const workflowParsed = collaborationFeatureSnapshotSchema.parse(
       buildWorkflowSnapshot(),
     );
-    const userParsed = collaborationFeatureSnapshotSchema.parse(
-      buildUserSnapshotWithoutOrigin(),
-    );
+    const userParsed =
+      collaborationFeatureSnapshotSchema.parse(buildUserSnapshot());
     const both: CollaborationFeatureSnapshot[] = [workflowParsed, userParsed];
     const seenOrigins: string[] = [];
     for (const snapshot of both) {

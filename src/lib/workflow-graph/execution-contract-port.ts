@@ -1,5 +1,3 @@
-import { createLogger } from "@/lib/logging";
-import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/authored-accountability-coverage-core";
 import type {
   ResolvedWorkflowSemanticDefinition,
@@ -9,9 +7,6 @@ import type {
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { GraphRolePromptProjection } from "./prompt-composer";
-
-const EXECUTION_CONTRACT_PORT_KEY =
-  "__cc_graph_execution_contract_port" as const;
 
 export type GraphExecutionContractDecision =
   | { ok: true }
@@ -67,102 +62,6 @@ export interface GraphExecutionContract {
   ): Promise<GraphRolePromptProjection | null>;
 }
 
-interface GraphExecutionContractPortState {
-  contract: GraphExecutionContract | null;
-}
-
-function state(): GraphExecutionContractPortState {
-  return getGlobalSingleton(EXECUTION_CONTRACT_PORT_KEY, () => ({
-    contract: null,
-  }));
-}
-
-export function registerGraphExecutionContract(
-  contract: GraphExecutionContract,
-): void {
-  state().contract = contract;
-  logger.info("graph-workflow.execution_contract.registered", {});
-}
-
-const logger = createLogger("graph-execution-contract");
-
-function missingContractRefusal(): Exclude<
-  GraphExecutionContractDecision,
-  { ok: true }
-> {
-  return {
-    ok: false,
-    code: "execution_contract_unregistered",
-    issues: [
-      {
-        code: "execution-contract-unregistered",
-        message: "Graph execution policy is not registered.",
-      },
-    ],
-    instruction:
-      "Register the graph execution contract before starting semantic work.",
-  };
-}
-
-export function assertGraphExecutionContractRegistered(): void {
-  if (state().contract === null) {
-    logger.error("graph-workflow.execution_contract.unregistered", {});
-    throw new GraphExecutionContractViolationError(missingContractRefusal());
-  }
-}
-
-function requireContract(): GraphExecutionContract {
-  const contract = state().contract;
-  if (contract === null)
-    throw new GraphExecutionContractViolationError(missingContractRefusal());
-  return contract;
-}
-
-export function createNonParticipatingGraphExecutionContract(): GraphExecutionContract {
-  return {
-    validateDefinition: () => ({ ok: true }),
-    loadLiveEdit: () => ({
-      validateOperation: () => ({ ok: true }),
-      accountabilityCoverageGroups: [],
-    }),
-    validateTaskCompletion: () => ({ ok: true }),
-    deriveContextAcceptanceCriteria: () => ({
-      ok: true,
-      acceptanceCriteriaByContextId: {},
-    }),
-    loadPromptProjection: async () => null,
-  };
-}
-
-export function createRegisteredGraphExecutionContract(): GraphExecutionContract {
-  return {
-    validateDefinition(definition) {
-      return (
-        state().contract?.validateDefinition(definition) ??
-        missingContractRefusal()
-      );
-    },
-    loadLiveEdit(execution) {
-      return requireContract().loadLiveEdit(execution);
-    },
-    validateTaskCompletion(execution, taskId) {
-      return (
-        state().contract?.validateTaskCompletion(execution, taskId) ??
-        missingContractRefusal()
-      );
-    },
-    deriveContextAcceptanceCriteria(definition) {
-      return (
-        state().contract?.deriveContextAcceptanceCriteria(definition) ??
-        missingContractRefusal()
-      );
-    },
-    async loadPromptProjection(execution, contextId) {
-      return requireContract().loadPromptProjection(execution, contextId);
-    },
-  };
-}
-
 export class GraphExecutionContractViolationError extends Error {
   readonly code: string;
   readonly issues: WorkflowGraphValidationError[];
@@ -183,8 +82,4 @@ export function assertGraphExecutionContractAccepted(
   if (!decision.ok) {
     throw new GraphExecutionContractViolationError(decision);
   }
-}
-
-export function resetGraphExecutionContractForTesting(): void {
-  state().contract = null;
 }

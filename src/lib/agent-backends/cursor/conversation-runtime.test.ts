@@ -19,7 +19,6 @@ import {
 import { CURSOR_BACKEND_ID } from "./backend-id";
 import { translatePortableMcpToCursor } from "./mcp-translation";
 import { CURSOR_DEFAULT_MODEL } from "./model-policy";
-import { CURSOR_IPC_CODEC_VERSION } from "./worker/ipc";
 import {
   createScriptedTransport,
   type ScriptedTransport,
@@ -229,7 +228,6 @@ describe("eager ref persistence", () => {
       worker: {
         onAttach: (_input, worker) => {
           worker.send({
-            v: CURSOR_IPC_CODEC_VERSION,
             type: "attachResult",
             outcome: "attached",
             ref: null,
@@ -556,7 +554,6 @@ describe("turn settlement", () => {
         onTurn: (turn, worker) => {
           worker.sendInputAccepted(turn.runId);
           worker.send({
-            v: CURSOR_IPC_CODEC_VERSION,
             type: "fatal",
             code: "ipc_protocol_error",
             message: "the worker received an undecodable frame",

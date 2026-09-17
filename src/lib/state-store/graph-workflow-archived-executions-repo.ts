@@ -5,7 +5,6 @@ import {
   graphWorkflowExecutionSchema,
   type GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
-import { upgradeLegacyArchivedExecutionBlob } from "@/lib/workflow-graph/archived-legacy-decode";
 import {
   graphWorkflowStatusSchema,
   type GraphWorkflowStatus,
@@ -60,7 +59,7 @@ export interface GraphWorkflowArchivedExecutionsRepo {
   /**
    * Every decodable archived execution for a session, newest first.
    *
-   * A row that neither the current schema nor the legacy decode floor accepts
+   * A row that the current schema does not accept
    * is SKIPPED with a diagnostic rather than throwing: history is a list, and
    * one unreadable record must not hide every readable one. `findByExecution`
    * keeps throwing — a caller who named that execution is asking for it
@@ -153,7 +152,7 @@ type DecodeResult =
  * instead of throwing lets the list skip a broken row while the point lookup
  * still fails loudly.
  */
-function decodeArchivedBlob(executionId: string, raw: string): DecodeResult {
+function decodeArchivedBlob(raw: string): DecodeResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -170,8 +169,7 @@ function decodeArchivedBlob(executionId: string, raw: string): DecodeResult {
     };
   }
 
-  const upgraded = upgradeLegacyArchivedExecutionBlob(parsed);
-  const decoded = decodeGraphWorkflowExecution(upgraded);
+  const decoded = decodeGraphWorkflowExecution(parsed);
   if (!decoded.ok) return { ok: false, issues: decoded.issues };
   if (decoded.value === null) {
     return {
@@ -184,14 +182,6 @@ function decodeArchivedBlob(executionId: string, raw: string): DecodeResult {
         },
       ],
     };
-  }
-  if (upgraded !== parsed) {
-    emitOrDeferRepositoryLog(() =>
-      logger.info(
-        "state-store.graph-workflow-archived-executions.legacy_decode",
-        { executionId },
-      ),
-    );
   }
   return { ok: true, value: decoded.value };
 }
@@ -345,7 +335,6 @@ export function createGraphWorkflowArchivedExecutionsRepo(
             ]);
           }
           const decoded = decodeArchivedBlob(
-            executionId,
             (row as { execution_json: string }).execution_json,
           );
           if (decoded.ok) return decoded.value;
@@ -372,7 +361,6 @@ export function createGraphWorkflowArchivedExecutionsRepo(
           ]);
         }
         const decoded = decodeArchivedBlob(
-          executionId,
           (row as { execution_json: string }).execution_json,
         );
         if (decoded.ok) return decoded.value;
@@ -412,7 +400,7 @@ export function createGraphWorkflowArchivedExecutionsRepo(
           }
           const { execution_id: executionId, execution_json: executionJson } =
             row as { execution_id: string; execution_json: string };
-          const decoded = decodeArchivedBlob(executionId, executionJson);
+          const decoded = decodeArchivedBlob(executionJson);
           if (!decoded.ok) {
             emitOrDeferRepositoryLog(() =>
               logger.warn(

@@ -5,7 +5,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
-import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createWorkflowCharterService } from "./charter/service";
@@ -71,7 +71,7 @@ describe("lifecycle ownership across asynchronous work", () => {
     const stops: GraphWorkflowExecution[] = [];
     const manager = createGraphWorkflowManager({
       executionRepository: repository,
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSession: fixture.store.getSession,
       loadDefinition: async () => createWorkflowDefinitionRecord(),
       readSessionWorktreeDirtyPaths: async () => [],

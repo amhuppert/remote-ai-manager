@@ -54,7 +54,7 @@ import {
   nextWriteToken,
   readJsonObjectFile,
   render,
-  resolveCliPrincipalCapabilities,
+  resolveCliPrincipalIdentity,
   resolveLaneContext,
   resolveProjectContext,
   resolveProseArg,
@@ -719,16 +719,9 @@ export async function runWorkflow(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  // `workflow execution …` and `workflow exec …` are dispatch-rewrite aliases
-  // for `workflow live …` (doc 06, D10) — one implementation, one help node. The
-  // aliases carry no registry entry, so rewrite before dispatch.
-  const rewritten =
-    rest[0] === "execution" || rest[0] === "exec"
-      ? ["live", ...rest.slice(1)]
-      : rest;
   return dispatchGroup({
     group: ["workflow"],
-    rest: rewritten,
+    rest,
     json: flags.json,
     handlers: {
       validate: (r) => runWorkflowValidate(r, flags, values, env, host),
@@ -2303,7 +2296,7 @@ async function runWorkflowStart(
     tokenSource: context.tokenSource,
     method: "POST",
     path: graphWorkflowPath(context),
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     ...(callerConversationId === null
       ? {}
       : {
@@ -2434,7 +2427,7 @@ async function runWorkflowRun(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/run`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: {
       plan: plan.value,
       ...(inputs !== undefined ? { inputs } : {}),
@@ -2806,7 +2799,7 @@ async function runWorkflowAbandon(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/abandon`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: { executionId, reason },
   });
   if (result.kind !== "ok") return workflowLiveFailure(result, json);
@@ -2972,7 +2965,7 @@ const liveEditResponseSchema = z.object({
 /**
  * `cctl workflow live get|edit|pause|resume` — act on the session's ACTIVE
  * launched execution (doc 06 §CLI surface). Session-scoped via
- * `resolveSessionContext`; the `execution`/`exec` aliases are rewritten to `live`
+ * `resolveSessionContext`; live operations address the active execution
  * before dispatch (see `runWorkflow`), so all three share this one implementation
  * and one help node.
  */
@@ -3042,7 +3035,7 @@ async function runWorkflowLiveAbort(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/abort`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: { reason },
   });
   if (result.kind !== "ok") return workflowFailure(result, json);
@@ -3392,7 +3385,7 @@ async function runWorkflowLiveEdit(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/runtime-edits`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body,
   });
   if (result.kind !== "ok") return workflowLiveFailure(result, json);
@@ -3494,7 +3487,7 @@ async function runWorkflowLiveAmend(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/amend`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     ...(callerConversationId === null
       ? {}
       : {
@@ -3590,7 +3583,7 @@ async function runWorkflowLivePauseResume(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/${action}`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
   });
   if (result.kind !== "ok") return workflowFailure(result, json);
 
@@ -3665,7 +3658,7 @@ async function runWorkflowTaskComplete(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/tasks/${encodePathSegment(taskId)}/complete`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: { executionId: context.executionId, summary },
   });
   // A 409 halt carries { error: reason, halt, reason }; the generic mapping
@@ -3744,7 +3737,7 @@ async function runWorkflowTaskAdd(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/tasks`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: {
       executionId: context.executionId,
       title,
@@ -3796,11 +3789,7 @@ async function runWorkflowGraph(
  * `cctl workflow graph expand --file <expansion.json>` — the lane verb that
  * appends a bounded subgraph to the RUNNING execution (D4 R6).
  *
- * Unlike every other lane verb it carries a SECOND credential: the signed
- * implementer-lane capability CC injects as `CC_WORKFLOW_LANE_CAPABILITY` at
- * dispatch, forwarded verbatim in the `x-cc-lane-capability` header. The CLI
- * never mints, inspects, or rewrites it — it is opaque transport here, and the
- * server is what verifies its signature and scope.
+ * The lane identity is built from server-injected env IDs; target flags do not change it.
  *
  * The payload is NOT validated client-side beyond "is it an object": the
  * envelope is a server decision, and a CLI that pre-judged it would drift.
@@ -3842,14 +3831,6 @@ async function runWorkflowGraphExpand(
     );
   }
 
-  const capability = env["CC_WORKFLOW_LANE_CAPABILITY"];
-  if (!capability) {
-    return usageFailure(
-      "no lane capability — set CC_WORKFLOW_LANE_CAPABILITY (graph expansion runs only in an implementer lane CC dispatched)",
-      json,
-    );
-  }
-
   const resolved = await resolveLaneContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
@@ -3860,8 +3841,7 @@ async function runWorkflowGraphExpand(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/expand`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
-    headers: { "x-cc-lane-capability": capability },
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: { executionId: context.executionId, request: payload },
   });
   // 403 (no capability / unauthorized lane) and 409 (envelope refusal) both
@@ -3971,7 +3951,7 @@ async function runWorkflowSharedDocUpsert(
     tokenSource: context.tokenSource,
     method: "PUT",
     path: `${graphWorkflowPath(context)}/shared-documents/${encodedPath}`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: {
       executionId: context.executionId,
       contextId: context.contextId,
@@ -4043,7 +4023,7 @@ async function runWorkflowCollabRequest(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${laneContextPath(context)}/collaboration-requests`,
-    principalCapabilities: resolveCliPrincipalCapabilities(env),
+    principalIdentity: resolveCliPrincipalIdentity(env),
     body: { executionId: context.executionId, brief },
   });
   // 403 (allowAgentCollaboration disabled) carries { error }; exit 1 with text.

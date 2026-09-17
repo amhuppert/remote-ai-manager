@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { collectStableAccountabilityContextIds } from "@/lib/workflow-graph/authored-accountability";
 import { locateAuthoredAccountabilityCoverage } from "@/lib/workflow-graph/authored-accountability-coverage";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
@@ -1782,7 +1782,7 @@ describe("delivery-plan service v4 lifecycle", () => {
     const draftEdit = applyDefinitionEdits(
       draft!,
       [charterEdit],
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(draftEdit.ok).toBe(true);
     if (!draftEdit.ok) return;
@@ -1807,7 +1807,7 @@ describe("delivery-plan service v4 lifecycle", () => {
     const cloneEdit = applyDefinitionEdits(
       clone!,
       [charterEdit],
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(cloneEdit.ok).toBe(true);
     const cloneSourceIds = clone!.definition.charter.sourcesOfTruth.map(
@@ -1845,7 +1845,7 @@ describe("delivery-plan service v4 lifecycle", () => {
     const locked = applyDefinitionEdits(
       frozen!,
       [{ type: "update-charter", mission: "Too late." }],
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(locked.ok).toBe(false);
     if (locked.ok) return;
@@ -1880,7 +1880,7 @@ describe("delivery-plan service v4 lifecycle", () => {
       applyDefinitionEdits(
         definition!,
         [{ type: "update-charter", mission: "Still authorable." }],
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       ).ok,
     ).toBe(true);
   });

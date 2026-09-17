@@ -1,5 +1,4 @@
 import {
-  CURSOR_IPC_CODEC_VERSION,
   encodeNativePayload,
   type CursorSdkErrorFrameDetail,
   type CursorWorkerFrame,
@@ -125,7 +124,6 @@ export class ScriptedWorker implements CursorWorkerSession {
     const encoded = encodeNativePayload(eventType, native);
     if (!encoded.ok) {
       this.send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "nativeEventRejected",
         runId,
         eventIndex,
@@ -137,7 +135,6 @@ export class ScriptedWorker implements CursorWorkerSession {
       return;
     }
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "nativeEvent",
       runId,
       eventIndex,
@@ -156,7 +153,6 @@ export class ScriptedWorker implements CursorWorkerSession {
     eventType = "assistant",
   ): void {
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "nativeEventRejected",
       runId,
       eventIndex,
@@ -168,11 +164,11 @@ export class ScriptedWorker implements CursorWorkerSession {
   }
 
   sendInputAccepted(runId: string): void {
-    this.send({ v: CURSOR_IPC_CODEC_VERSION, type: "inputAccepted", runId });
+    this.send({ type: "inputAccepted", runId });
   }
 
   sendRefIssued(ref: string, runId: string | null = null): void {
-    this.send({ v: CURSOR_IPC_CODEC_VERSION, type: "refIssued", runId, ref });
+    this.send({ type: "refIssued", runId, ref });
   }
 
   /**
@@ -192,7 +188,6 @@ export class ScriptedWorker implements CursorWorkerSession {
     },
   ): void {
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "usage",
       runId,
       ...usage,
@@ -205,7 +200,6 @@ export class ScriptedWorker implements CursorWorkerSession {
     error: CursorSdkErrorFrameDetail | null = null,
   ): void {
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "turnSettled",
       runId,
       outcome,
@@ -238,7 +232,6 @@ export class ScriptedWorker implements CursorWorkerSession {
     const ref = input.ref ?? this.options.ref ?? "agent-scripted";
     this.sendRefIssued(ref);
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "attachResult",
       outcome: "attached",
       ref,
@@ -261,7 +254,6 @@ export class ScriptedWorker implements CursorWorkerSession {
   cancel(runId: string): void {
     this.cancelledRunIds.push(runId);
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "cancelResult",
       runId,
       outcome: "cancelled",
@@ -277,7 +269,6 @@ export class ScriptedWorker implements CursorWorkerSession {
       return;
     }
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "steerResult",
       runId,
       requestId,

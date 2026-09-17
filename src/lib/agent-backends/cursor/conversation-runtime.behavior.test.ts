@@ -33,7 +33,6 @@ import {
   type ScriptedTransport,
   type ScriptedWorkerOptions,
 } from "./testing/scripted-worker";
-import { CURSOR_IPC_CODEC_VERSION } from "./worker/ipc";
 
 /**
  * Behavior suite for the Cursor conversation runtime, driven by scripted fake
@@ -365,7 +364,6 @@ describe("malformed and oversized native input", () => {
             // Well-formed frame, unparsable payload: the decode boundary, not
             // the encode boundary.
             worker.send({
-              v: CURSOR_IPC_CODEC_VERSION,
               type: "nativeEvent",
               runId: turn.runId,
               eventIndex: 0,
@@ -1092,7 +1090,6 @@ describe("live input archive barrier", () => {
           },
           onSteer: (input, worker) => {
             const frame = {
-              v: CURSOR_IPC_CODEC_VERSION,
               type: "steerResult",
               runId: input.runId,
               requestId: input.requestId,

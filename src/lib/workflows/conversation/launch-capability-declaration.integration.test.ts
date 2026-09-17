@@ -2,21 +2,6 @@ import { targetFromStoreSessionName } from "@/lib/conversations/conversation-tar
 import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 let conversationActors: ReturnType<typeof createTestActorImplementations>;
 import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
-/**
- * Launch-capability eligibility through the PRODUCTION turn path (D7 R9.4,
- * decisions D11/D12).
- *
- * The signed capability is what makes a launch's origin a principal rather than
- * a claim, and D12 makes eligibility an ALLOWLIST: it is declared by the caller
- * that authoritatively knows which kind of runtime it is building, so anything
- * that does not declare it — a lane, the planner's task run, a collaboration
- * runtime, a conversation kind added later — is minted none and cannot launch.
- *
- * A declaration nobody makes would be a guard with no reachable success path,
- * so this reads the `ConversationBackendCreateInput` the real conversation actor
- * hands the backend factory: an ordinary conversation declares itself, and the
- * same actor building a workflow lane does not.
- */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -74,9 +59,6 @@ afterEach(() => {
   fixture.close();
 });
 
-/** Scopes the actor asked to have a capability minted for. */
-let mintRequests: Array<{ sessionName: string; conversationId: string }> = [];
-
 /** Run one real turn and return the create-input the actor built. */
 async function runTurn(input: {
   conversationId: string;
@@ -92,17 +74,10 @@ async function runTurn(input: {
   const store = fixture.recreateStore();
 
   const created: ConversationBackendCreateInput[] = [];
-  mintRequests = [];
   conversationActors = createTestActorImplementations(
     createActorDependenciesFixture({
       getConversation: (projectPath, sessionName, id) =>
         store.getConversation(projectPath, sessionName, id),
-      // Injected rather than reaching the real signing key: the decision under
-      // test is WHO is minted one and under WHICH identity, not the signature.
-      mintConversationCapability: (scope) => {
-        mintRequests.push(scope);
-        return `cccc1.minted-for-${scope.conversationId}.sig`;
-      },
       getConversationBackendFactory: () => ({
         backend: "claude",
         createRuntime: async (createInput) => {
@@ -167,25 +142,17 @@ async function runTurn(input: {
   return created[0]!;
 }
 
-describe("launch-capability eligibility reaches the production runtime", () => {
-  it("mints for a durable ordinary conversation, under its own conversation id", async () => {
+describe("launch-identity eligibility reaches the production runtime", () => {
+  it("declares for a durable ordinary conversation, under its own conversation id", async () => {
     const created = await runTurn({
       conversationId: "ordinary-conv",
       role: null,
     });
 
-    expect(created.conversationCapability).toBe(
-      "cccc1.minted-for-ordinary-conv.sig",
-    );
-    // The identity signed is the conversation's OWN, taken at spawn. A
-    // capability minted further down — from the env builder's target — would
-    // read a redirected id for any runtime that sets one.
-    expect(mintRequests).toEqual([
-      { sessionName: SESSION_NAME, conversationId: "ordinary-conv" },
-    ]);
+    expect(created.workflowCallerConversationId).toBe("ordinary-conv");
   });
 
-  it("mints nothing for a workflow lane, whose authority is its lane capability", async () => {
+  it("declares nothing for a workflow lane, whose authority is its lane identity", async () => {
     const created = await runTurn({
       conversationId: "lane-conv",
       role: "iteration",
@@ -193,18 +160,15 @@ describe("launch-capability eligibility reaches the production runtime", () => {
         workflowContext: {
           executionId: "exec-1",
           contextId: "context-1",
-          laneCapability: "lane-cap",
         },
       },
     });
 
-    expect(created.conversationCapability).toBe(undefined);
-    expect(created.workflowLaneCapability).toBe("lane-cap");
+    expect(created.workflowCallerConversationId).toBe(undefined);
     expect(created.workflowExecutionId).toBe("exec-1");
-    expect(mintRequests).toEqual([]);
   });
 
-  it("mints nothing for a workflow role even when no lane identity is registered", async () => {
+  it("declares nothing for a workflow role even when no lane identity is registered", async () => {
     // Role and lane registration are separate facts, and a validator turn that
     // races registration must not fall back into the ordinary allowlist.
     const created = await runTurn({
@@ -212,21 +176,19 @@ describe("launch-capability eligibility reaches the production runtime", () => {
       role: "validator",
     });
 
-    expect(created.conversationCapability).toBe(undefined);
-    expect(mintRequests).toEqual([]);
+    expect(created.workflowCallerConversationId).toBe(undefined);
   });
 
-  it("mints nothing for the planner, which is a reserved role rather than a human's conversation", async () => {
+  it("declares nothing for the planner, which is a reserved role rather than a human's conversation", async () => {
     const created = await runTurn({
       conversationId: "planner-conv",
       role: "planner",
     });
 
-    expect(created.conversationCapability).toBe(undefined);
-    expect(mintRequests).toEqual([]);
+    expect(created.workflowCallerConversationId).toBe(undefined);
   });
 
-  it("mints nothing for the retired initialization role", async () => {
+  it("declares nothing for the retired initialization role", async () => {
     // Retired, so no new conversation takes it — but legacy rows still carry
     // it, and an allowlist that admits a role nobody reviews for launch
     // authority is the failure this criterion names.
@@ -235,18 +197,16 @@ describe("launch-capability eligibility reaches the production runtime", () => {
       role: "initialization",
     });
 
-    expect(created.conversationCapability).toBe(undefined);
-    expect(mintRequests).toEqual([]);
+    expect(created.workflowCallerConversationId).toBe(undefined);
   });
 
-  it("mints nothing for an ephemeral runtime, which CC state cannot resolve as an origin", async () => {
+  it("declares nothing for an ephemeral runtime, which CC state cannot resolve as an origin", async () => {
     const created = await runTurn({
       conversationId: "ephemeral-conv",
       role: null,
       persistence: "ephemeral",
     });
 
-    expect(created.conversationCapability).toBe(undefined);
-    expect(mintRequests).toEqual([]);
+    expect(created.workflowCallerConversationId).toBe(undefined);
   });
 });

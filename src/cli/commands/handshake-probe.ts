@@ -23,10 +23,8 @@ const handshakeResponseSchema = z.object({
     conversation: z.string().nullable(),
   }),
   tokenValid: z.boolean(),
-  /** Absent on servers older than the build-parity recovery path. */
-  cliPath: z.string().optional(),
-  /** Absent on servers older than the instance-identity field. */
-  configDir: z.string().optional(),
+  cliPath: z.string(),
+  configDir: z.string(),
 });
 
 export type HandshakeIdentity = z.infer<
@@ -43,9 +41,9 @@ export interface HandshakeFacts {
   tokenValid: boolean;
   tokenSource: TokenSource | null;
   /** The cctl `server` publishes — the recovery binary for a build mismatch. */
-  cliPath: string | undefined;
+  cliPath: string;
   /** The state directory `server` owns — its DB, logs, and transcripts. */
-  configDir: string | undefined;
+  configDir: string;
 }
 
 export type HandshakeOutcome =

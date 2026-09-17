@@ -1,3 +1,4 @@
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 import { getGraphWorkflowRuntime } from "./production";
 import { createWorkflowStorageService } from "./storage";
 import { randomUUID } from "node:crypto";
@@ -9,7 +10,6 @@ import { getSession, getActiveGraphWorkflowExecution } from "@/lib/state-store";
 
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
-import { createRegisteredGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { buildImplementerCollaborationContext } from "@/lib/workflow-graph/implementer-collaboration-context";
 import { resolveLaneToolCollaborationConfig } from "@/lib/workflow-graph/lane-collaboration-resolver";
 import { coerceGlobalDefaults } from "@/lib/workflow-graph/resolve-config";
@@ -93,7 +93,7 @@ function createLaneToolServices() {
     sharedDocumentRegistry,
     publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
     readLiveOccupancy: (conversationId) => readLiveOccupancy(conversationId),
-    executionContract: createRegisteredGraphExecutionContract(),
+    executionContract: getProductionWorkflowComposition().executionContract,
   });
 
   return {
@@ -194,10 +194,13 @@ export async function loadGraphWorkflowLaneToolContext(
     {
       loadFallbackInputs: async () => {
         const globalConfig = await readConfig();
-        const definitionRecord = await workflowStorage.get(
-          scopeForTier(execution.launchedTier, projectPath),
-          execution.seedDefinitionId,
-        );
+        const definitionRecord =
+          execution.seedDefinitionId === null
+            ? null
+            : await workflowStorage.get(
+                scopeForTier(execution.launchedTier, projectPath),
+                execution.seedDefinitionId,
+              );
         const contextDefinition =
           definitionRecord?.definition.executionContexts.find(
             (context) => context.id === contextId,

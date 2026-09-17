@@ -74,7 +74,6 @@ export const ARCHITECTURE_TOOLCHAIN_TEST_FILES = [
   "src/components/markdown/markdown-boundary.test.ts",
   "src/components/workflow-graph/workflow-graph-css.test.ts",
   "src/features/_root/pwa-manifest.test.ts",
-  "src/lib/agent-backends/claude/native-memory-policy-surface.test.ts",
   "src/lib/agent-backends/codex/managed-skills-bridge.test.ts",
   "src/lib/agent-backends/codex/native-sdd-authoring-packaging.test.ts",
   "src/lib/agent-backends/consumer-locality-static.test.ts",

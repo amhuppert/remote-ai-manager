@@ -582,13 +582,12 @@ describe("waitingForInput rehydration contract", () => {
     });
   });
 
-  it("a legacy-shape snapshot rehydrates with a canonical backendRef in the actor context", async () => {
+  it("a current snapshot rehydrates with its canonical backendRef in the actor context", async () => {
     const persisted = await captureWaitingForInputSnapshot();
-    // Shape the snapshot the way a pre-migration build persisted it: a
-    // discriminated legacy ref in the machine context.
+    // Startup receives canonical snapshots after ledgered migrations finish.
     (persisted as { context: { backendRef: unknown } }).context.backendRef = {
       backend: "claude",
-      sessionId: "sess-legacy-snap",
+      ref: "sess-persisted-snap",
     };
     machineFactory = stubbedMachine;
     setConversationQueueDeps(noopQueueDeps);
@@ -614,7 +613,7 @@ describe("waitingForInput rehydration contract", () => {
     expect(actor).toBeDefined();
     expect(actor!.getSnapshot().context.backendRef).toEqual({
       backend: "claude",
-      ref: "sess-legacy-snap",
+      ref: "sess-persisted-snap",
     });
   });
 

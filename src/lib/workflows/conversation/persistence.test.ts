@@ -1,7 +1,6 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createConversationMachineFixture } from "@/lib/workflows/conversation/testing/machine-fixture";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { z } from "zod";
 import { createActor, fromPromise, setup } from "xstate";
 import {
   persistConversationSnapshot,
@@ -617,13 +616,15 @@ describe("conversation persistence", () => {
       expect(result).toEqual(snapshot);
     });
 
-    it("normalizes an active debug snapshot that has no session generation", () => {
+    it("restores the persisted debug generation and persistence marker", () => {
       const snapshot = {
         context: {
           _schemaVersion: 1,
           conversationId: CONVERSATION_ID,
+          debugGenerationNeedsPersistence: true,
           debugMode: {
             active: true,
+            debugSessionId: "persisted-generation",
             recording: true,
             logFilePath: "/tmp/debug.jsonl",
             enteredAt: "2024-01-01T00:00:00Z",
@@ -644,7 +645,7 @@ describe("conversation persistence", () => {
       };
 
       expect(result.context.debugMode.debugSessionId).toEqual(
-        expect.any(String),
+        "persisted-generation",
       );
       expect(result.context.debugGenerationNeedsPersistence).toBe(true);
     });
@@ -730,134 +731,6 @@ describe("conversation persistence", () => {
       revived.stop();
     });
 
-    it("normalizes a legacy context.backendRef to the canonical ref shape", () => {
-      const snapshot = {
-        context: {
-          _schemaVersion: 1,
-          conversationId: CONVERSATION_ID,
-          backendRef: { backend: "claude", sessionId: "sess-legacy" },
-        },
-        value: "idle",
-      };
-
-      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
-
-      expect(result).not.toBeNull();
-      const { context } = z
-        .object({ context: z.object({ backendRef: z.unknown() }) })
-        .parse(result);
-      expect(context.backendRef).toEqual({
-        backend: "claude",
-        ref: "sess-legacy",
-      });
-    });
-
-    it("normalizes a superset context.backendRef and a legacy forkedFrom.sourceBackendRef", () => {
-      const snapshot = {
-        context: {
-          _schemaVersion: 1,
-          conversationId: CONVERSATION_ID,
-          backendRef: {
-            backend: "codex",
-            ref: "thr-super",
-            threadId: "thr-super",
-          },
-          forkedFrom: {
-            sourceConversationId: "parent",
-            messageIndex: 0,
-            sourceBackendRef: { backend: "codex", threadId: "thr-fork" },
-          },
-        },
-        value: "idle",
-      };
-
-      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
-
-      expect(result).not.toBeNull();
-      const { context } = z
-        .object({
-          context: z.object({
-            backendRef: z.unknown(),
-            forkedFrom: z.object({
-              sourceBackendRef: z.unknown(),
-              messageIndex: z.number(),
-            }),
-          }),
-        })
-        .parse(result);
-      expect(context.backendRef).toEqual({
-        backend: "codex",
-        ref: "thr-super",
-      });
-      expect(context.forkedFrom.sourceBackendRef).toEqual({
-        backend: "codex",
-        ref: "thr-fork",
-      });
-      expect(context.forkedFrom.messageIndex).toBe(0);
-    });
-
-    // A snapshot persisted mid-turn (by this build's shadow encoder, by
-    // migration 0005, or by an old build writing pure legacy refs) carries
-    // encoded refs inside active child snapshots too. Restoration must hand
-    // the actor a fully canonical tree.
-    it("normalizes shadow and legacy refs inside child snapshots back to canonical", () => {
-      const snapshot = {
-        context: {
-          _schemaVersion: 1,
-          conversationId: CONVERSATION_ID,
-          backendRef: {
-            backend: "claude",
-            ref: "sess-root",
-            sessionId: "sess-root",
-          },
-        },
-        value: { executing: "conversationTurn" },
-        children: {
-          "0.conversation.executing.conversationTurn": {
-            snapshot: {
-              status: "active",
-              input: {
-                conversationId: CONVERSATION_ID,
-                backendRef: { backend: "claude", sessionId: "sess-child" },
-                forkedFrom: {
-                  sourceConversationId: "parent",
-                  messageIndex: 0,
-                  sourceBackendRef: {
-                    backend: "codex",
-                    ref: "thr-child",
-                    threadId: "thr-child",
-                  },
-                },
-              },
-            },
-            src: "executePrompt",
-          },
-        },
-      };
-
-      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
-
-      expect(result).not.toBeNull();
-      for (const { path, value } of collectRefOccurrences(result)) {
-        expect(value, `restored ref not canonical at ${path}`).toEqual({
-          backend: value.backend,
-          ref: value.ref,
-        });
-      }
-      const childInput = (
-        result as unknown as {
-          children: Record<
-            string,
-            { snapshot: { input: Record<string, unknown> } }
-          >;
-        }
-      ).children["0.conversation.executing.conversationTurn"]!.snapshot.input;
-      expect(childInput.backendRef).toEqual({
-        backend: "claude",
-        ref: "sess-child",
-      });
-    });
-
     it("returns null when snapshot has no context", () => {
       const result = validateRestoredSnapshot(
         { value: "idle" },
@@ -867,50 +740,18 @@ describe("conversation persistence", () => {
       expect(result).toBeNull();
     });
 
-    it("coerces legacy persisted activeTurn (no kind) to conversation_turn variant and preserves all fields", () => {
-      // Shaped like a pre-discriminator activeTurn — no `kind` field. The
-      // restorer must add kind='conversation_turn' so the new machine code
-      // matches the variant.
-      const legacyActiveTurn = {
-        promptText: "do the thing",
-        images: [],
-        backend: "claude",
-        modelId: null,
-        effort: null,
-        autonomous: false,
-        startedAt: "2024-01-01T00:00:00Z",
-        streamId: "stream-legacy",
+    it("restores the migrated conversation turn without changing its fields", () => {
+      const activeTurn = {
+        kind: "conversation_turn",
+        promptText: "resume me",
+        retained: { futureField: true },
       };
       const snapshot = {
-        context: {
-          _schemaVersion: 1,
-          conversationId: CONVERSATION_ID,
-          activeTurn: { ...legacyActiveTurn },
-        },
+        context: { _schemaVersion: 1, activeTurn },
         value: "executing",
       };
-
       const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
-
-      expect(result).not.toBeNull();
-      const restoredActiveTurn = (
-        result as unknown as {
-          context: { activeTurn: Record<string, unknown> };
-        }
-      ).context.activeTurn;
-      expect(restoredActiveTurn).toEqual({
-        kind: "conversation_turn",
-        ...legacyActiveTurn,
-      });
-
-      // Re-serializing the in-memory shape into the persisted JSON form
-      // round-trips the legacy fields verbatim — only `kind` is added.
-      const reSerialized = JSON.parse(JSON.stringify(restoredActiveTurn));
-      const { kind, ...withoutKind } = reSerialized as {
-        kind: string;
-      } & typeof legacyActiveTurn;
-      expect(kind).toBe("conversation_turn");
-      expect(withoutKind).toEqual(legacyActiveTurn);
+      expect(result).toMatchObject({ context: { activeTurn } });
     });
 
     it("round-trips a task_run activeTurn variant unchanged", () => {

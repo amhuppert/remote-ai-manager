@@ -8,7 +8,6 @@ import type {
   CursorWorkerStartResult,
   CursorWorkerTransport,
 } from "../worker-port";
-import { CURSOR_IPC_CODEC_VERSION } from "./ipc";
 import type { CursorParentFrame, CursorWorkerFrame } from "./ipc";
 import type {
   CursorProcessHost,
@@ -125,7 +124,7 @@ class FakeProcessHost implements CursorProcessHost {
   readonly processes: FakeSpawnedProcess[] = [];
   readonly signals: { pgid: number; signal: NodeJS.Signals }[] = [];
   private readonly aliveGroups = new Set<number>();
-  private readonly ticksByPid = new Map<number, string | null>();
+  private readonly groupsByPid = new Map<number, number | null>();
   spawnError: Error | null = null;
   nextPid = 5000;
   /** A group that ignores SIGTERM, as a wedged SDK child would. */
@@ -144,22 +143,18 @@ class FakeProcessHost implements CursorProcessHost {
     // A worker that exits normally takes its group with it (its own watchdog
     // signals the group), and its pid stops being readable.
     child.onExited = () => {
-      this.ticksByPid.set(pid, null);
+      this.groupsByPid.set(pid, null);
       if (!this.leaveGroupAlive) this.aliveGroups.delete(pid);
     };
     this.processes.push(child);
     this.aliveGroups.add(pid);
-    this.ticksByPid.set(pid, `${pid}00`);
+    this.groupsByPid.set(pid, pid);
     return child;
   }
 
   processGroupId(pid: number): number | null {
     // Every spawned worker leads its own group, so pgid === pid.
-    return this.ticksByPid.has(pid) ? pid : null;
-  }
-
-  async startTicks(pid: number): Promise<string | null> {
-    return this.ticksByPid.get(pid) ?? null;
+    return this.groupsByPid.get(pid) ?? null;
   }
 
   isGroupAlive(pgid: number): boolean {
@@ -175,14 +170,9 @@ class FakeProcessHost implements CursorProcessHost {
     child?.exit(null, signal);
   }
 
-  /** Simulate pid reuse: the pid lives on with a different process behind it. */
-  recyclePid(pid: number): void {
-    this.ticksByPid.set(pid, "999999");
-  }
-
-  /** Simulate a host where process identity cannot be read at all. */
-  hideIdentity(pid: number): void {
-    this.ticksByPid.set(pid, null);
+  /** Simulate group lookup becoming unavailable after the spawn. */
+  hideGroupId(pid: number): void {
+    this.groupsByPid.set(pid, null);
   }
 
   last(): FakeSpawnedProcess {
@@ -275,7 +265,6 @@ async function settle(): Promise<void> {
 
 function readyFrame(pid: number): CursorWorkerFrame {
   return {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "ready",
     pid,
     pgid: pid,
@@ -417,14 +406,13 @@ describe("cursor worker spawn contract", () => {
     expect(harness.credentialReads).toBe(2);
   });
 
-  it("runs the static runtime preflight before every spawn", async () => {
+  it("consults the cached installation result before every spawn", async () => {
     const harness = createHarness();
     const first = await startReady(harness);
     await first.close();
     await startReady(harness);
 
-    // Per start, not once per process: package drift and a Node change between
-    // conversations are exactly what layer 1 exists to catch (D3).
+    // The production dependency caches its check by package path and mtime.
     expect(harness.preflightModels).toStrictEqual([
       "composer-2.5",
       "composer-2.5",
@@ -473,7 +461,6 @@ describe("cursor worker spawn contract", () => {
     await settle();
     const child = harness.host.last();
     child.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "preflightFailed",
       reason: "invalid_credential",
       message: "credential rejected",
@@ -741,12 +728,10 @@ describe("cursor worker attach and turn framing", () => {
     const child = harness.host.last();
 
     child.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "inputAccepted",
       runId: "run-1",
     });
     child.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "turnSettled",
       runId: "run-1",
       outcome: "completed",
@@ -782,7 +767,6 @@ describe("cursor worker teardown ladder", () => {
     await settle();
     expect(child.ofType("cancel")[0]?.runId).toBe("run-1");
     child.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "cancelResult",
       runId: "run-1",
       outcome: "cancelled",
@@ -880,40 +864,17 @@ describe("cursor worker teardown ladder", () => {
     ]);
   });
 
-  it("refuses to signal a pid whose recorded identity no longer matches", async () => {
+  it("tears down its spawned group without reading process start markers", async () => {
     const harness = createHarness();
     const session = await startReady(harness);
     harness.host.last().autoExitOnShutdown = false;
-    // The worker died and its pid was handed to something else.
-    harness.host.recyclePid(5000);
-
+    harness.host.hideGroupId(5000);
     const closing = session.close();
     await vi.advanceTimersByTimeAsync(
-      BOUNDS.cancelGraceMs + BOUNDS.exitGraceMs + BOUNDS.termGraceMs + 500,
+      BOUNDS.exitGraceMs + BOUNDS.termGraceMs + 500,
     );
-    const outcome: CursorWorkerCloseOutcome = await closing;
-
-    expect(harness.host.signals).toHaveLength(0);
-    expect(outcome.kind).toBe("cleanup_failed");
-    if (outcome.kind === "cleanup_failed") {
-      expect(outcome.reason).toBe("ownership_unverified");
-    }
-  });
-
-  it("refuses to signal when process identity cannot be read at all", async () => {
-    const harness = createHarness();
-    const session = await startReady(harness);
-    harness.host.last().autoExitOnShutdown = false;
-    harness.host.hideIdentity(5000);
-
-    const closing = session.close();
-    await vi.advanceTimersByTimeAsync(
-      BOUNDS.cancelGraceMs + BOUNDS.exitGraceMs + BOUNDS.termGraceMs + 500,
-    );
-    const outcome: CursorWorkerCloseOutcome = await closing;
-
-    expect(harness.host.signals).toHaveLength(0);
-    expect(outcome.kind).toBe("cleanup_failed");
+    expect(await closing).toEqual({ kind: "verified", escalation: "sigterm" });
+    expect(harness.host.signals).toEqual([{ pgid: 5000, signal: "SIGTERM" }]);
   });
 
   it("settles repeated closes identically without a second teardown", async () => {
@@ -1014,7 +975,6 @@ describe("cursor worker registry lifetime", () => {
     });
     await vi.advanceTimersByTimeAsync(BOUNDS.idleTtlMs - 1);
     child.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "inputAccepted",
       runId: "run-1",
     });
@@ -1042,7 +1002,6 @@ describe("cursor worker registry lifetime", () => {
     expect(harness.transport.find(CONVERSATION_ID)).not.toBeNull();
 
     child.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "turnSettled",
       runId: "quiet-run",
       outcome: "completed",

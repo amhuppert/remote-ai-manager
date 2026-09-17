@@ -24,12 +24,12 @@ import {
   resolveProjectOr404,
 } from "@/lib/shared/route-resolution";
 import { z } from "zod";
+import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import {
-  createAgentAuth,
-  createLaneCapabilityVerifier,
-  type AgentAuth,
-} from "@/lib/agent-gateway/token";
-import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
+  readLaneIdentity,
+  LANE_IDENTITY_HEADER,
+  type LaneIdentityReading,
+} from "@/lib/agent-gateway/lane-identity";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { createLogger, withTracing } from "@/lib/logging";
 import { GraphExecutionContractViolationError } from "./execution-contract-port";
@@ -64,7 +64,7 @@ const ADD_TASK_DISABLED_MESSAGE =
 const COLLABORATION_DISABLED_MESSAGE =
   "This execution context does not allow agent-initiated collaboration requests.";
 const EXPANSION_CAPABILITY_MESSAGE =
-  "Graph expansion requires a valid implementer-lane capability for this execution context.";
+  "Graph expansion requires a current implementer-lane identity for this execution context.";
 
 const executionIdField = z.string().trim().min(1);
 const trimmedRequired = z.string().trim().min(1);
@@ -100,11 +100,11 @@ const collaborationStartedSchema = z.object({
 export interface LaneRouteDeps {
   auth: AgentAuth;
   /**
-   * Classify the signed lane capability the request presents (D4 R7). Separate
+   * Read the injected lane identity the request presents (D4 R7). Separate
    * from `auth` because it answers a different question: the bearer token says
    * "a cctl on this machine", this says "the implementer bound to THIS context".
    */
-  verifyLaneCapability(request: Request): Promise<LaneCapabilityVerification>;
+  readLaneIdentity(request: Request): Promise<LaneIdentityReading>;
   expandGraph(input: GraphExpansionInput): Promise<GraphExpansionOutcome>;
   /**
    * Emit the typed refusal event for an expansion the ROUTE refuses before the
@@ -533,7 +533,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
    * POST …/contexts/[contextId]/expand — runtime graph expansion (D4 R6/R7).
    *
    * The only lane verb with a SECOND credential. The bearer token says a cctl on
-   * this machine is calling; the signed capability says which lane, and the
+   * this machine is calling; the injected identity says which lane, and the
    * service re-checks that claim against the context's current implementer
    * conversation inside the serialized mutation. Both are required.
    *
@@ -582,7 +582,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
       return response;
     }
 
-    const capability = await deps.verifyLaneCapability(request);
+    const capability = await deps.readLaneIdentity(request);
     if (capability.kind !== "valid") {
       log.warn("graph-workflow-lane.expansion_capability_rejected", {
         contextId,
@@ -696,7 +696,8 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
 
 const defaultDeps: LaneRouteDeps = {
   auth: createAgentAuth(),
-  verifyLaneCapability: createLaneCapabilityVerifier(),
+  readLaneIdentity: async (request) =>
+    readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
   expandGraph: (input) => createDefaultExpansionService().expand(input),
   publishExpansionRefusal,
   resolveProjectPath,

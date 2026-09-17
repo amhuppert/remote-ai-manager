@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
 import {
   graphWorkflowAbandonmentSchema,
@@ -8,31 +7,13 @@ import {
   graphWorkflowLaunchDocumentSchema,
 } from "./schemas";
 import {
-  ONE_OFF_SEED_DEFINITION_ID_PREFIX,
-  SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX,
   buildExecutionProvenance,
-  buildOneOffSeedCompatibilityFields,
-  buildSpecDeliverySeedCompatibilityFields,
   describeLaunchSource,
   deriveTemplateOriginFromSeedFields,
   floorRawExecutionOrigin,
-  isOneOffExecution,
   originFallbackName,
   originKindLabel,
 } from "./execution-origin";
-
-/**
- * The EXACT required-field shape every pre-D7 build parses a stored definition
- * tier with (D2). A one-off row has to keep satisfying it: the active repo's
- * `listActive()` decodes every row in the set, so one unparseable one-off row
- * would cost an older build the workflow state of every session rather than of
- * the one run it cannot understand.
- */
-const preD7RequiredDefinitionShape = z.object({
-  seedDefinitionId: z.string().trim().min(1),
-  seedDefinitionRevision: z.number().int().min(1),
-  launchedTier: z.enum(["project", "global"]).default("project"),
-});
 
 function maximal(): Record<string, unknown> {
   const built = buildMaximalGraphWorkflowExecution();
@@ -156,113 +137,29 @@ describe("graph-workflow execution origin", () => {
   });
 });
 
-describe("one-off legacy seed filler", () => {
-  it("mints a nonempty seed id namespaced to the execution", () => {
-    const filler = buildOneOffSeedCompatibilityFields("exec-77");
-    expect(filler).toEqual({
-      seedDefinitionId: `${ONE_OFF_SEED_DEFINITION_ID_PREFIX}exec-77`,
-      seedDefinitionRevision: 1,
+describe("one-off provenance", () => {
+  it("has no saved definition identity", () => {
+    expect(
+      buildExecutionProvenance({ kind: "one_off", planName: "Ad hoc" }),
+    ).toEqual({
+      origin: { kind: "one_off", planName: "Ad hoc" },
+      seedDefinitionId: null,
+      seedDefinitionRevision: null,
       launchedTier: "project",
     });
-  });
-
-  // The filler exists to keep an OLD reader parsing, so the assertion that
-  // matters is the old reader's own required-field shape, not ours.
-  it("keeps a one-off definition tier parseable under the pre-D7 required shape", () => {
-    const execution = graphWorkflowExecutionSchema.parse({
-      ...maximal(),
-      ...buildOneOffSeedCompatibilityFields("exec-77"),
-      origin: { kind: "one_off", planName: "Repair the flaky suite" },
-    });
-
-    expect(preD7RequiredDefinitionShape.parse(execution)).toEqual({
-      seedDefinitionId: "one-off:exec-77",
-      seedDefinitionRevision: 1,
-      launchedTier: "project",
-    });
-  });
-
-  it("classifies a run by its origin, never by the seed sentinel", () => {
-    const oneOff = graphWorkflowExecutionSchema.parse({
-      ...maximal(),
-      ...buildOneOffSeedCompatibilityFields("exec-77"),
-      origin: { kind: "one_off", planName: "Repair the flaky suite" },
-    });
-    expect(isOneOffExecution(oneOff)).toBe(true);
-
-    // A template run whose seed id merely LOOKS like the sentinel is still a
-    // template run: the sentinel is a projection, not an authority.
-    const templateWithSentinelShapedSeedId = graphWorkflowExecutionSchema.parse(
-      {
-        ...maximal(),
-        seedDefinitionId: "one-off:not-really",
-        origin: {
-          kind: "template",
-          definitionId: "one-off:not-really",
-          definitionRevision: 2,
-          tier: "project",
-        },
-      },
-    );
-    expect(isOneOffExecution(templateWithSentinelShapedSeedId)).toBe(false);
-  });
-});
-
-describe("spec-delivery legacy seed filler", () => {
-  it("mints a nonempty seed id namespaced to the execution", () => {
-    const filler = buildSpecDeliverySeedCompatibilityFields("exec-9");
-    expect(filler).toEqual({
-      seedDefinitionId: `${SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX}exec-9`,
-      seedDefinitionRevision: 1,
-      launchedTier: "project",
-    });
-  });
-
-  it("keeps a spec-delivery definition tier parseable under the pre-D7 required shape", () => {
-    const execution = graphWorkflowExecutionSchema.parse({
-      ...maximal(),
-      ...buildSpecDeliverySeedCompatibilityFields("exec-9"),
-      origin: {
-        kind: "spec_delivery",
-        specSlug: "conversation-compaction",
-        candidateId: "cand-42",
-      },
-    });
-
-    expect(preD7RequiredDefinitionShape.parse(execution)).toEqual({
-      seedDefinitionId: "spec-delivery:exec-9",
-      seedDefinitionRevision: 1,
-      launchedTier: "project",
-    });
-  });
-
-  it("is not classified as a one-off run", () => {
-    const specDelivery = graphWorkflowExecutionSchema.parse({
-      ...maximal(),
-      ...buildSpecDeliverySeedCompatibilityFields("exec-9"),
-      origin: {
-        kind: "spec_delivery",
-        specSlug: "conversation-compaction",
-        candidateId: "cand-42",
-      },
-    });
-    expect(isOneOffExecution(specDelivery)).toBe(false);
   });
 });
 
 describe("launch-source provenance", () => {
   it("pairs a spec-delivery origin with its saved definition identity", () => {
     expect(
-      buildExecutionProvenance(
-        {
-          kind: "spec_delivery",
-          specSlug: "conversation-compaction",
-          candidateId: "cand-42",
-          definitionId: "definition-42",
-          definitionRevision: 7,
-        },
-        "exec-9",
-      ),
+      buildExecutionProvenance({
+        kind: "spec_delivery",
+        specSlug: "conversation-compaction",
+        candidateId: "cand-42",
+        definitionId: "definition-42",
+        definitionRevision: 7,
+      }),
     ).toEqual({
       origin: {
         kind: "spec_delivery",

@@ -26,8 +26,7 @@ import {
 import { createReviewService } from "./review-service";
 import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
 import { createMergeAssociationResolver } from "./merge-association";
-import type { SpecWorkflowComposition } from "./workflow-composition";
-import { registerSpecWorkflowComposition } from "./workflow-composition";
+import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
 import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
 import {
   createSpecExecutionBindingGraphContract,
@@ -37,7 +36,7 @@ import { createAuthoredContextOutcomeService } from "@/lib/workflow-graph/author
 
 const logger = createLogger("specs.production-workflow-composition");
 
-export function createProductionSpecWorkflowComposition(): SpecWorkflowComposition {
+export function createProductionSpecWorkflowComposition(): WorkflowComposition {
   const db = getStateDb();
   const writeQueue = getSharedWriteQueue();
   const deliveryRepo = createSpecDeliveryRepo(db);
@@ -240,8 +239,4 @@ export function createProductionSpecWorkflowComposition(): SpecWorkflowCompositi
         specsRepo.getRevisionSnapshot(revisionId),
     }),
   };
-}
-
-export function registerProductionSpecWorkflowComposition(): void {
-  registerSpecWorkflowComposition(createProductionSpecWorkflowComposition());
 }

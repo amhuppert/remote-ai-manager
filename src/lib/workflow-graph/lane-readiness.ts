@@ -27,18 +27,8 @@ type ReadinessDefinition =
   | ResolvedWorkflowSemanticDefinition;
 
 /**
- * A context's output is "committed to a lane" when its work has been recorded
- * somewhere downstream consumers can observe. Three shapes are recognized:
- *
- *  - Legacy session isolation: status === "completed" and no laneId. Work
- *    landed directly on the session worktree at completion time.
- *  - Legacy per-context worktree merge: status === "completed", no laneId,
- *    mergeStatus === "merged-success". Squash-merge already landed in session.
- *  - Lane-aware: status === "completed", laneId set, lane has the context in
- *    its includedContextIds (lane-commit hook appends both a snapshot and
- *    the context id when committing or when there were no changes to commit).
- *
- * Pure — no side effects, safe to call from any layer.
+ * Completed session-isolated output is already visible in the session worktree.
+ * Worktree output is committed only when its assigned lane ledger records it.
  */
 export function isContextOutputCommittedToLane(
   state: GraphWorkflowExecutionContextState,
@@ -47,8 +37,7 @@ export function isContextOutputCommittedToLane(
   if (state.status !== "completed") return false;
 
   if (state.laneId === null) {
-    if (state.isolation === "session") return true;
-    return state.mergeStatus === "merged-success";
+    return state.isolation === "session";
   }
 
   const lane = execution.executionLanes[state.laneId];
@@ -605,46 +594,17 @@ function collectSourceLaneIds(
 /**
  * Returns true when a worktree context exists whose output has not been
  * published to the session worktree. In the lane-aware model, publication
- * means the session lane carries that contribution. Legacy per-context worktrees publish via squash merge
- * (`mergeStatus === "merged-success"`) when no lane is assigned.
+ * means the session lane carries that contribution.
  */
 function hasUnpublishedUnrelatedWorktreeWork(
   execution: GraphWorkflowExecution,
 ): boolean {
   for (const state of Object.values(execution.contextStates)) {
     if (state.isolation !== "worktree") continue;
-    if (isPublishedToSessionLane(state, execution)) continue;
+    if (isUpstreamVisibleToLane(state.contextId, null, execution)) continue;
     return true;
   }
   return false;
-}
-
-function isPublishedToSessionLane(
-  state: GraphWorkflowExecutionContextState,
-  execution: GraphWorkflowExecution,
-): boolean {
-  if (state.laneId === null) {
-    return state.mergeStatus === "merged-success";
-  }
-  return isUpstreamVisibleToLane(state.contextId, null, execution);
-}
-
-/**
- * A context is "landed" — its work is visible to a session-bound downstream.
- * Equivalent to "upstream output is visible to a downstream that has no lane
- * assignment" under the lane-aware model: legacy session-isolation contexts
- * publish straight to the session worktree, and legacy per-context worktree
- * contexts publish via the fan-in squash merge (`mergeStatus === "merged-success"`).
- * Prefer {@link isContextOutputCommittedToLane} or
- * `isUpstreamVisibleToLane` for lane-aware callers.
- */
-export function isContextLanded(
-  state: GraphWorkflowExecutionContextState,
-): boolean {
-  if (state.status !== "completed") return false;
-  if (state.laneId !== null) return false;
-  if (state.isolation === "session") return true;
-  return state.mergeStatus === "merged-success";
 }
 
 /**

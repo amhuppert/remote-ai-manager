@@ -78,7 +78,7 @@ describe("cctl doctor", () => {
     expect(result.stdout).toContain(MANAGING_CONFIG_DIR);
   });
 
-  it("omits the fields a server too old to report them never sent", async () => {
+  it("rejects an incomplete server identity", async () => {
     const host = handshakeHost(() =>
       jsonResponse({
         serverBuild: CLI_BUILD,
@@ -90,9 +90,8 @@ describe("cctl doctor", () => {
     const result = await runCli(["doctor", "--json"], baseEnv, host);
 
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect("cliPath" in envelope).toBe(false);
-    expect("configDir" in envelope).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(envelope.ok).toBe(false);
   });
 
   // The ambient token authenticates the managing instance. Pointed at a dev

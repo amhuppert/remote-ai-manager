@@ -941,17 +941,14 @@ const claudeConversationBackendFactory = {
           conversationId: ccScopeConversationId,
         },
         configDir: getConfigDirPath(),
-        ...(input.conversationCapability !== undefined
-          ? { conversationCapability: input.conversationCapability }
+        ...(input.workflowCallerConversationId !== undefined
+          ? { workflowCallerConversationId: input.workflowCallerConversationId }
           : {}),
         ...(input.workflowExecutionId !== undefined
           ? { workflowExecutionId: input.workflowExecutionId }
           : {}),
         ...(input.workflowContextId !== undefined
           ? { workflowContextId: input.workflowContextId }
-          : {}),
-        ...(input.workflowLaneCapability !== undefined
-          ? { workflowLaneCapability: input.workflowLaneCapability }
           : {}),
       }) as Record<string, string>,
       maxTurns: undefined,
@@ -975,12 +972,8 @@ const claudeConversationBackendFactory = {
       settings: initialSettings,
     };
 
-    // `settings` above is the SDK's FLAG tier, which managed policy outranks.
-    // Confirm the neutralization actually survives the cascade before starting
-    // a session: on a host whose policy forces auto-memory back on there is no
-    // higher lever to pull, so CC refuses the launch rather than run Claude's
-    // memory store alongside its own (see ./native-memory.ts).
-    await assertClaudeNativeMemoryNeutralized({ cwd: input.worktreePath });
+    // Shared with task launches; the flag check is cached for this process.
+    assertClaudeNativeMemoryNeutralized();
 
     const querySession = createQuerySession(sessionOptions);
 

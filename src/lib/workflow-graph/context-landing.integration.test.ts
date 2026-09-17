@@ -1,10 +1,9 @@
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { defaultGitClient } from "@/lib/git/client";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import { createGraphWorkflowManager } from "./workflow-manager";
-import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import {
   createContextLanding,
   type ContextLandingInput,
@@ -14,7 +13,6 @@ import { createSoloContextCommitter } from "./solo-context-committer";
 import { createJoinRunner } from "./join-runner";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createLaneDriftAuditor } from "./lane-drift";
-import { createParallelWorktrees } from "./parallel-worktrees";
 import { SESSION_LANE_ID } from "./lane-identity";
 import type { GraphMergeRunner } from "./graph-merge-runner";
 import { expect, it } from "vitest";
@@ -135,6 +133,7 @@ it.each([
   "lane_no_changes",
   "solo_no_changes",
   "read_only",
+  "missing_lane",
 ] as const)(
   "lands %s through the service with Git evidence and repeat-safe persistence",
   async (mode) => {
@@ -221,7 +220,7 @@ it.each([
       const repository = createPersistenceGraphRepository(fixture);
       const manager = createGraphWorkflowManager({
         executionRepository: repository,
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         getSession: fixture.store.getSession,
         loadDefinition: async () => null,
         abortConversation: () => {},
@@ -242,10 +241,8 @@ it.each([
         executionRepository: repository,
         recordPendingHaltReason: manager.recordPendingHaltReason,
         getSession: fixture.store.getSession,
-        parallelWorktrees: createParallelWorktrees(),
         mergeMutex,
         sessionGitLock,
-        mergeRunner,
         laneCommitter: createLaneCommitter(),
         soloContextCommitter: createSoloContextCommitter(),
         joinRunner: createJoinRunner({
@@ -254,8 +251,6 @@ it.each([
           sessionGitLock,
         }),
         laneDriftAuditor: createLaneDriftAuditor(),
-        readRepoConfig: async () => null,
-        createJobId: randomUUID,
       });
       const input: ContextLandingInput = {
         projectPath: root,
@@ -270,9 +265,16 @@ it.each([
               isolation: "worktree",
               worktreePath: root,
               branchName: "lane-shared",
-              laneId: "delivery",
+              laneId: mode === "missing_lane" ? null : "delivery",
             },
       };
+      if (mode === "missing_lane") {
+        await expect(service.land(input)).rejects.toThrow(
+          /worktree.*assigned lane/i,
+        );
+        expect(await git("rev-parse", "HEAD")).toBe(baseline);
+        return;
+      }
       const first = await service.land(input);
       const expectedKind =
         mode === "read_only"

@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -236,7 +236,7 @@ async function runNewValidatorPath(
     async (_input: ExecuteWorkflowTaskRunInput) => taskRunResult,
   );
   const runner = createValidatorRunner({
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => stubWorktreeDir,
     resolveTimeoutMs: async () => 300_000,
     executeWorkflowTaskRun,

@@ -49,7 +49,6 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     alignmentServiceFactoryMod,
     ticketServiceFactoryMod,
     notepadServiceFactoryMod,
-    agentGatewayTokenMod,
     modelSelectionAdmissionMod,
     memoryServiceFactoryMod,
   ] = await Promise.all([
@@ -74,7 +73,6 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     import("@/lib/session-alignment/service-factory"),
     import("@/lib/tickets/service-factory"),
     import("@/lib/notepads/service-factory"),
-    import("@/lib/agent-gateway/token"),
     import("@/lib/agent-backends/model-selection-admission"),
     import("@/lib/memory/service-factory"),
   ]);
@@ -124,8 +122,6 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         registryMod.getBackendDescriptor(backend).conversation?.capabilities,
       registerBackendRuntime: runtimeRegistryMod.registerRuntime,
       unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
-      mintConversationCapability:
-        agentGatewayTokenMod.mintSessionConversationCapability,
       buildChildEnv: childEnvMod.buildChildEnv,
       resolvePluginPaths: commandsMod.resolvePluginPaths,
       getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,

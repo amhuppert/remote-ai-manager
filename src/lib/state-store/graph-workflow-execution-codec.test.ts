@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
-import {
-  buildOneOffSeedCompatibilityFields,
-  buildSpecDeliverySeedCompatibilityFields,
-} from "@/lib/workflow-graph/execution-origin";
 import { decodeGraphWorkflowExecution } from "./graph-workflow-execution-codec";
 
 /**
@@ -101,10 +97,14 @@ describe("decodeGraphWorkflowExecution origin floor", () => {
     });
   });
 
-  it("decodes a one-off row as one_off while its seed sentinel survives intact", () => {
+  it("decodes a one-off row as one_off without a saved definition identity", () => {
     const decoded = decodeOrThrow(
       storedCandidate((candidate) => {
-        Object.assign(candidate, buildOneOffSeedCompatibilityFields("exec-77"));
+        Object.assign(candidate, {
+          seedDefinitionId: null,
+          seedDefinitionRevision: null,
+          launchedTier: "project",
+        });
         candidate.origin = {
           kind: "one_off",
           planName: "Repair the flaky suite",
@@ -116,20 +116,19 @@ describe("decodeGraphWorkflowExecution origin floor", () => {
       kind: "one_off",
       planName: "Repair the flaky suite",
     });
-    // The filler is what an older reader parses; the new reader must neither
-    // rewrite nor discard it.
-    expect(decoded.seedDefinitionId).toBe("one-off:exec-77");
-    expect(decoded.seedDefinitionRevision).toBe(1);
+    expect(decoded.seedDefinitionId).toBeNull();
+    expect(decoded.seedDefinitionRevision).toBeNull();
     expect(decoded.launchedTier).toBe("project");
   });
 
-  it("decodes a spec-delivery row as spec_delivery while its seed sentinel survives intact", () => {
+  it("decodes a spec-delivery row as spec_delivery without a saved definition identity", () => {
     const decoded = decodeOrThrow(
       storedCandidate((candidate) => {
-        Object.assign(
-          candidate,
-          buildSpecDeliverySeedCompatibilityFields("exec-9"),
-        );
+        Object.assign(candidate, {
+          seedDefinitionId: null,
+          seedDefinitionRevision: null,
+          launchedTier: "project",
+        });
         candidate.origin = {
           kind: "spec_delivery",
           specSlug: "conversation-compaction",
@@ -143,8 +142,8 @@ describe("decodeGraphWorkflowExecution origin floor", () => {
       specSlug: "conversation-compaction",
       candidateId: "cand-42",
     });
-    expect(decoded.seedDefinitionId).toBe("spec-delivery:exec-9");
-    expect(decoded.seedDefinitionRevision).toBe(1);
+    expect(decoded.seedDefinitionId).toBeNull();
+    expect(decoded.seedDefinitionRevision).toBeNull();
     expect(decoded.launchedTier).toBe("project");
   });
 
@@ -167,7 +166,11 @@ describe("decodeGraphWorkflowExecution origin floor", () => {
   it("refuses a null origin on a one-off row rather than reading its sentinel as provenance", () => {
     const decoded = decodeGraphWorkflowExecution(
       storedCandidate((candidate) => {
-        Object.assign(candidate, buildOneOffSeedCompatibilityFields("exec-77"));
+        Object.assign(candidate, {
+          seedDefinitionId: null,
+          seedDefinitionRevision: null,
+          launchedTier: "project",
+        });
         candidate.origin = null;
       }),
     );

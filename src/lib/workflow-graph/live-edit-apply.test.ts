@@ -1,5 +1,5 @@
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it } from "vitest";
 import { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
 import {
@@ -132,7 +132,7 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
       execution = { ...execution, status };
     },
     deps: {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getActiveExecution: () => Promise.resolve(execution),
       mutateActive: (_projectPath, _sessionName, fn) => {
         harness.mutations += 1;

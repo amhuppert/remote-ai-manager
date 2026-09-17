@@ -131,8 +131,8 @@ export interface GraphWorkflowLifecycleDeps {
 
   /**
    * Reports an execution that started but parked awaiting definition
-   * approval, so the registered lifecycle consumer can open its own review
-   * request for the pending definition. Defaults to the registered port.
+   * approval, so the injected lifecycle consumer can open its own review
+   * request for the pending definition.
    */
   awaitingDefinitionApproval?(
     context: GraphExecutionLifecycleContext,
@@ -142,10 +142,9 @@ export interface GraphWorkflowLifecycleDeps {
 
   /**
    * Consulted before a pending definition approval is recorded so the
-   * registered lifecycle consumer can record its own execution-scoped
+   * injected lifecycle consumer can record its own execution-scoped
    * admission for work it prepared, or refuse with a machine-readable reason.
-   * Consulted for every parked run whatever its origin. Defaults to the
-   * registered port (admit when nobody claims it).
+   * Consulted for every parked run whatever its origin.
    *
    * A REFUSAL MUST BE WRITE-FREE. It is answered by handing the reservation
    * back, which reopens the park to a rejection or an abort, so a consumer that
@@ -160,8 +159,8 @@ export interface GraphWorkflowLifecycleDeps {
   ): Promise<DefinitionApprovalGateDecision>;
 
   /**
-   * Reports a successful abort so the registered lifecycle consumer can
-   * terminalize work pinned to the run. Defaults to the registered port.
+   * Reports a successful abort so the injected lifecycle consumer can
+   * terminalize work pinned to the run.
    */
   executionAborted?(workflowExecutionId: string): Promise<void>;
 
@@ -715,7 +714,7 @@ export function createGraphWorkflowLifecycleService(
    * lifecycle port and engages the loop exactly like a gate-free START. The
    * HTTP handler and human-only server-side callers (e.g. the spec-side
    * execution-start grant) share this path so approval always starts the run
-   * the same way. The registered lifecycle consumer records its own
+   * the same way. The injected lifecycle consumer records its own
    * execution-scoped admission for a definition it prepared, or refuses
    * machine-readably.
    *

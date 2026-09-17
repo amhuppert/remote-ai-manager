@@ -82,7 +82,7 @@ describe("ProjectConversationsRepo", () => {
     expect(found?.backendRef).toEqual({ backend: "codex", ref: "thr-plc" });
   });
 
-  it("decodes a legacy-shape backend_ref row to the canonical ref", () => {
+  it("quarantines a noncanonical backend_ref without dropping its project conversation", () => {
     repo.upsert("/repo-a", makeProjectConversation({ id: "c-legacy" }));
     db.prepare(
       `UPDATE project_conversations SET backend_ref = ? WHERE id = ?`,
@@ -92,7 +92,8 @@ describe("ProjectConversationsRepo", () => {
     );
 
     const found = repo.findByKey("/repo-a", "c-legacy");
-    expect(found?.backendRef).toEqual({ backend: "claude", ref: "sess-old" });
+    expect(found?.id).toBe("c-legacy");
+    expect(found?.backendRef).toBeNull();
   });
 
   it("defaults spawnedSessionIds to [] for a row written without it", () => {

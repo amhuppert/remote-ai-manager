@@ -6,29 +6,10 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 
 const queryMock = vi.hoisted(() => vi.fn());
-const resolveSettingsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
-  resolveSettings: resolveSettingsMock,
 }));
-
-/** A resolved cascade carrying only what the managed policy tier supplied. */
-function managedPolicyTier(settings: Record<string, unknown>) {
-  return {
-    effective: settings,
-    provenance: Object.fromEntries(
-      Object.keys(settings).map((key) => [
-        key,
-        { source: "managed", policyOrigin: "file" },
-      ]),
-    ),
-    sources:
-      Object.keys(settings).length > 0
-        ? [{ source: "managed", settings, policyOrigin: "file" }]
-        : [],
-  };
-}
 
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
@@ -50,7 +31,7 @@ import {
   projectConversationTarget,
   sessionConversationTarget,
 } from "@/lib/conversations/conversation-target";
-import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
+import { CONVERSATION_IDENTITY_ENV_VAR } from "@/lib/agent-gateway/conversation-identity";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type { ClaudeCapabilityApplyTarget } from "./runtime-config/adapter";
 import { isUndeliveredQuerySessionError } from "./query-session-errors";
@@ -222,7 +203,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   // The ordinary host: no managed policy has an opinion about auto-memory, so
   // the flag layer the runtime writes is the effective value.
-  resolveSettingsMock.mockResolvedValue(managedPolicyTier({}));
 });
 
 describe("resolveIdleTtlMs", () => {
@@ -322,120 +302,6 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     expect(queryMock.mock.calls[0]?.[0]?.options?.settings).toMatchObject({
       autoMemoryEnabled: false,
       autoDreamEnabled: false,
-    });
-    await runtime.close();
-  });
-
-  it("refuses to launch a conversation when managed policy forces auto-memory back on", async () => {
-    // `Options.settings` is the flag tier, which loses to managed policy. On
-    // such a host the descriptor's `disabled` claim cannot be honoured, and a
-    // session that started anyway would run Claude's own memory store next to
-    // the Command Center library — so no session is started at all.
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    resolveSettingsMock.mockResolvedValue(
-      managedPolicyTier({ autoMemoryEnabled: true }),
-    );
-
-    await expect(
-      createRuntimeWithFakeDeps({
-        executionClass: "ordinary-conversation" as const,
-        conversationId: "conv-native-memory-policy",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      }),
-    ).rejects.toThrow(/managed policy/i);
-
-    expect(queryMock).not.toHaveBeenCalled();
-  });
-
-  it("refuses to launch a conversation when an unverifiable policy helper is configured", async () => {
-    // The SDK's resolver does not execute the admin `policyHelper`, but the
-    // launched CLI does — so a cascade that looks clean here can still have
-    // auto-memory turned back on by the helper's output, at a tier that
-    // outranks everything CC passes. Unverifiable is not off.
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    resolveSettingsMock.mockResolvedValue(
-      managedPolicyTier({
-        autoMemoryEnabled: false,
-        autoDreamEnabled: false,
-        policyHelper: { path: "/opt/corp/policy-helper" },
-      }),
-    );
-
-    await expect(
-      createRuntimeWithFakeDeps({
-        executionClass: "ordinary-conversation" as const,
-        conversationId: "conv-native-memory-helper",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      }),
-    ).rejects.toThrow(/policy helper/i);
-
-    expect(queryMock).not.toHaveBeenCalled();
-  });
-
-  it("refuses to launch a conversation when a forced remote settings refresh is configured", async () => {
-    // The resolved cascade is the CACHED remote policy. This key makes the
-    // launched CLI block startup for a fresh fetch whose payload CC has never
-    // seen, so a clean-looking cascade proves nothing about the launch.
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    resolveSettingsMock.mockResolvedValue(
-      managedPolicyTier({
-        autoMemoryEnabled: false,
-        autoDreamEnabled: false,
-        forceRemoteSettingsRefresh: true,
-      }),
-    );
-
-    await expect(
-      createRuntimeWithFakeDeps({
-        executionClass: "ordinary-conversation" as const,
-        conversationId: "conv-native-memory-refresh",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      }),
-    ).rejects.toThrow(/forceRemoteSettingsRefresh/);
-
-    expect(queryMock).not.toHaveBeenCalled();
-  });
-
-  it("resolves the policy tier for the conversation's own worktree", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const runtime = await createRuntimeWithFakeDeps({
-      executionClass: "ordinary-conversation" as const,
-      conversationId: "conv-native-memory-cwd",
-      projectPath: "/project",
-      projectName: "proj",
-      sessionName: "sess",
-      worktreePath: "/project/.worktrees/sess",
-      persistedRef: null,
-      sessionInstructions: [],
-      tooling: {},
-    });
-
-    expect(resolveSettingsMock).toHaveBeenCalledWith({
-      cwd: "/project/.worktrees/sess",
-      settingSources: [],
     });
     await runtime.close();
   });
@@ -557,7 +423,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       const runtime = await createRuntimeWithFakeDeps({
         executionClass: "ordinary-conversation" as const,
         conversationId: "conv-ordinary",
-        conversationCapability: "cccc1.spawn-minted.sig",
+        workflowCallerConversationId: "caller-conversation",
         projectPath: "/project",
         projectName: "proj",
         sessionName: "sess",
@@ -567,8 +433,8 @@ describe("ClaudeConversationRuntime — SDK options", () => {
         tooling: {},
       });
 
-      expect(envOfLastQuery()?.[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
-        "cccc1.spawn-minted.sig",
+      expect(envOfLastQuery()?.[CONVERSATION_IDENTITY_ENV_VAR]).toBe(
+        "caller-conversation",
       );
 
       runtime.close();
@@ -602,9 +468,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       // rather than deleting, because a delete would resurrect the parent's
       // value under the SDK env merge. Absent and "" are the same answer here:
       // nothing usable reached the runtime.
-      expect(envOfLastQuery()?.[CONVERSATION_CAPABILITY_ENV_VAR] ?? "").toBe(
-        "",
-      );
+      expect(envOfLastQuery()?.[CONVERSATION_IDENTITY_ENV_VAR] ?? "").toBe("");
 
       runtime.close();
     });

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { computeCandidateTreeHash } from "@/lib/git/diff";
-import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { resetContextStateToInitial } from "./context-transitions";
 import {
   captureContextReviewOrigin,
@@ -119,7 +119,7 @@ describe("retained-work review origin", () => {
       );
 
       const runner = createValidatorRunner({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: async () => repo,
         resolveTimeoutMs: async () => 30_000,
         getProjectDisplayName: () => "test",

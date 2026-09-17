@@ -232,8 +232,6 @@ _Generated from the `cctl` help registry. Read a command's `--help` for its curr
   - `cctl ticket attach conversation <number | project#number> [<conversationId>] --description "<what and why>"`
 - `cctl ticket attach session` — attach a live session pointer
   - `cctl ticket attach session <number | project#number> <sessionName> --description "<what and why>"`
-- `cctl ticket attach ticket` — compatibility alias for adding a related relationship
-  - `cctl ticket attach ticket <number | project#number> <relatedNumber | project#number> --description "<how it relates>"`
 - `cctl ticket attach note` — attach a markdown note
   - `cctl ticket attach note <number | project#number> "<markdown>" --description "<what and why>"`
 - `cctl ticket attachment get` — retrieve an attachment's full content

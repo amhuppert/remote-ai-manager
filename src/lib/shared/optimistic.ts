@@ -2,6 +2,7 @@ import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { executePromptStream } from "../prompt/sdk-driver";
 import { dispatchMergeJob } from "../jobs/queue";
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 import { createJobNotification } from "../notifications/service";
 import {
   evaluateMergeInitiation as evaluateSessionMergeAdmission,
@@ -52,7 +53,13 @@ export const defaultOptimisticDeps: OptimisticDeps = {
   createNotification: createJobNotification,
   sleep,
   evaluateSessionMergeAdmission(input) {
-    return evaluateSessionMergeAdmission({ ...input, surface: "optimistic" });
+    const policy = getProductionWorkflowComposition();
+    return evaluateSessionMergeAdmission({
+      ...input,
+      surface: "optimistic",
+      association: policy.mergeAssociation,
+      gate: policy.deliveryGate,
+    });
   },
 };
 

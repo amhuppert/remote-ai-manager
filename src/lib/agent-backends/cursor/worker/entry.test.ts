@@ -18,7 +18,7 @@ import {
   type CursorWorkerSendMessage,
   type CursorWorkerSendOptions,
 } from "./entry";
-import { CURSOR_IPC_CODEC_VERSION, decodeNativePayload } from "./ipc";
+import { decodeNativePayload } from "./ipc";
 import type { CursorParentFrame, CursorWorkerFrame } from "./ipc";
 
 /**
@@ -261,7 +261,6 @@ const TERMINATION_GRACE_MS = 1_000;
 
 function initFrame(): CursorParentFrame {
   return {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "init",
     conversationId: "conv-1",
     workerId: "worker-1",
@@ -279,7 +278,6 @@ function attachFrame(
   overrides: Partial<Extract<CursorParentFrame, { type: "attachAgent" }>> = {},
 ): CursorParentFrame {
   return {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "attachAgent",
     mode: "create",
     ref: null,
@@ -300,7 +298,6 @@ function startTurnFrame(
   overrides: Partial<Extract<CursorParentFrame, { type: "startTurn" }>> = {},
 ): CursorParentFrame {
   return {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "startTurn",
     runId: "run-1",
     promptText: "hello",
@@ -320,7 +317,6 @@ async function settle(): Promise<void> {
 
 function credentialFrame(): CursorParentFrame {
   return {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "credential",
     apiKey: API_KEY,
   };
@@ -350,7 +346,6 @@ describe("worker steering", () => {
     harness.channel.emit(startTurnFrame());
     await settle();
     const frame = {
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "steer",
       runId: "run-1",
       requestId: "input-1",
@@ -365,7 +360,6 @@ describe("worker steering", () => {
     await settle();
     expect(harness.channel.ofType("steerResult")).toEqual([
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "steerResult",
         runId: "run-1",
         requestId: "input-1",
@@ -417,7 +411,6 @@ describe("cursor worker handshake", () => {
     expect(harness.sdk.verifiedKeys).toStrictEqual([API_KEY]);
     expect(harness.channel.ofType("ready")).toStrictEqual([
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "ready",
         pid: WORKER_PID,
         pgid: WORKER_PID,
@@ -439,7 +432,6 @@ describe("cursor worker handshake", () => {
     harness.channel.emit(initFrame());
     await settle();
     harness.channel.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: API_KEY,
     });
@@ -463,7 +455,6 @@ describe("cursor worker handshake", () => {
     harness.channel.emit(initFrame());
     await settle();
     harness.channel.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: API_KEY,
     });
@@ -481,7 +472,6 @@ describe("cursor worker handshake", () => {
     harness.channel.emit(initFrame());
     await settle();
     harness.channel.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: API_KEY,
     });
@@ -505,7 +495,6 @@ describe("cursor worker handshake", () => {
     harness.channel.emit(initFrame());
     await settle();
     harness.channel.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: API_KEY,
     });
@@ -619,7 +608,6 @@ describe("cursor worker attach", () => {
 
     expect(harness.channel.ofType("refIssued")).toStrictEqual([
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "refIssued",
         runId: null,
         ref: "agent-ref-1",
@@ -952,7 +940,6 @@ describe("cursor worker turns", () => {
     await settle();
 
     harness.channel.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "cancel",
       runId: "run-1",
     });
@@ -966,7 +953,6 @@ describe("cursor worker turns", () => {
     await settle();
 
     harness.channel.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "cancel",
       runId: "run-1",
     });
@@ -1135,7 +1121,6 @@ describe("cursor worker watchdog", () => {
     await attach(harness);
 
     harness.channel.emit({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "shutdown",
       reason: "close",
     });
@@ -1182,18 +1167,16 @@ describe("cursor worker protocol handling", () => {
     const harness = createHarness();
     await handshake(harness);
 
-    harness.channel.emit({ v: CURSOR_IPC_CODEC_VERSION, type: "startTurn" });
-    harness.channel.emit({ v: 99, type: "shutdown", reason: "close" });
+    harness.channel.emit({ type: "startTurn" });
+    harness.channel.emit({ type: "shutdown", reason: 99 });
     harness.channel.emit({ secret: API_KEY });
     await settle();
 
     const fatals = harness.channel.ofType("fatal");
-    // A frame with no codec version is rejected on the version check before its
-    // shape is ever read, which is why the last input reports the same reason.
     expect(fatals.map((frame) => frame.code)).toStrictEqual([
       "protocol_invalid_frame",
-      "protocol_unsupported_version",
-      "protocol_unsupported_version",
+      "protocol_invalid_frame",
+      "protocol_invalid_frame",
     ]);
     expect(JSON.stringify(fatals)).not.toContain(API_KEY);
     expect(harness.control.exits).toHaveLength(0);

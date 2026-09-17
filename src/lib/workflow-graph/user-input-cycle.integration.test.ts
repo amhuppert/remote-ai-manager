@@ -1,7 +1,7 @@
 import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AskQuestionAnswer,
@@ -328,7 +328,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent: async () => null,
@@ -511,7 +511,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       findLatestContextValidationEvent: async () => null,

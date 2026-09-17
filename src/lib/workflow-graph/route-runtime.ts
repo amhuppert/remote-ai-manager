@@ -247,8 +247,8 @@ export type LandingCommitRepairTarget =
  *
  *  - `pending` only. A `failed` intent already recorded a halt, and retrying it
  *    unasked would re-halt the resume the operator just performed.
- *  - `fan_in_merge` is excluded — a merge is not a commit, and its retry path is
- *    `pendingMergeRetry` plus reconciliation against the join record.
+ *  - Historical `fan_in_merge` evidence is excluded: it cannot be repaired by
+ *    the current lane or solo committers.
  *  - A landing cannot precede the work it lands, so an unfinished context is
  *    never repaired.
  *

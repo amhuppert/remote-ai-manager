@@ -188,6 +188,32 @@ async function rowRef(key: CheckpointScopeKey) {
 }
 
 describe("hydrateCheckpointAuthority", () => {
+  it("fails loudly instead of retrying a stale operation", async () => {
+    await building(SESSION_KEY);
+    let writes = 0;
+    await expect(
+      hydrateCheckpointAuthority(SESSION_KEY, {
+        ...infra(),
+        repo: {
+          ...repo,
+          async recordOutcome() {
+            writes += 1;
+            return {
+              ok: false,
+              refusal: {
+                code: "stale_operation",
+                reason: "changed",
+                operationId: null,
+                phase: null,
+              },
+            };
+          },
+        },
+      }),
+    ).rejects.toThrow(/stale_operation/);
+    expect(writes).toBe(1);
+  });
+
   it("reports nothing when no operation owns the conversation", async () => {
     const hydration = await hydrateCheckpointAuthority(SESSION_KEY, infra());
     expect(hydration).toMatchObject({

@@ -818,7 +818,7 @@ describe("seam corpus predicates", () => {
     ).toBe(false);
   });
 
-  it("neutral model-parameter seam excludes provider owners, migrations, archives, and fixtures", () => {
+  it("neutral model-parameter seam excludes provider owners, migrations, and fixtures", () => {
     const seam = byId.get("neutral-model-parameter-fields")!;
     expect(seam.inCorpus("src/lib/prompt/dispatch.ts")).toBe(true);
     expect(seam.inCorpus("src/lib/agent-backends/codex/translator.ts")).toBe(
@@ -830,13 +830,15 @@ describe("seam corpus predicates", () => {
       ),
     ).toBe(false);
     expect(
-      seam.inCorpus("src/lib/workflow-graph/archived-legacy-decode.ts"),
+      seam.inCorpus(
+        "src/lib/state-store/migrations/frozen-archived-execution.ts",
+      ),
     ).toBe(false);
     expect(
       seam.inCorpus(
         "src/features/session/conversation/collab/envelope-adapter.ts",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(seam.inCorpus("src/lib/prompt/testing/request-fixture.ts")).toBe(
       false,
     );

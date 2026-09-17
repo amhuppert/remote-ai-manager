@@ -85,7 +85,7 @@ function makeJoin(
 }
 
 describe("isContextOutputCommittedToLane", () => {
-  it("treats legacy session-isolation + completed as committed (no lane required)", () => {
+  it("treats session-isolation + completed as committed (no lane required)", () => {
     const base = createWorkflowExecution();
     const state = {
       ...base.contextStates["context-plan"]!,
@@ -97,7 +97,7 @@ describe("isContextOutputCommittedToLane", () => {
     expect(isContextOutputCommittedToLane(state, base)).toBe(true);
   });
 
-  it("treats legacy worktree-isolation + merged-success as committed", () => {
+  it("does not treat a lane-less worktree as committed despite merged-success", () => {
     const base = createWorkflowExecution();
     const state = {
       ...base.contextStates["context-plan"]!,
@@ -106,7 +106,7 @@ describe("isContextOutputCommittedToLane", () => {
       laneId: null,
       mergeStatus: "merged-success" as const,
     };
-    expect(isContextOutputCommittedToLane(state, base)).toBe(true);
+    expect(isContextOutputCommittedToLane(state, base)).toBe(false);
   });
 
   it("requires the lane to acknowledge the context when laneId is set", () => {
@@ -391,7 +391,7 @@ describe("isUpstreamVisibleToDownstream", () => {
     ).toBe(true);
   });
 
-  it("returns true when upstream landed on session (legacy) and downstream has no lane (session-bound)", () => {
+  it("returns true when upstream landed on session and downstream has no lane (session-bound)", () => {
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
       ...base,

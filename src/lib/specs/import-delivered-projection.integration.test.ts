@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
-import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
-import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import { type OpenAmendmentResult } from "./authoring-service";
 import {
@@ -116,15 +114,12 @@ function countRows(table: string, specId: string): number {
 
 beforeEach(() => {
   resetJobQueue();
-  _resetDeliveryGateEvaluatorForTesting();
-  resetGraphExecutionLifecycleCallbacksForTesting();
+
   world = createSpecSpineWorld();
 });
 
 afterEach(() => {
   resetJobQueue();
-  _resetDeliveryGateEvaluatorForTesting();
-  resetGraphExecutionLifecycleCallbacksForTesting();
 });
 
 describe("an import's external-delivery record projects Delivered without proof (R4.1, R9.2)", () => {

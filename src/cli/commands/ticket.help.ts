@@ -408,10 +408,6 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         oneLiner: "read the bounded relationship outline on a ticket",
       },
       {
-        command: "ticket attach ticket",
-        oneLiner: "retained compatibility alias for a related edge",
-      },
-      {
         command: "ticket status-update",
         oneLiner: "record progress separately from structural links",
       },
@@ -513,10 +509,6 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     related: [
       { command: "ticket relation list", oneLiner: "inspect existing edges" },
       { command: "ticket relation get", oneLiner: "read the created edge" },
-      {
-        command: "ticket attach ticket",
-        oneLiner: "compatibility alias limited to related edges",
-      },
     ],
   },
   {
@@ -689,7 +681,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     path: ["ticket", "attach"],
     summary: "attach described context to a ticket",
     description:
-      "Attach one of four canonical context kinds (file, conversation, session, note). The retained ticket leaf is a compatibility-only alias for a related relationship and does not create an attachment. Every canonical attachment carries a required --description explaining what it contains and why it matters — the descriptions ARE the ticket's attachment index.",
+      "Attach one of four canonical context kinds (file, conversation, session, note). Every canonical attachment carries a required --description explaining what it contains and why it matters — the descriptions ARE the ticket's attachment index.",
     usage: [
       `cctl ticket attach <file|conversation|session|ticket|note> ${REF_PLACEHOLDER} … --description "<what and why>"`,
     ],
@@ -799,31 +791,6 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     ],
   },
   {
-    path: ["ticket", "attach", "ticket"],
-    summary: "compatibility alias for adding a related relationship",
-    description:
-      "Compatibility alias for 'ticket relation add --role related'. It calls the relationship route and never writes an attachment; use the relation command for new automation.",
-    usage: [
-      `cctl ticket attach ticket ${REF_PLACEHOLDER} <relatedNumber | project#number> --description "<how it relates>"`,
-    ],
-    flags: [{ ...descriptionFlag }],
-    examples: [
-      {
-        invocation:
-          'cctl ticket attach ticket 12 command-center#7 --description "blocks the release this ticket targets"',
-        explanation: "both identifier forms work for the related ticket too",
-      },
-    ],
-    related: [
-      { command: "ticket get", oneLiner: "follow the related ticket" },
-      {
-        command: "ticket relation add",
-        oneLiner: "use the canonical relationship command",
-      },
-      { command: "ticket relation get", oneLiner: "read the rationale" },
-    ],
-  },
-  {
     path: ["ticket", "attach", "note"],
     summary: "attach a markdown note",
     description:
@@ -862,7 +829,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     path: ["ticket", "attachment"],
     summary: "read, edit, refresh, and remove ticket attachments",
     description:
-      "Operate on one attachment by its id (from the index shown by 'ticket get' or 'ticket list'). Migrated relationship ids remain readable, editable, and removable through this compatibility adapter; refresh stays conversation-only. Works in any ticket status, including after work has started.",
+      "Operate on one attachment by its id (from the index shown by 'ticket get' or 'ticket list'). Works in any ticket status, including after work has started.",
     usage: [
       `cctl ticket attachment <get|update|refresh|remove> ${REF_PLACEHOLDER} <attachmentId>`,
     ],

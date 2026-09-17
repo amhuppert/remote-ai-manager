@@ -11,8 +11,6 @@
  */
 
 import type { Snapshot } from "xstate";
-import { z } from "zod";
-import { randomUUID } from "node:crypto";
 import {
   getConversationMachineSnapshot as defaultGetConversationMachineSnapshot,
   upsertConversationMachineSnapshot as defaultUpsertConversationMachineSnapshot,
@@ -21,10 +19,6 @@ import {
 } from "@/lib/state-store";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createLogger } from "@/lib/logging";
-import {
-  canonicalizeSessionRefsForStorageDeep,
-  normalizeSessionRefsDeepInPlace,
-} from "@/lib/shared/session-ref-codec";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   restorePersistedSnapshotEnvelope,
@@ -39,115 +33,6 @@ const logger = createLogger("conversation-persistence");
  */
 function snapshotOwnerFor(sessionName: string): ConversationSnapshotOwner {
   return isProjectSentinel(sessionName) ? "project" : "session";
-}
-
-// ============================================================
-// AgentSessionRef codec at the snapshot boundary
-// ============================================================
-
-/**
- * Canonicalize every session ref retained in the persisted resume token. The
- * root context is normally canonical, so this is a no-op unless a legacy ref
- * survives there (for example in `backendRef` or `forkedFrom`). The walk clones
- * on rewrite, leaving the projected input untouched.
- */
-function withCanonicalRefs<T>(conversationId: string, snapshot: T): T {
-  const { value, rewrittenRefs } =
-    canonicalizeSessionRefsForStorageDeep(snapshot);
-  if (rewrittenRefs > 0) {
-    logger.debug("conversation-persistence.snapshot_refs_canonicalized", {
-      conversationId,
-      rewrittenRefs,
-    });
-  }
-  return value;
-}
-
-/**
- * Normalize persisted session refs (legacy or shadow-superset shapes,
- * anywhere in the tree — root context and child snapshot inputs) back to the
- * canonical `{ backend, ref }` before the actor is created. Mutates in place,
- * mirroring `coerceLegacyActiveTurn`.
- */
-function normalizeSnapshotRefs(
-  conversationId: string,
-  snapshot: unknown,
-): void {
-  const rewrittenRefs = normalizeSessionRefsDeepInPlace(snapshot);
-  if (rewrittenRefs > 0) {
-    logger.debug("conversation-persistence.snapshot_refs_normalized", {
-      conversationId,
-      rewrittenRefs,
-    });
-  }
-}
-
-// ============================================================
-// Legacy ActiveTurn coercion
-// ============================================================
-
-/**
- * Persisted snapshots written before the ActiveTurn discriminated union landed
- * stored activeTurn as a bare object without a `kind` field. The preprocessor
- * below stamps the legacy shape with `kind: "conversation_turn"` so the
- * in-memory ConversationContext sees the variant the machine expects, while
- * the rest of the object passes through untouched (passthrough preserves any
- * extra fields a future schema iteration may have added).
- *
- * Applied during snapshot restoration; production code never persists the
- * legacy shape again because every SUBMIT_PROMPT path now stamps `kind`.
- */
-const persistedActiveTurnSchema = z
-  .preprocess(
-    (val) => {
-      if (val == null || typeof val !== "object") return val;
-      const obj = val as Record<string, unknown>;
-      if ("kind" in obj) return obj;
-      return { kind: "conversation_turn", ...obj };
-    },
-    z.union([
-      z.looseObject({ kind: z.literal("conversation_turn") }),
-      z.looseObject({ kind: z.literal("task_run") }),
-    ]),
-  )
-  .nullable();
-
-function coerceLegacyActiveTurn(snapshot: unknown): void {
-  if (!snapshot || typeof snapshot !== "object") return;
-  const context = (snapshot as { context?: Record<string, unknown> }).context;
-  if (!context || typeof context !== "object") return;
-  if (!("activeTurn" in context)) return;
-  const parsed = persistedActiveTurnSchema.safeParse(context.activeTurn);
-  if (parsed.success) {
-    context.activeTurn = parsed.data;
-  }
-}
-
-function normalizeSnapshotDebugGeneration(
-  conversationId: string,
-  snapshot: unknown,
-): void {
-  if (!snapshot || typeof snapshot !== "object") return;
-  const context = (snapshot as { context?: Record<string, unknown> }).context;
-  if (!context || typeof context !== "object") return;
-  const debugMode = context.debugMode;
-  if (!debugMode || typeof debugMode !== "object") return;
-  const record = debugMode as Record<string, unknown>;
-  if (record.active !== true) return;
-  if (
-    typeof record.debugSessionId === "string" &&
-    record.debugSessionId.length > 0
-  ) {
-    return;
-  }
-
-  const debugSessionId = randomUUID();
-  record.debugSessionId = debugSessionId;
-  context.debugGenerationNeedsPersistence = true;
-  logger.info("conversation-persistence.debug_session_id_minted", {
-    conversationId,
-    debugSessionId,
-  });
 }
 
 // ============================================================
@@ -402,14 +287,12 @@ async function writeSnapshot(
 ): Promise<void> {
   try {
     // XState child inputs can contain callbacks that structuredClone cannot
-    // clone. They are outside the durable resume contract, so project them out
-    // before canonicalizing the refs retained in the root context.
+    // clone. They are outside the durable resume contract, so project them out.
     const projected = toPersistedConversationSnapshot(snapshot);
-    const canonical = withCanonicalRefs(conversationId, projected);
     await getDeps().upsertConversationMachineSnapshot(
       snapshotOwnerFor(sessionName),
       conversationId,
-      canonical,
+      projected,
     );
 
     logger.debug("conversation-persistence.snapshot_saved", {
@@ -448,9 +331,6 @@ export function validateRestoredSnapshot(
     return null;
   }
 
-  coerceLegacyActiveTurn(snapshot);
-  normalizeSnapshotRefs(conversationId, snapshot);
-  normalizeSnapshotDebugGeneration(conversationId, snapshot);
   // Undo the write-side `children` projection. Without it XState restores an
   // actor that holds the raw token instead of a machine snapshot, and the
   // failure is silent until a caller reaches for `can()` or `context`.

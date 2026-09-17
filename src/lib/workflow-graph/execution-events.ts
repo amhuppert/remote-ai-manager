@@ -223,16 +223,16 @@ interface PublishCharterRegisteredInput {
   projectPath: string;
   sessionName: string;
   execution: GraphWorkflowExecution;
-  definitionId: string;
-  definitionRevision: number;
+  definitionId: string | null;
+  definitionRevision: number | null;
   charterHash: string;
 }
 
 export interface PublishCharterUpdatedInput {
   projectPath: string;
   sessionName: string;
-  definitionId: string;
-  definitionRevision: number;
+  definitionId: string | null;
+  definitionRevision: number | null;
   charterHash: string;
   execution?: GraphWorkflowExecution | null;
 }

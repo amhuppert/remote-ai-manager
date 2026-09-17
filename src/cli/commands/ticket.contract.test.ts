@@ -15,7 +15,6 @@ import {
   createTicketContentStore,
   type TicketContentStore,
 } from "@/lib/tickets/content-store";
-import { createLegacyRelatedTicketAdapter } from "@/lib/tickets/legacy-related-ticket-adapter";
 import {
   createTicketRelationshipRouteHandlers,
   type TicketRelationshipRouteHandlers,
@@ -171,11 +170,6 @@ beforeEach(async () => {
     getService: () => relationshipService,
     validateOptionalToken: (request) => auth.validateOptionalToken(request),
   });
-  const legacyRelatedTicketAdapter = createLegacyRelatedTicketAdapter({
-    repo,
-    ticketService: service,
-    relationshipService,
-  });
 
   const statusUpdateService = createTicketStatusUpdateService({
     repo,
@@ -234,7 +228,6 @@ beforeEach(async () => {
   attachmentHandlers = createTicketAttachmentRouteHandlers({
     getTicketService: () => service,
     getAttachmentService: () => attachmentService,
-    getLegacyRelatedTicketAdapter: () => legacyRelatedTicketAdapter,
     auth,
   });
   const snapshotRefreshService = createConversationSnapshotRefreshService({
@@ -254,7 +247,6 @@ beforeEach(async () => {
   });
   snapshotRefreshHandlers = createConversationSnapshotRefreshRouteHandlers({
     getService: () => snapshotRefreshService,
-    getLegacyRelatedTicketAdapter: () => legacyRelatedTicketAdapter,
     auth,
   });
 });
@@ -1121,10 +1113,12 @@ describe("cctl ticket against the real route handlers", () => {
         ],
         [
           "ticket",
-          "attach",
-          "ticket",
+          "relation",
+          "add",
           "1",
           "2",
+          "--role",
+          "related",
           "--description",
           "related bug this depends on",
         ],
@@ -1183,16 +1177,15 @@ describe("cctl ticket against the real route handlers", () => {
       });
 
       const relationshipId = envelope.ticket.relationships.items[0].id;
-      const legacy = await runCli(
-        ["ticket", "attachment", "get", "1", relationshipId, "--json"],
+      const relation = await runCli(
+        ["ticket", "relation", "get", "1", relationshipId, "--json"],
         makeEnv(),
         host,
       );
-      expect(legacy.exitCode).toBe(0);
-      expect(JSON.parse(legacy.stdout).attachment).toMatchObject({
-        kind: "related_ticket",
-        attachment: { id: relationshipId },
-        available: true,
+      expect(relation.exitCode).toBe(0);
+      expect(JSON.parse(relation.stdout).relationship).toMatchObject({
+        id: relationshipId,
+        role: "related",
       });
     });
 

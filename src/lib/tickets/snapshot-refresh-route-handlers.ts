@@ -2,11 +2,7 @@ import { NextResponse } from "next/server";
 import type { ApiError } from "@/lib/api/errors";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { createLogger, withTracing } from "@/lib/logging";
-import {
-  getConversationSnapshotRefreshService,
-  getLegacyRelatedTicketAdapter,
-} from "./service-factory";
-import type { LegacyRelatedTicketAdapter } from "./legacy-related-ticket-adapter";
+import { getConversationSnapshotRefreshService } from "./service-factory";
 import {
   conversationSnapshotRefreshInputSchema,
   type ConversationSnapshotRefreshService,
@@ -23,7 +19,6 @@ const logger = createLogger("tickets.snapshot-refresh.routes");
 
 export interface ConversationSnapshotRefreshRouteDeps {
   getService(): ConversationSnapshotRefreshService;
-  getLegacyRelatedTicketAdapter(): LegacyRelatedTicketAdapter;
   auth: AgentAuth;
 }
 
@@ -66,20 +61,6 @@ export function createConversationSnapshotRefreshRouteHandlers(
 
       try {
         const result = await deps.getService().refresh(parsed.data);
-        if (!result.ok && result.error.code === "attachment_not_found") {
-          const handle = await deps
-            .getLegacyRelatedTicketAdapter()
-            .isRelationshipHandle(parsed.data);
-          if (!handle.ok) return ticketResponse(handle);
-          if (handle.value) {
-            return validationFailedResponse([
-              {
-                path: "attachmentId",
-                message: "relationships do not have refreshable snapshots",
-              },
-            ]);
-          }
-        }
         return ticketResponse(result);
       } catch (error) {
         logger.error("tickets.snapshot_refresh.routes.failed", {
@@ -95,7 +76,6 @@ export function createConversationSnapshotRefreshRouteHandlers(
 function defaultDeps(): ConversationSnapshotRefreshRouteDeps {
   return {
     getService: () => getConversationSnapshotRefreshService(),
-    getLegacyRelatedTicketAdapter: () => getLegacyRelatedTicketAdapter(),
     auth: createAgentAuth(),
   };
 }

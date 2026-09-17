@@ -10,8 +10,8 @@ export interface ExecutionTarget {
   isolation: "session" | "worktree";
   /**
    * The execution lane this target was resolved through, when the owning
-   * context has been assigned to a lane. `null` for legacy per-context
-   * worktrees and for solo contexts that have not joined a lane yet.
+   * context has been assigned to a lane. `null` for session contexts that
+   * have not joined a lane and authored read-only session contexts.
    */
   laneId: string | null;
 }
@@ -110,20 +110,8 @@ export function createExecutionTargetResolver(): ExecutionTargetResolver {
       };
     }
 
-    const { worktreePath, branchName } = contextState;
-    if (worktreePath !== null && branchName !== null) {
-      logger.debug("resolve_worktree", {
-        executionId: execution.id,
-        contextId,
-        worktreePath,
-        branchName,
-      });
-      return {
-        worktreePath,
-        branchName,
-        isolation: "worktree",
-        laneId: null,
-      };
+    if (contextState.isolation === "worktree") {
+      throw new Error(`Worktree context "${contextId}" has no assigned lane`);
     }
 
     logger.debug("resolve_session", {

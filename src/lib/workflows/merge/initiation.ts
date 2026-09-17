@@ -4,8 +4,6 @@ import {
 } from "@/lib/workflow-graph/session-merge-admission";
 import type { MergeAssociationResolver } from "./association-port";
 import type { DeliveryGateEvaluator } from "./types";
-import { resolveRegisteredMergeAssociation } from "./association-port";
-import { createRegisteredDeliveryGateEvaluator } from "./delivery-gate-port";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("merge.initiation");
@@ -14,8 +12,8 @@ export type MergeInitiationInput = Parameters<
   typeof evaluateSessionMergeAdmission
 >[0] & {
   projectName?: string;
-  association?: MergeAssociationResolver;
-  gate?: DeliveryGateEvaluator;
+  association: MergeAssociationResolver;
+  gate: DeliveryGateEvaluator;
 };
 export type MergeInitiation =
   | SessionMergeAdmission
@@ -37,9 +35,7 @@ export async function evaluateMergeInitiation(
     input.projectName ??
     input.projectPath.split("/").filter(Boolean).at(-1) ??
     "";
-  const association = (
-    input.association?.resolve ?? resolveRegisteredMergeAssociation
-  )({
+  const association = input.association.resolve({
     projectPath: input.projectPath,
     projectName,
     sessionName: input.sessionName,
@@ -56,9 +52,7 @@ export async function evaluateMergeInitiation(
       },
     };
   }
-  const gate = await (
-    input.gate ?? createRegisteredDeliveryGateEvaluator()
-  ).evaluate({
+  const gate = await input.gate.evaluate({
     projectPath: input.projectPath,
     preparedSha: "",
     expectedTargetSha: "",

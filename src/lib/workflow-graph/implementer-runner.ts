@@ -1,6 +1,5 @@
 import { createLogger, type Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { mintImplementerLaneCapability as defaultMintImplementerLaneCapability } from "@/lib/agent-gateway/token";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
@@ -49,16 +48,6 @@ export interface GraphWorkflowImplementerRunnerDeps {
   conversationFsWriteRestriction?(
     backend: AgentBackendId,
   ): FsWriteRestrictionSupport;
-  /**
-   * Mint the lane's signed expansion capability. Injected so a test can drive
-   * the dispatch path without a server key; production binds the gateway's
-   * capability-key minter, which returns null when no key is provisioned.
-   */
-  mintLaneCapability?(scope: {
-    executionId: string;
-    contextId: string;
-    conversationId: string;
-  }): string | null;
   /** Injected so a test can observe the emitted turn-failure classification. */
   logger?: Logger;
 }
@@ -162,8 +151,6 @@ export function createGraphWorkflowImplementerRunner(
   const getProjectDisplayName =
     deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
   const getConversation = deps.getConversation ?? defaultGetConversation;
-  const mintLaneCapability =
-    deps.mintLaneCapability ?? defaultMintImplementerLaneCapability;
   const composeWriteEnvelope =
     deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
   const conversationFsWriteRestriction =
@@ -186,12 +173,6 @@ export function createGraphWorkflowImplementerRunner(
       backend: input.backend,
       modelId: input.modelSelection.modelId,
       parameterIds: Object.keys(input.modelSelection.parameters).sort(),
-    });
-
-    const laneCapability = mintLaneCapability({
-      executionId: input.executionId,
-      contextId: input.contextId,
-      conversationId: input.conversationId,
     });
 
     // Composed BEFORE any dispatch decision (R6): an envelope that cannot be
@@ -285,7 +266,6 @@ export function createGraphWorkflowImplementerRunner(
       workflowContext: {
         executionId: input.executionId,
         contextId: input.contextId,
-        ...(laneCapability !== null ? { laneCapability } : {}),
       },
       // Deterministically opt this implementer turn into holding open for
       // in-flight waitable background tasks. No agent involvement (Req 6.3).

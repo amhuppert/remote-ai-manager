@@ -306,7 +306,6 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
       getBackendDescriptor(backend).conversation?.capabilities,
     registerBackendRuntime: () => {},
     unregisterBackendRuntime: () => {},
-    mintConversationCapability: () => null,
     buildChildEnv: () => ({ NODE_ENV: "test" }),
     resolvePluginPaths: async () => [],
     getCodexToolPromptHint: () => "",

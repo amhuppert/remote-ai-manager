@@ -9,7 +9,7 @@ import {
 } from "@/lib/conversations/in-turn-question-schemas";
 
 /**
- * The Cursor worker IPC contract: versioned Zod-validated frames plus the
+ * The Cursor worker IPC contract: Zod-validated frames plus the
  * lossless tagged encoding applied to native SDK payloads before Node's fork
  * channel serializes them (spec D7).
  *
@@ -18,8 +18,6 @@ import {
  * has to be established in the worker — nothing downstream can recover what
  * the channel already destroyed.
  */
-
-export const CURSOR_IPC_CODEC_VERSION = 5;
 
 /**
  * Reserved wrapper key. An application object that already owns this key is
@@ -552,8 +550,6 @@ const mcpServerMapSchema = z.record(
   cursorWorkerMcpServerSchema,
 );
 
-const versionSchema = z.literal(CURSOR_IPC_CODEC_VERSION);
-
 /**
  * The worker's whole lifetime contract arrives in one frame. The bounds are
  * stated by the supervisor rather than defaulted in the worker so exactly one
@@ -561,7 +557,6 @@ const versionSchema = z.literal(CURSOR_IPC_CODEC_VERSION);
  * bound would be reaped twice or never.
  */
 const initFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("init"),
   conversationId: z.string().min(1),
   workerId: z.string().min(1),
@@ -577,7 +572,6 @@ const initFrameSchema = z.object({
 });
 
 const credentialFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("credential"),
   apiKey: z.string().min(1),
 });
@@ -590,7 +584,6 @@ const credentialFrameSchema = z.object({
  */
 const attachAgentFrameSchema = z
   .object({
-    v: versionSchema,
     type: z.literal("attachAgent"),
     agents: z.record(z.string(), cursorAgentDefinitionSchema).optional(),
     recoverAbandonedRun: z.boolean().optional(),
@@ -617,7 +610,6 @@ const attachAgentFrameSchema = z
 
 const startTurnFrameSchema = z
   .object({
-    v: versionSchema,
     type: z.literal("startTurn"),
     allowQuestions: z.boolean().optional(),
     runId: z.string().min(1),
@@ -644,14 +636,12 @@ const startTurnFrameSchema = z
   .strict();
 
 const cancelFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("cancel"),
   runId: z.string().min(1),
 });
 
 const steerFrameSchema = z
   .object({
-    v: versionSchema,
     type: z.literal("steer"),
     runId: z.string().min(1),
     requestId: z.string().min(1),
@@ -661,7 +651,6 @@ const steerFrameSchema = z
 
 const questionReplyFrameSchema = z
   .object({
-    v: versionSchema,
     type: z.literal("questionReply"),
     runId: z.string().min(1),
     requestId: z.string().min(1),
@@ -670,7 +659,6 @@ const questionReplyFrameSchema = z
   .strict();
 
 const shutdownFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("shutdown"),
   reason: z.enum(["close", "idle", "parent_exit"]),
 });
@@ -687,7 +675,6 @@ export const cursorParentFrameSchema = z.union([
 ]);
 
 const readyFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("ready"),
   pid: z.number().int().positive(),
   pgid: z.number().int().positive(),
@@ -707,7 +694,6 @@ export type CursorPreflightFailureReason = z.infer<
 >;
 
 const preflightFailedFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("preflightFailed"),
   reason: cursorPreflightFailureReasonSchema,
   message: z.string(),
@@ -720,7 +706,6 @@ const preflightFailedFrameSchema = z.object({
  * frame instead of splitting it by when the SDK happened to reveal the ref.
  */
 const refIssuedFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("refIssued"),
   runId: z.string().min(1).nullable(),
   ref: z.string().min(1),
@@ -746,7 +731,6 @@ export type CursorSdkErrorFrameDetail = z.infer<typeof sdkErrorSchema>;
  * a classifiable error rather than a dead worker.
  */
 const attachResultFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("attachResult"),
   outcome: z.enum(["attached", "failed"]),
   ref: z.string().min(1).nullable(),
@@ -754,7 +738,6 @@ const attachResultFrameSchema = z.object({
 });
 
 const inputAcceptedFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("inputAccepted"),
   runId: z.string().min(1),
 });
@@ -766,7 +749,6 @@ const inputAcceptedFrameSchema = z.object({
  * append boundary keys on (D21).
  */
 const nativeEventFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("nativeEvent"),
   runId: z.string().min(1),
   eventIndex: z.number().int().nonnegative(),
@@ -781,7 +763,6 @@ const nativeEventFrameSchema = z.object({
  * is still consumed, so the run's event sequence stays monotonic.
  */
 const nativeEventRejectedFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("nativeEventRejected"),
   runId: z.string().min(1),
   eventIndex: z.number().int().nonnegative(),
@@ -799,7 +780,6 @@ const nativeEventRejectedFrameSchema = z.object({
 });
 
 const usageFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("usage"),
   runId: z.string().min(1),
   inputTokens: z.number().int().nonnegative().nullable(),
@@ -811,7 +791,6 @@ const usageFrameSchema = z.object({
 });
 
 const turnSettledFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("turnSettled"),
   runId: z.string().min(1),
   outcome: z.enum(["completed", "aborted", "failed"]),
@@ -819,7 +798,6 @@ const turnSettledFrameSchema = z.object({
 });
 
 const cancelResultFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("cancelResult"),
   runId: z.string().min(1),
   outcome: z.enum(["cancelled", "not_active", "failed"]),
@@ -828,7 +806,6 @@ const cancelResultFrameSchema = z.object({
 
 const steerResultFrameSchema = z
   .object({
-    v: versionSchema,
     type: z.literal("steerResult"),
     runId: z.string().min(1),
     requestId: z.string().min(1),
@@ -838,7 +815,6 @@ const steerResultFrameSchema = z
 
 const questionRequestFrameSchema = z
   .object({
-    v: versionSchema,
     type: z.literal("questionRequest"),
     runId: z.string().min(1),
     requestId: z.string().min(1),
@@ -847,7 +823,6 @@ const questionRequestFrameSchema = z
   .strict();
 
 const fatalFrameSchema = z.object({
-  v: versionSchema,
   type: z.literal("fatal"),
   code: z.string().min(1),
   message: z.string(),
@@ -872,7 +847,7 @@ export const cursorWorkerFrameSchema = z.union([
 export type CursorParentFrame = z.infer<typeof cursorParentFrameSchema>;
 export type CursorWorkerFrame = z.infer<typeof cursorWorkerFrameSchema>;
 
-export type FrameRejectionReason = "unsupported_version" | "invalid_frame";
+export type FrameRejectionReason = "invalid_frame";
 
 export type FrameParseResult<TFrame> =
   | { ok: true; frame: TFrame }
@@ -926,9 +901,6 @@ function parseFrame<TFrame>(
     return { ok: false, reason: "invalid_frame", frameType: null };
   }
   const frameType = knownFrameType(value, known);
-  if (Reflect.get(value, "v") !== CURSOR_IPC_CODEC_VERSION) {
-    return { ok: false, reason: "unsupported_version", frameType };
-  }
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
     return { ok: false, reason: "invalid_frame", frameType };

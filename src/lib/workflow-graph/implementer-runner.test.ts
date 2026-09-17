@@ -46,16 +46,14 @@ function makeConversation(
 }
 
 describe("graph workflow implementer runner", () => {
-  it("mints the lane capability at dispatch and threads it into the lane identity", async () => {
+  it("declares the lane identity at dispatch and threads it into the lane identity", async () => {
     const executeConversationTurn = vi.fn(async () =>
       settledConversationTurn({ usage: {}, compacted: false }),
     );
-    const mintLaneCapability = vi.fn(() => "cclc1.payload.signature");
 
     const runner = createGraphWorkflowImplementerRunner({
       executeConversationTurn,
       getConversation: vi.fn(async () => makeConversation()),
-      mintLaneCapability,
     });
 
     await runner.runIteration({
@@ -73,13 +71,6 @@ describe("graph workflow implementer runner", () => {
       placement: { lane: "build", mode: "full" },
     });
 
-    // Scoped to all three facts — the route refuses a capability whose
-    // conversation is no longer the context's bound implementer.
-    expect(mintLaneCapability).toHaveBeenCalledWith({
-      executionId: "execution-1",
-      contextId: "context-plan",
-      conversationId: "conversation-1",
-    });
     expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
@@ -100,7 +91,6 @@ describe("graph workflow implementer runner", () => {
           workflowContext: {
             executionId: "execution-1",
             contextId: "context-plan",
-            laneCapability: "cclc1.payload.signature",
           },
         }),
         waitUntilReady: true,
@@ -108,7 +98,7 @@ describe("graph workflow implementer runner", () => {
     );
   });
 
-  it("dispatches without a capability when the server has no signing token", async () => {
+  it("dispatches without a identity when the server has no extra credentials", async () => {
     const executeConversationTurn = vi.fn(async () =>
       settledConversationTurn({ usage: {}, compacted: false }),
     );
@@ -116,7 +106,6 @@ describe("graph workflow implementer runner", () => {
     const runner = createGraphWorkflowImplementerRunner({
       executeConversationTurn,
       getConversation: vi.fn(async () => makeConversation()),
-      mintLaneCapability: () => null,
     });
 
     await runner.runIteration({
@@ -134,9 +123,6 @@ describe("graph workflow implementer runner", () => {
       placement: { lane: "build", mode: "full" },
     });
 
-    // Fail-closed rather than fail-open: the lane still runs, it simply holds
-    // no credential (exact match — no `laneCapability` key at all), so its
-    // expansion attempts are refused at the route.
     expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({

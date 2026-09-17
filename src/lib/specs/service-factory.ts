@@ -3,7 +3,7 @@ import { createDeliveryApprovalService } from "./delivery-approval";
 import { createDeliveryReviewService } from "./delivery-review-service";
 import { createDeliveryContinuationService } from "./delivery-continuation";
 import { readDeliveryReview } from "./delivery-review-query";
-import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/delivery-gate-port";
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
 import { createPlanReviewService } from "@/lib/workflows/plan-review/service";
 import { createHash, randomUUID } from "node:crypto";
@@ -553,7 +553,7 @@ export async function createProductionSpecRouteServices(
             bindings: bindingRepo,
             delivery: deliveryRepo,
             review: reviewRepo,
-            gate: createRegisteredDeliveryGateEvaluator(),
+            gate: getProductionWorkflowComposition().deliveryGate,
           },
           spec,
           executionId,
@@ -566,7 +566,7 @@ export async function createProductionSpecRouteServices(
           bindings: bindingRepo,
           delivery: deliveryRepo,
           review: reviewRepo,
-          gate: createRegisteredDeliveryGateEvaluator(),
+          gate: getProductionWorkflowComposition().deliveryGate,
         },
         spec,
         executionId,

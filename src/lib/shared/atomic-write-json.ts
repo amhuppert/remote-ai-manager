@@ -152,7 +152,7 @@ function isUnsupportedDirectorySyncError(err: unknown): boolean {
   if (["EISDIR", "EINVAL", "ENOTSUP", "EOPNOTSUPP"].includes(code)) {
     return true;
   }
-  return process.platform === "win32" && ["EPERM", "EBADF"].includes(code);
+  return false;
 }
 
 /**

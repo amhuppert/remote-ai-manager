@@ -1,46 +1,9 @@
-/**
- * The one server-side request-principal classifier for graph-workflow mutation
- * (D7 R9/R10), and the policy that decides what a principal may act on.
- *
- * Every mutation route asks the same two questions, and answering them in each
- * route is how they drift apart: one route reads a header, another trusts a
- * body field, a third forgets the check entirely. Both answers live here.
- *
- * WHO — {@link classifyWorkflowRequestPrincipal}. The server derives identity
- * only from things it can check for itself. Absence of an instance token means
- * the human browser UI, whose authority is session-wide and always has been.
- * A valid instance token means an agent, and an agent is only ever the
- * principal a SIGNATURE names: the capability key is never exported, so naming
- * another conversation requires forging a signature rather than typing an id.
- * A conversation id in a header or a request body is a CLAIM and is never
- * promoted here — that is the whole difference between this and a membership
- * check, which every sibling conversation in the session also passes.
- *
- * WHETHER — {@link authorizeExecutionMutation}. A signature proves issuance,
- * not currency, so the policy re-reads the execution: a lane must still be the
- * conversation driving its own context on its own execution, and a conversation
- * must satisfy the act's {@link ExecutionMutationAuthority} — session
- * membership for steering a run, the run's recorded origin for answering a
- * question the run posed. Human UI is admitted unconditionally, which is the
- * invariant this must not erode.
- *
- * Both answers are about the state the route READ. What keeps them true of the
- * state the route WRITES is {@link ./principal-fence}, which pins the act to
- * that execution's identity inside the serialized mutation.
- *
- * Launch is its own verb ({@link authorizeWorkflowLaunch}) because it is
- * refused for a reason no execution can answer: a lane launching a run would
- * nest one run inside another, and that holds even when the session's lease is
- * free.
- *
- * Reads take no capability at all. Nothing here is imported by a read path.
- */
-
-import type { ConversationCapabilityVerification } from "@/lib/agent-gateway/conversation-capability";
-import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
+/** Coordinates trusted agents against session membership and current lane bindings. */
+import type { ConversationIdentityReading } from "@/lib/agent-gateway/conversation-identity";
+import type { LaneIdentityReading } from "@/lib/agent-gateway/lane-identity";
 import type { OptionalTokenValidation } from "@/lib/agent-gateway/token";
 
-/** Who the server established the caller to be. Never a caller's own claim. */
+/** Caller identity checked against the current session. */
 export type WorkflowRequestPrincipal =
   | { kind: "human_ui" }
   | { kind: "conversation"; conversationId: string }
@@ -55,23 +18,17 @@ export type WorkflowPrincipalClassification =
   | { kind: "principal"; principal: WorkflowRequestPrincipal }
   /** Transport failed: a presented instance token that is not the expected one. */
   | { kind: "invalid_token" }
-  /** An agent that could not prove which conversation or lane it is. */
+  /** An agent that did not name a recognized conversation or lane. */
   | { kind: "unverified"; reason: string };
 
 export interface WorkflowPrincipalDeps {
   validateOptionalToken(request: Request): Promise<OptionalTokenValidation>;
-  verifyConversationCapability(
+  readConversationIdentity(
     request: Request,
-  ): Promise<ConversationCapabilityVerification>;
-  verifyLaneCapability(request: Request): Promise<LaneCapabilityVerification>;
+  ): Promise<ConversationIdentityReading>;
+  readLaneIdentity(request: Request): Promise<LaneIdentityReading>;
 }
 
-/**
- * The session facts classification checks a capability against. A capability
- * names a (session, conversation) pair at MINT time; both halves are re-checked
- * so one session's credential cannot be replayed against another, and a
- * capability outliving its conversation cannot act.
- */
 export interface WorkflowPrincipalSessionFacts {
   sessionName: string;
   conversationIds: readonly string[];
@@ -85,31 +42,11 @@ export async function classifyWorkflowRequestPrincipal(
   const transport = await deps.validateOptionalToken(request);
   if (transport.kind === "invalid") return { kind: "invalid_token" };
 
-  // Capabilities are read BEFORE the human-UI fallback, and deliberately
-  // without requiring the instance token. A capability is signed with a key no
-  // agent holds, so it proves identity on its own — the token adds nothing to
-  // it. Reading the token first would mean a caller presenting a valid
-  // capability but no token fell through to `human_ui` and gained SESSION-WIDE
-  // authority, i.e. presenting a credential would grant strictly more than that
-  // credential names. Human UI must mean the absence of every agent credential,
-  // not merely the absence of one of them.
-  //
-  // Lane before conversation: a lane is minted no conversation capability, so a
-  // caller holding both carried one in from elsewhere, and the lane principal
-  // is the narrower of the two — it can only ever act on its own execution.
-  const lane = await deps.verifyLaneCapability(request);
+  const lane = await deps.readLaneIdentity(request);
   if (lane.kind === "invalid") {
-    // Fail closed, and in particular do NOT fall through to the human-UI
-    // branch below. A caller that presented a lane credential and failed to
-    // authenticate it must not be answered with session-wide authority — that
-    // would make a junk header the cheapest escalation on the port.
     return { kind: "unverified", reason: `lane_invalid:${lane.reason}` };
   }
   if (lane.kind === "valid") {
-    // A lane capability signs no session, so membership is the only thing
-    // binding it to one: without this a lane credential minted in session A
-    // replays against session B, and a lane whose conversation is gone keeps
-    // acting on a run it can no longer be driving.
     if (!session.conversationIds.includes(lane.scope.conversationId)) {
       return { kind: "unverified", reason: "lane_conversation_absent" };
     }
@@ -124,13 +61,10 @@ export async function classifyWorkflowRequestPrincipal(
     };
   }
 
-  const conversation = await deps.verifyConversationCapability(request);
+  const conversation = await deps.readConversationIdentity(request);
   if (conversation.kind === "absent") {
-    // No capability of either kind. An instance token still marks an agent —
-    // one that cannot say which conversation it is, which is a refusal. Only a
-    // caller with neither credential is the browser.
     return transport.kind === "valid"
-      ? { kind: "unverified", reason: "unsigned" }
+      ? { kind: "unverified", reason: "missing_identity" }
       : { kind: "principal", principal: { kind: "human_ui" } };
   }
   if (conversation.kind === "invalid") {

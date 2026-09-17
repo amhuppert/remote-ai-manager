@@ -93,8 +93,14 @@ describe("deriveOverviewSummary — Launch card", () => {
   it("names a one-off run's plan rather than a definition it does not have", () => {
     const execution = createWorkflowExecution({
       origin: { kind: "one_off", planName: "Hotfix the timeout path" },
+      seedDefinitionId: null,
+      seedDefinitionRevision: null,
     });
 
+    expect(summarize(execution).launch.revisionLabel).toBe("Inline plan");
+    expect(summarize(execution).launch.seedLabel).toBe(
+      "Hotfix the timeout path",
+    );
     expect(summarize(execution).launch.originLabel).toContain(
       "Hotfix the timeout path",
     );

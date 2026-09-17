@@ -2,13 +2,12 @@ import { createExecutionLoopFixture } from "@/lib/workflow-graph/testing/executi
 import { type ExecutionLoopFixtureDeps } from "@/lib/workflow-graph/testing/execution-loop-fixture";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ExecutionTarget,
   ExecutionTargetResolver,
 } from "@/lib/workflow-graph/execution-target-resolver";
-import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import { planContextJoin } from "@/lib/workflow-graph/lane-join";
 import {
   applyJoinProgress,
@@ -595,7 +594,6 @@ interface BuildHarnessInput {
   parallelWorktrees?: ParallelWorktrees;
   mergeMutex?: PerSessionMergeMutex;
   sessionGitLock?: SessionGitLock;
-  mergeRunner?: GraphMergeRunner;
   joinRunner?: JoinRunner;
   soloContextCommitter?: ExecutionLoopFixtureDeps["soloContextCommitter"];
   laneCommitter?: ExecutionLoopFixtureDeps["laneCommitter"];
@@ -608,7 +606,6 @@ interface BuildHarnessInput {
   acquireConversationLock?: ExecutionLoopFixtureDeps["acquireConversationLock"];
   eventPublisher?: ExecutionLoopFixtureDeps["eventPublisher"];
   getMaxConcurrentQueries?: ExecutionLoopFixtureDeps["getMaxConcurrentQueries"];
-  readRepoConfig?: ExecutionLoopFixtureDeps["readRepoConfig"];
   landingEvidenceProber?: ExecutionLoopFixtureDeps["landingEvidenceProber"];
   laneDriftAuditor?: ExecutionLoopFixtureDeps["laneDriftAuditor"];
   resyncSharedIndex?: ExecutionLoopFixtureDeps["resyncSharedIndex"];
@@ -795,10 +792,6 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     withSessionGitLock: async (_k, fn) => fn(),
   };
 
-  const mergeRunner: GraphMergeRunner = input.mergeRunner ?? {
-    run: vi.fn(),
-  };
-
   const joinRunner: JoinRunner = input.joinRunner ?? {
     async run({ joinId, mutateActive }) {
       await mutateActive((e) =>
@@ -826,7 +819,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
   const getSession = input.getSession ?? (async () => makeStubSession());
 
   const deps: ExecutionLoopFixtureDeps = {
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     getSessionWorktreeDirtyPaths: async () => [],
     contextScheduler: { scheduleEligibleContexts: scheduleEligibleContextsSpy },
@@ -836,7 +829,6 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     parallelWorktrees,
     mergeMutex,
     sessionGitLock,
-    mergeRunner,
     joinRunner,
     soloContextCommitter,
     laneCommitter,
@@ -858,7 +850,6 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     acquireConversationLock: input.acquireConversationLock,
     eventPublisher: input.eventPublisher,
     getMaxConcurrentQueries: input.getMaxConcurrentQueries ?? (async () => 999),
-    readRepoConfig: input.readRepoConfig ?? (async () => null),
     // Default to a prober that finds nothing: these fixtures have no branches,
     // and the loop must never depend on git to make progress on a run whose
     // committers settled their own intents.
@@ -3311,121 +3302,6 @@ describe("execution loop", () => {
     });
   });
 
-  it("processes pendingMergeRetry, clears the entry on success, and completes", async () => {
-    const definition = createSingleContextDefinition(5);
-    const initial = createRunningExecution(definition, {
-      contextStates: {
-        "ctx-1": {
-          skipReason: null,
-          landingIntent: null,
-          pendingApproval: null,
-          pendingUserInputs: {},
-          contextId: "ctx-1",
-          status: "completed",
-          totalTaskCount: 1,
-          completedTaskCount: 1,
-          iterationCount: 1,
-          consecutiveFailureCount: 0,
-          consecutiveCandidateMismatchCount: 0,
-          worktreePath: "/repo/.worktrees/session-1.ctx-1",
-          branchName: "csm/session-1-ctx-1",
-          isolation: "worktree",
-          batchId: null,
-          laneId: null,
-          joinId: null,
-          mergeStatus: "pending",
-          cleanupStatus: "pending",
-          lastMergeError: null,
-        },
-      },
-      taskStates: {
-        "task-1": {
-          taskId: "task-1",
-          contextId: "ctx-1",
-          order: 1,
-          status: "completed",
-          summary: null,
-          startedAt: null,
-          completedAt: "2026-03-27T12:03:00.000Z",
-          lastConversationId: "conv-1",
-          failureMessage: null,
-          failureHistory: [],
-        },
-      },
-      pendingMergeRetry: ["ctx-1"],
-    });
-
-    const mergeRunner: GraphMergeRunner = {
-      run: vi.fn(async () => ({
-        status: "completed" as const,
-        mergeHash: "merge-hash",
-        commitHash: "commit-hash",
-        error: null,
-        conflictFiles: [],
-        conflictAnalysis: null,
-        preparedSha: null,
-        expectedTargetSha: null,
-        parkedRef: null,
-        refreshWarning: null,
-        candidateValidation: null,
-        haltReason: null,
-        phase: null,
-      })),
-    };
-
-    const parallelWorktrees: ParallelWorktrees = {
-      provision: vi.fn(),
-      provisionBatch: vi.fn(),
-      dispose: vi.fn(async () => ({ status: "removed" as const })),
-      provisionLane: vi.fn(),
-      provisionLaneBatch: vi.fn(),
-      disposeLane: vi.fn(async () => ({ status: "removed" as const })),
-      cleanupLane: vi.fn(async () => ({ status: "removed" as const })),
-    };
-
-    const runIterationSpy = vi.fn();
-
-    const harness = buildHarness({
-      initialExecution: initial,
-      iterationOrchestrator: { runIteration: runIterationSpy },
-      mergeRunner,
-      parallelWorktrees,
-    });
-
-    const loop = createExecutionLoopFixture(harness.deps);
-    const result = await loop.run({
-      projectPath: "/repo",
-      projectName: "test",
-      sessionName: "session-1",
-      execution: initial,
-    });
-
-    expect(mergeRunner.run).toHaveBeenCalledTimes(1);
-    expect(mergeRunner.run).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workflowExecutionId: initial.id,
-        // The context's own implementer conversation, so the resolver and fix
-        // agent run in the context worktree instead of whichever session
-        // conversation happened to be active last.
-        conversationId: "conv-1",
-        validationMode: {
-          mode: "run",
-          source: "graph_lane_merge",
-          selection: { mode: "only", commands: [] },
-        },
-      }),
-    );
-    expect(runIterationSpy).not.toHaveBeenCalled();
-    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
-    expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
-    expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
-      type: "complete",
-    });
-    expect(result.status).toBe("completed");
-    expect(result.contextStates["ctx-1"]?.mergeStatus).toBe("merged-success");
-    expect(result.pendingMergeRetry).toEqual([]);
-  });
-
   it("emits done with the haltReason when iteration returns a pre-halted execution", async () => {
     const definition = createSingleContextDefinition(10);
     const initial = createRunningExecution(definition, {
@@ -3501,7 +3377,7 @@ describe("execution loop", () => {
     expect(result.haltReason?.type).toBe("validator_infra_error");
   });
 
-  it("routes worktree-isolation contexts with an assigned lane through laneCommitter (snapshot appended, includedContextIds updated, no fan-in merge)", async () => {
+  it("routes worktree-isolation contexts through laneCommitter and records their contribution", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {
       contextStates: {
@@ -3555,10 +3431,6 @@ describe("execution loop", () => {
       resolve: () => laneTarget,
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      run: vi.fn(),
-    };
-
     const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async (commitInput) => ({
         status: "committed" as const,
@@ -3574,7 +3446,6 @@ describe("execution loop", () => {
     const harness = buildHarness({
       initialExecution: initial,
       executionTargetResolver,
-      mergeRunner,
       laneCommitter,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
@@ -3613,7 +3484,6 @@ describe("execution loop", () => {
       landingToken: null,
       ownership: null,
     });
-    expect(mergeRunner.run).not.toHaveBeenCalled();
 
     const lane = result.executionLanes["lane-plan"];
     expect(lane).toBeDefined();
@@ -3690,7 +3560,6 @@ describe("execution loop", () => {
             laneId: "lane-plan",
           }),
         },
-        mergeRunner: { run: vi.fn() },
         resyncSharedIndex: async (worktreePath) => {
           resynced.push(worktreePath);
         },
@@ -3873,7 +3742,6 @@ describe("execution loop", () => {
       const harness = buildHarness({
         initialExecution: initial,
         executionTargetResolver: { resolve: () => laneTarget },
-        mergeRunner: { run: vi.fn() },
         laneCommitter,
         laneDriftAuditor,
         iterationOrchestrator: {
@@ -4008,7 +3876,6 @@ describe("execution loop", () => {
           laneId: "lane-plan",
         }),
       },
-      mergeRunner: { run: vi.fn() },
       laneCommitter: {
         commit: async (commitInput) => ({
           status: "committed" as const,
@@ -4100,8 +3967,6 @@ describe("execution loop", () => {
       laneId: "lane-plan",
     };
 
-    const mergeRunner: GraphMergeRunner = { run: vi.fn() };
-
     const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       resolveHead: vi.fn(async () => "head-before-turn"),
       commit: vi.fn(async (commitInput) =>
@@ -4121,7 +3986,6 @@ describe("execution loop", () => {
     const harness = buildHarness({
       initialExecution: initial,
       executionTargetResolver: { resolve: () => laneTarget },
-      mergeRunner,
       laneCommitter,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
@@ -4167,7 +4031,6 @@ describe("execution loop", () => {
       landingToken: null,
       ownership: null,
     });
-    expect(mergeRunner.run).not.toHaveBeenCalled();
 
     const lane = result.executionLanes["lane-plan"];
     expect(lane).toBeDefined();
@@ -4602,8 +4465,6 @@ describe("execution loop", () => {
       resolve: () => laneTarget,
     };
 
-    const mergeRunner: GraphMergeRunner = { run: vi.fn() };
-
     const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
       resolveHead: async () => null,
@@ -4612,7 +4473,6 @@ describe("execution loop", () => {
     const harness = buildHarness({
       initialExecution: initial,
       executionTargetResolver,
-      mergeRunner,
       laneCommitter,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
@@ -4641,7 +4501,6 @@ describe("execution loop", () => {
     });
 
     expect(laneCommitter.commit).toHaveBeenCalledTimes(1);
-    expect(mergeRunner.run).not.toHaveBeenCalled();
 
     const lane = result.executionLanes["lane-plan"];
     expect(lane).toBeDefined();
@@ -4701,8 +4560,6 @@ describe("execution loop", () => {
       laneId: "lane-plan",
     };
 
-    const mergeRunner: GraphMergeRunner = { run: vi.fn() };
-
     const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({
         status: "failed" as const,
@@ -4714,7 +4571,6 @@ describe("execution loop", () => {
     const harness = buildHarness({
       initialExecution: initial,
       executionTargetResolver: { resolve: () => laneTarget },
-      mergeRunner,
       laneCommitter,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
@@ -4743,7 +4599,6 @@ describe("execution loop", () => {
     });
 
     expect(laneCommitter.commit).toHaveBeenCalledTimes(1);
-    expect(mergeRunner.run).not.toHaveBeenCalled();
     expect(result.status).toBe("halted");
     expect(result.haltReason).toMatchObject({
       type: "merge_failure",

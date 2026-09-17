@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -317,3 +317,42 @@ export function createCursorPackageProbe(
     },
   };
 }
+
+export function createCachedCursorPreflight(
+  deps: CursorStaticPreflightDeps & { packageIdentity(): Promise<string> },
+): (input: { model: string }) => Promise<CursorStaticPreflightResult> {
+  let cached:
+    | { identity: string; result: Promise<CursorStaticPreflightResult> }
+    | undefined;
+  return async (input) => {
+    const identity = await deps.packageIdentity();
+    if (cached?.identity !== identity) {
+      cached = { identity, result: runCursorStaticPreflight(input, deps) };
+    }
+    const result = await cached.result;
+    return {
+      ...result,
+      diagnostics: { ...result.diagnostics, model: input.model },
+    };
+  };
+}
+
+export const runProductionCursorPreflight = createCachedCursorPreflight({
+  packages: createCursorPackageProbe(path.join(process.cwd(), "node_modules")),
+  host: { platform: process.platform, arch: process.arch },
+  workerNodeVersion: async () => process.version,
+  async packageIdentity() {
+    const manifest = path.join(
+      process.cwd(),
+      "node_modules",
+      CURSOR_SDK_PACKAGE,
+      "package.json",
+    );
+    try {
+      const resolved = await realpath(manifest);
+      return `${resolved}:${(await stat(resolved)).mtimeMs}`;
+    } catch {
+      return `${manifest}:missing`;
+    }
+  },
+});

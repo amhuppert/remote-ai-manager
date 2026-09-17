@@ -77,7 +77,7 @@ function withAgentPrincipal(
     auth: {
       validateOptionalToken: vi.fn(async () => ({ kind: "valid" as const })),
     },
-    verifyConversationCapability: vi.fn(async () =>
+    readConversationIdentity: vi.fn(async () =>
       conversationId === null
         ? { kind: "absent" as const }
         : {
@@ -86,7 +86,7 @@ function withAgentPrincipal(
             issuedAt: 1,
           },
     ),
-    verifyLaneCapability: vi.fn(async () => ({ kind: "absent" as const })),
+    readLaneIdentity: vi.fn(async () => ({ kind: "absent" as const })),
   });
 }
 

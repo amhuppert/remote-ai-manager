@@ -866,7 +866,14 @@ describe("ConnectedGraphWorkflowPanel definition approval", () => {
       }
       if (url.includes("/graph-workflow/events")) {
         await tailRead;
-        return jsonResponse({ events: [walked, closingRound] });
+        expect(url).toContain("direction=desc");
+        return jsonResponse({
+          events: [
+            { ...closingRound, seq: 2 },
+            { ...walked, seq: 1 },
+          ],
+          nextCursor: null,
+        });
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });

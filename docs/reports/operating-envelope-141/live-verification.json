@@ -1,0 +1,60 @@
+{
+  "target": "http://localhost:3001",
+  "configDir": "/Users/alex/github/command-center/.worktrees/ticket-remove-or-simplify-mechanisms-outside-the-operating-envelope-9f4df4/.config",
+  "status": "passed",
+  "scenarios": [
+    {
+      "claim": "Published CLI handshake agrees with dev server and rejects invalid bearer",
+      "evidence": [
+        ".cc/temp/live-envelope/doctor.json",
+        ".cc/temp/live-envelope/handshake-valid.json",
+        ".cc/temp/live-envelope/handshake-wrong-token.json"
+      ]
+    },
+    {
+      "claim": "Mutation identity comes from env and is independent of --conversation target",
+      "evidence": [
+        ".cc/temp/live-envelope/valid-identity-target-override.json",
+        ".cc/temp/live-envelope/unknown-identity.json"
+      ],
+      "detail": "Known caller with nonexistent target reaches no-active-execution refusal; nonexistent env caller receives unverified_principal."
+    },
+    {
+      "claim": "Real Claude launch receives plain conversation identity with retired signature env empty",
+      "evidence": [
+        ".cc/temp/live-envelope/prompt.json",
+        ".cc/temp/live-envelope/transcript.jsonl"
+      ],
+      "marker": "envelope141-live-9137"
+    },
+    {
+      "claim": "Ticket relationship CLI write survives API and SQLite readback; retired alias refused",
+      "evidence": [
+        ".cc/temp/live-envelope/relationship-add.json",
+        ".cc/temp/live-envelope/relationship-read.json",
+        ".cc/temp/live-envelope/relationship-durable-row.json",
+        ".cc/temp/live-envelope/retired-alias.json"
+      ]
+    },
+    {
+      "claim": "Default and explicit-page event reads return events plus nextCursor",
+      "evidence": [
+        ".cc/temp/live-envelope/events-default.json",
+        ".cc/temp/live-envelope/events-page.json"
+      ]
+    }
+  ],
+  "limits": [
+    "Only Claude provider exercised live; Codex and Cursor not run.",
+    "Event pagination checked with empty history, not a multi-page execution.",
+    "Direct composition reached live workflow routes but no workflow execution or merge delivery was launched.",
+    "Did not simulate an older server; current published CLI/server handshake succeeded."
+  ],
+  "cleanup": {
+    "ticketsDeleted": true,
+    "relationshipRowsRemaining": 0,
+    "sessionDeleted": true,
+    "scratchProjectRemoved": true,
+    "priorDevConfigRestored": true
+  }
+}

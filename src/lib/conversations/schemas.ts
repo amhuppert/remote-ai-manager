@@ -166,9 +166,7 @@ export const forkedFromSchema = z
     messageIndex: z.number().int().min(0),
     sourceBackend: agentBackendSchema.nullable().optional(),
     // Null when the fork is not derived from the source SDK session
-    // (e.g., user fork at index 0 — "edit and start over"). Decodes leniently:
-    // this schema sits directly on the persisted `forked_from` column, where
-    // legacy and shadow-superset ref shapes coexist (see session-ref-codec).
+    // (e.g., user fork at index 0 — "edit and start over").
     sourceBackendRef: persistedAgentSessionRefSchema.nullable().optional(),
     forkLocator: z.string().nullable().optional(),
     forkMode: z.enum(["native", "synthetic"]).nullable().default(null),

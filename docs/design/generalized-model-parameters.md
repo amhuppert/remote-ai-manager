@@ -524,7 +524,7 @@ The implementation remains one unreleased cutover, but it can be developed in co
    - Prove latest-turn selection wins atomically and restart replay uses the persisted selection rather than current global defaults.
 
 5. **Cursor worker and SDK translation**
-   - Bump IPC protocol version.
+   - Update the shared worker IPC schema and its contract tests.
    - Prove the exact sorted parameter array reaches create, resume, and send.
    - Prove any parameter change affects continuity binding and runtime reuse.
 

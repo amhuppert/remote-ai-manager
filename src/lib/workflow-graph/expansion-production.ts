@@ -1,3 +1,4 @@
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 /**
  * Production wiring for the runtime graph-expansion service (D4 R6) — the same
  * role `lane-tool-context-loader.ts` plays for the other lane verbs.
@@ -29,7 +30,6 @@ import {
   expansionRefusalEventInput,
   type ExpansionRefusalNotice,
 } from "./expansion-service";
-import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
 
 export {
   classifyExpansionPayloadRefusal,
@@ -66,7 +66,7 @@ export function createDefaultExpansionService() {
     getActiveExecution: getActiveGraphWorkflowExecution,
     mutateActive: executionRepository.mutateActive,
     buildLiveEditDeps: buildDefaultLiveEditDeps,
-    executionContract: createRegisteredGraphExecutionContract(),
+    executionContract: getProductionWorkflowComposition().executionContract,
     prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
     publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
     publishGraphExpansion: eventPublisher.publishGraphExpansion,

@@ -721,7 +721,7 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
   // must live in context-transitions.ts. The allowlist below names the writes
   // that are NOT context-status writes: execution-level status is hand-rolled
   // by design (decision D4), task-level status is out of this owner's scope,
-  // and migrate-legacy repairs raw pre-parse records. Any new assignment
+  // Any new assignment
   // outside the allowlist fails this test — route it through
   // transitionContextStatus / transitionContextMergeStatus instead.
   const ALLOWED_STATUS_WRITES: Record<string, RegExp[]> = {
@@ -742,11 +742,6 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
     "execution-tool-context.ts": [
       // Task-level status.
       /taskState\.status = "completed"/,
-    ],
-    "migrate-legacy-execution.ts": [
-      // Pre-parse repair of raw Record<string, unknown> rows; runs before the
-      // execution schema exists, so it cannot use the typed transition owner.
-      /upgraded\.status = "paused"/,
     ],
   };
 

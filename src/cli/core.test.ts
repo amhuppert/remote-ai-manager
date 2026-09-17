@@ -23,6 +23,8 @@ function handshakeBody(overrides: Record<string, unknown> = {}) {
     serverBuild: CLI_BUILD,
     identity: { project: "cc", session: "my-session", conversation: "conv-1" },
     tokenValid: true,
+    cliPath: "/test/cc/bin/cctl",
+    configDir: "/test/cc",
     ...overrides,
   };
 }

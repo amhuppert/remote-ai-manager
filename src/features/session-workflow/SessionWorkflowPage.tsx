@@ -252,7 +252,7 @@ function SessionWorkflowPageContent() {
               />
             )}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {selectedDefinition !== null && (
+              {selectedDefinition?.id != null && (
                 <div className="flex min-h-[36px] shrink-0 items-center justify-end border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-base px-md font-mono text-[0.68rem] text-text-tertiary">
                   <Link
                     href={`/projects/${encodeURIComponent(projectName)}/workflows?definition=${encodeURIComponent(selectedDefinition.id)}`}

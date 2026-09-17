@@ -33,8 +33,8 @@ function setup(
   const publishCharterRegistered = vi.fn(
     (input: {
       execution: GraphWorkflowExecution;
-      definitionId: string;
-      definitionRevision: number;
+      definitionId: string | null;
+      definitionRevision: number | null;
       charterHash: string;
     }): GraphWorkflowEventDelivery => ({
       events: [

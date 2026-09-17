@@ -23,7 +23,6 @@ import {
   _createTestDb,
   _createTestDbAtPath,
 } from "../state-db";
-import { createConversationsRepo } from "../conversations-repo";
 import { schemaCompatibilityBarrierPath } from "../schema-compatibility";
 
 type Db = InstanceType<typeof BetterSqlite3>;
@@ -578,22 +577,5 @@ describe("0005-agent-session-ref-shape (production registry)", () => {
     // Either way the handle is `thr-new`.
     expect(parsed.backend).toBe("codex");
     expect(parsed.ref ?? parsed.threadId).toBe("thr-new");
-
-    const repo = createConversationsRepo(dbA);
-    const loaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-race");
-    expect(loaded?.backendRef).toEqual({ backend: "codex", ref: "thr-new" });
-  });
-
-  it("a legacy-shape row written by a racing old build after migration still reads canonically", async () => {
-    const db = freshDb();
-    await runMigrations({ db, configDir: null });
-
-    seedConversation(db, "c-old-writer", {
-      backendRef: JSON.stringify({ backend: "codex", threadId: "thr-race" }),
-    });
-
-    const repo = createConversationsRepo(db);
-    const loaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-old-writer");
-    expect(loaded?.backendRef).toEqual({ backend: "codex", ref: "thr-race" });
   });
 });

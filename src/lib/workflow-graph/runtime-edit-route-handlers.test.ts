@@ -1,5 +1,5 @@
 import { applyFixtureMutation } from "./testing/execution-mutation-fixture";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
@@ -25,15 +25,15 @@ import {
   type GraphWorkflowRuntimeEditRouteDeps,
 } from "./runtime-edit-route-handlers";
 import {
-  CONVERSATION_CAPABILITY_HEADER,
-  mintConversationCapability,
-  verifyConversationCapability,
-} from "@/lib/agent-gateway/conversation-capability";
+  CONVERSATION_IDENTITY_HEADER,
+  encodeConversationIdentity,
+  readConversationIdentity,
+} from "@/lib/agent-gateway/conversation-identity";
 import {
-  LANE_CAPABILITY_HEADER,
-  mintLaneCapability,
-  verifyLaneCapability,
-} from "@/lib/agent-gateway/lane-capability";
+  LANE_IDENTITY_HEADER,
+  encodeLaneIdentity,
+  readLaneIdentity,
+} from "@/lib/agent-gateway/lane-identity";
 import { assertExecutionPrincipalFence } from "./principal-fence";
 
 const PROJECT_PATH = "/repo";
@@ -180,7 +180,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     writeCharterDocument = vi.fn(async () => {});
 
     liveEditApplyDeps = {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSession: fixture.store.getSession,
       getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
       mutateActive: repository.mutateActive,
@@ -1084,7 +1084,6 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
  * a refused caller never reaches the apply.
  */
 describe("graph workflow runtime edit route principals", () => {
-  const CAPABILITY_SECRET = "server-only-capability-key";
   const ORIGIN_CONV = "conv-origin";
   const SIBLING_CONV = "conv-sibling";
   const LANE_CONV = "conv-lane";
@@ -1159,7 +1158,7 @@ describe("graph workflow runtime edit route principals", () => {
     };
     const buildLiveEditDeps = vi.fn(async () => TEST_LIVE_EDIT_DEPS);
     const liveEditApplyDeps: LiveEditApplyServiceDeps = {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSession: async () => principalSession(conversationIds),
       getActiveExecution: async () => readExecution,
       mutateActive,
@@ -1178,16 +1177,12 @@ describe("graph workflow runtime edit route principals", () => {
       applyLiveEdits: (input) =>
         applyLiveEditsToActiveExecution(input, liveEditApplyDeps),
       auth: { validateOptionalToken: async () => ({ kind: transport }) },
-      verifyConversationCapability: async (request: Request) =>
-        verifyConversationCapability(
-          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
+      readConversationIdentity: async (request: Request) =>
+        readConversationIdentity(
+          request.headers.get(CONVERSATION_IDENTITY_HEADER),
         ),
-      verifyLaneCapability: async (request: Request) =>
-        verifyLaneCapability(
-          request.headers.get(LANE_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
-        ),
+      readLaneIdentity: async (request: Request) =>
+        readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
     } satisfies GraphWorkflowRuntimeEditRouteDeps);
 
     return {
@@ -1221,24 +1216,19 @@ describe("graph workflow runtime edit route principals", () => {
   }
 
   const capabilityFor = (conversationId: string) => ({
-    [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-      { sessionName: SESSION_NAME, conversationId },
-      CAPABILITY_SECRET,
-      1_760_000_000_000,
-    ),
+    [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+      sessionName: SESSION_NAME,
+      conversationId,
+    }),
   });
 
   const laneCapabilityFor = (conversationId: string) => ({
-    [LANE_CAPABILITY_HEADER]: mintLaneCapability(
-      {
-        laneKind: "implementer",
-        executionId: "execution-owned",
-        contextId: "context-plan",
-        conversationId,
-      },
-      CAPABILITY_SECRET,
-      1_760_000_000_000,
-    ),
+    [LANE_IDENTITY_HEADER]: encodeLaneIdentity({
+      laneKind: "implementer",
+      executionId: "execution-owned",
+      contextId: "context-plan",
+      conversationId,
+    }),
   });
 
   // Editing a run in flight is authored work, and the conversation holding the
@@ -1398,7 +1388,7 @@ describe("graph workflow runtime edit route principals", () => {
 
     const response = await stack.handlers.POST(
       editRequest({
-        [LANE_CAPABILITY_HEADER]: "cclc1.ZmFrZQ.bm90LWEtc2lnbmF0dXJl",
+        [LANE_IDENTITY_HEADER]: "cclc1.ZmFrZQ.bm90LWEtc2lnbmF0dXJl",
       }),
       routeParams,
     );

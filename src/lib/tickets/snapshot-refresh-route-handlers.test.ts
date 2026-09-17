@@ -15,7 +15,6 @@ import {
   createConversationSnapshotRefreshRouteHandlers,
   type ConversationSnapshotRefreshRouteDeps,
 } from "./snapshot-refresh-route-handlers";
-import type { LegacyRelatedTicketAdapter } from "./legacy-related-ticket-adapter";
 import type { ConversationSnapshotRefreshService } from "./snapshot-refresh";
 import type { TicketAttachment } from "./schemas";
 
@@ -60,20 +59,9 @@ function routeContext(number = "7", attachmentId = "attachment-1") {
 function makeDeps(
   refresh: ConversationSnapshotRefreshService["refresh"],
   authResult: "absent" | "invalid" = "absent",
-  isRelationshipHandle: LegacyRelatedTicketAdapter["isRelationshipHandle"] = async () => ({
-    ok: true,
-    value: false,
-  }),
 ): ConversationSnapshotRefreshRouteDeps {
   return {
     getService: () => ({ refresh, schedule: vi.fn() }),
-    getLegacyRelatedTicketAdapter: () => ({
-      add: vi.fn(),
-      resolve: vi.fn(),
-      update: vi.fn(),
-      remove: vi.fn(),
-      isRelationshipHandle,
-    }),
     auth: auth(authResult),
   };
 }
@@ -125,39 +113,6 @@ describe("conversation snapshot refresh POST", () => {
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toMatchObject({
       code: "context_preparation_failed",
-    });
-  });
-
-  it("refuses snapshot refresh for a migrated relationship handle", async () => {
-    const refresh = vi.fn(async () => ({
-      ok: false as const,
-      error: {
-        code: "attachment_not_found" as const,
-        identifier: "command-center#7",
-        attachmentId: "legacy-related-1",
-      },
-    }));
-    const isRelationshipHandle = vi.fn(async () => ({
-      ok: true as const,
-      value: true,
-    }));
-    const handlers = createConversationSnapshotRefreshRouteHandlers(
-      makeDeps(refresh, "absent", isRelationshipHandle),
-    );
-
-    const response = await handlers.refreshPOST(
-      new Request("http://localhost/refresh-snapshot", { method: "POST" }),
-      routeContext("7", "legacy-related-1"),
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "validation_failed",
-    });
-    expect(isRelationshipHandle).toHaveBeenCalledWith({
-      projectName: "command-center",
-      number: 7,
-      attachmentId: "legacy-related-1",
     });
   });
 

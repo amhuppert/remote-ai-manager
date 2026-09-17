@@ -1,7 +1,7 @@
 import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { WorkflowDefinitionNotFoundError } from "./workflow-manager";
 import { ResetExecutionContextError } from "./reset-context";
 import { ResetAssignmentError } from "./reset-assignment";
@@ -40,16 +40,16 @@ import {
   type GraphWorkflowValidationRoundServiceDeps,
 } from "./validation-services";
 import {
-  CONVERSATION_CAPABILITY_HEADER,
-  mintConversationCapability,
-  verifyConversationCapability,
-  type ConversationCapabilityVerification,
-} from "@/lib/agent-gateway/conversation-capability";
+  CONVERSATION_IDENTITY_HEADER,
+  encodeConversationIdentity,
+  readConversationIdentity,
+  type ConversationIdentityReading,
+} from "@/lib/agent-gateway/conversation-identity";
 import {
-  LANE_CAPABILITY_HEADER,
-  mintLaneCapability,
-  verifyLaneCapability,
-} from "@/lib/agent-gateway/lane-capability";
+  LANE_IDENTITY_HEADER,
+  encodeLaneIdentity,
+  readLaneIdentity,
+} from "@/lib/agent-gateway/lane-identity";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { CandidateScope } from "@/lib/git/diff";
@@ -65,12 +65,7 @@ import {
   WorkflowStartInputError,
 } from "./workflow-manager";
 import { WorkflowStartGuardError } from "./start-guards";
-import {
-  GraphExecutionContractViolationError,
-  createRegisteredGraphExecutionContract,
-  registerGraphExecutionContract,
-  resetGraphExecutionContractForTesting,
-} from "./execution-contract-port";
+import { GraphExecutionContractViolationError } from "./execution-contract-port";
 import { assertExecutionPrincipalFence } from "./principal-fence";
 import type { GlobalConfig } from "@/lib/config/schemas";
 
@@ -215,8 +210,9 @@ describe("graph workflow execution route handlers", () => {
       ) => Promise<GraphWorkflowExecution[]>
     >();
 
+  const executionContract = createTestGraphExecutionContract();
   const handlers = createGraphWorkflowExecutionRouteHandlers({
-    executionContract: createRegisteredGraphExecutionContract(),
+    executionContract,
 
     resolveProjectPath,
     getSession,
@@ -284,10 +280,7 @@ describe("graph workflow execution route handlers", () => {
   });
 
   afterEach(() => {
-    resetGraphExecutionContractForTesting();
-    registerGraphExecutionContract(
-      createNonParticipatingGraphExecutionContract(),
-    );
+    Object.assign(executionContract, createTestGraphExecutionContract());
   });
 
   it("delegates a zero-input start to the shared start path and returns 202", async () => {
@@ -368,11 +361,6 @@ describe("graph workflow execution route handlers", () => {
   });
 
   it("ignores a caller-supplied conversation header, which is a claim rather than authority", async () => {
-    // START used to take this header as the execution owner. The header is
-    // exactly as forgeable as typing an id: every sibling conversation and
-    // every lane can send it, and a session-membership check passes for all of
-    // them. Ownership now comes only from a signature, so an unsigned caller
-    // launches UNOWNED rather than as whoever it named (R9.4).
     const startedExecution = createWorkflowExecution({
       id: "execution-owned",
       status: "running",
@@ -926,7 +914,7 @@ describe("graph workflow execution route handlers", () => {
     getSession.mockResolvedValue(
       makeSession({ graphWorkflowExecution: parkedExecution }),
     );
-    registerGraphExecutionContract({
+    Object.assign(executionContract, {
       loadPromptProjection: async () => null,
 
       validateDefinition() {
@@ -3220,7 +3208,7 @@ describe("graph workflow resolve-approval route handler", () => {
       now: () => NOW,
     });
     return createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
@@ -3509,7 +3497,7 @@ describe("graph workflow approval-snapshot route handler", () => {
     resolveApprovalSnapshot?: GraphWorkflowExecutionRouteDeps["resolveApprovalSnapshot"];
   }) {
     return createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
@@ -3967,7 +3955,7 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: {
         async getActive() {
@@ -4055,7 +4043,7 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
       ...createContextTestCapabilities(),
       materializeWorkflowDocuments: async ({ execution }) => execution,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: {
         async getActive() {
@@ -4154,7 +4142,7 @@ describe("graph workflow execution by-id and result routes", () => {
 
   function buildHandlers(store = fixture.store) {
     return createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
@@ -4363,13 +4351,12 @@ describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () 
    */
   function buildHandlers() {
     return createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
       getActiveExecution: async () => null,
-      getEventsTail: fixture.store.getGraphWorkflowEventsTail,
       getEventsPage: fixture.store.getGraphWorkflowEventsPage,
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
@@ -4466,7 +4453,7 @@ describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () 
     expect(seen).toEqual(["ctx-0", "ctx-1", "ctx-2", "ctx-3", "ctx-4"]);
   });
 
-  it("reads newest-first when asked, and leaves the tail mode untouched", async () => {
+  it("reads newest-first when asked and paginates by default", async () => {
     await seedEvents(3);
 
     const desc = await get(
@@ -4479,13 +4466,12 @@ describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () 
       ),
     ).toEqual(["ctx-2", "ctx-1"]);
 
-    // No `page` param: the historical tail contract, with no cursor field and
-    // no `seq` on the rows.
+    // The default response uses the same page contract.
     const tail = await get(`${EVENTS_URL}?executionId=${EXECUTION_ID}`);
     const tailBody = await tail.json();
-    expect(tailBody.nextCursor).toBeUndefined();
+    expect(tailBody.nextCursor).toBeNull();
     expect(tailBody.events).toHaveLength(3);
-    expect(tailBody.events[0].seq).toBeUndefined();
+    expect(tailBody.events[0].seq).toBeTypeOf("number");
   });
 
   it("falls back to the default page size when the limit is unusable", async () => {
@@ -4541,18 +4527,18 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     session: SessionState = makeSession(),
     verifyCapability: (
       request: Request,
-    ) => Promise<ConversationCapabilityVerification> = async () => ({
+    ) => Promise<ConversationIdentityReading> = async () => ({
       kind: "absent",
     }),
   ) {
     return createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () => session,
       getActiveExecution: async () => null,
-      verifyConversationCapability: verifyCapability,
+      readConversationIdentity: verifyCapability,
       runExecution,
       kickOffExecutionLoop,
       markRunning,
@@ -4832,21 +4818,10 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     },
   );
 
-  /**
-   * R9.4/D11: the principal is DERIVED FROM A SIGNATURE, never from the
-   * caller's claim. Membership is not authority — a sibling conversation, a
-   * lane, or a copied id all pass a membership check, which is exactly the
-   * forgery this refuses.
-   */
-  describe("origin conversation is derived from a signed capability", () => {
-    const CAPABILITY_SECRET = "server-only-capability-key";
-
-    function buildCapabilityHandlers(
-      session: SessionState,
-      secret: string | null = CAPABILITY_SECRET,
-    ) {
+  describe("origin conversation is derived from a injected identity", () => {
+    function buildCapabilityHandlers(session: SessionState) {
       return createGraphWorkflowExecutionRouteHandlers({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         resolveProjectPath: async (name: string) =>
           name === "repo" ? PROJECT_PATH : null,
@@ -4858,10 +4833,9 @@ describe("graph workflow RUN route — inline one-off launch", () => {
         awaitingDefinitionApproval,
         readRepoConfig: async () => null,
         readConfig: async () => makeGlobalConfig(),
-        verifyConversationCapability: async (request: Request) =>
-          verifyConversationCapability(
-            request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-            secret,
+        readConversationIdentity: async (request: Request) =>
+          readConversationIdentity(
+            request.headers.get(CONVERSATION_IDENTITY_HEADER),
           ),
         startExecution: unusedDep("startExecution"),
         pauseExecution: unusedDep("pauseExecution"),
@@ -4886,9 +4860,8 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     function runWithHeaders(
       headers: Record<string, string>,
       session: SessionState,
-      secret: string | null = CAPABILITY_SECRET,
     ) {
-      return buildCapabilityHandlers(session, secret).RUN(
+      return buildCapabilityHandlers(session).RUN(
         makeRequest(RUN_URL, "POST", { plan: makePlan() }, headers),
         makeContext({ name: "repo", session: SESSION_NAME }),
       );
@@ -4912,11 +4885,10 @@ describe("graph workflow RUN route — inline one-off launch", () => {
 
       const response = await runWithHeaders(
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: "conv-owner" },
-            CAPABILITY_SECRET,
-            1_760_000_000_000,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+            sessionName: SESSION_NAME,
+            conversationId: "conv-owner",
+          }),
         },
         session,
       );
@@ -4927,25 +4899,17 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       );
     });
 
-    it("fails closed on a forged signature rather than launching unowned", async () => {
+    it("fails closed on a malformed identity rather than launching unowned", async () => {
       const session = makeSession({
         conversations: [makeConversation("conv-owner")],
       });
-      const forged = mintConversationCapability(
-        { sessionName: SESSION_NAME, conversationId: "conv-owner" },
-        "not-the-server-key",
-        1_760_000_000_000,
-      );
+      const forged = "malformed-identity";
 
       const response = await runWithHeaders(
-        { [CONVERSATION_CAPABILITY_HEADER]: forged },
+        { [CONVERSATION_IDENTITY_HEADER]: forged },
         session,
       );
 
-      // A caller presenting a capability is never the browser — the browser
-      // sends none — so a bad one is a failed authentication, not an anonymous
-      // human. Launching it unowned would let a forgery consume the session's
-      // one lease and leave no principal to answer for it.
       expect(response.status).toBe(403);
       expect(runExecution).not.toHaveBeenCalled();
       await expect(response.json()).resolves.toMatchObject({
@@ -4953,9 +4917,6 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       });
     });
 
-    // THE forgery the bare header allowed: conv-sibling is a real conversation
-    // in this session, so a membership check admits it. Only the signature
-    // distinguishes "is a conversation here" from "is THIS caller".
     it("refuses to own a run from an unsigned header claim naming a sibling conversation", async () => {
       const session = makeSession({
         conversations: [
@@ -4986,11 +4947,10 @@ describe("graph workflow RUN route — inline one-off launch", () => {
 
       const response = await runWithHeaders(
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: "other-session", conversationId: "conv-owner" },
-            CAPABILITY_SECRET,
-            1_760_000_000_000,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+            sessionName: "other-session",
+            conversationId: "conv-owner",
+          }),
         },
         session,
       );
@@ -4999,10 +4959,6 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       expect(runExecution).not.toHaveBeenCalled();
     });
 
-    // The signed conversation must still exist here; a capability naming a
-    // conversation this session does not have is not an owner. This is the
-    // DELETED-ORIGIN path: the conversation's capability outlives it, and the
-    // membership re-check is what makes it inert.
     it("refuses a valid capability naming a conversation absent from the session", async () => {
       const session = makeSession({
         conversations: [makeConversation("conv-owner")],
@@ -5010,11 +4966,10 @@ describe("graph workflow RUN route — inline one-off launch", () => {
 
       const response = await runWithHeaders(
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: "conv-gone" },
-            CAPABILITY_SECRET,
-            1_760_000_000_000,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+            sessionName: SESSION_NAME,
+            conversationId: "conv-gone",
+          }),
         },
         session,
       );
@@ -5023,29 +4978,24 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       expect(runExecution).not.toHaveBeenCalled();
     });
 
-    // A server with no key can verify nothing, so it can establish no agent
-    // principal at all. It must refuse rather than fall back to the claim
-    // sitting beside the capability in this very request.
-    it("refuses a capability-bearing caller when the server has no capability key", async () => {
+    it("accepts an environment identity without provisioning a signing key", async () => {
       const session = makeSession({
         conversations: [makeConversation("conv-owner")],
       });
 
       const response = await runWithHeaders(
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: "conv-owner" },
-            CAPABILITY_SECRET,
-            1_760_000_000_000,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+            sessionName: SESSION_NAME,
+            conversationId: "conv-owner",
+          }),
           [OWNER_CONVERSATION_HEADER]: "conv-owner",
         },
         session,
-        null,
       );
 
-      expect(response.status).toBe(403);
-      expect(runExecution).not.toHaveBeenCalled();
+      expect(response.status).toBe(202);
+      expect(runExecution).toHaveBeenCalled();
     });
 
     // A human browser launch presents no agent credentials at all and stays a
@@ -5068,17 +5018,14 @@ describe("graph workflow RUN route — inline one-off launch", () => {
    * verified authority at all, which is the nesting refusal D12 exists for.
    */
   describe("agent callers must present a verified capability to launch", () => {
-    const CAPABILITY_SECRET = "server-only-capability-key";
-
     function buildAgentHandlers(
       transport: "absent" | "valid" | "invalid",
-      secret: string | null = CAPABILITY_SECRET,
       session: SessionState = makeSession({
         conversations: [makeConversation("conv-owner")],
       }),
     ) {
       return createGraphWorkflowExecutionRouteHandlers({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         resolveProjectPath: async (name: string) =>
           name === "repo" ? PROJECT_PATH : null,
@@ -5091,10 +5038,9 @@ describe("graph workflow RUN route — inline one-off launch", () => {
         readRepoConfig: async () => null,
         readConfig: async () => makeGlobalConfig(),
         auth: { validateOptionalToken: async () => ({ kind: transport }) },
-        verifyConversationCapability: async (request: Request) =>
-          verifyConversationCapability(
-            request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-            secret,
+        readConversationIdentity: async (request: Request) =>
+          readConversationIdentity(
+            request.headers.get(CONVERSATION_IDENTITY_HEADER),
           ),
         startExecution: unusedDep("startExecution"),
         pauseExecution: unusedDep("pauseExecution"),
@@ -5119,9 +5065,8 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     function agentPost(
       transport: "absent" | "valid" | "invalid",
       headers: Record<string, string> = {},
-      secret: string | null = CAPABILITY_SECRET,
     ) {
-      return buildAgentHandlers(transport, secret).RUN(
+      return buildAgentHandlers(transport).RUN(
         makeRequest(RUN_URL, "POST", { plan: makePlan() }, headers),
         makeContext({ name: "repo", session: SESSION_NAME }),
       );
@@ -5145,13 +5090,9 @@ describe("graph workflow RUN route — inline one-off launch", () => {
         { [OWNER_CONVERSATION_HEADER]: "conv-owner" },
       ],
       [
-        "a forged capability",
+        "a malformed identity",
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: "conv-owner" },
-            "not-the-server-key",
-            1_760_000_000_000,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: "malformed-identity",
         },
       ],
     ])("refuses a token-bearing agent presenting %s", async (_l, headers) => {
@@ -5166,30 +5107,12 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       expect(kickOffExecutionLoop).not.toHaveBeenCalled();
     });
 
-    it("refuses an agent whose server has no capability key", async () => {
-      const response = await agentPost(
-        "valid",
-        {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: "conv-owner" },
-            CAPABILITY_SECRET,
-            1_760_000_000_000,
-          ),
-        },
-        null,
-      );
-
-      expect(response.status).toBe(403);
-      expect(runExecution).not.toHaveBeenCalled();
-    });
-
     it("admits an agent presenting a valid capability, as its owner", async () => {
       const response = await agentPost("valid", {
-        [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-          { sessionName: SESSION_NAME, conversationId: "conv-owner" },
-          CAPABILITY_SECRET,
-          1_760_000_000_000,
-        ),
+        [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+          sessionName: SESSION_NAME,
+          conversationId: "conv-owner",
+        }),
       });
 
       expect(response.status).toBe(202);
@@ -5230,12 +5153,9 @@ describe("graph workflow RUN route — inline one-off launch", () => {
 
     const response = await buildHandlers(
       makeSession({ conversations: [makeConversation("conv-owner")] }),
-      // The origin is server-verified, so the caller proves its identity with a
-      // signed capability; the bare header alone no longer owns a run.
       async (request: Request) =>
-        verifyConversationCapability(
-          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-          "server-only-capability-key",
+        readConversationIdentity(
+          request.headers.get(CONVERSATION_IDENTITY_HEADER),
         ),
     ).RUN(
       makeRequest(
@@ -5243,11 +5163,10 @@ describe("graph workflow RUN route — inline one-off launch", () => {
         "POST",
         { plan: makePlan() },
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: "conv-owner" },
-            "server-only-capability-key",
-            1_760_000_000_000,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+            sessionName: SESSION_NAME,
+            conversationId: "conv-owner",
+          }),
         },
       ),
       makeContext({ name: "repo", session: SESSION_NAME }),
@@ -5412,7 +5331,6 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
    * (in-memory SQLite) store: whether the lease was released is a fact about the
    * persisted active row, which only a real store can answer.
    */
-  const CAPABILITY_SECRET = "server-only-capability-key";
 
   function buildStack(
     transport: "absent" | "valid" | "invalid" = "absent",
@@ -5449,7 +5367,7 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5459,7 +5377,7 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
     });
     const stopExecutionLaneDevServers = vi.fn(async () => {});
     const handlers = createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
@@ -5486,16 +5404,12 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       recordApprovalDecision: unusedDep("recordApprovalDecision"),
       stopExecutionLaneDevServers,
       auth: { validateOptionalToken: async () => ({ kind: transport }) },
-      verifyConversationCapability: async (request: Request) =>
-        verifyConversationCapability(
-          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
+      readConversationIdentity: async (request: Request) =>
+        readConversationIdentity(
+          request.headers.get(CONVERSATION_IDENTITY_HEADER),
         ),
-      verifyLaneCapability: async (request: Request) =>
-        verifyLaneCapability(
-          request.headers.get(LANE_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
-        ),
+      readLaneIdentity: async (request: Request) =>
+        readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
     });
     return { handlers, manager, repository, stopExecutionLaneDevServers };
   }
@@ -5744,14 +5658,6 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
   });
 
   describe("who may end the lease holder's tenure", () => {
-    /**
-     * The ordinary-conversation half of the shared mutation contract: abandon
-     * reads session MEMBERSHIP, so the human UI and any verified conversation
-     * may end the tenure, and what the audit records is the signed identity of
-     * whichever one did. An agent that cannot prove which conversation it is
-     * still may not. Current and stale lane authority are exercised by the
-     * common mutation table and the archive-turnover regression below.
-     */
     async function seedOwnedHalt(ownerConversationId: string): Promise<void> {
       await seedActive(haltedExecution({ ownerConversationId }));
       for (const id of [ownerConversationId, "conv-sibling"]) {
@@ -5765,11 +5671,10 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
 
     function capabilityFor(conversationId: string): Record<string, string> {
       return {
-        [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-          { sessionName: SESSION_NAME, conversationId },
-          CAPABILITY_SECRET,
-          1,
-        ),
+        [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+          sessionName: SESSION_NAME,
+          conversationId,
+        }),
       };
     }
 
@@ -5819,13 +5724,9 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
         { [OWNER_CONVERSATION_HEADER]: "conv-origin" },
       ],
       [
-        "a forged capability",
+        "a malformed identity",
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: "conv-origin" },
-            "not-the-server-key",
-            1,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: "malformed-identity",
         },
       ],
     ])(
@@ -5841,10 +5742,7 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       },
     );
 
-    // The audit is where a claim would do damage under membership authority:
-    // every session conversation is admitted, so the actor recorded must still
-    // be the SIGNED identity rather than the id the caller typed in a header.
-    it("admits a verified sibling conversation and attributes the audit to its signed identity", async () => {
+    it("admits a verified sibling conversation and attributes the audit to its injected identity", async () => {
       const response = await abandonAs("valid", {
         ...capabilityFor("conv-sibling"),
         [OWNER_CONVERSATION_HEADER]: "conv-origin",
@@ -5963,16 +5861,12 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
         "POST",
         { executionId: "execution-halted", reason: "Superseded" },
         {
-          [LANE_CAPABILITY_HEADER]: mintLaneCapability(
-            {
-              laneKind: "implementer",
-              executionId: "execution-halted",
-              contextId: "context-plan",
-              conversationId: authorizedLaneConversationId,
-            },
-            CAPABILITY_SECRET,
-            1,
-          ),
+          [LANE_IDENTITY_HEADER]: encodeLaneIdentity({
+            laneKind: "implementer",
+            executionId: "execution-halted",
+            contextId: "context-plan",
+            conversationId: authorizedLaneConversationId,
+          }),
         },
       ),
       routeContext(),
@@ -6122,7 +6016,7 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6140,7 +6034,7 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       ) => Promise<DefinitionApprovalGateDecision>
     >(async () => ({ ok: true }));
     const handlers = createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       now: () => NOW,
       resolveProjectPath: async (name) =>
@@ -6747,20 +6641,9 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
   });
 });
 
-/**
- * Origin-scoped agent mutation and session-wide human authority (R9.1, R9.2,
- * R9.4, R10.1).
- *
- * Every case here uses REAL capabilities minted under a test secret and
- * verified through the production verifiers, so what is under test is the
- * server deriving a principal from a signature — not a fixture asserting a
- * principal into place. The claim/authority distinction is the whole subject:
- * a conversation id that is merely presented must never decide anything.
- */
 describe("graph workflow mutation principals", () => {
   const PROJECT_PATH = "/repo";
   const SESSION_NAME = "session-1";
-  const CAPABILITY_SECRET = "server-only-capability-key";
   const BASE_URL = `/api/projects/repo/sessions/${SESSION_NAME}/graph-workflow`;
 
   const ORIGIN_CONV = "conv-origin";
@@ -6778,8 +6661,6 @@ describe("graph workflow mutation principals", () => {
     return {
       ...base,
       ownerConversationId: ORIGIN_CONV,
-      // Binds the lane conversation to context-plan, which is what makes a lane
-      // capability CURRENT rather than merely well-signed.
       taskStates: {
         ...base.taskStates,
         "task-plan-1": {
@@ -6792,16 +6673,15 @@ describe("graph workflow mutation principals", () => {
     };
   }
 
-  function conversationCapability(
+  function workflowCallerConversationId(
     conversationId: string,
     sessionName: string = SESSION_NAME,
   ): Record<string, string> {
     return {
-      [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-        { sessionName, conversationId },
-        CAPABILITY_SECRET,
-        1_760_000_000_000,
-      ),
+      [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+        sessionName,
+        conversationId,
+      }),
     };
   }
 
@@ -6811,11 +6691,10 @@ describe("graph workflow mutation principals", () => {
     conversationId: string;
   }): Record<string, string> {
     return {
-      [LANE_CAPABILITY_HEADER]: mintLaneCapability(
-        { laneKind: "implementer", ...input },
-        CAPABILITY_SECRET,
-        1_760_000_000_000,
-      ),
+      [LANE_IDENTITY_HEADER]: encodeLaneIdentity({
+        laneKind: "implementer",
+        ...input,
+      }),
     };
   }
 
@@ -6927,7 +6806,7 @@ describe("graph workflow mutation principals", () => {
       });
 
     const handlers = createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
@@ -6938,16 +6817,12 @@ describe("graph workflow mutation principals", () => {
           kind: input.transport ?? "absent",
         }),
       },
-      verifyConversationCapability: async (request: Request) =>
-        verifyConversationCapability(
-          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
+      readConversationIdentity: async (request: Request) =>
+        readConversationIdentity(
+          request.headers.get(CONVERSATION_IDENTITY_HEADER),
         ),
-      verifyLaneCapability: async (request: Request) =>
-        verifyLaneCapability(
-          request.headers.get(LANE_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
-        ),
+      readLaneIdentity: async (request: Request) =>
+        readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
       pauseExecution,
       abortExecution,
       abandonExecution,
@@ -7146,7 +7021,7 @@ describe("graph workflow mutation principals", () => {
     });
     const fromOrigin = await pause(
       originStack,
-      conversationCapability(ORIGIN_CONV),
+      workflowCallerConversationId(ORIGIN_CONV),
     );
 
     expect(fromOrigin.status).toBe(200);
@@ -7158,7 +7033,7 @@ describe("graph workflow mutation principals", () => {
     });
     const fromSibling = await pause(
       siblingStack,
-      conversationCapability(SIBLING_CONV),
+      workflowCallerConversationId(SIBLING_CONV),
     );
 
     expect(fromSibling.status).toBe(200);
@@ -7195,7 +7070,7 @@ describe("graph workflow mutation principals", () => {
 
       const response = await mutation.act(
         stack,
-        conversationCapability(SIBLING_CONV),
+        workflowCallerConversationId(SIBLING_CONV),
       );
 
       expect(response.status).toBe(200);
@@ -7215,7 +7090,7 @@ describe("graph workflow mutation principals", () => {
 
       const response = await mutation.act(
         stack,
-        conversationCapability(SIBLING_CONV),
+        workflowCallerConversationId(SIBLING_CONV),
       );
 
       expect(response.status).toBe(403);
@@ -7241,7 +7116,7 @@ describe("graph workflow mutation principals", () => {
         `${BASE_URL}/abandon`,
         "POST",
         { executionId: "execution-stale", reason: "operator cleanup" },
-        conversationCapability(SIBLING_CONV),
+        workflowCallerConversationId(SIBLING_CONV),
       ),
       routeContext(),
     );
@@ -7309,11 +7184,7 @@ describe("graph workflow mutation principals", () => {
     expect(stack.mutationApplied).not.toHaveBeenCalled();
   });
 
-  // R9.4 — an id the caller merely presents is not authority, even when it
-  // names a conversation this session really has. Read on the verb that still
-  // discriminates by origin: under membership authority the claim buys nothing
-  // because the signed sibling identity is already admitted.
-  it("refuses an agent whose claimed conversation header is not its signed identity", async () => {
+  it("refuses an agent whose claimed conversation header is not its injected identity", async () => {
     const stack = buildStack({
       execution: ownedExecution(),
       transport: "valid",
@@ -7325,7 +7196,7 @@ describe("graph workflow mutation principals", () => {
         "POST",
         { contextId: "context-plan", decision: "approve" },
         {
-          ...conversationCapability(SIBLING_CONV),
+          ...workflowCallerConversationId(SIBLING_CONV),
           [OWNER_CONVERSATION_HEADER]: ORIGIN_CONV,
         },
       ),
@@ -7351,7 +7222,10 @@ describe("graph workflow mutation principals", () => {
       session: sessionWithoutOrigin,
       transport: "valid",
     });
-    const agent = await pause(agentStack, conversationCapability(ORIGIN_CONV));
+    const agent = await pause(
+      agentStack,
+      workflowCallerConversationId(ORIGIN_CONV),
+    );
 
     expect(agent.status).toBe(403);
     await expect(agent.json()).resolves.toMatchObject({
@@ -7415,7 +7289,7 @@ describe("graph workflow mutation principals", () => {
 
       const response = await mutation.act(
         stack,
-        conversationCapability(SIBLING_CONV),
+        workflowCallerConversationId(SIBLING_CONV),
       );
 
       expect(response.status).toBe(200);
@@ -7463,7 +7337,7 @@ describe("graph workflow mutation principals", () => {
       });
 
       const response = await mutation.act(stack, {
-        [LANE_CAPABILITY_HEADER]: "cclc1.ZmFrZQ.bm90LWEtc2lnbmF0dXJl",
+        [LANE_IDENTITY_HEADER]: "cclc1.ZmFrZQ.bm90LWEtc2lnbmF0dXJl",
       });
 
       expect(response.status).toBe(403);
@@ -7520,7 +7394,7 @@ describe("graph workflow mutation principals", () => {
 
       const response = await mutation.act(
         stack,
-        conversationCapability(ORIGIN_CONV),
+        workflowCallerConversationId(ORIGIN_CONV),
       );
 
       expect(response.status).toBe(409);
@@ -7624,7 +7498,7 @@ describe("graph workflow mutation principals", () => {
           "POST",
           { definitionId: "workflow-def-1" },
           {
-            ...conversationCapability(conversationId),
+            ...workflowCallerConversationId(conversationId),
             [OWNER_CONVERSATION_HEADER]: "conv-claimed",
           },
         ),
@@ -7736,7 +7610,7 @@ describe("graph workflow mutation principals", () => {
       const stack = buildStack({ execution: null, transport: "absent" });
 
       const response = await launch(stack, {
-        [LANE_CAPABILITY_HEADER]: "cclc1.ZmFrZQ.bm90LWEtc2lnbmF0dXJl",
+        [LANE_IDENTITY_HEADER]: "cclc1.ZmFrZQ.bm90LWEtc2lnbmF0dXJl",
       });
 
       expect(response.status).toBe(403);
@@ -7747,10 +7621,6 @@ describe("graph workflow mutation principals", () => {
     },
   );
 
-  // A lane capability signs no session, so a credential minted elsewhere — or
-  // one whose conversation has since been deleted — reaches the launch door
-  // perfectly well signed. Identity fails first, before the nesting rule: the
-  // server never establishes a lane principal it cannot place in this session.
   it.each([
     [
       "run",
@@ -7874,7 +7744,10 @@ describe("graph workflow mutation principals", () => {
         transport: "absent",
       });
 
-      const response = await decide(stack, conversationCapability(ORIGIN_CONV));
+      const response = await decide(
+        stack,
+        workflowCallerConversationId(ORIGIN_CONV),
+      );
 
       expect(response.status).toBe(403);
       await expect(response.json()).resolves.toMatchObject({
@@ -7896,7 +7769,6 @@ describe("graph workflow mutation principals", () => {
 describe("graph workflow mutation turnover — end to end", () => {
   const PROJECT_PATH = "/repo";
   const SESSION_NAME = "session-1";
-  const CAPABILITY_SECRET = "server-only-capability-key";
   const ORIGIN_CONV = "conv-origin";
   const BASE_URL = `/api/projects/repo/sessions/${SESSION_NAME}/graph-workflow`;
 
@@ -7940,7 +7812,7 @@ describe("graph workflow mutation turnover — end to end", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -7975,7 +7847,7 @@ describe("graph workflow mutation turnover — end to end", () => {
     };
 
     const handlers = createGraphWorkflowExecutionRouteHandlers({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
@@ -8005,10 +7877,9 @@ describe("graph workflow mutation turnover — end to end", () => {
       drainAndHalt: unusedRouteDep,
       recordApprovalDecision: unusedRouteDep,
       auth: { validateOptionalToken: async () => ({ kind: "valid" as const }) },
-      verifyConversationCapability: async (request: Request) =>
-        verifyConversationCapability(
-          request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-          CAPABILITY_SECRET,
+      readConversationIdentity: async (request: Request) =>
+        readConversationIdentity(
+          request.headers.get(CONVERSATION_IDENTITY_HEADER),
         ),
     } satisfies GraphWorkflowExecutionRouteDeps);
 
@@ -8018,11 +7889,10 @@ describe("graph workflow mutation turnover — end to end", () => {
         "POST",
         {},
         {
-          [CONVERSATION_CAPABILITY_HEADER]: mintConversationCapability(
-            { sessionName: SESSION_NAME, conversationId: ORIGIN_CONV },
-            CAPABILITY_SECRET,
-            1_760_000_000_000,
-          ),
+          [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+            sessionName: SESSION_NAME,
+            conversationId: ORIGIN_CONV,
+          }),
         },
       ),
       makeContext({ name: "repo", session: SESSION_NAME }),

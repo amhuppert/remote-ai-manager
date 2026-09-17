@@ -1206,8 +1206,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands generation-owned graph workflows at schema version 17", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(17);
+  it("this build understands nullable graph execution seeds at schema version 18", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(18);
   });
 
   it("refuses a version-12 binary after ticket relationships stamp version 13", () => {

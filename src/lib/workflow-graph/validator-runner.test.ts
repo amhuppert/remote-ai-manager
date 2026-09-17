@@ -3,7 +3,7 @@ import type {
   ExecutionMutationOutcome as FixtureOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import {
   WHOLE_TREE_CANDIDATE_SCOPE,
   type CandidateScope,
@@ -2053,7 +2053,7 @@ describe("createValidatorRunner", () => {
       textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2112,7 +2112,7 @@ describe("createValidatorRunner", () => {
       textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2158,7 +2158,7 @@ describe("createValidatorRunner", () => {
         }),
       );
       const runner = createValidatorRunner({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: stubWorktreePath,
         resolveTimeoutMs: stubTimeoutMs,
         executeWorkflowTaskRun,
@@ -2249,7 +2249,7 @@ describe("createValidatorRunner", () => {
       apiTurns: 9,
     }));
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2299,7 +2299,7 @@ describe("createValidatorRunner", () => {
       textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2352,7 +2352,7 @@ describe("createValidatorRunner", () => {
       async (_input: ExecuteWorkflowTaskRunInput) => textTaskRun(agentResponse),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2406,7 +2406,7 @@ describe("createValidatorRunner", () => {
         textTaskRun(verdictJson("Context completed correctly")),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2471,7 +2471,7 @@ describe("createValidatorRunner", () => {
       }),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2554,7 +2554,7 @@ describe("createValidatorRunner", () => {
       }),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2623,7 +2623,7 @@ describe("createValidatorRunner", () => {
       async (_input: ExecuteWorkflowTaskRunInput) => textTaskRun(agentResponse),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2677,7 +2677,7 @@ describe("createValidatorRunner", () => {
         textTaskRun(verdictJson("Context completed correctly")),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2723,7 +2723,7 @@ describe("createValidatorRunner", () => {
       textTaskRun("I could not find anything to review."),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2763,7 +2763,7 @@ describe("createValidatorRunner", () => {
       },
     }));
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2791,7 +2791,7 @@ describe("createValidatorRunner", () => {
       errorTaskRun("provider returned 500"),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2840,7 +2840,7 @@ describe("createValidatorRunner", () => {
       pendingQuestions,
     }));
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2881,7 +2881,7 @@ describe("createValidatorRunner", () => {
     );
     const readLaneConversation = vi.fn(async () => null);
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2910,7 +2910,7 @@ describe("createValidatorRunner", () => {
       throw new Error("Codex rate limit exceeded");
     });
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -2958,7 +2958,7 @@ describe("createValidatorRunner", () => {
       ),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -3020,7 +3020,7 @@ describe("createValidatorRunner", () => {
       textTaskRun(codexResponse),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -3174,7 +3174,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3276,7 +3276,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3342,7 +3342,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3410,7 +3410,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3476,7 +3476,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3577,7 +3577,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3667,7 +3667,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3761,7 +3761,7 @@ describe("context validator continuity runtime integration", () => {
     );
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3825,7 +3825,7 @@ describe("context validator continuity runtime integration", () => {
       }),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
@@ -3866,7 +3866,7 @@ describe("validator-runner executionTarget override", () => {
     );
     const resolveWorktreePath = vi.fn(async () => sessionWorktreeDir);
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -3916,7 +3916,7 @@ describe("validator-runner executionTarget override", () => {
     );
     const resolveWorktreePath = vi.fn(async () => sessionWorktreeDir);
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -4023,7 +4023,7 @@ describe("createValidatorRunner diff scope", () => {
     );
     const resolveWorktreePath = vi.fn(async () => sessionWorktreeDir);
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -4068,7 +4068,7 @@ describe("createValidatorRunner diff scope", () => {
       async (_wt: string, _scope: CandidateScope) => availableScope,
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -4119,7 +4119,7 @@ describe("createValidatorRunner diff scope", () => {
       }),
     );
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,

@@ -696,9 +696,14 @@ const BACKEND_IDENTITY_ALLOWLIST: readonly AllowlistEntry[] = [
       "Frozen one-way migration boundary: provider identity is required to translate retired provider-specific config fields into atomic selections. The file cannot serve runtime requests and is deleted only when schema-v11 databases are no longer supported.",
   },
   {
-    path: "src/lib/workflow-graph/archived-legacy-decode.ts",
+    path: "src/lib/state-store/migrations/0051-retire-stored-shape-readers.ts",
     justification:
-      "Read-only terminal-archive decoder: provider identity is required to project frozen legacy tuples into atomic display selections. It cannot produce runtime requests and is deleted when legacy terminal archives are no longer supported.",
+      "Frozen one-way collaboration migration: historical backend pairing and parameter names reconstruct stored settings once; remove with pre-0051 database support. No runtime requests reach it.",
+  },
+  {
+    path: "src/lib/state-store/migrations/frozen-archived-execution.ts",
+    justification:
+      "Frozen one-way archive migration: provider identity translates historical tuples once into canonical assignment records; it cannot serve runtime requests.",
   },
 ];
 
@@ -708,16 +713,6 @@ const NEUTRAL_MODEL_PARAMETER_ALLOWLIST: readonly AllowlistEntry[] = [
     path: "src/lib/state-store/migrations/",
     justification:
       "Forward-only migrations own retired provider-field decoding. They cannot serve runtime requests and leave the exception set when pre-selection database schemas are no longer supported.",
-  },
-  {
-    path: "src/lib/workflow-graph/archived-legacy-decode.ts",
-    justification:
-      "Read-only terminal-archive decoder. It cannot produce a runtime request and is deleted when legacy terminal archives are no longer supported.",
-  },
-  {
-    path: "src/features/session/conversation/collab/envelope-adapter.ts",
-    justification:
-      "Read-only collaboration-envelope presentation adapter. It cannot produce a runtime request and is deleted when legacy collaboration envelopes are no longer supported.",
   },
 ];
 

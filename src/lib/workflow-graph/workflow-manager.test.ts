@@ -2,7 +2,7 @@ import { createRepository } from "./testing/manager-scheduler-fixture";
 import type { ExecutionMutationDecision as FixtureDecision } from "@/lib/workflow-graph/execution-mutation";
 
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -109,7 +109,7 @@ function regroupedDefinition(approvalRequired = false) {
         position: { at: "start" },
       },
     ],
-    createNonParticipatingGraphExecutionContract(),
+    createTestGraphExecutionContract(),
   );
   if (!edited.ok) throw new Error(JSON.stringify(edited.issues));
   return edited.record;
@@ -239,7 +239,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: {
         ...repository,
@@ -282,7 +282,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -375,7 +375,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -480,7 +480,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition(_projectPath, definitionId, tier) {
@@ -683,7 +683,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -907,7 +907,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition(projectPath, definitionId, tier) {
@@ -1411,9 +1411,8 @@ describe("graph workflow manager", () => {
       );
       expect(row?.id).toBe(launched.execution.id);
       expect(row?.origin).toEqual({ kind: "one_off", planName: plan.name });
-      // The legacy-shaped filler names no stored definition, which is what lets
-      // an older reader parse the row without resolving anything.
-      expect(row?.seedDefinitionId).toBe(`one-off:${launched.execution.id}`);
+      expect(row?.seedDefinitionId).toBeNull();
+      expect(row?.seedDefinitionRevision).toBeNull();
       expect(
         projectDefinitionsBefore.some(
           (summary) => summary.id === row?.seedDefinitionId,
@@ -1740,7 +1739,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -1882,7 +1881,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -2154,7 +2153,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: racing,
         async loadDefinition() {
@@ -2890,7 +2889,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -3175,7 +3174,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3216,7 +3215,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3244,7 +3243,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3273,7 +3272,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3308,7 +3307,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3337,7 +3336,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3366,7 +3365,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3393,7 +3392,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3568,7 +3567,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -3693,7 +3692,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3755,7 +3754,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3798,7 +3797,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3849,7 +3848,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: {
         ...repository,
@@ -3959,7 +3958,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -4014,7 +4013,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -4080,7 +4079,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -4123,7 +4122,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         getSession: async () => null,
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: createRepository(execution),
         async loadDefinition() {
@@ -4196,7 +4195,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -4341,7 +4340,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -4433,7 +4432,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -4566,7 +4565,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -4731,7 +4730,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -4789,7 +4788,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: {
           ...repository,
@@ -4869,7 +4868,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -4951,7 +4950,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5043,7 +5042,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5146,7 +5145,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: crashedLaneRepository(),
         async loadDefinition() {
@@ -5188,7 +5187,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: crashedLaneRepository(),
         async loadDefinition() {
@@ -5282,7 +5281,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5391,7 +5390,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5472,7 +5471,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5547,7 +5546,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5643,7 +5642,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5719,7 +5718,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5800,7 +5799,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -5852,7 +5851,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5895,7 +5894,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -5949,7 +5948,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6076,7 +6075,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6137,7 +6136,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6221,7 +6220,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6300,7 +6299,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6380,7 +6379,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6459,7 +6458,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6514,7 +6513,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6575,7 +6574,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6590,13 +6589,27 @@ describe("graph workflow manager", () => {
     ).toBe("concluded");
   });
 
-  it("resume preserves merged-failed contexts and populates pendingMergeRetry", async () => {
+  it("resume makes failed lane landings reconcilable without scheduling retired fan-in merges", async () => {
     const baseExecution = createWorkflowExecution();
     const repository = createRepository(
       createWorkflowExecution({
         ...baseExecution,
         status: "halted",
         activeContextIds: [],
+        executionLanes: {
+          "lane-plan": {
+            laneId: "lane-plan",
+            kind: "worktree",
+            status: "active",
+            branchName: "csm/session-1-context-plan",
+            worktreePath: "/repo/.worktrees/session-1.context-plan",
+            includedContextIds: ["context-plan"],
+            lastCommittingContextId: "context-plan",
+            commitSnapshots: [],
+            createdAt: "2026-03-27T15:00:00.000Z",
+            updatedAt: "2026-03-27T15:00:00.000Z",
+          },
+        },
         completedAt: "2026-03-27T15:30:00.000Z",
         haltReason: {
           type: "merge_precondition_failed",
@@ -6622,6 +6635,7 @@ describe("graph workflow manager", () => {
             ...baseExecution.contextStates["context-plan"]!,
             status: "completed",
             isolation: "worktree",
+            laneId: "lane-plan",
             worktreePath: "/repo/.worktrees/session-1.context-plan",
             branchName: "csm/session-1-context-plan",
             mergeStatus: "merged-failed",
@@ -6645,7 +6659,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6658,7 +6672,7 @@ describe("graph workflow manager", () => {
     expect(execution.status).toBe("running");
     expect(execution.haltReason).toBeNull();
     expect(execution.secondaryHaltReasons).toEqual([]);
-    expect(execution.pendingMergeRetry).toEqual(["context-plan"]);
+    expect(execution.pendingMergeRetry).toEqual([]);
     expect(execution.contextStates["context-plan"]).toMatchObject({
       status: "completed",
       mergeStatus: "pending",
@@ -6671,18 +6685,29 @@ describe("graph workflow manager", () => {
     });
   });
 
-  it("resume resets an in-progress merge to pending and schedules a retry", async () => {
-    // A merge whose success write was fenced out (resume landed mid-git-op)
-    // strands mergeStatus at in-progress: the context is completed so it is
-    // never rescheduled, and downstream eligibility requires merged-success.
-    // Resume treats it like merged-failed — retry and let the merge runner
-    // reconcile against what actually landed on the branch.
+  it("resume makes interrupted lane landings reconcilable without scheduling retired fan-in merges", async () => {
+    // Resume clears stale failure bookkeeping so landing evidence can be
+    // reconciled against the lane branch by the replacement loop.
     const baseExecution = createWorkflowExecution();
     const repository = createRepository(
       createWorkflowExecution({
         ...baseExecution,
         status: "halted",
         activeContextIds: [],
+        executionLanes: {
+          "lane-plan": {
+            laneId: "lane-plan",
+            kind: "worktree",
+            status: "active",
+            branchName: "csm/session-1-context-plan",
+            worktreePath: "/repo/.worktrees/session-1.context-plan",
+            includedContextIds: ["context-plan"],
+            lastCommittingContextId: "context-plan",
+            commitSnapshots: [],
+            createdAt: "2026-03-27T15:00:00.000Z",
+            updatedAt: "2026-03-27T15:00:00.000Z",
+          },
+        },
         completedAt: "2026-03-27T15:30:00.000Z",
         haltReason: {
           type: "execution_loop_failed",
@@ -6696,6 +6721,7 @@ describe("graph workflow manager", () => {
             ...baseExecution.contextStates["context-plan"]!,
             status: "completed",
             isolation: "worktree",
+            laneId: "lane-plan",
             worktreePath: "/repo/.worktrees/session-1.context-plan",
             branchName: "csm/session-1-context-plan",
             mergeStatus: "in-progress",
@@ -6711,7 +6737,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6722,7 +6748,7 @@ describe("graph workflow manager", () => {
     const execution = await manager.resume("/repo", "session-1");
 
     expect(execution.status).toBe("running");
-    expect(execution.pendingMergeRetry).toEqual(["context-plan"]);
+    expect(execution.pendingMergeRetry).toEqual([]);
     expect(execution.contextStates["context-plan"]).toMatchObject({
       status: "completed",
       mergeStatus: "pending",
@@ -6784,7 +6810,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -6875,7 +6901,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -6908,7 +6934,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -6980,7 +7006,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -7015,7 +7041,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -7071,7 +7097,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -7156,7 +7182,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -7184,7 +7210,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -7208,7 +7234,7 @@ describe("graph workflow manager", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       loadDefinition,
@@ -7389,7 +7415,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         getSession: async () => null,
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7417,7 +7443,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7470,7 +7496,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7511,7 +7537,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7545,7 +7571,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7568,7 +7594,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7591,7 +7617,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7653,7 +7679,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7696,7 +7722,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7730,7 +7756,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7770,7 +7796,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7826,7 +7852,7 @@ describe("graph workflow manager", () => {
           getSession: async () => null,
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -7862,7 +7888,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -7924,7 +7950,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: wrappedRepository,
         async loadDefinition() {
@@ -7993,7 +8019,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8051,7 +8077,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8090,7 +8116,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8122,7 +8148,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8152,7 +8178,7 @@ describe("graph workflow manager", () => {
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8185,7 +8211,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           loadDefinition: async () => createWorkflowDefinitionRecord(),
@@ -8285,7 +8311,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8313,7 +8339,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8347,7 +8373,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8382,7 +8408,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8459,7 +8485,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -8518,7 +8544,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -8555,7 +8581,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8596,7 +8622,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8625,7 +8651,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8670,7 +8696,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8706,7 +8732,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8736,7 +8762,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8762,7 +8788,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8799,7 +8825,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8837,7 +8863,7 @@ describe("graph workflow manager", () => {
         retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
 
         executionRepository: repository,
         async loadDefinition() {
@@ -8951,7 +8977,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -9156,7 +9182,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -9347,7 +9373,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -9395,7 +9421,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -9440,7 +9466,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -9509,7 +9535,7 @@ describe("graph workflow manager", () => {
           retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
 
           executionRepository: repository,
           async loadDefinition() {
@@ -9676,7 +9702,7 @@ describe("halt/resume lifecycle attribution", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -9757,7 +9783,7 @@ describe("halt/resume lifecycle attribution", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -9872,7 +9898,7 @@ describe("abandon — the explicit, audited end of a resumable halt's tenure", (
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {

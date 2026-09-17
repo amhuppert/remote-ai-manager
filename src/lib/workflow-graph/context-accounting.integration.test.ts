@@ -8,7 +8,7 @@ import { createGraphWorkflowContextServices } from "./engine-composition";
 import { createGraphWorkflowManager } from "./workflow-manager";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
-import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { createPersistenceGraphRepository } from "./testing/persistence-repository-fixture";
 import {
   createCohortExecution,
@@ -73,7 +73,7 @@ describe("durable context accounting", () => {
           broadcast: () => {},
           dispatchPush: () => {},
         });
-        const policy = createNonParticipatingGraphExecutionContract();
+        const policy = createTestGraphExecutionContract();
         const manager = createGraphWorkflowManager({
           executionRepository: repository,
           executionContract: policy,

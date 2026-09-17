@@ -5,11 +5,8 @@
  * this schema is the contract the collaboration feature itself reads and
  * writes through. Two variants keyed on `origin`:
  *
- *  - `"user"`  — the existing user-triggered envelope shape, captured
- *                permissively so persisted JSONL records continue to round-trip
- *                without a data migration. Existing records on disk do not
- *                carry an `origin` field; the schema defaults the
- *                discriminator to `"user"` when absent on read.
+ *  - `"user"`  — the user-triggered envelope shape, with its persisted
+ *                discriminator supplied by the writer or migration 0051.
  *  - `"workflow"` — the agent-invoked shape: carries
  *                `parentImplementerTurnId`, `executionContextId`,
  *                `conversationId`, and the resolved collaboration config (each
@@ -49,9 +46,8 @@ const collaborationFeatureSnapshotUserSchema = z
     /**
      * Both flow agents' resolved runtimes (backend, concrete model, effort,
      * fast mode, optional profile snapshot). Typed rather than left to
-     * passthrough so readers get the parsed shape; optional because envelopes
-     * written before per-agent configs existed carry the legacy
-     * backend-keyed `agentModelSettings` blob instead.
+     * passthrough so readers get the parsed shape. Optional for historical
+     * envelopes that did not capture model selections.
      */
     agents: collaborationAgentsMapSchema.optional(),
   })
@@ -107,22 +103,13 @@ const collaborationFeatureSnapshotWorkflowSchema = z.object({
   resolvedConfig: resolvedCollaborationConfigSchema,
 });
 
-const discriminatedUnion = z.discriminatedUnion("origin", [
-  collaborationFeatureSnapshotUserSchema,
-  collaborationFeatureSnapshotWorkflowSchema,
-]);
-
-export const collaborationFeatureSnapshotSchema = z.preprocess((value) => {
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    !("origin" in value)
-  ) {
-    return { ...(value as Record<string, unknown>), origin: "user" };
-  }
-  return value;
-}, discriminatedUnion);
+export const collaborationFeatureSnapshotSchema = z.discriminatedUnion(
+  "origin",
+  [
+    collaborationFeatureSnapshotUserSchema,
+    collaborationFeatureSnapshotWorkflowSchema,
+  ],
+);
 
 export type CollaborationFeatureSnapshot = z.infer<
   typeof collaborationFeatureSnapshotSchema

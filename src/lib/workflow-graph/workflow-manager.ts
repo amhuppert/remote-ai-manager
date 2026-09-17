@@ -289,8 +289,8 @@ export class WorkflowDefinitionApprovalRequiredError extends Error {
 
   constructor(
     readonly executionId: string,
-    readonly definitionId: string,
-    readonly definitionRevision: number,
+    readonly definitionId: string | null,
+    readonly definitionRevision: number | null,
   ) {
     super(
       `Workflow execution ${executionId} was created and parked awaiting definition approval`,
@@ -507,7 +507,7 @@ export class WorkflowDefinitionRevisionMismatchError extends Error {
   readonly code = "definition_revision_mismatch" as const;
 
   constructor(
-    readonly definitionId: string,
+    readonly definitionId: string | null,
     readonly expectedRevision: number,
     readonly actualRevision: number,
   ) {
@@ -2136,7 +2136,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           resolvedHaltReason: GraphWorkflowHaltReason | null;
         } = { resolvedHaltReason: null };
         let hasInterrupted = false;
-        let mergeRetryContextIds: string[] = [];
         let resetJoinIds: string[] = [];
         let laneConversationIdsToAbort: string[] = [];
         let refilledRoundContextIds: string[] = [];
@@ -2286,7 +2285,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // instead of dispatching the first batch (#80, design 3.8).
         execution.laneReservations = {};
 
-        const retryIds: string[] = [];
         const refilledRoundIds: string[] = [];
         const retiredRoundIds: string[] = [];
         for (const contextState of Object.values(execution.contextStates)) {
@@ -2296,12 +2294,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           // leave the context permanently ineligible. Clear every stamp so the
           // fresh generation re-schedules from a clean slate (Design 3.1).
           contextState.reservedByBatchId = null;
-          // in-progress: the merge's success write was fenced out (resume
-          // landed mid-git-operation) or the server died mid-merge. The
-          // context is completed so it is never rescheduled and downstream
-          // eligibility requires merged-success — without a retry the
-          // execution wedges. The merge runner reconciles against whatever
-          // actually landed on the branch.
+          // Clear stale failure bookkeeping so the replacement loop can
+          // reconcile landing evidence against the lane branch. A failed
+          // status otherwise overrides even a commit that reached the branch.
           if (
             contextState.mergeStatus === "merged-failed" ||
             contextState.mergeStatus === "in-progress"
@@ -2310,10 +2305,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
               execution,
               contextState.contextId,
               "pending",
-              { reason: "manager.resume_merge_retry" },
+              { reason: "manager.resume_landing_reconciliation" },
             );
             contextState.lastMergeError = null;
-            retryIds.push(contextState.contextId);
             continue;
           }
           // A context that tripped the circuit breaker is active+running at
@@ -2376,10 +2370,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             }
           }
         }
-        mergeRetryContextIds = retryIds;
         refilledRoundContextIds = refilledRoundIds;
         retiredRoundContextIds = retiredRoundIds;
-        execution.pendingMergeRetry = retryIds;
 
         hasInterrupted = Object.values(execution.taskStates).some(
           (ts) => ts.status === "interrupted",
@@ -2393,7 +2385,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           previousStatus,
           resumeCapture,
           hasInterrupted,
-          mergeRetryContextIds,
           resetJoinIds,
           laneConversationIdsToAbort,
           refilledRoundContextIds,
@@ -2419,7 +2410,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         previousStatus,
         resumeCapture,
         hasInterrupted,
-        mergeRetryContextIds,
         resetJoinIds,
         laneConversationIdsToAbort,
         refilledRoundContextIds,
@@ -2479,15 +2469,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       refilledRoundContextIds,
       retiredRoundContextIds,
     });
-    if (mergeRetryContextIds.length > 0) {
-      execLogger.lifecycle("resume.merge_retry_scheduled", {
-        retryContextIds: mergeRetryContextIds,
-      });
-      logger.info("graph-workflow.resume.merge_retry_scheduled", {
-        executionId: nextExecution.id,
-        retryContextIds: mergeRetryContextIds,
-      });
-    }
     if (resetJoinIds.length > 0) {
       execLogger.lifecycle("resume.join_retry_scheduled", {
         resetJoinIds,

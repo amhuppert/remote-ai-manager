@@ -318,7 +318,10 @@ function listLibSources(dir: string): string[] {
       (rel) =>
         rel.endsWith(".ts") &&
         !rel.includes(".test.") &&
-        !rel.startsWith("agent-backends/"),
+        !rel.startsWith("agent-backends/") &&
+        // Frozen one-way translation, not a runtime consumer. Keep this exact
+        // exception aligned with the migration boundary in seam-adoption.ts.
+        rel !== "state-store/migrations/0051-retire-stored-shape-readers.ts",
     )
     .map((rel) => path.join(dir, rel));
 }

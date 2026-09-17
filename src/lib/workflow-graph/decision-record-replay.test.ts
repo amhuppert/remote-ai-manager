@@ -1,5 +1,5 @@
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 /**
  * The closeout replay proof for D4 R13.3.
  *
@@ -398,7 +398,7 @@ describe("R13.3 — expansion decisions replay from durable records", () => {
       );
 
       const service = createGraphWorkflowExpansionService({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
         mutateActive: repository.mutateActive,
         buildLiveEditDeps: () => Promise.resolve(makeLiveEditDeps()),

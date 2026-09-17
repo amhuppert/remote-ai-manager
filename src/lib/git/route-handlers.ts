@@ -47,6 +47,8 @@ import {
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { evaluateMergeInitiation } from "@/lib/workflows/merge/initiation";
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
+import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
 import { createLogger, withTracing } from "@/lib/logging";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { getStateDb } from "@/lib/state-store/store";
@@ -60,6 +62,10 @@ type RouteContext = {
 };
 
 export interface GitRouteDeps {
+  getMergePolicy(): Pick<
+    WorkflowComposition,
+    "mergeAssociation" | "deliveryGate"
+  >;
   resolveProjectPath(name: string): Promise<string | null>;
   getSession(
     projectPath: string,
@@ -165,6 +171,7 @@ export interface GitRouteDeps {
 
 function defaultDeps(): GitRouteDeps {
   return {
+    getMergePolicy: getProductionWorkflowComposition,
     resolveProjectPath: defaultResolveProjectPath,
     getSession: defaultGetSession,
     getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
@@ -498,12 +505,15 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     if (!r.ok) return r.response;
     const { projectPath, projectName, sessionName, session } = r.value;
 
+    const policy = deps.getMergePolicy();
     const admission = await evaluateMergeInitiation({
       projectPath,
       projectName,
       sessionName,
       surface: "merge-route",
       readActiveExecution: deps.getActiveGraphWorkflowExecution,
+      association: policy.mergeAssociation,
+      gate: policy.deliveryGate,
     });
     if (!admission.admitted) {
       const { refusal } = admission;

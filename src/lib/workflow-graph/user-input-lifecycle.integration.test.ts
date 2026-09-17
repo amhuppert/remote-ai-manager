@@ -1,7 +1,7 @@
 import { createExecutionLoopFixture } from "@/lib/workflow-graph/testing/execution-loop-fixture";
 import { type ExecutionLoopFixtureDeps } from "@/lib/workflow-graph/testing/execution-loop-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
@@ -339,7 +339,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     };
 
     return {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
       contextScheduler: {
         scheduleEligibleContexts: async () => ({
@@ -364,7 +364,6 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       },
       mergeMutex: { withMergeMutex: async (_k, fn) => fn() },
       sessionGitLock: { withSessionGitLock: async (_k, fn) => fn() },
-      mergeRunner: { run: vi.fn() },
       soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
       laneCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -756,7 +755,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {

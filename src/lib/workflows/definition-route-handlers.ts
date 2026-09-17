@@ -1,3 +1,5 @@
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
+import type { GraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createLogger, type Logger } from "@/lib/logging";
@@ -217,6 +219,7 @@ type RouteContext = {
 };
 
 export interface WorkflowDefinitionRouteDeps {
+  getExecutionContract(): GraphExecutionContract;
   resolveProjectPath(name: string): Promise<string | null>;
   readConfig(): Promise<GlobalConfig>;
   /**
@@ -308,6 +311,8 @@ const defaultManagedDefinitions: ManagedWorkflowDefinitionPolicy = {
 };
 
 const defaultDeps: WorkflowDefinitionRouteDeps = {
+  getExecutionContract: () =>
+    getProductionWorkflowComposition().executionContract,
   resolveProjectPath: defaultResolveProjectPath,
   readConfig,
   readRepoConfig,
@@ -886,6 +891,7 @@ export function createWorkflowDefinitionRouteHandlers(
           : null;
       let blockingBefore: number | null = null;
       return runDefinitionEditRequest({
+        executionContract: deps.getExecutionContract(),
         rawBody,
         notFoundError: "Workflow not found",
         loadRecord: () => deps.getDefinition(projectPath, workflowId),

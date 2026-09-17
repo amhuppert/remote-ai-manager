@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -478,7 +478,7 @@ describe("Loop-Until-Done — exhaustion halt and cap-raise resume (R15.3)", () 
           },
         },
         {
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
           getActiveExecution: run.repository.getActive,
           mutateActive: run.repository.mutateActive,
           buildLiveEditDeps: async () => harnessLiveEditDeps(),

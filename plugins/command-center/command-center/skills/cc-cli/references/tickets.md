@@ -55,10 +55,8 @@ kind, description, and exact retrieval command in text and `attachmentIndex` in
 JSON. `list --attachments` adds the same bounded index for shown rows, at one
 request per shown ticket. `attach` creates four canonical kinds, each with a
 required description: file snapshot, conversation compaction snapshot, live
-session pointer, or Markdown note. `attach ticket` remains a compatibility
-alias for `relation add --role related`; it calls the relationship route and
-creates no attachment. Migrated relationship ids remain usable with
-`attachment get|update|remove`; refresh stays conversation-only.
+session pointer, or Markdown note. Use `relation add --role related` to link
+tickets, and `relation get|update|remove` to inspect or change a relationship.
 
 **Designed friction.** Treat self-link, duplicate-edge, graph-cycle,
 same-project hierarchy, and append-only/provenance refusals as deliberate; read

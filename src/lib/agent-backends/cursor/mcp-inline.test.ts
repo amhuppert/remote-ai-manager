@@ -421,10 +421,6 @@ class InProcessWorkerHost implements CursorProcessHost {
     return this.ticks.has(pid) ? pid : null;
   }
 
-  async startTicks(pid: number): Promise<string | null> {
-    return this.ticks.get(pid) ?? null;
-  }
-
   isGroupAlive(pgid: number): boolean {
     return this.aliveGroups.has(pgid);
   }

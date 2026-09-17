@@ -8,7 +8,7 @@ import {
   CURSOR_SANDBOX_OPTIONS,
   CURSOR_SETTING_SOURCES,
 } from "./policy";
-import { CURSOR_IPC_CODEC_VERSION, parseParentFrame } from "./worker/ipc";
+import { parseParentFrame } from "./worker/ipc";
 
 describe("cursor phase 1 policy", () => {
   it("pins the exact tested policy values", () => {
@@ -62,7 +62,6 @@ describe("cursor phase 1 policy", () => {
     // only fail once a real worker started.
     for (const mode of ["create", "resume"] as const) {
       const parsed = parseParentFrame({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "attachAgent",
         mode,
         ref: mode === "resume" ? "agent-ref-1" : null,

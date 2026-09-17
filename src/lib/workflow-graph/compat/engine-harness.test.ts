@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { workflowSemanticDefinitionSchema } from "../definition-schemas";
 import { runEngineScenario } from "./engine-harness";
-import { createNonParticipatingGraphExecutionContract } from "../execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 
 const CONTEXT_ID = "context-collision";
 const LEFT_SEAT = "left";
@@ -136,7 +136,7 @@ describe("engine harness validator-attempt accounting", () => {
       },
       {
         executionContract: {
-          ...createNonParticipatingGraphExecutionContract(),
+          ...createTestGraphExecutionContract(),
           validateTaskCompletion: () => ({
             ok: false,
             code: "task-evidence-required",

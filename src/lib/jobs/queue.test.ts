@@ -1,3 +1,6 @@
+import { createProductionSpecWorkflowComposition } from "../specs/production-workflow-composition";
+import type { MergeAssociationInput } from "../workflows/merge/association-port";
+import type { WorkflowComposition } from "../workflows/production-contracts";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,27 +9,19 @@ import { fromPromise } from "xstate";
 import { defaultGitClient } from "../git/client";
 import {
   abortSessionJob,
-  dispatchMergeJob,
+  dispatchMergeJob as dispatchMergeJobWithComposition,
   dispatchCommitJob,
-  dispatchResolveConflictsJob,
+  dispatchResolveConflictsJob as dispatchResolveConflictsJobWithComposition,
   dispatchRebaseJob,
   getJob,
   getActiveJobs,
   getConflictAnalysis,
   getFinalizingSessionMergeJob,
-  runRegisteredMergeJob,
+  runRegisteredMergeJob as runRegisteredMergeJobWithLifecycle,
   _resetForTesting,
   type AcquireSessionLockFn,
 } from "./queue";
 import { mergeMachine } from "../workflows/merge/machine";
-import {
-  registerMergeAssociationResolver,
-  _resetMergeAssociationResolverForTesting,
-} from "../workflows/merge/association-port";
-import {
-  registerMergeDeliveryLifecycle,
-  _resetMergeDeliveryLifecycleForTesting,
-} from "../workflows/merge/delivery-lifecycle-port";
 import { commitMachine } from "../workflows/commit/machine";
 import { rebaseMachine } from "../workflows/rebase/machine";
 import type {
@@ -296,6 +291,18 @@ async function waitForJobCompletions(): Promise<void> {
   pendingJobCompletions.clear();
 }
 
+let composition: WorkflowComposition;
+const dispatchMergeJob = (
+  input: Parameters<typeof dispatchMergeJobWithComposition>[0],
+) => dispatchMergeJobWithComposition(input, composition);
+const dispatchResolveConflictsJob = (
+  input: Parameters<typeof dispatchResolveConflictsJobWithComposition>[0],
+) => dispatchResolveConflictsJobWithComposition(input, composition);
+const runRegisteredMergeJob = (
+  input: Parameters<typeof runRegisteredMergeJobWithLifecycle>[0],
+) =>
+  runRegisteredMergeJobWithLifecycle(input, composition.mergeDeliveryLifecycle);
+
 const BASE_MERGE_PARAMS = {
   projectPath: "/projects/foo",
   projectName: "foo",
@@ -419,6 +426,7 @@ describe("background-jobs", () => {
     // against an isolated store this test can read back from.
     testDb = _createTestDb({ inMemory: true });
     _installTestDb(testDb);
+    composition = createProductionSpecWorkflowComposition();
     mergeIntentsRepo = createMergeIntentsRepo(testDb);
     notificationsRepo = createNotificationsRepo(testDb);
 
@@ -1893,11 +1901,6 @@ describe("background-jobs", () => {
   // merge association at dispatch (MA1/MA2/MA5)
   // ----------------------------------------------------------
   describe("merge association at dispatch", () => {
-    afterEach(() => {
-      _resetMergeAssociationResolverForTesting();
-      _resetMergeDeliveryLifecycleForTesting();
-    });
-
     function completeCleanMerge(): void {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
@@ -1908,8 +1911,8 @@ describe("background-jobs", () => {
 
     it("stamps resolved provenance durably on the job and gates the merge", async () => {
       completeCleanMerge();
-      registerMergeAssociationResolver({
-        resolve(input) {
+      Object.assign(composition.mergeAssociation, {
+        resolve(input: MergeAssociationInput) {
           return input.sessionName === "my-session"
             ? {
                 kind: "linked",
@@ -1934,7 +1937,7 @@ describe("background-jobs", () => {
     });
 
     it("refuses dispatch with the resolver's refusal and creates no job", () => {
-      registerMergeAssociationResolver({
+      Object.assign(composition.mergeAssociation, {
         resolve() {
           return {
             kind: "refused",
@@ -1959,7 +1962,7 @@ describe("background-jobs", () => {
     it("does not consult the resolver when explicit provenance is supplied", async () => {
       completeCleanMerge();
       const resolve = vi.fn();
-      registerMergeAssociationResolver({ resolve });
+      Object.assign(composition.mergeAssociation, { resolve });
 
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -1975,7 +1978,7 @@ describe("background-jobs", () => {
       );
     });
 
-    it("passes through unlinked when no resolver is registered", async () => {
+    it("passes through unlinked when the session has no spec association", async () => {
       completeCleanMerge();
 
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
@@ -2019,10 +2022,10 @@ describe("background-jobs", () => {
       );
     });
 
-    it("notifies the registered delivery lifecycle when a gated final-publish merge completes", async () => {
+    it("notifies the injected delivery lifecycle when a gated final-publish merge completes", async () => {
       completeCleanMerge();
       const markDelivered = vi.fn().mockResolvedValue(undefined);
-      registerMergeDeliveryLifecycle({ markDelivered });
+      Object.assign(composition.mergeDeliveryLifecycle, { markDelivered });
 
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -2052,7 +2055,7 @@ describe("background-jobs", () => {
       });
       mockPublishActor.mockResolvedValue({ status: "up-to-date" as const });
       const markDelivered = vi.fn().mockResolvedValue(undefined);
-      registerMergeDeliveryLifecycle({ markDelivered });
+      Object.assign(composition.mergeDeliveryLifecycle, { markDelivered });
 
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -2072,7 +2075,7 @@ describe("background-jobs", () => {
     it("does not notify delivery for a linked merge that is not the final publish", async () => {
       completeCleanMerge();
       const markDelivered = vi.fn().mockResolvedValue(undefined);
-      registerMergeDeliveryLifecycle({ markDelivered });
+      Object.assign(composition.mergeDeliveryLifecycle, { markDelivered });
 
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -2084,7 +2087,7 @@ describe("background-jobs", () => {
       expect(markDelivered).not.toHaveBeenCalled();
     });
 
-    it("resolve-conflicts dispatch falls back to the registered resolver", async () => {
+    it("resolve-conflicts dispatch falls back to the injected resolver", async () => {
       mockResolveConflictsActor.mockResolvedValue({
         status: "resolved",
         conflicts: [],
@@ -2094,7 +2097,7 @@ describe("background-jobs", () => {
         status: "completed" as const,
         mergeHash: "squash_hash",
       });
-      registerMergeAssociationResolver({
+      Object.assign(composition.mergeAssociation, {
         resolve() {
           return {
             kind: "linked",

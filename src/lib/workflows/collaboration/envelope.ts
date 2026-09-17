@@ -783,6 +783,7 @@ async function initializeEnvelope(
       updatedAt: timestamp,
       featureSnapshot: {
         ...previousSnapshot,
+        origin: "user",
         mode: "asymmetric",
         brief: input.brief,
         primaryAgentBackend: input.primaryAgentBackend,

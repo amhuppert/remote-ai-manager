@@ -1,3 +1,5 @@
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
+import type { GraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
@@ -47,6 +49,7 @@ type RouteContext = {
  * shape checks) runs automatically inside storage.create/update for that scope.
  */
 export interface TemplateLibraryRouteDeps {
+  getExecutionContract(): GraphExecutionContract;
   resolveProjectPath(name: string): Promise<string | null>;
   readConfig(): Promise<GlobalConfig>;
   list(projectPath: string): Promise<TemplateLibraryItem[]>;
@@ -70,6 +73,8 @@ const defaultLibrary = createTemplateLibraryService({
 });
 
 const defaultDeps: TemplateLibraryRouteDeps = {
+  getExecutionContract: () =>
+    getProductionWorkflowComposition().executionContract,
   resolveProjectPath: defaultResolveProjectPath,
   readConfig: defaultReadConfig,
   list: (projectPath) => defaultLibrary.list(projectPath),
@@ -257,6 +262,7 @@ export function createTemplateLibraryRouteHandlers(
     const { workflowId = "" } = await context.params;
     const rawBody = await request.json().catch(() => undefined);
     return runDefinitionEditRequest({
+      executionContract: deps.getExecutionContract(),
       rawBody,
       notFoundError: "Template not found",
       loadRecord: () => deps.getGlobal(workflowId),

@@ -1361,16 +1361,8 @@ function sampleAttachment(
 const LONG_DESCRIPTION = "x".repeat(150);
 
 describe("cctl ticket attach", () => {
-  it("keeps attach ticket as a narrow compatibility projection over the relationship route", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          relationship: { ...sampleRelationship, role: "related" },
-          tickets: [sampleDetail],
-        },
-        201,
-      ),
-    );
+  it("rejects the retired attach ticket alias before any request", async () => {
+    const host = makeHost(() => jsonResponse({}));
     const result = await runCli(
       [
         "ticket",
@@ -1385,29 +1377,8 @@ describe("cctl ticket attach", () => {
       baseEnv,
       host,
     );
-
-    expect(result.exitCode).toBe(0);
-    const request = firstOf(host.requests, "request");
-    expect(new URL(request.url).pathname).toBe(
-      "/api/projects/cc/tickets/12/relationships",
-    );
-    expect(JSON.parse(request.init.body ?? "{}")).toEqual({
-      target: { projectName: "other", number: 7 },
-      role: "related",
-      description: "same release",
-    });
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      attachment: {
-        id: "rel-1",
-        ticketId: "ticket-1",
-        payload: {
-          kind: "related_ticket",
-          ticketId: "ticket-2",
-          identifierSnapshot: "other#7",
-        },
-      },
-    });
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
   });
 
   it("exits 2 naming the offending kind and the registry's kinds", async () => {
@@ -1419,7 +1390,7 @@ describe("cctl ticket attach", () => {
     );
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('unknown ticket attach kind "url"');
-    for (const kind of ["file", "conversation", "session", "ticket", "note"]) {
+    for (const kind of ["file", "conversation", "session", "note"]) {
       expect(result.stderr, kind).toContain(kind);
     }
     expect(host.requests).toHaveLength(0);
@@ -1430,7 +1401,6 @@ describe("cctl ticket attach", () => {
     const invocations = [
       ["ticket", "attach", "note", "12", "some text"],
       ["ticket", "attach", "session", "12", "csm/fix"],
-      ["ticket", "attach", "ticket", "12", "7"],
       ["ticket", "attach", "conversation", "12"],
       ["ticket", "attach", "file", "12", "logs/ci.txt"],
     ];
@@ -1445,7 +1415,6 @@ describe("cctl ticket attach", () => {
   it("exits 2 before any network call on extra positional arguments for every kind", async () => {
     const invocations = [
       ["ticket", "attach", "note", "12", "md", "extra"],
-      ["ticket", "attach", "ticket", "12", "7", "extra"],
       ["ticket", "attach", "session", "12", "s1", "extra"],
       ["ticket", "attach", "conversation", "12", "conv-1", "extra"],
       ["ticket", "attach", "file", "12", "a.txt", "extra"],
@@ -1933,70 +1902,6 @@ describe("cctl ticket attachment get — file content", () => {
 });
 
 describe("cctl ticket attachment", () => {
-  it("accepts the narrow legacy relationship projections from get, update, and remove", async () => {
-    const legacyAttachment = sampleAttachment(
-      "rel-1",
-      {
-        kind: "related_ticket",
-        ticketId: "ticket-2",
-        identifierSnapshot: "other#7",
-      },
-      "Related ticket",
-    );
-    const host = makeHost((request) => {
-      if (request.init.method === "PATCH") {
-        return jsonResponse({ ...legacyAttachment, description: "updated" });
-      }
-      if (request.init.method === "DELETE") {
-        return jsonResponse({
-          attachmentId: "rel-1",
-          ticketId: "ticket-1",
-          kind: "related_ticket",
-          ticketUpdatedAt: "2026-01-03T00:00:00Z",
-        });
-      }
-      return jsonResponse({
-        kind: "related_ticket",
-        attachment: legacyAttachment,
-        available: true,
-        ticket: { ...sampleDetail, projectName: "other", number: 7 },
-        followCommand: "cctl ticket get 'other#7'",
-      });
-    });
-
-    const got = await runCli(
-      ["ticket", "attachment", "get", "12", "rel-1"],
-      baseEnv,
-      host,
-    );
-    const updated = await runCli(
-      [
-        "ticket",
-        "attachment",
-        "update",
-        "12",
-        "rel-1",
-        "--description",
-        "updated",
-      ],
-      baseEnv,
-      host,
-    );
-    const removed = await runCli(
-      ["ticket", "attachment", "remove", "12", "rel-1", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(got.exitCode).toBe(0);
-    expect(got.stdout).toContain("related ticket: other#7");
-    expect(updated.exitCode).toBe(0);
-    expect(removed.exitCode).toBe(0);
-    expect(JSON.parse(removed.stdout)).toMatchObject({
-      removed: { kind: "related_ticket", attachmentId: "rel-1" },
-    });
-  });
-
   it.each([
     {
       state: "pending" as const,

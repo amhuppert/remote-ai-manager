@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
@@ -224,7 +224,7 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       name === "repo" ? PROJECT_PATH : null;
 
     const liveEditApplyDeps = {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSession: fixture.store.getSession,
       getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
       mutateActive: repository.mutateActive,

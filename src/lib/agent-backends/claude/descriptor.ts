@@ -126,10 +126,8 @@ export const claudeConversationFsWriteRestriction = "enforced" as const;
 /**
  * Claude's auto-memory is off in every environment Command Center launches.
  * The Agent SDK exposes the lever on the `Settings` layer CC already supplies,
- * which outranks the machine's `~/.claude/settings.json` — but NOT the managed
- * policy tier, so the claim is only true because each launch also verifies the
- * effective cascade and refuses both when policy overrides it and when a policy
- * source is present that the resolver cannot read (see `./native-memory.ts`).
+ * which overrides user and project settings on CC's unmanaged hosts.
+ * The shared launch check reads these flags once for the server process.
  * `autoDreamEnabled` is the same switch for the background consolidation pass
  * — leaving it on would keep a writer running against a store nothing reads.
  *
@@ -140,7 +138,7 @@ export const claudeConversationFsWriteRestriction = "enforced" as const;
 export const claudeNativeMemory: BackendNativeMemory = {
   mechanism: "disabled",
   lever:
-    "SDK Settings autoMemoryEnabled=false, autoDreamEnabled=false; launch refused when the effective policy tier cannot be proven off",
+    "SDK Settings autoMemoryEnabled=false, autoDreamEnabled=false; launch refused if the shared flags are unreadable",
 };
 
 export interface ClaudeDescriptorDeps {

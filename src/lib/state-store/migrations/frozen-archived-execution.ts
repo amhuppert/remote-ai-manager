@@ -2,38 +2,10 @@ import { z } from "zod";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 
 /**
- * The read-only decode floor for ARCHIVED graph-workflow execution blobs.
- *
- * Agent assignments replaced the bare implementer config and the
- * provider-named singleton validator by hard cutover: live configuration and
- * saved definitions migrate once and every other legacy shape is refused
- * loudly. Archived executions are the single approved exception — they are
- * finished history nobody can re-run or re-author, so they are decoded on read
- * and never rewritten.
- *
- * The exception is exactly as wide as the shapes that were legal before the
- * cutover and no wider, and it applies to whole blobs rather than to fields.
- * The former schemas are reproduced below, and a blob is decoded ONLY when
- * every context in it is completely pre-cutover — both roles, in every
- * context. A blob is written by one code generation, so a mixture of
- * generations (an assignment implementer beside a singleton validator, or a
- * legacy context beside a current one) was never a state this system could
- * produce; it is corruption, and it stays refused. Deciding field by field
- * would let those hybrids through, turning a read-compatibility floor into the
- * inbound compatibility parser the charter forbids.
- *
- * Every schema, catalog, and identity below is FROZEN: a literal copy taken at
- * cutover time that binds no live module. The gate must answer "was this shape
- * legal before the cutover?", a question whose answer was fixed then and cannot
- * change. Reaching for the live model catalog or config schemas would let an
- * unrelated later edit — retiring a model, tightening a policy — silently
- * widen, narrow, or break the decoding of records written years earlier.
- *
- * The content hasher is the one admitted non-`zod` import, and it is not part of
- * the gate: it runs only AFTER a blob has been accepted, over a frozen local
- * literal, so it cannot change which records decode. The synthesized snapshot's
- * hashes have to be computed the way every other snapshot's are, or they would
- * not verify against the same contract.
+ * Frozen pre-assignment archive transform for migration 0051 only.
+ * Whole blobs must belong to one historical generation; mixed or malformed
+ * role shapes remain untouched. Local schemas and historical defaults ensure
+ * later catalog edits cannot reinterpret a past execution's runtime.
  */
 
 /**
@@ -283,7 +255,31 @@ function upgradeContext(context: unknown): Record<string, unknown> | undefined {
   if (implementer === undefined) return undefined;
   const contextValidator = upgradeContextValidator(context.contextValidator);
   if (contextValidator === undefined) return undefined;
-  return { ...context, implementer, contextValidator };
+  const collaboration = context.collaboration;
+  if (!isRecord(collaboration) || !isRecord(collaboration.secondAgent)) {
+    return { ...context, implementer, contextValidator };
+  }
+  const agent = collaboration.secondAgent.value;
+  if (!isRecord(agent) || "modelSelection" in agent) {
+    return { ...context, implementer, contextValidator };
+  }
+  const legacyAgent = legacyAgentConfigSchema.safeParse(agent);
+  if (!legacyAgent.success) return undefined;
+  const retained = { ...agent };
+  delete retained.model;
+  delete retained.reasoningEffort;
+  return {
+    ...context,
+    implementer,
+    contextValidator,
+    collaboration: {
+      ...collaboration,
+      secondAgent: {
+        ...collaboration.secondAgent,
+        value: { ...retained, ...upgradeAgent(legacyAgent.data) },
+      },
+    },
+  };
 }
 
 /**

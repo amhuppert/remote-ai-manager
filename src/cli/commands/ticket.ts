@@ -84,9 +84,6 @@ import {
   buildStatusUpdatePageProjection,
   buildTicketGetProjection,
   emitTicketDisclosure,
-  legacyRelatedTicketAttachmentSchema,
-  legacyRemovedRelatedTicketSchema,
-  legacyResolvedRelatedTicketSchema,
   renderRelationshipDetailText,
   renderRelationshipPageText,
   renderStatusUpdateDetailText,
@@ -98,7 +95,7 @@ import {
  * `cctl ticket` — the agent ticket command group (ticket-system design §CLI
  * Contract): CRUD (`create|list|get|update|delete`), relationship and
  * append-only status-update commands, four canonical context attachments plus
- * the `attach ticket` relationship compatibility alias, and per-attachment
+ * ticket relationships, and per-attachment
  * operations (`attachment get|update|refresh|remove`). Ticket references come
  * in two forms: a bare `<number>` resolving through the ambient project scope,
  * and the cross-scope `<project>#<number>` that works from any conversation.
@@ -322,12 +319,6 @@ function statusUpdatesPath(
   return updateId === undefined
     ? base
     : `${base}/${encodePathSegment(updateId)}`;
-}
-
-/** `attachments:` block for text output — entries via the shared renderer. */
-function renderIndexText(entries: AttachmentIndexEntry[]): string {
-  if (entries.length === 0) return "attachments: none\n";
-  return `attachments:\n${renderAttachmentIndexLines(entries).join("\n")}\n`;
 }
 
 function sessionDetailLines(
@@ -1701,7 +1692,6 @@ const ATTACH_ARG_NOUN = {
   file: "<path>",
   conversation: "<conversationId>",
   session: "<sessionName>",
-  ticket: "<ticket>",
   note: '"<markdown>"',
 } as const;
 type AttachKind = keyof typeof ATTACH_ARG_NOUN;
@@ -1761,14 +1751,13 @@ async function runTicketAttach(
         runTicketAttachKind("conversation", r, flags, values, env, host),
       session: (r) =>
         runTicketAttachKind("session", r, flags, values, env, host),
-      ticket: (r) => runTicketAttachKind("ticket", r, flags, values, env, host),
       note: (r) => runTicketAttachKind("note", r, flags, values, env, host),
     },
   });
 }
 
 /**
- * Everything the five attach kinds share: flag allowlist, host-ticket
+ * Everything the four attach kinds share: flag allowlist, host-ticket
  * reference, the mandatory description, and the single kind-specific
  * positional. `rest` starts after the kind token.
  */
@@ -1819,19 +1808,6 @@ async function runTicketAttachKind(
   const target = resolved.target;
   const identifier = `${target.projectName}#${ref.number}`;
 
-  if (kind === "ticket") {
-    return attachRelatedTicketCompatibility(
-      rest.slice(1),
-      description,
-      target,
-      ref,
-      flags,
-      env,
-      json,
-      host,
-    );
-  }
-
   if (kind === "file") {
     return attachFile(
       rest.slice(1),
@@ -1875,7 +1851,7 @@ async function runTicketAttachKind(
  * ticket carries its own scope when the qualified form is used.
  */
 async function buildJsonAttachPayload(
-  kind: Exclude<AttachKind, "file" | "ticket">,
+  kind: Exclude<AttachKind, "file">,
   args: string[],
   flags: GlobalFlags,
   values: Record<string, string>,
@@ -1956,106 +1932,6 @@ async function buildJsonAttachPayload(
   };
 }
 
-async function attachRelatedTicketCompatibility(
-  args: string[],
-  description: string,
-  source: TicketTarget,
-  sourceRef: TicketRef,
-  flags: GlobalFlags,
-  env: CliEnv,
-  json: boolean,
-  host: CliHost,
-): Promise<CliResult> {
-  const relatedRaw = args[0];
-  if (relatedRaw === undefined) {
-    return usageFailure(
-      `ticket attach ticket requires a related <ticket> argument (${REF_USAGE})`,
-      json,
-    );
-  }
-  const related = parseTicketRef(relatedRaw);
-  if (!related.ok) return usageFailure(related.message, json);
-  const target = await resolveTicketTarget(related.ref, flags, env, host);
-  if (!target.ok) return target.result;
-
-  const result = await cliRequest(host, {
-    server: source.server,
-    token: source.token,
-    tokenSource: source.tokenSource,
-    method: "POST",
-    path: relationshipsPath(source.projectName, sourceRef.number),
-    body: {
-      target: {
-        projectName: target.target.projectName,
-        number: related.ref.number,
-      },
-      role: "related",
-      description,
-    },
-  });
-  if (result.kind !== "ok") return ticketRequestFailure(result, json);
-  const parsed = ticketRelationshipMutationResponseSchema.safeParse(
-    result.body,
-  );
-  if (!parsed.success) {
-    return invalidResponseFailure({
-      what: `ticket attach ticket on ${source.projectName}#${sourceRef.number}`,
-      issues: parsed.error.issues,
-      json,
-    });
-  }
-  const sourceTicket = parsed.data.tickets.find(
-    (ticket) =>
-      ticket.projectName === source.projectName &&
-      ticket.number === sourceRef.number,
-  );
-  if (sourceTicket === undefined) {
-    return invalidResponseFailure({
-      what: `ticket attach ticket on ${source.projectName}#${sourceRef.number}`,
-      issues: [
-        {
-          path: ["tickets"],
-          message: "response omitted the source ticket",
-        },
-      ],
-      json,
-    });
-  }
-  const relationship = parsed.data.relationship;
-  const attachment = legacyRelatedTicketAttachmentSchema.safeParse({
-    id: relationship.id,
-    ticketId: sourceTicket.id,
-    description:
-      relationship.description.trim() === ""
-        ? "Related ticket"
-        : relationship.description,
-    payload: {
-      kind: "related_ticket",
-      ticketId: relationship.otherTicket.id,
-      identifierSnapshot: `${target.target.projectName}#${related.ref.number}`,
-    },
-    createdAt: relationship.createdAt,
-    updatedAt: relationship.updatedAt,
-  });
-  if (!attachment.success) {
-    return invalidResponseFailure({
-      what: `ticket attach ticket on ${source.projectName}#${sourceRef.number}`,
-      issues: attachment.error.issues,
-      json,
-    });
-  }
-  const identifier = `${source.projectName}#${sourceRef.number}`;
-  return {
-    exitCode: EXIT_OK,
-    stdout: render(
-      json,
-      `attached related_ticket ${attachment.data.id} to ${identifier}\n`,
-      { ok: true, attachment: attachment.data },
-    ),
-    stderr: "",
-  };
-}
-
 async function attachFile(
   args: string[],
   description: string,
@@ -2107,7 +1983,7 @@ async function attachFile(
 
 function attachedResult(
   body: unknown,
-  kindArg: Exclude<AttachKind, "ticket">,
+  kindArg: AttachKind,
   identifier: string,
   json: boolean,
 ): CliResult {
@@ -2200,7 +2076,6 @@ const resolvedAttachmentSchema = z.union([
     conversationIds: z.array(z.string()),
     readCommands: z.array(z.string()),
   }),
-  legacyResolvedRelatedTicketSchema,
   z.looseObject({
     kind: z.literal("note"),
     attachment: ticketAttachmentSchema,
@@ -2210,14 +2085,8 @@ const resolvedAttachmentSchema = z.union([
 
 type AttachmentVerb = "get" | "update" | "refresh" | "remove";
 
-const attachmentMutationResponseSchema = z.union([
-  ticketAttachmentSchema,
-  legacyRelatedTicketAttachmentSchema,
-]);
-const removedAttachmentSchema = z.union([
-  deletedTicketAttachmentSchema,
-  legacyRemovedRelatedTicketSchema,
-]);
+const attachmentMutationResponseSchema = ticketAttachmentSchema;
+const removedAttachmentSchema = deletedTicketAttachmentSchema;
 type ResolvedAttachmentBody = z.infer<typeof resolvedAttachmentSchema>;
 
 function unresolvedConversationRefreshResult(
@@ -2303,18 +2172,7 @@ function renderResolvedText(
       resolved.finished ? "finished" : "live"
     }, ${resolved.conversationIds.length} conversation(s))\nread commands:\n${commands}\n`;
   }
-  if (resolved.available !== true) {
-    return `${header}\nrelated ticket ${resolved.identifierSnapshot ?? "(unknown)"} is no longer available (deleted)\n`;
-  }
-  const ticket = resolved.ticket;
-  const relatedIndex = buildAttachmentIndex({
-    identifier: identifierOf(ticket),
-    attachments: ticket.attachments,
-    mode: "full",
-  });
-  const follow =
-    resolved.followCommand ?? `cctl ticket get ${identifierOf(ticket)}`;
-  return `${header}\nrelated ticket: ${identifierOf(ticket)}  ${ticket.title} (${ticket.status})\nfollow: ${follow}\n${renderIndexText(relatedIndex)}`;
+  throw new Error("Unknown attachment kind");
 }
 
 type ResolvedFileAttachment = Extract<ResolvedAttachmentBody, { kind: "file" }>;

@@ -1,3 +1,4 @@
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AgentBackendsConfig,
@@ -709,6 +710,7 @@ describe("ordinary authored-launch callers", () => {
       ...expectedProject.launch,
     });
     const projectHandlers = createWorkflowDefinitionRouteHandlers({
+      getExecutionContract: createTestGraphExecutionContract,
       planReviews: unreviewedPlanReviewLookup,
       resolveProjectPath: async () => "/repo",
       readConfig: async () => globalConfig,
@@ -827,6 +829,7 @@ describe("ordinary authored-launch callers", () => {
       ...expectedProject.launch,
     });
     const templateHandlers = createTemplateLibraryRouteHandlers({
+      getExecutionContract: createTestGraphExecutionContract,
       resolveProjectPath: async () => "/repo",
       readConfig: async () => globalConfig,
       list: async () => [],
@@ -921,6 +924,7 @@ describe("ordinary authored-launch callers", () => {
       update: [] as WorkflowDefinitionDraft[],
     };
     const projectHandlers = createWorkflowDefinitionRouteHandlers({
+      getExecutionContract: createTestGraphExecutionContract,
       planReviews: unreviewedPlanReviewLookup,
       resolveProjectPath: async () => "/repo",
       readConfig: async () => globalConfig,
@@ -972,6 +976,7 @@ describe("ordinary authored-launch callers", () => {
       update: [] as WorkflowDefinitionDraft[],
     };
     const templateHandlers = createTemplateLibraryRouteHandlers({
+      getExecutionContract: createTestGraphExecutionContract,
       resolveProjectPath: async () => "/repo",
       readConfig: async () => globalConfig,
       list: async () => [],

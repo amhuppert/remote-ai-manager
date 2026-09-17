@@ -12,9 +12,7 @@ vi.mock("@/lib/logging", async (importOriginal) => ({
 
 import { _resetPublicationForTesting } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
-import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
 import { graphWorkflowHaltReasonSchema } from "@/lib/workflow-graph/schemas";
-import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import {
   approveAndSignOffSpine,
@@ -44,15 +42,13 @@ describe("delivery-approval reachability across the gate and the request-approva
 
   beforeEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     world = createSpecSpineWorld();
   });
 
   afterEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     _resetPublicationForTesting();
   });
 

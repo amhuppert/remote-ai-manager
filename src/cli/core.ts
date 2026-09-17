@@ -112,22 +112,6 @@ async function maybeFetchHelpContext(
  * failure whose hint lists the parent's children. When the resolved entry opts
  * into dynamic context, server-rendered blocks are appended best-effort (§4.4).
  */
-/**
- * `workflow execution …` / `workflow exec …` are dispatch-rewrite aliases for
- * `workflow live …` (doc 06, D10). The rewrite must also apply to help lookup so
- * `cctl workflow execution get --help` resolves the one `workflow live` help node
- * (the aliases get no separate entries).
- */
-function rewriteWorkflowLiveAlias(path: string[]): string[] {
-  if (
-    path[0] === "workflow" &&
-    (path[1] === "execution" || path[1] === "exec")
-  ) {
-    return ["workflow", "live", ...path.slice(2)];
-  }
-  return path;
-}
-
 async function resolveHelp(
   rawHelpPath: string[],
   flags: GlobalFlags,
@@ -135,7 +119,7 @@ async function resolveHelp(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
-  const helpPath = rewriteWorkflowLiveAlias(rawHelpPath);
+  const helpPath = rawHelpPath;
   const first = helpPath[0];
   if (first === undefined || first === "help") {
     return helpResult(USAGE, json);
@@ -213,16 +197,8 @@ export async function runCli(
       ? probe
       : parseArgv(
           argv,
-          new Set(
-            booleanFlagArgsForCommand(
-              rewriteWorkflowLiveAlias(probe.positionals),
-            ),
-          ),
-          new Set(
-            emptyValueFlagArgsForCommand(
-              rewriteWorkflowLiveAlias(probe.positionals),
-            ),
-          ),
+          new Set(booleanFlagArgsForCommand(probe.positionals)),
+          new Set(emptyValueFlagArgsForCommand(probe.positionals)),
         );
   if (parsed.kind === "error") {
     // The parse failed, so flags.json is unavailable — honor a literal --json.

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   createContextValidationCoordinator,
   type ContextValidationCoordinatorDeps,
@@ -91,7 +90,7 @@ export type ExecutionServicesPorts = Omit<
   GraphWorkflowExecutionLoopDeps,
   "contextLanding"
 > &
-  Omit<ContextLandingDeps, "recordPendingHaltReason" | "createJobId">;
+  Omit<ContextLandingDeps, "recordPendingHaltReason">;
 
 export function createGraphWorkflowExecutionServices(
   ports: ExecutionServicesPorts,
@@ -99,7 +98,6 @@ export function createGraphWorkflowExecutionServices(
   const contextLanding = createContextLanding({
     ...ports,
     recordPendingHaltReason: ports.workflowManager.recordPendingHaltReason,
-    createJobId: ports.createJobId ?? randomUUID,
   });
   return createGraphWorkflowExecutionLoop({ ...ports, contextLanding });
 }
@@ -183,7 +181,6 @@ type EngineGit = Pick<
   | "parallelWorktrees"
   | "mergeMutex"
   | "sessionGitLock"
-  | "mergeRunner"
   | "soloContextCommitter"
   | "laneCommitter"
   | "joinRunner"

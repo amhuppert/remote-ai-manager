@@ -20,9 +20,8 @@
  *   acceptance from a reference or resends the input.
  * - `needs_reconciliation`: held, as it was.
  *
- * Every rule is a repository write under the operation's phase, so a
- * concurrent writer refuses this one with `stale_operation` and the loop
- * re-reads rather than trusting the phase it started from.
+ * Callers hold the actor host exclusive section. A refused write is an
+ * invariant failure, not a reason to retry against a different operation.
  *
  * Private to the conversation lifecycle (`boundaries.arch.test.ts`): the
  * manager, the actor input loader and startup rehydration call it; nothing
@@ -129,13 +128,6 @@ export async function readCheckpointAuthority(
   return settled(state, restingOutcome(state));
 }
 
-/**
- * How many times the loop re-reads after a refused write. Each refusal means
- * another writer moved the operation; two writers contending over one crashed
- * operation is already the unlikely case, and a third read settles it.
- */
-const MAX_RESTART_PASSES = 3;
-
 export async function hydrateCheckpointAuthority(
   key: CheckpointScopeKey,
   infra: CheckpointRestartInfrastructure,
@@ -144,141 +136,142 @@ export async function hydrateCheckpointAuthority(
   const fields = checkpointKeyLogFields(key);
 
   let state = await repo.getStateForAdmission(key);
-  for (let pass = 0; pass < MAX_RESTART_PASSES; pass += 1) {
-    const active = state.active;
-    if (active === null) return settled(state, { kind: "none" });
-    const at = infra.now();
-    const operationFields = {
-      ...fields,
-      operationId: active.id,
-      ordinal: active.ordinal,
-    };
-    switch (active.phase) {
-      case "ready":
-        return settled(state, { kind: "ready", operation: active });
-      case "needs_reconciliation":
-        log.info("checkpoint.restart.held", {
-          ...operationFields,
-          lastStablePhase: active.lastStablePhase,
-          errorCode: active.failure?.code ?? null,
+  const active = state.active;
+  if (active === null) return settled(state, { kind: "none" });
+  const at = infra.now();
+  const operationFields = {
+    ...fields,
+    operationId: active.id,
+    ordinal: active.ordinal,
+  };
+  switch (active.phase) {
+    case "ready":
+      return settled(state, { kind: "ready", operation: active });
+    case "needs_reconciliation":
+      log.info("checkpoint.restart.held", {
+        ...operationFields,
+        lastStablePhase: active.lastStablePhase,
+        errorCode: active.failure?.code ?? null,
+      });
+      return settled(state, { kind: "held", operation: active });
+    case "building": {
+      const failed = await repo.recordOutcome({
+        key,
+        operationId: active.id,
+        expectedPhase: "building",
+        phase: "failed",
+        failure: {
+          code: "interrupted",
+          message:
+            "generation was interrupted by a restart before its payload was frozen",
+        },
+        at,
+      });
+      if (failed.ok) {
+        log.warn("checkpoint.restart.build_interrupted", operationFields);
+        state = await repo.getStateForAdmission(key);
+        return settled(state, {
+          kind: "build_interrupted",
+          operation: failed.value,
         });
-        return settled(state, { kind: "held", operation: active });
-      case "building": {
-        const failed = await repo.recordOutcome({
-          key,
-          operationId: active.id,
-          expectedPhase: "building",
-          phase: "failed",
-          failure: {
-            code: "interrupted",
-            message:
-              "generation was interrupted by a restart before its payload was frozen",
-          },
-          at,
+      }
+      log.warn("checkpoint.restart.write_refused", {
+        ...operationFields,
+        refusal: failed.refusal.code,
+      });
+      throw new Error(`checkpoint restart refused: ${failed.refusal.code}`);
+    }
+    case "retiring": {
+      const committed = await repo.commitReady({
+        key,
+        operationId: active.id,
+        at,
+      });
+      if (committed.ok) {
+        log.info("checkpoint.restart.retirement_completed", operationFields);
+        state = await repo.getStateForAdmission(key);
+        return settled(state, {
+          kind: "retirement_completed",
+          operation: committed.value,
         });
-        if (failed.ok) {
-          log.warn("checkpoint.restart.build_interrupted", operationFields);
-          state = await repo.getStateForAdmission(key);
-          return settled(state, {
-            kind: "build_interrupted",
-            operation: failed.value,
-          });
-        }
+      }
+      if (
+        committed.refusal.code === "stale_operation" ||
+        committed.refusal.code === "checkpoint_not_found"
+      ) {
         log.warn("checkpoint.restart.write_refused", {
           ...operationFields,
-          refusal: failed.refusal.code,
-        });
-        break;
-      }
-      case "retiring": {
-        const committed = await repo.commitReady({
-          key,
-          operationId: active.id,
-          at,
-        });
-        if (committed.ok) {
-          log.info("checkpoint.restart.retirement_completed", operationFields);
-          state = await repo.getStateForAdmission(key);
-          return settled(state, {
-            kind: "retirement_completed",
-            operation: committed.value,
-          });
-        }
-        if (
-          committed.refusal.code === "stale_operation" ||
-          committed.refusal.code === "checkpoint_not_found"
-        ) {
-          log.warn("checkpoint.restart.write_refused", {
-            ...operationFields,
-            refusal: committed.refusal.code,
-          });
-          break;
-        }
-        // The clear itself was refused — the conversation this operation
-        // retires is not where the operation says it is. The payload stays
-        // durable and the operation stays owned for an explicit repair.
-        const blocked = await repo.recordOutcome({
-          key,
-          operationId: active.id,
-          expectedPhase: "retiring",
-          phase: "needs_reconciliation",
-          failure: {
-            code: "readiness_commit_refused",
-            message: `readiness was refused after a restart: ${committed.refusal.code}`,
-          },
-          at,
-        });
-        log.error("checkpoint.restart.retirement_blocked", {
-          ...operationFields,
           refusal: committed.refusal.code,
-          held: blocked.ok,
+        });
+        throw new Error(
+          `checkpoint restart refused: ${committed.refusal.code}`,
+        );
+      }
+      // The clear itself was refused — the conversation this operation
+      // retires is not where the operation says it is. The payload stays
+      // durable and the operation stays owned for an explicit repair.
+      const blocked = await repo.recordOutcome({
+        key,
+        operationId: active.id,
+        expectedPhase: "retiring",
+        phase: "needs_reconciliation",
+        failure: {
+          code: "readiness_commit_refused",
+          message: `readiness was refused after a restart: ${committed.refusal.code}`,
+        },
+        at,
+      });
+      if (!blocked.ok) {
+        throw new Error(`checkpoint restart refused: ${blocked.refusal.code}`);
+      }
+      log.error("checkpoint.restart.retirement_blocked", {
+        ...operationFields,
+        refusal: committed.refusal.code,
+        held: blocked.ok,
+      });
+      state = await repo.getStateForAdmission(key);
+      return settled(state, {
+        kind: "retirement_blocked",
+        operation: blocked.value,
+      });
+    }
+    case "delivering": {
+      const held = await repo.recordOutcome({
+        key,
+        operationId: active.id,
+        expectedPhase: "delivering",
+        attemptId: active.delivery?.attemptId,
+        phase: "needs_reconciliation",
+        failure: {
+          code: "delivery_unresolved",
+          message:
+            "a delivery attempt was interrupted by a restart before its acceptance was recorded; review queued deliveries, then run checkpoint reconcile or compact-context --recover",
+        },
+        at,
+      });
+      if (held.ok) {
+        log.error("checkpoint.restart.delivery_unresolved", {
+          ...operationFields,
+          attemptId: active.delivery?.attemptId ?? null,
+          queuedAttemptId: active.delivery?.queuedAttemptId ?? null,
         });
         state = await repo.getStateForAdmission(key);
         return settled(state, {
-          kind: "retirement_blocked",
-          operation: blocked.ok ? blocked.value : active,
+          kind: "delivery_unresolved",
+          operation: held.value,
         });
       }
-      case "delivering": {
-        const held = await repo.recordOutcome({
-          key,
-          operationId: active.id,
-          expectedPhase: "delivering",
-          attemptId: active.delivery?.attemptId,
-          phase: "needs_reconciliation",
-          failure: {
-            code: "delivery_unresolved",
-            message:
-              "a delivery attempt was interrupted by a restart before its acceptance was recorded; review queued deliveries, then run checkpoint reconcile or compact-context --recover",
-          },
-          at,
-        });
-        if (held.ok) {
-          log.error("checkpoint.restart.delivery_unresolved", {
-            ...operationFields,
-            attemptId: active.delivery?.attemptId ?? null,
-            queuedAttemptId: active.delivery?.queuedAttemptId ?? null,
-          });
-          state = await repo.getStateForAdmission(key);
-          return settled(state, {
-            kind: "delivery_unresolved",
-            operation: held.value,
-          });
-        }
-        log.warn("checkpoint.restart.write_refused", {
-          ...operationFields,
-          refusal: held.refusal.code,
-        });
-        break;
-      }
-      case "applied":
-      case "failed":
-      case "cancelled":
-        // Not an active phase: the repository's active lookup never returns
-        // one, so reaching here means the row changed under this read.
-        break;
+      log.warn("checkpoint.restart.write_refused", {
+        ...operationFields,
+        refusal: held.refusal.code,
+      });
+      throw new Error(`checkpoint restart refused: ${held.refusal.code}`);
     }
-    state = await repo.getStateForAdmission(key);
+    case "applied":
+    case "failed":
+    case "cancelled":
+      throw new Error(
+        `checkpoint restart found inactive phase: ${active.phase}`,
+      );
   }
-  return settled(state, restingOutcome(state));
 }

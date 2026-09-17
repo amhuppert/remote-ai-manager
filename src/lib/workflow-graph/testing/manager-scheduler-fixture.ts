@@ -65,8 +65,8 @@ export interface InMemoryExecutionRepository {
 }
 
 export type CreateSeedCapture = {
-  definitionId: string;
-  definitionRevision: number;
+  definitionId: string | null;
+  definitionRevision: number | null;
   executionId: string;
   startedAt: string;
   inputs: Record<string, string>;
@@ -132,10 +132,7 @@ export function createRepository(
       // The fake mirrors the real repository's provenance derivation rather
       // than inventing one, so a test that reads back `seedDefinitionId` is
       // reading the same rule production applies.
-      const provenance = buildExecutionProvenance(
-        seed.source,
-        seed.executionId,
-      );
+      const provenance = buildExecutionProvenance(seed.source);
       createCalls.push({
         definitionId: provenance.seedDefinitionId,
         definitionRevision: provenance.seedDefinitionRevision,

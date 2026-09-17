@@ -3,7 +3,6 @@ import type { CursorParentFrame } from "./ipc";
 import {
   errnoCode,
   readProcessGroupIdSync,
-  readProcessStartTicks,
 } from "@/lib/shared/process-identity";
 
 /**
@@ -13,7 +12,7 @@ import {
  * Spawning, signalling, and liveness probing are the supervisor's whole
  * teardown mechanism, so they are the one thing its tests must be able to
  * script: a fake host lets every rung of the ladder — orderly exit, SIGTERM
- * escalation, SIGKILL, a surviving group, a recycled pid — be exercised without
+ * escalation, SIGKILL, a surviving group — be exercised without
  * a real process in a state that is hard to produce on demand.
  */
 
@@ -39,7 +38,6 @@ export interface CursorProcessHost {
   spawn(request: CursorSpawnRequest): CursorSpawnedProcess;
   /** Null when the group cannot be read; callers treat that as unverifiable. */
   processGroupId(pid: number): number | null;
-  startTicks(pid: number): Promise<string | null>;
   isGroupAlive(pgid: number): boolean;
   signalGroup(pgid: number, signal: NodeJS.Signals): void;
 }
@@ -95,7 +93,6 @@ export function createCursorProcessHost(): CursorProcessHost {
       };
     },
     processGroupId: (pid) => readProcessGroupIdSync(pid),
-    startTicks: (pid) => readProcessStartTicks(pid),
     isGroupAlive(pgid) {
       try {
         process.kill(-pgid, 0);

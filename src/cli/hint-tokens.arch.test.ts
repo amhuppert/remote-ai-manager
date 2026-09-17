@@ -23,21 +23,6 @@ const CLI_ROOT = path.resolve(
 
 const REGISTRY = buildHelpRegistry(allHelpEntries());
 
-/**
- * `workflow execution …` / `workflow exec …` are dispatch-rewrite aliases for
- * `workflow live …` and carry no registry entries of their own, so a mention
- * spelling them resolves the same node the dispatcher would.
- */
-function rewriteAliases(tokens: readonly string[]): string[] {
-  if (
-    tokens[0] === "workflow" &&
-    (tokens[1] === "execution" || tokens[1] === "exec")
-  ) {
-    return ["workflow", "live", ...tokens.slice(2)];
-  }
-  return [...tokens];
-}
-
 function entryFor(tokens: readonly string[]): CommandHelpEntry | undefined {
   const entry = resolveHelpEntry(REGISTRY, [...tokens]);
   return entry !== undefined && entry.path.length === tokens.length
@@ -56,7 +41,7 @@ function entryFor(tokens: readonly string[]): CommandHelpEntry | undefined {
  * naming a verb under a live group that the registry no longer has.
  */
 function unresolvedPath(mention: readonly string[]): string | null {
-  const tokens = rewriteAliases(mention);
+  const tokens = mention;
   const head = tokens[0];
   if (head === undefined) return null;
   let entry = entryFor([head]);
@@ -125,14 +110,6 @@ describe("commands named in CLI text resolve against the registry", () => {
     ]);
 
     expect(hits.map((hit) => hit.command)).toEqual(["workflow rewind"]);
-  });
-
-  it("resolves the workflow live aliases the dispatcher rewrites", () => {
-    expect(unresolvedPath(["workflow", "execution", "get"])).toBeNull();
-    expect(unresolvedPath(["workflow", "exec", "get"])).toBeNull();
-    expect(unresolvedPath(["workflow", "execution", "rewind"])).toBe(
-      "workflow live rewind",
-    );
   });
 
   it("reads a real command path out of the registry it checks against", () => {

@@ -276,7 +276,7 @@ export class CodexConversationRuntime
    * its own kind from the fields above, and the id right above this one is a
    * redirect, so anything derived here would name the wrong conversation.
    */
-  private readonly conversationCapability: string | undefined;
+  private readonly workflowCallerConversationId: string | undefined;
   /**
    * Graph-workflow lane identity, present only for implementer-lane
    * conversations so the injected env carries CC_WORKFLOW_EXECUTION_ID /
@@ -285,7 +285,6 @@ export class CodexConversationRuntime
    */
   private readonly workflowExecutionId: string | undefined;
   private readonly workflowContextId: string | undefined;
-  private readonly workflowLaneCapability: string | undefined;
   private readonly deps: CodexConversationRuntimeDeps;
   private readonly resolvedModelSelection: ResolvedCodexModelSelection;
   private active: CodexTurnState | null = null;
@@ -311,10 +310,9 @@ export class CodexConversationRuntime
     this.conversationTarget = input.conversationTarget;
     this.ccScopeConversationId =
       input.ccScopeConversationId ?? input.conversationId;
-    this.conversationCapability = input.conversationCapability;
+    this.workflowCallerConversationId = input.workflowCallerConversationId;
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
-    this.workflowLaneCapability = input.workflowLaneCapability;
     this.resolvedModelSelection = projectAdmittedCodexModelSelection(
       input.modelSelection,
     );
@@ -1111,17 +1109,14 @@ export class CodexConversationRuntime
           conversationId: this.ccScopeConversationId,
         },
         configDir: this.deps.getConfigDir(),
-        ...(this.conversationCapability !== undefined
-          ? { conversationCapability: this.conversationCapability }
+        ...(this.workflowCallerConversationId !== undefined
+          ? { workflowCallerConversationId: this.workflowCallerConversationId }
           : {}),
         ...(this.workflowExecutionId !== undefined
           ? { workflowExecutionId: this.workflowExecutionId }
           : {}),
         ...(this.workflowContextId !== undefined
           ? { workflowContextId: this.workflowContextId }
-          : {}),
-        ...(this.workflowLaneCapability !== undefined
-          ? { workflowLaneCapability: this.workflowLaneCapability }
           : {}),
       }),
     );

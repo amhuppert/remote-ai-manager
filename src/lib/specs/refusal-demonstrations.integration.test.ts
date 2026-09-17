@@ -18,9 +18,7 @@ import {
   setPublicationBroadcastForTesting,
 } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
-import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
 import { graphWorkflowHaltReasonSchema } from "@/lib/workflow-graph/schemas";
-import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import type { SpecEventRow } from "./schemas";
 import {
@@ -180,15 +178,13 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
 
   beforeEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     world = createSpecSpineWorld();
   });
 
   afterEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     _resetPublicationForTesting();
   });
 
@@ -789,7 +785,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       ),
     );
 
-    world.registerMergeComposition();
+    world.composeMerge();
     // Same modeled lineage as a healthy candidate — the demonstrated refusal
     // comes from the divergent candidate tree, not a broken history.
     const branchHead = commitShas[commitShas.length - 1];
@@ -1191,7 +1187,7 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       cliEnv,
       bridgeHost(world),
     );
-    expect(structured.exitCode).toBe(0);
+    expect(structured.exitCode, structured.stderr).toBe(0);
     const envelope = JSON.parse(structured.stdout) as {
       blocked: string;
       next: string;
@@ -1293,7 +1289,7 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       cliEnv,
       bridgeHost(world),
     );
-    expect(structured.exitCode).toBe(0);
+    expect(structured.exitCode, structured.stderr).toBe(0);
     const status = JSON.parse(structured.stdout).status as {
       pendingApprovals: unknown[];
       revisionSignOff: { revisionNumber: number; state: string };

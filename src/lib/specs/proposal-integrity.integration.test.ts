@@ -17,8 +17,6 @@ import {
   setPublicationBroadcastForTesting,
 } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
-import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
-import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import type { Refusal, SpecRevision } from "./schemas";
 import {
@@ -125,16 +123,14 @@ describe("dismiss superseded proposal through the production route", () => {
 
   beforeEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     world = createSpecSpineWorld();
     setPublicationBroadcastForTesting(() => ({ delivered: true }));
   });
 
   afterEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     _resetPublicationForTesting();
   });
 
@@ -235,16 +231,14 @@ describe("approve remaining and sign off through the production route", () => {
 
   beforeEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     world = createSpecSpineWorld();
     setPublicationBroadcastForTesting(() => ({ delivered: true }));
   });
 
   afterEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     _resetPublicationForTesting();
   });
 

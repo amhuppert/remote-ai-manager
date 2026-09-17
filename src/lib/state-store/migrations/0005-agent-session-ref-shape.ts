@@ -158,8 +158,7 @@ function migrateTable(db: Db, table: string): void {
   // concurrent old build can never be overwritten by a stale scan. Inside the
   // immediate transaction the guard cannot miss (the write lock is held across
   // scan and update); it is defense in depth in case that lock discipline is
-  // ever weakened. A row it skips is left as-is — the read path decodes legacy
-  // shapes, so an unmigrated row degrades to the tolerated old-writer case.
+  // ever weakened. A skipped row remains intact and is logged.
   const guardedUpdate = db.prepare(
     `UPDATE ${table}
         SET backend_ref = ?, forked_from = ?, machine_snapshot = ?

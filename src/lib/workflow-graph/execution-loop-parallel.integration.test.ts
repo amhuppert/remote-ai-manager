@@ -11,7 +11,7 @@ import type {
   ExecutionMutationOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -486,7 +486,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -549,7 +549,7 @@ describe("execution loop — parallel integration", () => {
 
     const soloCommitCalls: string[] = [];
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -563,7 +563,6 @@ describe("execution loop — parallel integration", () => {
       parallelWorktrees,
       mergeMutex,
       sessionGitLock,
-      mergeRunner,
       joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async (input) => {
@@ -636,7 +635,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -696,14 +695,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      async run() {
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -719,7 +712,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -768,7 +760,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -804,14 +796,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      async run() {
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -827,7 +813,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -869,7 +854,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -927,7 +912,7 @@ describe("execution loop — parallel integration", () => {
     });
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -941,7 +926,6 @@ describe("execution loop — parallel integration", () => {
       parallelWorktrees,
       mergeMutex,
       sessionGitLock,
-      mergeRunner,
       joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -1003,7 +987,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -1066,14 +1050,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      async run() {
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -1089,7 +1067,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -1144,7 +1121,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -1215,14 +1192,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      async run() {
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -1238,7 +1209,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -1283,7 +1253,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -1359,16 +1329,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeOrder: string[] = [];
-    const mergeRunner: GraphMergeRunner = {
-      async run(input) {
-        mergeOrder.push(input.contextId);
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -1384,7 +1346,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -1417,7 +1378,6 @@ describe("execution loop — parallel integration", () => {
     // The pending halt drains before the quiescence publish runs, so no lane
     // is published while halted; B's completed work stays committed on its
     // lane, retained for resume.
-    expect(mergeOrder).toEqual([]);
     expect(result.contextStates["ctx-a"]?.status).toBe("halted");
     expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("not-applicable");
     expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-success");
@@ -1438,7 +1398,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -1550,7 +1510,6 @@ describe("execution loop — parallel integration", () => {
         }) as never;
       },
       getConversation: (async () => null) as never,
-      mintLaneCapability: () => null,
       composeWriteEnvelope: (input) =>
         composeImplementerLaneWriteEnvelope(input, { scratchRootDir }),
     });
@@ -1561,7 +1520,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -1633,10 +1592,6 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      run: vi.fn(),
-    };
-
     const soloCommit = vi.fn(async () => ({
       status: "committed" as const,
       hash: "unexpected",
@@ -1645,7 +1600,7 @@ describe("execution loop — parallel integration", () => {
     const resolveHead = vi.fn(async () => null);
     const joinRun = vi.fn();
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -1661,7 +1616,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: { run: joinRun },
       soloContextCommitter: {
         commit: soloCommit,
@@ -1691,7 +1645,6 @@ describe("execution loop — parallel integration", () => {
     expect(result.status).toBe("completed");
     expect(parallelWorktrees.provisionCalls).toEqual([]);
     expect(parallelWorktrees.disposeCalls).toEqual([]);
-    expect(mergeRunner.run).not.toHaveBeenCalled();
     expect(joinRun).not.toHaveBeenCalled();
     expect(soloCommit).not.toHaveBeenCalled();
     expect(laneCommit).not.toHaveBeenCalled();
@@ -1753,7 +1706,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -1817,7 +1770,7 @@ describe("execution loop — parallel integration", () => {
     const mergeMutex = createPerSessionMergeMutex();
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -1831,7 +1784,6 @@ describe("execution loop — parallel integration", () => {
       parallelWorktrees,
       mergeMutex,
       sessionGitLock,
-      mergeRunner,
       joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -1879,7 +1831,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -1949,7 +1901,7 @@ describe("execution loop — parallel integration", () => {
     });
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -1963,7 +1915,6 @@ describe("execution loop — parallel integration", () => {
       parallelWorktrees,
       mergeMutex,
       sessionGitLock,
-      mergeRunner,
       joinRunner: createJoinRunner({ mergeRunner, sessionGitLock, mergeMutex }),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -2066,7 +2017,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -2117,14 +2068,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      async run() {
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -2140,7 +2085,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -2268,7 +2212,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -2315,17 +2259,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    // The mid-run failure is a lane-commit failure: under the lane model no
-    // session merges run mid-wave, so a failing lane commit is what records
-    // the pending merge_failure halt while siblings are still in flight.
-    const mergeRunner: GraphMergeRunner = {
-      async run() {
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -2341,7 +2276,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -2433,7 +2367,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -2490,16 +2424,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeOrder: string[] = [];
-    const mergeRunner: GraphMergeRunner = {
-      async run(input) {
-        mergeOrder.push(input.contextId);
-        return buildSuccessMergeOutput();
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -2515,7 +2441,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -2559,9 +2484,6 @@ describe("execution loop — parallel integration", () => {
       expect(runIterationCalls).toContain("ctx-b");
       expect(runIterationCalls).toContain("ctx-d");
       expect(runIterationCalls).not.toContain("ctx-c");
-      // The siblings' work is lane-committed; their publish waits for
-      // quiescence, which the parked gate prevents — so no session merge runs.
-      expect(mergeOrder).toEqual([]);
 
       const raceOutcome = await Promise.race([
         runPromise.then(() => "settled" as const),
@@ -2582,7 +2504,6 @@ describe("execution loop — parallel integration", () => {
     );
     expect(result.contextStates["ctx-c"]?.status).toBe("pending");
     expect(runIterationCalls).not.toContain("ctx-c");
-    expect(mergeOrder).toEqual([]);
     // The abort retains ctx-b's unpublished lane for forensics/resume.
     expect(parallelWorktrees.disposeCalls).toEqual([]);
   });
@@ -2620,7 +2541,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -2676,12 +2597,6 @@ describe("execution loop — parallel integration", () => {
     };
 
     const ordered: string[] = [];
-    const mergeRunner: GraphMergeRunner = {
-      async run(input) {
-        ordered.push(`merge:${input.contextId}`);
-        return buildSuccessMergeOutput();
-      },
-    };
     const orderedLaneCommitter = {
       commit: async (input: { contextId: string }) => {
         ordered.push(`lane-commit:${input.contextId}`);
@@ -2707,7 +2622,7 @@ describe("execution loop — parallel integration", () => {
     });
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -2723,7 +2638,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -2814,7 +2728,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -2854,14 +2768,8 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const mergeRunner: GraphMergeRunner = {
-      async run() {
-        throw new Error("fan-in merge must not run for lane-isolated contexts");
-      },
-    };
-
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -2877,7 +2785,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner,
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -2961,7 +2868,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3015,7 +2922,7 @@ describe("execution loop — parallel integration", () => {
       acquireSessionLock: () => () => {},
     });
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -3029,7 +2936,6 @@ describe("execution loop — parallel integration", () => {
       parallelWorktrees,
       mergeMutex,
       sessionGitLock,
-      mergeRunner,
       joinRunner: createJoinRunner({
         mergeRunner,
         sessionGitLock,
@@ -3093,7 +2999,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3157,7 +3063,7 @@ describe("execution loop — parallel integration", () => {
     };
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -3173,11 +3079,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner: {
-        async run() {
-          return buildSuccessMergeOutput();
-        },
-      },
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -3237,7 +3138,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3303,7 +3204,7 @@ describe("execution loop — parallel integration", () => {
     };
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -3319,11 +3220,6 @@ describe("execution loop — parallel integration", () => {
       sessionGitLock: createSessionGitLock({
         acquireSessionLock: () => () => {},
       }),
-      mergeRunner: {
-        async run() {
-          return buildSuccessMergeOutput();
-        },
-      },
       joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),
@@ -3456,7 +3352,7 @@ describe("execution loop — parallel integration", () => {
       retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -3529,7 +3425,7 @@ describe("execution loop — parallel integration", () => {
     };
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       workflowManager: manager,
@@ -3543,7 +3439,6 @@ describe("execution loop — parallel integration", () => {
       parallelWorktrees,
       mergeMutex,
       sessionGitLock,
-      mergeRunner,
       joinRunner,
       soloContextCommitter: {
         commit: async () => ({ status: "skipped" }),

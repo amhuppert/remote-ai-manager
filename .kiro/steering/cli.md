@@ -152,10 +152,8 @@ still points at the old one.
 
 CC implements the shared exit taxonomy as `0` success, `1` operation failure, `2` local usage or
 validation failure, `3` connection/auth failure, and `4` build skew — the binary and the server are
-different builds. The "nothing changed" promise is scoped to the paths that earn it: a gated server
-refuses a mutation before its handler runs and a read's response is discarded unread, but a server
-that predates the gate runs a skewed mutation and only stamps the header, so that exit-4 text warns
-the mutation may have committed and to verify before retrying. That table is data (`EXIT_TAXONOMY` in `src/cli/exit-taxonomy.ts`, with each
+different builds. The server refuses skewed mutations before their handlers run, and the CLI
+discards mismatched read responses. Thus exit 4 means nothing changed. That table is data (`EXIT_TAXONOMY` in `src/cli/exit-taxonomy.ts`, with each
 code's meaning and recovery pointer): the `cctl exit-codes` command, its help node's rendered body,
 and the cc-cli SKILL.md exit-code table all derive from it rather than restating it, so a
 correction lands in one place instead of three. `exit-taxonomy.ts` sits below `shared.ts` in the

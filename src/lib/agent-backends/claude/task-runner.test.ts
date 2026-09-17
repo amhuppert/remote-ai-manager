@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // vi.mock is allowed for external packages and infrastructure with module-level side effects
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(),
-  resolveSettings: vi.fn(),
 }));
 
 // Records every emitted event so the secrets-discipline checks can read the
@@ -34,32 +33,14 @@ vi.mock("@/lib/shared/child-env", () => ({
   buildChildEnv: () => ({ ...childEnvState.env }),
 }));
 
-import { query, resolveSettings } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeTaskRunner } from "./task-runner";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import type { AgentTaskRequest } from "../task";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
-import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
+import { CONVERSATION_IDENTITY_ENV_VAR } from "@/lib/agent-gateway/conversation-identity";
 
 const mockQuery = vi.mocked(query);
-const mockResolveSettings = vi.mocked(resolveSettings);
-
-/** A resolved cascade carrying only what the managed policy tier supplied. */
-function managedPolicyTier(settings: Record<string, unknown>) {
-  return {
-    effective: settings,
-    provenance: Object.fromEntries(
-      Object.keys(settings).map((key) => [
-        key,
-        { source: "managed", policyOrigin: "file" },
-      ]),
-    ),
-    sources:
-      Object.keys(settings).length > 0
-        ? [{ source: "managed", settings, policyOrigin: "file" }]
-        : [],
-  } as unknown as Awaited<ReturnType<typeof resolveSettings>>;
-}
 
 function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
   return {
@@ -110,8 +91,6 @@ describe("ClaudeTaskRunner", () => {
     vi.clearAllMocks();
     logState.entries = [];
     childEnvState.env = {};
-    // The ordinary host: no managed policy has an opinion about auto-memory.
-    mockResolveSettings.mockResolvedValue(managedPolicyTier({}));
     runner = new ClaudeTaskRunner();
   });
 
@@ -150,67 +129,6 @@ describe("ClaudeTaskRunner", () => {
     expect(mockQuery.mock.calls[0]?.[0]?.options?.settings).toMatchObject({
       autoMemoryEnabled: false,
       autoDreamEnabled: false,
-    });
-  });
-
-  it("refuses to launch a task run when managed policy forces auto-memory back on", async () => {
-    // The settings the runner passes are the SDK's flag tier, which managed
-    // policy outranks. With no higher lever available, a run that started
-    // anyway would contradict the descriptor's `disabled` claim, so the run
-    // fails without ever reaching the SDK.
-    mockResolveSettings.mockResolvedValue(
-      managedPolicyTier({ autoDreamEnabled: true }),
-    );
-
-    const result = await runner.run(makeRequest());
-
-    expect(mockQuery).not.toHaveBeenCalled();
-    expect(result.error).toMatch(/managed policy/i);
-    expect(result.error).toContain("autoDreamEnabled");
-  });
-
-  it("refuses to launch a task run when an unverifiable policy helper is configured", async () => {
-    // Same omitted policy source as the conversation path: the resolver does
-    // not run the admin helper that the launched CLI does.
-    mockResolveSettings.mockResolvedValue(
-      managedPolicyTier({
-        autoMemoryEnabled: false,
-        autoDreamEnabled: false,
-        policyHelper: { path: "/opt/corp/policy-helper" },
-      }),
-    );
-
-    const result = await runner.run(makeRequest());
-
-    expect(mockQuery).not.toHaveBeenCalled();
-    expect(result.error).toContain("/opt/corp/policy-helper");
-  });
-
-  it("refuses to launch a task run when a forced remote settings refresh is configured", async () => {
-    mockResolveSettings.mockResolvedValue(
-      managedPolicyTier({
-        autoMemoryEnabled: false,
-        autoDreamEnabled: false,
-        forceRemoteSettingsRefresh: true,
-      }),
-    );
-
-    const result = await runner.run(makeRequest());
-
-    expect(mockQuery).not.toHaveBeenCalled();
-    expect(result.error).toContain("forceRemoteSettingsRefresh");
-  });
-
-  it("resolves the policy tier for the run's own working directory", async () => {
-    mockQuery.mockReturnValue(
-      makeStream([successResultMessage()]) as ReturnType<typeof query>,
-    );
-
-    await runner.run(makeRequest({ workingDirectory: "/test/elsewhere" }));
-
-    expect(mockResolveSettings).toHaveBeenCalledWith({
-      cwd: "/test/elsewhere",
-      settingSources: [],
     });
   });
 
@@ -272,7 +190,7 @@ describe("ClaudeTaskRunner", () => {
       );
 
       const env = mockQuery.mock.calls[0]?.[0]?.options?.env;
-      expect(env?.[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(undefined);
+      expect(env?.[CONVERSATION_IDENTITY_ENV_VAR]).toBe(undefined);
     });
 
     it("neutralizes ambient CC_* first, so no outer workflow identity survives", async () => {

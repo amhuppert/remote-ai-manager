@@ -229,7 +229,7 @@ export interface GraphWorkflowExecutionLoopDeps {
   /**
    * Read tracked dirty paths from the session worktree. Used by the pre-batch
    * preflight to halt before scheduling worktree-isolation contexts whose
-   * fan-in merge would inevitably fail. Inspection errors halt before admission.
+   * session publication would fail. Inspection errors halt before admission.
    */
   getSessionWorktreeDirtyPaths(input: {
     sessionWorktreePath: string;
@@ -1969,71 +1969,6 @@ export function createGraphWorkflowExecutionLoop(
       return true;
     }
 
-    async function processPendingMergeRetry(): Promise<void> {
-      while (execution.pendingMergeRetry.length > 0) {
-        const contextId = execution.pendingMergeRetry[0];
-        if (!contextId) break;
-        const state = execution.contextStates[contextId];
-        if (
-          !state ||
-          state.worktreePath === null ||
-          state.branchName === null
-        ) {
-          await deps.executionRepository
-            .mutateActive(input.projectPath, input.sessionName, (e) => {
-              const next = structuredClone(e);
-              next.pendingMergeRetry = next.pendingMergeRetry.filter(
-                (id) => id !== contextId,
-              );
-              return changed(next);
-            })
-            .then((mutation) => mutation.execution);
-          await refreshExecution();
-          continue;
-        }
-        execLogger?.lifecycle("merge.retry_attempted", { contextId });
-        logger.info("graph-workflow.merge.retry_attempted", {
-          executionId: execution.id,
-          contextId,
-        });
-        adoptExecution(
-          (
-            await contextLanding.land({
-              ...input,
-              executionId: execution.id,
-              contextId: contextId,
-              preTurnHeadSha: null,
-              target: {
-                isolation: "worktree",
-                laneId: null,
-                worktreePath: state.worktreePath,
-                branchName: state.branchName,
-              },
-            })
-          ).execution,
-        );
-
-        await refreshExecution();
-
-        const refreshedState = execution.contextStates[contextId];
-        if (refreshedState?.mergeStatus === "merged-success") {
-          await deps.executionRepository
-            .mutateActive(input.projectPath, input.sessionName, (e) => {
-              const next = structuredClone(e);
-              next.pendingMergeRetry = next.pendingMergeRetry.filter(
-                (id) => id !== contextId,
-              );
-              return changed(next);
-            })
-            .then((mutation) => mutation.execution);
-          await refreshExecution();
-          continue;
-        }
-        // The landing service has recorded the failed merge and its halt reason.
-        return;
-      }
-    }
-
     /**
      * Capture review evidence before work begins, alongside the attempt's
      * adoption baseline. Resumed attempts never replace either captured origin.
@@ -3058,9 +2993,6 @@ export function createGraphWorkflowExecutionLoop(
             cs.laneId,
             execution.executionLanes[cs.laneId]?.branchName ?? cs.branchName,
           );
-        } else if (cs.cleanupStatus !== "removed") {
-          // Legacy per-context worktree whose merge-time dispose did not land.
-          recordLane(cs.contextId, cs.branchName);
         }
       }
       if (laneBranches.size === 0) return;
@@ -3154,18 +3086,6 @@ export function createGraphWorkflowExecutionLoop(
             sessionName: input.sessionName,
           });
           break;
-        }
-
-        if (execution.pendingMergeRetry.length > 0 && inFlight.size === 0) {
-          await processPendingMergeRetry();
-          if (execution.pendingHaltReason !== null) {
-            execution = await deps.workflowManager.drainAndHalt({
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-            });
-            break;
-          }
-          continue;
         }
 
         if (inFlight.size === 0) {

@@ -15,8 +15,6 @@ import {
   setPublicationBroadcastForTesting,
 } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
-import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
-import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import type { DeliveryPlanBinding } from "./delivery-plan";
 import type { Spec, SpecDeliveryPlanAttemptRow } from "./schemas";
@@ -56,16 +54,14 @@ describe("spec abandon --execution retires the launched attempt", () => {
 
   beforeEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     world = createSpecSpineWorld();
     setPublicationBroadcastForTesting(() => ({ delivered: true }));
   });
 
   afterEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     _resetPublicationForTesting();
   });
 

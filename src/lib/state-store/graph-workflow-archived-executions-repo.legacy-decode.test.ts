@@ -9,6 +9,7 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
+import { migrateArchivedExecutionAssignments } from "./migrations/0051-archived-execution-shape";
 import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import {
@@ -121,6 +122,7 @@ function insertRawBlob(executionId: string, blob: unknown): void {
     "2026-01-02T00:00:00Z",
     JSON.stringify(blob),
   );
+  migrateArchivedExecutionAssignments(db);
 }
 
 function readRawBlob(executionId: string): string {
@@ -132,7 +134,7 @@ function readRawBlob(executionId: string): string {
   return row.execution_json;
 }
 
-describe("archived execution legacy decode floor", () => {
+describe("archived execution one-time assignment migration", () => {
   it("decodes a pre-assignment implementer into a built-in implementer assignment", () => {
     insertRawBlob("wf-legacy", legacyArchivedBlob());
 
@@ -340,7 +342,7 @@ describe("archived execution legacy decode floor", () => {
     });
   });
 
-  it("never rewrites the archived blob it decoded", () => {
+  it("does not rewrite a migrated archive on read", () => {
     const blob = legacyArchivedBlob();
     insertRawBlob("wf-legacy", blob);
     const before = readRawBlob("wf-legacy");
@@ -348,7 +350,7 @@ describe("archived execution legacy decode floor", () => {
     repo.findByExecution(PROJECT_PATH, SESSION_NAME, "wf-legacy");
 
     expect(readRawBlob("wf-legacy")).toBe(before);
-    expect(before).toContain('"type":"claude"');
+    expect(before).not.toContain('"type":"claude"');
   });
 
   it("still refuses a blob that is broken for reasons the floor does not cover", () => {
@@ -600,32 +602,5 @@ describe("listBySession", () => {
     expect(() =>
       repo.findByExecution(PROJECT_PATH, SESSION_NAME, "wf-broken"),
     ).toThrow(PersistenceError);
-  });
-});
-
-/**
- * The approved backward-compatibility exception is a FROZEN decoder: what the
- * gate accepts is the set of shapes that were legal before the cutover, fixed
- * at that moment. Binding it to a live schema would let a later catalog or
- * policy change silently widen, narrow, or break the decoding of records
- * written years earlier — history rewritten by an unrelated edit.
- */
-describe("the decode floor is frozen", () => {
-  it("gates archived blobs on locally reproduced schemas, not live ones", async () => {
-    const fs = await import("node:fs/promises");
-    const source = await fs.readFile(
-      new URL("../workflow-graph/archived-legacy-decode.ts", import.meta.url),
-      "utf8",
-    );
-
-    const specifiers = [...source.matchAll(/from\s+["']([^"']+)["']/g)].map(
-      (match) => match[1],
-    );
-    // An exact list, not a subset: any live schema, catalog, or resolver added
-    // to the decoder fails here. The content hasher is admitted because it runs
-    // after the gate, over a frozen local literal — it decides nothing about
-    // which blobs decode, and the snapshot hashes above must be computed by the
-    // same function that verifies them everywhere else.
-    expect(specifiers).toEqual(["zod", "@/lib/agent-profiles/hashing"]);
   });
 });

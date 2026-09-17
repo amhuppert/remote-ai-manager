@@ -140,12 +140,14 @@ function appendGraphWorkflowLines(
   lines.push(
     `${indent}  <workflow-status>${execution.status}</workflow-status>`,
   );
-  lines.push(
-    `${indent}  <seed-definition-id>${execution.seedDefinitionId}</seed-definition-id>`,
-  );
-  lines.push(
-    `${indent}  <seed-definition-revision>${execution.seedDefinitionRevision}</seed-definition-revision>`,
-  );
+  if (execution.seedDefinitionId !== null) {
+    lines.push(
+      `${indent}  <seed-definition-id>${execution.seedDefinitionId}</seed-definition-id>`,
+    );
+    lines.push(
+      `${indent}  <seed-definition-revision>${execution.seedDefinitionRevision}</seed-definition-revision>`,
+    );
+  }
 
   // Active context info
   const activeContextId = execution.activeContextIds[0];

@@ -4,7 +4,7 @@ import type {
   ExecutionMutationOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 /**
  * R3.3 — a pre-existing workflow still behaves the way it did, after the
  * cutover migrated it.
@@ -719,7 +719,7 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
     });
 
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       async resolveWorktreePath() {
         return "/repo/worktree";
       },

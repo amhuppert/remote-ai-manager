@@ -7,10 +7,7 @@ import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import { STRUCTURAL_REVISION_KEYS } from "@/lib/workflow-graph/structural-revision";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import { PersistenceError } from "../shared/errors";
-import {
-  decodeGraphWorkflowExecution,
-  type GraphWorkflowExecutionMigration,
-} from "./graph-workflow-execution-codec";
+import { decodeGraphWorkflowExecution } from "./graph-workflow-execution-codec";
 import { stableStringify } from "./serialization";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { checkRowColumnSize } from "./row-size-telemetry";
@@ -18,7 +15,6 @@ import { checkRowColumnSize } from "./row-size-telemetry";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.graph-workflow-executions");
-const parallelLogger = createLogger("graph-workflow-parallel");
 
 /**
  * Heavy, near-static fields of a {@link GraphWorkflowExecution} — the working
@@ -135,8 +131,8 @@ interface RuntimeProjections {
 
 interface ExecutionProjections extends RuntimeProjections {
   executionId: string;
-  seedDefinitionId: string;
-  seedDefinitionRevision: number;
+  seedDefinitionId: string | null;
+  seedDefinitionRevision: number | null;
   startedAt: string;
 }
 
@@ -330,21 +326,11 @@ function logAndThrowValidationFailure(
   });
 }
 
-/**
- * Merge a stored definition/runtime tier pair back into one
- * {@link GraphWorkflowExecution} candidate. The merged record runs through the
- * shared {@link decodeGraphWorkflowExecution} (legacy-upgrade + schema
- * validation), so the merge path and the vestigial sessions-column path share
- * one validation rule. Returns the decoded value plus an optional
- * `migration` describing a legacy upgrade the caller should persist.
- */
+/** Merge and validate a stored definition/runtime tier pair. */
 function mergeRow(
   identifier: string,
   row: ActiveStorageRow,
-): {
-  value: GraphWorkflowExecution;
-  migration: GraphWorkflowExecutionMigration | null;
-} {
+): GraphWorkflowExecution {
   let definition: unknown;
   let runtime: unknown;
   try {
@@ -400,7 +386,7 @@ function mergeRow(
       },
     ]);
   }
-  return { value: decoded.value, migration: decoded.migration };
+  return decoded.value;
 }
 
 function key(projectPath: string, sessionName: string): string {
@@ -619,22 +605,8 @@ export function createGraphWorkflowExecutionsRepo(
       ]);
     }
     const merged = mergeRow(`${projectPath}::${sessionName}`, row);
-    if (merged.migration !== null) {
-      // Emitted from the cached read only. `listActive` re-merges every row on
-      // every call (the feed polls it), so logging there would repeat a line
-      // per legacy row per poll for as long as the row stays unwritten.
-      emitOrDeferRepositoryLog(() =>
-        parallelLogger.info("graph-workflow.parallel.legacy_migrated", {
-          projectPath,
-          sessionName,
-          executionId: merged.migration?.executionId,
-          repairedFields: merged.migration?.repairedFields,
-          persisted: false,
-        }),
-      );
-    }
-    parsedByKey.set(cacheKey, merged.value);
-    return merged.value;
+    parsedByKey.set(cacheKey, merged);
+    return merged;
   }
 
   /**
@@ -752,20 +724,7 @@ export function createGraphWorkflowExecutionsRepo(
           `${row.project_path}::${row.session_name}`,
           row,
         );
-        if (merged.migration !== null) {
-          // Same read-only contract as readActive: the upgrade is handed back,
-          // never written back — a lookup by execution id must not be a writer.
-          emitOrDeferRepositoryLog(() =>
-            parallelLogger.info("graph-workflow.parallel.legacy_migrated", {
-              projectPath: row.project_path,
-              sessionName: row.session_name,
-              executionId: merged.migration?.executionId,
-              repairedFields: merged.migration?.repairedFields,
-              persisted: false,
-            }),
-          );
-        }
-        return merged.value;
+        return merged;
       });
     },
     setActive(projectPath, sessionName, execution, updatedAt) {
@@ -852,11 +811,11 @@ export function createGraphWorkflowExecutionsRepo(
             ]);
           }
           const identifier = `${row.project_path}::${row.session_name}`;
-          // Upgraded in memory like every other read: the feed calls this on a
+          // Validation stays read-only: the feed calls this on a
           // poll, and a launch admitted between two polls must not find its row
           // overwritten by an enumeration carrying a pre-launch snapshot.
           const merged = mergeRow(identifier, row);
-          result.set(key(row.project_path, row.session_name), merged.value);
+          result.set(key(row.project_path, row.session_name), merged);
         }
         return result;
       });

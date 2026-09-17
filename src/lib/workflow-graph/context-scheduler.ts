@@ -212,9 +212,8 @@ function findUpstreamCompletedOnLane(
  * Record how a just-dispatched context is going to land (D4 decision D8).
  *
  * The mode is read off the placement the dispatch just made, which is the only
- * point where all three shapes are distinguishable: a lane-bound context
- * commits on its lane, a session-bound one commits solo, and a legacy
- * laneId-null worktree context publishes through the fan-in squash merge.
+ * point where the destination is known: a lane-bound context commits on its
+ * lane, and a session-bound context commits solo.
  *
  * `baselineSha` stays null here: the lane head is resolved out of the write
  * queue, so the runner persists it as soon as it captures it — still before the
@@ -231,12 +230,10 @@ function recordDispatchLandingIntent(
     (context) => context.id === contextId,
   )?.placement;
   if (placement?.mode === "readOnly") return;
-  const mode =
-    state.laneId !== null
-      ? "lane_commit"
-      : state.isolation === "session"
-        ? "solo_commit"
-        : "fan_in_merge";
+  if (state.laneId === null && state.isolation === "worktree") {
+    throw new Error(`Worktree context "${contextId}" has no assigned lane`);
+  }
+  const mode = state.laneId !== null ? "lane_commit" : "solo_commit";
   recordLandingIntent(execution, contextId, {
     mode,
     laneId: state.laneId,

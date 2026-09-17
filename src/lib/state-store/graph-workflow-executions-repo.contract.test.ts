@@ -26,12 +26,6 @@ import type {
   GraphWorkflowLandingIntent,
 } from "@/lib/workflow-graph/schemas";
 import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
-import {
-  buildOneOffSeedCompatibilityFields,
-  buildSpecDeliverySeedCompatibilityFields,
-  ONE_OFF_SEED_DEFINITION_ID_PREFIX,
-  SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX,
-} from "@/lib/workflow-graph/execution-origin";
 import { executionLeaseAndResultDeliveries } from "./migrations/0024-execution-lease-and-result-deliveries";
 import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
@@ -1869,7 +1863,7 @@ describe("graph-workflow-executions-repo derived lease projection", () => {
     expect(after.lease_held).toBe(0);
   });
 
-  it("re-derives the projection when a legacy row is upgraded on read", () => {
+  it("re-derives the projection when a loaded row is written", () => {
     // Establish a row whose stored bytes say completed while the column lies.
     write({ status: "completed", haltReason: null, abandonment: null });
     db.prepare(
@@ -1894,16 +1888,10 @@ describe("graph-workflow-executions-repo derived lease projection", () => {
 });
 
 describe("graph-workflow-executions-repo one-off origin persistence", () => {
-  /**
-   * The pre-D7 required shape of the projection columns: every older reader,
-   * including the `NOT NULL` constraints themselves, resolves a run through
-   * these. A one-off run has no definition record anywhere, so it writes the
-   * legacy-shaped filler rather than leaving them empty.
-   */
-  const preD7ProjectionSchema = z.object({
+  const projectionSchema = z.object({
     execution_id: z.string().min(1),
-    seed_definition_id: z.string().min(1),
-    seed_definition_revision: z.number().int().min(1),
+    seed_definition_id: z.string().nullable(),
+    seed_definition_revision: z.number().int().min(1).nullable(),
     started_at: z.string().min(1),
     status: z.string().min(1),
   });
@@ -1913,11 +1901,12 @@ describe("graph-workflow-executions-repo one-off origin persistence", () => {
     return graphWorkflowExecutionSchema.parse({
       ...base,
       origin: { kind: "one_off", planName: "Ship the search box" },
-      ...buildOneOffSeedCompatibilityFields(base.id),
+      seedDefinitionId: null,
+      seedDefinitionRevision: null,
     });
   }
 
-  it("keeps a one-off row readable through the pre-D7 required-field shape", () => {
+  it("stores no saved definition identity for one-off rows", () => {
     repo.setActive(
       PROJECT_PATH,
       SESSION_NAME,
@@ -1933,10 +1922,10 @@ describe("graph-workflow-executions-repo one-off origin persistence", () => {
           WHERE project_path = ? AND session_name = ?`,
       )
       .get(PROJECT_PATH, SESSION_NAME);
-    expect(preD7ProjectionSchema.safeParse(row).success).toBe(true);
+    expect(projectionSchema.safeParse(row).success).toBe(true);
     expect(
-      (row as { seed_definition_id: string }).seed_definition_id,
-    ).toContain(ONE_OFF_SEED_DEFINITION_ID_PREFIX);
+      (row as { seed_definition_id: string | null }).seed_definition_id,
+    ).toBeNull();
   });
 
   it("reloads a one-off run by its origin, never by the seed sentinel", () => {
@@ -1957,9 +1946,8 @@ describe("graph-workflow-executions-repo one-off origin persistence", () => {
       planName: "Ship the search box",
     });
     expect(reloaded?.launchDocument).toEqual(execution.launchDocument);
-    // The filler survives untouched, so an older build still parses the row.
     expect(reloaded?.seedDefinitionId).toBe(execution.seedDefinitionId);
-    expect(reloaded?.seedDefinitionRevision).toBe(1);
+    expect(reloaded?.seedDefinitionRevision).toBeNull();
   });
 
   it("stores the same projections on a fresh floor and on a 0024-upgraded schema", async () => {
@@ -2023,10 +2011,10 @@ describe("graph-workflow-executions-repo one-off origin persistence", () => {
 });
 
 describe("graph-workflow-executions-repo spec-delivery origin persistence", () => {
-  const preD7ProjectionSchema = z.object({
+  const projectionSchema = z.object({
     execution_id: z.string().min(1),
-    seed_definition_id: z.string().min(1),
-    seed_definition_revision: z.number().int().min(1),
+    seed_definition_id: z.string().nullable(),
+    seed_definition_revision: z.number().int().min(1).nullable(),
     started_at: z.string().min(1),
     status: z.string().min(1),
   });
@@ -2040,11 +2028,12 @@ describe("graph-workflow-executions-repo spec-delivery origin persistence", () =
         specSlug: "conversation-compaction",
         candidateId: "cand-42",
       },
-      ...buildSpecDeliverySeedCompatibilityFields(base.id),
+      seedDefinitionId: null,
+      seedDefinitionRevision: null,
     });
   }
 
-  it("keeps a spec-delivery row readable through the pre-D7 required-field shape", () => {
+  it("stores no invented identity for definition-less spec deliveries", () => {
     repo.setActive(
       PROJECT_PATH,
       SESSION_NAME,
@@ -2060,10 +2049,10 @@ describe("graph-workflow-executions-repo spec-delivery origin persistence", () =
           WHERE project_path = ? AND session_name = ?`,
       )
       .get(PROJECT_PATH, SESSION_NAME);
-    expect(preD7ProjectionSchema.safeParse(row).success).toBe(true);
+    expect(projectionSchema.safeParse(row).success).toBe(true);
     expect(
-      (row as { seed_definition_id: string }).seed_definition_id,
-    ).toContain(SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX);
+      (row as { seed_definition_id: string | null }).seed_definition_id,
+    ).toBeNull();
   });
 
   it("reloads a spec-delivery run by its origin, never by the seed sentinel", () => {
@@ -2085,9 +2074,8 @@ describe("graph-workflow-executions-repo spec-delivery origin persistence", () =
       candidateId: "cand-42",
     });
     expect(reloaded?.launchDocument).toEqual(execution.launchDocument);
-    // The filler survives untouched, so an older build still parses the row.
     expect(reloaded?.seedDefinitionId).toBe(execution.seedDefinitionId);
-    expect(reloaded?.seedDefinitionRevision).toBe(1);
+    expect(reloaded?.seedDefinitionRevision).toBeNull();
   });
 });
 

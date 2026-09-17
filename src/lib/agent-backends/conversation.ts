@@ -289,19 +289,8 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
    * raw backend session id) that CC state cannot resolve.
    */
   ccScopeConversationId?: string;
-  /**
-   * The signed conversation capability workflow authority is derived from
-   * (D7 D11/D12), minted by the conversation actor for a durable ordinary
-   * conversation — one a human addresses directly.
-   *
-   * Minted upstream under the conversation's OWN id rather than derived here,
-   * because `ccScopeConversationId` above is a redirect: a collaboration lane
-   * points it at its originating conversation, so any authority derived from
-   * the CC-side id would be that human's. Runtimes that are handed none carry
-   * none, which is what keeps a lane, the planner, and a collaboration runtime
-   * unable to claim a launch origin.
-   */
-  conversationCapability?: string;
+  /** Actual caller ID for workflow coordination, distinct from a redirected CC routing ID. */
+  workflowCallerConversationId?: string;
   projectPath: string;
   projectName: string;
   /**
@@ -329,12 +318,6 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
    */
   workflowExecutionId?: string;
   workflowContextId?: string;
-  /**
-   * The signed implementer-lane capability (D4 R7), minted at dispatch and
-   * exported as CC_WORKFLOW_LANE_CAPABILITY. Present only for lanes whose
-   * dispatch could mint one; a lane without it simply cannot expand the graph.
-   */
-  workflowLaneCapability?: string;
   /**
    * Server-derived filesystem-write envelope this runtime's turns execute under
    * (see `fsWritePolicySchema`). Composed by the graph-workflow implementer
@@ -420,14 +403,10 @@ export interface ConversationBackendFactory {
 
 /**
  * The graph-workflow lane identity a conversation runs under: which execution
- * and context it implements, plus the signed capability that proves it is THAT
- * context's bound implementer (D4 R7). Carried as one value from the implementer
- * runner through the conversation actor to the session-env builder, so the three
- * fields cannot drift apart on the way.
+ * and context it implements. The server checks its conversation binding again
+ * when it mutates the execution.
  */
 export interface WorkflowLaneIdentity {
   executionId: string;
   contextId: string;
-  /** Absent when the server has no capability signing key. */
-  laneCapability?: string;
 }

@@ -6,7 +6,7 @@ import type {
   ExecutionMutationOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -21,7 +21,6 @@ import type {
   ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
-import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
@@ -32,7 +31,6 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import type { MergeOutput } from "@/lib/workflows/merge/types";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import { parseJsonl } from "@/lib/shared/read-jsonl";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
@@ -428,24 +426,6 @@ function createStartedExecution(
   };
 }
 
-function buildSuccessMergeOutput(): MergeOutput {
-  return {
-    status: "completed",
-    mergeHash: "merge-hash",
-    commitHash: "commit-hash",
-    error: null,
-    conflictFiles: [],
-    conflictAnalysis: null,
-    preparedSha: null,
-    expectedTargetSha: null,
-    parkedRef: null,
-    refreshWarning: null,
-    candidateValidation: null,
-    haltReason: null,
-    phase: null,
-  };
-}
-
 function createNoopJoinRunner(): JoinRunner {
   return {
     async run({ joinId, mutateActive }) {
@@ -519,12 +499,13 @@ const startRouteModules: RouteModules = {
 /** Evaluate the workflow modules again, as a second route module graph does. */
 async function loadSeparateRouteModules(): Promise<RouteModules> {
   vi.resetModules();
-  const [manager, loop, scheduler, fixture] = await Promise.all([
-    import("./workflow-manager"),
-    import("./execution-loop"),
-    import("./context-scheduler"),
-    import("./testing/execution-loop-fixture"),
-  ]);
+  // These entry points share cyclic dependencies. Evaluate one graph before
+  // requesting its other entry points so Vitest's loader cannot wait on its
+  // own in-flight imports. Each call still creates a separate route graph.
+  const manager = await import("./workflow-manager");
+  const loop = await import("./execution-loop");
+  const scheduler = await import("./context-scheduler");
+  const fixture = await import("./testing/execution-loop-fixture");
   return {
     createGraphWorkflowManager: manager.createGraphWorkflowManager,
     createContextScheduler: scheduler.createContextScheduler,
@@ -588,7 +569,7 @@ function createRouteManager(
     retireLaneConversation: () => {},
     stopExecutionLaneDevServers: async () => {},
 
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     executionRepository: fixture.repository,
     async loadDefinition() {
@@ -638,13 +619,8 @@ function createGeneration(fixture: Fixture, modules: RouteModules): Generation {
   const sessionGitLock = createSessionGitLock({
     acquireSessionLock: () => () => {},
   });
-  const mergeRunner: GraphMergeRunner = {
-    async run() {
-      return buildSuccessMergeOutput();
-    },
-  };
   const loop = modules.createExecutionLoopFixture({
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
     getSessionWorktreeDirtyPaths: async () => [],
     workflowManager: manager,
     executionRepository: fixture.repository,
@@ -657,7 +633,6 @@ function createGeneration(fixture: Fixture, modules: RouteModules): Generation {
     parallelWorktrees,
     mergeMutex,
     sessionGitLock,
-    mergeRunner,
     joinRunner: createNoopJoinRunner(),
     soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
     laneCommitter: {
@@ -671,7 +646,6 @@ function createGeneration(fixture: Fixture, modules: RouteModules): Generation {
     laneDriftAuditor: { audit: async () => ({ unattributedPaths: [] }) },
     resyncSharedIndex: async () => {},
     landingEvidenceProber: { probe: async () => new Map() },
-    readRepoConfig: async () => null,
     getMaxConcurrentQueries: async () => 4,
   });
 

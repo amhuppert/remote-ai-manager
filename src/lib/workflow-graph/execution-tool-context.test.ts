@@ -1,5 +1,5 @@
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
@@ -178,8 +178,7 @@ function buildToolContext(
     publishLiveEditApplied,
     readLiveOccupancy: factoryOptions.readLiveOccupancy ?? (() => null),
     executionContract:
-      factoryOptions.executionContract ??
-      createNonParticipatingGraphExecutionContract(),
+      factoryOptions.executionContract ?? createTestGraphExecutionContract(),
     now: () => "2026-03-27T12:00:00.000Z",
   };
   const factory = createGraphWorkflowExecutionToolContext(deps);
@@ -629,7 +628,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       });
     const { publishLiveEditApplied, deliver } = createTestLiveEditPublisher();
     const factory = createGraphWorkflowExecutionToolContext({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       executionRepository: {
         mutateActive: createFakeMutateActive(store, deliver),
       },
@@ -694,7 +693,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       },
     };
     const factory = createGraphWorkflowExecutionToolContext({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       executionRepository: {
         mutateActive: async (_projectPath, _sessionName, fn) => {
           return applyFixtureMutation(store.current, fn, (next) => {
@@ -769,7 +768,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       },
     };
     const factory = createGraphWorkflowExecutionToolContext({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       // A fence-honoring seam: it enforces the ambient loop fence with the real
       // `assertLoopFence` exactly as the production repository's `mutateActive`
       // does, so a superseded generation's write is rejected before it applies.
@@ -835,7 +834,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const sharedDocumentRegistry =
       createGraphWorkflowSharedDocumentRegistryService();
     const deps: GraphWorkflowExecutionToolContextDeps = {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       executionRepository: {
         mutateActive: createFakeMutateActive(store),
       },
@@ -913,7 +912,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
     };
     const { toolContext } = buildToolContext({});
     const factory = createGraphWorkflowExecutionToolContext({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       executionRepository: {
         mutateActive: async (_p, _s, fn) =>
           fn(structuredClone(createWorkflowExecution())) as never,
@@ -966,7 +965,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const sharedDocumentRegistry =
       createGraphWorkflowSharedDocumentRegistryService();
     const deps: GraphWorkflowExecutionToolContextDeps = {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       executionRepository: {
         mutateActive: createFakeMutateActive(store),
       },

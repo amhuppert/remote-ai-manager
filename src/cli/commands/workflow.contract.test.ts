@@ -6,7 +6,7 @@
 // @vitest-inputs src/lib/workflow-graph/execution-route-handlers.ts
 // @vitest-inputs src/lib/workflows/mutations.ts
 // @vitest-inputs src/app/api/projects/*/sessions/*/graph-workflow/*/route.ts
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import os from "node:os";
 import path from "node:path";
 import nodePath from "node:path";
@@ -45,17 +45,14 @@ import {
 } from "@/lib/conversations/schemas";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import {
-  CONVERSATION_CAPABILITY_ENV_VAR,
-  CONVERSATION_CAPABILITY_HEADER,
-  mintConversationCapability,
-  verifyConversationCapability,
-} from "@/lib/agent-gateway/conversation-capability";
+  CONVERSATION_IDENTITY_ENV_VAR,
+  CONVERSATION_IDENTITY_HEADER,
+  readConversationIdentity,
+} from "@/lib/agent-gateway/conversation-identity";
 import {
-  LANE_CAPABILITY_ENV_VAR,
-  LANE_CAPABILITY_HEADER,
-  mintLaneCapability,
-  verifyLaneCapability,
-} from "@/lib/agent-gateway/lane-capability";
+  LANE_IDENTITY_HEADER,
+  readLaneIdentity,
+} from "@/lib/agent-gateway/lane-identity";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinition,
@@ -98,7 +95,6 @@ function summary(
 /** The ordinary session conversation `cctl` runs in. */
 const CLI_CONVERSATION_ID = "conv-cli";
 const LANE_CONVERSATION_ID = "conv-lane";
-const CAPABILITY_SECRET = "server-only-capability-key";
 const CLI_CONVERSATION: ConversationState = conversationStateSchema.parse({
   id: CLI_CONVERSATION_ID,
   scope: "session",
@@ -193,7 +189,7 @@ function makeExecutionDeps(
   overrides: Partial<GraphWorkflowExecutionRouteDeps>,
 ): GraphWorkflowExecutionRouteDeps {
   return {
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     resolveProjectPath: async () => PROJECT_PATH,
     getSession: async () => makeSession(),
@@ -218,16 +214,12 @@ function makeExecutionDeps(
     // sends. A verifier that returns a fixture principal without reading the
     // request would let the CLI silently drop the capability again.
     auth: { validateOptionalToken: async () => ({ kind: "valid" as const }) },
-    verifyConversationCapability: async (request) =>
-      verifyConversationCapability(
-        request.headers.get(CONVERSATION_CAPABILITY_HEADER),
-        CAPABILITY_SECRET,
+    readConversationIdentity: async (request) =>
+      readConversationIdentity(
+        request.headers.get(CONVERSATION_IDENTITY_HEADER),
       ),
-    verifyLaneCapability: async (request) =>
-      verifyLaneCapability(
-        request.headers.get(LANE_CAPABILITY_HEADER),
-        CAPABILITY_SECRET,
-      ),
+    readLaneIdentity: async (request) =>
+      readLaneIdentity(request.headers.get(LANE_IDENTITY_HEADER)),
     ...overrides,
   };
 }
@@ -260,6 +252,7 @@ function routeHost(
     executionDeps,
   } = overrides;
   const definitionHandlers = createWorkflowDefinitionRouteHandlers({
+    getExecutionContract: createTestGraphExecutionContract,
     planReviews: unreviewedPlanReviewLookup,
     resolveProjectPath: async () => PROJECT_PATH,
     readConfig: async () => VALIDATION_GLOBAL_CONFIG,
@@ -305,6 +298,7 @@ function routeHost(
     ...(assignmentReferences ? { assignmentReferences } : {}),
   });
   const templateHandlers = createTemplateLibraryRouteHandlers({
+    getExecutionContract: createTestGraphExecutionContract,
     resolveProjectPath: async () => PROJECT_PATH,
     readConfig: notUsed,
     list: (projectPath) =>
@@ -484,27 +478,15 @@ const env: CliEnv = {
   CC_PROJECT: "cc",
   CC_SESSION: "sess",
   CC_CONVERSATION_ID: CLI_CONVERSATION_ID,
-  [CONVERSATION_CAPABILITY_ENV_VAR]: mintConversationCapability(
-    { sessionName: "sess", conversationId: CLI_CONVERSATION_ID },
-    CAPABILITY_SECRET,
-    1_760_000_000_000,
-  ),
+  [CONVERSATION_IDENTITY_ENV_VAR]: CLI_CONVERSATION_ID,
 };
 
 const laneEnv: CliEnv = {
   ...env,
   CC_CONVERSATION_ID: LANE_CONVERSATION_ID,
-  [CONVERSATION_CAPABILITY_ENV_VAR]: undefined,
-  [LANE_CAPABILITY_ENV_VAR]: mintLaneCapability(
-    {
-      laneKind: "implementer",
-      executionId: "execution-active",
-      contextId: "context-plan",
-      conversationId: LANE_CONVERSATION_ID,
-    },
-    CAPABILITY_SECRET,
-    1_760_000_000_000,
-  ),
+  [CONVERSATION_IDENTITY_ENV_VAR]: undefined,
+  CC_WORKFLOW_EXECUTION_ID: "execution-active",
+  CC_WORKFLOW_CONTEXT_ID: "context-plan",
 };
 
 describe("cctl workflow against the real workflow route handlers", () => {
@@ -640,7 +622,7 @@ describe("cctl workflow against the real workflow route handlers", () => {
     });
     const capabilityFreeEnv = {
       ...env,
-      [CONVERSATION_CAPABILITY_ENV_VAR]: undefined,
+      [CONVERSATION_IDENTITY_ENV_VAR]: undefined,
     };
     // --full is the selector that carries the whole durable record; the
     // bounded default answers the same address with the table's projection.

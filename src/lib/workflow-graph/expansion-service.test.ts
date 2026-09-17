@@ -1,5 +1,5 @@
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it } from "vitest";
 import {
   createInMemoryLeaseReservation,
@@ -280,7 +280,7 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
     committed: () => committedRows,
     snapshotPreparationInsideMutation,
     deps: {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getActiveExecution: () => Promise.resolve(execution),
       mutateActive: repository.mutateActive,
       buildLiveEditDeps: () => Promise.resolve(LIVE_EDIT_DEPS),

@@ -504,15 +504,8 @@ describe("deriveContextWaitState", () => {
     expect(result).toEqual({ kind: "completed" });
   });
 
-  /**
-   * The legacy per-context worktree shape, which predates lanes entirely: no
-   * laneId, and a squash-merge that landed the work directly in the session
-   * worktree at completion time. `isContextOutputCommittedToLane` already
-   * defines this state as landed, so a historical execution's nodes have to
-   * read Published rather than being stranded on Completed for want of a lane
-   * record that never existed.
-   */
-  it("reports published for a legacy worktree merge that carries no laneId", () => {
+  // A merge status alone cannot establish lane publication.
+  it("does not infer publication from a worktree merge without a lane", () => {
     const execution = makeExecution({
       contextStates: {
         "ctx-1": makeContextState({
@@ -532,7 +525,7 @@ describe("deriveContextWaitState", () => {
       execution,
     });
 
-    expect(result).toEqual({ kind: "published" });
+    expect(result).toEqual({ kind: "completed" });
   });
 
   /**

@@ -5,10 +5,6 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
-import {
-  ONE_OFF_SEED_DEFINITION_ID_PREFIX,
-  SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX,
-} from "@/lib/workflow-graph/execution-origin";
 
 /**
  * The executions rail's Current/History split and row provenance (design
@@ -113,8 +109,8 @@ export function resolveLaunchRevision(input: {
   const definitionId = input.summaryDefinitionId;
   if (
     definitionId === null ||
-    definitionId.startsWith(ONE_OFF_SEED_DEFINITION_ID_PREFIX) ||
-    definitionId.startsWith(SPEC_DELIVERY_SEED_DEFINITION_ID_PREFIX)
+    definitionId.startsWith("one-off:") ||
+    definitionId.startsWith("spec-delivery:")
   ) {
     return null;
   }

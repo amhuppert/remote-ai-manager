@@ -12,8 +12,7 @@ import { buildChildEnv } from "@/lib/shared/child-env";
 import { modelSelectionKey } from "../../model-selection";
 import { CURSOR_PHASE1_POLICY } from "../policy";
 import {
-  createCursorPackageProbe,
-  runCursorStaticPreflight,
+  runProductionCursorPreflight,
   type CursorStaticPreflightResult,
 } from "../preflight";
 import { CURSOR_SDK_PINNED_VERSION } from "../sdk-pin";
@@ -42,7 +41,6 @@ import {
   CURSOR_WORKER_TERMINATION_GRACE_MS,
 } from "./bounds";
 import {
-  CURSOR_IPC_CODEC_VERSION,
   parseWorkerFrame,
   type CursorParentFrame,
   type CursorWorkerFrame,
@@ -101,11 +99,7 @@ const DEFAULT_BOUNDS: CursorSupervisorBounds = {
 
 export interface CursorSupervisorDeps {
   host: CursorProcessHost;
-  /**
-   * Preflight layer 1 (D3), run in the server before every spawn — not once at
-   * boot: package drift and a Node change between conversations are precisely
-   * what it exists to catch.
-   */
+  /** Cached installation check, refreshed when the SDK package changes. */
   runStaticPreflight(input: {
     model: string;
   }): Promise<CursorStaticPreflightResult>;
@@ -179,7 +173,6 @@ class SupervisedWorker implements CursorWorkerSession {
     readonly pid: number,
     /** Null when the host could not read it: identity is then unverifiable. */
     private readonly pgid: number | null,
-    private readonly startTicks: string | null,
     private readonly child: CursorSpawnedProcess,
     private readonly host: CursorProcessHost,
     private readonly bounds: CursorSupervisorBounds,
@@ -323,7 +316,6 @@ class SupervisedWorker implements CursorWorkerSession {
       // The caller is waiting on one settlement channel, so the refusal
       // arrives on it rather than as silence.
       this.input.onFrame({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "attachResult",
         outcome: "failed",
         ref: null,
@@ -338,7 +330,6 @@ class SupervisedWorker implements CursorWorkerSession {
       return;
     }
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: credential,
     });
@@ -347,7 +338,6 @@ class SupervisedWorker implements CursorWorkerSession {
     // non-persisted option set on every create AND resume, and a caller that
     // could compose it could also forget it.
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "attachAgent",
       mode: input.mode,
       ref: input.ref,
@@ -371,7 +361,6 @@ class SupervisedWorker implements CursorWorkerSession {
   startTurn(input: CursorTurnInput): void {
     this.activeRuns.add(input.runId);
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "startTurn",
       allowQuestions: input.allowQuestions ?? false,
       runId: input.runId,
@@ -385,12 +374,11 @@ class SupervisedWorker implements CursorWorkerSession {
   }
 
   cancel(runId: string): void {
-    this.send({ v: CURSOR_IPC_CODEC_VERSION, type: "cancel", runId });
+    this.send({ type: "cancel", runId });
   }
 
   steer(runId: string, requestId: string, text: string): void {
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "steer",
       runId,
       requestId,
@@ -404,7 +392,6 @@ class SupervisedWorker implements CursorWorkerSession {
     reply: import("@/lib/conversations/in-turn-question-schemas").InTurnQuestionReply,
   ): void {
     this.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "questionReply",
       runId,
       requestId,
@@ -426,7 +413,7 @@ class SupervisedWorker implements CursorWorkerSession {
 
   /**
    * The verified teardown ladder (D9): native cancellation, bounded grace,
-   * disposal and orderly exit, then ownership-guarded process-group escalation,
+   * disposal and orderly exit, then process-group escalation,
    * then verification. Only its settlement clears the registry entry.
    */
   private async runTeardown(): Promise<CursorWorkerCloseOutcome> {
@@ -449,7 +436,6 @@ class SupervisedWorker implements CursorWorkerSession {
 
     if (!this.exited) {
       this.send({
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "shutdown",
         reason: "close",
       });
@@ -477,23 +463,6 @@ class SupervisedWorker implements CursorWorkerSession {
     return outcome;
   }
 
-  /**
-   * Ownership guard (D9). A stored pid is not an identity: pids are recycled,
-   * so a signal aimed at one may reach an unrelated process.
-   *
-   * While the worker is still running, its boot start-ticks must still match
-   * what was recorded at spawn. Once its exit has been observed, the pid is no
-   * longer readable at all, and the group is instead identified by the fact
-   * that this supervisor created it and watched its leader's whole life — a
-   * group id cannot be repurposed while the group still has members.
-   */
-  private async ownsGroup(): Promise<boolean> {
-    if (this.pgid === null) return false;
-    if (this.exited) return this.startTicks !== null;
-    if (this.startTicks === null) return false;
-    return (await this.host.startTicks(this.pid)) === this.startTicks;
-  }
-
   private async groupGoneWithin(timeoutMs: number): Promise<boolean> {
     if (this.pgid === null) return this.exited;
     const deadline = timeoutMs;
@@ -511,15 +480,14 @@ class SupervisedWorker implements CursorWorkerSession {
       return { kind: "verified", escalation: "orderly" };
     }
 
-    if (!(await this.ownsGroup())) {
+    if (this.pgid === null) {
       return {
         kind: "cleanup_failed",
         reason: "ownership_unverified",
         message: `worker ${this.workerId} could not be proven to own process group ${this.pgid ?? "unknown"}; no signal was sent`,
       };
     }
-    // Non-null by construction: ownsGroup refuses an unreadable group.
-    const pgid = this.pgid ?? this.pid;
+    const pgid = this.pgid;
 
     this.host.signalGroup(pgid, "SIGTERM");
     if (await this.groupGoneWithin(this.bounds.termGraceMs)) {
@@ -597,11 +565,11 @@ export function createCursorWorkerSupervisor(
             ...(input.workflowContextId !== undefined
               ? { workflowContextId: input.workflowContextId }
               : {}),
-            ...(input.workflowLaneCapability !== undefined
-              ? { workflowLaneCapability: input.workflowLaneCapability }
-              : {}),
-            ...(input.conversationCapability !== undefined
-              ? { conversationCapability: input.conversationCapability }
+            ...(input.workflowCallerConversationId !== undefined
+              ? {
+                  workflowCallerConversationId:
+                    input.workflowCallerConversationId,
+                }
               : {}),
           }),
     );
@@ -704,7 +672,6 @@ export function createCursorWorkerSupervisor(
       workerId,
       child.pid,
       deps.host.processGroupId(child.pid),
-      await deps.host.startTicks(child.pid),
       child,
       deps.host,
       bounds,
@@ -714,7 +681,6 @@ export function createCursorWorkerSupervisor(
     );
 
     worker.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "init",
       conversationId: input.conversationId,
       workerId,
@@ -730,7 +696,6 @@ export function createCursorWorkerSupervisor(
     // spawn re-reads the server's environment, which is also what makes
     // rotation-at-restart the whole rotation story.
     worker.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: credential,
     });
@@ -884,16 +849,7 @@ export function cursorWorkerScriptPath(): string {
 export function createProductionCursorWorkerTransport(): CursorWorkerTransport {
   return createCursorWorkerSupervisor({
     host: createCursorProcessHost(),
-    runStaticPreflight: (input) =>
-      runCursorStaticPreflight(input, {
-        packages: createCursorPackageProbe(
-          path.join(process.cwd(), "node_modules"),
-        ),
-        host: { platform: process.platform, arch: process.arch },
-        // `fork` reuses this process's executable, so the server's own Node
-        // version IS the worker's — no separate probe can be more accurate.
-        workerNodeVersion: async () => process.version,
-      }),
+    runStaticPreflight: runProductionCursorPreflight,
     // Read per spawn, never cached: rotation takes effect at server restart
     // because the server's own environment is the only source (D2).
     readCredential: () => process.env.CURSOR_API_KEY ?? null,

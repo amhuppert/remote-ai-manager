@@ -364,6 +364,8 @@ const PROJECT_SCOPE_INVOCATIONS: {
       serverBuild: "dev",
       identity: { project: "cc", session: null, conversation: "conv-1" },
       tokenValid: true,
+      cliPath: "/test/cc/bin/cctl",
+      configDir: "/test/cc",
     },
   },
   { name: "ticket list", argv: ["ticket", "list"], body: { tickets: [] } },

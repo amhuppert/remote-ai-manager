@@ -2,8 +2,7 @@ import path from "node:path";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createLogger } from "@/lib/logging";
-import { CONVERSATION_CAPABILITY_ENV_VAR } from "./conversation-capability";
-import { LANE_CAPABILITY_ENV_VAR } from "./lane-capability";
+import { CONVERSATION_IDENTITY_ENV_VAR } from "./conversation-identity";
 
 const logger = createLogger("session-env");
 
@@ -57,32 +56,8 @@ export interface SessionEnvContractInput {
    */
   workflowExecutionId?: string;
   workflowContextId?: string;
-  /**
-   * The signed implementer-lane capability (D4 R7), minted at dispatch for lane
-   * conversations that may hold one. Absent lanes export nothing and inherit
-   * nothing: the ambient CC_* neutralization above already zeroes an outer
-   * lane's capability, which matters more here than for the identity vars —
-   * this one is a CREDENTIAL, and a lane holding another lane's would be a
-   * confused-deputy path straight through the expansion authority check.
-   */
-  workflowLaneCapability?: string;
-  /**
-   * The signed conversation capability workflow authority is derived from
-   * (D11/D12), already minted by the spawn site.
-   *
-   * Passed in rather than minted here, because this builder cannot mint it
-   * under the right identity: `target.conversationId` is the CC-side id, which
-   * a collaboration runtime deliberately REDIRECTS to its originating
-   * conversation, so a capability minted from it would name the human's
-   * conversation and hand a collaboration lane that human's authority. The
-   * spawn site holds the facts eligibility actually turns on — role,
-   * persistence, lane binding, and the conversation's own id — so it decides
-   * and mints, and this builder only distributes.
-   *
-   * Omission is the fail-closed default: a runtime kind added later carries no
-   * capability until someone deliberately mints it one.
-   */
-  conversationCapability?: string;
+  /** Actual ordinary caller, distinct from a collaboration runtime's routing target. */
+  workflowCallerConversationId?: string;
 }
 
 /** Override every inherited CC_* key with "" (in place). */
@@ -139,27 +114,19 @@ export function buildSessionEnvContract(
     env["CC_WORKFLOW_EXECUTION_ID"] = input.workflowExecutionId;
   if (input.workflowContextId !== undefined)
     env["CC_WORKFLOW_CONTEXT_ID"] = input.workflowContextId;
-  if (input.workflowLaneCapability !== undefined)
-    env[LANE_CAPABILITY_ENV_VAR] = input.workflowLaneCapability;
 
-  // Distribute the capability the spawn site minted. The two refusals below are
-  // not eligibility rules — that decision was already made — but contradictions
-  // the capability's own contents make incoherent, and a caller that reaches
-  // either has a bug worth failing on rather than a preference worth honouring.
-  // A conversation carrying no capability is not blocked from reading anything;
-  // reads need none. It simply cannot claim to BE the origin of a launch.
-  if (input.conversationCapability !== undefined) {
+  if (input.workflowCallerConversationId !== undefined) {
     if (input.workflowExecutionId !== undefined) {
       throw new Error(
-        "buildSessionEnvContract: a workflow lane's authority is its lane capability — it must not also carry a conversation capability",
+        "buildSessionEnvContract: a workflow lane must not also carry an ordinary conversation identity",
       );
     }
     if (input.target.scope !== "session") {
       throw new Error(
-        "buildSessionEnvContract: a project conversation has no session to launch into and must not carry a conversation capability",
+        "buildSessionEnvContract: a project conversation has no session to launch into and must not carry a workflow caller identity",
       );
     }
-    env[CONVERSATION_CAPABILITY_ENV_VAR] = input.conversationCapability;
+    env[CONVERSATION_IDENTITY_ENV_VAR] = input.workflowCallerConversationId;
   }
   env["BASH_MAX_TIMEOUT_MS"] ??= BASH_MAX_TIMEOUT_MS_DEFAULT;
 

@@ -16,7 +16,7 @@ import type {
   CursorWorkerExitInfo,
   CursorWorkerStartInput,
 } from "../worker-port";
-import { CURSOR_IPC_CODEC_VERSION, parseWorkerFrame } from "./ipc";
+import { parseWorkerFrame } from "./ipc";
 import type { CursorParentFrame, CursorWorkerFrame } from "./ipc";
 import { createCursorProcessHost } from "./process-host";
 import {
@@ -163,7 +163,6 @@ function initFrame(
   overrides: Partial<Extract<CursorParentFrame, { type: "init" }>> = {},
 ): CursorParentFrame {
   return {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "init",
     conversationId: CONVERSATION_ID,
     workerId: "worker-real",
@@ -239,7 +238,6 @@ describe("cursor worker self-termination", () => {
     const worker = forkStubWorker();
     worker.send(initFrame({ idleTimeoutMs: 800 }));
     worker.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: API_KEY,
     });
@@ -267,7 +265,6 @@ describe("cursor worker credential lifetime in a real process", () => {
     const worker = forkStubWorker();
     worker.send(initFrame());
     worker.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: API_KEY,
     });
@@ -279,7 +276,6 @@ describe("cursor worker credential lifetime in a real process", () => {
     ).toBe(true);
 
     const attachFrame: CursorParentFrame = {
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "attachAgent",
       mode: "create",
       ref: null,
@@ -307,7 +303,6 @@ describe("cursor worker credential lifetime in a real process", () => {
     // With a fresh one immediately ahead of it — the order the supervisor
     // sends — the same attach succeeds.
     worker.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: API_KEY,
     });
@@ -353,17 +348,13 @@ const realStaticPreflight = (input: { model: string }) =>
 function createSupervisorHarness(
   options: StubOptions & {
     scriptPath?: string;
-    startTicks?: (pid: number) => Promise<string | null>;
   } = {},
 ): SupervisorHarness {
   const host = createCursorProcessHost();
   const frames: CursorWorkerFrame[] = [];
   const exits: CursorWorkerExitInfo[] = [];
   const transport = createCursorWorkerSupervisor({
-    host:
-      options.startTicks === undefined
-        ? host
-        : { ...host, startTicks: options.startTicks },
+    host,
     runStaticPreflight: realStaticPreflight,
     readCredential: () => API_KEY,
     workerScriptPath: () => options.scriptPath ?? STUB_WORKER,
@@ -419,34 +410,6 @@ describe("cursor worker supervisor against real processes", () => {
     expect(isGroupAlive(pid)).toBe(false);
     expect(markedProcessCount(marker)).toBe(0);
     expect(harness.transport.find(CONVERSATION_ID)).toBeNull();
-  }, 30_000);
-
-  it("refuses to signal a group whose recorded identity no longer matches", async () => {
-    // Pid reuse, staged: the spawn-time read is the real one, and by teardown
-    // the pid reads as a different process than the one that was recorded.
-    const realHost = createCursorProcessHost();
-    let reads = 0;
-    const harness = createSupervisorHarness({
-      mode: "hang",
-      startTicks: async (pid: number) => {
-        reads += 1;
-        return reads === 1 ? realHost.startTicks(pid) : "999999999";
-      },
-    });
-    const started = await harness.transport.start(harness.startInput);
-    expect(started.kind).toBe("ready");
-    if (started.kind !== "ready") return;
-    const pid = started.session.pid;
-    spawnedGroups.add(pid);
-
-    const outcome = await started.session.close();
-
-    expect(outcome.kind).toBe("cleanup_failed");
-    if (outcome.kind === "cleanup_failed") {
-      expect(outcome.reason).toBe("ownership_unverified");
-    }
-    // The point of the guard: an unverifiable process is left alone, not shot.
-    expect(isAlive(pid)).toBe(true);
   }, 30_000);
 
   it("tears a cooperative worker down without signalling anything", async () => {

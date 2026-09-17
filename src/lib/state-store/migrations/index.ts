@@ -1,3 +1,5 @@
+import { retireStoredShapeReaders } from "./0051-retire-stored-shape-readers";
+import { removeExecutionSeedFiller } from "./0050-remove-execution-seed-filler";
 import { graphWorkflowLaneCoverage } from "./0047-graph-workflow-lane-coverage";
 import { graphWorkflowDocumentContent } from "./0048-graph-workflow-document-content";
 import { graphWorkflowReviewOrigin } from "./0049-graph-workflow-review-origin";
@@ -135,6 +137,8 @@ export const migrations: readonly StateMigration[] = [
   graphWorkflowLaneCoverage,
   graphWorkflowDocumentContent,
   graphWorkflowReviewOrigin,
+  removeExecutionSeedFiller,
+  retireStoredShapeReaders,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

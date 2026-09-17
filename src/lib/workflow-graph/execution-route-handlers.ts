@@ -35,7 +35,6 @@ import {
   getSession as defaultGetSession,
   listArchivedGraphWorkflowExecutions,
   getGraphWorkflowEventsPage,
-  getGraphWorkflowEventsTail,
   getGraphWorkflowExecutionById as defaultGetGraphWorkflowExecutionById,
   getGraphWorkflowBoundaryResultAfter as defaultGetGraphWorkflowBoundaryResultAfter,
 } from "@/lib/state-store";
@@ -43,7 +42,6 @@ import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowCleanupStatusValue,
-  GraphWorkflowExecutionEvent,
   GraphWorkflowMergeStatusValue,
 } from "@/lib/workflow-graph/event-schemas";
 import type {
@@ -66,8 +64,8 @@ import {
   createAgentAuth,
   type OptionalTokenValidation,
 } from "@/lib/agent-gateway/token";
-import type { ConversationCapabilityVerification } from "@/lib/agent-gateway/conversation-capability";
-import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
+import type { ConversationIdentityReading } from "@/lib/agent-gateway/conversation-identity";
+import type { LaneIdentityReading } from "@/lib/agent-gateway/lane-identity";
 import { authorizeWorkflowLaunch } from "./request-principal";
 import {
   classifyRoutePrincipal,
@@ -184,8 +182,8 @@ interface GraphWorkflowExecutionFinalPublishProgress {
 
 export interface GraphWorkflowExecutionSummary {
   executionId: string;
-  definitionId: string;
-  definitionRevision: number;
+  definitionId: string | null;
+  definitionRevision: number | null;
   status: GraphWorkflowStatus;
   startedAt: string;
   completedAt: string | null;
@@ -221,22 +219,22 @@ export interface GraphWorkflowExecutionRouteDeps extends GraphWorkflowLifecycleD
   readConfig?(): Promise<GlobalConfig>;
 
   /**
-   * Classifies the signed conversation capability a launch presents (D11), from
+   * Classifies the injected conversation identity a launch presents (D11), from
    * which the origin principal is derived. Defaults to the registered verifier,
    * keyed on the server-only capability key.
    */
-  verifyConversationCapability?(
+  readConversationIdentity?(
     request: Request,
-  ): Promise<ConversationCapabilityVerification>;
+  ): Promise<ConversationIdentityReading>;
 
   /**
-   * Classifies the signed lane capability a caller presents (D4 R7). A lane may
+   * Classifies the injected lane identity a caller presents (D4 R7). A lane may
    * act on its OWN execution and is refused as nesting when it tries to launch,
    * so the mutation guard has to be able to tell a lane from an ordinary
    * conversation. Defaults to the registered verifier, keyed on the same
    * server-only capability key.
    */
-  verifyLaneCapability?(request: Request): Promise<LaneCapabilityVerification>;
+  readLaneIdentity?(request: Request): Promise<LaneIdentityReading>;
 
   /** Find a named execution in Current first, then History, under full scope. */
   getExecutionById?(
@@ -277,17 +275,6 @@ export interface GraphWorkflowExecutionRouteDeps extends GraphWorkflowLifecycleD
   };
 
   /**
-   * Read the bounded tail of the persisted append-only event log for an
-   * execution. Defaults to the real `graph_workflow_events` repo via the store.
-   */
-  getEventsTail?(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    limit: number,
-  ): Promise<GraphWorkflowExecutionEvent[]>;
-
-  /**
    * Read one cursor-paginated page of an execution's event log — the reader the
    * loop-ledger surfaces walk for COMPLETE history, which the bounded tail
    * cannot serve. Defaults to the real `graph_workflow_events` repo.
@@ -300,37 +287,41 @@ export interface GraphWorkflowExecutionRouteDeps extends GraphWorkflowLifecycleD
   ): Promise<GraphWorkflowEventPage>;
 }
 
-const defaultDeps: GraphWorkflowExecutionRouteDeps = {
-  ...createProductionGraphWorkflowLifecycleDeps(),
-  resolveProjectPath: defaultResolveProjectPath,
-  getSession: defaultGetSession,
-  readRepoConfig: defaultReadRepoConfig,
-  readConfig,
-  getExecutionById: (projectPath, sessionName, executionId) =>
-    defaultGetGraphWorkflowExecutionById(projectPath, sessionName, executionId),
-  getBoundaryResultAfter: (projectPath, sessionName, executionId, cursor) =>
-    defaultGetGraphWorkflowBoundaryResultAfter(
-      projectPath,
-      sessionName,
-      executionId,
-      cursor,
-    ),
-  recordApprovalDecision: (input) =>
-    getGraphWorkflowRuntime().approvalGateService.recordDecision(input),
-  resolveApprovalSnapshot: (input) => resolveApprovalSnapshot(input),
-  auth: createAgentAuth(),
-  getEventsTail: (projectPath, sessionName, executionId, limit) =>
-    getGraphWorkflowEventsTail(projectPath, sessionName, executionId, limit),
-  getEventsPage: (projectPath, sessionName, executionId, query) =>
-    getGraphWorkflowEventsPage(projectPath, sessionName, executionId, query),
-};
+function createDefaultDeps(): GraphWorkflowExecutionRouteDeps {
+  return {
+    ...createProductionGraphWorkflowLifecycleDeps(),
+    resolveProjectPath: defaultResolveProjectPath,
+    getSession: defaultGetSession,
+    readRepoConfig: defaultReadRepoConfig,
+    readConfig,
+    getExecutionById: (projectPath, sessionName, executionId) =>
+      defaultGetGraphWorkflowExecutionById(
+        projectPath,
+        sessionName,
+        executionId,
+      ),
+    getBoundaryResultAfter: (projectPath, sessionName, executionId, cursor) =>
+      defaultGetGraphWorkflowBoundaryResultAfter(
+        projectPath,
+        sessionName,
+        executionId,
+        cursor,
+      ),
+    recordApprovalDecision: (input) =>
+      getGraphWorkflowRuntime().approvalGateService.recordDecision(input),
+    resolveApprovalSnapshot: (input) => resolveApprovalSnapshot(input),
+    auth: createAgentAuth(),
+    getEventsPage: (projectPath, sessionName, executionId, query) =>
+      getGraphWorkflowEventsPage(projectPath, sessionName, executionId, query),
+  };
+}
 
 /**
  * Header the token-gated CLI/agent surfaces use to name the calling
  * conversation (`cctl` sends it from `CC_CONVERSATION_ID`).
  *
  * It carries NO authority and nothing here reads it. Ownership and every
- * mutation principal are derived from a signed capability instead
+ * mutation principal are derived from injected caller identity instead
  * (`request-principal.ts`), because confirming a claimed id belongs to the
  * session only proves the conversation exists — every sibling passes that
  * check. The constant remains because agent transports still send the header
@@ -605,7 +596,7 @@ function resolveApprovalConflictMessage(
 }
 
 export function createGraphWorkflowExecutionRouteHandlers(
-  deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
+  deps: GraphWorkflowExecutionRouteDeps = createDefaultDeps(),
 ) {
   const lifecycle = createGraphWorkflowLifecycleService(deps);
   const {
@@ -715,7 +706,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
 
     // Owner identity is DERIVED, never read off a header or payload: a caller
     // header naming a conversation is a claim every sibling conversation and
-    // every lane can also make, so START answers it with the same signed
+    // every lane can also make, so START answers it with the same injected
     // principal RUN does (R9.4). A lane is refused here as nesting.
     const launchPrincipal = await resolveLaunchPrincipal({
       request,
@@ -1078,13 +1069,8 @@ export function createGraphWorkflowExecutionRouteHandlers(
     );
     const executionId =
       url.searchParams.get("executionId") ?? activeExecution?.id ?? null;
-    // `page` opts into the cursor-paginated ledger contract; without it the
-    // route answers exactly as it always has, so no existing consumer moves.
-    const paginated = url.searchParams.get("page") === "true";
     if (!executionId) {
-      return NextResponse.json(
-        paginated ? { events: [], nextCursor: null } : { events: [] },
-      );
+      return NextResponse.json({ events: [], nextCursor: null });
     }
 
     const limitParam = url.searchParams.get("limit");
@@ -1094,44 +1080,31 @@ export function createGraphWorkflowExecutionRouteHandlers(
         ? Math.min(parsedLimit, GRAPH_WORKFLOW_EVENTS_MAX_LIMIT)
         : GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT;
 
-    if (paginated) {
-      const cursorParam = Number(url.searchParams.get("cursor"));
-      const getEventsPage = deps.getEventsPage ?? getGraphWorkflowEventsPage;
-      const page = await getEventsPage(
-        resolved.projectPath,
-        resolved.sessionName,
-        executionId,
-        {
-          limit,
-          cursor:
-            Number.isInteger(cursorParam) && cursorParam > 0
-              ? cursorParam
-              : null,
-          direction:
-            url.searchParams.get("direction") === "desc" ? "desc" : "asc",
-        },
-      );
-      return NextResponse.json({
-        // `seq` is the wire name for the row's durable ordering key: it is what
-        // the caller sends back as `cursor`, so the pair is one vocabulary.
-        events: page.records.map((record) => ({
-          seq: record.id,
-          occurredAt: record.occurredAt,
-          event: record.event,
-          preReset: record.preReset,
-        })),
-        nextCursor: page.nextCursor,
-      });
-    }
-
-    const getEventsTail = deps.getEventsTail ?? getGraphWorkflowEventsTail;
-    const events = await getEventsTail(
+    const cursorParam = Number(url.searchParams.get("cursor"));
+    const getEventsPage = deps.getEventsPage ?? getGraphWorkflowEventsPage;
+    const page = await getEventsPage(
       resolved.projectPath,
       resolved.sessionName,
       executionId,
-      limit,
+      {
+        limit,
+        cursor:
+          Number.isInteger(cursorParam) && cursorParam > 0 ? cursorParam : null,
+        direction:
+          url.searchParams.get("direction") === "desc" ? "desc" : "asc",
+      },
     );
-    return NextResponse.json({ events });
+    return NextResponse.json({
+      // `seq` is the wire name for the row's durable ordering key: it is what
+      // the caller sends back as `cursor`, so the pair is one vocabulary.
+      events: page.records.map((record) => ({
+        seq: record.id,
+        occurredAt: record.occurredAt,
+        event: record.event,
+        preReset: record.preReset,
+      })),
+      nextCursor: page.nextCursor,
+    });
   }
 
   async function PAUSE(
@@ -1846,60 +1819,79 @@ export function createGraphWorkflowExecutionRouteHandlers(
   };
 }
 
-const defaultGraphWorkflowExecutionHandlers =
-  createGraphWorkflowExecutionRouteHandlers();
-
-export const startGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.START,
+export const startGraphWorkflowExecution = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().START(request, context),
 );
-export const runGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.RUN,
+export const runGraphWorkflowExecution = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().RUN(request, context),
 );
-export const getGraphWorkflowExecutionStatus = withTracing(
-  defaultGraphWorkflowExecutionHandlers.STATUS,
+export const getGraphWorkflowExecutionStatus = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().STATUS(request, context),
 );
-export const getGraphWorkflowExecutionFull = withTracing(
-  defaultGraphWorkflowExecutionHandlers.EXECUTION,
+export const getGraphWorkflowExecutionFull = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().EXECUTION(request, context),
 );
-export const getGraphWorkflowExecutionById = withTracing(
-  defaultGraphWorkflowExecutionHandlers.EXECUTION_BY_ID,
+export const getGraphWorkflowExecutionById = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().EXECUTION_BY_ID(request, context),
 );
-export const getGraphWorkflowExecutionResult = withTracing(
-  defaultGraphWorkflowExecutionHandlers.EXECUTION_RESULT,
+export const getGraphWorkflowExecutionResult = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().EXECUTION_RESULT(
+    request,
+    context,
+  ),
 );
 export const getGraphWorkflowExecutionHistory = withTracing(
-  defaultGraphWorkflowExecutionHandlers.HISTORY,
+  (request, context) =>
+    createGraphWorkflowExecutionRouteHandlers().HISTORY(request, context),
 );
-export const getGraphWorkflowExecutionEvents = withTracing(
-  defaultGraphWorkflowExecutionHandlers.EVENTS,
+export const getGraphWorkflowExecutionEvents = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().EVENTS(request, context),
 );
-export const pauseGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.PAUSE,
+export const pauseGraphWorkflowExecution = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().PAUSE(request, context),
 );
-export const resumeGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.RESUME,
+export const resumeGraphWorkflowExecution = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().RESUME(request, context),
 );
-export const abortGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.ABORT,
+export const abortGraphWorkflowExecution = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().ABORT(request, context),
 );
-export const abandonGraphWorkflowExecution = withTracing(
-  defaultGraphWorkflowExecutionHandlers.ABANDON,
+export const abandonGraphWorkflowExecution = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().ABANDON(request, context),
 );
 export const resetGraphWorkflowExecutionContext = withTracing(
-  defaultGraphWorkflowExecutionHandlers.RESET_CONTEXT,
+  (request, context) =>
+    createGraphWorkflowExecutionRouteHandlers().RESET_CONTEXT(request, context),
 );
 export const resetGraphWorkflowExecutionAssignment = withTracing(
-  defaultGraphWorkflowExecutionHandlers.RESET_ASSIGNMENT,
+  (request, context) =>
+    createGraphWorkflowExecutionRouteHandlers().RESET_ASSIGNMENT(
+      request,
+      context,
+    ),
 );
-export const resolveGraphWorkflowApproval = withTracing(
-  defaultGraphWorkflowExecutionHandlers.RESOLVE_APPROVAL,
+export const resolveGraphWorkflowApproval = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().RESOLVE_APPROVAL(
+    request,
+    context,
+  ),
 );
 export const getGraphWorkflowApprovalSnapshot = withTracing(
-  defaultGraphWorkflowExecutionHandlers.APPROVAL_SNAPSHOT,
+  (request, context) =>
+    createGraphWorkflowExecutionRouteHandlers().APPROVAL_SNAPSHOT(
+      request,
+      context,
+    ),
 );
-export const approveGraphWorkflowDefinition = withTracing(
-  defaultGraphWorkflowExecutionHandlers.APPROVE_DEFINITION,
+export const approveGraphWorkflowDefinition = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().APPROVE_DEFINITION(
+    request,
+    context,
+  ),
 );
-export const rejectGraphWorkflowDefinition = withTracing(
-  defaultGraphWorkflowExecutionHandlers.REJECT_DEFINITION,
+export const rejectGraphWorkflowDefinition = withTracing((request, context) =>
+  createGraphWorkflowExecutionRouteHandlers().REJECT_DEFINITION(
+    request,
+    context,
+  ),
 );

@@ -50,7 +50,7 @@ import {
   projectConversationTarget,
   sessionConversationTarget,
 } from "@/lib/conversations/conversation-target";
-import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
+import { CONVERSATION_IDENTITY_ENV_VAR } from "@/lib/agent-gateway/conversation-identity";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { turnContinuationSchema } from "../errors";
 import {
@@ -915,14 +915,16 @@ describe("CodexConversationRuntime", () => {
       it("carries the capability it was handed into the agent env", async () => {
         setupThread(minimalSuccessEvents());
         const runtime = new CodexConversationRuntime(
-          makeCreateInput({ conversationCapability: "cccc1.spawn-minted.sig" }),
+          makeCreateInput({
+            workflowCallerConversationId: "caller-conversation",
+          }),
           deps,
         );
 
         await runtime.sendTurn(makeTurnInput());
 
-        expect(envOfFirstTurn()[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
-          "cccc1.spawn-minted.sig",
+        expect(envOfFirstTurn()[CONVERSATION_IDENTITY_ENV_VAR]).toBe(
+          "caller-conversation",
         );
       });
 
@@ -941,9 +943,7 @@ describe("CodexConversationRuntime", () => {
         await runtime.sendTurn(makeTurnInput());
 
         expect(envOfFirstTurn().CC_CONVERSATION_ID).toBe("conv-originating");
-        expect(envOfFirstTurn()[CONVERSATION_CAPABILITY_ENV_VAR]).toBe(
-          undefined,
-        );
+        expect(envOfFirstTurn()[CONVERSATION_IDENTITY_ENV_VAR]).toBe(undefined);
       });
     });
 

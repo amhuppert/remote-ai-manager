@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
-  CURSOR_IPC_CODEC_VERSION,
   CURSOR_NATIVE_TAG_KEY,
   MAX_NATIVE_ENCODE_DEPTH,
   MAX_NATIVE_ENCODE_NODES,
@@ -86,6 +85,13 @@ function nest(depth: number): unknown {
   for (let level = 0; level < depth; level += 1) value = { child: value };
   return value;
 }
+
+it("accepts frames without a build version", () => {
+  expect(parseParentFrame({ type: "cancel", runId: "run-1" })).toEqual({
+    ok: true,
+    frame: { type: "cancel", runId: "run-1" },
+  });
+});
 
 describe("cursor native payload codec", () => {
   it("round-trips every JSON-edge value the fork channel would mangle", () => {
@@ -313,7 +319,6 @@ describe("cursor native payload bounds", () => {
 
 describe("cursor IPC frames", () => {
   const initFrame = {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "init",
     conversationId: "conv-1",
     workerId: "worker-1",
@@ -327,7 +332,6 @@ describe("cursor IPC frames", () => {
   };
 
   const attachFrame = {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "attachAgent",
     mode: "resume",
     ref: "agent-ref-1",
@@ -346,7 +350,6 @@ describe("cursor IPC frames", () => {
   };
 
   const startTurnFrame = {
-    v: CURSOR_IPC_CODEC_VERSION,
     type: "startTurn",
     runId: "run-1",
     promptText: "hello",
@@ -360,18 +363,14 @@ describe("cursor IPC frames", () => {
     forceExpirePersistedRun: false,
   };
 
-  it("uses protocol version 5 for interactive run controls", () => {
-    expect(CURSOR_IPC_CODEC_VERSION).toBe(5);
-  });
-
   it("accepts every parent frame in the contract", () => {
     for (const frame of [
       initFrame,
-      { v: CURSOR_IPC_CODEC_VERSION, type: "credential", apiKey: API_KEY },
+      { type: "credential", apiKey: API_KEY },
       attachFrame,
       startTurnFrame,
-      { v: CURSOR_IPC_CODEC_VERSION, type: "cancel", runId: "run-1" },
-      { v: CURSOR_IPC_CODEC_VERSION, type: "shutdown", reason: "close" },
+      { type: "cancel", runId: "run-1" },
+      { type: "shutdown", reason: "close" },
     ]) {
       const parsed = parseParentFrame(frame);
       expect(parsed.ok).toBe(true);
@@ -394,7 +393,6 @@ describe("cursor IPC frames", () => {
   it("accepts every worker frame in the contract", () => {
     for (const frame of [
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "ready",
         pid: 91,
         pgid: 91,
@@ -402,20 +400,17 @@ describe("cursor IPC frames", () => {
         sdkVersion: "1.0.28",
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "preflightFailed",
         reason: "invalid_credential",
         message: "credential rejected",
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "attachResult",
         outcome: "attached",
         ref: "agent-ref-1",
         error: null,
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "refIssued",
         runId: "run-1",
         ref: "agent-ref-1",
@@ -423,13 +418,11 @@ describe("cursor IPC frames", () => {
       // The ref reaches the parent at attach on the tested SDK, before any run
       // exists, so the run-less arm is part of the contract.
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "refIssued",
         runId: null,
         ref: "agent-ref-1",
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "nativeEventRejected",
         runId: "run-1",
         eventIndex: 3,
@@ -438,9 +431,8 @@ describe("cursor IPC frames", () => {
         byteLength: 4_194_304,
         sha256: "a".repeat(64),
       },
-      { v: CURSOR_IPC_CODEC_VERSION, type: "inputAccepted", runId: "run-1" },
+      { type: "inputAccepted", runId: "run-1" },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "nativeEvent",
         runId: "run-1",
         eventIndex: 0,
@@ -448,7 +440,6 @@ describe("cursor IPC frames", () => {
         payload: '{"type":"assistant_message"}',
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "usage",
         runId: "run-1",
         inputTokens: 10,
@@ -459,7 +450,6 @@ describe("cursor IPC frames", () => {
         reasoningTokens: 5,
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "turnSettled",
         runId: "run-1",
         outcome: "failed",
@@ -471,14 +461,12 @@ describe("cursor IPC frames", () => {
         },
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "cancelResult",
         runId: "run-1",
         outcome: "cancelled",
         message: null,
       },
       {
-        v: CURSOR_IPC_CODEC_VERSION,
         type: "fatal",
         code: "worker_exit",
         message: "sdk crashed",
@@ -491,20 +479,10 @@ describe("cursor IPC frames", () => {
     }
   });
 
-  it("rejects a mismatched codec version without falling back", () => {
-    const parsed = parseParentFrame({
-      ...initFrame,
-      v: CURSOR_IPC_CODEC_VERSION + 1,
-    });
-    expect(parsed.ok).toBe(false);
-    if (parsed.ok) return;
-    expect(parsed.reason).toBe("unsupported_version");
-  });
-
   it("rejects unknown, malformed, and non-object frames without throwing", () => {
     for (const input of [
-      { v: CURSOR_IPC_CODEC_VERSION, type: "notAFrame" },
-      { v: CURSOR_IPC_CODEC_VERSION, type: "cancel" },
+      { type: "notAFrame" },
+      { type: "cancel" },
       null,
       "startTurn",
       42,
@@ -520,7 +498,6 @@ describe("cursor IPC frames", () => {
     // A malformed credential frame still carries the key; the bounded
     // rejection must name the frame type and nothing else.
     const parsed = parseParentFrame({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "credential",
       apiKey: "",
       strayCopy: API_KEY,

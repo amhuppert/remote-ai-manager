@@ -176,9 +176,9 @@ export function useGraphWorkflowEventsQuery(
     ),
     queryFn: () =>
       apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/events?executionId=${encodeURIComponent(executionId!)}`,
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/events?direction=desc&executionId=${encodeURIComponent(executionId!)}`,
         graphWorkflowExecutionEventsResponseSchema,
-      ).then((r) => r.events),
+      ).then((r) => r.events.reverse()),
     enabled: executionId != null,
   });
 }

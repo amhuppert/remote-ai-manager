@@ -3,7 +3,7 @@ import {
   workflowDefinitionEditOperationSchema,
   workflowLiveEditOperationSchema,
 } from "@/lib/workflows/edit-schemas";
-import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { applyDefinitionEdits } from "./definition-edits";
 import { applyLiveExecutionEdits } from "./runtime-edits";
 import {
@@ -83,7 +83,7 @@ describe("document editing across tiers", () => {
     const saved = applyDefinitionEdits(
       documentFor(),
       operations.map((op) => workflowDefinitionEditOperationSchema.parse(op)),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     const execution = executionFor(bodyDefinition());
     execution.status = "paused";
@@ -155,7 +155,7 @@ describe("document editing across tiers", () => {
       const saved = applyDefinitionEdits(
         record,
         [workflowDefinitionEditOperationSchema.parse(savedOp)],
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       const execution = executionFor(bodyDefinition());
       execution.status = "paused";

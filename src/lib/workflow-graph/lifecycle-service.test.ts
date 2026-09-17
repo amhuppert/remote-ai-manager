@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -52,7 +52,7 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
       };
     };
     return {
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       startExecution: unused("startExecution"),
       runExecution: unused("runExecution"),
@@ -90,7 +90,7 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
         parameters: { ticket: "CC-42" },
       },
       makeSeamDeps({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         startExecution,
         kickOffExecutionLoop,
       }),
@@ -130,7 +130,7 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
         ownerConversationId: "conv-planner",
       },
       makeSeamDeps({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         startExecution,
         kickOffExecutionLoop,
       }),
@@ -161,7 +161,7 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
         ownerConversationId: null,
       },
       makeSeamDeps({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         startExecution,
         kickOffExecutionLoop,
       }),
@@ -199,7 +199,7 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
         definitionId: "wf-1",
       },
       makeSeamDeps({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         startExecution,
         markRunning,
         kickOffExecutionLoop,
@@ -233,7 +233,7 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
         definitionId: "wf-static",
       },
       makeSeamDeps({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         startExecution,
         kickOffExecutionLoop,
       }),
@@ -264,7 +264,7 @@ describe("launchGraphWorkflowExecution (lifecycle running launch bridge)", () =>
           definitionId: "wf-1",
         },
         makeSeamDeps({
-          executionContract: createNonParticipatingGraphExecutionContract(),
+          executionContract: createTestGraphExecutionContract(),
           startExecution,
           kickOffExecutionLoop,
         }),
@@ -342,7 +342,7 @@ describe("lifecycle contract: production slot auto-release", () => {
       retireLaneConversation: () => {},
       getSession: async () => null,
 
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       executionRepository: repository,
       async loadDefinition() {
@@ -352,7 +352,7 @@ describe("lifecycle contract: production slot auto-release", () => {
       stopExecutionLaneDevServers: managerStopLaneDevServers,
     });
     const handlers = createGraphWorkflowLifecycleService({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       startExecution: unusedDep("startExecution"),
       runExecution: unusedDep("runExecution"),
@@ -604,7 +604,7 @@ describe("lifecycle contract: production slot auto-release", () => {
   it("frees the slot identically when a run reaches completed", async () => {
     const seeded = runningExecution({ id: "execution-finishing" });
     const stack = buildStack({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       startExecution: async () => acceptedLaunch(seeded),
       // Stands in for the execution loop: the graph runs out of work and the
@@ -638,7 +638,7 @@ describe("lifecycle contract: production slot auto-release", () => {
 
   it("leaves a halted run holding the slot for resume", async () => {
     const stack = buildStack({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       startExecution: async () =>
         acceptedLaunch(runningExecution({ id: "execution-halting" })),
@@ -687,7 +687,7 @@ describe("lifecycle contract: production slot auto-release", () => {
     planState.worktreePath = "/repo/.worktrees/session-1--lane-plan";
 
     const stack = buildStack({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
 
       startExecution: async () => acceptedLaunch(laneExecution),
       kickOffExecutionLoop: async () => {

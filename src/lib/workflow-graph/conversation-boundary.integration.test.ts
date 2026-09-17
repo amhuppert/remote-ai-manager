@@ -2,7 +2,7 @@ import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iter
 import { createExecutionLoopFixture } from "@/lib/workflow-graph/testing/execution-loop-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   ConversationBackendTurnInput,
@@ -115,7 +115,7 @@ async function compose(
     getSession: async () => null,
     stopExecutionLaneDevServers: async () => {},
 
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     executionRepository: repository,
     loadDefinition: async () => null,
@@ -186,7 +186,6 @@ async function compose(
     executeConversationTurn: hosted.manager.executeConversationTurn,
     getConversation: store.getConversation,
     getProjectDisplayName: () => "lifecycle-fixture",
-    mintLaneCapability: () => null,
     logger: runnerLogger,
   });
   const run = async (prompt: string) =>
@@ -206,7 +205,7 @@ async function compose(
     ...createContextTestCapabilities(),
     materializeWorkflowDocuments: async ({ execution }) => execution,
 
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
 
     executionRepository: repository,
     findLatestContextValidationEvent: async () => null,
@@ -263,7 +262,7 @@ async function compose(
       })
       .then((mutation) => mutation.execution);
   const loop = createExecutionLoopFixture({
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
     getSessionWorktreeDirtyPaths: async () => [],
 
     contextScheduler: {
@@ -303,7 +302,6 @@ async function compose(
     },
     mergeMutex: { withMergeMutex: async (_key, fn) => fn() },
     sessionGitLock: { withSessionGitLock: async (_key, fn) => fn() },
-    mergeRunner: { run: vi.fn() },
     soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
     laneCommitter: {
       commit: async () => ({ status: "skipped" }),

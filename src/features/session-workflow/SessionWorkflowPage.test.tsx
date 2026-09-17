@@ -153,7 +153,7 @@ function seedPage(
       null,
     );
     client.setQueryData(
-      workflowDefinitionKeys.detail("proj", item.seedDefinitionId),
+      workflowDefinitionKeys.detail("proj", item.seedDefinitionId ?? ""),
       { item: createWorkflowDefinitionRecord() },
     );
   }
@@ -263,7 +263,7 @@ describe("SessionWorkflowPage execution selection", () => {
         screen.getByRole("link", { name: "Source definition" }),
       ).toHaveAttribute(
         "href",
-        `/projects/proj/workflows?definition=${encodeURIComponent(current.seedDefinitionId)}`,
+        `/projects/proj/workflows?definition=${encodeURIComponent(current.seedDefinitionId ?? "")}`,
       ),
     );
     await userEvent.click(
@@ -273,7 +273,7 @@ describe("SessionWorkflowPage execution selection", () => {
       screen.getByRole("link", { name: "Source definition" }),
     ).toHaveAttribute(
       "href",
-      `/projects/proj/workflows?definition=${encodeURIComponent(historical.seedDefinitionId)}`,
+      `/projects/proj/workflows?definition=${encodeURIComponent(historical.seedDefinitionId ?? "")}`,
     );
   });
 

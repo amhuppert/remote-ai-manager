@@ -508,7 +508,7 @@ async function createExecutionFromSeed(
     // projection columns later (D7 decision D2). The authoritative `origin` and
     // the legacy-shaped projection beside it come from one derivation, so a
     // one-off run's filler can never be mistaken for a definition identity.
-    ...buildExecutionProvenance(seed.source, seed.executionId),
+    ...buildExecutionProvenance(seed.source),
     launchDocument: toDurableLaunchDocument(seed.launchDocument),
     liveSessionReadOnlyPinned: seed.liveSessionReadOnlyPinned ?? false,
     boundInputs: seed.inputs,

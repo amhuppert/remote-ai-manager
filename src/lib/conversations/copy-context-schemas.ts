@@ -47,8 +47,8 @@ const copyContextDefinitionSchema = z.object({
 export const copyContextGraphWorkflowExecutionSchema = z.object({
   id: z.string(),
   status: z.string(),
-  seedDefinitionId: z.string(),
-  seedDefinitionRevision: z.number(),
+  seedDefinitionId: z.string().nullable(),
+  seedDefinitionRevision: z.number().nullable(),
   activeContextIds: z.array(z.string()),
   contextStates: z.record(
     z.string(),

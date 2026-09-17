@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it } from "vitest";
 import type {
   ParameterDeclaration,
@@ -59,7 +59,7 @@ describe("applyDefinitionEdits", () => {
           instructions: "Edit the compiled contract downstream.",
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(false);
@@ -86,7 +86,7 @@ describe("applyDefinitionEdits", () => {
         taskId: "task-plan-1",
         instructions: "Read the NEW relevant files.",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -127,7 +127,7 @@ describe("applyDefinitionEdits", () => {
           targetContextId: "context-docs",
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -172,7 +172,7 @@ describe("applyDefinitionEdits", () => {
           position: { after: "task-plan-1" },
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -231,7 +231,7 @@ describe("applyDefinitionEdits", () => {
         contextId: "context-plan",
         orderedTaskIds: ["b", "a"],
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(good.ok).toBe(true);
     if (good.ok) {
@@ -247,7 +247,7 @@ describe("applyDefinitionEdits", () => {
         contextId: "context-plan",
         orderedTaskIds: ["b"],
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(bad.ok).toBe(false);
     if (!bad.ok) {
@@ -266,7 +266,7 @@ describe("applyDefinitionEdits", () => {
         contextId: "context-implement",
         position: { before: "task-implement-1" },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -323,7 +323,7 @@ describe("applyDefinitionEdits", () => {
     const result = applyDefinitionEdits(
       record,
       ops({ type: "remove-task", taskId: "a" }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -337,7 +337,7 @@ describe("applyDefinitionEdits", () => {
     const refused = applyDefinitionEdits(
       record,
       ops({ type: "remove-context", contextId: "context-plan" }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.issues[0]?.code).toBe("context-not-empty");
@@ -352,7 +352,7 @@ describe("applyDefinitionEdits", () => {
         contextId: "context-implement",
         deleteTasks: true,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -393,7 +393,7 @@ describe("applyDefinitionEdits", () => {
         contextId: "context-implement",
         deleteTasks: true,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(false);
@@ -415,7 +415,7 @@ describe("applyDefinitionEdits", () => {
         sourceContextId: "context-plan",
         targetContextId: "context-implement",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(dup.ok).toBe(false);
     if (!dup.ok) expect(dup.issues[0]?.code).toBe("edge-already-exists");
@@ -427,7 +427,7 @@ describe("applyDefinitionEdits", () => {
         sourceContextId: "context-plan",
         targetContextId: "context-implement",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(removed.ok).toBe(true);
     if (removed.ok) {
@@ -457,7 +457,7 @@ describe("applyDefinitionEdits", () => {
           title: "Nope",
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -478,7 +478,7 @@ describe("applyDefinitionEdits", () => {
         sourceContextId: "context-verify",
         targetContextId: "context-plan",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -495,7 +495,7 @@ describe("applyDefinitionEdits", () => {
         name: "Renamed Flow",
         description: "A better description",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -513,7 +513,7 @@ describe("applyDefinitionEdits", () => {
         mission: "New mission statement",
         conventions: ["one", "two"],
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(ok.ok).toBe(true);
     if (ok.ok) {
@@ -546,7 +546,7 @@ describe("applyDefinitionEdits", () => {
           },
         ],
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(badRanks.ok).toBe(false);
   });
@@ -566,7 +566,7 @@ describe("applyDefinitionEdits", () => {
           { id: "inv-2", statement: "No back-compat shims without approval" },
         ],
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(set.ok).toBe(true);
     if (set.ok) {
@@ -583,7 +583,7 @@ describe("applyDefinitionEdits", () => {
     const cleared = applyDefinitionEdits(
       set.ok ? set.record : record,
       ops({ type: "update-charter", invariants: null }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(cleared.ok).toBe(true);
     if (cleared.ok) {
@@ -604,7 +604,7 @@ describe("applyDefinitionEdits", () => {
           },
         ],
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(false);
@@ -628,7 +628,7 @@ describe("applyDefinitionEdits", () => {
           { id: "inv-1", statement: "Conflicting duplicate" },
         ],
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(false);
   });
@@ -644,7 +644,7 @@ describe("applyDefinitionEdits", () => {
     const cleared = applyDefinitionEdits(
       record,
       ops({ type: "update-workflow-config", scriptValidator: null }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(cleared.ok).toBe(true);
     if (cleared.ok) {
@@ -659,7 +659,7 @@ describe("applyDefinitionEdits", () => {
         type: "update-workflow-config",
         circuitBreaker: { consecutiveFailureThreshold: 5 },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(set.ok).toBe(true);
     if (set.ok) {
@@ -695,7 +695,7 @@ describe("applyDefinitionEdits", () => {
           },
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(set.ok).toBe(true);
     if (!set.ok) return;
@@ -728,7 +728,7 @@ describe("applyDefinitionEdits", () => {
           agentValidation: null,
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
@@ -760,7 +760,7 @@ describe("applyDefinitionEdits", () => {
           memory: { implementer: { contribute: "off" } },
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(set.ok).toBe(true);
     if (!set.ok) return;
@@ -780,7 +780,7 @@ describe("applyDefinitionEdits", () => {
         { type: "update-workflow-config", memory: null },
         { type: "update-context", contextId: "context-plan", memory: null },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
@@ -801,7 +801,7 @@ describe("applyDefinitionEdits", () => {
         contextId: "context-plan",
         implementer: null,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -821,7 +821,7 @@ describe("applyDefinitionEdits", () => {
         type: "update-workflow-config",
         planRepair: { enabled: false, maxAttemptsPerContext: 1 },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(setWorkflow.ok).toBe(true);
     if (setWorkflow.ok) {
@@ -833,7 +833,7 @@ describe("applyDefinitionEdits", () => {
       const clearedWorkflow = applyDefinitionEdits(
         setWorkflow.record,
         ops({ type: "update-workflow-config", planRepair: null }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(clearedWorkflow.ok).toBe(true);
       if (clearedWorkflow.ok) {
@@ -850,7 +850,7 @@ describe("applyDefinitionEdits", () => {
         contextId: "context-plan",
         planRepair: { enabled: true, maxAttemptsPerContext: 3 },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(setContext.ok).toBe(true);
     if (setContext.ok) {
@@ -869,7 +869,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           planRepair: null,
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(clearedContext.ok).toBe(true);
       if (clearedContext.ok) {
@@ -932,7 +932,7 @@ describe("applyDefinitionEdits", () => {
           options: ["a", "b"],
         },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(added.ok).toBe(true);
     if (added.ok) {
@@ -944,7 +944,7 @@ describe("applyDefinitionEdits", () => {
     const removedStillReferenced = applyDefinitionEdits(
       record,
       ops({ type: "remove-parameter", name: "feature-name" }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(removedStillReferenced.ok).toBe(false);
   });
@@ -964,7 +964,7 @@ describe("applyDefinitionEdits", () => {
         kind: "path",
         path: ".kiro/steering/tech.md",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(removed.ok).toBe(true);
     if (removed.ok) {
@@ -974,7 +974,7 @@ describe("applyDefinitionEdits", () => {
     const unknown = applyDefinitionEdits(
       createWorkflowDefinitionRecord(),
       ops({ type: "remove-prerequisite", kind: "path", path: "nope.md" }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) {
@@ -1037,7 +1037,7 @@ describe("applyDefinitionEdits", () => {
           acceptanceCriteria: "Every finding is triaged.",
           outputSchema: VALID_SCHEMA,
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
 
       expect(contextOf(result, "context-review")?.outputSchema).toEqual(
@@ -1053,7 +1053,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           outputSchema: VALID_SCHEMA,
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(contextOf(seeded, "context-plan")?.outputSchema).toEqual(
         VALID_SCHEMA,
@@ -1071,7 +1071,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           outputSchema: replacement,
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(contextOf(replaced, "context-plan")?.outputSchema).toEqual(
         replacement,
@@ -1086,7 +1086,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           outputSchema: null,
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(contextOf(cleared, "context-plan")).not.toHaveProperty(
         "outputSchema",
@@ -1101,7 +1101,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           outputSchema: VALID_SCHEMA,
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       if (!seeded.ok) throw new Error("expected the seeding batch to succeed");
 
@@ -1112,7 +1112,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           title: "Plan (renamed)",
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
 
       expect(contextOf(renamed, "context-plan")?.outputSchema).toEqual(
@@ -1147,7 +1147,7 @@ describe("applyDefinitionEdits", () => {
         const result = applyDefinitionEdits(
           createWorkflowDefinitionRecord(),
           ops(operation),
-          createNonParticipatingGraphExecutionContract(),
+          createTestGraphExecutionContract(),
         );
 
         expect(result.ok).toBe(false);
@@ -1169,7 +1169,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-implement",
           outputSchema: { type: "object", properties: { a: { $ref: "#/x" } } },
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
 
       expect(result.ok).toBe(false);
@@ -1207,7 +1207,7 @@ describe("applyDefinitionEdits", () => {
             ownedPaths: ["docs", "README.md"],
           },
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(contextOf(added, "context-docs")?.placement).toEqual({
         lane: "delivery",
@@ -1227,7 +1227,7 @@ describe("applyDefinitionEdits", () => {
             ownedPaths: ["docs"],
           },
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(contextOf(narrowed, "context-docs")?.placement).toEqual({
         lane: "delivery",
@@ -1244,7 +1244,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           title: "Plan (renamed)",
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
 
       expect(contextOf(renamed, "context-plan")?.placement).toEqual({
@@ -1265,7 +1265,7 @@ describe("applyDefinitionEdits", () => {
           acceptanceCriteria: "Docs describe the change.",
           placement: { lane: "delivery", mode: "owned", ownedPaths: ["docs"] },
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       if (!seeded.ok) throw new Error("expected the seeding batch to succeed");
 
@@ -1280,7 +1280,7 @@ describe("applyDefinitionEdits", () => {
             ownedPaths: ["docs/reference"],
           },
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
 
       expect(result.ok).toBe(false);
@@ -1298,7 +1298,7 @@ describe("applyDefinitionEdits", () => {
           contextId: "context-plan",
           placement: { lane: "-not-a-branch-segment", mode: "full" },
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
 
       expect(result.ok).toBe(false);
@@ -1335,7 +1335,7 @@ describe("applyDefinitionEdits", () => {
             targetContextId: "context-return",
           },
         ),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
       expect(seeded.ok).toBe(true);
       if (!seeded.ok) return;
@@ -1347,7 +1347,7 @@ describe("applyDefinitionEdits", () => {
           sourceContextId: "context-implement",
           targetContextId: "context-return",
         }),
-        createNonParticipatingGraphExecutionContract(),
+        createTestGraphExecutionContract(),
       );
 
       expect(result.ok).toBe(false);
@@ -1398,7 +1398,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         targetContextId: "context-implement",
         when: SHIP_GUARD,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(true);
@@ -1427,7 +1427,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         targetContextId: base.executionContexts[1]!.id,
         when: SHIP_GUARD,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(false);
@@ -1445,7 +1445,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         sourceContextId: "context-plan",
         targetContextId: "context-implement",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(added.ok).toBe(true);
     if (!added.ok) return;
@@ -1457,7 +1457,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         edgeId: "context-plan__context-implement",
         when: SHIP_GUARD,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(set.ok).toBe(true);
     if (!set.ok) return;
@@ -1470,7 +1470,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         edgeId: "context-plan__context-implement",
         when: { else: true },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(replaced.ok).toBe(true);
     if (!replaced.ok) return;
@@ -1483,7 +1483,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         edgeId: "context-plan__context-implement",
         when: null,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
@@ -1494,7 +1494,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
     const result = applyDefinitionEdits(
       guardableRecord(),
       ops({ type: "update-edge", edgeId: "nope", when: null }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(false);
@@ -1511,7 +1511,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         sourceContextId: "context-plan",
         targetContextId: "context-implement",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(added.ok).toBe(true);
     if (!added.ok) return;
@@ -1529,7 +1529,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
           },
         },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(false);
@@ -1548,7 +1548,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
     const result = applyDefinitionEdits(
       record,
       ops({ type: "remove-edge", edgeId: base.edges[0]!.id }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(true);
@@ -1576,7 +1576,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         sourceContextId: "context-plan",
         targetContextId: "context-implement",
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(false);
@@ -1594,7 +1594,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         contextId: "context-plan",
         routing: { cardinality: "exactlyOne" },
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(set.ok).toBe(true);
     if (!set.ok) return;
@@ -1611,7 +1611,7 @@ describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () 
         contextId: "context-plan",
         routing: null,
       }),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
@@ -1647,7 +1647,7 @@ describe("acceptance-criterion records on definition edits", () => {
           ],
         },
       ),
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
 
     expect(result.ok).toBe(true);

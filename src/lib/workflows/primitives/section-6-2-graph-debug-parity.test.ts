@@ -1,6 +1,6 @@
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 /**
  * Section 6.2 — graph + debug workflow parity verification.
  *
@@ -804,7 +804,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     };
 
     const loop = createExecutionLoopFixture({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       getSessionWorktreeDirtyPaths: async () => [],
 
       contextScheduler: {
@@ -867,7 +867,6 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       },
       mergeMutex: { withMergeMutex: async (_k, fn) => fn() },
       sessionGitLock: { withSessionGitLock: async (_k, fn) => fn() },
-      mergeRunner: { run: vi.fn() },
       joinRunner: {
         async run({ joinId, mutateActive }) {
           await mutateActive((e) =>
@@ -1039,7 +1038,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       });
 
       const runner = createValidatorRunner({
-        executionContract: createNonParticipatingGraphExecutionContract(),
+        executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: async () => workingDir,
         resolveTimeoutMs: async () => 60_000,
         executeWorkflowTaskRun: executeWorkflowTaskRunSpy,

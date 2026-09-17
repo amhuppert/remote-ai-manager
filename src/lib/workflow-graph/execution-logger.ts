@@ -93,8 +93,8 @@ interface ManifestContextSummary {
 
 interface Manifest {
   executionId: string;
-  definitionId: string;
-  definitionRevision: number;
+  definitionId: string | null;
+  definitionRevision: number | null;
   definition: ResolvedWorkflowSemanticDefinition;
   startedAt: string;
   completedAt: string | null;

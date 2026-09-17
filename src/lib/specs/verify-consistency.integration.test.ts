@@ -18,12 +18,10 @@ import {
 } from "@/lib/events/publication";
 import { _resetForTesting as resetJobQueue } from "@/lib/jobs/queue";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { resetGraphExecutionLifecycleCallbacksForTesting } from "@/lib/workflow-graph/execution-lifecycle-port";
 import {
   holdsExecutionLease,
   isTerminalStatus,
 } from "@/lib/workflow-graph/lifecycle-classifier";
-import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
 import type {
   SpecExecutionCleanupPhase,
@@ -113,16 +111,14 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
 
   beforeEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     world = createSpecSpineWorld();
     setPublicationBroadcastForTesting(() => ({ delivered: true }));
   });
 
   afterEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     _resetPublicationForTesting();
   });
 
@@ -460,16 +456,14 @@ describe("spec verify reports proposal-integrity consistency findings", () => {
 
   beforeEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     world = createSpecSpineWorld();
     setPublicationBroadcastForTesting(() => ({ delivered: true }));
   });
 
   afterEach(() => {
     resetJobQueue();
-    _resetDeliveryGateEvaluatorForTesting();
-    resetGraphExecutionLifecycleCallbacksForTesting();
+
     _resetPublicationForTesting();
   });
 

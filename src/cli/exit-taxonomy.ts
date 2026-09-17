@@ -50,7 +50,7 @@ export const EXIT_TAXONOMY: readonly ExitCodeMeaning[] = [
   {
     code: EXIT_VERSION_MISMATCH,
     meaning:
-      "this binary and the server are different builds — nothing changed unless the failure text warns the mutation may have committed",
+      "this binary and the server are different builds — nothing changed",
     recovery: "cctl doctor --server <url>",
   },
 ];

@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 /**
  * R15.1 — the whole scoped-validation path over ONE real shared worktree.
  *
@@ -148,7 +148,7 @@ describe("scoped candidate identity and rendering over a shared lane worktree", 
     contextId: string,
   ): Promise<{ diffScopeSection: string; candidateTreeHash: string | null }> {
     const runner = createValidatorRunner({
-      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: async () => worktreePath,
       resolveTimeoutMs: async () => 30_000,
       getProjectDisplayName: () => "repo",

@@ -1,4 +1,4 @@
-import { createRegisteredGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import type { GraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { NextResponse } from "next/server";
 import { notFound } from "@/lib/shared/route-resolution";
 import { z } from "zod";
@@ -53,6 +53,7 @@ function formatAdmissionIssueForEdit(
 }
 
 export interface DefinitionEditRequestParams {
+  executionContract: GraphExecutionContract;
   /** The raw (unparsed) request body. */
   rawBody: unknown;
   /** 404 message for this tier ("Workflow not found" / "Template not found"). */
@@ -121,7 +122,7 @@ export async function runDefinitionEditRequest(
   const applied = applyDefinitionEdits(
     record,
     parsed.data.operations,
-    createRegisteredGraphExecutionContract(),
+    params.executionContract,
   );
   if (!applied.ok) {
     const regionLocked = applied.issues.find(

@@ -76,9 +76,6 @@ export function buildParityResponse(
   const headers = buildParityHeaders(request.headers, serverBuild);
   if (headers === null) return NextResponse.next();
   if (MUTATING_METHODS.has(request.method)) {
-    // The mismatch header rides the refusal too, so a binary that predates the
-    // `build_skew` code still reads it as skew (exit 4) rather than as a
-    // generic 409.
     return NextResponse.json(buildSkewBody(serverBuild), {
       status: 409,
       headers,

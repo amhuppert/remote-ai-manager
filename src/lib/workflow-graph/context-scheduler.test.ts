@@ -199,6 +199,33 @@ it("clears lane states when scheduling a new execution context", async () => {
 
   expect(execution.laneStates).toEqual({});
 });
+it("refuses to dispatch a worktree context without an assigned lane", async () => {
+  const base = createWorkflowExecution();
+  const repository = createRepository(
+    createWorkflowExecution({
+      ...base,
+      status: "running",
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "ready",
+          isolation: "worktree",
+          laneId: null,
+        },
+      },
+    }),
+  );
+
+  await expect(
+    scheduleNextContext(
+      { executionRepository: repository },
+      "/repo",
+      "session-1",
+    ),
+  ).rejects.toThrow('Worktree context "context-plan" has no assigned lane');
+});
+
 describe("scheduleEligibleContexts", () => {
   function createSession(overrides: Partial<SessionState> = {}): SessionState {
     return {

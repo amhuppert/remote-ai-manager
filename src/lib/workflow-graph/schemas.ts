@@ -2245,8 +2245,8 @@ export const graphWorkflowExecutionSchema = z.object({
   // default could not see them, and an optional field would be a second
   // compatibility surface for every consumer to re-handle.
   origin: graphWorkflowExecutionOriginSchema,
-  seedDefinitionId: z.string().trim().min(1),
-  seedDefinitionRevision: z.number().int().min(1),
+  seedDefinitionId: z.string().trim().min(1).nullable(),
+  seedDefinitionRevision: z.number().int().min(1).nullable(),
   // Written once at seed and never rewritten — it lives in the definition tier
   // beside the other seed-time audit fields. `.default(null)` floors rows
   // written before the snapshot existed; those runs render at whatever fidelity
@@ -2529,8 +2529,8 @@ export type GraphWorkflowPendingArtifacts = z.infer<
  */
 export const graphWorkflowExecutionHistoryItemSchema = z.object({
   executionId: z.string(),
-  definitionId: z.string(),
-  definitionRevision: z.number(),
+  definitionId: z.string().nullable(),
+  definitionRevision: z.number().nullable(),
   status: graphWorkflowStatusSchema,
   startedAt: z.string(),
   completedAt: z.string().nullable().default(null),

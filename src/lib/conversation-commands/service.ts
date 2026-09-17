@@ -22,6 +22,7 @@ import { hasUncommittedChanges, collectChangeSummary } from "@/lib/git/commits";
 import { resolveMergeTarget, type MergeTarget } from "@/lib/git/merge-target";
 import type { RebaseOnto } from "@/lib/git/rebase";
 import { parseRebaseArgs } from "./rebase-args";
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 import {
   evaluateMergeInitiation as evaluateSessionMergeAdmission,
   type MergeInitiation as SessionMergeAdmission,
@@ -845,9 +846,12 @@ const productionDeps: ConversationCommandDeps = {
   },
   enqueueAuthoringTurn: enqueueConversationMessage,
   evaluateSessionMergeAdmission(input) {
+    const policy = getProductionWorkflowComposition();
     return evaluateSessionMergeAdmission({
       ...input,
       surface: "merge-command",
+      association: policy.mergeAssociation,
+      gate: policy.deliveryGate,
     });
   },
   // Dynamic so the tickets/compaction graph stays off this module's static

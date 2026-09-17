@@ -227,6 +227,8 @@ describe("cctl at project conversation scope — project-supported commands", ()
             serverBuild: "dev",
             identity: { project: "cc", session: null, conversation: "conv-1" },
             tokenValid: true,
+            cliPath: "/test/cc/bin/cctl",
+            configDir: "/test/cc",
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),

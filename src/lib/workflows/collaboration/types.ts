@@ -157,26 +157,6 @@ export const collaborationAgentModelSettingsSchema =
 export type CollaborationAgentModelSettings = BackendModelSelection;
 
 /**
- * LEGACY persisted shape, read-only: envelopes written before per-flow-agent
- * configs were introduced keyed lane settings by backend name. Kept solely so
- * the envelope adapter can decode old feature snapshots for display; nothing
- * writes this shape anymore.
- */
-export const legacyReadOnlyCollaborationAgentModelSettingsMapSchema = z.object({
-  claude: z.object({
-    model: z.string(),
-    effort: z.string().optional(),
-  }),
-  codex: z.object({
-    model: z.string(),
-    effort: z.string().optional(),
-  }),
-});
-export type LegacyReadOnlyCollaborationAgentModelSettingsMap = z.infer<
-  typeof legacyReadOnlyCollaborationAgentModelSettingsMapSchema
->;
-
-/**
  * One flow agent's fully resolved runtime, persisted into the envelope's
  * feature snapshot at start and replayed verbatim on resume. The selection is
  * complete and indivisible; no resume path may reconstruct it from current

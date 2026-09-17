@@ -181,8 +181,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   private readonly sessionInstructions: string[];
   private readonly workflowExecutionId: string | undefined;
   private readonly workflowContextId: string | undefined;
-  private readonly workflowLaneCapability: string | undefined;
-  private readonly conversationCapability: string | undefined;
+  private readonly workflowCallerConversationId: string | undefined;
   private readonly deps: CursorConversationRuntimeDeps;
   private readonly workerOwnerToken = {};
   private readonly steering: CursorSteering;
@@ -247,8 +246,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     ];
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
-    this.workflowLaneCapability = input.workflowLaneCapability;
-    this.conversationCapability = input.conversationCapability;
+    this.workflowCallerConversationId = input.workflowCallerConversationId;
     this.modelSelection = input.modelSelection;
     this.outputFormat = input.outputFormat;
 
@@ -679,11 +677,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       ...(this.workflowContextId !== undefined
         ? { workflowContextId: this.workflowContextId }
         : {}),
-      ...(this.workflowLaneCapability !== undefined
-        ? { workflowLaneCapability: this.workflowLaneCapability }
-        : {}),
-      ...(this.conversationCapability !== undefined
-        ? { conversationCapability: this.conversationCapability }
+      ...(this.workflowCallerConversationId !== undefined
+        ? { workflowCallerConversationId: this.workflowCallerConversationId }
         : {}),
     });
 

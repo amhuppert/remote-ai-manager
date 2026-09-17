@@ -1,3 +1,4 @@
+import { originFallbackName } from "@/lib/workflow-graph/execution-origin";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
@@ -90,8 +91,12 @@ function launchCard(input: OverviewSummaryInput): OverviewLaunchCard {
   const { execution, draftRevision } = input;
   const launched = execution.seedDefinitionRevision;
   return {
-    revisionLabel: `definition r${launched}`,
-    seedLabel: `${execution.seedDefinitionId}@${launched}`,
+    revisionLabel:
+      launched === null ? "Inline plan" : `definition r${launched}`,
+    seedLabel:
+      execution.seedDefinitionId === null
+        ? originFallbackName(execution.origin)
+        : `${execution.seedDefinitionId}@${launched}`,
     runLabel: execution.id,
     originLabel: originLabel(execution.origin),
     inputs: Object.entries(execution.boundInputs).map(([name, value]) => ({
@@ -99,7 +104,7 @@ function launchCard(input: OverviewSummaryInput): OverviewLaunchCard {
       value,
     })),
     draftNote:
-      draftRevision != null && draftRevision !== launched
+      launched !== null && draftRevision != null && draftRevision !== launched
         ? `The builder draft is r${draftRevision}. Saved edits do not reach this run.`
         : null,
   };

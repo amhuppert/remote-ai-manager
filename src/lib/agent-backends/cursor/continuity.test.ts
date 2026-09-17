@@ -14,7 +14,6 @@ import {
   createScriptedTransport,
   type ScriptedWorker,
 } from "./testing/scripted-worker";
-import { CURSOR_IPC_CODEC_VERSION } from "./worker/ipc";
 
 const CONTEXT: ContinuityContext = {
   projectPath: "/repo",
@@ -44,7 +43,6 @@ function refusingAttach(error: {
 }) {
   return (_input: unknown, worker: ScriptedWorker): void => {
     worker.send({
-      v: CURSOR_IPC_CODEC_VERSION,
       type: "attachResult",
       outcome: "failed",
       ref: null,

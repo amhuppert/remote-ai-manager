@@ -1,15 +1,12 @@
 import {
   collaborationAgentsMapSchema,
   collaborationArtifactSchema,
-  legacyReadOnlyCollaborationAgentModelSettingsMapSchema,
   type CollaborationAgent,
   type CollaborationArtifact,
   type CollaborationAutonomousResolutionThreshold,
   type CollaborationResolvedAgent,
 } from "@/lib/workflows/collaboration/types";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
-import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
 
 /**
  * One lane's display identity. The persisted `agents` entry carries the full
@@ -99,13 +96,6 @@ const VALID_AGENTS: ReadonlySet<CollaborationAgent> = new Set([
   "codex",
 ]);
 
-const LEGACY_EFFORT_PARAMETER_BY_AGENT: Readonly<
-  Record<CollaborationAgent, "effort" | "reasoning">
-> = {
-  claude: "effort",
-  codex: "reasoning",
-};
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -147,47 +137,6 @@ function parseUserAnswers(value: unknown): Record<string, string> {
   return out;
 }
 
-/**
- * Display-only decode of the legacy backend-keyed `agentModelSettings` blob
- * on envelopes written before per-flow-agent configs existed, mapped through
- * the opposite-backend pairing that was invariant when those envelopes were
- * written. Confined to this adapter — nothing writes the legacy shape — so
- * old collab passages keep their model/effort meta line.
- */
-function legacyAgentsView(
-  record: Record<string, unknown>,
-  primary: CollaborationAgent,
-): CollabAgentsDisplayMap | undefined {
-  const legacy =
-    legacyReadOnlyCollaborationAgentModelSettingsMapSchema.safeParse(
-      record["agentModelSettings"],
-    );
-  if (!legacy.success) return undefined;
-  const secondary = oppositeCollaborationBackend(primary);
-  const codexFastMode = record["codexFastMode"];
-  const entryFor = (backend: CollaborationAgent) => {
-    const settings = legacy.data[backend];
-    const parameters: Record<string, string> = {};
-    if (settings.effort !== undefined) {
-      parameters[LEGACY_EFFORT_PARAMETER_BY_AGENT[backend]] = settings.effort;
-    }
-    if (
-      backendSupportsFastMode(backend) &&
-      typeof codexFastMode === "boolean"
-    ) {
-      parameters.fast = String(codexFastMode);
-    }
-    return {
-      backend,
-      modelSelection: { modelId: settings.model, parameters },
-    };
-  };
-  return {
-    agent_one: entryFor(primary),
-    agent_two: entryFor(secondary),
-  };
-}
-
 export function parseCollabFeatureSnapshot(
   snapshot: unknown,
 ): CollabFeatureSnapshot | null {
@@ -222,7 +171,7 @@ export function parseCollabFeatureSnapshot(
         agent_one: toAgentDisplay(agents.data.agent_one),
         agent_two: toAgentDisplay(agents.data.agent_two),
       }
-    : legacyAgentsView(record, primaryAgentBackend);
+    : undefined;
   return {
     mode: "asymmetric",
     brief,

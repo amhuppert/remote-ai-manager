@@ -1,3 +1,7 @@
+import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
+import type { MergeDeliveryLifecycle } from "@/lib/workflows/merge/delivery-lifecycle-port";
+import type { MergeAssociationResolver } from "@/lib/workflows/merge/association-port";
+import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 /**
  * Background job lifecycle management for async merge, commit,
  * and conflict resolution operations.
@@ -45,10 +49,9 @@ import {
   mergeMachine,
   type MergeMachineType,
 } from "../workflows/merge/machine";
-import { provideRegisteredDeliveryGate } from "../workflows/merge/delivery-gate-port";
-import { resolveRegisteredMergeAssociation } from "../workflows/merge/association-port";
+import { provideDeliveryGate } from "../workflows/merge/delivery-gate-port";
 import {
-  notifyRegisteredMergeDelivered,
+  notifyMergeDelivered,
   resolveDeliveredMergeSha,
 } from "../workflows/merge/delivery-lifecycle-port";
 import type {
@@ -270,6 +273,7 @@ function markProgress(job: BackgroundJob): void {
 function broadcastJobStatus(
   job: BackgroundJob,
   broadcast: PublishFn = defaultJobBroadcast,
+  deliveryLifecycle?: MergeDeliveryLifecycle,
 ): void {
   markProgress(job);
   const event: JobStatusEvent = {
@@ -305,7 +309,7 @@ function broadcastJobStatus(
     job.status === "ready-to-land" ||
     job.status === "discarded"
   ) {
-    persistTerminalState(job);
+    persistTerminalState(job, deliveryLifecycle);
   }
 }
 
@@ -345,7 +349,10 @@ function persistJobProgress(job: BackgroundJob): void {
 }
 
 /** Persist terminal state to DB and create a notification. Non-throwing. */
-function persistTerminalState(job: BackgroundJob): void {
+function persistTerminalState(
+  job: BackgroundJob,
+  deliveryLifecycle?: MergeDeliveryLifecycle,
+): void {
   try {
     createJobsRepo(getStateDb()).updateJobRecord(job.jobId, {
       status: job.status,
@@ -376,7 +383,9 @@ function persistTerminalState(job: BackgroundJob): void {
       (job.executionId !== undefined || job.specExecutionId !== undefined) &&
       job.finalPublish === true
     ) {
-      notifyRegisteredMergeDelivered(
+      notifyMergeDelivered(
+        deliveryLifecycle ??
+          getProductionWorkflowComposition().mergeDeliveryLifecycle,
         job.executionId,
         deliveredSha,
         job.specExecutionId,
@@ -779,6 +788,7 @@ function createDispatchHost(
   broadcast: PublishFn,
   acquireSessionLock?: AcquireSessionLockFn,
   jobId?: string,
+  deliveryLifecycle?: MergeDeliveryLifecycle,
 ): JobDispatchHost {
   return {
     prepare(params) {
@@ -790,7 +800,7 @@ function createDispatchHost(
       });
     },
     publishStatus(job) {
-      broadcastJobStatus(job, broadcast);
+      broadcastJobStatus(job, broadcast, deliveryLifecycle);
     },
     persistProgress(job) {
       markProgress(job);
@@ -967,7 +977,7 @@ export interface DispatchMergeParams {
 }
 
 /**
- * A merge refused at dispatch by the registered association resolver: the
+ * A merge refused at dispatch by the injected association resolver: the
  * session hosts spec-execution state the delivery gate could never evaluate
  * from this merge (not started, or ambiguous). No job is created.
  */
@@ -987,18 +997,21 @@ export type MergeDispatchResult =
 
 /**
  * Resolve merge association once, at dispatch. Explicit caller provenance is
- * authoritative; otherwise the registered resolver decides, and its refusal
+ * authoritative; otherwise the injected resolver decides, and its refusal
  * aborts dispatch before any job or lock exists.
  */
-function resolveDispatchProvenance(input: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  targetBranch?: string;
-  executionId?: string;
-  specExecutionId?: string;
-  finalPublish?: boolean;
-}):
+function resolveDispatchProvenance(
+  associationResolver: MergeAssociationResolver,
+  input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    targetBranch?: string;
+    executionId?: string;
+    specExecutionId?: string;
+    finalPublish?: boolean;
+  },
+):
   | {
       ok: true;
       executionId?: string;
@@ -1014,7 +1027,7 @@ function resolveDispatchProvenance(input: {
       finalPublish: input.finalPublish,
     };
   }
-  const association = resolveRegisteredMergeAssociation({
+  const association = associationResolver.resolve({
     projectPath: input.projectPath,
     projectName: input.projectName,
     sessionName: input.sessionName,
@@ -1062,6 +1075,7 @@ export interface RegisteredMergeJobInput {
  */
 export function runRegisteredMergeJob(
   params: RegisteredMergeJobInput,
+  deliveryLifecycle?: MergeDeliveryLifecycle,
 ): Promise<MergeOutput> {
   return new Promise<MergeOutput>((resolve, reject) => {
     const { input } = params;
@@ -1078,6 +1092,7 @@ export function runRegisteredMergeJob(
         params.broadcast ?? defaultJobBroadcast,
         () => () => {},
         input.jobId,
+        deliveryLifecycle,
       ),
       ...(input.parkedRef !== undefined
         ? { continuesParkedRef: input.parkedRef }
@@ -1143,6 +1158,7 @@ export function runRegisteredMergeJob(
 
 export function dispatchMergeJob(
   params: DispatchMergeParams,
+  composition: WorkflowComposition = getProductionWorkflowComposition(),
 ): MergeDispatchResult {
   const {
     projectPath,
@@ -1167,9 +1183,10 @@ export function dispatchMergeJob(
     candidateValidation,
   } = params;
   const machine =
-    injectedMachine ?? provideRegisteredDeliveryGate(mergeMachine);
+    injectedMachine ??
+    provideDeliveryGate(mergeMachine, composition.deliveryGate);
 
-  const provenance = resolveDispatchProvenance({
+  const provenance = resolveDispatchProvenance(composition.mergeAssociation, {
     projectPath,
     projectName,
     sessionName,
@@ -1200,7 +1217,12 @@ export function dispatchMergeJob(
       branchName,
       targetBranch,
     },
-    host: createDispatchHost(broadcast, acquireSessionLock),
+    host: createDispatchHost(
+      broadcast,
+      acquireSessionLock,
+      undefined,
+      composition.mergeDeliveryLifecycle,
+    ),
     // A land or discard re-entry continues the parked candidate rather than
     // superseding it, so the host must not drop the ref it is about to use.
     ...(parkedRef !== undefined ? { continuesParkedRef: parkedRef } : {}),
@@ -1334,33 +1356,36 @@ export function dispatchCommitJob(params: {
  * with jobType "resolve-conflicts". The routing state skips directly to
  * conflict resolution, then proceeds through validation and squash merge.
  */
-export function dispatchResolveConflictsJob(params: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  worktreePath: string;
-  branchName: string;
-  mergeMessage: string;
-  decisions?: ConflictDecisionInput[];
-  /**
-   * Files the conflicted merge this retry resumes reported. The retry's own
-   * run never sees that merge, so without them its post-resolution
-   * ground-truth check has no list of files to hold the agent to.
-   */
-  conflictFiles?: string[];
-  targetBranch?: string;
-  resolutionContext?: string;
-  broadcast?: PublishFn;
-  acquireSessionLock?: AcquireSessionLockFn;
-  machine?: MergeMachineType;
-  executionId?: string;
-  specExecutionId?: string;
-  finalPublish?: boolean;
-  candidateValidation?: BackgroundJob["candidateValidation"];
-  /** The resumed merge's own fact; see {@link DispatchMergeParams}. */
-  finalizeSessionOnPublish?: boolean;
-  skipMarkMerged?: boolean;
-}): MergeDispatchResult {
+export function dispatchResolveConflictsJob(
+  params: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    worktreePath: string;
+    branchName: string;
+    mergeMessage: string;
+    decisions?: ConflictDecisionInput[];
+    /**
+     * Files the conflicted merge this retry resumes reported. The retry's own
+     * run never sees that merge, so without them its post-resolution
+     * ground-truth check has no list of files to hold the agent to.
+     */
+    conflictFiles?: string[];
+    targetBranch?: string;
+    resolutionContext?: string;
+    broadcast?: PublishFn;
+    acquireSessionLock?: AcquireSessionLockFn;
+    machine?: MergeMachineType;
+    executionId?: string;
+    specExecutionId?: string;
+    finalPublish?: boolean;
+    candidateValidation?: BackgroundJob["candidateValidation"];
+    /** The resumed merge's own fact; see {@link DispatchMergeParams}. */
+    finalizeSessionOnPublish?: boolean;
+    skipMarkMerged?: boolean;
+  },
+  composition: WorkflowComposition = getProductionWorkflowComposition(),
+): MergeDispatchResult {
   const {
     projectPath,
     projectName,
@@ -1381,9 +1406,10 @@ export function dispatchResolveConflictsJob(params: {
     candidateValidation,
   } = params;
   const machine =
-    injectedMachine ?? provideRegisteredDeliveryGate(mergeMachine);
+    injectedMachine ??
+    provideDeliveryGate(mergeMachine, composition.deliveryGate);
 
-  const provenance = resolveDispatchProvenance({
+  const provenance = resolveDispatchProvenance(composition.mergeAssociation, {
     projectPath,
     projectName,
     sessionName,
@@ -1414,7 +1440,12 @@ export function dispatchResolveConflictsJob(params: {
       branchName,
       targetBranch,
     },
-    host: createDispatchHost(broadcast, acquireSessionLock),
+    host: createDispatchHost(
+      broadcast,
+      acquireSessionLock,
+      undefined,
+      composition.mergeDeliveryLifecycle,
+    ),
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
       if (resolvedExecutionId) job.executionId = resolvedExecutionId;

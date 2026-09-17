@@ -1,6 +1,6 @@
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import type { GraphWorkflowExecutionToolContextDeps } from "@/lib/workflow-graph/execution-tool-context";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -152,7 +152,7 @@ function buildRealContext(
       return next;
     };
   const factory = createGraphWorkflowExecutionToolContext({
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
     executionRepository: {
       mutateActive: mutateActiveImpl,
     },
@@ -210,7 +210,7 @@ function laneRouteHost(
         return { kind: "valid" as const };
       },
     },
-    async verifyLaneCapability() {
+    async readLaneIdentity() {
       return { kind: "absent" as const };
     },
     async expandGraph() {

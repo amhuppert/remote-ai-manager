@@ -201,6 +201,41 @@ function classifierExecution(
   });
 }
 
+/** Assign the worktree and lane ledger before testing commit reconciliation. */
+function assignWorktreeLane(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): void {
+  const state = execution.contextStates[contextId];
+  if (!state) throw new Error(`fixture missing ${contextId}`);
+  const laneId = `lane-${contextId}`;
+  state.laneId = laneId;
+  state.worktreePath = `/tmp/${contextId}`;
+  state.branchName = `csm/${contextId}`;
+  if (state.landingIntent) state.landingIntent.laneId = laneId;
+  execution.executionLanes[laneId] = {
+    laneId,
+    kind: "worktree",
+    status: "active",
+    worktreePath: state.worktreePath,
+    branchName: state.branchName,
+    includedContextIds: [],
+    lastCommittingContextId: null,
+    commitSnapshots: [],
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function committedBranch(contextId: string) {
+  return new Map([
+    [
+      contextId,
+      { headSha: "bbb", tokenCommitSha: "bbb", baselineReachable: true },
+    ],
+  ]);
+}
+
 describe("projectExecutionRoutes", () => {
   it("resolves guards over the running execution's captured outputs", () => {
     const projection = projectExecutionRoutes(
@@ -219,7 +254,7 @@ describe("projectExecutionRoutes", () => {
 });
 
 describe("isRouteSourceLanded (R2.5 land gate)", () => {
-  it("is false while a completed source's fan-in merge is pending, and true once merged", () => {
+  it("refuses lane-less worktree output regardless of its merge status", () => {
     const pending = classifierExecution({
       verdict: "fix",
       contextStates: {
@@ -236,7 +271,7 @@ describe("isRouteSourceLanded (R2.5 land gate)", () => {
 
     const merged = structuredClone(pending);
     merged.contextStates.classify!.mergeStatus = "merged-success";
-    expect(isRouteSourceLanded(merged, "classify")).toBe(true);
+    expect(isRouteSourceLanded(merged, "classify")).toBe(false);
   });
 
   it("treats only a reconciled landing as landed, whatever the lifecycle says (decision D8)", () => {
@@ -381,7 +416,7 @@ describe("settleRoutes — landing intents gate the decision (R2.5)", () => {
       isolation: "worktree",
       mergeStatus: "merged-success",
       landingIntent: {
-        mode: "fan_in_merge",
+        mode: "lane_commit",
         attempt: 1,
         token: "cc-landing:execution-1:classify:1",
         laneId: null,
@@ -396,7 +431,12 @@ describe("settleRoutes — landing intents gate the decision (R2.5)", () => {
       },
     });
 
-    const outcome = settleRoutes(execution, { now: NOW });
+    assignWorktreeLane(execution, "classify");
+
+    const outcome = settleRoutes(execution, {
+      now: NOW,
+      branchEvidence: committedBranch("classify"),
+    });
 
     expect(outcome.reconciledContextIds).toEqual(["classify"]);
     expect(execution.contextStates.classify?.landingIntent?.state).toBe(
@@ -599,9 +639,9 @@ describe("settleRoutes — landing intents gate the decision (R2.5)", () => {
   });
 });
 
-describe("merge-retry recovery, through the scheduler (R2.5)", () => {
-  /** A classifier whose fan-in merge failed: its verdict is banked, its work is not. */
-  function mergeFailedClassifier(): GraphWorkflowExecution {
+describe("lane-commit recovery, through the scheduler (R2.5)", () => {
+  /** A classifier whose lane commit failed: its verdict is banked, its work is not. */
+  function commitFailedClassifier(): GraphWorkflowExecution {
     const execution = classifierExecution({ verdict: "fix" });
     execution.contextStates.classify = landedSource("classify", {
       isolation: "worktree",
@@ -610,7 +650,7 @@ describe("merge-retry recovery, through the scheduler (R2.5)", () => {
       mergeStatus: "merged-failed",
       lastMergeError: "conflict in src/app.ts",
       landingIntent: {
-        mode: "fan_in_merge",
+        mode: "lane_commit",
         attempt: 1,
         token: "cc-landing:execution-1:classify:1",
         laneId: null,
@@ -624,12 +664,12 @@ describe("merge-retry recovery, through the scheduler (R2.5)", () => {
         settledAt: null,
       },
     });
-    execution.pendingMergeRetry = ["classify"];
+    assignWorktreeLane(execution, "classify");
     return execution;
   }
 
-  it("blocks both branches while the merge is unresolved, then releases them when the retry lands", () => {
-    const execution = mergeFailedClassifier();
+  it("blocks both branches while the commit is unresolved, then releases them when the retry lands", () => {
+    const execution = commitFailedClassifier();
 
     const blocked = settleRoutes(execution, { now: NOW });
     expect(blocked.halt).toBeNull();
@@ -644,12 +684,14 @@ describe("merge-retry recovery, through the scheduler (R2.5)", () => {
     ).toEqual([]);
     expect(execution.contextStates.ship?.status).toBe("pending");
 
-    // What a successful `processPendingMergeRetry` leaves behind.
+    // A successful commit retry clears the error; the trailer proves landing.
     execution.contextStates.classify!.mergeStatus = "merged-success";
     execution.contextStates.classify!.lastMergeError = null;
-    execution.pendingMergeRetry = [];
 
-    const released = settleRoutes(execution, { now: LATER });
+    const released = settleRoutes(execution, {
+      now: LATER,
+      branchEvidence: committedBranch("classify"),
+    });
     expect(released.reconciledContextIds).toEqual(["classify"]);
     expect(execution.contextStates.classify?.landingIntent?.state).toBe(
       "landed",
@@ -931,7 +973,7 @@ describe("landing intents (decision D8)", () => {
       isolation: "worktree",
       mergeStatus: "merged-success",
       landingIntent: {
-        mode: "fan_in_merge",
+        mode: "lane_commit",
         attempt: 1,
         token: "cc-landing:execution-1:fix:1",
         laneId: null,
@@ -946,11 +988,16 @@ describe("landing intents (decision D8)", () => {
       },
     });
 
-    const reconciled = reconcileLandingIntents(execution, { now: NOW });
+    assignWorktreeLane(execution, "fix");
+
+    const reconciled = reconcileLandingIntents(execution, {
+      now: NOW,
+      branchEvidence: committedBranch("fix"),
+    });
     expect(reconciled).toEqual(["fix"]);
     expect(execution.contextStates.fix?.landingIntent).toMatchObject({
       state: "landed",
-      evidence: "join-merge",
+      evidence: "commit",
     });
   });
 
@@ -1032,13 +1079,13 @@ describe("landing intents (decision D8)", () => {
     expect(isRouteSourceLanded(execution, "fix")).toBe(false);
   });
 
-  it("re-lands a failed fan-in intent once the merge retry succeeds (R2.5)", () => {
+  it("re-lands a failed lane-commit intent when the branch proves the retry succeeded (R2.5)", () => {
     const execution = classifierExecution({});
     execution.contextStates.fix = landedSource("fix", {
       isolation: "worktree",
       mergeStatus: "merged-failed",
       landingIntent: {
-        mode: "fan_in_merge",
+        mode: "lane_commit",
         attempt: 1,
         token: "cc-landing:execution-1:fix:1",
         laneId: null,
@@ -1052,19 +1099,23 @@ describe("landing intents (decision D8)", () => {
         settledAt: null,
       },
     });
+    assignWorktreeLane(execution, "fix");
+
     reconcileLandingIntents(execution, { now: NOW });
     expect(isRouteSourceLanded(execution, "fix")).toBe(false);
 
-    // What `processPendingMergeRetry` leaves behind when the retry succeeds:
-    // the merge status moves and nothing else. Reconciliation has to notice,
-    // or the dependents stay blocked on a merge that already landed.
+    // The retry clears the failure; the branch trailer supplies the evidence
+    // needed to reconcile the previously failed intent.
     execution.contextStates.fix!.mergeStatus = "merged-success";
 
-    const reconciled = reconcileLandingIntents(execution, { now: LATER });
+    const reconciled = reconcileLandingIntents(execution, {
+      now: LATER,
+      branchEvidence: committedBranch("fix"),
+    });
     expect(reconciled).toEqual(["fix"]);
     expect(execution.contextStates.fix?.landingIntent).toMatchObject({
       state: "landed",
-      evidence: "join-merge",
+      evidence: "commit",
       settledAt: LATER,
     });
     expect(isRouteSourceLanded(execution, "fix")).toBe(true);

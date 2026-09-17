@@ -935,6 +935,7 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     expect(result.kind).toBe("completed_final");
 
     const stored = await built.envelopeStore.read("wf-asym");
+    expect(stored?.featureSnapshot).toMatchObject({ origin: "user" });
     expect(stored).toBeTruthy();
     if (!stored) return;
 

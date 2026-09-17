@@ -452,13 +452,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       : await resolveClaudeManagedSkillsForLaunch();
 
     try {
-      // The `settings` below are the SDK's FLAG tier, which managed policy
-      // outranks. Confirm the native-memory neutralization survives the
-      // cascade before spawning: with no lever above managed policy, a run
-      // that started anyway would contradict the descriptor's `disabled`
-      // claim. The refusal lands in the catch below and is reported as an
-      // ordinary run failure (see ./native-memory.ts).
-      await assertClaudeNativeMemoryNeutralized({ cwd: workingDirectory });
+      assertClaudeNativeMemoryNeutralized();
 
       const stream = this.deps.runQuery({
         prompt,

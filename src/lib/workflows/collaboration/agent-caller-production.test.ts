@@ -229,7 +229,9 @@ describe("createCollaborationProductionCallAgent", () => {
     // authority (D7 D11/D12). The redirect above is exactly what makes this
     // runtime indistinguishable from its origin by id alone, which is why
     // authority is minted at spawn and never derived from that id.
-    expect(createRuntimeInputs[0]?.conversationCapability).toBe(undefined);
+    expect(createRuntimeInputs[0]?.workflowCallerConversationId).toBe(
+      undefined,
+    );
   });
 
   it("starts a fresh Claude conversation on the first lane call and resumes the SDK-returned session later", async () => {

@@ -1,4 +1,4 @@
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -211,7 +211,7 @@ describe("seedDeliveryPlanFromLast", () => {
     const byId = applyDefinitionEdits(
       reopened,
       [{ type: "remove-edge", edgeId: "edge-plan-to-implement" }],
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(byId).toEqual({ ok: true, record: expect.anything() });
     if (!byId.ok) return;
@@ -229,7 +229,7 @@ describe("seedDeliveryPlanFromLast", () => {
           targetContextId: "context-verify",
         },
       ],
-      createNonParticipatingGraphExecutionContract(),
+      createTestGraphExecutionContract(),
     );
     expect(byEndpoints).toEqual({ ok: true, record: expect.anything() });
     if (!byEndpoints.ok) return;

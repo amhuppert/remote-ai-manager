@@ -3,7 +3,7 @@ import type {
   ExecutionMutationOutcome as FixtureOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
-import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 import { withTracing } from "@/lib/logging";
@@ -32,7 +32,7 @@ import type {
 import type { PendingToolBlock } from "./tool-dispatcher";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { LoadLaneToolContextResult } from "./lane-tool-context-loader";
-import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
+import type { LaneIdentityReading } from "@/lib/agent-gateway/lane-identity";
 import { GraphExecutionContractViolationError } from "./execution-contract-port";
 
 /**
@@ -231,7 +231,7 @@ function buildContext(options: BuildContextOptions = {}): {
     now: () => "2026-03-27T12:00:00.000Z",
   });
   const factory = createGraphWorkflowExecutionToolContext({
-    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionContract: createTestGraphExecutionContract(),
     executionRepository: {
       mutateActive: createFakeMutateActive(store, eventPublisher),
     },
@@ -286,7 +286,7 @@ function makeDeps(
         return { kind: "valid" as const };
       },
     },
-    async verifyLaneCapability() {
+    async readLaneIdentity() {
       return { kind: "absent" as const };
     },
     async expandGraph() {
@@ -949,7 +949,7 @@ describe("lane route handlers — token gate", () => {
             return { kind: "invalid" as const };
           },
         },
-        async verifyLaneCapability() {
+        async readLaneIdentity() {
           return { kind: "absent" as const };
         },
         async expandGraph() {
@@ -1003,19 +1003,18 @@ describe("lane route handlers — graph expansion capability chain", () => {
   function expansionDeps(
     context: GraphWorkflowToolServerContext,
     overrides: {
-      capability?: LaneCapabilityVerification;
+      capability?: LaneIdentityReading;
       expandGraph?: LaneRouteDeps["expandGraph"];
       refusals?: ExpansionRefusalNotice[];
     } = {},
   ): LaneRouteDeps {
     return {
       ...makeDeps(context),
-      async verifyLaneCapability() {
+      async readLaneIdentity() {
         return (
           overrides.capability ?? {
             kind: "valid" as const,
             scope: VALID_SCOPE,
-            issuedAt: 1,
           }
         );
       },
@@ -1127,7 +1126,7 @@ describe("lane route handlers — graph expansion capability chain", () => {
     const expandGraph = vi.fn();
     const handlers = createLaneRouteHandlers(
       expansionDeps(context, {
-        capability: { kind: "invalid", reason: "bad_signature" },
+        capability: { kind: "invalid", reason: "malformed" },
         expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
       }),
     );
@@ -1150,7 +1149,7 @@ describe("lane route handlers — graph expansion capability chain", () => {
         // Only an implementer lane may expand (R7). The verifier refuses any
         // other kind BEFORE the scope is read as a claim, so an unsupported
         // kind never reaches the service at all.
-        capability: { kind: "invalid", reason: "unsupported_lane_kind" },
+        capability: { kind: "invalid", reason: "malformed" },
         expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
         refusals,
       }),
@@ -1177,7 +1176,6 @@ describe("lane route handlers — graph expansion capability chain", () => {
         capability: {
           kind: "valid",
           scope: { ...VALID_SCOPE, contextId: "context-implement" },
-          issuedAt: 1,
         },
         expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
       }),
@@ -1200,7 +1198,6 @@ describe("lane route handlers — graph expansion capability chain", () => {
         capability: {
           kind: "valid",
           scope: { ...VALID_SCOPE, executionId: "execution-other" },
-          issuedAt: 1,
         },
         expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
       }),
@@ -1246,7 +1243,7 @@ describe("lane route handlers — graph expansion capability chain", () => {
   describe("typed refusal events for route-level envelope violations (R6.2)", () => {
     const CAPABILITY_CASES: readonly {
       label: string;
-      capability: LaneCapabilityVerification;
+      capability: LaneIdentityReading;
       refusalCode: string;
     }[] = [
       {
@@ -1256,7 +1253,7 @@ describe("lane route handlers — graph expansion capability chain", () => {
       },
       {
         label: "a signature that does not verify",
-        capability: { kind: "invalid", reason: "bad_signature" },
+        capability: { kind: "invalid", reason: "malformed" },
         refusalCode: "expansion-capability-invalid",
       },
       {
@@ -1264,7 +1261,6 @@ describe("lane route handlers — graph expansion capability chain", () => {
         capability: {
           kind: "valid",
           scope: { ...VALID_SCOPE, contextId: "context-implement" },
-          issuedAt: 1,
         },
         refusalCode: "expansion-capability-out-of-scope",
       },
@@ -1273,7 +1269,6 @@ describe("lane route handlers — graph expansion capability chain", () => {
         capability: {
           kind: "valid",
           scope: { ...VALID_SCOPE, executionId: "execution-other" },
-          issuedAt: 1,
         },
         refusalCode: "expansion-capability-out-of-scope",
       },

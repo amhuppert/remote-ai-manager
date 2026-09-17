@@ -51,8 +51,7 @@ export interface CursorWorkerStartInput {
   onExit(info: CursorWorkerExitInfo): void;
   workflowExecutionId?: string;
   workflowContextId?: string;
-  workflowLaneCapability?: string;
-  conversationCapability?: string;
+  workflowCallerConversationId?: string;
 }
 
 export interface CursorWorkerExitInfo {
