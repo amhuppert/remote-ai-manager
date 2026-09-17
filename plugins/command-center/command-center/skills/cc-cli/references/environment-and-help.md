@@ -67,17 +67,17 @@ invoke that binary instead.
   Inside CC this should never happen (the env contract injects it); outside
   CC, pass `--token` or export `CC_API_TOKEN`.
 
-## cctl version
+## Build identity
 
-Print the `cctl` build stamp (git sha + build time) — compare it against the
-server build `cctl doctor` reports. Reading only; always exits `0`, needs no
-server, and is **terminal (no hint)**. `doctor` is the fuller check.
+`cctl --version` prints this binary's build stamp offline. Compare it with the
+server build from `cctl doctor`.
 
+```sh
+cctl --version
+cctl --version --json
 ```
-cctl version          # → cctl <sha>-<build-time>
-cctl --version        # the same, as a global flag
-cctl version --json   # → { "ok": true, "cliBuild": "<sha>-<build-time>" }
-```
+
+The JSON metadata is `{ "name": "cctl", "version": "<sha>-<build-time>" }`.
 
 ## Discovering commands with `--help`
 
@@ -100,41 +100,13 @@ it is the recovery path, so reach for it whenever a command surprises you.
 
 ### `--help --json` — the structured help node
 
-`cctl <command> --help --json` returns the node as structured data instead of
-prose (no rendered-text duplicate):
+`cctl <command> --help --json` returns the native help node directly. The root
+uses the same shape with `path: ""` and `kind: "root"`; groups and leaves have
+`kind: "group"`, `"command"`, or `"validation"`.
 
-```json
-{ "ok": true, "help": {
-    "command": "workflow create",
-    "summary": "…", "description": "…",
-    "usage": ["cctl workflow create --file plan.json [--json]"],
-    "flags": [{ "name": "file", "kind": "value", "valuePlaceholder": "<path>", "description": "…" }],
-    "examples": [{ "invocation": "…", "explanation": "…" }],
-    "related": [{ "command": "workflow start", "oneLiner": "…" }],
-    "skills": [{ "name": "graph-workflow-planning", "loadWhen": "…", "path": "…" }]
-} }
-```
-
-The bare top-level `cctl --help --json` is the one exception: it returns the usage
-text blob as `{ "ok": true, "usage": "…" }`, because the top-level usage is not a
-single command node.
-
-### `context:` — dynamic, live-state blocks
-
-Some **leaf** commands' `--help` appends a `context:` section (a `context.blocks[]`
-array in `--json`) with **live application state** — e.g. `cctl dev ensure --help`
-surfaces this session's dev servers and their URLs; inside a workflow lane,
-`cctl workflow task complete --help` surfaces the lane's current task, remaining
-count, and iteration budget.
-
-This context is **best-effort garnish**, not contract:
-
-- It is fetched from the server with a short timeout and **silently omitted** on
-  any failure — no server, no token, offline, or a slow response. Help still
-  renders the static sections and still exits `0`.
-- **Never infer anything from its absence.** A missing `context:` block means it
-  was not fetched, not that the underlying state is empty. Read it when present;
-  confirm consequential mutable state with the relevant status command.
-- **Group-node text help is a pure index** and never carries `context:` — a bare
-  `cctl <group> --help` (e.g. `cctl dev --help`) just lists its subcommands. Ask a
-  leaf's `--help` for live blocks (a group's `--help --json` may still include them).
+The node contains `path`, `summary`, `description`, `usage`, `children`,
+`arguments`, `flags`, `examples`, `related`, `skills`, and `sections`. Flags
+state their source, requiredness, value constraints, and available file
+alternative. Payload metadata names the byte limit and validation twin;
+levels name the disclosure selectors. Help stays offline. Read mutable state
+with the relevant `list` or `status` command.

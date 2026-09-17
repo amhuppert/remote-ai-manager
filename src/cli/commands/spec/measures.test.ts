@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { MEASURE_DEFINITIONS_VERSION } from "@/lib/specs/measures";
-import { runCli } from "../../core";
-import type { CliEnv, CliHost } from "../../shared";
+import { runCcWithHost } from "../../testing/domain-runtime";
+import type { CliEnv, CliHost } from "../../transport";
 
 const responseBody = {
   definitionsVersion: MEASURE_DEFINITIONS_VERSION,
@@ -40,7 +40,7 @@ const env: CliEnv = {
 };
 
 describe("cctl spec measures", () => {
-  it("returns the four measures and frozen definitions version in the JSON envelope", async () => {
+  it("returns the four measures and frozen definitions version", async () => {
     const host: CliHost = {
       async fetch(url, init) {
         expect(new URL(url).pathname).toBe("/api/projects/demo/spec-measures");
@@ -58,9 +58,13 @@ describe("cctl spec measures", () => {
       homedir: "/Users/test",
     };
 
-    const result = await runCli(["spec", "measures", "--json"], env, host);
+    const result = await runCcWithHost(
+      ["spec", "measures", "--json"],
+      env,
+      host,
+    );
 
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true, ...responseBody });
+    expect(JSON.parse(result.stdout).payload.data).toEqual(responseBody);
   });
 });

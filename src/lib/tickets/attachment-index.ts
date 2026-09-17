@@ -34,6 +34,7 @@ export interface BuildAttachmentIndexInput {
   identifier: string;
   attachments: TicketAttachment[];
   mode: AttachmentIndexMode;
+  server?: string;
 }
 
 function singleLine(text: string): string {
@@ -57,8 +58,9 @@ function boundDescription(
 function commandsFor(
   identifier: string,
   attachment: TicketAttachment,
+  server?: string,
 ): string[] {
-  return [attachmentGetCommand(identifier, attachment.id)];
+  return [attachmentGetCommand(identifier, attachment.id, server)];
 }
 
 export function buildAttachmentIndex(
@@ -71,7 +73,7 @@ export function buildAttachmentIndex(
       kind: attachment.payload.kind,
       description: bounded.description,
       truncated: bounded.truncated,
-      commands: commandsFor(input.identifier, attachment),
+      commands: commandsFor(input.identifier, attachment, input.server),
     };
   });
 }

@@ -156,6 +156,11 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "Edits a stored workflow definition through project context only; live execution editing is `workflow live edit`, which stays session-only.",
   },
+  "workflow edit-preview": {
+    support: "project-supported",
+    reason:
+      "Previews definition edits through the same project-scoped store as workflow edit; no session or running execution is required.",
+  },
   "workflow delete": {
     support: "project-supported",
     reason:

@@ -10,8 +10,8 @@ vi.mock("@/lib/logging", async (importOriginal) => ({
   }),
 }));
 
-import { runCli } from "@/cli/core";
-import type { CliEnv, CliHost } from "@/cli/shared";
+import { runCcWithHost } from "@/cli/testing/domain-runtime";
+import type { CliEnv, CliHost } from "@/cli/transport";
 import {
   _resetPublicationForTesting,
   setPublicationBroadcastForTesting,
@@ -305,7 +305,7 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     const commands = printedCommands(remedy);
     expect(commands.length).toBeGreaterThan(0);
     for (const argv of commands) {
-      const result = await runCli(argv, cliEnv, host);
+      const result = await runCcWithHost(argv, cliEnv, host);
       expect(
         result.exitCode,
         `${argv.join(" ")} failed: ${result.stderr}`,
@@ -431,7 +431,7 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     };
     await abandon();
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "verify", SLUG],
       cliEnv,
       bridgeHost(world),
@@ -717,7 +717,7 @@ describe("spec verify reports proposal-integrity consistency findings", () => {
     // One renderer, not one per family: a single `cctl spec verify` prints both
     // families' findings with their remedies, so neither family can drift into
     // a section of its own.
-    const rendered = await runCli(
+    const rendered = await runCcWithHost(
       ["spec", "verify", SLUG],
       cliEnv,
       bridgeHost(world),

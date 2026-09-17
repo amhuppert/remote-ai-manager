@@ -8,6 +8,12 @@
 
 import { quoteAgentCommandArgument } from "./command-arguments";
 
+function serverFlag(server: string | undefined): string {
+  return server === undefined
+    ? ""
+    : ` --server ${quoteAgentCommandArgument(server)}`;
+}
+
 export function conversationCompactionGetCommand(
   conversationId: string,
 ): string {
@@ -42,33 +48,39 @@ function conversationScopeFlags(scope: ConversationReadCommandScope): string {
 export function conversationReadCommands(
   conversationId: string,
   scope: ConversationReadCommandScope,
+  server?: string,
 ): string[] {
   const commands = [
     conversationCompactionGetCommand(conversationId),
     conversationReadOutlineCommand(conversationId),
     conversationReadRangeCommand(conversationId),
   ];
-  const flags = conversationScopeFlags(scope);
+  const flags = `${conversationScopeFlags(scope)}${serverFlag(server)}`;
   return commands.map((command) => `${command}${flags}`);
 }
 
 /** Follow command for a ticket reference (`<project>#<number>` identifier). */
-export function ticketFollowCommand(identifier: string): string {
-  return `cctl ticket get ${quoteAgentCommandArgument(identifier)}`;
+export function ticketFollowCommand(
+  identifier: string,
+  server?: string,
+): string {
+  return `cctl ticket get ${quoteAgentCommandArgument(identifier)}${serverFlag(server)}`;
 }
 
 /** Retrieval command for one attachment of a ticket. */
 export function attachmentGetCommand(
   identifier: string,
   attachmentId: string,
+  server?: string,
 ): string {
-  return `cctl ticket attachment get ${quoteAgentCommandArgument(identifier)} ${quoteAgentCommandArgument(attachmentId)}`;
+  return `cctl ticket attachment get ${quoteAgentCommandArgument(identifier)} ${quoteAgentCommandArgument(attachmentId)}${serverFlag(server)}`;
 }
 
 /** Retry command for a conversation attachment snapshot. */
 export function attachmentRefreshCommand(
   identifier: string,
   attachmentId: string,
+  server?: string,
 ): string {
-  return `cctl ticket attachment refresh ${quoteAgentCommandArgument(identifier)} ${quoteAgentCommandArgument(attachmentId)}`;
+  return `cctl ticket attachment refresh ${quoteAgentCommandArgument(identifier)} ${quoteAgentCommandArgument(attachmentId)}${serverFlag(server)}`;
 }

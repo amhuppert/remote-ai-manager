@@ -66,10 +66,8 @@ export const PURE_NODE_TEST_FILES = [
 ] as const;
 
 export const ARCHITECTURE_TOOLCHAIN_TEST_FILES = [
-  "src/cli/commands/workflow.contract.test.ts",
-  "src/cli/commands/workflow.help.test.ts",
-  "src/cli/help-registry.contract.test.ts",
-  "src/cli/index.egress.test.ts",
+  "src/cli/commands/workflow/routes.contract.test.ts",
+  "src/cli/testing/source-scan.test.ts",
   "src/components/markdown/Markdown.import-boundary.test.ts",
   "src/components/markdown/markdown-boundary.test.ts",
   "src/components/workflow-graph/workflow-graph-css.test.ts",

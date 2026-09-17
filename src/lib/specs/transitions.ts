@@ -570,7 +570,7 @@ export function propose(context: ProposeContext): TransitionDecision {
     return refused(
       "lint_blocked",
       health.blockingFindings.map((finding) => finding.message),
-      `Nothing was proposed for revision ${context.review.revisionId}. Run \`cctl spec lint ${context.draft.specHandle}\`, resolve every blocking finding it reports, then re-run \`cctl spec propose ${context.draft.specHandle} --notes <notes.md>\`.`,
+      `Nothing was proposed for revision ${context.review.revisionId}. Run \`cctl spec lint ${context.draft.specHandle}\`, resolve every blocking finding it reports, then re-run \`cctl spec propose ${context.draft.specHandle} --notes-file <notes.md>\`.`,
       { findings: [...health.ordered] },
     );
   }

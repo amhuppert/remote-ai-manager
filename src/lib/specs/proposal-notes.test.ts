@@ -160,7 +160,7 @@ describe("oversizedProposalNotesRefusal", () => {
       "x".repeat(PROPOSAL_NOTES_MAX_CHARACTERS + 1),
     );
 
-    expect(refusal?.instruction).toContain("--notes");
+    expect(refusal?.instruction).toContain("--notes-file");
     expect(refusal?.instruction.toLowerCase()).toContain("shorten");
     expect(refusal?.instruction.toLowerCase()).toContain("nothing was");
   });

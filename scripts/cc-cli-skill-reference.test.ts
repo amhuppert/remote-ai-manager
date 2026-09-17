@@ -1,265 +1,142 @@
-// @vitest-inputs plugins/command-center/command-center/skills/cc-cli/**
+// @vitest-inputs plugins/command-center/command-center/skills/**
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { EXIT_TAXONOMY } from "../src/cli/exit-taxonomy";
-import { allHelpEntries } from "../src/cli/help-registry";
-import type { CommandHelpEntry } from "../src/cli/help-types";
+import { createCommandCenterCli } from "../src/cli/framework/application";
 import {
   BEGIN_MARKER,
   COMMAND_REFERENCE_PATH,
   END_MARKER,
-  EXIT_CODES_BEGIN_MARKER,
-  EXIT_CODES_END_MARKER,
-  SKILL_MD_PATH,
   extractBlock,
+  nativeHelpNodes,
   proseUsageFindings,
   renderCommandReference,
-  renderExitCodeTable,
-  spliceBlock,
   skillDocumentPaths,
+  spliceBlock,
 } from "./cc-cli-skill-reference";
 
-function entry(
-  path: string[],
-  summary: string,
-  usage: string[],
-): CommandHelpEntry {
-  return {
-    path,
-    summary,
-    description: "d",
-    usage,
-    flags: [],
-    examples: [],
-    related: [],
-  };
-}
-
-describe("renderCommandReference", () => {
-  it("emits one bullet per command with its summary and usage shapes", () => {
-    const block = renderCommandReference([
-      entry(["docs"], "manage docs", ["cctl docs <register|list>"]),
-      entry(["docs", "register"], "register a doc", ["cctl docs register <p>"]),
-    ]);
-    expect(block).toContain("- `cctl docs` — manage docs");
-    expect(block).toContain("  - `cctl docs <register|list>`");
-    expect(block).toContain("- `cctl docs register` — register a doc");
-    expect(block).toContain("  - `cctl docs register <p>`");
-  });
-
-  it("groups children under their top-level command in registry order", () => {
-    const block = renderCommandReference([
-      entry(["ask"], "ask", ["cctl ask"]),
-      entry(["dev"], "dev group", ["cctl dev <list>"]),
-      entry(["dev", "list"], "list servers", ["cctl dev list"]),
-    ]);
-    const askIdx = block.indexOf("`cctl ask`");
-    const devIdx = block.indexOf("`cctl dev`");
-    const devListIdx = block.indexOf("`cctl dev list`");
-    expect(askIdx).toBeLessThan(devIdx);
-    expect(devIdx).toBeLessThan(devListIdx);
-  });
-
-  it("omits retired commands from the portable reference", () => {
-    const retired: CommandHelpEntry = {
-      ...entry(["spec", "task"], "retired task history", ["cctl spec task"]),
-      includeInGeneratedReference: false,
-    };
-
-    const block = renderCommandReference([
-      entry(["spec"], "spec work", ["cctl spec"]),
-      retired,
-    ]);
-
-    expect(block).not.toContain("cctl spec task");
-  });
+const cli = createCommandCenterCli(async () => {
+  throw new Error("Reference generation must remain offline");
 });
 
-describe("spliceBlock / extractBlock", () => {
-  const source = `intro\n${BEGIN_MARKER}\nOLD\n${END_MARKER}\noutro\n`;
+const fenced = (body: string) => `# doc\n\n\`\`\`sh\n${body}\n\`\`\`\n`;
 
-  it("replaces only the text between the markers", () => {
-    const next = spliceBlock(source, BEGIN_MARKER, END_MARKER, "NEW\n");
-    expect(next).toBe(`intro\n${BEGIN_MARKER}\nNEW\n\n${END_MARKER}\noutro\n`);
-    expect(next.startsWith("intro\n")).toBe(true);
-    expect(next.endsWith("outro\n")).toBe(true);
-  });
-
-  it("round-trips: extract after splice recovers the block (trimmed)", () => {
-    const next = spliceBlock(
-      source,
-      BEGIN_MARKER,
-      END_MARKER,
-      "line one\nline two\n",
+describe("native help reference", () => {
+  it("collects CC domain declarations for the portable reference", () => {
+    const nodes = nativeHelpNodes(cli);
+    expect(
+      nodes.find((node) => node.path === "ticket import")?.flags,
+    ).toContainEqual(
+      expect.objectContaining({ name: "archive", source: "domain" }),
     );
-    expect(extractBlock(next, BEGIN_MARKER, END_MARKER)).toBe(
-      "line one\nline two",
-    );
+    expect(new Set(nodes.map((node) => node.path)).size).toBe(nodes.length);
   });
 
-  it("leaves a second block's markers untouched", () => {
-    const two = `${source}${EXIT_CODES_BEGIN_MARKER}\nCODES\n${EXIT_CODES_END_MARKER}\n`;
-    const next = spliceBlock(two, BEGIN_MARKER, END_MARKER, "NEW\n");
-    const untouched = extractBlock(
-      next,
-      EXIT_CODES_BEGIN_MARKER,
-      EXIT_CODES_END_MARKER,
-    );
-    expect(untouched).toBe("CODES");
-  });
-
-  it("throws when a marker is absent", () => {
-    expect(() =>
-      spliceBlock("no markers here", BEGIN_MARKER, END_MARKER, "x"),
-    ).toThrow(/marker/);
-  });
-});
-
-describe("renderExitCodeTable", () => {
-  it("renders one row per taxonomy code, in code order", () => {
-    const table = renderExitCodeTable([
-      { code: 0, meaning: "it worked", recovery: null },
-      { code: 3, meaning: "no server", recovery: "cctl doctor" },
-    ]);
-
-    const rows = table.split("\n").filter((line) => line.startsWith("| `"));
-    expect(rows).toEqual([
-      "| `0` | it worked | — |",
-      "| `3` | no server | `cctl doctor` |",
-    ]);
-  });
-
-  it("derives the committed table from the shipped taxonomy", () => {
-    const table = renderExitCodeTable();
-    for (const row of EXIT_TAXONOMY) {
-      expect(table).toContain(row.meaning);
-      if (row.recovery !== null) expect(table).toContain(row.recovery);
+  it("renders registry usage and flags including structured input admission", () => {
+    const nodes = nativeHelpNodes(cli);
+    const reference = renderCommandReference(nodes);
+    expect(reference).toContain("`--archive`");
+    for (const node of nodes) {
+      if (node.kind === "root") continue;
+      expect(reference).toContain(`\`cctl ${node.path}\``);
+      for (const usage of node.usage)
+        expect(reference).toContain(`\`${usage}\``);
     }
   });
+
+  it("keeps the committed generated reference equal to the native registry", () => {
+    expect(
+      extractBlock(
+        readFileSync(COMMAND_REFERENCE_PATH, "utf8"),
+        BEGIN_MARKER,
+        END_MARKER,
+      ),
+    ).toBe(renderCommandReference(nativeHelpNodes(cli)).trim());
+  });
 });
 
-describe("proseUsageFindings", () => {
-  const entries = [
-    entry(["dev"], "dev group", ["cctl dev <list|stop>"]),
-    entry(["dev", "list"], "list servers", ["cctl dev list [--json]"]),
-    entry(["dev", "stop"], "stop one", ["cctl dev stop <serverName>"]),
-  ];
-
-  function findings(body: string) {
-    return proseUsageFindings(`# doc\n\n\`\`\`\n${body}\n\`\`\`\n`, entries);
-  }
-
-  it("accepts a usage shape the registry declares verbatim", () => {
-    expect(findings("cctl dev list [--json]")).toEqual([]);
-  });
-
-  it("reports a usage shape that has drifted from the registry", () => {
-    const [finding] = findings("cctl dev list [--json] [--all]");
-    expect(finding?.reason).toBe("usage-drift");
-    expect(finding?.expected).toEqual(["cctl dev list [--json]"]);
-  });
-
-  it("reports a line naming a verb the registry does not have", () => {
-    const [finding] = findings("cctl dev restart");
-    expect(finding?.reason).toBe("unknown-command");
-  });
-
-  it("accepts a concrete example, argument values and all", () => {
-    expect(findings("cctl dev stop web   # → stopped web")).toEqual([]);
-    expect(findings('cctl dev list --json  # → { "ok": true }')).toEqual([]);
-  });
-
-  it("does not read `<10k` in an example's prose as a placeholder", () => {
-    expect(findings("cctl dev stop web-for-<10k-users")).toEqual([]);
-  });
-
-  it("ignores prose outside fenced blocks and the generated blocks", () => {
-    const source = [
-      "Run `cctl dev list [--every-flag]` to see them.",
-      "",
-      BEGIN_MARKER,
-      "- `cctl dev list`",
-      "  - `cctl dev list [--generated]`",
-      END_MARKER,
-      "",
-      EXIT_CODES_BEGIN_MARKER,
-      "| `0` | `cctl dev list [--generated]` | — |",
-      EXIT_CODES_END_MARKER,
-      "",
-    ].join("\n");
-
-    expect(proseUsageFindings(source, entries)).toEqual([]);
-  });
-
-  it("keeps the skill and reference prose resolvable against the registry", () => {
-    // The hand-authored prose sections are the half no generator owns, and the
-    // 2026-08 audit found three usage lines in them that no longer matched the
-    // binary. This is the gate that makes a fourth fail here instead of
-    // shipping.
-    const found = skillDocumentPaths().flatMap((filePath) =>
-      proseUsageFindings(readFileSync(filePath, "utf8"), allHelpEntries()).map(
-        (finding) =>
-          `${filePath}:${finding.line}: ${finding.text} (${finding.reason})`,
-      ),
-    );
+describe("prose command contracts", () => {
+  it("accepts concrete or parameterized native invocations and comments", () => {
     expect(
-      found,
-      "skill usage lines must agree with the help registry",
+      proseUsageFindings(
+        fenced(
+          [
+            "cctl ticket import --archive <path> [--project <project>]",
+            "cctl dev stop web # stopped",
+            "cctl notify 'use --obsolete only in this quoted explanation' --title CI",
+            "cctl validate run test --json -- src/example.test.ts",
+          ].join("\n"),
+        ),
+        nativeHelpNodes(cli),
+      ),
     ).toEqual([]);
   });
+
+  it("detects removed verbs and flags in examples as well as usage shapes", () => {
+    const findings = proseUsageFindings(
+      fenced(
+        [
+          "cctl dev restart web",
+          "cctl ask --question 'Which one?' --option first --option second",
+          "cctl ticket import --file .cc/temp/archive.gz",
+        ].join("\n"),
+      ),
+      nativeHelpNodes(cli),
+    );
+    expect(findings.map((finding) => finding.reason)).toEqual([
+      "unknown-command",
+      "unknown-flag",
+      "unknown-flag",
+    ]);
+    expect(findings[1]?.expected).toContain("--file");
+    expect(findings[2]?.expected).toContain("--archive");
+  });
+
+  it("ignores quoted content, positionals after --, prose, and generated blocks", () => {
+    const source =
+      `Run cctl removed.\n${BEGIN_MARKER}\n${fenced("cctl removed")}\n${END_MARKER}\n` +
+      fenced("cctl notify -- '--not-a-flag'");
+    expect(proseUsageFindings(source, nativeHelpNodes(cli))).toEqual([]);
+  });
+
+  it("checks continuation lines", () => {
+    expect(
+      proseUsageFindings(
+        fenced("cctl ask \\\n  --question 'retired sugar'"),
+        nativeHelpNodes(cli),
+      ),
+    ).toEqual([expect.objectContaining({ reason: "unknown-flag", line: 4 })]);
+  });
+
+  it("keeps portable prose commands resolvable against the native registry", () => {
+    const nodes = nativeHelpNodes(cli);
+    const findings = skillDocumentPaths().flatMap((file) =>
+      proseUsageFindings(readFileSync(file, "utf8"), nodes).map(
+        (finding) =>
+          `${file}:${finding.line}: ${finding.text} (${finding.reason})`,
+      ),
+    );
+    expect(findings).toEqual([]);
+  });
 });
 
-describe("committed SKILL.md stays in sync with the registry (the CI check)", () => {
-  it("publishes every one-off lifecycle verb and no removed release verb", () => {
-    const reference = renderCommandReference(allHelpEntries());
-
-    expect(reference).toContain("`cctl workflow run`");
-    expect(reference).toContain("`cctl workflow wait`");
-    expect(reference).toContain(
-      "`cctl workflow status [<executionId>] [--halt | --full] [--json]`",
-    );
-    expect(reference).toContain("`cctl workflow abandon`");
-    expect(reference).not.toMatch(/workflow live release|live release/);
+describe("generated markers", () => {
+  const source = `intro\n${BEGIN_MARKER}\nOLD\n${END_MARKER}\noutro\n`;
+  it("replaces only the declared block and round-trips", () => {
+    const next = spliceBlock(source, BEGIN_MARKER, END_MARKER, "NEW\n");
+    expect(next).toBe(`intro\n${BEGIN_MARKER}\nNEW\n\n${END_MARKER}\noutro\n`);
+    expect(extractBlock(next, BEGIN_MARKER, END_MARKER)).toBe("NEW");
   });
-
-  it("the on-disk command reference equals the freshly-rendered block", () => {
-    // This is the drift gate: if a command's registry entry changes and the
-    // generator is not re-run, the committed block no longer matches — exactly
-    // the failure `bun scripts/cc-cli-skill-reference.ts --check` reports in CI.
-    const source = readFileSync(COMMAND_REFERENCE_PATH, "utf8");
-    const current = extractBlock(source, BEGIN_MARKER, END_MARKER);
-    expect(
-      current,
-      `Command reference is missing the ${BEGIN_MARKER}/${END_MARKER} markers`,
-    ).not.toBeNull();
-    const expected = renderCommandReference(allHelpEntries()).trim();
-    expect(
-      current,
-      "cc-cli command reference is stale — run `bun scripts/cc-cli-skill-reference.ts`",
-    ).toBe(expected);
-    expect(current).toContain(
-      "cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]",
-    );
-    expect(current).toContain(
-      "cctl spec plan preview <slug> --stage draft|proposed",
-    );
-    expect(current).not.toMatch(/cctl spec task|materialized graph/i);
-  });
-
-  it("the on-disk exit-code table equals the freshly-rendered taxonomy", () => {
-    const source = readFileSync(SKILL_MD_PATH, "utf8");
-    const current = extractBlock(
-      source,
-      EXIT_CODES_BEGIN_MARKER,
-      EXIT_CODES_END_MARKER,
-    );
-    expect(
-      current,
-      `SKILL.md is missing the ${EXIT_CODES_BEGIN_MARKER}/${EXIT_CODES_END_MARKER} markers`,
-    ).not.toBeNull();
-    expect(
-      current,
-      "cc-cli SKILL.md exit-code table is stale — run `bun scripts/cc-cli-skill-reference.ts`",
-    ).toBe(renderExitCodeTable().trim());
+  it("rejects absent or reversed markers", () => {
+    expect(() =>
+      spliceBlock("absent", BEGIN_MARKER, END_MARKER, "new"),
+    ).toThrow(/marker/);
+    expect(() =>
+      spliceBlock(
+        `${END_MARKER}\n${BEGIN_MARKER}`,
+        BEGIN_MARKER,
+        END_MARKER,
+        "new",
+      ),
+    ).toThrow(/order/);
   });
 });

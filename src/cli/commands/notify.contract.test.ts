@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAgentAuth } from "@/lib/agent-gateway/token";
 import { createSessionNotificationHandlers } from "@/lib/push-notification/session-notification-route-handlers";
 import type { AgentNotificationOutcome } from "@/lib/push-notification/dispatcher";
-import { runCli } from "../core";
-import type { CliEnv, CliHost } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost } from "../transport";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real session
@@ -95,7 +95,7 @@ describe("cctl notify against the real notification handler", () => {
     const dispatch = vi.fn(
       async (): Promise<AgentNotificationOutcome> => ({ delivered: true }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "Build done", "--title", "Heads up"],
       makeEnv(),
       makeHost(makeHandlers(dispatch)),
@@ -112,7 +112,7 @@ describe("cctl notify against the real notification handler", () => {
   });
 
   it("exits 1 when the handler reports push is unconfigured (409)", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "hi"],
       makeEnv(),
       makeHost(
@@ -128,7 +128,7 @@ describe("cctl notify against the real notification handler", () => {
   });
 
   it("exits 3 when the real token gate rejects a wrong token", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "hi"],
       makeEnv({ CC_API_TOKEN: "wrong" }),
       makeHost(makeHandlers(async () => ({ delivered: true }))),

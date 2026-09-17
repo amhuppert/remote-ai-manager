@@ -10,8 +10,8 @@ vi.mock("@/lib/logging", async (importOriginal) => ({
   }),
 }));
 
-import { runCli } from "@/cli/core";
-import type { CliEnv, CliHost } from "@/cli/shared";
+import { runCcWithHost } from "@/cli/testing/domain-runtime";
+import type { CliEnv, CliHost } from "@/cli/transport";
 import {
   _resetPublicationForTesting,
   setPublicationBroadcastForTesting,
@@ -159,7 +159,7 @@ describe("dismiss superseded proposal through the production route", () => {
   it("answers the agent's cctl attempt with that same refusal", async () => {
     const { stranded } = await strandedSpec(world);
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "spec",
         "dismiss-superseded",

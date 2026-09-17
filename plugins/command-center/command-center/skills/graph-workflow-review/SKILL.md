@@ -54,28 +54,28 @@ Each finding names three things:
 2. **Location** — the `contextId`, plus the `criterionId` when the finding is about one acceptance criterion; a charter-level finding names the invariant id or source id instead.
 3. **Recommended repair** — concrete enough for the planner to apply without a follow-up conversation, in the move/delete/defer/split/add vocabulary.
 
-Write the artifact as a markdown file under `.cc/temp/` (git-ignored) and pass it with `--findings`. It is the whole substance the planner sees: they may be a fresh session with no access to this conversation.
+Write the artifact as a markdown file under `.cc/temp/` (git-ignored) and pass it with `--findings-file`. It is the whole substance the planner sees: they may be a fresh session with no access to this conversation.
 
 ## Recording the verdict
 
 Read the current state first — this exact revision may already carry one:
 
 ```
-cctl workflow review --file .cc/temp/plan.json
+cctl workflow review get --file .cc/temp/plan.json
 ```
 
 Record a terminal verdict:
 
 ```
-cctl workflow review --file .cc/temp/plan.json --verdict approved
-cctl workflow review --file .cc/temp/plan.json --verdict changes-requested --findings .cc/temp/findings.md
+cctl workflow review record --file .cc/temp/plan.json --verdict approved
+cctl workflow review record --file .cc/temp/plan.json --verdict changes-requested --findings-file .cc/temp/findings.md
 ```
 
-- `--file <plan.json>` is required in both modes; the plan is posted whole and hashed server-side, so the CLI never computes an identity of its own.
-- `--verdict approved|changes-requested` selects record mode. Without it the command reads.
-- `--findings <path>` is record-mode only (passing it without `--verdict` is a usage error) and is **required for changes-requested** — a verdict without the artifact that justifies it is refused. It is kept on an approved verdict too, so approving with notes preserves them.
+- `--file <plan.json>` is required for both commands; the plan is posted whole and hashed server-side, so the CLI never computes an identity of its own.
+- `review record` requires `--verdict approved|changes-requested`; `review get` reads the existing verdict.
+- `review record` accepts findings inline with `--findings` or from `--findings-file <path>`. Findings are **required for changes-requested** — a verdict without the artifact that justifies it is refused. It is kept on an approved verdict too, so approving with notes preserves them.
 - `--reviewer <conversation-id>` defaults to `CC_CONVERSATION_ID`, so a review recorded from the reviewing conversation captures reviewer identity automatically. Pass it by hand only when recording from somewhere else.
-- `--json` for the structured envelope.
+- `--json` for a library envelope with review data under `payload.data`.
 
 Read mode prints the verdict, the reviewer, when it was reached, the revision hash, the findings artifact in full, and ready-to-run commands that open the reviewer's own conversation (`cctl conversation read <id> --outline`, plus `cctl conversation compaction get <id> --json` when a completed compaction exists) — that is how a planner in a fresh session recovers the deliberation behind a finding. An unreviewed revision reads back as `plan review: none recorded for this revision (advisory)` and exits 0: nobody having reviewed it is an ordinary answer, not a failure.
 

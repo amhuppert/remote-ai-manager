@@ -4,7 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getBuildStamp } from "@/lib/build-info";
 import { createAgentGatewayHandlers } from "@/lib/agent-gateway/route-handlers";
-import { runCli, type CliEnv, type CliHost } from "./core";
+import { runCcWithHost, inlineDataOf } from "./testing/domain-runtime";
+import type { CliEnv, CliHost } from "./transport";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real handshake
@@ -59,15 +60,15 @@ function makeEnv(overrides: CliEnv = {}): CliEnv {
 describe("cctl doctor against the real handshake handler", () => {
   it("handshakes green: exit 0, matching stamps, echoed identity", async () => {
     const handlers = createAgentGatewayHandlers({ configDir: dir });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["doctor", "--json"],
       makeEnv(),
       makeHost(handlers),
     );
 
     expect(result.exitCode).toBe(0);
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
+    const envelope = inlineDataOf(result);
+    expect(result.envelope).toHaveProperty("ok", true);
     expect(envelope.serverBuild).toBe(getBuildStamp());
     expect(envelope.cliBuild).toBe(getBuildStamp());
     expect(envelope.tokenValid).toBe(true);
@@ -81,7 +82,7 @@ describe("cctl doctor against the real handshake handler", () => {
 
   it("exits 3 when the handler rejects a wrong token", async () => {
     const handlers = createAgentGatewayHandlers({ configDir: dir });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["doctor"],
       makeEnv({ CC_API_TOKEN: "wrong-token" }),
       makeHost(handlers),
@@ -96,7 +97,7 @@ describe("cctl doctor against the real handshake handler", () => {
     const env = makeEnv({ CC_CONFIG_DIR: dir });
     delete env["CC_API_TOKEN"];
 
-    const result = await runCli(["doctor"], env, makeHost(handlers));
+    const result = await runCcWithHost(["doctor"], env, makeHost(handlers));
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("valid (source: file)");
@@ -107,9 +108,13 @@ describe("cctl doctor against the real handshake handler", () => {
       configDir: dir,
       getServerBuildStamp: () => "stale00-2026-01-01T00:00:00.000Z",
     });
-    const result = await runCli(["doctor"], makeEnv(), makeHost(handlers));
+    const result = await runCcWithHost(
+      ["doctor"],
+      makeEnv(),
+      makeHost(handlers),
+    );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain("stale00-2026-01-01T00:00:00.000Z");
+    expect(result.stdout).toContain("stale00-2026-01-01T00:00:00.000Z");
   });
 });

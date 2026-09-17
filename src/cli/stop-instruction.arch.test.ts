@@ -18,9 +18,9 @@ const LEGACY_SPELLING = "stopInstruction";
  * it: everything else authors `instruction`.
  */
 const ALLOWED: Readonly<Record<string, string>> = {
-  "shared.ts":
-    "the envelope type and the tier seam accept both spellings, so a lane response carrying the legacy name still suppresses the hint",
-  "commands/workflow.ts":
+  "commands/workflow/schemas.ts":
+    "decodes the lane task completion response’s server-owned stopInstruction field",
+  "commands/workflow/lane.ts":
     "the lane `task complete` response is the one server payload that still emits it (src/lib/workflow-graph/lane-route-handlers.ts)",
 };
 

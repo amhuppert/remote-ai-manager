@@ -190,7 +190,7 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     required: [
       /approved DeliveryPlanAttempt/,
       /`candidateId` and `candidateHash`/,
-      /`cctl spec start <slug> --inputs \.cc\/temp\/inputs\.json`/,
+      /`cctl spec start <slug> --file \.cc\/temp\/inputs\.json`/,
       /one-off start/i,
       /shared graph start/i,
       /ordinary `cctl workflow live edit`/,

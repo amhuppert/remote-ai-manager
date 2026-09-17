@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "../core";
-import type { CliEnv, CliHost, FetchInit } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../transport";
 
 const baseEnv: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:3000",
@@ -151,14 +151,14 @@ describe("fixture across a build-skewed instance pair", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).sessionName).toBe("fx-test");
+    expect(JSON.parse(result.stdout).payload.data.sessionName).toBe("fx-test");
     expect(
       host.requests.filter(
         (r) => r.init.headers?.["x-cc-cli-build"] !== undefined,
@@ -180,7 +180,7 @@ describe("fixture across a build-skewed instance pair", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "prompt", "scratch", "fx-test", "--text", "go", "--wait"],
       baseEnv,
       host,
@@ -213,7 +213,7 @@ describe("cctl fixture session create", () => {
 
   it("creates the session on the dev server and returns ids, urls, and state paths", async () => {
     const host = createHost();
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch", "--json"],
       baseEnv,
       host,
@@ -222,14 +222,20 @@ describe("cctl fixture session create", () => {
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(true);
-    expect(envelope.sessionName).toBe("fx-test");
-    expect(envelope.conversationId).toBe("c1");
-    expect(envelope.target).toBe(TARGET);
-    expect(envelope.urls.session).toBe(`${TARGET}/projects/scratch/fx-test`);
-    expect(envelope.urls.conversation).toBe(`${TARGET}/conversations?c=c1`);
-    expect(envelope.worktreePath).toBe("/wt");
-    expect(envelope.dbPath).toBe("/wt/.config/command-center.db");
-    expect(envelope.transcriptPath).toBe("/wt/.config/transcripts/c1.jsonl");
+    expect(envelope.payload.data.sessionName).toBe("fx-test");
+    expect(envelope.payload.data.conversationId).toBe("c1");
+    expect(envelope.payload.data.target).toBe(TARGET);
+    expect(envelope.payload.data.urls.session).toBe(
+      `${TARGET}/projects/scratch/fx-test`,
+    );
+    expect(envelope.payload.data.urls.conversation).toBe(
+      `${TARGET}/conversations?c=c1`,
+    );
+    expect(envelope.payload.data.worktreePath).toBe("/wt");
+    expect(envelope.payload.data.dbPath).toBe("/wt/.config/command-center.db");
+    expect(envelope.payload.data.transcriptPath).toBe(
+      "/wt/.config/transcripts/c1.jsonl",
+    );
 
     const create = host.requests.find((r) => r.init.method === "POST");
     expect(create?.url).toBe(`${TARGET}/api/projects/scratch/sessions`);
@@ -240,7 +246,7 @@ describe("cctl fixture session create", () => {
 
   it("passes --name through as the session name", async () => {
     const host = createHost();
-    await runCli(
+    await runCcWithHost(
       ["fixture", "session", "create", "scratch", "--name", "probe-x"],
       baseEnv,
       host,
@@ -251,7 +257,11 @@ describe("cctl fixture session create", () => {
 
   it("warms the routes the agent will visit next", async () => {
     const host = createHost();
-    await runCli(["fixture", "session", "create", "scratch"], baseEnv, host);
+    await runCcWithHost(
+      ["fixture", "session", "create", "scratch"],
+      baseEnv,
+      host,
+    );
 
     const warmed = host.requests
       .filter((r) => r.init.method === "GET" && r.url.startsWith(TARGET))
@@ -265,7 +275,7 @@ describe("cctl fixture session create", () => {
 
   it("skips warm-up with --skip-warm", async () => {
     const host = createHost();
-    await runCli(
+    await runCcWithHost(
       ["fixture", "session", "create", "scratch", "--skip-warm"],
       baseEnv,
       host,
@@ -289,7 +299,7 @@ describe("cctl fixture session create", () => {
       }
       return null;
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "nope"],
       baseEnv,
       host,
@@ -297,16 +307,6 @@ describe("cctl fixture session create", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("scratch");
     expect(result.stderr).toContain("other");
-  });
-
-  it("requires a target project argument", async () => {
-    const result = await runCli(
-      ["fixture", "session", "create"],
-      baseEnv,
-      makeHost(() => null),
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("project");
   });
 });
 
@@ -347,7 +347,7 @@ describe("fixture target resolution", () => {
       devServer({ worktreePath: siblingWorktree }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
       workflowEnv,
       host,
@@ -355,10 +355,12 @@ describe("fixture target resolution", () => {
 
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.target).toBe(laneTarget);
-    expect(envelope.worktreePath).toBe(laneWorktree);
-    expect(envelope.dbPath).toBe(`${laneWorktree}/.config/command-center.db`);
-    expect(envelope.dbPath).not.toBe(
+    expect(envelope.payload.data.target).toBe(laneTarget);
+    expect(envelope.payload.data.worktreePath).toBe(laneWorktree);
+    expect(envelope.payload.data.dbPath).toBe(
+      `${laneWorktree}/.config/command-center.db`,
+    );
+    expect(envelope.payload.data.dbPath).not.toBe(
       `${siblingWorktree}/.config/command-center.db`,
     );
     const fixtureWrites = host.requests.filter(
@@ -385,7 +387,7 @@ describe("fixture target resolution", () => {
     async (_label, workflowIdentity, missingName) => {
       const host = makeHost(() => null);
 
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["fixture", "session", "create", "scratch"],
         { ...baseEnv, ...workflowIdentity },
         host,
@@ -420,7 +422,7 @@ describe("fixture target resolution", () => {
       return null;
     });
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
       workflowEnv,
       host,
@@ -428,8 +430,10 @@ describe("fixture target resolution", () => {
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      error: "workflow execution is not active",
-      code: "WORKFLOW_EXECUTION_NOT_ACTIVE",
+      error: {
+        message: "workflow execution is not active",
+        details: { serverCode: "WORKFLOW_EXECUTION_NOT_ACTIVE" },
+      },
       instruction: "Run `cctl workflow status`.",
     });
     expect(host.requests.filter(({ init }) => init.method === "POST")).toEqual(
@@ -450,14 +454,16 @@ describe("fixture target resolution", () => {
       return jsonResponse({ error: "unrouted" }, 404);
     };
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch"],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("unexpected dev-servers response");
+    expect(result.stderr).toContain(
+      "development server registry response is invalid",
+    );
     expect(result.stderr).not.toContain("cctl dev ensure");
   });
 
@@ -468,7 +474,7 @@ describe("fixture target resolution", () => {
       return jsonResponse({ error: "Project not found" }, 404);
     };
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch"],
       baseEnv,
       host,
@@ -481,7 +487,7 @@ describe("fixture target resolution", () => {
   });
 
   it("refuses to run against the managing CC server", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "fixture",
         "session",
@@ -494,7 +500,7 @@ describe("fixture target resolution", () => {
       makeHost(() => null),
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("managing CC server");
+    expect(result.stderr).toContain("managing CC instance");
   });
 
   it("fails with a dev-ensure hint when no dev server is running", async () => {
@@ -508,7 +514,7 @@ describe("fixture target resolution", () => {
       }
       return jsonResponse({ error: "unrouted" }, 404);
     };
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch"],
       baseEnv,
       host,
@@ -531,7 +537,7 @@ describe("fixture target resolution", () => {
       }
       return jsonResponse({ error: "unrouted" }, 404);
     };
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch"],
       baseEnv,
       host,
@@ -550,7 +556,7 @@ describe("cctl fixture session delete", () => {
       }
       return null;
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "session", "delete", "scratch", "fx-test", "--json"],
       baseEnv,
       host,
@@ -563,7 +569,7 @@ describe("cctl fixture session delete", () => {
     );
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(true);
-    expect(envelope.worktreeRemoved).toBe(true);
+    expect(envelope.payload.data.worktreeRemoved).toBe(true);
   });
 });
 
@@ -591,7 +597,7 @@ describe("cctl fixture prompt", () => {
         'event: start\ndata: {}\n\nevent: assistant-message\ndata: {"text":"hi"}\n\nevent: done\ndata: {}\n\n',
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "fixture",
         "prompt",
@@ -609,9 +615,11 @@ describe("cctl fixture prompt", () => {
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(true);
-    expect(envelope.conversationId).toBe("c1");
-    expect(envelope.turn).toBe("completed");
-    expect(envelope.transcriptPath).toBe("/wt/.config/transcripts/c1.jsonl");
+    expect(envelope.payload.data.conversationId).toBe("c1");
+    expect(envelope.payload.data.turn).toBe("completed");
+    expect(envelope.payload.data.transcriptPath).toBe(
+      "/wt/.config/transcripts/c1.jsonl",
+    );
 
     const post = host.requests.find((r) => r.url === promptUrl);
     expect(JSON.parse(post?.init.body ?? "{}").prompt).toBe("say hi");
@@ -624,7 +632,7 @@ describe("cctl fixture prompt", () => {
       }
       return null;
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "fixture",
         "prompt",
@@ -648,14 +656,14 @@ describe("cctl fixture prompt", () => {
 
   it("returns started without waiting when --wait is absent", async () => {
     const host = promptHost(() => hangingSseResponse());
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "prompt", "scratch", "fx-test", "--text", "go", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.turn).toBe("started");
+    expect(envelope.payload.data.turn).toBe("started");
     expect(envelope.hint).toContain("status");
   });
 
@@ -663,7 +671,7 @@ describe("cctl fixture prompt", () => {
     const host = promptHost(() =>
       sseResponse('event: error\ndata: {"message":"model exploded"}\n\n'),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "prompt", "scratch", "fx-test", "--text", "go", "--wait"],
       baseEnv,
       host,
@@ -678,7 +686,7 @@ describe("cctl fixture prompt", () => {
     const host = promptHost(() =>
       sseResponse('event: error\ndata: {"message":"model exploded"}\n\n'),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "fixture",
         "prompt",
@@ -696,11 +704,12 @@ describe("cctl fixture prompt", () => {
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: false,
-      details: {
-        forensics: [
-          "transcript: /wt/.config/transcripts/c1.jsonl",
-          "db: /wt/.config/command-center.db",
-        ],
+      effect: "applied",
+      error: {
+        details: {
+          transcriptPath: "/wt/.config/transcripts/c1.jsonl",
+          dbPath: "/wt/.config/command-center.db",
+        },
       },
     });
   });
@@ -709,7 +718,7 @@ describe("cctl fixture prompt", () => {
     // The fake host's sleep resolves instantly, so the timeout branch wins
     // the race against the never-ending stream.
     const host = promptHost(() => hangingSseResponse());
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "fixture",
         "prompt",
@@ -728,16 +737,6 @@ describe("cctl fixture prompt", () => {
     expect(result.stderr).toContain("timed out");
     expect(result.stderr).toContain("fixture status");
   });
-
-  it("requires --text", async () => {
-    const result = await runCli(
-      ["fixture", "prompt", "scratch", "fx-test"],
-      baseEnv,
-      makeHost(() => null),
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--text");
-  });
 });
 
 describe("cctl fixture status", () => {
@@ -754,14 +753,14 @@ describe("cctl fixture status", () => {
       }
       return null;
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["fixture", "status", "scratch", "fx-test", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.conversations).toEqual([
+    expect(envelope.payload.data.conversations).toEqual([
       { id: "c1", name: "fx-test 1", status: "running" },
       { id: "c2", name: "fx-test 2", status: "awaiting" },
     ]);

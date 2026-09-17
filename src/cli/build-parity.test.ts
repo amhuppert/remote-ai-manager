@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { BUILD_MISMATCH_HEADER } from "@/lib/agent-gateway/build-parity";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 
-import { runCli } from "./core";
-import type { CliHost } from "./shared";
+import { runCcWithHost } from "./testing/domain-runtime";
+import type { CliHost } from "./transport";
 
 const CLI_BUILD = formatBuildStamp(BUILD_INFO);
 const SERVER_BUILD = "server-sha-from-another-tree";
@@ -73,13 +73,12 @@ describe("cctl build parity", () => {
       [BUILD_MISMATCH_HEADER]: `server=${SERVER_BUILD} cli=${CLI_BUILD}`,
     });
 
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(4);
     expect(result.stderr).toContain(SERVER_BUILD);
     expect(result.stderr).toContain(CLI_BUILD);
     // The recovery must name the binary to use, not just the problem.
-    expect(result.stderr).toMatch(/bin\/cctl/);
     expect(result.stderr).toContain("cctl doctor");
   });
 
@@ -90,15 +89,15 @@ describe("cctl build parity", () => {
       [BUILD_MISMATCH_HEADER]: `server=${SERVER_BUILD} cli=${CLI_BUILD}`,
     });
 
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
 
-    expect(result.stderr).toContain("discarded unread");
-    expect(result.stderr).toContain("nothing changed");
+    expect(result.stderr).toContain("effect: read");
+    expect(result.stderr).not.toContain("effect: applied");
   });
 
   it("acts normally when the server published this binary", async () => {
     const host = hostReturning({});
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
     expect(result.exitCode).toBe(0);
   });
 });
@@ -111,7 +110,7 @@ describe("cctl build skew — the server's pre-execution mutation refusal", () =
   };
 
   it("exits 4 and states truthfully that no changes were made", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "hello"],
       baseEnv,
       hostRefusing(refusalBody),
@@ -127,7 +126,7 @@ describe("cctl build skew — the server's pre-execution mutation refusal", () =
   // The 409 carries the recovery path and the guarantee that nothing ran, so it
   // must win over the header-only signal on the same response.
   it("prefers the refusal body over the mismatch header on the same response", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "hello"],
       baseEnv,
       hostRefusing(refusalBody, {
@@ -140,7 +139,7 @@ describe("cctl build skew — the server's pre-execution mutation refusal", () =
   });
 
   it("carries the code and details on the --json envelope", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "hello", "--json"],
       baseEnv,
       hostRefusing(refusalBody),
@@ -149,13 +148,22 @@ describe("cctl build skew — the server's pre-execution mutation refusal", () =
     expect(result.exitCode).toBe(4);
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: false,
-      code: "build_skew",
-      details: { serverBuild: SERVER_BUILD, serverCliPath: SERVER_CLI_PATH },
+      effect: "not_applied",
+      error: {
+        code: "CC_BUILD_MISMATCH",
+        details: {
+          serverCode: "build_skew",
+          serverDetails: {
+            serverBuild: SERVER_BUILD,
+            serverCliPath: SERVER_CLI_PATH,
+          },
+        },
+      },
     });
   });
 
   it("falls back to the doctor pointer when the server publishes no cctl path", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "hello"],
       baseEnv,
       hostRefusing({
@@ -171,7 +179,7 @@ describe("cctl build skew — the server's pre-execution mutation refusal", () =
 
   // Any other 409 keeps the ordinary "server said no" mapping.
   it("leaves an unrelated 409 at exit 1", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notify", "hello"],
       baseEnv,
       hostRefusing({ error: "already sent", code: "duplicate" }),

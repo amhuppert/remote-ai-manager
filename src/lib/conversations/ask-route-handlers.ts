@@ -11,7 +11,6 @@
 
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
 import { createLogger, withTracing, type Logger } from "@/lib/logging";
@@ -44,18 +43,13 @@ import {
   type LaneAskPermission,
 } from "@/lib/workflow-graph/user-input-gate";
 import {
-  askQuestionItemSchema,
+  askQuestionsBodySchema,
   type AskQuestionItem,
   type ConversationRole,
   type ConversationState,
 } from "./schemas";
 
 const log = createLogger("ask-route-handlers");
-
-export const askQuestionsBodySchema = z.object({
-  questions: z.array(askQuestionItemSchema).min(1),
-});
-export type AskQuestionsBody = z.infer<typeof askQuestionsBodySchema>;
 
 const AUTONOMOUS_DENIAL =
   "autonomous conversation — proceed with best judgment";
@@ -256,6 +250,10 @@ async function registerAskBatchAfterRoleGate(
       return NextResponse.json(
         {
           error: `question batch ${conversation.pendingQuestionId} already pending`,
+          code: "question_batch_pending",
+          details: { questionBatchId: conversation.pendingQuestionId },
+          instruction:
+            "You already asked — end your turn; the answer will arrive as your next user message.",
         } satisfies ApiError,
         { status: 409 },
       );

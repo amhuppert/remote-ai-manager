@@ -7,8 +7,8 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { Db } from "@/lib/state-store/schemas";
-import { runCli } from "@/cli/core";
-import type { CliHost } from "@/cli/shared";
+import { runCcWithHost } from "@/cli/testing/domain-runtime";
+import type { CliHost } from "@/cli/transport";
 
 import { MEASURE_DEFINITIONS_VERSION } from "./measures";
 import { createMeasuresQuery } from "./measures-query";
@@ -279,14 +279,24 @@ describe("MeasuresQuery", () => {
       homedir: "/Users/test",
     };
     const env = { CC_SERVER_URL: "http://cc.test", CC_PROJECT: "measures" };
-    const firstResult = await runCli(["spec", "measures", "--json"], env, host);
-    const secondResult = await runCli(
+    const firstResult = await runCcWithHost(
       ["spec", "measures", "--json"],
       env,
       host,
     );
-    const { ok: firstOk, ...first } = JSON.parse(firstResult.stdout);
-    const { ok: secondOk, ...second } = JSON.parse(secondResult.stdout);
+    const secondResult = await runCcWithHost(
+      ["spec", "measures", "--json"],
+      env,
+      host,
+    );
+    const {
+      ok: firstOk,
+      payload: { data: first },
+    } = JSON.parse(firstResult.stdout);
+    const {
+      ok: secondOk,
+      payload: { data: second },
+    } = JSON.parse(secondResult.stdout);
 
     expect(firstResult.exitCode).toBe(0);
     expect(secondResult.exitCode).toBe(0);

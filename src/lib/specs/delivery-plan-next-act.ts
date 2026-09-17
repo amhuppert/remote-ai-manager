@@ -49,15 +49,17 @@ export function deliveryPlanNextAct(
     case "approved":
       return {
         actor: "agent",
-        command: `cctl spec start ${input.specSlug}`,
-        reason: "Start the signed one-off graph launch.",
+        command: `cctl spec start ${input.specSlug} --file .cc/temp/inputs.json`,
+        reason:
+          "Write the launch parameters (or {} when none are required) to .cc/temp/inputs.json, then start the signed one-off graph launch.",
       };
     case "parked":
       return input.parkedApproved
         ? {
             actor: "agent",
-            command: `cctl spec start ${input.specSlug}`,
-            reason: "The signed candidate is parked for prelaunch review.",
+            command: `cctl spec start ${input.specSlug} --file .cc/temp/inputs.json`,
+            reason:
+              "The signed candidate is parked for prelaunch review. Write the launch parameters (or {}) to .cc/temp/inputs.json before starting it.",
           }
         : {
             actor: input.signOffRequiresHuman ? "human" : "agent",

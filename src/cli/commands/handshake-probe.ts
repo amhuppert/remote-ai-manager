@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { CliHost, TokenSource } from "../shared";
+import type { CliHost, TokenSource } from "../transport";
 
 /**
  * "Which CC server is this, and is my binary its own?" — the one question

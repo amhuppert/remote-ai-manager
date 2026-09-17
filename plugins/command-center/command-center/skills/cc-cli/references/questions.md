@@ -7,7 +7,7 @@ as your **next user message**, delivered through the normal prompt queue.
 
 ```
 cctl ask --file .cc/temp/questions.json
-cctl ask --question "<text>" --option <label> --option <label> [--multi-select] [--header "<h>"] [--context "<c>"]
+cctl ask-check --file .cc/temp/questions.json
 ```
 
 - `--file` — a JSON object `{ "questions": [ … ] }`, each question
@@ -18,21 +18,20 @@ cctl ask --question "<text>" --option <label> --option <label> [--multi-select] 
   suggested" action), `tradeoff` renders as `+ pro` / `− con` lines under the
   option, and the question-level `context` supports markdown-lite (`**bold**`,
   `` `code` ``, `- ` bullets). Author the file under `.cc/temp/` with the available file-writing tool.
-- The `--question` form is sugar for a single question: repeat `--option` per
-  choice (at least one); `--multi-select` allows picking several; `--header`
-  and `--context` fill the panel's header and implications note. Options are
-  bare labels here — use `--file` when options warrant descriptions, a
-  recommended pick, or trade-offs (they usually do at a real fork).
+The file is required for a single question as well as a batch. Use
+`ask-check` to validate it before registering the handoff. For example:
 
-On success it prints the registration and the end-turn instruction. With
-`--json` the envelope is `{ ok, questionBatchId, instruction }` — `instruction`
-is a dedicated field, **not** a `hint`, because it is load-bearing protocol:
-
+```json
+{ "questions": [{ "id": "migration-order", "question": "Which migration order?",
+  "options": [{ "label": "Phases in order", "recommended": true },
+              { "label": "Fast path" }] }] }
 ```
-cctl ask --question "Which migration order?" --option "Phases in order" --option "Fast path"
-# → Question batch q_ab12 registered. The user has been notified.
-#   End your turn now with a brief handoff note (what you asked, what you'll do with the answer).
-#   The answer will arrive as your next user message.
+
+On success, `payload.data.questionBatchId` identifies the registered batch.
+The top-level `instruction` is the required end-turn action:
+
+```sh
+cctl ask --file .cc/temp/questions.json --json
 ```
 
 ### End-turn discipline

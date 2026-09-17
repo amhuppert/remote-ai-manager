@@ -1,3 +1,8 @@
+import {
+  decodeEvaluatedGuidance,
+  type EvaluatedGuidance,
+} from "cli-for-agents/guidance";
+
 /**
  * Lane-reminder rule engine (doc 04 §6.3, §6.4).
  *
@@ -116,6 +121,8 @@ export interface LaneReminderResult {
   reminders: string[];
   /** Ids of the rules that fired, parallel to `reminders` — for the log event. */
   ruleIds: string[];
+  /** Actual evaluated rules and their authority, transported without client re-evaluation. */
+  guidance: EvaluatedGuidance;
 }
 
 /**
@@ -129,14 +136,49 @@ export function evaluateLaneReminders(
 ): LaneReminderResult {
   const reminders: string[] = [];
   const ruleIds: string[] = [];
+  const commandPath = {
+    "task-complete": "workflow task complete",
+    "task-add": "workflow task add",
+    "shared-doc-upsert": "workflow shared-doc upsert",
+    "collab-request": "workflow collab request",
+  }[input.verb];
+  const authority = "cc-server-lane";
+  const candidates = [];
   for (const rule of LANE_REMINDER_RULES) {
     if (!rule.verbs.includes(input.verb)) continue;
     if (!rule.when(input)) continue;
-    reminders.push(rule.text(input));
+    const text = rule.text(input);
+    reminders.push(text);
     ruleIds.push(rule.id);
+    candidates.push({
+      tier: "reminder",
+      value: { ruleId: rule.id, text },
+      priority: LANE_REMINDER_RULES.length - LANE_REMINDER_RULES.indexOf(rule),
+      provenance: {
+        authority,
+        commandPath,
+        ruleId: rule.id,
+        evidence: rule.evidence,
+      },
+    });
     if (reminders.length === MAX_REMINDERS) break;
   }
-  return { reminders, ruleIds };
+  return {
+    reminders,
+    ruleIds,
+    guidance: decodeEvaluatedGuidance({
+      authority,
+      commandPath,
+      candidates,
+      firings: ruleIds.map((ruleId) => ({
+        type: "guidance.rule_fired",
+        commandPath,
+        ruleId,
+        tier: "reminder",
+      })),
+      issues: [],
+    }),
+  };
 }
 
 /**

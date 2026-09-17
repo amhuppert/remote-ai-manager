@@ -2620,7 +2620,7 @@ async function completeDeliveryPlanLaunch(
         unmetConditions: [
           "This composition has no shared graph start boundary, so the approved candidate cannot be launched.",
         ],
-        instruction: `Nothing was written. Retry \`cctl spec start ${pending.spec.slug}\` after configuring the shared graph start boundary.`,
+        instruction: `Nothing was written. Retry \`cctl spec start ${pending.spec.slug} --file .cc/temp/inputs.json\` after configuring the shared graph start boundary.`,
       },
     };
   }
@@ -2649,8 +2649,8 @@ async function completeDeliveryPlanLaunch(
         ],
         instruction:
           code === "validation"
-            ? `Nothing was written. Correct the graph launch inputs, then retry \`cctl spec start ${pending.spec.slug}\` with the amended --inputs file.`
-            : `Nothing was written. Retry \`cctl spec start ${pending.spec.slug}\` after correcting the launch refusal.`,
+            ? `Nothing was written. Correct the graph launch inputs, then retry \`cctl spec start ${pending.spec.slug} --file .cc/temp/inputs.json\` with the amended --file payload.`
+            : `Nothing was written. Retry \`cctl spec start ${pending.spec.slug} --file .cc/temp/inputs.json\` after correcting the launch refusal.`,
       },
     };
   }
@@ -2868,7 +2868,7 @@ async function seededDeliveryPlanInstruction(
     abandonWorkflowExecutionId === undefined
       ? ""
       : `Abandon execution ${abandonWorkflowExecutionId} with \`cctl spec abandon ${target} --execution ${abandonWorkflowExecutionId} --reason <reason>\`, then `;
-  return `${abandon}open a seeded attempt with \`cctl spec plan open ${target}\`, propose and sign its candidate off, then launch it with \`cctl spec start ${target}\`.`;
+  return `${abandon}open a seeded attempt with \`cctl spec plan open ${target}\`, propose and sign its candidate off, then launch it with \`cctl spec start ${target} --file .cc/temp/inputs.json\`.`;
 }
 
 function abandonReasonRefusal(): LifecycleResult<never> {

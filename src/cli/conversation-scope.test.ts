@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "./core";
+import { runCcWithHost } from "./testing/domain-runtime";
 import {
   PROJECT_SUPPORTED_CLI_COMMANDS,
   SESSION_ONLY_CLI_COMMANDS,
 } from "./session-env-inventory";
-import type { CliEnv, CliHost, FetchInit } from "./shared";
+import type { CliEnv, CliHost, FetchInit } from "./transport";
 
 /**
  * The env a PROJECT conversation's agent actually receives from
@@ -127,7 +127,36 @@ function makeHost(
       if (filePath.includes("validation-lease-")) return "lease-1\n";
       // Commands that read a payload file do so BEFORE resolving scope, so the
       // file must parse for the scope refusal to be the failure under test.
-      return JSON.stringify({ summary: "s", objective: "o", decisions: [] });
+      const payloads: Record<string, unknown> = {
+        "/tmp/ask.json": {
+          questions: [
+            {
+              question: "Ship it?",
+              options: [{ label: "Yes" }, { label: "No" }],
+            },
+          ],
+        },
+        "/tmp/charter.json": { content: "Deliver the requested feature." },
+        "/tmp/decisions.json": {
+          decisions: [{ statement: "Adopt library conventions." }],
+        },
+        "/tmp/plan.json": { expectedRevision: 1, summary: "s", objective: "o" },
+        "/tmp/inputs.json": {},
+        "/tmp/edit.json": {
+          expectedRevision: 1,
+          operations: [
+            { type: "update-context", contextId: "worker", title: "Updated" },
+          ],
+        },
+        "/tmp/live-edit.json": {
+          executionId: "exec-7",
+          baseLiveRevision: 1,
+          operations: [
+            { type: "update-context", contextId: "worker", title: "Updated" },
+          ],
+        },
+      };
+      return filePath in payloads ? JSON.stringify(payloads[filePath]) : null;
     },
     async readFileBytes() {
       return null;
@@ -162,7 +191,7 @@ describe("cctl at project conversation scope — project-supported commands", ()
   for (const testCase of validationVerbCases) {
     it(`validate ${testCase.verb} selects the project conversation route`, async () => {
       const host = makeHost(validationResponse);
-      const result = await runCli([...testCase.argv], projectEnv, host);
+      const result = await runCcWithHost([...testCase.argv], projectEnv, host);
 
       expect(result.stderr).not.toContain("CC_SESSION");
       const request = onlyRequest(host);
@@ -177,7 +206,7 @@ describe("cctl at project conversation scope — project-supported commands", ()
 
   it("notify posts to the project conversation notifications route", async () => {
     const host = makeHost();
-    const result = await runCli(["notify", "done"], projectEnv, host);
+    const result = await runCcWithHost(["notify", "done"], projectEnv, host);
 
     expect(result.exitCode).toBe(0);
     expect(pathOf(onlyRequest(host).url)).toBe(
@@ -193,18 +222,8 @@ describe("cctl at project conversation scope — project-supported commands", ()
           headers: { "content-type": "application/json" },
         }),
     );
-    const result = await runCli(
-      [
-        "ask",
-        "--question",
-        "Ship it?",
-        "--option",
-        "Yes",
-        "--option",
-        "No",
-        "--header",
-        "Ship",
-      ],
+    const result = await runCcWithHost(
+      ["ask", "--file", "/tmp/ask.json"],
       projectEnv,
       host,
     );
@@ -233,7 +252,7 @@ describe("cctl at project conversation scope — project-supported commands", ()
           { status: 200, headers: { "content-type": "application/json" } },
         ),
     );
-    const result = await runCli(["doctor"], projectEnv, host);
+    const result = await runCcWithHost(["doctor"], projectEnv, host);
 
     expect(result.exitCode).toBe(0);
     const url = new URL(onlyRequest(host).url);
@@ -249,15 +268,34 @@ describe("cctl at project conversation scope — project-supported commands", ()
       () =>
         new Response(
           JSON.stringify({
-            ok: true,
             conversationId: "conv-1",
-            messages: [],
-            window: { from: 0, to: 0, total: 0 },
+            totalMessages: 0,
+            maxSeq: -1,
+            units: [],
+            truncated: false,
+            omissions: {
+              thinkingOmitted: 0,
+              toolResultBytesElided: 0,
+              unitsOutsideWindow: 0,
+            },
+            boundaries: {
+              entries: [],
+              totalInRange: 0,
+              nextBefore: null,
+              indexCommand: null,
+            },
+            truncation: {
+              omittedAfter: null,
+              partialEntry: null,
+              excerptedEntries: [],
+              excerptedEntriesOmitted: 0,
+              excerptedEntriesNext: null,
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1"],
       projectEnv,
       host,
@@ -276,21 +314,29 @@ describe("cctl at project conversation scope — project-supported commands", ()
         new Response(
           JSON.stringify({
             id: "att-1",
-            kind: "conversation",
+            ticketId: "ticket-12",
             description: "d",
             createdAt: "2026-01-02T00:00:00Z",
-            snapshotKey: "k",
-            snapshotCapturedAt: "2026-01-02T00:00:00Z",
+            updatedAt: "2026-01-02T00:00:00Z",
+            payload: {
+              kind: "conversation",
+              projectPath: "/project/cc",
+              sessionName: null,
+              conversationId: "conv-1",
+              snapshotKey: "k",
+              snapshotCapturedAt: "2026-01-02T00:00:00Z",
+            },
           }),
           { status: 201, headers: { "content-type": "application/json" } },
         ),
     );
-    await runCli(
+    const result = await runCcWithHost(
       ["ticket", "attach", "conversation", "12", "--description", "d"],
       projectEnv,
       host,
     );
 
+    expect(result.exitCode, result.stderr).toBe(0);
     const body: unknown = JSON.parse(onlyRequest(host).init.body ?? "{}");
     expect(body).toEqual({
       description: "d",
@@ -311,7 +357,7 @@ describe("cctl at project conversation scope — project-supported commands", ()
           { status: 200, headers: { "content-type": "application/json" } },
         ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "abandon", "feat", "--reason", "superseded"],
       projectEnv,
       host,
@@ -323,7 +369,7 @@ describe("cctl at project conversation scope — project-supported commands", ()
 
   /**
    * The memory group is deliberately absent from the inventory: it routes
-   * through `resolveProjectConversationContext`, the session-agnostic resolver
+   * through `resolveCcProjectConversation`, the session-agnostic resolver
    * the inventory's markers exclude, so an entry here would fail the stale-entry
    * assertion. Its scope contract still needs covering — the server derives
    * project, incarnation, and visible union from the caller conversation, so a
@@ -340,7 +386,7 @@ describe("cctl at project conversation scope — project-supported commands", ()
       ["memory", "review"],
     ]) {
       const host = makeHost();
-      const result = await runCli(argv, projectEnv, host);
+      const result = await runCcWithHost(argv, projectEnv, host);
 
       expect(result.stderr, argv.join(" ")).not.toContain("CC_SESSION");
       expect(host.requests.length, argv.join(" ")).toBeGreaterThan(0);
@@ -364,7 +410,7 @@ describe("cctl at project conversation scope — project-supported commands", ()
       ["conversation", "read", "conv-1"],
     ]) {
       const host = makeHost();
-      await runCli(argv, projectEnv, host);
+      await runCcWithHost(argv, projectEnv, host);
       for (const request of host.requests) {
         expect(request.url).not.toContain("__project__");
         expect(request.url).not.toContain("/sessions/");
@@ -390,7 +436,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
     // A leaf that differs from its project-supported group: starting an execution
     // pins it to a session, and approveExecutionStart refuses one whose session is
     // null, so a project-scope start would persist an unapprovable execution.
-    "spec start": ["spec", "start", "feat"],
+    "spec start": ["spec", "start", "feat", "--file", "/tmp/inputs.json"],
   };
 
   /** Session-only workflow verbs that resolve through the group entry. */
@@ -402,7 +448,8 @@ describe("cctl at project conversation scope — session-only commands", () => {
     ["workflow", "wait", "exec-7", "--timeout", "1ms"],
     ["workflow", "abandon", "exec-7", "--reason", "superseded"],
     ["workflow", "live", "get"],
-    ["workflow", "live", "edit", "--file", "/tmp/edit.json"],
+    ["workflow", "live", "edit", "--file", "/tmp/live-edit.json"],
+    ["workflow", "live", "edit-preview", "--file", "/tmp/live-edit.json"],
     ["workflow", "live", "pause"],
     ["workflow", "live", "resume"],
     ["workflow", "task", "complete", "t1", "--summary", "s"],
@@ -413,7 +460,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
   for (const argv of sessionOnlyWorkflowVerbs) {
     it(`${argv.slice(0, 3).join(" ")} refuses at project scope`, async () => {
       const host = makeHost();
-      const result = await runCli(argv, projectEnv, host);
+      const result = await runCcWithHost(argv, projectEnv, host);
 
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("CC_SESSION");
@@ -423,7 +470,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
 
   it("workflow run gives project conversations session-conversation guidance without a request", async () => {
     const host = makeHost();
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["workflow", "run", "--file", "/tmp/plan.json", "--json"],
       projectEnv,
       host,
@@ -431,8 +478,12 @@ describe("cctl at project conversation scope — session-only commands", () => {
 
     expect(result.exitCode).toBe(2);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      code: "project_scope_refused",
-      details: { remedy: expect.stringContaining("session conversation") },
+      ok: false,
+      effect: "not_applied",
+      error: {
+        code: "CC_USAGE",
+        message: expect.stringContaining("session conversation"),
+      },
     });
     expect(host.requests).toHaveLength(0);
   });
@@ -472,6 +523,13 @@ describe("cctl at project conversation scope — session-only commands", () => {
       "workflow list": ["workflow", "list"],
       "workflow get": ["workflow", "get", "wf-1"],
       "workflow edit": ["workflow", "edit", "wf-1", "--file", "/tmp/edit.json"],
+      "workflow edit-preview": [
+        "workflow",
+        "edit-preview",
+        "wf-1",
+        "--file",
+        "/tmp/edit.json",
+      ],
       "workflow delete": ["workflow", "delete", "wf-1"],
       "workflow templates": ["workflow", "templates"],
     };
@@ -485,9 +543,13 @@ describe("cctl at project conversation scope — session-only commands", () => {
     for (const [command, argv] of Object.entries(projectSupportedInvocations)) {
       it(`${command} routes at project scope instead of failing for a missing session`, async () => {
         const host = makeHost();
-        const result = await runCli(argv, projectEnv, host);
+        const result = await runCcWithHost(argv, projectEnv, host);
 
         expect(result.stderr).not.toContain("CC_SESSION");
+        expect(
+          host.requests.length,
+          `${command}: ${result.stderr}`,
+        ).toBeGreaterThan(0);
         for (const request of host.requests) {
           expect(request.url).not.toContain("__project__");
           expect(request.url).not.toContain("/sessions/");
@@ -499,7 +561,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
   for (const [command, argv] of Object.entries(invocations)) {
     it(`${command} fails with the explicit CC_SESSION usage error and issues no request`, async () => {
       const host = makeHost();
-      const result = await runCli(argv, projectEnv, host);
+      const result = await runCcWithHost(argv, projectEnv, host);
 
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("CC_SESSION");
@@ -518,7 +580,7 @@ describe("cctl validate at session conversation scope", () => {
   for (const testCase of validationVerbCases) {
     it(`validate ${testCase.verb} selects the session conversation route`, async () => {
       const host = makeHost(validationResponse);
-      await runCli([...testCase.argv], sessionEnv, host);
+      await runCcWithHost([...testCase.argv], sessionEnv, host);
 
       const request = onlyRequest(host);
       expect(pathOf(request.url)).toBe(

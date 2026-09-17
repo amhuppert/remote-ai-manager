@@ -9,6 +9,7 @@ out/
 
 # build
 dist/
+!.yalc/cli-for-agents/dist/
 build/
 src/lib/build-info/build-info.generated.ts
 

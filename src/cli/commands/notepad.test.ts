@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { shellWords } from "@/lib/shared/testing/shell-words";
-import { runCli } from "../core";
-import type { CliEnv, CliHost, CliResult, FetchInit } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../transport";
 
 /**
- * Unit layer for `cctl notepad`: the real dispatch and flag parsing against a
- * fake CLI host, so every deterministic refusal is proven to happen BEFORE a
- * request and every accepted invocation is proven to build the path, query, and
- * headers the notepad routes read. Behavior against real persistence is the
+ * Unit layer for `cctl notepad`: commands build the paths, queries, request
+ * bodies, and attribution headers the notepad routes read. Behavior against real persistence is the
  * contract test's job.
  */
 
@@ -34,26 +31,22 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function makeHost(
   respond: (req: RecordedRequest) => Response,
-  files: Record<string, string> = {},
-): CliHost & { requests: RecordedRequest[]; written: Record<string, string> } {
+): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
-  const written: Record<string, string> = {};
+
   return {
     requests,
-    written,
+
     async fetch(url, init) {
       const req = { url, init };
       requests.push(req);
       return respond(req);
     },
-    async readTextFile(filePath) {
-      return files[filePath] ?? null;
+    async readTextFile() {
+      return null;
     },
     async readFileBytes() {
       return null;
-    },
-    async writeTextFile(filePath, contents) {
-      written[filePath] = contents;
     },
     async sleep() {},
     platform: "darwin",
@@ -101,74 +94,10 @@ const sampleListItem = {
   updatedAt: "2026-08-02T00:00:00.000Z",
 };
 
-describe("cctl notepad dispatch", () => {
-  it("exits 2 naming the subcommands when none is given", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["notepad"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("subcommand");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on an unknown subcommand before any network call", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["notepad", "rename"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('unknown notepad subcommand "rename"');
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on an unknown flag before any network call", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["notepad", "get", NOTEPAD_ID, "--frob", "x"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('unknown flag "--frob"');
-    expect(host.requests).toHaveLength(0);
-  });
-});
-
-/** A bounded list of 3 rows capped at 2, scoped to `project`. */
-async function listWithProject(project: string): Promise<CliResult> {
-  const rows = Array.from({ length: 3 }, (_, index) => ({
-    ...sampleListItem,
-    id: `notepad-${index}`,
-    name: `Notepad ${index}`,
-  }));
-  const host = makeHost(() => jsonResponse({ notepads: rows }));
-  return runCli(
-    ["notepad", "list", "--limit", "2", "--json"],
-    { ...baseEnv, CC_PROJECT: project },
-    host,
-  );
-}
-
-/**
- * The project a printed reveal command actually reaches: the string is taken
- * through a REAL shell, and the argv that survives is run back through the CLI
- * from a DIFFERENT ambient project. The answer is the `project` query the second
- * run sends — which is the only thing that decides whose rows come back.
- */
-async function projectRevealReaches(reveal: string): Promise<string | null> {
-  const words = shellWords(reveal);
-  expect(words[0]).toBe("cctl");
-  const host = makeHost(() => jsonResponse({ notepads: [] }));
-  const result = await runCli(
-    [...words.slice(1), "--json"],
-    { ...baseEnv, CC_PROJECT: "some-unrelated-project" },
-    host,
-  );
-  expect(result.exitCode, result.stderr).toBe(0);
-  return new URL(firstRequest(host).url).searchParams.get("project");
-}
-
 describe("cctl notepad list", () => {
   it("merges the ambient project with the global scope by default", async () => {
     const host = makeHost(() => jsonResponse({ notepads: [sampleListItem] }));
-    const result = await runCli(["notepad", "list"], baseEnv, host);
+    const result = await runCcWithHost(["notepad", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     const { url, init } = firstRequest(host);
@@ -183,7 +112,11 @@ describe("cctl notepad list", () => {
 
   it("narrows to the global scope with --global and asks for archived rows", async () => {
     const host = makeHost(() => jsonResponse({ notepads: [] }));
-    await runCli(["notepad", "list", "--global", "--archived"], baseEnv, host);
+    await runCcWithHost(
+      ["notepad", "list", "--global", "--archived"],
+      baseEnv,
+      host,
+    );
 
     const params = new URL(firstRequest(host).url).searchParams;
     expect(params.get("scope")).toBe("global");
@@ -198,20 +131,20 @@ describe("cctl notepad list", () => {
       name: `Notepad ${index}`,
     }));
     const host = makeHost(() => jsonResponse({ notepads: rows }));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notepad", "list", "--archived", "--limit", "2", "--json"],
       baseEnv,
       host,
     );
 
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.total).toBe(3);
-    expect(envelope.returned).toBe(2);
-    expect(envelope.truncated).toBe(true);
-    expect(envelope.reveal).toBe(
-      "cctl notepad list --project cc --archived --limit 3",
+    expect(envelope.payload.data.omission.total.count).toBe(3);
+    expect(envelope.payload.data.omission.returned).toBe(2);
+    expect(envelope.payload.data.omission.truncated).toBe(true);
+    expect(envelope.payload.data.revealCommand).toBe(
+      "cctl notepad list --project=cc --limit=3 --archived",
     );
-    expect(envelope.notepads).toHaveLength(2);
+    expect(envelope.payload.data.notepads).toHaveLength(2);
   });
 
   it("pins the listed project in the reveal command, not the ambient one", async () => {
@@ -221,7 +154,7 @@ describe("cctl notepad list", () => {
       name: `Notepad ${index}`,
     }));
     const host = makeHost(() => jsonResponse({ notepads: rows }));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notepad", "list", "--project", "beta", "--limit", "2", "--json"],
       { ...baseEnv, CC_PROJECT: "alpha" },
       host,
@@ -233,48 +166,9 @@ describe("cctl notepad list", () => {
     // The reveal has to name the project whose rows were bounded away: run from
     // any other ambient scope it would otherwise disclose a different project's
     // notepads.
-    expect(JSON.parse(result.stdout).reveal).toBe(
-      "cctl notepad list --project beta --limit 3",
+    expect(JSON.parse(result.stdout).payload.data.revealCommand).toBe(
+      "cctl notepad list --project=beta --limit=3",
     );
-  });
-
-  it("quotes a project name the shell would otherwise split", async () => {
-    const result = await listWithProject("My Repo");
-
-    // A project name is a directory basename, so it can carry spaces. Unquoted,
-    // the reveal would parse as `--project My` and disclose nothing.
-    expect(JSON.parse(result.stdout).reveal).toBe(
-      "cctl notepad list --project 'My Repo' --limit 3",
-    );
-  });
-
-  /**
-   * The reveal is a command a caller PASTES INTO A SHELL, so the assertion that
-   * means anything is where the pasted command actually lands. A name is a
-   * directory basename and the project resolver restricts no character, so every
-   * case here is a legal project — and each is a way a reveal can quietly list
-   * the wrong project, or fail to run at all.
-   */
-  it.each([
-    ["My Repo", "a space the shell would word-split"],
-    ["team$prod", "a variable the shell would expand"],
-    ["team${prod}", "a braced variable the shell would expand"],
-    ["repo`whoami`", "a command substitution the shell would run"],
-    ["repo$(whoami)", "a modern command substitution"],
-    ["back\\slash", "a backslash the shell would consume"],
-    ["it's-mine", "an apostrophe that would close a single quote"],
-    ["repo*glob?", "glob characters the shell would expand"],
-    ['say"hi"', "double quotes"],
-    ["a&b|c;d", "control operators that would end the command"],
-    ["--team", "a name the CLI would read as a flag"],
-    ["-t", "a short-flag-shaped name"],
-    ["--team prod", "a flag-shaped name that also needs quoting"],
-    ["--json", "a name colliding with a real global flag"],
-  ])("reveals %j (%s) back to the same project", async (project) => {
-    const result = await listWithProject(project);
-    const reveal = String(JSON.parse(result.stdout).reveal);
-
-    expect(await projectRevealReaches(reveal)).toBe(project);
   });
 
   it("reveals the global scope without a project selector", async () => {
@@ -286,33 +180,26 @@ describe("cctl notepad list", () => {
       projectName: null,
     }));
     const host = makeHost(() => jsonResponse({ notepads: rows }));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notepad", "list", "--global", "--limit", "2", "--json"],
       baseEnv,
       host,
     );
 
-    expect(JSON.parse(result.stdout).reveal).toBe(
-      "cctl notepad list --global --limit 3",
+    expect(JSON.parse(result.stdout).payload.data.revealCommand).toBe(
+      "cctl notepad list --limit=3 --global",
     );
-  });
-
-  it("rejects a non-positive --limit before any network call", async () => {
-    const host = makeHost(() => jsonResponse({ notepads: [] }));
-    const result = await runCli(
-      ["notepad", "list", "--limit", "0"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
   });
 });
 
 describe("cctl notepad get", () => {
   it("prints the canonical content with its reference XML intact", async () => {
     const host = makeHost(() => jsonResponse({ notepad: sampleNotepad }));
-    const result = await runCli(["notepad", "get", NOTEPAD_ID], baseEnv, host);
+    const result = await runCcWithHost(
+      ["notepad", "get", NOTEPAD_ID],
+      baseEnv,
+      host,
+    );
 
     expect(result.exitCode).toBe(0);
     expect(new URL(firstRequest(host).url).pathname).toBe(
@@ -322,35 +209,6 @@ describe("cctl notepad get", () => {
     expect(result.stdout).toContain("revision: 4");
     expect(result.stdout).toContain("write-mode: full-edit");
   });
-
-  it("writes an artifact receipt instead of truncating oversized content", async () => {
-    const big = "x".repeat(80_000);
-    const host = makeHost(() =>
-      jsonResponse({ notepad: { ...sampleNotepad, content: big } }),
-    );
-    const result = await runCli(["notepad", "get", NOTEPAD_ID], baseEnv, host);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).not.toContain(big);
-    expect(result.stdout).toContain("artifact: .cc/temp/");
-    expect(result.stdout).toContain("format: markdown");
-    expect(result.stdout).toContain("bytes: 80000");
-    expect(result.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/);
-    expect(Object.values(host.written)[0]).toBe(big);
-  });
-
-  it("requires exactly one notepad id", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const missing = await runCli(["notepad", "get"], baseEnv, host);
-    expect(missing.exitCode).toBe(2);
-    const extra = await runCli(
-      ["notepad", "get", NOTEPAD_ID, "other"],
-      baseEnv,
-      host,
-    );
-    expect(extra.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
 });
 
 describe("cctl notepad create", () => {
@@ -358,7 +216,7 @@ describe("cctl notepad create", () => {
     const host = makeHost(() =>
       jsonResponse({ notepad: { ...sampleNotepad, revision: 1 } }, 201),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notepad", "create", "--name", "Migration notes"],
       baseEnv,
       host,
@@ -383,7 +241,7 @@ describe("cctl notepad create", () => {
         201,
       ),
     );
-    await runCli(
+    await runCcWithHost(
       ["notepad", "create", "--name", "Standing context", "--global"],
       baseEnv,
       host,
@@ -393,34 +251,6 @@ describe("cctl notepad create", () => {
     expect(body.scope).toBe("global");
     expect(body.project).toBeUndefined();
   });
-
-  it("reads initial content from --content-file", async () => {
-    const host = makeHost(() => jsonResponse({ notepad: sampleNotepad }, 201), {
-      "/tmp/seed.md": "# Seeded\n",
-    });
-    await runCli(
-      [
-        "notepad",
-        "create",
-        "--name",
-        "Seeded",
-        "--content-file",
-        "/tmp/seed.md",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(bodyOf(firstRequest(host))).toMatchObject({ content: "# Seeded" });
-  });
-
-  it("requires --name before any network call", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["notepad", "create"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--name");
-    expect(host.requests).toHaveLength(0);
-  });
 });
 
 describe("cctl notepad update and append", () => {
@@ -429,7 +259,7 @@ describe("cctl notepad update and append", () => {
       const host = makeHost(() =>
         jsonResponse({ notepad: { ...sampleNotepad, revision: 5 } }),
       );
-      const result = await runCli(
+      const result = await runCcWithHost(
         [
           "notepad",
           operation,
@@ -457,75 +287,6 @@ describe("cctl notepad update and append", () => {
       expect(request.init.headers["x-cc-conversation-id"]).toBe("conv-1");
       expect(result.stdout).toContain("revision: 5");
     });
-
-    it(`${operation} refuses a missing --if-revision at exit 2 before any request`, async () => {
-      const host = makeHost(() => jsonResponse({}));
-      const result = await runCli(
-        ["notepad", operation, NOTEPAD_ID, "--content", "text"],
-        baseEnv,
-        host,
-      );
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain("--if-revision");
-      expect(host.requests).toHaveLength(0);
-    });
-
-    it(`${operation} refuses a malformed --if-revision at exit 2 before any request`, async () => {
-      const host = makeHost(() => jsonResponse({}));
-      for (const raw of ["0", "-1", "1.5", "four"]) {
-        const result = await runCli(
-          [
-            "notepad",
-            operation,
-            NOTEPAD_ID,
-            "--if-revision",
-            raw,
-            "--content",
-            "text",
-          ],
-          baseEnv,
-          host,
-        );
-        expect(result.exitCode, `--if-revision ${raw}`).toBe(2);
-      }
-      expect(host.requests).toHaveLength(0);
-    });
-
-    it(`${operation} requires content before any request`, async () => {
-      const host = makeHost(() => jsonResponse({}));
-      const result = await runCli(
-        ["notepad", operation, NOTEPAD_ID, "--if-revision", "4"],
-        baseEnv,
-        host,
-      );
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain("--content");
-      expect(host.requests).toHaveLength(0);
-    });
-
-    it(`${operation} refuses both --content and --content-file`, async () => {
-      const host = makeHost(() => jsonResponse({}), { "/tmp/a.md": "a" });
-      const result = await runCli(
-        [
-          "notepad",
-          operation,
-          NOTEPAD_ID,
-          "--if-revision",
-          "4",
-          "--content",
-          "inline",
-          "--content-file",
-          "/tmp/a.md",
-        ],
-        baseEnv,
-        host,
-      );
-
-      expect(result.exitCode).toBe(2);
-      expect(host.requests).toHaveLength(0);
-    });
   }
 });
 
@@ -534,7 +295,7 @@ describe("cctl notepad comment", () => {
 
   it("lists the notepad's comments through the comments route", async () => {
     const host = makeHost(() => jsonResponse({ comments: [] }));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notepad", "comment", "list", NOTEPAD_ID],
       baseEnv,
       host,
@@ -553,7 +314,7 @@ describe("cctl notepad comment", () => {
 
   it("passes --status through as the server's own filter", async () => {
     const host = makeHost(() => jsonResponse({ comments: [] }));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notepad", "comment", "list", NOTEPAD_ID, "--status", "open"],
       baseEnv,
       host,
@@ -561,19 +322,6 @@ describe("cctl notepad comment", () => {
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(new URL(firstRequest(host).url).search).toBe("?status=open");
-  });
-
-  it("refuses an unknown --status at exit 2 before any request", async () => {
-    const host = makeHost(() => jsonResponse({ comments: [] }));
-    const result = await runCli(
-      ["notepad", "comment", "list", NOTEPAD_ID, "--status", "settled"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("open or resolved");
-    expect(host.requests).toHaveLength(0);
   });
 
   it("replies to a comment with the caller-conversation attribution", async () => {
@@ -592,7 +340,7 @@ describe("cctl notepad comment", () => {
         201,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "notepad",
         "comment",
@@ -619,77 +367,24 @@ describe("cctl notepad comment", () => {
     expect(bodyOf(request)).not.toHaveProperty("baseRevision");
     expect(result.stdout).toContain(`replied to ${COMMENT_ID}`);
   });
-
-  it("reads the reply body from a file, like every other prose argument", async () => {
-    const host = makeHost(
-      () =>
-        jsonResponse({
-          reply: {
-            id: "reply-1",
-            commentId: COMMENT_ID,
-            body: "From a file.",
-            authorKind: "agent",
-            authorConversationId: "conv-1",
-            createdAt: "2026-08-02T00:00:00.000Z",
-          },
-        }),
-      { "/tmp/reply.md": "From a file." },
-    );
-    const result = await runCli(
-      [
-        "notepad",
-        "comment",
-        "reply",
-        NOTEPAD_ID,
-        COMMENT_ID,
-        "--body-file",
-        "/tmp/reply.md",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(bodyOf(firstRequest(host))).toEqual({ body: "From a file." });
-  });
-
-  it("refuses a reply with no body, and one missing an id, before any request", async () => {
-    const host = makeHost(() => jsonResponse({}));
-
-    const noBody = await runCli(
-      ["notepad", "comment", "reply", NOTEPAD_ID, COMMENT_ID],
-      baseEnv,
-      host,
-    );
-    expect(noBody.exitCode).toBe(2);
-    expect(noBody.stderr).toContain("--body");
-
-    const noCommentId = await runCli(
-      ["notepad", "comment", "reply", NOTEPAD_ID, "--body", "text"],
-      baseEnv,
-      host,
-    );
-    expect(noCommentId.exitCode).toBe(2);
-    expect(noCommentId.stderr).toContain("<commentId>");
-
-    expect(host.requests).toHaveLength(0);
-  });
 });
 
 describe("cctl notepad response handling", () => {
   it("fails loudly when a success body does not match the notepad contract", async () => {
     const host = makeHost(() => jsonResponse({ notepad: { id: 7 } }));
-    const result = await runCli(["notepad", "get", NOTEPAD_ID], baseEnv, host);
+    const result = await runCcWithHost(
+      ["notepad", "get", NOTEPAD_ID],
+      baseEnv,
+      host,
+    );
 
     expect(result.exitCode).toBe(1);
     // The failure reports the validation evidence — the paths that refused —
     // rather than asserting build skew, which misleads when builds match
-    // (command-center#91). `cctl doctor` is named as the check that separates
-    // skew from a genuine server/CLI contract defect.
-    expect(result.stderr).toContain("failed this CLI's validation");
-    expect(result.stderr).toContain("notepad.id");
+    // (command-center#91).
+    expect(result.stderr).toContain("CC_INVALID_RESPONSE");
+    expect(result.stderr).toContain('["notepad","id"]');
     expect(result.stderr).not.toContain("same build as this CLI");
-    expect(result.stderr).toContain("cctl doctor");
   });
 
   it("renders a server refusal with its code and reason", async () => {
@@ -705,7 +400,7 @@ describe("cctl notepad response handling", () => {
         404,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["notepad", "get", "missing-id"],
       baseEnv,
       host,

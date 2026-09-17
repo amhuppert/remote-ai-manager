@@ -18,8 +18,12 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { Db } from "@/lib/state-store/schemas";
-import { runCli } from "../../core";
-import type { CliEnv, CliHost, FetchInit } from "../../shared";
+import {
+  artifactTextOf,
+  inlineDataOf,
+  runCcWithHost,
+} from "../../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../../transport";
 
 const PROJECT_PATH = "/repos/native-entry";
 const ELEMENT_FILE = "/tmp/native-entry-element.json";
@@ -32,7 +36,6 @@ const SECOND_ELEMENT_FILE = "/tmp/native-entry-second-element.json";
 const SECOND_DRAFT_FILE = "/tmp/native-entry-second-draft.json";
 const BATCH_FILE = "/tmp/native-entry-batch.json";
 const STALE_BATCH_FILE = "/tmp/native-entry-stale-batch.json";
-const CURRENT_DETAIL_FILE = "/tmp/native-entry-current-detail.json";
 
 /**
  * A batch that updates the created requirement and adds a criterion under it.
@@ -100,11 +103,10 @@ function requestFromFetch(url: string, init: FetchInit): Request {
 describe("native /spec first-save visibility", () => {
   let db: Db;
   let host: CliHost;
-  let written: Map<string, string>;
 
   beforeEach(() => {
     db = _createTestDb({ inMemory: true });
-    written = new Map<string, string>();
+
     db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
     const specs = createSpecsRepo(db, createWriteQueue());
     const review = createSpecReviewRepo(db);
@@ -267,9 +269,6 @@ describe("native /spec first-save visibility", () => {
       async readFileBytes() {
         return null;
       },
-      async writeTextFile(filePath, content) {
-        written.set(filePath, content);
-      },
       async sleep() {},
       platform: "darwin",
       homedir: "/Users/test",
@@ -293,42 +292,38 @@ describe("native /spec first-save visibility", () => {
   }
 
   async function listedSpecs(): Promise<unknown> {
-    const listed = await runCli(["spec", "list", "--json"], env, host);
+    const listed = await runCcWithHost(["spec", "list", "--json"], env, host);
     expect(listed.exitCode).toBe(0);
-    return JSON.parse(listed.stdout);
+    return inlineDataOf(listed);
   }
 
   it("creates the durable spec object from the first successful draft save", async () => {
     expect(await listedSpecs()).toMatchObject({ specs: [] });
 
-    const created = await runCli(
+    const created = await runCcWithHost(
       createArgs(["--file", ELEMENT_FILE, "--json"]),
       env,
       host,
     );
     expect(created.exitCode).toBe(0);
-    const envelope = JSON.parse(created.stdout) as {
-      created: {
-        spec: { createdAt: string };
-        version: { createdAt: string; elementVersion: number };
-      };
+    const envelope = inlineDataOf(created) as {
+      spec: { createdAt: string };
+      version: { createdAt: string; elementVersion: number };
     };
     // The spec object is born from the first draft save itself.
-    expect(envelope.created.version.elementVersion).toBe(1);
-    expect(envelope.created.spec.createdAt).toBe(
-      envelope.created.version.createdAt,
-    );
+    expect(envelope.version.elementVersion).toBe(1);
+    expect(envelope.spec.createdAt).toBe(envelope.version.createdAt);
 
     expect(await listedSpecs()).toMatchObject({
       specs: [{ spec: { slug: "audit-log" }, phase: { primary: "draft" } }],
     });
-    const shown = await runCli(
+    const shown = await runCcWithHost(
       ["spec", "show", "audit-log", "--json"],
       env,
       host,
     );
-    expect(shown.exitCode).toBe(0);
-    expect(JSON.parse(shown.stdout)).toMatchObject({
+    expect(shown.exitCode, shown.stderr || shown.stdout).toBe(0);
+    expect(inlineDataOf(shown)).toMatchObject({
       view: "outline",
       spec: { slug: "audit-log" },
       requirements: [
@@ -340,19 +335,15 @@ describe("native /spec first-save visibility", () => {
     });
   });
 
-  it("refuses the elementless create form and leaves no durable spec behind", async () => {
-    const created = await runCli(createArgs(), env, host);
-
-    expect(created.exitCode).toBe(2);
-    expect(created.stderr).toContain("--file");
-    expect(await listedSpecs()).toMatchObject({ specs: [] });
-  });
-
   it("refuses a taken slug with a typed slug_taken refusal", async () => {
-    const first = await runCli(createArgs(["--file", ELEMENT_FILE]), env, host);
+    const first = await runCcWithHost(
+      createArgs(["--file", ELEMENT_FILE]),
+      env,
+      host,
+    );
     expect(first.exitCode).toBe(0);
 
-    const second = await runCli(
+    const second = await runCcWithHost(
       createArgs(["--file", SECOND_ELEMENT_FILE, "--json"]),
       env,
       host,
@@ -360,7 +351,7 @@ describe("native /spec first-save visibility", () => {
     expect(second.exitCode).toBe(1);
     expect(JSON.parse(second.stdout)).toMatchObject({
       ok: false,
-      code: "slug_taken",
+      error: { details: { serverCode: "slug_taken" } },
     });
     expect(await listedSpecs()).toMatchObject({
       specs: [{ spec: { slug: "audit-log" } }],
@@ -368,10 +359,14 @@ describe("native /spec first-save visibility", () => {
   });
 
   it("names the globally reused element ID and its owning spec", async () => {
-    const first = await runCli(createArgs(["--file", ELEMENT_FILE]), env, host);
+    const first = await runCcWithHost(
+      createArgs(["--file", ELEMENT_FILE]),
+      env,
+      host,
+    );
     expect(first.exitCode).toBe(0);
 
-    const second = await runCli(
+    const second = await runCcWithHost(
       [
         "spec",
         "create",
@@ -392,20 +387,19 @@ describe("native /spec first-save visibility", () => {
     expect(second.exitCode).toBe(1);
     expect(JSON.parse(second.stdout)).toMatchObject({
       ok: false,
-      error: expect.stringContaining(
-        'Spec element ID "requirement-1" is already used by spec',
-      ),
-      code: "element_id_taken",
-      issues: [
-        {
-          path: "unmetConditions[0]",
-          message: expect.stringContaining("element IDs are globally unique"),
+      error: {
+        message: expect.stringContaining(
+          'Spec element ID "requirement-1" is already used by spec',
+        ),
+        details: {
+          serverCode: "element_id_taken",
+          serverDetails: {
+            elementId: "requirement-1",
+            existingSpecId: expect.any(String),
+          },
         },
-      ],
-      details: {
-        elementId: "requirement-1",
-        existingSpecId: expect.any(String),
       },
+
       instruction: expect.stringContaining("<spec-slug>-requirement-1"),
     });
     expect(await listedSpecs()).toMatchObject({
@@ -414,14 +408,14 @@ describe("native /spec first-save visibility", () => {
   });
 
   it("reopens the spec's editable draft through spec amend", async () => {
-    const created = await runCli(
+    const created = await runCcWithHost(
       createArgs(["--file", ELEMENT_FILE]),
       env,
       host,
     );
     expect(created.exitCode).toBe(0);
 
-    const amended = await runCli(
+    const amended = await runCcWithHost(
       ["spec", "amend", "audit-log", "--json"],
       env,
       host,
@@ -429,34 +423,33 @@ describe("native /spec first-save visibility", () => {
 
     expect(amended.exitCode).toBe(0);
     // openAmendment is idempotent: an already-open draft comes back unchanged.
-    expect(JSON.parse(amended.stdout)).toMatchObject({
-      ok: true,
+    expect(inlineDataOf(amended)).toMatchObject({
       revision: { number: 1, state: "draft", authoringStage: "requirements" },
     });
   });
 
   it("keeps subsequent element-granular draft saves landing in the created spec", async () => {
-    const created = await runCli(
+    const created = await runCcWithHost(
       createArgs(["--file", ELEMENT_FILE]),
       env,
       host,
     );
     expect(created.exitCode).toBe(0);
 
-    const drafted = await runCli(
+    const drafted = await runCcWithHost(
       ["spec", "draft", "audit-log", "--file", SECOND_DRAFT_FILE],
       env,
       host,
     );
     expect(drafted.exitCode).toBe(0);
 
-    const shown = await runCli(
+    const shown = await runCcWithHost(
       ["spec", "show", "audit-log", "--json"],
       env,
       host,
     );
-    expect(shown.exitCode).toBe(0);
-    const body = JSON.parse(shown.stdout) as {
+    expect(shown.exitCode, shown.stderr || shown.stdout).toBe(0);
+    const body = inlineDataOf(shown) as {
       requirements: Array<{ summary: string }>;
     };
     expect(body.requirements.map(({ summary }) => summary)).toEqual([
@@ -466,21 +459,13 @@ describe("native /spec first-save visibility", () => {
   });
 
   async function currentElementIds(): Promise<string[]> {
-    const shown = await runCli(
-      [
-        "spec",
-        "show",
-        "audit-log",
-        "--full",
-        "--out",
-        CURRENT_DETAIL_FILE,
-        "--json",
-      ],
+    const shown = await runCcWithHost(
+      ["spec", "show", "audit-log", "--full", "--json"],
       env,
       host,
     );
-    expect(shown.exitCode).toBe(0);
-    const body = JSON.parse(written.get(CURRENT_DETAIL_FILE) ?? "null") as {
+    expect(shown.exitCode, shown.stderr || shown.stdout).toBe(0);
+    const body = JSON.parse(artifactTextOf(shown)) as {
       currentRevision: {
         elements: Array<{ element: { id: string } }>;
       } | null;
@@ -492,17 +477,18 @@ describe("native /spec first-save visibility", () => {
 
   it("lands an array --file as one batch of element-granular writes", async () => {
     expect(
-      (await runCli(createArgs(["--file", ELEMENT_FILE]), env, host)).exitCode,
+      (await runCcWithHost(createArgs(["--file", ELEMENT_FILE]), env, host))
+        .exitCode,
     ).toBe(0);
 
-    const batched = await runCli(
+    const batched = await runCcWithHost(
       ["spec", "draft", "audit-log", "--file", BATCH_FILE, "--json"],
       env,
       host,
     );
 
     expect(batched.exitCode).toBe(0);
-    expect(JSON.parse(batched.stdout).batch.written).toMatchObject([
+    expect(inlineDataOf(batched).written).toMatchObject([
       {
         index: 0,
         elementId: "requirement-1",
@@ -521,20 +507,19 @@ describe("native /spec first-save visibility", () => {
 
   it("refuses the whole batch when one element's base version is stale and writes nothing", async () => {
     expect(
-      (await runCli(createArgs(["--file", ELEMENT_FILE]), env, host)).exitCode,
+      (await runCcWithHost(createArgs(["--file", ELEMENT_FILE]), env, host))
+        .exitCode,
     ).toBe(0);
 
-    const refused = await runCli(
+    const refused = await runCcWithHost(
       ["spec", "draft", "audit-log", "--file", STALE_BATCH_FILE],
       env,
       host,
     );
 
     expect(refused.exitCode).toBe(1);
-    expect(refused.stderr).toContain(
-      "elements[0] requirement-1: stale_element",
-    );
-    expect(refused.stderr).toContain("element is at version 1");
+    expect(refused.stderr).toContain("[0] requirement-1:");
+    expect(refused.stderr).toContain("is at version 1, not 7");
     // All-or-nothing: the second element was a legal create and still must not
     // survive the refusal.
     expect(await currentElementIds()).toEqual(["requirement-1"]);

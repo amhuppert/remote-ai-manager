@@ -24,7 +24,7 @@ Run commands from the assigned session worktree root.
 bun install
 cctl validate list
 cctl validate run test --queue-if-busy --json
-cctl validate run test --queue-if-busy --require-match --json -- src/cli/commands/validate.test.ts
+cctl validate run test --queue-if-busy --require-match --json -- src/cli/commands/validate/runtime.test.ts
 cctl validate run test --scope full --queue-if-busy --json
 cctl validate run typecheck --queue-if-busy --json
 cctl validate run seams --queue-if-busy --json

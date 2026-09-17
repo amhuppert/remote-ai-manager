@@ -2,7 +2,7 @@ import path from "node:path";
 
 /**
  * Pure config-dir resolution rule, shared by the server (loader.ts) and the
- * cctl bundle (src/cli/core.ts). Kept dependency-free — bundling it into the
+ * cctl bundle (src/cli/transport.ts). Kept dependency-free — bundling it into the
  * CLI must not drag in the config loader, schemas, or logging.
  *
  * Priority:

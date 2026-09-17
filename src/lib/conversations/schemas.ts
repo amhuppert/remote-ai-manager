@@ -160,6 +160,11 @@ export const askQuestionItemSchema = z.object({
 });
 export type AskQuestionItem = z.infer<typeof askQuestionItemSchema>;
 
+export const askQuestionsBodySchema = z.object({
+  questions: z.array(askQuestionItemSchema).min(1),
+});
+export type AskQuestionsBody = z.infer<typeof askQuestionsBodySchema>;
+
 export const forkedFromSchema = z
   .object({
     sourceConversationId: z.string(),

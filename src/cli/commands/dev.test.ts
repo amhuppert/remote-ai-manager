@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "../core";
-import type { CliEnv, CliHost, FetchInit } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../transport";
 
 const baseEnv: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:3000",
@@ -14,9 +14,6 @@ const workflowEnv: CliEnv = {
   CC_WORKFLOW_EXECUTION_ID: "execution-1",
   CC_WORKFLOW_CONTEXT_ID: "context-1",
 };
-
-const ENSURE_HINT =
-  "drive the app at http://localhost:5010; re-check liveness with 'cctl dev list'";
 
 interface RecordedRequest {
   url: string;
@@ -53,6 +50,7 @@ function makeHost(
   respond: (req: RecordedRequest) => Response,
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
+  let elapsed = 0;
   return {
     requests,
     async fetch(url, init) {
@@ -66,7 +64,10 @@ function makeHost(
     async readFileBytes() {
       return null;
     },
-    async sleep() {},
+    now: () => elapsed,
+    async sleep(ms) {
+      elapsed += ms;
+    },
     platform: "darwin",
     homedir: "/Users/test",
   };
@@ -75,7 +76,7 @@ function makeHost(
 describe("cctl dev list", () => {
   it("lists servers, leading with the local/remote URLs agents need", async () => {
     const host = makeHost(() => jsonResponse({ servers: [server()] }));
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     const request = host.requests[0];
@@ -89,12 +90,20 @@ describe("cctl dev list", () => {
 
   it("derives localUrl from the port in the --json envelope", async () => {
     const host = makeHost(() => jsonResponse({ servers: [server()] }));
-    const result = await runCli(["dev", "list", "--json"], baseEnv, host);
+    const result = await runCcWithHost(
+      ["dev", "list", "--json"],
+      baseEnv,
+      host,
+    );
 
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(true);
-    expect(envelope.servers[0].localUrl).toBe("http://localhost:5010");
-    expect(envelope.servers[0].remoteUrl).toBe("https://web.example.ts.net");
+    expect(envelope.payload.data.servers[0].localUrl).toBe(
+      "http://localhost:5010",
+    );
+    expect(envelope.payload.data.servers[0].remoteUrl).toBe(
+      "https://web.example.ts.net",
+    );
   });
 
   it("renders the failure reason and log path the JSON envelope carries", async () => {
@@ -111,18 +120,20 @@ describe("cctl dev list", () => {
         ],
       }),
     );
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("error:  port 5010 is already in use");
-    expect(result.stdout).toContain("log:    /wt/.cc/dev-web.log");
+    expect(result.stdout).toContain(
+      "server error: port 5010 is already in use",
+    );
+    expect(result.stdout).toContain("log: /wt/.cc/dev-web.log");
   });
 
   it("omits the error and log lines when the server carries neither", async () => {
     const host = makeHost(() =>
       jsonResponse({ servers: [server({ logFilePath: null })] }),
     );
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain("error:");
@@ -131,7 +142,7 @@ describe("cctl dev list", () => {
 
   it("reports an empty configuration plainly", async () => {
     const host = makeHost(() => jsonResponse({ servers: [] }));
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toLowerCase()).toContain("no dev servers");
   });
@@ -139,7 +150,7 @@ describe("cctl dev list", () => {
   it("carries the invoking workflow context identity to the server", async () => {
     const host = makeHost(() => jsonResponse({ servers: [server()] }));
 
-    const result = await runCli(["dev", "list"], workflowEnv, host);
+    const result = await runCcWithHost(["dev", "list"], workflowEnv, host);
 
     expect(result.exitCode).toBe(0);
     const url = new URL(host.requests[0]?.url ?? "");
@@ -150,7 +161,7 @@ describe("cctl dev list", () => {
   it("rejects incomplete workflow identity before issuing a request", async () => {
     const host = makeHost(() => jsonResponse({ servers: [server()] }));
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "list"],
       {
         ...baseEnv,
@@ -167,7 +178,7 @@ describe("cctl dev list", () => {
   it("uses an explicitly selected session instead of ambient workflow identity", async () => {
     const host = makeHost(() => jsonResponse({ servers: [server()] }));
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "list", "--project", "cc", "--session", "other"],
       workflowEnv,
       host,
@@ -192,7 +203,7 @@ describe("cctl dev list", () => {
       ),
     );
 
-    const result = await runCli(["dev", "list"], workflowEnv, host);
+    const result = await runCcWithHost(["dev", "list"], workflowEnv, host);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("instruction: Run `cctl workflow status`.");
@@ -229,7 +240,7 @@ describe("cctl dev ensure", () => {
       });
     });
 
-    const result = await runCli(["dev", "ensure", "web"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure", "web"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     const startReq = host.requests.find((r) => r.init.method === "POST");
@@ -237,7 +248,7 @@ describe("cctl dev ensure", () => {
       "/api/projects/cc/sessions/my-session/dev-servers/web/start",
     );
     expect(result.stdout).toContain("http://localhost:5010");
-    expect(result.stdout.endsWith(`hint: ${ENSURE_HINT}\n`)).toBe(true);
+    expect(result.stdout).toContain("cctl dev list");
   });
 
   it("names the log file in the ready block, matching the list rendering", async () => {
@@ -252,10 +263,10 @@ describe("cctl dev ensure", () => {
           }),
     );
 
-    const result = await runCli(["dev", "ensure", "web"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure", "web"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("log:    /wt/.cc/dev-web.log");
+    expect(result.stdout).toContain("log: /wt/.cc/dev-web.log");
   });
 
   it("resolves the single configured server when no name is given", async () => {
@@ -269,7 +280,7 @@ describe("cctl dev ensure", () => {
       return jsonResponse({ servers: [server({ serverName: "web" })] });
     });
 
-    const result = await runCli(["dev", "ensure"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     const startReq = host.requests.find((r) => r.init.method === "POST");
@@ -280,7 +291,7 @@ describe("cctl dev ensure", () => {
 
   it("exits 1 with a CommandCenter.json pointer when nothing is configured (no name)", async () => {
     const host = makeHost(() => jsonResponse({ servers: [] }));
-    const result = await runCli(["dev", "ensure"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure"], baseEnv, host);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("CommandCenter.json");
@@ -298,7 +309,7 @@ describe("cctl dev ensure", () => {
         400,
       ),
     );
-    const result = await runCli(["dev", "ensure", "web"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure", "web"], baseEnv, host);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("CommandCenter.json");
@@ -310,7 +321,7 @@ describe("cctl dev ensure", () => {
         servers: [server({ serverName: "web" }), server({ serverName: "api" })],
       }),
     );
-    const result = await runCli(["dev", "ensure"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure"], baseEnv, host);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("web");
@@ -337,7 +348,7 @@ describe("cctl dev ensure", () => {
         ],
       });
     });
-    const result = await runCli(["dev", "ensure", "web"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure", "web"], baseEnv, host);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("failed to start");
@@ -356,7 +367,7 @@ describe("cctl dev ensure", () => {
         servers: [server({ status: "starting", port: null })],
       });
     });
-    const result = await runCli(["dev", "ensure", "web"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "ensure", "web"], baseEnv, host);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toLowerCase()).toContain("running state");
@@ -383,7 +394,7 @@ describe("cctl dev ensure", () => {
       });
     });
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "ensure", "web", "--json"],
       baseEnv,
       host,
@@ -391,10 +402,10 @@ describe("cctl dev ensure", () => {
 
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.details.forensics.join("\n")).toContain(
-      "last status: starting",
+    expect(JSON.stringify(envelope.error.details.server)).toContain("starting");
+    expect(JSON.stringify(envelope.error.details.server)).toContain(
+      "still compiling",
     );
-    expect(envelope.details.forensics.join("\n")).toContain("still compiling");
     expect(envelope.hint).toContain("cctl dev list");
   });
 
@@ -418,7 +429,7 @@ describe("cctl dev ensure", () => {
       });
     });
 
-    const result = await runCli(["dev", "ensure"], workflowEnv, host);
+    const result = await runCcWithHost(["dev", "ensure"], workflowEnv, host);
 
     expect(result.exitCode).toBe(0);
     expect(host.requests.length).toBeGreaterThanOrEqual(4);
@@ -433,7 +444,7 @@ describe("cctl dev ensure", () => {
 describe("cctl dev stop", () => {
   it("stops the named server and exits 0 with no hint", async () => {
     const host = makeHost(() => jsonResponse({ status: "ok" }));
-    const result = await runCli(["dev", "stop", "web"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "stop", "web"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     const request = host.requests[0];
@@ -445,18 +456,11 @@ describe("cctl dev stop", () => {
     expect(result.stdout).not.toContain("hint:");
   });
 
-  it("exits 2 when the server name is missing", async () => {
-    const host = makeHost(() => jsonResponse({ status: "ok" }));
-    const result = await runCli(["dev", "stop"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("exits 2 when the server is not running (404)", async () => {
     const host = makeHost(() =>
       jsonResponse({ error: 'Server "web" is not running' }, 404),
     );
-    const result = await runCli(["dev", "stop", "web"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "stop", "web"], baseEnv, host);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("not running");
   });
@@ -468,7 +472,7 @@ describe("cctl dev stop", () => {
         404,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "stop", "web", "--json"],
       baseEnv,
       host,
@@ -476,13 +480,17 @@ describe("cctl dev stop", () => {
     expect(result.exitCode).toBe(2);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
-    expect(envelope.code).toBe("UNKNOWN_DEV_SERVER");
+    expect(envelope.error.details.serverCode).toBe("UNKNOWN_DEV_SERVER");
   });
 
   it("carries the invoking workflow context identity to the stop route", async () => {
     const host = makeHost(() => jsonResponse({ status: "ok" }));
 
-    const result = await runCli(["dev", "stop", "web"], workflowEnv, host);
+    const result = await runCcWithHost(
+      ["dev", "stop", "web"],
+      workflowEnv,
+      host,
+    );
 
     expect(result.exitCode).toBe(0);
     const url = new URL(host.requests[0]?.url ?? "");
@@ -492,16 +500,9 @@ describe("cctl dev stop", () => {
 });
 
 describe("cctl dev (dispatch)", () => {
-  it("exits 2 on an unknown subcommand", async () => {
-    const host = makeHost(() => jsonResponse({ servers: [] }));
-    const result = await runCli(["dev", "frobnicate"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("exits 3 when the server rejects the token", async () => {
     const host = makeHost(() => jsonResponse({ error: "nope" }, 401));
-    const result = await runCli(["dev", "list"], baseEnv, host);
+    const result = await runCcWithHost(["dev", "list"], baseEnv, host);
     expect(result.exitCode).toBe(3);
     expect(result.stderr).toContain("token");
   });

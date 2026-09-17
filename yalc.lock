@@ -1,0 +1,9 @@
+{
+  "version": "v1",
+  "packages": {
+    "cli-for-agents": {
+      "signature": "397a4a7425b30a8da2684fb696b8bd8b",
+      "file": true
+    }
+  }
+}

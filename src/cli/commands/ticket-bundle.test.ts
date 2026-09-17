@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
-import { runCli } from "../core";
-import type { CliHost } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliHost } from "../transport";
 
 it("prints the exact prepared-bundle acknowledgment and never downloads an incomplete export without it", async () => {
   const requests: string[] = [];
@@ -32,8 +32,8 @@ it("prints the exact prepared-bundle acknowledgment and never downloads an incom
     platform: "darwin",
     homedir: "/test",
   };
-  const result = await runCli(
-    ["ticket", "export", "7", "--out", "ticket.gz"],
+  const result = await runCcWithHost(
+    ["ticket", "export", "7"],
     {
       CC_SERVER_URL: "http://cc.test",
       CC_API_TOKEN: "test",
@@ -42,9 +42,9 @@ it("prints the exact prepared-bundle acknowledgment and never downloads an incom
     host,
   );
   expect(result.stderr + result.stdout).toContain("conversation:gone");
-  expect(result.stderr + result.stdout).toContain(`--prepared ${id}`);
+  expect(result.stderr + result.stdout).toContain(`--prepared=${id}`);
   expect(result.stderr + result.stdout).toContain(
-    `--acknowledge ${"a".repeat(64)}`,
+    `--acknowledge=${"a".repeat(64)}`,
   );
   expect(requests.every((url) => !url.includes("/download"))).toBe(true);
 });

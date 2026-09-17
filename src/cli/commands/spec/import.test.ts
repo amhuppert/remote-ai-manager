@@ -11,8 +11,8 @@ import {
   computeSpecElementPayloadHash,
   computeSpecRevisionCitationHash,
 } from "@/lib/state-store/specs-repo";
-import { runCli } from "../../core";
-import type { CliEnv, CliHost, FetchInit } from "../../shared";
+import { inlineDataOf, runCcWithHost } from "../../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../../transport";
 
 const BUNDLE_FILE = "/tmp/import-bundle.json";
 const CREATED_AT = "2026-08-11T00:00:00.000Z";
@@ -231,11 +231,6 @@ const PREVIEW = {
   },
 };
 
-/** Every advisory-tier line the text output carries, in order. */
-function hintLines(stdout: string): string[] {
-  return stdout.split("\n").filter((line) => line.startsWith("hint: "));
-}
-
 interface RecordedRequest {
   url: string;
   init: FetchInit;
@@ -251,8 +246,6 @@ function response(body: unknown, status = 200): Response {
 function makeHost(
   options: {
     file?: unknown;
-    /** Raw file text, for the unparseable-document cases. */
-    rawFile?: string;
     body?: unknown;
     status?: number;
   } = {},
@@ -262,11 +255,14 @@ function makeHost(
     requests,
     async fetch(url, init) {
       requests.push({ url, init });
-      return response(options.body ?? RECEIPT, options.status ?? 200);
+      const body = JSON.parse(init.body ?? "{}");
+      return response(
+        options.body ?? (body.dryRun ? PREVIEW : RECEIPT),
+        options.status ?? 200,
+      );
     },
     async readTextFile(filePath) {
       if (filePath !== BUNDLE_FILE) return null;
-      if (options.rawFile !== undefined) return options.rawFile;
       return JSON.stringify(options.file ?? bundle());
     },
     async readFileBytes() {
@@ -279,395 +275,248 @@ function makeHost(
 }
 
 describe("cctl spec import", () => {
-  it("posts the whole bundle to the project-scoped import action", async () => {
+  it("previews admission, then commits the complete project-scoped bundle", async () => {
     const host = makeHost();
-
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "import", "--file", BUNDLE_FILE, "--json"],
       env,
       host,
     );
-
-    expect(result.exitCode).toBe(0);
-    const request = host.requests[0];
-    expect(request?.init.method).toBe("POST");
-    expect(new URL(request?.url ?? "").pathname).toBe(
-      "/api/specs/demo/actions/import",
-    );
-    expect(request?.init.headers["x-cc-conversation-id"]).toBe(
-      "conversation-1",
-    );
-    // The action parses the request body with the bundle schema itself, so the
-    // document travels whole rather than as a subset the CLI re-assembled.
-    const sent = importBundleSchema.parse(
-      JSON.parse(request?.init.body ?? "null"),
-    );
-    expect(sent).toMatchObject({
-      slug: "imported-feature",
-      source: { label: SOURCE_LABEL },
-      delivered: true,
-      dryRun: false,
-    });
-    expect(sent.requirements[0]?.criteria).toHaveLength(2);
-    expect(sent.decisions[0]?.traces).toEqual(["core"]);
-  });
-
-  it("renders the created slug, revision, handle summary, delivered state, and next step", async () => {
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      makeHost(),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("imported spec imported-feature");
-    expect(result.stdout).toContain(SOURCE_LABEL);
-    // Approved on import provenance, never presented as a human approval.
-    expect(result.stdout).toContain("import provenance");
-    expect(result.stdout).toContain("revision 1");
-    expect(result.stdout).toContain("requirements: 1 (R1)");
-    expect(result.stdout).toContain("criteria: 2");
-    expect(result.stdout).toContain("decisions: 1 (D1)");
-    expect(result.stdout).toContain("questions: 1 (Q1)");
-    expect(result.stdout).toContain("assumptions: 1 (A1)");
-    expect(result.stdout).toContain("sections: 2");
-    // External delivery is testimony; the receipt must not read as proof.
-    expect(result.stdout).toContain("provenance, not proof");
-    expect(result.stdout).toContain("next: cctl spec show imported-feature");
-  });
-
-  it("carries the receipt structurally in the --json envelope", async () => {
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE, "--json"],
-      env,
-      makeHost(),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      import: {
-        spec: { slug: "imported-feature" },
-        revision: {
-          id: "revision-imported",
-          state: "approved",
-          externalDelivery: { source: { label: SOURCE_LABEL } },
-        },
-        counts: { requirements: 1, criteria: 2 },
-      },
-      tokens: { spec: "imported-feature", revision: "revision-imported" },
-    });
-  });
-
-  it("points an undelivered import at delivery planning instead of a read", async () => {
-    const host = makeHost({
-      file: bundle({ delivered: false }),
-      body: {
-        ...RECEIPT,
-        revision: { ...RECEIPT.revision, externalDelivery: null },
-      },
-    });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("no external delivery recorded");
-    expect(result.stdout).toContain(
-      "next: cctl spec plan open imported-feature",
-    );
-  });
-
-  it("rehearses with --dry-run and renders the findings and the handles it would allocate", async () => {
-    const host = makeHost({ body: PREVIEW });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE, "--dry-run"],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(host.requests[0]?.init.body ?? "null")).toMatchObject({
-      dryRun: true,
-    });
-    expect(result.stdout).toContain("dry run — nothing was written");
-    for (const handle of ["R1", "R1.1", "R1.2", "D1", "Q1", "A1"]) {
-      expect(result.stdout, `dry run omits ${handle}`).toContain(handle);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(host.requests).toHaveLength(2);
+    for (const [index, request] of host.requests.entries()) {
+      expect(request.init.method).toBe("POST");
+      expect(new URL(request.url).pathname).toBe(
+        "/api/specs/demo/actions/import",
+      );
+      expect(request.init.headers["x-cc-conversation-id"]).toBe(
+        "conversation-1",
+      );
+      const sent = importBundleSchema.parse(
+        JSON.parse(request.init.body ?? "null"),
+      );
+      expect(sent).toMatchObject({
+        slug: "imported-feature",
+        source: { label: SOURCE_LABEL },
+        delivered: true,
+        dryRun: index === 0,
+      });
+      expect(sent.requirements[0]?.criteria).toHaveLength(2);
+      expect(sent.decisions[0]?.traces).toEqual(["core"]);
     }
-    expect(result.stdout).toContain("findings: 0, 0 blocking");
-    expect(result.stdout).toContain(
-      `hint: cctl spec import --file ${BUNDLE_FILE}`,
-    );
-    // The renderer owns the hint tier; a command that also prints it in its own
-    // body says the same advisory thing twice (doc 04 §1.2).
-    expect(hintLines(result.stdout)).toHaveLength(1);
-  });
-
-  it("names the blocking findings a rehearsal found and does not offer the import", async () => {
-    const host = makeHost({
-      body: {
-        dryRun: true,
-        preview: {
-          ...PREVIEW.preview,
-          findings: [
-            {
-              ruleId: "9.3.uncovered-criterion",
-              severity: "blocks_propose",
-              elementHandle: "R1.2",
-              message: "R1.2 has no covering task.",
-            },
-            {
-              ruleId: "9.9.thin-decision",
-              severity: "advisory",
-              elementHandle: "D1",
-              message: "D1 rejects only one alternative.",
-            },
-          ],
-          blocking: 1,
-        },
-      },
-    });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE, "--dry-run"],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("findings: 2, 1 blocking");
-    expect(result.stdout).toContain(
-      "R1.2 [9.3.uncovered-criterion]: R1.2 has no covering task.",
-    );
-    expect(result.stdout).toContain("D1 [9.9.thin-decision]");
-    expect(result.stdout).toContain("fix the 1 blocking finding");
-    // The bare invocation is never offered while something would refuse it.
-    expect(result.stdout).not.toContain(
-      `hint: cctl spec import --file ${BUNDLE_FILE}`,
-    );
-  });
-
-  it("carries the preview structurally in the --json envelope", async () => {
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE, "--dry-run", "--json"],
-      env,
-      makeHost({ body: PREVIEW }),
-    );
-
-    expect(result.exitCode).toBe(0);
+    expect(inlineDataOf(result)).toMatchObject(RECEIPT);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      dryRun: true,
-      preview: {
-        blocking: 0,
-        counts: { requirements: 1 },
-        handles: { criteria: [{ handle: "R1.1" }, { handle: "R1.2" }] },
+      effect: "applied",
+      recovery: {
+        kind: "reported",
+        references: [
+          { kind: "spec", id: "spec-imported" },
+          { kind: "spec-revision", id: "revision-imported" },
+        ],
       },
     });
   });
 
-  /**
-   * A bundle that asks to be rehearsed must not be performed because the flag
-   * was left off: the flag and the document can each request a rehearsal, and
-   * neither cancels the other's request.
-   */
-  it("honours a dryRun the document itself declares", async () => {
-    const host = makeHost({ file: bundle({ dryRun: true }), body: PREVIEW });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
+  it("retains the provenance and delivery testimony in the native receipt", async () => {
+    const result = await runCcWithHost(
+      ["spec", "import", "--file", BUNDLE_FILE, "--json"],
       env,
-      host,
+      makeHost(),
     );
-
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(host.requests[0]?.init.body ?? "null")).toMatchObject({
-      dryRun: true,
-    });
-  });
-
-  /**
-   * A document-declared rehearsal survives every invocation of this command, so
-   * the only step that ends it is an edit to the document. A hint that offered
-   * the bare re-run would rehearse a third time and every time after.
-   */
-  it("tells a document-declared rehearsal to clear the field before importing", async () => {
-    const host = makeHost({ file: bundle({ dryRun: true }), body: PREVIEW });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    const [hint, ...extra] = hintLines(result.stdout);
-    expect(extra).toEqual([]);
-    expect(hint).toContain('"dryRun": false');
-    expect(hint).toContain(BUNDLE_FILE);
-  });
-
-  it("keeps naming the document field when a declared rehearsal also blocks", async () => {
-    const host = makeHost({
-      file: bundle({ dryRun: true }),
-      body: {
-        dryRun: true,
-        preview: {
-          ...PREVIEW.preview,
-          findings: [
-            {
-              ruleId: "9.3.uncovered-criterion",
-              severity: "blocks_propose",
-              elementHandle: "R1.2",
-              message: "R1.2 has no covering task.",
-            },
-          ],
-          blocking: 1,
+    expect(inlineDataOf(result)).toMatchObject({
+      revision: {
+        state: "approved",
+        externalDelivery: {
+          actor: { kind: "agent" },
+          source: { label: SOURCE_LABEL },
         },
       },
+      counts: RECEIPT.counts,
     });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    const [hint] = hintLines(result.stdout);
-    expect(hint).toContain("fix the 1 blocking finding");
-    expect(hint).toContain('"dryRun": false');
   });
 
-  it("refuses a missing or malformed bundle before any request", async () => {
-    const missing = makeHost();
-    const noFlag = await runCli(["spec", "import"], env, missing);
-    expect(noFlag.exitCode).toBe(2);
-    expect(noFlag.stderr).toContain("--file");
-    expect(missing.requests).toEqual([]);
-
-    const unreadable = makeHost();
-    const absent = await runCli(
-      ["spec", "import", "--file", "/tmp/nope.json"],
-      env,
-      unreadable,
-    );
-    expect(absent.exitCode).toBe(2);
-    expect(unreadable.requests).toEqual([]);
-
-    const badJson = makeHost({ rawFile: "{" });
-    const unparseable = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      badJson,
-    );
-    expect(unparseable.exitCode).toBe(2);
-    expect(badJson.requests).toEqual([]);
-
-    const offSchema = makeHost({
-      file: bundle({ requirements: "not-an-array" }),
-    });
-    const invalid = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      offSchema,
-    );
-    expect(invalid.exitCode).toBe(2);
-    expect(invalid.stderr).toContain("requirements");
-    expect(invalid.stderr).toContain("cctl spec schema import-bundle");
-    expect(offSchema.requests).toEqual([]);
-  });
-
-  it("rejects a canonical export bundle locally instead of restoring it", async () => {
-    const host = makeHost({
-      file: canonicalExportBundle(),
-    });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("does not match the required schema");
-    expect(result.stderr).toContain("cctl spec schema import-bundle");
-    expect(host.requests).toEqual([]);
-  });
-
-  it("takes no positional argument — the slug is the bundle's", async () => {
-    const host = makeHost();
-
-    const result = await runCli(
-      ["spec", "import", "imported-feature", "--file", BUNDLE_FILE],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toEqual([]);
-  });
-
-  it("renders the slug_taken refusal with the recovery it names", async () => {
-    const host = makeHost({
-      status: 409,
-      body: {
-        code: "slug_taken",
-        unmetConditions: [
-          'spec slug "imported-feature" already names "Imported Feature" (spec-1) in this project',
-        ],
-        instruction:
-          "Import creates new specs only. Choose an unused slug, or read the existing spec with `cctl spec show <slug>` and amend it through ordinary authoring.",
-        details: { existingSpecId: "spec-1", name: "Imported Feature" },
-      },
-    });
-
-    const result = await runCli(
-      ["spec", "import", "--file", BUNDLE_FILE],
-      env,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("already names");
-    expect(result.stderr).toContain("Import creates new specs only");
-  });
-
-  it("renders the lint_blocked refusal's findings", async () => {
-    const host = makeHost({
-      status: 409,
-      body: {
-        code: "lint_blocked",
-        unmetConditions: ["R1.2 has no covering task."],
-        instruction:
-          "Nothing was imported. Resolve every blocking finding in the bundle, then retry `cctl spec import`.",
-        details: { findingCount: 1 },
-        findings: [
-          {
-            ruleId: "9.3.uncovered-criterion",
-            severity: "blocks_propose",
-            elementHandle: "R1.2",
-            message: "R1.2 has no covering task.",
-          },
-        ],
-      },
-    });
-
-    const result = await runCli(
+  it("keeps an undelivered import distinct from an external-delivery testimony", async () => {
+    const host = makeHost({ file: bundle({ delivered: false }) });
+    const originalFetch = host.fetch;
+    host.fetch = async (url, init) =>
+      JSON.parse(init.body ?? "{}").dryRun
+        ? originalFetch(url, init)
+        : response({
+            ...RECEIPT,
+            revision: { ...RECEIPT.revision, externalDelivery: null },
+          });
+    const result = await runCcWithHost(
       ["spec", "import", "--file", BUNDLE_FILE, "--json"],
       env,
       host,
     );
-
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: false,
-      code: "lint_blocked",
-      details: { findings: [{ elementHandle: "R1.2" }] },
+    expect(result.exitCode).toBe(0);
+    expect(inlineDataOf(result)).toMatchObject({
+      revision: { externalDelivery: null },
     });
   });
+
+  it("rehearses without a commit and retains counts and prospective stable handles", async () => {
+    const host = makeHost();
+    const result = await runCcWithHost(
+      ["spec", "import-preview", "--file", BUNDLE_FILE, "--json"],
+      env,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(host.requests).toHaveLength(1);
+    expect(JSON.parse(host.requests[0]?.init.body ?? "null")).toMatchObject({
+      dryRun: true,
+    });
+    expect(inlineDataOf(result)).toEqual(PREVIEW);
+    expect(JSON.parse(result.stdout).effect).toBe("read");
+  });
+
+  it("retains complete blocking and advisory findings in a preview and refuses the write", async () => {
+    const findings = [
+      {
+        ruleId: "9.3.uncovered-criterion",
+        severity: "blocks_propose",
+        elementHandle: "R1.2",
+        message: "R1.2 has no covering task.",
+      },
+      {
+        ruleId: "9.9.thin-decision",
+        severity: "advisory",
+        elementHandle: "D1",
+        message: "D1 rejects only one alternative.",
+      },
+    ];
+    const body = {
+      dryRun: true,
+      preview: { ...PREVIEW.preview, findings, blocking: 1 },
+    };
+    const previewHost = makeHost({ body });
+    const preview = await runCcWithHost(
+      ["spec", "import-preview", "--file", BUNDLE_FILE, "--json"],
+      env,
+      previewHost,
+    );
+    expect(preview.exitCode).toBe(0);
+    expect(inlineDataOf(preview)).toEqual(body);
+    const writeHost = makeHost({ body });
+    const write = await runCcWithHost(
+      ["spec", "import", "--file", BUNDLE_FILE, "--json"],
+      env,
+      writeHost,
+    );
+    expect(write.exitCode).toBe(1);
+    expect(JSON.parse(write.stdout)).toMatchObject({
+      effect: "not_applied",
+      error: { details: body },
+    });
+    expect(writeHost.requests).toHaveLength(1);
+  });
+
+  it("allows a document-declared rehearsal only through import-preview", async () => {
+    const host = makeHost({ file: bundle({ dryRun: true }) });
+    const preview = await runCcWithHost(
+      ["spec", "import-preview", "--file", BUNDLE_FILE, "--json"],
+      env,
+      host,
+    );
+    expect(preview.exitCode).toBe(0);
+    expect(inlineDataOf(preview)).toEqual(PREVIEW);
+    const refusedHost = makeHost({ file: bundle({ dryRun: true }) });
+    const refused = await runCcWithHost(
+      ["spec", "import", "--file", BUNDLE_FILE, "--json"],
+      env,
+      refusedHost,
+    );
+    expect(refused.exitCode).toBe(2);
+    expect(JSON.parse(refused.stdout).error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["dryRun"],
+          message: expect.stringContaining("import-preview"),
+        }),
+      ]),
+    );
+    expect(refusedHost.requests).toHaveLength(0);
+  });
+
+  it("refuses an import whose requirements violate the bundle schema", async () => {
+    const host = makeHost({ file: bundle({ requirements: "not-an-array" }) });
+    const result = await runCcWithHost(
+      ["spec", "import", "--file", BUNDLE_FILE, "--json"],
+      env,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout).error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: ["requirements"] }),
+      ]),
+    );
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("rejects canonical export restoration at the located import-schema boundary", async () => {
+    const host = makeHost({ file: canonicalExportBundle() });
+    const result = await runCcWithHost(
+      ["spec", "import", "--file", BUNDLE_FILE, "--json"],
+      env,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: {
+        issues: expect.arrayContaining([
+          { code: "schema", path: ["slug"], message: expect.any(String) },
+        ]),
+      },
+    });
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it.each(["slug_taken", "lint_blocked"])(
+    "retains the server's %s refusal, detail and recovery instruction",
+    async (code) => {
+      const host = makeHost({
+        status: 409,
+        body: {
+          code,
+          unmetConditions: ["The bundle cannot be imported."],
+          instruction:
+            "Nothing was imported. Resolve the bundle findings before retrying.",
+          details: { findingCount: 1 },
+          findings: [
+            {
+              ruleId: "9.3.uncovered-criterion",
+              severity: "blocks_propose",
+              elementHandle: "R1.2",
+              message: "R1.2 has no covering task.",
+            },
+          ],
+        },
+      });
+      const result = await runCcWithHost(
+        ["spec", "import", "--file", BUNDLE_FILE, "--json"],
+        env,
+        host,
+      );
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        effect: "not_applied",
+        error: {
+          details: {
+            serverCode: code,
+            serverDetails:
+              code === "lint_blocked"
+                ? { findings: [{ elementHandle: "R1.2" }] }
+                : { findingCount: 1 },
+          },
+        },
+        instruction: expect.stringContaining("Nothing was imported"),
+      });
+      expect(host.requests).toHaveLength(1);
+    },
+  );
 });

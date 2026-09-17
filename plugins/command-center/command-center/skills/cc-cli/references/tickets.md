@@ -15,7 +15,7 @@ values exit `2` **before any network call**.
 **The bounded list.** `list` leads with `tickets: <n> total, <m> shown` and caps
 the rows at 20; when it truncates, the same line names the exact command that
 returns the rest (the filters in effect plus `--limit <n>`), and `--json`
-carries `total`/`returned`/`truncated`/`reveal`. Each row ends with its
+keeps rows and omission metadata under `payload.data`. Each row ends with its
 `attachments: <count>`, read straight from the list payload — the default costs
 exactly one request.
 
@@ -52,7 +52,7 @@ server can preserve durable source provenance.
 
 **Attachment index.** `ticket get` renders each canonical attachment's id,
 kind, description, and exact retrieval command in text and `attachmentIndex` in
-JSON. `list --attachments` adds the same bounded index for shown rows, at one
+`payload.data`. `list --attachments` adds the same bounded index for shown rows, at one
 request per shown ticket. `attach` creates four canonical kinds, each with a
 required description: file snapshot, conversation compaction snapshot, live
 session pointer, or Markdown note. Use `relation add --role related` to link
@@ -60,7 +60,7 @@ tickets, and `relation get|update|remove` to inspect or change a relationship.
 
 **Designed friction.** Treat self-link, duplicate-edge, graph-cycle,
 same-project hierarchy, and append-only/provenance refusals as deliberate; read
-their structured `code`, `details`, `issues`, and `rationale` before changing
+`error.code`, `error.details`, `error.issues`, and `error.why` before changing
 the request. Classify silent truncation, missing drill-down handles, lost
 structured issues, and help/parser drift as CLI defects rather than constraints
 to work around.
@@ -90,3 +90,10 @@ cctl ticket update 12 --status in_progress
 Related: `cctl conversation compaction get` reads a compaction directly once a
 conversation attachment names it; `cctl ticket relation get` and `cctl ticket
 status-update get` are the full-content drill-down commands emitted by outlines.
+
+**Bundle transfer.** `ticket export <ticket> --out <path>` writes the exact gzip
+bundle and reports its artifact metadata. Import that binary with
+`ticket import --archive <path>`; reserve `--file` for structured JSON inputs.
+Prepared transfers use `--prepared`; follow the server's digest and omission
+acknowledgment requirements. An interrupted preparation or commit has a real
+transfer id in recovery; inspect that state before retrying.

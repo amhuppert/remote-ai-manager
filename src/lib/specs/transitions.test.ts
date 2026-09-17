@@ -585,7 +585,7 @@ describe("transition predicates", () => {
             },
           ],
           instruction:
-            "Nothing was proposed for revision revision-2. Run `cctl spec lint native-sdd`, resolve every blocking finding it reports, then re-run `cctl spec propose native-sdd --notes <notes.md>`.",
+            "Nothing was proposed for revision revision-2. Run `cctl spec lint native-sdd`, resolve every blocking finding it reports, then re-run `cctl spec propose native-sdd --notes-file <notes.md>`.",
         },
       });
     });
@@ -627,7 +627,7 @@ describe("transition predicates", () => {
             },
           ],
           instruction:
-            "Nothing was proposed for revision revision-2. Run `cctl spec lint native-sdd`, resolve every blocking finding it reports, then re-run `cctl spec propose native-sdd --notes <notes.md>`.",
+            "Nothing was proposed for revision revision-2. Run `cctl spec lint native-sdd`, resolve every blocking finding it reports, then re-run `cctl spec propose native-sdd --notes-file <notes.md>`.",
         },
       });
     });

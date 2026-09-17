@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveCliPrincipalIdentity } from "./shared";
+import { resolveCliPrincipalIdentity } from "./transport";
 
 describe("environment workflow principal", () => {
   it("uses the injected caller identity rather than the routing conversation", () => {

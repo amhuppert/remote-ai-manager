@@ -524,6 +524,11 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
     );
 
     expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "question_batch_pending",
+      details: { questionBatchId: "q_existing" },
+      instruction: expect.stringMatching(/end your turn/i),
+    });
     expect(send).not.toHaveBeenCalled();
   });
 

@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentAuth } from "@/lib/agent-gateway/token";
 import { createReferenceDocumentMutationHandlers } from "@/lib/sessions/reference-documents-route-handlers";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
-import { runCli } from "../core";
-import type { CliEnv, CliHost } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost } from "../transport";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real reference-
@@ -112,51 +112,65 @@ describe("cctl docs against the real reference-document handlers", () => {
   it("register → list → delete round-trips through the real store", async () => {
     const host = makeHost();
 
-    const registered = await runCli(
+    const registered = await runCcWithHost(
       ["docs", "register", "docs/a.md", "--description", "why it matters"],
       makeEnv(),
       host,
     );
     expect(registered.exitCode).toBe(0);
 
-    const listed = await runCli(["docs", "list", "--json"], makeEnv(), host);
-    const envelope = JSON.parse(listed.stdout);
-    expect(envelope.documents).toHaveLength(1);
-    expect(envelope.documents[0].filePath).toBe("docs/a.md");
-    const id = envelope.documents[0].id as string;
-
-    const deleted = await runCli(["docs", "delete", id], makeEnv(), host);
-    expect(deleted.exitCode).toBe(0);
-
-    const afterDelete = await runCli(
+    const listed = await runCcWithHost(
       ["docs", "list", "--json"],
       makeEnv(),
       host,
     );
-    expect(JSON.parse(afterDelete.stdout).documents).toHaveLength(0);
+    const envelope = JSON.parse(listed.stdout).payload.data;
+    expect(envelope.documents).toHaveLength(1);
+    expect(envelope.documents[0].filePath).toBe("docs/a.md");
+    const id = envelope.documents[0].id as string;
+
+    const deleted = await runCcWithHost(
+      ["docs", "delete", id],
+      makeEnv(),
+      host,
+    );
+    expect(deleted.exitCode).toBe(0);
+
+    const afterDelete = await runCcWithHost(
+      ["docs", "list", "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(JSON.parse(afterDelete.stdout).payload.data.documents).toHaveLength(
+      0,
+    );
   });
 
   it("re-registering the same path does not duplicate (idempotent upsert)", async () => {
     const host = makeHost();
-    await runCli(
+    await runCcWithHost(
       ["docs", "register", "docs/a.md", "--description", "first"],
       makeEnv(),
       host,
     );
-    await runCli(
+    await runCcWithHost(
       ["docs", "register", "docs/a.md", "--description", "second"],
       makeEnv(),
       host,
     );
 
-    const listed = await runCli(["docs", "list", "--json"], makeEnv(), host);
-    const envelope = JSON.parse(listed.stdout);
+    const listed = await runCcWithHost(
+      ["docs", "list", "--json"],
+      makeEnv(),
+      host,
+    );
+    const envelope = JSON.parse(listed.stdout).payload.data;
     expect(envelope.documents).toHaveLength(1);
     expect(envelope.documents[0].description).toBe("second");
   });
 
   it("exits 2 on a worktree-escaping path via the real guard", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["docs", "register", "../../etc/passwd", "--description", "evil"],
       makeEnv(),
       makeHost(),
@@ -166,7 +180,7 @@ describe("cctl docs against the real reference-document handlers", () => {
   });
 
   it("exits 3 when the real token gate rejects a wrong token", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["docs", "register", "docs/a.md", "--description", "why"],
       makeEnv({ CC_API_TOKEN: "wrong" }),
       makeHost(),

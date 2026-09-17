@@ -45,7 +45,8 @@ describe("changed-scope selection of source-scanning contracts", () => {
     for (const changed of [
       "src/lib/specs/authoring-service.ts",
       "src/features/spec-studio/SpecReviewMode.tsx",
-      "src/cli/commands/spec/index.ts",
+      "src/cli/commands/spec/native-definitions.ts",
+      "src/cli/commands/spec/native-read.ts",
     ]) {
       expect(select([changed]), changed).toContain(
         "src/lib/workflow-graph/spec-graph-boundary.arch.test.ts",
@@ -84,11 +85,7 @@ describe("changed-scope selection of source-scanning contracts", () => {
     expect(
       select(["plugins/command-center/command-center/skills/cc-cli/SKILL.md"]),
     ).toEqual(
-      expect.arrayContaining([
-        "scripts/cc-cli-skill-reference.test.ts",
-        "src/cli/commands/workflow.help.test.ts",
-        "src/cli/help-registry.contract.test.ts",
-      ]),
+      expect.arrayContaining(["scripts/cc-cli-skill-reference.test.ts"]),
     );
   });
 

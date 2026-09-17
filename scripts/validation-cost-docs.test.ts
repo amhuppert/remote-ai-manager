@@ -1,7 +1,7 @@
 // @vitest-inputs .kiro/steering/project-configuration.md
 // @vitest-inputs docs/ai-validation-output.md docs/project-configuration.md
 // @vitest-inputs plugins/command-center/command-center/skills/*/references/commandcenter-json.md
-// @vitest-inputs src/cli/commands/validate.help.ts
+// @vitest-inputs src/cli/commands/validate/definitions.ts
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -135,10 +135,10 @@ describe("validation cost documentation", () => {
       "register the same number as the command cost",
       "under its shared cost and timeout",
     ];
-    // The CLI help registry teaches the same contract to every agent.
+    // The CLI declarations teach the same contract to every agent.
     for (const surface of [
       ...COST_DOC_SURFACES,
-      "src/cli/commands/validate.help.ts",
+      "src/cli/commands/validate/definitions.ts",
     ]) {
       const doc = read(surface);
       for (const claim of retiredClaims) {

@@ -5,8 +5,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { allHelpEntries } from "../src/cli/help-registry";
-import { pathKey } from "../src/cli/help-types";
+import { nativeHelpNodes } from "./cc-cli-skill-reference";
 import { renderCharterDigest } from "../src/lib/workflow-graph/charter/render";
 import { graphWorkflowMutabilityPolicySchema } from "../src/lib/workflow-graph/config-schemas";
 import {
@@ -297,9 +296,7 @@ const DOCUMENTED_FIELDS: ReadonlyArray<{
   },
 ];
 
-const REGISTRY_KEYS = new Set(
-  allHelpEntries().map((entry) => pathKey(entry.path)),
-);
+const REGISTRY_KEYS = new Set(nativeHelpNodes().map((entry) => entry.path));
 
 /**
  * Pulls every `cctl …` invocation out of a markdown document's code spans and
@@ -1105,27 +1102,24 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       expect(
         new Set(citedCctlCommands(skill)),
         `${why} — \`cctl workflow review\` is not cited`,
-      ).toContain("workflow review");
+      ).toContain("workflow review record");
 
       // Every flag the shipped verb declares, taken from its help entry rather
       // than from a list this file maintains: a flag added or renamed there
       // fails here instead of leaving the reviewer a stale invocation.
-      const entry = allHelpEntries().find(
-        (candidate) => pathKey(candidate.path) === "workflow review",
+      const entry = nativeHelpNodes().find(
+        (candidate) => candidate.path === "workflow review record",
       );
       expect(
         entry,
         "`cctl workflow review` has no help-registry entry",
       ).toBeDefined();
-      for (const flag of entry?.flags ?? []) {
+      for (const flag of (entry?.flags ?? []).filter(
+        (flag) => flag.source === "domain" || flag.source === "payload",
+      )) {
         expectDocuments(skill, `--${flag.name}`, `${why} — declared flags`);
-        // The verdict flag's vocabulary is its placeholder: `approved|changes-requested`.
-        const placeholder =
-          flag.kind === "value" ? (flag.valuePlaceholder ?? "") : "";
-        for (const value of placeholder.split("|")) {
-          if (/^[a-z][a-z-]*$/.test(value)) {
-            expectDocuments(skill, value, `${why} — ${flag.name} vocabulary`);
-          }
+        for (const value of flag.choices ?? []) {
+          expectDocuments(skill, value, `${why} — ${flag.name} vocabulary`);
         }
       }
       // Reviewer identity is captured from the reviewing conversation.

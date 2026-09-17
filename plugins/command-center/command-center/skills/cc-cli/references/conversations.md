@@ -86,8 +86,8 @@ source windows needed to answer the question. Stop when the evidence is enough.
   compact fenced document instead of JSON-derived text. After `--outline` it
   hints the next escalation — and tells you whether a compaction exists to
   fetch, is still generating, or must be created first. With `--json`, the
-  rendered output is in the `transcript` field for the default format, and in
-  the `markdown` field when `--format markdown` is set. Invalid options exit
+  rendered output is in `payload.data.transcript` for the default format, and in
+  `payload.data.markdown` when `--format markdown` is set. Invalid options exit
   `2` with one issue per line; an unknown conversation exits `2`. An empty
   window (e.g. message indexes that don't exist) reports the conversation's
   real coordinate bounds so you can re-aim. A bounded window closes by naming

@@ -37,7 +37,7 @@ synchronization or restoration of backend conversation continuity.
 
 ```sh
 cctl ticket export my-project#7 --out ticket.cc-ticket.gz
-cctl ticket import --file ticket.cc-ticket.gz --project destination
+cctl ticket import --archive ticket.cc-ticket.gz --project destination
 ```
 
 When export reports omissions, inspect them and repeat the command using the exact
@@ -55,7 +55,7 @@ cctl ticket import --prepared <id> --allow-duplicate --project destination
 ```
 
 A preparation can also be reused after a CLI wait timeout. Export uses `--prepared`
-with the original ticket reference; import uses it instead of `--file`.
+with the original ticket reference; import uses it instead of `--archive`.
 
 ## Storage and validation
 

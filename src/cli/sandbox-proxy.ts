@@ -1,4 +1,4 @@
-import type { CliEnv } from "./shared";
+import type { CliEnv } from "./transport";
 
 function parseHttpUrl(raw: string | undefined): URL | null {
   if (raw === undefined || raw.trim() === "") return null;

@@ -16,11 +16,11 @@ describe("plan review API route mounting", () => {
   // `reviews` is a static sibling of `[workflowId]`, which Next.js resolves in
   // its favour — the same shape `generate` already has in this directory. It
   // can never shadow a real definition: workflow ids are minted by randomUUID.
-  it("mounts the record route the `cctl workflow review --verdict` path posts to", () => {
+  it("mounts the record route the `cctl workflow review record --verdict` path posts to", () => {
     expect(recordPOST).toBe(recordWorkflowPlanReview);
   });
 
-  it("mounts the status route `cctl workflow review` reads", () => {
+  it("mounts the status route `cctl workflow review get` reads", () => {
     expect(statusPOST).toBe(getWorkflowPlanReviewStatus);
   });
 });

@@ -90,8 +90,8 @@ before authoring the document.
 Run the workflow in order. Check `cctl spec list` and `cctl spec search
 --all <query>` first and stop if an existing spec already covers the work.
 Author the bundle from the source documents yourself: you are the parser,
-and the server never reads a source file. Iterate with `cctl spec import
---file <bundle.json> --dry-run` until it reports no blocking finding — the
+and the server never reads a source file. Iterate with `cctl spec import-preview
+--file <bundle.json>` until it reports no blocking finding — the
 rehearsal also prints the handles the import would allocate, so bundle
 cross-references can be written against the real numbering. Then import
 once and read the receipt: it names the created spec and what it still
@@ -151,8 +151,8 @@ the human already has the Needs You entry. Its receipt reports one
 outcome per consulted gate — filed, already filed, not needed, filed
 with notice delivery uncertain, or not filed. Never re-file an ask it
 filed: `cctl spec request-approval` is the recovery for the last two
-outcomes, and the receipt prints it as the next command when one of
-them occurs.
+outcomes. Repair only the gates whose receipt reports one of those
+outcomes; read `cctl spec request-approval --help` for the gate flags.
 
 That receipt also carries the approval ledger, as do `cctl spec status`
 and every act that reopens a draft. Read both of its sides: approvals
@@ -187,14 +187,15 @@ Managed graph execution requires an approved DeliveryPlanAttempt. Propose freeze
 immutable finalized candidate, and human plan sign-off approves that
 candidate's `candidateId` and `candidateHash` rather than a recipe for rebuilding it.
 
-`cctl spec start <slug> --inputs .cc/temp/inputs.json` is the one-off start
+`cctl spec start <slug> --file .cc/temp/inputs.json` is the one-off start
 that launches the stored approved candidate and creates the graph-workflow
 execution in that same act. The JSON object goes unchanged to the shared
-graph start boundary, which applies the authored input contract. Start
+graph start boundary, which applies the authored input contract. Use {}
+when it requires no parameters. Start
 checks the approved `candidateHash` against the stored canonical candidate
 bytes before launch.
 
-Use `cctl spec start <slug> --park` only for explicit prelaunch review; it
+Use `cctl spec start <slug> --file .cc/temp/inputs.json --park` only for explicit prelaunch review; it
 creates no execution and takes no session slot. A stale candidate or draft
 revision refuses with the next valid lifecycle act rather than launching
 different bytes.

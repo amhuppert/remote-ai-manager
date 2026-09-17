@@ -38,7 +38,7 @@ the planning method), then walk the canonical chain: validate → create → sta
   `add`/`update`/`remove-parameter`, `add`/`remove-prerequisite`. Task order is
   never written by hand — place a task with `position` `{"at":"start|end"}` /
   `{"after":"<id>"}` / `{"before":"<id>"}`. A config/override field set to `null`
-  **clears** it (restores cascade inheritance). `--dry-run` applies + validates +
+  **clears** it (restores cascade inheritance). `workflow edit-preview` applies + validates +
   reports and persists nothing. A malformed ops file exits `2`; a rejected batch
   exits `1` with locator-first issues (`operations[i]: <code> — <detail>`).
   `--tier global` edits a global-library template.
@@ -60,7 +60,7 @@ the planning method), then walk the canonical chain: validate → create → sta
   `--full` prints the entire record (for a wholesale `replace`). At most one
   selector per invocation; `--tier global` reads a global-library template. An
   unknown id exits `2`. No hint.
-- `start` — launch an execution from a saved definition id. `--file` supplies a
+- `start` — launch an execution from a saved definition id. `--inputs` supplies a
   JSON **object** of launch parameter values (the `{{inputs.<name>}}` a template
   declares); a missing/invalid/non-object file exits `2`. A guard rejection
   (a run already active, uncommitted worktree changes, unmet prerequisites)
@@ -84,7 +84,7 @@ cctl workflow status
 #     plan       completed  2/2
 #     implement  running    1/4
 #     verify     pending    0/1
-cctl workflow start wf-1 --file .cc/temp/inputs.json
+cctl workflow start wf-1 --inputs .cc/temp/inputs.json
 # → started wf-1 (run exec-9c2a...)
 #   hint: track progress with 'cctl workflow status'
 ```
@@ -152,7 +152,7 @@ The group's verbs — `get`, `ledger`, `edit`, `amend`, `pause`, `resume`,
   `requires_pause` / `invalid_edit`) exits `1` with the code on the `--json`
   envelope and issues one per line; a malformed/unreadable file or missing
   execution exits `2` (deterministic local checks run before any network call).
-  `--dry-run` validates and reports without persisting.
+  `workflow live edit-preview` validates and reports without persisting; `workflow live edit-check` performs input admission.
 - `pause` / `resume` — pause the running execution (so started contexts become
   editable) and resume it afterward. A server `409` (e.g. nothing to pause/resume)
   renders as exit `1`.

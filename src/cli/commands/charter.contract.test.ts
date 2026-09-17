@@ -24,8 +24,8 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import type { ActiveConversationTurnDescription } from "@/lib/workflows/conversation/manager";
 
-import { runCli } from "../core";
-import type { CliEnv, CliHost } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost } from "../transport";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real
@@ -217,7 +217,7 @@ describe("cctl charter write against the real alignment handlers", () => {
       [CHARTER_FILE]: JSON.stringify({ content: "## Mission\nShip it." }),
     });
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["charter", "write", "--file", CHARTER_FILE],
       makeEnv(),
       host,
@@ -235,7 +235,7 @@ describe("cctl charter write against the real alignment handlers", () => {
     const host = makeHost(service, {
       [CHARTER_FILE]: JSON.stringify({ content: "## Mission\nShip it." }),
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["charter", "write", "--file", CHARTER_FILE],
       makeEnv({ CC_API_TOKEN: "wrong" }),
       host,
@@ -261,7 +261,7 @@ describe("cctl decisions propose against the real alignment handlers", () => {
       }),
     });
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["decisions", "propose", "--file", DECISIONS_FILE],
       makeEnv(),
       host,

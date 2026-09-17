@@ -30,14 +30,12 @@ import {
   type NotepadsRepo,
 } from "@/lib/state-store/notepads-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
-import { runCli } from "../core";
+import { ccRequestFailure } from "../framework/request";
 import {
-  cliRequest,
-  failureFromRequest,
-  type CliEnv,
-  type CliHost,
-  type CliResult,
-} from "../shared";
+  runCcWithHost,
+  inlineDataOf as dataOf,
+} from "../testing/domain-runtime";
+import { cliRequest, type CliEnv, type CliHost } from "../transport";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real notepad route
@@ -56,23 +54,6 @@ const TOKEN = "notepad-contract-token";
 const PROJECT_NAME = "cc";
 const PROJECT_PATH = "/repos/cc";
 const CONVERSATION_ID = "conv-agent-1";
-
-/**
- * A legal project directory basename that a shell acts on. The project resolver
- * restricts no character, so this is an ordinary project — and a reveal command
- * naming it is the case where bad quoting silently lists a DIFFERENT project
- * instead of failing.
- */
-const HOSTILE_PROJECT_NAME = "team$prod dir";
-const HOSTILE_PROJECT_PATH = "/repos/team$prod dir";
-
-/**
- * A legal basename the CLI itself would read as a flag. `mkdir -- --team`
- * makes one, and it lists fine through `CC_PROJECT` — so a reveal that cannot
- * name it back is a reveal that discloses nothing.
- */
-const FLAG_SHAPED_PROJECT_NAME = "--team";
-const FLAG_SHAPED_PROJECT_PATH = "/repos/--team";
 
 /** Canonical notepad content: Markdown carrying a reference in its XML form. */
 const REFERENCE_XML =
@@ -97,8 +78,6 @@ beforeEach(async () => {
 
   fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
-  fixture.seedProject(HOSTILE_PROJECT_PATH);
-  fixture.seedProject(FLAG_SHAPED_PROJECT_PATH);
   const writeQueue = createWriteQueue();
   repo = createNotepadsRepo(fixture.db, writeQueue);
   contentStore = createNotepadContentStore({
@@ -128,10 +107,6 @@ beforeEach(async () => {
     getService: () => service,
     resolveProjectPath: async (projectName) => {
       if (projectName === PROJECT_NAME) return PROJECT_PATH;
-      if (projectName === HOSTILE_PROJECT_NAME) return HOSTILE_PROJECT_PATH;
-      if (projectName === FLAG_SHAPED_PROJECT_NAME) {
-        return FLAG_SHAPED_PROJECT_PATH;
-      }
       return null;
     },
     auth: createAgentAuth({ configDir: dir }),
@@ -150,13 +125,10 @@ afterEach(async () => {
  * so an id that needs escaping is proven to survive the round-trip.
  */
 function makeHost(): CliHost & {
-  written: Record<string, string>;
   requests: string[];
 } {
-  const written: Record<string, string> = {};
   const requests: string[] = [];
   return {
-    written,
     requests,
     async fetch(url, init) {
       requests.push(`${init.method ?? "GET"} ${new URL(url).pathname}`);
@@ -222,9 +194,6 @@ function makeHost(): CliHost & {
     async readFileBytes() {
       return null;
     },
-    async writeTextFile(filePath, contents) {
-      written[filePath] = contents;
-    },
     async sleep() {},
     platform: os.platform(),
     homedir: os.homedir(),
@@ -241,8 +210,9 @@ function makeEnv(overrides: CliEnv = {}): CliEnv {
   };
 }
 
-function envelopeOf(result: CliResult): Record<string, unknown> {
-  return JSON.parse(result.stdout) as Record<string, unknown>;
+function envelopeOf(result: Awaited<ReturnType<typeof runCcWithHost>>) {
+  if (result.format !== "json") throw new Error("Expected a JSON run");
+  return result.envelope;
 }
 
 /** The user's own act, made where the panel makes it — not through the CLI. */
@@ -266,13 +236,13 @@ async function createNotepad(
   name: string,
   content = SEED_CONTENT,
 ): Promise<{ id: string; revision: number }> {
-  const created = await runCli(
+  const created = await runCcWithHost(
     ["notepad", "create", "--name", name, "--content", content, "--json"],
     makeEnv(),
     host,
   );
   expect(created.exitCode, created.stderr).toBe(0);
-  const notepad = envelopeOf(created).notepad as {
+  const notepad = dataOf(created).notepad as {
     id: string;
     revision: number;
   };
@@ -329,12 +299,16 @@ describe("cctl notepad against the real notepad routes", () => {
 
     // The read hands back the canonical text verbatim — the embedded reference
     // arrives as XML carrying its own retrieval command, not as resolved prose.
-    const read = await runCli(["notepad", "get", created.id], makeEnv(), host);
+    const read = await runCcWithHost(
+      ["notepad", "get", created.id],
+      makeEnv(),
+      host,
+    );
     expect(read.exitCode, read.stderr).toBe(0);
     expect(read.stdout).toContain(REFERENCE_XML);
     expect(read.stdout).toContain("revision: 1");
 
-    const updated = await runCli(
+    const updated = await runCcWithHost(
       [
         "notepad",
         "update",
@@ -349,11 +323,9 @@ describe("cctl notepad against the real notepad routes", () => {
       host,
     );
     expect(updated.exitCode, updated.stderr).toBe(0);
-    expect((envelopeOf(updated).notepad as { revision: number }).revision).toBe(
-      2,
-    );
+    expect((dataOf(updated).notepad as { revision: number }).revision).toBe(2);
 
-    const appended = await runCli(
+    const appended = await runCcWithHost(
       [
         "notepad",
         "append",
@@ -389,12 +361,12 @@ describe("cctl notepad against the real notepad routes", () => {
       expect(revision.authorConversationId).toBe(CONVERSATION_ID);
     }
 
-    const finalRead = await runCli(
+    const finalRead = await runCcWithHost(
       ["notepad", "get", created.id, "--json"],
       makeEnv(),
       host,
     );
-    expect((envelopeOf(finalRead).notepad as { content: string }).content).toBe(
+    expect((dataOf(finalRead).notepad as { content: string }).content).toBe(
       reloaded?.content,
     );
   });
@@ -404,30 +376,13 @@ describe("cctl notepad against the real notepad routes", () => {
     const created = await createNotepad(host, "Guarded");
 
     for (const operation of ["update", "append"] as const) {
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["notepad", operation, created.id, "--content", "sneaky"],
         makeEnv(),
         host,
       );
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("--if-revision");
-    }
-    for (const raw of ["0", "-3", "2.5", "latest"]) {
-      const result = await runCli(
-        [
-          "notepad",
-          "update",
-          created.id,
-          "--if-revision",
-          raw,
-          "--content",
-          "sneaky",
-        ],
-        makeEnv(),
-        host,
-      );
-      expect(result.exitCode, `--if-revision ${raw}`).toBe(2);
-      expect(result.stderr).toContain("positive integer");
     }
 
     const stored = await repo.find(created.id);
@@ -440,7 +395,7 @@ describe("cctl notepad against the real notepad routes", () => {
     const created = await createNotepad(host, "Contested");
 
     // Another writer moves the notepad on while this agent still holds rev 1.
-    const byOther = await runCli(
+    const byOther = await runCcWithHost(
       [
         "notepad",
         "append",
@@ -455,7 +410,7 @@ describe("cctl notepad against the real notepad routes", () => {
     );
     expect(byOther.exitCode, byOther.stderr).toBe(0);
 
-    const stale = await runCli(
+    const stale = await runCcWithHost(
       [
         "notepad",
         "append",
@@ -473,7 +428,7 @@ describe("cctl notepad against the real notepad routes", () => {
     expect(stale.stderr).toContain("why:");
     expect(stale.stderr).toContain("instruction:");
 
-    const staleJson = await runCli(
+    const staleJson = await runCcWithHost(
       [
         "notepad",
         "append",
@@ -488,18 +443,23 @@ describe("cctl notepad against the real notepad routes", () => {
       host,
     );
     const envelope = envelopeOf(staleJson);
-    expect(envelope.code).toBe("stale_revision");
-    expect(envelope.details).toMatchObject({ currentRevision: 2 });
+    expect(envelope.error?.details).toHaveProperty(
+      "serverCode",
+      "stale_revision",
+    );
+    expect(envelope.error?.details).toHaveProperty(
+      "serverDetails",
+      expect.objectContaining({ currentRevision: 2 }),
+    );
 
     // Re-read, then retry against what the read reported.
-    const reread = await runCli(
+    const reread = await runCcWithHost(
       ["notepad", "get", created.id, "--json"],
       makeEnv(),
       host,
     );
-    const current = (envelopeOf(reread).notepad as { revision: number })
-      .revision;
-    const retried = await runCli(
+    const current = (dataOf(reread).notepad as { revision: number }).revision;
+    const retried = await runCcWithHost(
       [
         "notepad",
         "append",
@@ -533,7 +493,7 @@ describe("cctl notepad against the real notepad routes", () => {
     );
     expect(deleted.status).toBe(200);
 
-    const afterDelete = await runCli(
+    const afterDelete = await runCcWithHost(
       ["notepad", "get", created.id],
       makeEnv(),
       host,
@@ -541,15 +501,15 @@ describe("cctl notepad against the real notepad routes", () => {
     expect(afterDelete.exitCode).toBe(1);
     expect(afterDelete.stderr).toContain(created.id);
 
-    const unknown = await runCli(
+    const unknown = await runCcWithHost(
       ["notepad", "get", "never-existed", "--json"],
       makeEnv(),
       host,
     );
     expect(unknown.exitCode).toBe(1);
     const envelope = envelopeOf(unknown);
-    expect(envelope.code).toBe("not_found");
-    expect(String(envelope.error)).toContain("never-existed");
+    expect(envelope.error?.details).toHaveProperty("serverCode", "not_found");
+    expect(String(envelope.error?.message)).toContain("never-existed");
   });
 
   it("reads through a reference captured before a rename", async () => {
@@ -560,18 +520,18 @@ describe("cctl notepad against the real notepad routes", () => {
     expect(renamed.status).toBe(200);
 
     // The id an agent captured before the rename is unchanged and still resolves.
-    const read = await runCli(
+    const read = await runCcWithHost(
       ["notepad", "get", created.id, "--json"],
       makeEnv(),
       host,
     );
     expect(read.exitCode, read.stderr).toBe(0);
-    const notepad = envelopeOf(read).notepad as { id: string; name: string };
+    const notepad = dataOf(read).notepad as { id: string; name: string };
     expect(notepad.id).toBe(created.id);
     expect(notepad.name).toBe("Renamed");
 
     // And the write path resolves by the same id, under the new name.
-    const appended = await runCli(
+    const appended = await runCcWithHost(
       [
         "notepad",
         "append",
@@ -601,7 +561,7 @@ describe("cctl notepad against the real notepad routes", () => {
     ).toBe(200);
 
     for (const operation of ["update", "append"] as const) {
-      const refused = await runCli(
+      const refused = await runCcWithHost(
         [
           "notepad",
           operation,
@@ -620,7 +580,7 @@ describe("cctl notepad against the real notepad routes", () => {
       expect(refused.stderr).toContain("instruction:");
     }
 
-    const refusedUpdate = await runCli(
+    const refusedUpdate = await runCcWithHost(
       [
         "notepad",
         "update",
@@ -636,10 +596,13 @@ describe("cctl notepad against the real notepad routes", () => {
     );
     expect(refusedUpdate.exitCode).toBe(1);
     const envelope = envelopeOf(refusedUpdate);
-    expect(envelope.code).toBe("write_mode_refused");
-    expect(String(envelope.error)).toContain("append-only");
+    expect(envelope.error?.details).toHaveProperty(
+      "serverCode",
+      "write_mode_refused",
+    );
+    expect(String(envelope.error?.message)).toContain("append-only");
 
-    const acceptedAppend = await runCli(
+    const acceptedAppend = await runCcWithHost(
       [
         "notepad",
         "append",
@@ -664,34 +627,36 @@ describe("cctl notepad against the real notepad routes", () => {
     for (const name of ["First", "Second", "Third"]) {
       await createNotepad(host, name, `# ${name}`);
     }
-    const globalCreate = await runCli(
+    const globalCreate = await runCcWithHost(
       ["notepad", "create", "--name", "Standing", "--global", "--json"],
       makeEnv(),
       host,
     );
     expect(globalCreate.exitCode, globalCreate.stderr).toBe(0);
 
-    const bounded = await runCli(
+    const bounded = await runCcWithHost(
       ["notepad", "list", "--limit", "2", "--json"],
       makeEnv(),
       host,
     );
-    const envelope = envelopeOf(bounded);
-    expect(envelope.total).toBe(4);
-    expect(envelope.returned).toBe(2);
-    expect(envelope.truncated).toBe(true);
-    expect(envelope.reveal).toBe("cctl notepad list --project cc --limit 4");
+    const data = dataOf(bounded);
+    expect(data.omission).toMatchObject({
+      total: { kind: "known", count: 4 },
+      returned: 2,
+      truncated: true,
+    });
+    expect(data.revealCommand).toBe("cctl notepad list --project=cc --limit=4");
 
     // The reveal command is a real invocation that returns everything omitted —
     // run here from a DIFFERENT ambient project, because a reveal that only
     // worked where it was printed would disclose another scope's notepads to any
     // agent that carried it elsewhere.
-    const revealed = await runCli(
-      [...String(envelope.reveal).split(" ").slice(1), "--json"],
+    const revealed = await runCcWithHost(
+      [...String(data.revealCommand).split(" ").slice(1), "--json"],
       makeEnv({ CC_PROJECT: "some-other-project" }),
       host,
     );
-    const all = envelopeOf(revealed).notepads as { name: string }[];
+    const all = dataOf(revealed).notepads as { name: string }[];
     expect(all).toHaveLength(4);
     expect(all.map((item) => item.name).sort()).toEqual([
       "First",
@@ -701,116 +666,37 @@ describe("cctl notepad against the real notepad routes", () => {
     ]);
 
     // --global narrows to the scope reachable from every conversation.
-    const globalOnly = await runCli(
+    const globalOnly = await runCcWithHost(
       ["notepad", "list", "--global", "--json"],
       makeEnv(),
       host,
     );
-    const globals = envelopeOf(globalOnly).notepads as { name: string }[];
+    const globals = dataOf(globalOnly).notepads as { name: string }[];
     expect(globals.map((item) => item.name)).toEqual(["Standing"]);
 
     // The text rows carry the id an agent addresses the notepad by.
-    const text = await runCli(["notepad", "list"], makeEnv(), host);
+    const text = await runCcWithHost(["notepad", "list"], makeEnv(), host);
     expect(text.stdout).toContain("4 total, 4 shown");
     expect(text.stdout).toContain("global");
     expect(text.stdout).toContain(`project(${PROJECT_NAME})`);
-  });
-
-  /**
-   * The whole disclosure chain against real persistence, for the two project
-   * basenames that break a naive reveal: one the SHELL rewrites, one the CLI
-   * reads as a flag. Both list fine through `CC_PROJECT`, so a reveal that
-   * cannot name them back is the difference between disclosing the remainder and
-   * disclosing nothing.
-   */
-  it.each([
-    [HOSTILE_PROJECT_NAME, "the shell would rewrite"],
-    [FLAG_SHAPED_PROJECT_NAME, "the CLI would read as a flag"],
-  ])("reveals the remainder for a project name %j %s", async (project) => {
-    const host = makeHost();
-    const inThatProject = makeEnv({ CC_PROJECT: project });
-    for (const name of ["First", "Second", "Third"]) {
-      const created = await runCli(
-        ["notepad", "create", "--name", name, "--content", `# ${name}`],
-        inThatProject,
-        host,
-      );
-      expect(created.exitCode, created.stderr).toBe(0);
-    }
-
-    const bounded = await runCli(
-      ["notepad", "list", "--limit", "2", "--json"],
-      inThatProject,
-      host,
-    );
-    const envelope = envelopeOf(bounded);
-    expect(envelope.total).toBe(3);
-    expect(envelope.truncated).toBe(true);
-
-    // End to end: the reveal string goes through a REAL shell, and the argv that
-    // survives runs against the real routes from a DIFFERENT ambient project. An
-    // expansion that leaked, or a name the parser refused, lands somewhere other
-    // than the three rows this bounded away.
-    const words = shellWords(String(envelope.reveal));
-    expect(words[0]).toBe("cctl");
-
-    const revealed = await runCli(
-      [...words.slice(1), "--json"],
-      makeEnv({ CC_PROJECT: PROJECT_NAME }),
-      host,
-    );
-    expect(revealed.exitCode, revealed.stderr).toBe(0);
-    const all = envelopeOf(revealed).notepads as { name: string }[];
-    expect(all.map((item) => item.name).sort()).toEqual([
-      "First",
-      "Second",
-      "Third",
-    ]);
-  });
-
-  it("delivers oversized content as an artifact receipt instead of truncating it", async () => {
-    const host = makeHost();
-    const big = `${SEED_CONTENT}\n\n${"filler line\n".repeat(6_000)}`;
-    const created = await createNotepad(host, "Large", big);
-
-    const read = await runCli(["notepad", "get", created.id], makeEnv(), host);
-    expect(read.exitCode, read.stderr).toBe(0);
-    expect(read.stdout).not.toContain("filler line");
-    expect(read.stdout).toContain("artifact: .cc/temp/notepad-");
-    expect(read.stdout).toContain("format: markdown");
-    expect(read.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/);
-
-    // The artifact holds the canonical text, reference XML included.
-    const [artifactPath, artifactBody] = Object.entries(host.written)[0] ?? [];
-    expect(read.stdout).toContain(`artifact: ${artifactPath}`);
-    expect(artifactBody).toBe(big);
-    expect(artifactBody).toContain(REFERENCE_XML);
-
-    // --json spills the same way: it changes serialization, never volume.
-    const asJson = await runCli(
-      ["notepad", "get", created.id, "--json"],
-      makeEnv(),
-      host,
-    );
-    const envelope = envelopeOf(asJson);
-    expect(envelope.storage).toBe("artifact");
-    expect(envelope.artifact).toMatchObject({ format: "markdown" });
-    expect(envelope.notepad).not.toHaveProperty("content");
   });
 
   it("refuses a duplicate name in the same scope and allows it in the other", async () => {
     const host = makeHost();
     await createNotepad(host, "Shared name");
 
-    const duplicate = await runCli(
+    const duplicate = await runCcWithHost(
       ["notepad", "create", "--name", "Shared name", "--json"],
       makeEnv(),
       host,
     );
     expect(duplicate.exitCode).toBe(1);
-    expect(envelopeOf(duplicate).code).toBe("name_taken");
+    expect(envelopeOf(duplicate).error?.details).toHaveProperty(
+      "serverCode",
+      "name_taken",
+    );
 
-    const otherScope = await runCli(
+    const otherScope = await runCcWithHost(
       ["notepad", "create", "--name", "Shared name", "--global"],
       makeEnv(),
       host,
@@ -827,13 +713,13 @@ describe("cctl notepad against the real notepad routes", () => {
       "Is this reference still the right one?",
     );
 
-    const listed = await runCli(
+    const listed = await runCcWithHost(
       ["notepad", "comment", "list", created.id, "--json"],
       makeEnv(),
       host,
     );
     expect(listed.exitCode, listed.stderr).toBe(0);
-    const threads = envelopeOf(listed).comments as {
+    const threads = dataOf(listed).comments as {
       comment: { id: string; body: string; status: string };
       passage: { quote: string; location: string; state: string };
       replies: unknown[];
@@ -852,7 +738,7 @@ describe("cctl notepad against the real notepad routes", () => {
       state: "anchored",
     });
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["notepad", "comment", "list", created.id],
       makeEnv(),
       host,
@@ -868,7 +754,7 @@ describe("cctl notepad against the real notepad routes", () => {
       expect(text.stdout).toContain(fact);
     }
 
-    const replied = await runCli(
+    const replied = await runCcWithHost(
       [
         "notepad",
         "comment",
@@ -895,12 +781,12 @@ describe("cctl notepad against the real notepad routes", () => {
     });
 
     // And the listing shows the reply to the next reader.
-    const relisted = await runCli(
+    const relisted = await runCcWithHost(
       ["notepad", "comment", "list", created.id, "--json"],
       makeEnv(),
       host,
     );
-    const withReply = envelopeOf(relisted).comments as {
+    const withReply = dataOf(relisted).comments as {
       replies: { body: string }[];
     }[];
     expect(withReply[0]?.replies.map((reply) => reply.body)).toEqual([
@@ -938,7 +824,7 @@ describe("cctl notepad against the real notepad routes", () => {
     );
     expect(settled.status).toBe(200);
 
-    const bounded = await runCli(
+    const bounded = await runCcWithHost(
       [
         "notepad",
         "comment",
@@ -953,21 +839,25 @@ describe("cctl notepad against the real notepad routes", () => {
       makeEnv(),
       host,
     );
-    const envelope = envelopeOf(bounded);
-    expect(envelope).toMatchObject({ total: 3, returned: 2, truncated: true });
+    const data = dataOf(bounded);
+    expect(data.omission).toMatchObject({
+      total: { kind: "known", count: 3 },
+      returned: 2,
+      truncated: true,
+    });
 
     // The reveal is a real invocation that returns everything the cap dropped —
     // and keeps the status filter, or it would disclose a different set than the
     // one it omitted.
-    const words = shellWords(String(envelope.reveal));
+    const words = shellWords(String(data.revealCommand));
     expect(words[0]).toBe("cctl");
-    const revealed = await runCli(
-      [...words.slice(1), "--json"],
+    const revealed = await runCcWithHost(
+      ["--json", ...words.slice(1)],
       makeEnv(),
       host,
     );
-    expect(revealed.exitCode, revealed.stderr).toBe(0);
-    const all = envelopeOf(revealed).comments as {
+    expect(revealed.exitCode, revealed.stdout + revealed.stderr).toBe(0);
+    const all = dataOf(revealed).comments as {
       comment: { body: string };
     }[];
     expect(all.map((thread) => thread.comment.body).sort()).toEqual([
@@ -975,96 +865,6 @@ describe("cctl notepad against the real notepad routes", () => {
       "Comment 2.",
       "Comment 3.",
     ]);
-  });
-
-  it("delivers an oversized comment listing as an artifact receipt instead of truncating it", async () => {
-    const host = makeHost();
-    const created = await createNotepad(host, "Verbose review");
-    const longBody = `The passage needs rewriting.\n${"detail line\n".repeat(6_000)}`;
-    await seedComment(created.id, "before starting", longBody);
-
-    const listed = await runCli(
-      ["notepad", "comment", "list", created.id],
-      makeEnv(),
-      host,
-    );
-    expect(listed.exitCode, listed.stderr).toBe(0);
-    expect(listed.stdout).toContain("comments: 1 total, 1 shown");
-    expect(listed.stdout).not.toContain("detail line");
-    expect(listed.stdout).toContain("artifact: .cc/temp/notepad-comments-");
-    expect(listed.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/);
-
-    // The spilled file holds the whole block the pipe would have truncated.
-    const [artifactPath, artifactBody] = Object.entries(host.written)[0] ?? [];
-    expect(listed.stdout).toContain(`artifact: ${artifactPath}`);
-    expect(artifactBody).toContain("The passage needs rewriting.");
-    expect(artifactBody).toContain("detail line");
-
-    // --json spills the same way: it changes serialization, never volume.
-    const asJson = await runCli(
-      ["notepad", "comment", "list", created.id, "--json"],
-      makeEnv(),
-      host,
-    );
-    const envelope = envelopeOf(asJson);
-    expect(envelope.storage).toBe("artifact");
-    expect(envelope).toMatchObject({ total: 1, returned: 1, truncated: false });
-    expect(envelope).not.toHaveProperty("comments");
-  });
-
-  /**
-   * The envelope carries whole threads — the anchor's stored context, section
-   * id, and timestamps — that the text form never renders, so for the same
-   * comments the JSON is always the larger serialization. There is therefore a
-   * band where the blocks fit stdout and the envelope does not, and measuring
-   * the text for both arms would spill exactly the caller whose output feeds
-   * code. Sizes here stay inside the production anchor bounds (32 characters of
-   * prefix and suffix); the bulk is ordinary comment prose.
-   */
-  it("decides the spill on the bytes each arm actually writes, not on the text's", async () => {
-    const host = makeHost();
-    const created = await createNotepad(host, "Long review");
-    for (let nth = 0; nth < 20; nth++) {
-      await seedComment(
-        created.id,
-        "before starting",
-        `Comment ${nth}: ${"the passage needs rewriting. ".repeat(92)}`,
-      );
-    }
-
-    // The blocks fit, so the text arm prints them.
-    const text = await runCli(
-      ["notepad", "comment", "list", created.id],
-      makeEnv(),
-      host,
-    );
-    expect(text.exitCode, text.stderr).toBe(0);
-    expect(Buffer.byteLength(text.stdout, "utf8")).toBeLessThan(60_000);
-    expect(text.stdout).not.toContain("artifact:");
-    expect(text.stdout).toContain("Comment 19:");
-
-    // The same comments serialized as JSON do not, so that arm spills instead of
-    // writing an envelope past the budget.
-    const asJson = await runCli(
-      ["notepad", "comment", "list", created.id, "--json"],
-      makeEnv(),
-      host,
-    );
-    expect(asJson.exitCode, asJson.stderr).toBe(0);
-    const envelope = envelopeOf(asJson);
-    expect(envelope.storage).toBe("artifact");
-    expect(envelope.artifact).toMatchObject({ format: "json" });
-    expect(envelope).not.toHaveProperty("comments");
-    expect(envelope).toMatchObject({ total: 20, returned: 20 });
-
-    // The spilled file is the envelope's payload, parseable by the caller that
-    // asked for JSON — not the other arm's rendering.
-    const artifactPath = (envelope.artifact as { path: string }).path;
-    const spilled = JSON.parse(host.written[artifactPath] ?? "") as {
-      comment: { body: string };
-    }[];
-    expect(spilled).toHaveLength(20);
-    expect(spilled[19]?.comment.body).toContain("Comment 19:");
   });
 
   it("accepts a reply on a read-only notepad, where every content write is refused", async () => {
@@ -1081,7 +881,7 @@ describe("cctl notepad against the real notepad routes", () => {
     ).toBe(200);
 
     // The same notepad, the same agent: the content write is refused…
-    const refused = await runCli(
+    const refused = await runCcWithHost(
       [
         "notepad",
         "update",
@@ -1099,7 +899,7 @@ describe("cctl notepad against the real notepad routes", () => {
 
     // …and the reply is not, because a reply is review discussion rather than a
     // change to the content the write mode governs.
-    const replied = await runCli(
+    const replied = await runCcWithHost(
       [
         "notepad",
         "comment",
@@ -1126,18 +926,15 @@ describe("cctl notepad against the real notepad routes", () => {
     const host = makeHost();
 
     for (const verb of ["resolve", "reopen", "delete"]) {
-      const attempted = await runCli(
+      const attempted = await runCcWithHost(
         ["notepad", "comment", verb, "notepad-1", "comment-1"],
         makeEnv(),
         host,
       );
       expect(attempted.exitCode, `notepad comment ${verb}`).toBe(2);
-      expect(attempted.stderr).toContain(
-        `unknown notepad comment subcommand "${verb}"`,
-      );
       // The refusal names the whole surface, so the absence is legible rather
       // than looking like a typo in a verb that exists.
-      expect(attempted.stderr).toContain("list or reply");
+      expect(attempted.stderr).toContain("notepad comment reply");
       // Nothing was sent: the boundary holds before any request.
       expect(host.requests).toEqual([]);
     }
@@ -1173,18 +970,16 @@ describe("cctl notepad against the real notepad routes", () => {
         throw new Error(`${attempt.act} was accepted from an agent caller`);
       }
 
-      const rendered = failureFromRequest(result, false);
-      expect(rendered.exitCode, attempt.act).toBe(1);
-      expect(rendered.stderr).toContain(`Only the user can ${attempt.act}`);
-      // The server authors the reason and the next step; the CLI renders them
-      // in the tiers the steering contract reserves for them.
-      expect(rendered.stderr).toContain("why:");
-      expect(rendered.stderr).toContain("instruction:");
-
-      const asJson = failureFromRequest(result, true);
-      const envelope = JSON.parse(asJson.stdout) as Record<string, unknown>;
-      expect(envelope.code).toBe("comment_user_act_refused");
-      expect(envelope.details).toMatchObject({ act: attempt.act });
+      const failure = ccRequestFailure(result);
+      expect(failure.error.message).toContain(
+        `Only the user can ${attempt.act}`,
+      );
+      expect(failure.error.why).toBeTruthy();
+      expect(failure.instruction).toBeDefined();
+      expect(failure.error.details).toMatchObject({
+        serverCode: "comment_user_act_refused",
+        serverDetails: { act: attempt.act },
+      });
     }
 
     // The comment survived all three attempts, open and undeleted.
@@ -1196,7 +991,7 @@ describe("cctl notepad against the real notepad routes", () => {
     const host = makeHost();
     const created = await createNotepad(host, "Protected");
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "notepad",
         "append",

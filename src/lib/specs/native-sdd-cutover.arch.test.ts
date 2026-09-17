@@ -72,9 +72,7 @@ const RETIREMENT_NEGATIVE_ASSERTIONS = [
   // refuse. Without it nothing would prove the refusal is a schema floor
   // rather than an absence of callers.
   "src/lib/specs/delivery-plan.test.ts",
-  "src/cli/help-registry.contract.test.ts",
   "src/cli/commands/spec/read.contract.test.ts",
-  "src/cli/commands/spec/plan.help.test.ts",
   "src/lib/conversation-commands/native-spec-guidance.test.ts",
   "src/lib/agent-backends/codex/native-sdd-authoring-packaging.test.ts",
 ];

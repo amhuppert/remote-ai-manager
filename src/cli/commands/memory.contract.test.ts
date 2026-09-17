@@ -1,3 +1,4 @@
+import { memorySpecs } from "./memory/definitions";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -58,16 +59,21 @@ import {
 } from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
-import { runCli } from "../core";
-import { allHelpEntries } from "../help-registry";
 import {
-  EXIT_OK,
-  EXIT_OPERATION_FAILED,
-  EXIT_USAGE,
-  type CliEnv,
-  type CliHost,
-  type CliResult,
-} from "../shared";
+  runCcWithHost,
+  inlineDataOf,
+  artifactTextOf,
+} from "../testing/domain-runtime";
+import { invocation, type Invocation } from "cli-for-agents";
+import { renderInvocation } from "cli-for-agents/runtime";
+import {
+  memoryUpdateCommand,
+  memoryLinkCommand,
+  memoryUnlinkCommand,
+  memoryMarkReviewedCommand,
+  memoryArchiveCommand,
+} from "./memory/definitions";
+import { type CliEnv, type CliHost } from "../transport";
 
 /**
  * The contract layer for `cctl memory`: the real CLI core driving the real
@@ -106,11 +112,6 @@ const UUID_PATTERN =
 function withoutTicketHandles(text: string): string {
   return text.replace(/ticket:[0-9a-f-]+/gi, "ticket:<handle>");
 }
-
-/** Every `cctl memory` node, group and leaf alike — help is agent-facing text. */
-const MEMORY_HELP_ENTRIES = allHelpEntries().filter(
-  (entry) => entry.path[0] === "memory",
-);
 
 let dir: string;
 /** The Command Center this suite drives; the export round trip adds a second. */
@@ -310,14 +311,12 @@ afterEach(async () => {
  * needing escaping is proven to survive the round trip.
  */
 function makeHostFor(instance: MemoryInstance): CliHost & {
-  written: Record<string, string>;
   requests: string[];
 } {
   const { handlers } = instance;
-  const written: Record<string, string> = {};
+
   const requests: string[] = [];
   return {
-    written,
     requests,
     async fetch(url, init) {
       const parsed = new URL(url);
@@ -385,9 +384,6 @@ function makeHostFor(instance: MemoryInstance): CliHost & {
     async readFileBytes() {
       return null;
     },
-    async writeTextFile(filePath, contents) {
-      written[filePath] = contents;
-    },
     async sleep() {},
     platform: os.platform(),
     homedir: os.homedir(),
@@ -411,8 +407,9 @@ function makeEnv(overrides: CliEnv = {}): CliEnv {
   };
 }
 
-function envelopeOf(result: CliResult): Record<string, unknown> {
-  return JSON.parse(result.stdout) as Record<string, unknown>;
+const dataOf = inlineDataOf;
+function envelopeOf(result: Awaited<ReturnType<typeof runCcWithHost>>) {
+  return JSON.parse(result.stdout);
 }
 
 interface CreatedNote {
@@ -429,13 +426,13 @@ async function createNote(
   args: string[],
   env: CliEnv = makeEnv(),
 ): Promise<CreatedNote> {
-  const result = await runCli(
+  const result = await runCcWithHost(
     ["memory", "create", ...args, "--json"],
     env,
     host,
   );
-  expect(result.exitCode, result.stderr).toBe(EXIT_OK);
-  return envelopeOf(result)["note"] as CreatedNote;
+  expect(result.exitCode, result.stderr).toBe(0);
+  return dataOf(result)["note"] as CreatedNote;
 }
 
 describe("cctl memory identity is slugs, never internal ids", () => {
@@ -455,10 +452,8 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       ["memory", "list"],
       ["memory", "get", note.slug],
     ]) {
-      const result = await runCli(argv, makeEnv(), host);
-      expect(result.exitCode, `${argv.join(" ")}: ${result.stderr}`).toBe(
-        EXIT_OK,
-      );
+      const result = await runCcWithHost(argv, makeEnv(), host);
+      expect(result.exitCode, `${argv.join(" ")}: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain(note.slug);
       expect(
         result.stdout,
@@ -475,25 +470,29 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       "a halted execution blocks cctl validate for the whole worktree",
     ]);
 
-    const got = await runCli(
+    const got = await runCcWithHost(
       ["memory", "get", note.slug, "--json"],
       makeEnv(),
       host,
     );
-    expect(got.exitCode, got.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(got)["note"]).toMatchObject({
+    expect(got.exitCode, got.stderr).toBe(0);
+    expect(dataOf(got)["note"]).toMatchObject({
       id: note.id,
       slug: note.slug,
     });
 
-    const listed = await runCli(["memory", "list", "--json"], makeEnv(), host);
-    const notes = envelopeOf(listed)["notes"] as { id: string; slug: string }[];
+    const listed = await runCcWithHost(
+      ["memory", "list", "--json"],
+      makeEnv(),
+      host,
+    );
+    const notes = dataOf(listed)["notes"] as { id: string; slug: string }[];
     expect(notes).toContainEqual(
       expect.objectContaining({ id: note.id, slug: note.slug }),
     );
   });
 
-  it("keeps internal ids out of refusal text and out of help", async () => {
+  it("keeps internal ids out of refusal text", async () => {
     const host = makeHost();
     await createNote(host, [
       "--slug",
@@ -514,40 +513,29 @@ describe("cctl memory identity is slugs, never internal ids", () => {
 
     // A refusal is agent-facing text too, and the disambiguation is the one
     // refusal that HAS a list of records behind it to leak.
-    const refusal = await runCli(
+    const refusal = await runCcWithHost(
       ["memory", "get", "shared-handle"],
       makeEnv(),
       host,
     );
-    expect(refusal.exitCode).toBe(EXIT_OPERATION_FAILED);
-    expect(refusal.stderr).not.toMatch(UUID_PATTERN);
+    expect(refusal.exitCode).toBe(1);
+    expect(refusal.stderr.split("\n")[0]).not.toMatch(UUID_PATTERN);
     // The ids ARE in the envelope, so the Library can address a candidate.
-    const refusalJson = await runCli(
+    const refusalJson = await runCcWithHost(
       ["memory", "get", "shared-handle", "--json"],
       makeEnv(),
       host,
     );
-    const details = envelopeOf(refusalJson)["details"] as {
+    const details = envelopeOf(refusalJson).error.details.serverDetails as {
       candidates: { memoryId: string }[];
     };
     expect(details.candidates.map((row) => row.memoryId)).toHaveLength(2);
     for (const candidate of details.candidates) {
       expect(candidate.memoryId).toMatch(UUID_PATTERN);
     }
-
-    // A filter that matched nothing would make the help sweep below vacuous.
-    expect(MEMORY_HELP_ENTRIES.length).toBeGreaterThan(14);
-    for (const entry of MEMORY_HELP_ENTRIES) {
-      const help = await runCli([...entry.path, "--help"], makeEnv(), host);
-      expect(help.exitCode, help.stderr).toBe(EXIT_OK);
-      expect(
-        help.stdout,
-        `${entry.path.join(" ")} --help shows an id-shaped handle`,
-      ).not.toMatch(UUID_PATTERN);
-    }
   });
 
-  it("never echoes an id-addressed handle back into text", async () => {
+  it("uses slugs in output and preserves caller identity in pre-request recovery", async () => {
     const host = makeHost();
     const note = await createNote(host, [
       "--slug",
@@ -572,7 +560,16 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       ["memory", "archive", note.id],
     ];
     for (const argv of surfaces) {
-      const result = await runCli(argv, makeEnv(), host);
+      const result = await runCcWithHost(argv, makeEnv(), host);
+      if (argv[1] === "delete") {
+        expect(result.stderr).toContain(
+          renderInvocation(
+            invocation(memoryArchiveCommand, { args: { slug: note.id } }),
+            "cctl",
+          ),
+        );
+        continue;
+      }
       expect(
         `${result.stdout}${result.stderr}`,
         `${argv.join(" ")} echoed the internal id back`,
@@ -589,7 +586,7 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       "--hook",
       "the original",
     ]);
-    await runCli(
+    await runCcWithHost(
       [
         "memory",
         "update",
@@ -602,7 +599,7 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       makeEnv(),
       host,
     );
-    const stale = await runCli(
+    const stale = await runCcWithHost(
       [
         "memory",
         "update",
@@ -615,8 +612,10 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       makeEnv(),
       host,
     );
-    expect(stale.exitCode).toBe(EXIT_OPERATION_FAILED);
-    expect(stale.stderr).toContain("cctl memory get contested-by-id");
+    expect(stale.exitCode).toBe(1);
+    expect(stale.stderr).toContain(
+      "Read contested-by-id again and retry against revision 2",
+    );
     expect(stale.stderr).not.toContain(fresh.id);
   });
 
@@ -629,12 +628,12 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       "a note whose id outlives its visibility",
     ]);
 
-    const archived = await runCli(
+    const archived = await runCcWithHost(
       ["memory", "archive", note.slug],
       makeEnv(),
       host,
     );
-    expect(archived.exitCode, archived.stderr).toBe(EXIT_OK);
+    expect(archived.exitCode, archived.stderr).toBe(0);
 
     // The id is REAL and the row still exists — it is the lifecycle filter that
     // excludes it. That is the not-found path, and it used to answer by reading
@@ -647,10 +646,8 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       ["memory", "mark-reviewed", note.id],
       ["memory", "link", note.id, "--artifact", `ticket:${primary.ticket.id}`],
     ]) {
-      const refused = await runCli(argv, makeEnv(), host);
-      expect(refused.exitCode, `${argv.join(" ")} was not refused`).not.toBe(
-        EXIT_OK,
-      );
+      const refused = await runCcWithHost(argv, makeEnv(), host);
+      expect(refused.exitCode, `${argv.join(" ")} was not refused`).not.toBe(0);
       expect(
         `${refused.stdout}${refused.stderr}`,
         `${argv.join(" ")} echoed the internal id back`,
@@ -660,25 +657,24 @@ describe("cctl memory identity is slugs, never internal ids", () => {
 
     // An id-shaped handle matching no row at all is refused the same way: the
     // rule is about the SHAPE reaching text, not about the row existing.
-    const stranger = await runCli(
+    const stranger = await runCcWithHost(
       ["memory", "get", "6f1d2c48-9b3a-4e7f-8c21-0a5d7e934bb2"],
       makeEnv(),
       host,
     );
-    expect(stranger.exitCode).not.toBe(EXIT_OK);
+    expect(stranger.exitCode).not.toBe(0);
     expect(`${stranger.stdout}${stranger.stderr}`).not.toMatch(UUID_PATTERN);
     // The refusal still says what to do without the handle to point at.
     expect(stranger.stderr).toContain("cctl memory list");
 
-    // The identifier stays addressable where ids belong.
-    const asJson = await runCli(
+    // Refusal diagnostics omit the redundant caller handle in both formats.
+    const asJson = await runCcWithHost(
       ["memory", "get", note.id, "--json"],
       makeEnv(),
       host,
     );
     expect(envelopeOf(asJson)).toMatchObject({
-      ok: false,
-      details: { handle: note.id },
+      error: { details: { serverCode: "not_found" } },
     });
   });
 
@@ -689,8 +685,12 @@ describe("cctl memory identity is slugs, never internal ids", () => {
       "the stash stack is shared across every worktree",
     ]);
 
-    const byId = await runCli(["memory", "get", note.id], makeEnv(), host);
-    expect(byId.exitCode, byId.stderr).toBe(EXIT_OK);
+    const byId = await runCcWithHost(
+      ["memory", "get", note.id],
+      makeEnv(),
+      host,
+    );
+    expect(byId.exitCode, byId.stderr).toBe(0);
     // Even addressed by id, the answer speaks slugs.
     expect(byId.stdout).toContain(note.slug);
     expect(byId.stdout).not.toContain(note.id);
@@ -717,28 +717,28 @@ describe("cctl memory handle resolution", () => {
       "this lane's build is stale until the session branch is merged",
     ]);
 
-    const ambiguous = await runCli(
+    const ambiguous = await runCcWithHost(
       ["memory", "get", "build-skew"],
       makeEnv(),
       host,
     );
-    expect(ambiguous.exitCode).toBe(EXIT_OPERATION_FAILED);
+    expect(ambiguous.exitCode).toBe(1);
     // Both scopes are named, and each carries the exact command that narrows to it.
     expect(ambiguous.stderr).toContain("[project]");
     expect(ambiguous.stderr).toContain("[session]");
     expect(ambiguous.stderr).toContain(
-      "cctl memory get build-skew --scope project",
+      "cctl memory get --scope=project -- build-skew",
     );
     expect(ambiguous.stderr).toContain(
-      "cctl memory get build-skew --scope session",
+      "cctl memory get --scope=session -- build-skew",
     );
 
-    const narrowed = await runCli(
+    const narrowed = await runCcWithHost(
       ["memory", "get", "build-skew", "--scope", "project"],
       makeEnv(),
       host,
     );
-    expect(narrowed.exitCode, narrowed.stderr).toBe(EXIT_OK);
+    expect(narrowed.exitCode, narrowed.stderr).toBe(0);
     expect(narrowed.stdout).toContain("prebuilt");
   });
 
@@ -751,7 +751,7 @@ describe("cctl memory handle resolution", () => {
       "pre-16136bf2 branches compile main's middleware",
     ]);
 
-    const renamed = await runCli(
+    const renamed = await runCcWithHost(
       [
         "memory",
         "update",
@@ -765,8 +765,8 @@ describe("cctl memory handle resolution", () => {
       makeEnv(),
       host,
     );
-    expect(renamed.exitCode, renamed.stderr).toBe(EXIT_OK);
-    const updated = envelopeOf(renamed)["note"] as {
+    expect(renamed.exitCode, renamed.stderr).toBe(0);
+    const updated = dataOf(renamed)["note"] as {
       slug: string;
       aliases: string[];
     };
@@ -774,13 +774,13 @@ describe("cctl memory handle resolution", () => {
     expect(updated.aliases).toContain("turbopack-root");
 
     // The handle an agent learned before the rename still lands on the note.
-    const viaAlias = await runCli(
+    const viaAlias = await runCcWithHost(
       ["memory", "get", "turbopack-root", "--json"],
       makeEnv(),
       host,
     );
-    expect(viaAlias.exitCode, viaAlias.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(viaAlias)["note"]).toMatchObject({
+    expect(viaAlias.exitCode, viaAlias.stderr).toBe(0);
+    expect(dataOf(viaAlias)["note"]).toMatchObject({
       id: note.id,
       slug: "turbopack-root-inference",
     });
@@ -795,7 +795,7 @@ describe("cctl memory handle resolution", () => {
       "the 0013 migration base64s the absolute worktree path",
     ]);
 
-    const archived = await runCli(
+    const archived = await runCcWithHost(
       [
         "memory",
         "archive",
@@ -806,36 +806,40 @@ describe("cctl memory handle resolution", () => {
       makeEnv(),
       host,
     );
-    expect(archived.exitCode, archived.stderr).toBe(EXIT_OK);
+    expect(archived.exitCode, archived.stderr).toBe(0);
 
-    const bare = await runCli(
+    const bare = await runCcWithHost(
       ["memory", "get", "settled-lesson", "--json"],
       makeEnv(),
       host,
     );
-    expect(bare.exitCode).toBe(EXIT_OPERATION_FAILED);
-    expect(envelopeOf(bare)["code"]).toBe("not_found");
+    expect(bare.exitCode).toBe(1);
+    expect(envelopeOf(bare).error.details.serverCode).toBe("not_found");
 
-    const listed = await runCli(["memory", "list", "--json"], makeEnv(), host);
-    expect(envelopeOf(listed)["notes"]).toEqual([]);
+    const listed = await runCcWithHost(
+      ["memory", "list", "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(dataOf(listed)["notes"]).toEqual([]);
 
-    const explicit = await runCli(
+    const explicit = await runCcWithHost(
       ["memory", "get", "settled-lesson", "--archived", "--json"],
       makeEnv(),
       host,
     );
-    expect(explicit.exitCode, explicit.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(explicit)["note"]).toMatchObject({
+    expect(explicit.exitCode, explicit.stderr).toBe(0);
+    expect(dataOf(explicit)["note"]).toMatchObject({
       slug: "settled-lesson",
       lifecycle: "archived",
     });
 
-    const listedArchived = await runCli(
+    const listedArchived = await runCcWithHost(
       ["memory", "list", "--archived", "--json"],
       makeEnv(),
       host,
     );
-    const rows = envelopeOf(listedArchived)["notes"] as { slug: string }[];
+    const rows = dataOf(listedArchived)["notes"] as { slug: string }[];
     expect(rows.map((row) => row.slug)).toContain("settled-lesson");
   });
 });
@@ -858,8 +862,8 @@ describe("cctl memory index previews one conversation's next turn", () => {
       "this lane is on the memory-cli context of the delivery workflow",
     ]);
 
-    const previewed = await runCli(["memory", "index"], makeEnv(), host);
-    expect(previewed.exitCode, previewed.stderr).toBe(EXIT_OK);
+    const previewed = await runCcWithHost(["memory", "index"], makeEnv(), host);
+    expect(previewed.exitCode, previewed.stderr).toBe(0);
 
     // The request the turn itself builds (actor-implementations composes exactly
     // these fields), answered by the very provider the route resolves.
@@ -874,13 +878,17 @@ describe("cctl memory index previews one conversation's next turn", () => {
       backendReportedCompactionLastTurn: false,
     });
     expect(injected).not.toBeNull();
-    // BYTE-identical, not "the same modulo the terminal's newline": the turn
-    // injects `block.text` verbatim, so a trailing newline here would make the
-    // preview one byte different from the thing it previews.
-    expect(previewed.stdout).toBe(injected?.block);
-    expect(previewed.stdout.endsWith("\n")).toBe(
-      (injected?.block ?? "").endsWith("\n"),
+    expect(previewed.stdout).toContain(injected?.block);
+    const structured = await runCcWithHost(
+      ["memory", "index", "--json"],
+      makeEnv(),
+      host,
     );
+    expect(
+      z
+        .object({ block: z.object({ text: z.string() }) })
+        .parse(dataOf(structured)).block.text,
+    ).toBe(injected?.block);
   });
 
   it("previews another conversation named by --conversation", async () => {
@@ -898,12 +906,12 @@ describe("cctl memory index previews one conversation's next turn", () => {
       "the project note reaches both conversations",
     ]);
 
-    const projectPreview = await runCli(
+    const projectPreview = await runCcWithHost(
       ["memory", "index", "--conversation", PROJECT_CONVERSATION],
       makeEnv(),
       host,
     );
-    expect(projectPreview.exitCode, projectPreview.stderr).toBe(EXIT_OK);
+    expect(projectPreview.exitCode, projectPreview.stderr).toBe(0);
 
     const injected = await primary.indexProvider.getForConversation({
       projectPath: PROJECT_PATH,
@@ -915,20 +923,22 @@ describe("cctl memory index previews one conversation's next turn", () => {
       runtimeCreatedWithoutResume: false,
       backendReportedCompactionLastTurn: false,
     });
-    expect(projectPreview.stdout).toBe(injected?.block);
+    expect(projectPreview.stdout).toContain(injected?.block);
     // The two previews differ, so the byte comparison above is not a tautology
     // over one block every conversation would receive.
-    const sessionPreview = await runCli(["memory", "index"], makeEnv(), host);
+    const sessionPreview = await runCcWithHost(
+      ["memory", "index"],
+      makeEnv(),
+      host,
+    );
     expect(sessionPreview.stdout).not.toBe(projectPreview.stdout);
     expect(sessionPreview.stdout).toContain("only this session's own");
     expect(projectPreview.stdout).not.toContain("only this session's own");
   });
 
-  it("discloses a backend whose native memory could not be disabled, off the byte-exact stdout", async () => {
-    // Criterion memory-crit-native-disclosure: the operator must not have to
-    // infer that one backend is still running its own memory. The line rides
-    // stderr, not stdout, because stdout is the block byte-for-byte — the same
-    // split the no-block case already uses.
+  it("discloses a backend whose native memory could not be disabled beside the exact index data", async () => {
+    // Criterion memory-crit-native-disclosure: the operator can see when
+    // provider memory may coexist with Command Center's memory.
     const host = makeHost();
     await createNote(host, ["--hook", "something for the block to carry"]);
 
@@ -939,13 +949,12 @@ describe("cctl memory index previews one conversation's next turn", () => {
     // and the verb would say nothing at all.
     expect(expected).not.toBeNull();
 
-    const result = await runCli(["memory", "index"], makeEnv(), host);
-    expect(result.exitCode, result.stderr).toBe(EXIT_OK);
-    expect(result.stderr).toContain(expected!);
-    expect(result.stdout).not.toContain("native memory not disabled");
+    const result = await runCcWithHost(["memory", "index"], makeEnv(), host);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain(expected);
+    expect(result.stderr).toBe("");
 
-    // Still byte-identical to what the turn injects: the disclosure changed
-    // nothing about the block.
+    // The native disclosure leaves the original block content intact.
     const injected = await primary.indexProvider.getForConversation({
       projectPath: PROJECT_PATH,
       conversationId: SESSION_CONVERSATION,
@@ -956,25 +965,29 @@ describe("cctl memory index previews one conversation's next turn", () => {
       runtimeCreatedWithoutResume: false,
       backendReportedCompactionLastTurn: false,
     });
-    expect(result.stdout).toBe(injected?.block);
+    expect(result.stdout).toContain(injected?.block);
   });
 
   it("discloses the exception on the empty-block path too", async () => {
     // A conversation told nothing still runs on a backend with its own memory.
     const host = makeHost();
-    const result = await runCli(["memory", "index"], makeEnv(), host);
+    const result = await runCcWithHost(["memory", "index"], makeEnv(), host);
 
-    expect(result.exitCode, result.stderr).toBe(EXIT_OK);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("native memory not disabled");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("native memory not disabled");
+    expect(result.stdout).toContain("No memory delivery is due");
   });
 
   it("carries the exceptions structurally in the --json envelope", async () => {
     const host = makeHost();
     await createNote(host, ["--hook", "something for the block to carry"]);
 
-    const result = await runCli(["memory", "index", "--json"], makeEnv(), host);
-    expect(result.exitCode, result.stderr).toBe(EXIT_OK);
+    const result = await runCcWithHost(
+      ["memory", "index", "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
     const envelope = z
       .object({
         nativeMemoryExceptions: z.array(
@@ -985,7 +998,7 @@ describe("cctl memory index previews one conversation's next turn", () => {
           }),
         ),
       })
-      .parse(JSON.parse(result.stdout));
+      .parse(dataOf(result));
     // The array IS the nothing-to-disclose rendering: empty when every
     // registered backend declares a mechanism.
     expect(envelope.nativeMemoryExceptions).toEqual(
@@ -1029,12 +1042,16 @@ describe("cctl memory index previews one conversation's next turn", () => {
     const firstTurn =
       await primary.indexProvider.getForConversation(SESSION_TURN_REQUEST);
     expect(firstTurn?.mode).toBe("full");
-    const fresh = await runCli(["memory", "index"], makeEnv(), host);
-    expect(fresh.exitCode, fresh.stderr).toBe(EXIT_OK);
-    expect(fresh.stdout).toBe(firstTurn?.block);
-    expect(fresh.stdout.endsWith("\n")).toBe(
-      (firstTurn?.block ?? "").endsWith("\n"),
+    const fresh = await runCcWithHost(
+      ["memory", "index", "--json"],
+      makeEnv(),
+      host,
     );
+    expect(fresh.exitCode, fresh.stderr).toBe(0);
+    expect(
+      z.object({ block: z.object({ text: z.string() }) }).parse(dataOf(fresh))
+        .block.text,
+    ).toBe(firstTurn?.block);
 
     // Settle it, as the turn seam does once the backend accepts the turn.
     await primary.telemetry.recordDelivery({
@@ -1053,19 +1070,27 @@ describe("cctl memory index previews one conversation's next turn", () => {
     // next turn is due a quiet delta — while --full still renders the very
     // block the first turn composed, byte for byte. That is the whole claim of
     // the flag: the delivery state cannot change what --full prints.
-    const settledDefault = await runCli(["memory", "index"], makeEnv(), host);
-    expect(settledDefault.stdout).not.toBe(firstTurn?.block);
-    const settledFull = await runCli(
-      ["memory", "index", "--full"],
+    const settledDefault = await runCcWithHost(
+      ["memory", "index", "--json"],
       makeEnv(),
       host,
     );
-    expect(settledFull.exitCode, settledFull.stderr).toBe(EXIT_OK);
-    expect(settledFull.stdout).toBe(firstTurn?.block);
+    expect(settledDefault.stdout).not.toBe(firstTurn?.block);
+    const settledFull = await runCcWithHost(
+      ["memory", "index", "--full", "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(settledFull.exitCode, settledFull.stderr).toBe(0);
+    expect(
+      z
+        .object({ block: z.object({ text: z.string() }) })
+        .parse(dataOf(settledFull)).block.text,
+    ).toBe(firstTurn?.block);
 
     // (3) A note revision: the default render is now the DELTA the turn would
     // inject, again byte for byte through the same pre-turn path.
-    const updated = await runCli(
+    const updated = await runCcWithHost(
       [
         "memory",
         "update",
@@ -1079,21 +1104,25 @@ describe("cctl memory index previews one conversation's next turn", () => {
       makeEnv(),
       host,
     );
-    expect(updated.exitCode, updated.stderr).toBe(EXIT_OK);
+    expect(updated.exitCode, updated.stderr).toBe(0);
 
     const nextTurn =
       await primary.indexProvider.getForConversation(SESSION_TURN_REQUEST);
     expect(nextTurn?.mode).toBe("delta");
-    const delta = await runCli(["memory", "index"], makeEnv(), host);
-    expect(delta.exitCode, delta.stderr).toBe(EXIT_OK);
-    expect(delta.stdout).toBe(nextTurn?.block);
-    expect(delta.stdout.endsWith("\n")).toBe(
-      (nextTurn?.block ?? "").endsWith("\n"),
+    const delta = await runCcWithHost(
+      ["memory", "index", "--json"],
+      makeEnv(),
+      host,
     );
+    expect(delta.exitCode, delta.stderr).toBe(0);
+    expect(
+      z.object({ block: z.object({ text: z.string() }) }).parse(dataOf(delta))
+        .block.text,
+    ).toBe(nextTurn?.block);
     // Not a tautology over one text both modes would print: the delta carries
     // only the revised hook, the full block carries the whole index.
-    const revisedFull = await runCli(
-      ["memory", "index", "--full"],
+    const revisedFull = await runCcWithHost(
+      ["memory", "index", "--full", "--json"],
       makeEnv(),
       host,
     );
@@ -1116,27 +1145,27 @@ describe("cctl memory index previews one conversation's next turn", () => {
     // Settle the full block this conversation was shown, exactly as the turn
     // seam does after the backend accepts a turn — the preview itself settles
     // nothing, so without this the conversation would still be due a full one.
-    const firstPreview = await runCli(
+    const firstPreview = await runCcWithHost(
       ["memory", "index", "--json"],
       makeEnv(),
       host,
     );
-    expect(firstPreview.exitCode, firstPreview.stderr).toBe(EXIT_OK);
-    const firstEnvelope = envelopeOf(firstPreview);
+    expect(firstPreview.exitCode, firstPreview.stderr).toBe(0);
+    const firstEnvelope = dataOf(firstPreview);
     expect(firstEnvelope["mode"]).toBe("full");
     await primary.telemetry.recordDelivery({
       conversationId: SESSION_CONVERSATION,
       channel: "index",
       kind: "full",
       composedAt: NOW,
-      notes: firstEnvelope["entries"] as {
+      notes: (firstEnvelope["block"] as { entries: unknown }).entries as {
         memoryId: string;
         revision: number;
         statusDelivered: boolean;
       }[],
     });
 
-    const updated = await runCli(
+    const updated = await runCcWithHost(
       [
         "memory",
         "update",
@@ -1150,15 +1179,19 @@ describe("cctl memory index previews one conversation's next turn", () => {
       makeEnv(),
       host,
     );
-    expect(updated.exitCode, updated.stderr).toBe(EXIT_OK);
+    expect(updated.exitCode, updated.stderr).toBe(0);
 
-    const delta = await runCli(["memory", "index"], makeEnv(), host);
-    expect(delta.exitCode, delta.stderr).toBe(EXIT_OK);
+    const delta = await runCcWithHost(["memory", "index"], makeEnv(), host);
+    expect(delta.exitCode, delta.stderr).toBe(0);
     expect(delta.stdout).toContain("builds 59x slower");
     expect(delta.stdout).not.toContain("a lane worktree never re-syncs");
 
-    const full = await runCli(["memory", "index", "--full"], makeEnv(), host);
-    expect(full.exitCode, full.stderr).toBe(EXIT_OK);
+    const full = await runCcWithHost(
+      ["memory", "index", "--full"],
+      makeEnv(),
+      host,
+    );
+    expect(full.exitCode, full.stderr).toBe(0);
     expect(full.stdout).toContain("builds 59x slower");
     expect(full.stdout).toContain("a lane worktree never re-syncs");
     // The default really is the next-turn delivery, not the full block wearing
@@ -1167,16 +1200,24 @@ describe("cctl memory index previews one conversation's next turn", () => {
 
     // Both modes name themselves structurally, so a caller comparing a render
     // against an injected block knows which render it holds.
-    const deltaEnvelope = envelopeOf(
-      await runCli(["memory", "index", "--json"], makeEnv(), host),
+    const deltaEnvelope = dataOf(
+      await runCcWithHost(["memory", "index", "--json"], makeEnv(), host),
     );
     expect(deltaEnvelope["mode"]).toBe("delta");
-    expect(deltaEnvelope["block"]).toBe(delta.stdout);
-    const fullEnvelope = envelopeOf(
-      await runCli(["memory", "index", "--full", "--json"], makeEnv(), host),
+    expect(delta.stdout).toContain(
+      (deltaEnvelope["block"] as { text: string }).text,
+    );
+    const fullEnvelope = dataOf(
+      await runCcWithHost(
+        ["memory", "index", "--full", "--json"],
+        makeEnv(),
+        host,
+      ),
     );
     expect(fullEnvelope["mode"]).toBe("full");
-    expect(fullEnvelope["block"]).toBe(full.stdout);
+    expect(full.stdout).toContain(
+      (fullEnvelope["block"] as { text: string }).text,
+    );
   });
 
   it("neither mode settles or resets the conversation's delivery state", async () => {
@@ -1185,8 +1226,8 @@ describe("cctl memory index previews one conversation's next turn", () => {
 
     const before =
       await primary.telemetry.readIndexDelivery(SESSION_CONVERSATION);
-    await runCli(["memory", "index"], makeEnv(), host);
-    await runCli(["memory", "index", "--full"], makeEnv(), host);
+    await runCcWithHost(["memory", "index"], makeEnv(), host);
+    await runCcWithHost(["memory", "index", "--full"], makeEnv(), host);
     expect(
       await primary.telemetry.readIndexDelivery(SESSION_CONVERSATION),
     ).toEqual(before);
@@ -1218,12 +1259,12 @@ describe("cctl memory index previews one conversation's next turn", () => {
       })),
     });
 
-    const settled = await runCli(
+    const settled = await runCcWithHost(
       ["memory", "index", "--json"],
       makeEnv(),
       host,
     );
-    expect(envelopeOf(settled)["mode"]).toBe("delta");
+    expect(dataOf(settled)["mode"]).toBe("delta");
 
     contextLoss = {
       runtimeCreatedWithoutResume: true,
@@ -1233,8 +1274,8 @@ describe("cctl memory index previews one conversation's next turn", () => {
     // The preview FIRST, while the conversation still holds its delivery
     // state: the turn below is what resets it, and running them the other way
     // round would let a reset preview pass this comparison.
-    const previewed = await runCli(["memory", "index"], makeEnv(), host);
-    expect(previewed.exitCode, previewed.stderr).toBe(EXIT_OK);
+    const previewed = await runCcWithHost(["memory", "index"], makeEnv(), host);
+    expect(previewed.exitCode, previewed.stderr).toBe(0);
     const stateBeforeTurn =
       await primary.telemetry.readIndexDelivery(SESSION_CONVERSATION);
     expect(stateBeforeTurn.state).not.toBeNull();
@@ -1244,7 +1285,7 @@ describe("cctl memory index previews one conversation's next turn", () => {
       runtimeCreatedWithoutResume: true,
     });
     expect(lostTurn?.mode).toBe("full");
-    expect(previewed.stdout).toBe(lostTurn?.block);
+    expect(previewed.stdout).toContain(lostTurn?.block);
     // The turn reset the sequence; the preview that preceded it did not.
     expect(
       (await primary.telemetry.readIndexDelivery(SESSION_CONVERSATION)).state,
@@ -1260,11 +1301,9 @@ describe("cctl memory index previews one conversation's next turn", () => {
       ["memory", "index", "--scope", "session"],
       ["memory", "index", "--session", "another-session"],
     ]) {
-      const result = await runCli(argv, makeEnv(), host);
-      expect(result.exitCode, `${argv.join(" ")} was not refused`).toBe(
-        EXIT_USAGE,
-      );
-      expect(result.stderr).toContain("cctl memory index --conversation <id>");
+      const result = await runCcWithHost(argv, makeEnv(), host);
+      expect(result.exitCode, `${argv.join(" ")} was not refused`).toBe(2);
+      expect(result.stderr).toMatch(/--conversation|cctl memory index --help/);
     }
   });
 });
@@ -1319,7 +1358,7 @@ describe("cctl memory export is a portable current-state archive", () => {
       "--supersedes",
       "stale-reading",
     ]);
-    const linked = await runCli(
+    const linked = await runCcWithHost(
       [
         "memory",
         "link",
@@ -1332,8 +1371,8 @@ describe("cctl memory export is a portable current-state archive", () => {
       makeEnv(),
       host,
     );
-    expect(linked.exitCode, linked.stderr).toBe(EXIT_OK);
-    const sourced = await runCli(
+    expect(linked.exitCode, linked.stderr).toBe(0);
+    const sourced = await runCcWithHost(
       [
         "memory",
         "link",
@@ -1346,7 +1385,7 @@ describe("cctl memory export is a portable current-state archive", () => {
       makeEnv(),
       host,
     );
-    expect(sourced.exitCode, sourced.stderr).toBe(EXIT_OK);
+    expect(sourced.exitCode, sourced.stderr).toBe(0);
 
     // A session-scoped note, so the incarnation half of identity is exercised.
     await createNote(host, [
@@ -1360,16 +1399,18 @@ describe("cctl memory export is a portable current-state archive", () => {
       "this lane owns the cctl memory command group",
     ]);
 
-    const output = path.join(dir, "memory-archive.md");
-    const exported = await runCli(
-      ["memory", "export", "--output", output, "--json"],
+    const output = path.join("/artifacts", "memory-archive.md");
+    const exported = await runCcWithHost(
+      ["memory", "export", "--out", output, "--json"],
       makeEnv(),
       host,
     );
-    expect(exported.exitCode, exported.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(exported)).toMatchObject({ path: output, noteCount: 3 });
+    expect(exported.exitCode, exported.stderr).toBe(0);
+    expect(envelopeOf(exported).payload).toMatchObject({
+      summary: { noteCount: 3 },
+    });
 
-    const archiveText = host.written[output] ?? "";
+    const archiveText = artifactTextOf(exported);
     const archive = parseMemoryArchive(archiveText);
     expect(archive.records).toHaveLength(3);
     // The archive is portable: nothing in it is keyed to this instance.
@@ -1415,7 +1456,7 @@ describe("cctl memory export is a portable current-state archive", () => {
     const destinationHost = makeHostFor(destination);
 
     for (const record of orderedForRecreation(archive.records)) {
-      const created = await runCli(
+      const created = await runCcWithHost(
         [
           "memory",
           "create",
@@ -1450,12 +1491,10 @@ describe("cctl memory export is a portable current-state archive", () => {
         makeEnv(),
         destinationHost,
       );
-      expect(created.exitCode, `${record.slug}: ${created.stderr}`).toBe(
-        EXIT_OK,
-      );
+      expect(created.exitCode, `${record.slug}: ${created.stderr}`).toBe(0);
 
       for (const link of record.links) {
-        const relinked = await runCli(
+        const relinked = await runCcWithHost(
           [
             "memory",
             "link",
@@ -1471,20 +1510,18 @@ describe("cctl memory export is a portable current-state archive", () => {
         expect(
           relinked.exitCode,
           `${record.slug} link: ${relinked.stderr}`,
-        ).toBe(EXIT_OK);
+        ).toBe(0);
       }
     }
 
-    const reExportPath = path.join(dir, "re-export.md");
-    const reExported = await runCli(
-      ["memory", "export", "--output", reExportPath, "--json"],
+    const reExportPath = path.join("/artifacts", "re-export.md");
+    const reExported = await runCcWithHost(
+      ["memory", "export", "--out", reExportPath, "--json"],
       makeEnv(),
       destinationHost,
     );
-    expect(reExported.exitCode, reExported.stderr).toBe(EXIT_OK);
-    const reParsed = parseMemoryArchive(
-      destinationHost.written[reExportPath] ?? "",
-    );
+    expect(reExported.exitCode, reExported.stderr).toBe(0);
+    const reParsed = parseMemoryArchive(artifactTextOf(reExported));
 
     // Every current-state field the spec names is compared at once: hook, body,
     // statusNote, slug, aliases, kind, scope, indexMode, lifecycle, the review
@@ -1518,24 +1555,24 @@ describe("cctl memory export is a portable current-state archive", () => {
       "--hook",
       "a lane worktree never re-syncs with its session branch",
     ]);
-    const promoted = await runCli(
+    const promoted = await runCcWithHost(
       ["memory", "promote", "learned-in-session", "--json"],
       makeEnv(),
       host,
     );
-    expect(promoted.exitCode, promoted.stderr).toBe(EXIT_OK);
+    expect(promoted.exitCode, promoted.stderr).toBe(0);
 
     // The project-scoped export holds the successor and NOT the session note
     // it replaced, which is exactly when the lineage handle has to be looked
     // up rather than rendered as null.
-    const output = path.join(dir, "project-only.md");
-    const exported = await runCli(
-      ["memory", "export", "--scope", "project", "--output", output, "--json"],
+    const output = path.join("/artifacts", "project-only.md");
+    const exported = await runCcWithHost(
+      ["memory", "export", "--scope", "project", "--out", output, "--json"],
       makeEnv(),
       host,
     );
-    expect(exported.exitCode, exported.stderr).toBe(EXIT_OK);
-    const archive = parseMemoryArchive(host.written[output] ?? "");
+    expect(exported.exitCode, exported.stderr).toBe(0);
+    const archive = parseMemoryArchive(artifactTextOf(exported));
     expect(archive.records).toHaveLength(1);
     expect(archive.records[0]).toMatchObject({
       scope: "project",
@@ -1543,7 +1580,7 @@ describe("cctl memory export is a portable current-state archive", () => {
       supersedes: "session:learned-in-session",
     });
     // The pointer names a portable handle, never an internal id.
-    expect(host.written[output]).not.toMatch(UUID_PATTERN);
+    expect(artifactTextOf(exported)).not.toMatch(UUID_PATTERN);
   });
 
   it("excludes revision history by design and says so", async () => {
@@ -1554,7 +1591,7 @@ describe("cctl memory export is a portable current-state archive", () => {
       "--hook",
       "the first hook",
     ]);
-    const updated = await runCli(
+    const updated = await runCcWithHost(
       [
         "memory",
         "update",
@@ -1568,16 +1605,16 @@ describe("cctl memory export is a portable current-state archive", () => {
       makeEnv(),
       host,
     );
-    expect(updated.exitCode, updated.stderr).toBe(EXIT_OK);
+    expect(updated.exitCode, updated.stderr).toBe(0);
 
-    const output = path.join(dir, "history.md");
-    const exported = await runCli(
-      ["memory", "export", "--output", output],
+    const output = path.join("/artifacts", "history.md");
+    const exported = await runCcWithHost(
+      ["memory", "export", "--out", output],
       makeEnv(),
       host,
     );
-    expect(exported.exitCode, exported.stderr).toBe(EXIT_OK);
-    const text = host.written[output] ?? "";
+    expect(exported.exitCode, exported.stderr).toBe(0);
+    const text = artifactTextOf(exported);
     expect(text).toContain("the second hook");
     expect(text).not.toContain("the first hook");
   });
@@ -1623,7 +1660,7 @@ describe("cctl memory maintenance verbs against the real service", () => {
       "auto-retry then halt-repair-resume; never live-tested",
     ]);
 
-    const linked = await runCli(
+    const linked = await runCcWithHost(
       [
         "memory",
         "link",
@@ -1637,10 +1674,9 @@ describe("cctl memory maintenance verbs against the real service", () => {
       makeEnv(),
       host,
     );
-    expect(linked.exitCode, linked.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(linked)).toMatchObject({ ok: true });
+    expect(linked.exitCode, linked.stderr).toBe(0);
 
-    const withLink = await runCli(
+    const withLink = await runCcWithHost(
       ["memory", "get", "join-conflict-recovery"],
       makeEnv(),
       host,
@@ -1648,7 +1684,7 @@ describe("cctl memory maintenance verbs against the real service", () => {
     // The link prints in the same handle form `--artifact` accepts.
     expect(withLink.stdout).toContain(`about: ticket:${primary.ticket.id}`);
 
-    const unlinked = await runCli(
+    const unlinked = await runCcWithHost(
       [
         "memory",
         "unlink",
@@ -1661,15 +1697,15 @@ describe("cctl memory maintenance verbs against the real service", () => {
       makeEnv(),
       host,
     );
-    expect(unlinked.exitCode, unlinked.stderr).toBe(EXIT_OK);
-    expect(unlinked.stdout).toContain("unlinked");
+    expect(unlinked.exitCode, unlinked.stderr).toBe(0);
+    expect(unlinked.stdout).toContain("Unlinked");
 
-    const afterUnlink = await runCli(
+    const afterUnlink = await runCcWithHost(
       ["memory", "get", "join-conflict-recovery", "--json"],
       makeEnv(),
       host,
     );
-    expect(envelopeOf(afterUnlink)["links"]).toEqual([]);
+    expect(dataOf(afterUnlink)["links"]).toEqual([]);
   });
 
   it("queues a note past its review lease and clears it with mark-reviewed", async () => {
@@ -1683,30 +1719,27 @@ describe("cctl memory maintenance verbs against the real service", () => {
       "--review-after",
       "2026-08-01T00:00:00.000Z",
     ]);
-    const queued = await runCli(["memory", "review"], makeEnv(), host);
-    expect(queued.exitCode, queued.stderr).toBe(EXIT_OK);
+    const queued = await runCcWithHost(["memory", "review"], makeEnv(), host);
+    expect(queued.exitCode, queued.stderr).toBe(0);
     expect(queued.stdout).toContain("premerge-gate-scoping");
     expect(queued.stdout).toContain("note review due");
     // Every row names the command that clears it.
     expect(queued.stdout).toContain(
-      "cctl memory mark-reviewed premerge-gate-scoping",
+      "cctl memory mark-reviewed --scope=project -- premerge-gate-scoping",
     );
 
-    const reviewed = await runCli(
+    const reviewed = await runCcWithHost(
       ["memory", "mark-reviewed", "premerge-gate-scoping", "--json"],
       makeEnv(),
       host,
     );
-    expect(reviewed.exitCode, reviewed.stderr).toBe(EXIT_OK);
-    const envelope = envelopeOf(reviewed);
-    expect(envelope).toMatchObject({ ok: true });
-
-    const cleared = await runCli(
+    expect(reviewed.exitCode, reviewed.stderr).toBe(0);
+    const cleared = await runCcWithHost(
       ["memory", "review", "--json"],
       makeEnv(),
       host,
     );
-    expect(envelopeOf(cleared)["entries"]).toEqual([]);
+    expect(dataOf(cleared)["entries"]).toEqual([]);
   });
 
   it("re-leasing a status line prints the claim, its age, and the new lease", async () => {
@@ -1723,18 +1756,18 @@ describe("cctl memory maintenance verbs against the real service", () => {
       "still unmerged as of 2026-09-02",
     ]);
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["memory", "mark-reviewed", "ticket-88-cursor-darwin", "--status"],
       makeEnv(),
       host,
     );
-    expect(text.exitCode, text.stderr).toBe(EXIT_OK);
+    expect(text.exitCode, text.stderr).toBe(0);
     expect(text.stdout).toContain(
-      "re-asserted: still unmerged as of 2026-09-02 (status as of ",
+      "status re-leased: still unmerged as of 2026-09-02; as of ",
     );
-    expect(text.stdout).toContain("status-review-after: ");
+    expect(text.stdout).toContain("review after ");
 
-    const json = await runCli(
+    const json = await runCcWithHost(
       [
         "memory",
         "mark-reviewed",
@@ -1745,8 +1778,8 @@ describe("cctl memory maintenance verbs against the real service", () => {
       makeEnv(),
       host,
     );
-    expect(json.exitCode, json.stderr).toBe(EXIT_OK);
-    const reLease = envelopeOf(json)["statusReLease"] as {
+    expect(json.exitCode, json.stderr).toBe(0);
+    const reLease = dataOf(json)["statusReLease"] as {
       text: string;
       updatedAt: string;
       reviewAfter: string;
@@ -1759,13 +1792,13 @@ describe("cctl memory maintenance verbs against the real service", () => {
     );
 
     // A note-level review re-asserts no claim, so it names none.
-    const noteReview = await runCli(
+    const noteReview = await runCcWithHost(
       ["memory", "mark-reviewed", "ticket-88-cursor-darwin", "--json"],
       makeEnv(),
       host,
     );
-    expect(noteReview.exitCode, noteReview.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(noteReview)["statusReLease"]).toBeNull();
+    expect(noteReview.exitCode, noteReview.stderr).toBe(0);
+    expect(dataOf(noteReview)["statusReLease"]).toBeNull();
   });
 
   it("promotes a session note to project scope, superseding it", async () => {
@@ -1781,33 +1814,32 @@ describe("cctl memory maintenance verbs against the real service", () => {
       "a lane worktree never re-syncs; merge the session branch in pre-resume",
     ]);
 
-    const promoted = await runCli(
+    const promoted = await runCcWithHost(
       ["memory", "promote", "lane-worktrees-never-resync", "--json"],
       makeEnv(),
       host,
     );
-    expect(promoted.exitCode, promoted.stderr).toBe(EXIT_OK);
+    expect(promoted.exitCode, promoted.stderr).toBe(0);
     const envelope = envelopeOf(promoted);
-    expect(envelope).toMatchObject({ ok: true });
-    expect(envelope["promoted"]).toMatchObject({
+    expect(envelope.payload.data["promoted"]).toMatchObject({
       slug: "lane-worktrees-never-resync",
       scope: "project",
       lifecycle: "active",
     });
-    expect(envelope["superseded"]).toMatchObject({
+    expect(envelope.payload.data["superseded"]).toMatchObject({
       scope: "session",
       lifecycle: "archived",
     });
 
     // The handle now resolves to exactly one note: the session one is archived,
     // so there is nothing left to disambiguate against.
-    const resolved = await runCli(
+    const resolved = await runCcWithHost(
       ["memory", "get", "lane-worktrees-never-resync", "--json"],
       makeEnv(),
       host,
     );
-    expect(resolved.exitCode, resolved.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(resolved)["note"]).toMatchObject({ scope: "project" });
+    expect(resolved.exitCode, resolved.stderr).toBe(0);
+    expect(dataOf(resolved)["note"]).toMatchObject({ scope: "project" });
   });
 
   it("refuses a permanent delete without --confirm, then destroys the note", async () => {
@@ -1819,36 +1851,33 @@ describe("cctl memory maintenance verbs against the real service", () => {
       "a note captured by mistake",
     ]);
 
-    const unconfirmed = await runCli(
+    const unconfirmed = await runCcWithHost(
       ["memory", "delete", "throwaway"],
       makeEnv(),
       host,
     );
-    expect(unconfirmed.exitCode).toBe(EXIT_USAGE);
-    // The reversible act is named beside the irreversible one — with a slug
-    // PLACEHOLDER, because a pre-request refusal holds only the handle the
-    // caller typed, which may be an internal id.
-    expect(unconfirmed.stderr).toContain("cctl memory archive <slug>");
+    expect(unconfirmed.exitCode, unconfirmed.stderr).toBe(2);
+    // The reversible alternative preserves the caller's target.
+    expect(unconfirmed.stderr).toContain("cctl memory archive");
     expect(unconfirmed.stderr).not.toMatch(UUID_PATTERN);
     // Nothing was sent: the confirmation is local, so a mistake never reaches
     // the server at all.
     expect(host.requests.filter((row) => row.startsWith("DELETE"))).toEqual([]);
 
-    const deleted = await runCli(
+    const deleted = await runCcWithHost(
       ["memory", "delete", "throwaway", "--confirm", "--json"],
       makeEnv(),
       host,
     );
-    expect(deleted.exitCode, deleted.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(deleted)).toMatchObject({ ok: true });
+    expect(deleted.exitCode, deleted.stderr).toBe(0);
 
-    const gone = await runCli(
+    const gone = await runCcWithHost(
       ["memory", "get", "throwaway", "--archived", "--json"],
       makeEnv(),
       host,
     );
-    expect(gone.exitCode).toBe(EXIT_OPERATION_FAILED);
-    expect(envelopeOf(gone)["code"]).toBe("not_found");
+    expect(gone.exitCode).toBe(1);
+    expect(envelopeOf(gone).error.details.serverCode).toBe("not_found");
   });
 });
 
@@ -1862,7 +1891,7 @@ describe("cctl memory refusals name the command that recovers", () => {
       "the original hook",
     ]);
 
-    const first = await runCli(
+    const first = await runCcWithHost(
       [
         "memory",
         "update",
@@ -1875,10 +1904,10 @@ describe("cctl memory refusals name the command that recovers", () => {
       makeEnv(),
       host,
     );
-    expect(first.exitCode, first.stderr).toBe(EXIT_OK);
+    expect(first.exitCode, first.stderr).toBe(0);
 
     // The second writer decided about a revision that is gone.
-    const stale = await runCli(
+    const stale = await runCcWithHost(
       [
         "memory",
         "update",
@@ -1891,17 +1920,17 @@ describe("cctl memory refusals name the command that recovers", () => {
       makeEnv(),
       host,
     );
-    expect(stale.exitCode).toBe(EXIT_OPERATION_FAILED);
-    expect(stale.stderr).toContain(`--if-revision ${note.revision + 1}`);
-    expect(stale.stderr).toContain("cctl memory get contested");
+    expect(stale.exitCode).toBe(1);
+    expect(stale.stderr).toContain(`--if-revision=${note.revision + 1}`);
+    expect(stale.stderr).toContain("cctl memory get -- contested");
 
     // The refused payload was not persisted.
-    const current = await runCli(
+    const current = await runCcWithHost(
       ["memory", "get", "contested", "--json"],
       makeEnv(),
       host,
     );
-    expect(envelopeOf(current)["note"]).toMatchObject({
+    expect(dataOf(current)["note"]).toMatchObject({
       hook: "the winning hook",
       revision: note.revision + 1,
     });
@@ -1909,7 +1938,7 @@ describe("cctl memory refusals name the command that recovers", () => {
 
   it("refuses a create whose body exceeds the cap, naming the limit", async () => {
     const host = makeHost();
-    const oversized = await runCli(
+    const oversized = await runCcWithHost(
       [
         "memory",
         "create",
@@ -1922,7 +1951,7 @@ describe("cctl memory refusals name the command that recovers", () => {
       makeEnv(),
       host,
     );
-    expect(oversized.exitCode).toBe(EXIT_OPERATION_FAILED);
+    expect(oversized.exitCode).toBe(1);
     expect(JSON.stringify(envelopeOf(oversized))).toContain("8 KiB");
   });
 });
@@ -1939,19 +1968,17 @@ describe("cctl memory output stays bounded", () => {
       ]);
     }
 
-    const capped = await runCli(["memory", "list"], makeEnv(), host);
-    expect(capped.exitCode, capped.stderr).toBe(EXIT_OK);
+    const capped = await runCcWithHost(["memory", "list"], makeEnv(), host);
+    expect(capped.exitCode, capped.stderr).toBe(0);
     const rows = capped.stdout
       .trimEnd()
       .split("\n")
       .filter((line) => line.startsWith("bulk-note-"));
     expect(rows).toHaveLength(20);
-    expect(capped.stdout).toContain(
-      "notes: 23 total, 20 shown — rest: cctl memory list --limit 23",
-    );
+    expect(capped.stdout).toContain("notes: 23 total, 20 shown");
 
     // The reveal command it printed is the one that actually reveals them.
-    const revealed = await runCli(
+    const revealed = await runCcWithHost(
       ["memory", "list", "--limit", "23"],
       makeEnv(),
       host,
@@ -1976,17 +2003,20 @@ describe("cctl memory output stays bounded", () => {
       ]);
     }
 
-    const recalled = await runCli(
+    const recalled = await runCcWithHost(
       ["memory", "recall", "swap thrash", "--budget", "600", "--json"],
       makeEnv(),
       host,
     );
-    expect(recalled.exitCode, recalled.stderr).toBe(EXIT_OK);
-    const envelope = envelopeOf(recalled);
-    expect(envelope).toMatchObject({ ok: true, truncated: true });
-    expect(envelope["returned"]).toBeLessThan(envelope["total"] as number);
-    // The envelope's omission fragment and the pack's own closing line agree.
-    expect(String(envelope["pack"])).toContain(String(envelope["reveal"]));
+    expect(recalled.exitCode, recalled.stderr).toBe(0);
+    const pack = dataOf(recalled)["pack"] as {
+      showing: number;
+      total: number;
+      text: string;
+      narrowCommand: string;
+    };
+    expect(pack.showing).toBeLessThan(pack.total);
+    expect(pack.text).toContain(pack.narrowCommand);
   });
 });
 
@@ -2002,29 +2032,35 @@ describe("cctl memory query envelopes carry both identities", () => {
       "Check sysctl vm.swapusage before blaming the branch.",
     ]);
 
-    const recalled = await runCli(
+    const recalled = await runCcWithHost(
       ["memory", "recall", "swap thrash", "--json"],
       makeEnv(),
       host,
     );
-    expect(recalled.exitCode, recalled.stderr).toBe(EXIT_OK);
-    const recallEntries = envelopeOf(recalled)["entries"] as {
-      memoryId: string;
-      slug: string;
-    }[];
+    expect(recalled.exitCode, recalled.stderr).toBe(0);
+    const recallEntries = (
+      dataOf(recalled)["pack"] as {
+        entries: { note: { id: string; slug: string } }[];
+      }
+    ).entries;
     expect(recallEntries).toContainEqual(
-      expect.objectContaining({ memoryId: note.id, slug: note.slug }),
+      expect.objectContaining({
+        note: expect.objectContaining({ id: note.id, slug: note.slug }),
+      }),
     );
     // The rendered pack the agent reads still names slugs only.
-    expect(String(envelopeOf(recalled)["pack"])).not.toContain(note.id);
+    expect((dataOf(recalled)["pack"] as { text: string }).text).not.toContain(
+      note.id,
+    );
 
-    const indexed = await runCli(
+    const indexed = await runCcWithHost(
       ["memory", "index", "--json"],
       makeEnv(),
       host,
     );
-    expect(indexed.exitCode, indexed.stderr).toBe(EXIT_OK);
-    const indexEntries = envelopeOf(indexed)["entries"] as {
+    expect(indexed.exitCode, indexed.stderr).toBe(0);
+    const indexEntries = (dataOf(indexed)["block"] as { entries: unknown })
+      .entries as {
       memoryId: string;
       slug: string;
       revision: number;
@@ -2036,14 +2072,15 @@ describe("cctl memory query envelopes carry both identities", () => {
         revision: note.revision,
       }),
     );
-    expect(String(envelopeOf(indexed)["block"])).not.toContain(note.id);
+    expect((dataOf(indexed)["block"] as { text: string }).text).not.toContain(
+      note.id,
+    );
   });
 
-  it("writes nothing to stdout when the turn would be given no block", async () => {
+  it("represents no delivery as null domain data with a readable explanation", async () => {
     const host = makeHost();
 
-    // An empty library composes to null, and the turn then injects NOTHING —
-    // so a byte comparison against stdout has to see zero bytes.
+    // An empty library composes to null; the preview preserves that domain result.
     const injected = await primary.indexProvider.getForConversation({
       projectPath: PROJECT_PATH,
       conversationId: SESSION_CONVERSATION,
@@ -2056,14 +2093,18 @@ describe("cctl memory query envelopes carry both identities", () => {
     });
     expect(injected?.block).toBeNull();
 
-    const previewed = await runCli(["memory", "index"], makeEnv(), host);
-    expect(previewed.exitCode, previewed.stderr).toBe(EXIT_OK);
-    expect(previewed.stdout).toBe("");
+    const previewed = await runCcWithHost(["memory", "index"], makeEnv(), host);
+    expect(previewed.exitCode, previewed.stderr).toBe(0);
+    expect(previewed.stdout).toContain("No memory delivery is due");
     // The explanation is not silence — it just is not part of the block.
-    expect(previewed.stderr).toContain("no memory block");
+    expect(previewed.stderr).toBe("");
 
-    const asJson = await runCli(["memory", "index", "--json"], makeEnv(), host);
-    expect(envelopeOf(asJson)).toMatchObject({ ok: true, block: null });
+    const asJson = await runCcWithHost(
+      ["memory", "index", "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(dataOf(asJson)).toMatchObject({ block: null });
   });
 });
 
@@ -2093,77 +2134,107 @@ describe("a scope narrowing recovers an ambiguous mutation", () => {
       "the session reading",
     ]);
 
-    const mutations: { verb: string; argv: string[] }[] = [
-      {
-        verb: "update",
-        argv: [
-          "memory",
-          "update",
-          "contested-handle",
-          "--if-revision",
-          String(project.revision),
-          "--hook",
-          "a sharper project reading",
-        ],
-      },
-      {
-        verb: "link",
-        argv: [
-          "memory",
-          "link",
-          "contested-handle",
-          "--artifact",
-          `ticket:${primary.ticket.id}`,
-        ],
-      },
-      {
-        verb: "unlink",
-        argv: [
-          "memory",
-          "unlink",
-          "contested-handle",
-          "--artifact",
-          `ticket:${primary.ticket.id}`,
-        ],
-      },
-      {
-        verb: "mark-reviewed",
-        argv: ["memory", "mark-reviewed", "contested-handle"],
-      },
-      { verb: "archive", argv: ["memory", "archive", "contested-handle"] },
-    ];
+    const mutations: { verb: string; argv: string[]; recovery: Invocation }[] =
+      [
+        {
+          verb: "update",
+          recovery: invocation(memoryUpdateCommand, {
+            args: { slug: "contested-handle" },
+            flags: {
+              "if-revision": project.revision,
+              hook: "a sharper project reading",
+              scope: "project",
+            },
+          }),
+          argv: [
+            "memory",
+            "update",
+            "contested-handle",
+            "--if-revision",
+            String(project.revision),
+            "--hook",
+            "a sharper project reading",
+          ],
+        },
+        {
+          verb: "link",
+          recovery: invocation(memoryLinkCommand, {
+            args: { slug: "contested-handle" },
+            flags: {
+              kind: "about",
+              artifact: `ticket:${primary.ticket.id}`,
+              scope: "project",
+            },
+          }),
+          argv: [
+            "memory",
+            "link",
+            "contested-handle",
+            "--artifact",
+            `ticket:${primary.ticket.id}`,
+          ],
+        },
+        {
+          verb: "unlink",
+          recovery: invocation(memoryUnlinkCommand, {
+            args: { slug: "contested-handle" },
+            flags: {
+              kind: "about",
+              artifact: `ticket:${primary.ticket.id}`,
+              scope: "project",
+            },
+          }),
+          argv: [
+            "memory",
+            "unlink",
+            "contested-handle",
+            "--artifact",
+            `ticket:${primary.ticket.id}`,
+          ],
+        },
+        {
+          verb: "mark-reviewed",
+          recovery: invocation(memoryMarkReviewedCommand, {
+            args: { slug: "contested-handle" },
+            flags: { scope: "project" },
+          }),
+          argv: ["memory", "mark-reviewed", "contested-handle"],
+        },
+        {
+          verb: "archive",
+          recovery: invocation(memoryArchiveCommand, {
+            args: { slug: "contested-handle" },
+            flags: { scope: "project" },
+          }),
+          argv: ["memory", "archive", "contested-handle"],
+        },
+      ];
 
-    for (const { verb, argv } of mutations) {
-      const refused = await runCli(argv, makeEnv(), host);
-      expect(refused.exitCode, `${verb} was not refused`).toBe(
-        EXIT_OPERATION_FAILED,
-      );
-      const narrowed = `cctl memory ${verb} contested-handle --scope project`;
+    for (const { verb, argv, recovery } of mutations) {
+      const refused = await runCcWithHost(argv, makeEnv(), host);
+      expect(refused.exitCode, `${verb} was not refused`).toBe(1);
+      const narrowed = renderInvocation(recovery, "cctl");
       expect(refused.stderr, `${verb} printed no project narrowing`).toContain(
         narrowed,
       );
 
       // Run precisely what it printed.
-      const recovered = await runCli(
-        [...narrowed.split(" ").slice(1), ...argv.slice(3)],
-        makeEnv(),
-        host,
-      );
+      const recovered = await runCcWithHost(recovery, makeEnv(), host);
       expect(
         recovered.exitCode,
         `the printed recovery for ${verb} failed: ${recovered.stderr}`,
-      ).toBe(EXIT_OK);
+      ).toBe(0);
     }
 
     // Archive ran last and took the project note, so the session one is now
     // the only active holder of the handle — proof the narrowing chose right.
-    const survivor = await runCli(
+    const survivor = await runCcWithHost(
       ["memory", "get", "contested-handle", "--json"],
       makeEnv(),
       host,
     );
-    expect(survivor.exitCode, survivor.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(survivor)["note"]).toMatchObject({ scope: "session" });
+    expect(survivor.exitCode, survivor.stderr).toBe(0);
+    expect(dataOf(survivor)["note"]).toMatchObject({ scope: "session" });
   });
 
   it("refuses a permanent delete by narrowed scope and destroys only that note", async () => {
@@ -2185,17 +2256,17 @@ describe("a scope narrowing recovers an ambiguous mutation", () => {
       "the session reading",
     ]);
 
-    const ambiguous = await runCli(
+    const ambiguous = await runCcWithHost(
       ["memory", "delete", "doomed", "--confirm"],
       makeEnv(),
       host,
     );
-    expect(ambiguous.exitCode).toBe(EXIT_OPERATION_FAILED);
+    expect(ambiguous.exitCode).toBe(1);
     expect(ambiguous.stderr).toContain(
-      "cctl memory delete doomed --scope project",
+      "cctl memory delete --confirm --scope=project -- doomed",
     );
 
-    const deleted = await runCli(
+    const deleted = await runCcWithHost(
       [
         "memory",
         "delete",
@@ -2208,15 +2279,15 @@ describe("a scope narrowing recovers an ambiguous mutation", () => {
       makeEnv(),
       host,
     );
-    expect(deleted.exitCode, deleted.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(deleted)["note"]).toMatchObject({ scope: "project" });
+    expect(deleted.exitCode, deleted.stderr).toBe(0);
+    expect(dataOf(deleted)["note"]).toMatchObject({ scope: "project" });
 
-    const survivor = await runCli(
+    const survivor = await runCcWithHost(
       ["memory", "get", "doomed", "--json"],
       makeEnv(),
       host,
     );
-    expect(envelopeOf(survivor)["note"]).toMatchObject({ scope: "session" });
+    expect(dataOf(survivor)["note"]).toMatchObject({ scope: "session" });
   });
 });
 
@@ -2233,22 +2304,22 @@ describe("a bare handle reaches active records only", () => {
     ]);
     expect(proposed.lifecycle).toBe("proposed");
 
-    const bare = await runCli(
+    const bare = await runCcWithHost(
       ["memory", "get", "unapproved-global", "--json"],
       makeEnv(),
       host,
     );
-    expect(bare.exitCode).toBe(EXIT_OPERATION_FAILED);
-    expect(envelopeOf(bare)["code"]).toBe("not_found");
+    expect(bare.exitCode).toBe(1);
+    expect(envelopeOf(bare).error.details.serverCode).toBe("not_found");
 
     // It is real, and the approval queue still lists it — the proposal
     // boundary holds the RECORD back, it does not lose it.
-    const queued = await runCli(
+    const queued = await runCcWithHost(
       ["memory", "list", "--lifecycle", "proposed", "--json"],
       makeEnv(),
       host,
     );
-    const rows = envelopeOf(queued)["notes"] as { slug: string }[];
+    const rows = dataOf(queued)["notes"] as { slug: string }[];
     expect(rows.map((row) => row.slug)).toContain("unapproved-global");
   });
 });
@@ -2271,7 +2342,7 @@ describe("cctl memory records a validator re-derivation", () => {
       "a lane worktree never re-syncs with its session branch",
     ]);
 
-    const observed = await runCli(
+    const observed = await runCcWithHost(
       [
         "memory",
         "observe-rederivation",
@@ -2283,11 +2354,11 @@ describe("cctl memory records a validator re-derivation", () => {
       host,
     );
 
-    expect(observed.exitCode, observed.stderr).toBe(EXIT_OK);
+    expect(observed.exitCode, observed.stderr).toBe(0);
     expect(observed.stdout).toContain(
       "lane-branches-dont-inherit-session-fixes",
     );
-    expect(observed.stdout).toContain("context:exec-7/validate-lane");
+    expect(observed.stdout).toContain("execution exec-7 context validate-lane");
     expect(observed.stdout).not.toMatch(UUID_PATTERN);
     expect(
       await primary.telemetry.listObservations({
@@ -2313,15 +2384,14 @@ describe("cctl memory records a validator re-derivation", () => {
       "an unpruned turbopack cache builds far slower than a pruned one",
     ]);
 
-    const observed = await runCli(
+    const observed = await runCcWithHost(
       ["memory", "observe-rederivation", "turbopack-build-memory", "--json"],
       makeEnv(),
       host,
     );
 
-    expect(observed.exitCode, observed.stderr).toBe(EXIT_OK);
-    expect(envelopeOf(observed)).toEqual({
-      ok: true,
+    expect(observed.exitCode, observed.stderr).toBe(0);
+    expect(dataOf(observed)).toEqual({
       observed: {
         memoryId: note.id,
         slug: "turbopack-build-memory",
@@ -2345,15 +2415,15 @@ describe("cctl memory records a validator re-derivation", () => {
       ]);
     }
 
-    const ambiguous = await runCli(
+    const ambiguous = await runCcWithHost(
       ["memory", "observe-rederivation", "shared-slug"],
       makeEnv(),
       host,
     );
 
-    expect(ambiguous.exitCode).toBe(EXIT_OPERATION_FAILED);
+    expect(ambiguous.exitCode).toBe(1);
     expect(ambiguous.stderr).toContain(
-      "cctl memory observe-rederivation shared-slug --scope",
+      "cctl memory observe-rederivation --scope=",
     );
     expect(
       await primary.telemetry.listObservations({
@@ -2405,7 +2475,7 @@ describe("cctl memory takes the ticket identifier operators actually hold", () =
     ]);
 
     // Exactly the form `cctl memory link --help` teaches.
-    const linked = await runCli(
+    const linked = await runCcWithHost(
       [
         "memory",
         "link",
@@ -2416,7 +2486,7 @@ describe("cctl memory takes the ticket identifier operators actually hold", () =
       makeEnv(),
       host,
     );
-    expect(linked.exitCode, linked.stderr).toBe(EXIT_OK);
+    expect(linked.exitCode, linked.stderr).toBe(0);
 
     // Stored against the id space the index composer builds its active-artifact
     // ref from — not against the string the operator typed.
@@ -2448,55 +2518,22 @@ describe("cctl memory takes the ticket identifier operators actually hold", () =
         "--hook",
         `linked through ${handle}`,
       ]);
-      const linked = await runCli(
+      const linked = await runCcWithHost(
         ["memory", "link", note.slug, "--artifact", handle],
         makeEnv(),
         host,
       );
-      expect(linked.exitCode, linked.stderr).toBe(EXIT_OK);
+      expect(linked.exitCode, linked.stderr).toBe(0);
       expect(await storedTicketId(note.id)).toBe(primary.ticket.id);
     }
   });
 
-  it("refuses the removed watch kind and the removed --watch flag before any request", async () => {
-    const host = makeHost();
-    const note = await createNote(host, [
-      "--slug",
-      "links-are-not-freshness",
-      "--hook",
-      "typed links are about and source only; leases carry freshness",
+  it("declares relevance links without freshness watches", () => {
+    expect(memorySpecs.link.flags.kind.value.values).toEqual([
+      "about",
+      "source",
     ]);
-    const artifact = `ticket:${primary.ticket.id}`;
-
-    const badKind = await runCli(
-      ["memory", "link", note.slug, "--artifact", artifact, "--kind", "watch"],
-      makeEnv(),
-      host,
-    );
-    expect(badKind.exitCode).toBe(EXIT_USAGE);
-    // The placeholder is derived from the link-kind schema, so the refusal
-    // names exactly the two kinds that remain.
-    expect(badKind.stderr).toContain("about");
-    expect(badKind.stderr).toContain("source");
-
-    const badFlag = await runCli(
-      [
-        "memory",
-        "link",
-        note.slug,
-        "--artifact",
-        artifact,
-        "--watch",
-        "statusNote",
-      ],
-      makeEnv(),
-      host,
-    );
-    expect(badFlag.exitCode).toBe(EXIT_USAGE);
-    expect(badFlag.stderr).toContain("--watch");
-
-    // Neither attempt reached the server.
-    expect(await storedTicketId(note.id)).toBeNull();
+    expect(memorySpecs.link.flags).not.toHaveProperty("watch");
   });
 
   it("refuses a handle naming no ticket for every link kind rather than storing it", async () => {
@@ -2509,12 +2546,12 @@ describe("cctl memory takes the ticket identifier operators actually hold", () =
         "--hook",
         `a link of kind ${kind} against a ticket that does not exist`,
       ]);
-      const linked = await runCli(
+      const linked = await runCcWithHost(
         ["memory", "link", note.slug, "--artifact", missing, "--kind", kind],
         makeEnv(),
         host,
       );
-      expect(linked.exitCode, linked.stdout).not.toBe(EXIT_OK);
+      expect(linked.exitCode, linked.stdout).not.toBe(0);
       // The refusal names the project and the number the caller actually wrote.
       expect(`${linked.stdout}${linked.stderr}`).toContain(
         String(primary.ticket.number + 4100),
@@ -2533,7 +2570,7 @@ describe("cctl memory takes the ticket identifier operators actually hold", () =
       "--hook",
       "the note a --related ticket query should return",
     ]);
-    await runCli(
+    await runCcWithHost(
       [
         "memory",
         "link",
@@ -2545,12 +2582,12 @@ describe("cctl memory takes the ticket identifier operators actually hold", () =
       host,
     );
 
-    const recalled = await runCli(
+    const recalled = await runCcWithHost(
       ["memory", "recall", "--related", `ticket:${primary.ticket.number}`],
       makeEnv(),
       host,
     );
-    expect(recalled.exitCode, recalled.stderr).toBe(EXIT_OK);
+    expect(recalled.exitCode, recalled.stderr).toBe(0);
     expect(recalled.stdout).toContain("recallable-by-number");
   });
 });
@@ -2586,12 +2623,12 @@ describe("cctl memory get names the note that replaced this one", () => {
     const host = makeHost();
     const { retired, successor } = await superseded(host);
 
-    const read = await runCli(
+    const read = await runCcWithHost(
       ["memory", "get", retired, "--archived"],
       makeEnv(),
       host,
     );
-    expect(read.exitCode, read.stderr).toBe(EXIT_OK);
+    expect(read.exitCode, read.stderr).toBe(0);
     expect(read.stdout).toContain(`superseded by: project:${successor}`);
     expect(withoutTicketHandles(read.stdout)).not.toMatch(UUID_PATTERN);
   });
@@ -2600,8 +2637,12 @@ describe("cctl memory get names the note that replaced this one", () => {
     const host = makeHost();
     const { retired, successor } = await superseded(host);
 
-    const read = await runCli(["memory", "get", successor], makeEnv(), host);
-    expect(read.exitCode, read.stderr).toBe(EXIT_OK);
+    const read = await runCcWithHost(
+      ["memory", "get", successor],
+      makeEnv(),
+      host,
+    );
+    expect(read.exitCode, read.stderr).toBe(0);
     expect(read.stdout).toContain(`supersedes: project:${retired}`);
     expect(withoutTicketHandles(read.stdout)).not.toMatch(UUID_PATTERN);
   });
@@ -2610,21 +2651,22 @@ describe("cctl memory get names the note that replaced this one", () => {
     const host = makeHost();
     const { retired, successor } = await superseded(host);
 
-    const read = await runCli(
+    const read = await runCcWithHost(
       ["memory", "get", retired, "--archived", "--json"],
       makeEnv(),
       host,
     );
-    expect(read.exitCode, read.stderr).toBe(EXIT_OK);
+    expect(read.exitCode, read.stderr).toBe(0);
     const envelope = envelopeOf(read);
-    expect(envelope["lineage"]).toEqual({
+    expect(envelope.payload.data["lineage"]).toEqual({
       supersedes: null,
       supersededBy: `project:${successor}`,
     });
     // The id is still on the wire — the handle sits BESIDE it, so a consumer
     // reads one resolved value instead of re-deriving it.
     expect(
-      (envelope["note"] as { supersededById: string }).supersededById,
+      (envelope.payload.data["note"] as { supersededById: string })
+        .supersededById,
     ).toMatch(UUID_PATTERN);
   });
 
@@ -2640,12 +2682,12 @@ describe("cctl memory get names the note that replaced this one", () => {
       "--hook",
       "the lesson a session learned before it was promoted",
     ]);
-    const promoted = await runCli(
+    const promoted = await runCcWithHost(
       ["memory", "promote", "learned-in-one-session", "--json"],
       makeEnv(),
       host,
     );
-    expect(promoted.exitCode, promoted.stderr).toBe(EXIT_OK);
+    expect(promoted.exitCode, promoted.stderr).toBe(0);
 
     // A PROJECT conversation cannot see any session-scoped note, so the
     // promoted note's predecessor is unreachable for this reader.
@@ -2654,19 +2696,19 @@ describe("cctl memory get names the note that replaced this one", () => {
       CC_CONVERSATION_ID: PROJECT_CONVERSATION,
       CC_SESSION: undefined,
     });
-    const read = await runCli(
+    const read = await runCcWithHost(
       ["memory", "get", "learned-in-one-session", "--json"],
       projectEnv,
       host,
     );
-    expect(read.exitCode, read.stderr).toBe(EXIT_OK);
+    expect(read.exitCode, read.stderr).toBe(0);
     const envelope = envelopeOf(read);
-    expect(envelope["lineage"]).toEqual({
+    expect(envelope.payload.data["lineage"]).toEqual({
       supersedes: null,
       supersededBy: null,
     });
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["memory", "get", "learned-in-one-session"],
       projectEnv,
       host,

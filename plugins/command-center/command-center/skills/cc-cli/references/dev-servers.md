@@ -82,7 +82,7 @@ cctl fixture status <project> <sessionName>
   aside for testing). An unknown name exits `2` listing the projects the dev
   server actually has.
 - `session create` — creates the session and returns everything a live test
-  needs in one envelope: `sessionName`, a ready `conversationId`, deep-link
+  needs under `payload.data` with `--json`: `sessionName`, a ready `conversationId`, deep-link
   `urls` (session page + `/conversations?c=<id>`), and the dev instance's
   `dbPath`/`transcriptPath` for backend verification. It also **pre-warms**
   the returned routes (dev mode compiles each route on first hit, ~5–10s), so

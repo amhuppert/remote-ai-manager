@@ -31,6 +31,7 @@
     "seams:check": "bun scripts/seam-adoption.ts --check && bun run test-profiles:check",
     "test-profiles:check": "bun scripts/test-profiles.ts --check",
     "cli:skill-ref": "bun scripts/cc-cli-skill-reference.ts --check",
+    "cli:library:refresh": "bun scripts/refresh-cli-library.ts",
     "logs:analyze": "bun scripts/analyze-logs.ts",
     "logs:duckdb": "scripts/duckdb-logs/run.sh",
     "workflow:audit": "bun scripts/workflow-audit/run.ts",
@@ -66,6 +67,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@xyflow/react": "^12.10.2",
     "better-sqlite3": "^12.6.2",
+    "cli-for-agents": "file:.yalc/cli-for-agents",
     "clsx": "^2.1.1",
     "ignore": "^7.0.5",
     "immer": "^11.1.4",
@@ -131,7 +133,8 @@
     "typescript": "^5.7.0",
     "typescript-native": "npm:typescript@7.0.2",
     "vite": "^7.3.1",
-    "vitest": "^3.2.1"
+    "vitest": "^3.2.1",
+    "yalc": "1.0.0-pre.53"
   },
   "patchedDependencies": {
     "@openai/codex-sdk@0.153.3": "patches/@openai%2Fcodex-sdk@0.153.3.patch",

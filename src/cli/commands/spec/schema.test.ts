@@ -19,8 +19,12 @@ import {
   validationStrategySchema,
 } from "@/lib/specs/schemas";
 import { NATIVE_SDD_GUIDANCE } from "@/lib/specs/native-sdd-guidance";
-import { runCli } from "../../core";
-import type { CliEnv, CliHost } from "../../shared";
+import {
+  artifactTextOf,
+  inlineDataOf,
+  runCcWithHost,
+} from "../../testing/domain-runtime";
+import type { CliEnv, CliHost } from "../../transport";
 
 const env: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:4999",
@@ -67,7 +71,7 @@ const documentSchema = z
   .strict();
 
 const listEnvelopeSchema = z
-  .object({ ok: z.literal(true), documents: z.array(documentSchema) })
+  .object({ documents: z.array(documentSchema) })
   .passthrough();
 
 const indexDocumentSchema = z
@@ -79,23 +83,29 @@ const indexDocumentSchema = z
   .strict();
 
 const indexEnvelopeSchema = z
-  .object({ ok: z.literal(true), documents: z.array(indexDocumentSchema) })
+  .object({ documents: z.array(indexDocumentSchema) })
   .passthrough();
 
 async function readDocuments() {
-  const index = await runCli(["spec", "schema", "--json"], env, offlineHost());
+  const index = await runCcWithHost(
+    ["spec", "schema", "--json"],
+    env,
+    offlineHost(),
+  );
   expect(index.exitCode).toBe(0);
-  const entries = indexEnvelopeSchema.parse(JSON.parse(index.stdout)).documents;
+  const entries = indexEnvelopeSchema.parse(inlineDataOf(index)).documents;
   const documents = [];
   for (const entry of entries) {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "schema", entry.id, "--json"],
       env,
       offlineHost(),
     );
     expect(result.exitCode).toBe(0);
     const [document] = listEnvelopeSchema.parse(
-      JSON.parse(result.stdout),
+      result.artifacts.length
+        ? JSON.parse(artifactTextOf(result)).payload.data
+        : inlineDataOf(result),
     ).documents;
     if (document !== undefined) documents.push(document);
   }
@@ -103,16 +113,15 @@ async function readDocuments() {
 }
 
 describe("cctl spec schema", () => {
-  it("keeps the JSON index at the same disclosure level as the text index", async () => {
-    const result = await runCli(
+  it("keeps the schema index limited to document summaries", async () => {
+    const result = await runCcWithHost(
       ["spec", "schema", "--json"],
       env,
       offlineHost(),
     );
 
     expect(result.exitCode).toBe(0);
-    const envelope = indexEnvelopeSchema.parse(JSON.parse(result.stdout));
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(64 * 1024);
+    const envelope = indexEnvelopeSchema.parse(inlineDataOf(result));
     expect(envelope.documents[0]).not.toHaveProperty("jsonSchema");
     expect(envelope.documents[0]).not.toHaveProperty("example");
   });
@@ -132,73 +141,25 @@ describe("cctl spec schema", () => {
     ]);
   });
 
-  it("publishes the read envelopes and revision-role semantics offline", async () => {
-    const result = await runCli(
+  it("publishes the spec revision-role semantics offline", async () => {
+    const result = await runCcWithHost(
       ["spec", "schema", "read-envelopes", "--json"],
       env,
       offlineHost(),
     );
-
     expect(result.exitCode).toBe(0);
-    const [document] = listEnvelopeSchema.parse(
-      JSON.parse(result.stdout),
-    ).documents;
-    expect(document?.id).toBe("read-envelopes");
-    expect(document?.usedBy).toEqual(
-      expect.arrayContaining([
-        "cctl spec show <slug>",
-        "cctl spec status <slug>",
-        "cctl spec lint <slug>",
-        "cctl spec get <slug>/<handle>",
-      ]),
-    );
+    const data = result.artifacts.length
+      ? JSON.parse(artifactTextOf(result)).payload.data
+      : inlineDataOf(result);
+    const [document] = listEnvelopeSchema.parse(data).documents;
     expect(document?.jsonSchema).toMatchObject({ type: "object" });
-    const reference = z
-      .object({
-        envelopes: z.array(
-          z.object({
-            command: z.string(),
-            view: z.string().nullable(),
-            payloadFields: z.array(z.string()),
-            disclosure: z.string(),
-          }),
-        ),
-      })
-      .parse(document?.example);
-    const outline = reference.envelopes.find(
-      ({ command, view }) => command === "spec show" && view === "outline",
-    );
-    expect(outline?.payloadFields).toEqual(
-      expect.arrayContaining([
-        "storage",
-        "spec",
-        "revision",
-        "reason",
-        "artifact",
-      ]),
-    );
-    expect(outline?.disclosure).toContain("storage: inline");
-    expect(outline?.disclosure).toContain("stdout_budget_exceeded");
-    const summary = reference.envelopes.find(
-      ({ command, view }) => command === "spec show" && view === "summary",
-    );
-    expect(summary?.payloadFields).toContain("disclosure");
-    expect(summary?.disclosure).toContain("exact default-outline next command");
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope.hint).toContain("consult");
-    expect(envelope.hint).not.toContain("write this document");
-    const notes = document?.notes.join(" ") ?? "";
-    expect(notes).toContain("currentRevision");
-    expect(notes).toContain("lineage head");
-    expect(notes).toContain("baseRevision");
-    expect(notes).toContain("immediate");
-    expect(notes).toContain("currentApprovedRevision");
-    expect(notes).toContain("latest approved");
-    expect(notes).toContain("lint.total");
-    expect(notes).toContain("flattened");
-    expect(notes).toContain("storage");
-    expect(notes).toContain("--json");
-    expect(notes).toContain("does not widen");
+    expect(document?.example).toMatchObject({
+      revisionRoles: {
+        currentRevision: expect.stringContaining("lineage head"),
+        baseRevision: expect.stringContaining("immediate parent"),
+        currentApprovedRevision: expect.stringContaining("latest approved"),
+      },
+    });
   });
 
   /**
@@ -212,7 +173,7 @@ describe("cctl spec schema", () => {
 
     expect(bundle?.usedBy).toEqual([
       "cctl spec import --file <bundle.json>",
-      "cctl spec import --file <bundle.json> --dry-run",
+      "cctl spec import-preview --file <bundle.json>",
     ]);
     expect(bundle?.jsonSchema).toMatchObject({
       type: "object",
@@ -246,13 +207,13 @@ describe("cctl spec schema", () => {
     expect(notes).toContain(IMPORTED_VALIDATION_STRATEGY_NOTE);
     expect(notes).toContain("new specs");
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["spec", "schema", "import-bundle"],
       env,
       offlineHost(),
     );
     expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("document: import-bundle");
+    expect(text.stdout).toContain('"id": "import-bundle"');
     expect(text.stdout).toContain("cctl spec import --file <bundle.json>");
   });
 
@@ -825,7 +786,7 @@ describe("cctl spec schema", () => {
   it("omits the removed plan-edit schema document", async () => {
     const documents = await readDocuments();
     expect(documents.map((document) => document.id)).not.toContain("plan-edit");
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "schema", "plan-edit"],
       env,
       offlineHost(),
@@ -893,39 +854,24 @@ describe("cctl spec schema", () => {
     }
   });
 
-  it("prints one document's schema, enums, and example in text mode", async () => {
-    const result = await runCli(
+  it("prints the selected schema and leaves the index bounded", async () => {
+    const selected = await runCcWithHost(
       ["spec", "schema", "requirement"],
       env,
       offlineHost(),
     );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("document: requirement");
-    expect(result.stdout).toContain("used by: cctl spec draft <slug> --file");
-    expect(result.stdout).toContain("json schema:");
-    expect(result.stdout).toContain("enums:");
-    expect(result.stdout).toContain("payload.priority: must | should | could");
-    expect(result.stdout).toContain("example:");
-    expect(result.stdout).toContain('"kind": "requirement"');
+    expect(selected.exitCode).toBe(0);
+    expect(selected.stdout).toContain('"jsonSchema"');
+    expect(selected.stdout).toContain('"kind": "requirement"');
+    const index = await runCcWithHost(["spec", "schema"], env, offlineHost());
+    expect(index.exitCode).toBe(0);
+    expect(index.stdout).not.toContain('"jsonSchema"');
+    for (const id of specElementKindSchema.options)
+      expect(index.stdout).toContain(`"id": "${id}"`);
   });
 
-  it("indexes every document without dumping them when no kind is named", async () => {
-    const result = await runCli(["spec", "schema"], env, offlineHost());
-
-    expect(result.exitCode).toBe(0);
-    for (const id of [
-      ...specElementKindSchema.options,
-      "element-batch",
-      "discovered-task",
-    ]) {
-      expect(result.stdout).toContain(`cctl spec schema ${id}`);
-    }
-    expect(result.stdout).not.toContain("json schema:");
-  });
-
-  it("refuses an unknown document at exit 2 and names the ones it has", async () => {
-    const result = await runCli(
+  it("refuses an unknown spec document and names the available documents", async () => {
+    const result = await runCcWithHost(
       ["spec", "schema", "requirements"],
       env,
       offlineHost(),
@@ -938,15 +884,15 @@ describe("cctl spec schema", () => {
   });
 
   it("refuses the retired execution-scope document and points at plan editing", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "schema", "scope"],
       env,
       offlineHost(),
     );
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('unknown schema document "scope"');
-    expect(result.stderr).toContain("cctl workflow get <definitionId> --full");
+    expect(result.stderr).toContain('Unknown spec document "scope"');
+    expect(result.stderr).toContain("cctl spec schema");
     expect(result.stderr).not.toContain("spec start <slug> --file");
   });
 });

@@ -85,6 +85,6 @@ export function oversizedProposalNotesRefusal(
     unmetConditions: [
       `The proposal notes are ${notes.length} characters; the server stores at most ${PROPOSAL_NOTES_MAX_CHARACTERS}.`,
     ],
-    instruction: `Nothing was proposed. Shorten the notes to ${PROPOSAL_NOTES_MAX_CHARACTERS} characters or fewer — keep the disposition and the closure list, and link the long form from a spec element rather than pasting it — then run \`cctl spec propose <slug> --notes <file>\` again.`,
+    instruction: `Nothing was proposed. Shorten the notes to ${PROPOSAL_NOTES_MAX_CHARACTERS} characters or fewer — keep the disposition and the closure list, and link the long form from a spec element rather than pasting it — then run \`cctl spec propose <slug> --notes-file <file>\` again.`,
   };
 }

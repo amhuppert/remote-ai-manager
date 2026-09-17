@@ -22,7 +22,7 @@ const reviewedAdvisoryFields = {
 /**
  * The minimal advisory the create and replace responses carry: enough to print
  * one line, deliberately without the findings artifact. An author who needs the
- * findings runs `cctl workflow review --file <plan.json>`, which is also the
+ * findings runs `cctl workflow review get --file <plan.json>`, which is also the
  * surface that resolves the reviewer conversation.
  */
 export const planReviewAdvisorySchema = z.discriminatedUnion("state", [
@@ -131,8 +131,7 @@ export const planReviewAcknowledgementRequestSchema = z.object({
 /**
  * Stands in for the caller's own plan file in the server-built findings
  * command. The server never sees the path the plan was read from, so it emits
- * the invocation SHAPE and `cctl` — which does know the path — re-renders the
- * same command with it. One builder, so the two cannot drift.
+ * the invocation shape with an explicit placeholder the caller replaces.
  */
 export const PLAN_FILE_PLACEHOLDER = "<plan.json>";
 
@@ -140,7 +139,7 @@ export const PLAN_FILE_PLACEHOLDER = "<plan.json>";
 export function planReviewFindingsCommand(
   planFilePath: string = PLAN_FILE_PLACEHOLDER,
 ): string {
-  return `cctl workflow review --file ${planFilePath}`;
+  return `cctl workflow review get --file ${planFilePath}`;
 }
 
 /**

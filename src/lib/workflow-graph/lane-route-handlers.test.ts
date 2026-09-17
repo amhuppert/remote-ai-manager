@@ -1,3 +1,4 @@
+import { createCcRuntimeFixture } from "@/cli/testing/framework";
 import type {
   ExecutionMutationDecision as FixtureDecision,
   ExecutionMutationOutcome as FixtureOutcome,
@@ -465,6 +466,46 @@ describe("lane route handlers — complete task", () => {
     });
   });
 
+  it("delivers post-completion reminders through the native CLI with the acknowledged task receipt", async () => {
+    const { context } = buildContext({
+      execution: buildRunningExecution({ iterationCount: 2 }),
+    });
+    const handlers = createLaneRouteHandlers(makeDeps(context));
+    const fixture = createCcRuntimeFixture({
+      env: {
+        CC_WORKFLOW_EXECUTION_ID: "execution-1",
+        CC_WORKFLOW_CONTEXT_ID: BASE_PARAMS.contextId,
+      },
+      respond: ({ init }) =>
+        handlers.completeTask(
+          new Request("http://cc.test/complete", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: init.body,
+          }),
+          params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
+        ),
+    });
+    const result = await fixture.run([
+      "workflow",
+      "task",
+      "complete",
+      "task-plan-1",
+      "--summary",
+      "done",
+    ]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.effect).toBe("applied");
+    expect(envelope.reminders).toHaveLength(2);
+    expect(envelope.reminders[0]).toContain("used 2 of 3 iterations");
+    expect(envelope.reminders[1]).toContain("acceptance criterion");
+    expect(envelope.recovery.references).toContainEqual({
+      kind: "workflow-task",
+      id: "task-plan-1",
+    });
+  });
+
   it("attaches lane reminders to the success body when the iteration budget is near the threshold", async () => {
     // iterationCount 2, default threshold 3 → iteration-budget fires (3−2=1≤2),
     // and completing the fixture's only task makes this a final completion, so
@@ -482,12 +523,16 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.ok).toBe(true);
-    expect(body.reminders).toHaveLength(2);
-    expect(body.reminders[0]).toContain("used 2 of 3 iterations");
-    expect(body.reminders[0]).toContain(
+    expect(body.guidance.candidates).toHaveLength(2);
+    expect(body.guidance.candidates[0].value.text).toContain(
+      "used 2 of 3 iterations",
+    );
+    expect(body.guidance.candidates[0].value.text).toContain(
       "script validators run before agent validators",
     );
-    expect(body.reminders[1]).toContain("acceptance criterion");
+    expect(body.guidance.candidates[1].value.text).toContain(
+      "acceptance criterion",
+    );
   });
 
   it("attaches the final-task self-check reminder when the last task completes", async () => {
@@ -505,9 +550,13 @@ describe("lane route handlers — complete task", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.remainingTaskCount).toBe(0);
-    expect(body.reminders).toHaveLength(1);
-    expect(body.reminders[0]).toContain("acceptance criterion");
-    expect(body.reminders[0]).toContain("charter invariant");
+    expect(body.guidance.candidates).toHaveLength(1);
+    expect(body.guidance.candidates[0].value.text).toContain(
+      "acceptance criterion",
+    );
+    expect(body.guidance.candidates[0].value.text).toContain(
+      "charter invariant",
+    );
   });
 
   it("omits the reminders field entirely when no rule fires", async () => {
@@ -527,8 +576,8 @@ describe("lane route handlers — complete task", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.remainingTaskCount).toBe(1);
-    expect(body.reminders).toBeUndefined();
-    expect("reminders" in body).toBe(false);
+    expect(body.guidance).toBeUndefined();
+    expect("guidance" in body).toBe(false);
   });
 
   it("suppresses the final-task self-check when the rotation gate stops the turn", async () => {
@@ -551,7 +600,7 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.stopInstruction).toContain("CONTEXT LIMIT REACHED");
-    expect(body.reminders).toBeUndefined();
+    expect(body.guidance).toBeUndefined();
   });
 
   it("attaches the halted-stop reminder to the 409 halt body", async () => {
@@ -566,9 +615,11 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body.halt).toBe(true);
-    expect(body.reminders).toHaveLength(1);
-    expect(body.reminders[0]).toContain("iteration halted: circuit_breaker");
-    expect(body.reminders[0]).toContain("end your turn");
+    expect(body.guidance.candidates).toHaveLength(1);
+    expect(body.guidance.candidates[0].value.text).toContain(
+      "iteration halted: circuit_breaker",
+    );
+    expect(body.guidance.candidates[0].value.text).toContain("end your turn");
   });
 
   it("attaches the rotation-gate stopInstruction verbatim and omits it otherwise", async () => {

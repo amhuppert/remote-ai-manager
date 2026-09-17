@@ -4757,7 +4757,7 @@ export function createSpecWriteRouteHandlers(
                     unmetConditions: [
                       "Execution scope documents are retired; the approved delivery plan is the execution graph.",
                     ],
-                    instruction: `Nothing was started. Open an authored delivery attempt with \`cctl spec plan open ${resolved.value.spec.slug}\`, then propose and sign off that candidate before rerunning \`cctl spec start ${resolved.value.spec.slug}\`.`,
+                    instruction: `Nothing was started. Open an authored delivery attempt with \`cctl spec plan open ${resolved.value.spec.slug}\`, then propose and sign off that candidate before rerunning \`cctl spec start ${resolved.value.spec.slug} --file .cc/temp/inputs.json\`.`,
                   },
                 };
               }

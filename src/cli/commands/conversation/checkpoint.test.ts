@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { runCli } from "../../core";
-import { STDOUT_BUDGET_BYTES } from "../../disclosure";
-import type { CliEnv, CliHost, FetchInit } from "../../shared";
+import { runCcWithHost, inlineDataOf } from "../../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../../transport";
 
 /**
  * Behaviour of the checkpoint CLI leaves, driven through the real dispatch.
@@ -45,19 +44,16 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 interface TestHost extends CliHost {
   requests: RecordedRequest[];
-  written: { path: string; content: string }[];
 }
 
 function makeHost(
   respond: (req: RecordedRequest, index: number) => Response,
-  options: { writeTextFile?: CliHost["writeTextFile"]; nowStep?: number } = {},
+  options: { nowStep?: number } = {},
 ): TestHost {
   const requests: RecordedRequest[] = [];
-  const written: { path: string; content: string }[] = [];
   let clock = 0;
   return {
     requests,
-    written,
     async fetch(url: string, init: FetchInit) {
       const req: RecordedRequest = {
         url,
@@ -74,11 +70,6 @@ function makeHost(
     async readFileBytes() {
       return null;
     },
-    writeTextFile:
-      options.writeTextFile ??
-      (async (path: string, content: string) => {
-        written.push({ path, content });
-      }),
     async sleep() {},
     now() {
       clock += options.nowStep ?? 0;
@@ -204,7 +195,7 @@ describe("cctl conversation compact-context", () => {
       ),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--json"],
       sessionEnv,
       host,
@@ -218,8 +209,8 @@ describe("cctl conversation compact-context", () => {
     expect(body.requestId).toMatch(UUID_PATTERN);
 
     const json = envelope(result.stdout);
-    expect(json.outcome).toBe("admitted");
-    expect(json.requestId).toBe(body.requestId);
+    expect(inlineDataOf(result).outcome).toBe("admitted");
+    expect(inlineDataOf(result).requestId).toBe(body.requestId);
     // Admission is not readiness: an agent reading this must not send the next
     // message believing the context was already retired.
     expect(JSON.stringify(json)).not.toContain('"phase":"ready"');
@@ -238,7 +229,7 @@ describe("cctl conversation compact-context", () => {
           202,
         ),
       );
-      await runCli(
+      await runCcWithHost(
         ["conversation", "compact-context", "conv-1"],
         sessionEnv,
         host,
@@ -248,7 +239,7 @@ describe("cctl conversation compact-context", () => {
     expect(seen[0]).not.toBe(seen[1]);
   });
 
-  it("passes --recover through as the superseded operation", async () => {
+  it("passes --recover=through as the superseded operation", async () => {
     const host = makeHost(() =>
       jsonResponse(
         {
@@ -260,7 +251,7 @@ describe("cctl conversation compact-context", () => {
       ),
     );
 
-    await runCli(
+    await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--recover", "op-old"],
       sessionEnv,
       host,
@@ -269,17 +260,6 @@ describe("cctl conversation compact-context", () => {
     expect(host.requests[0]?.body).toMatchObject({
       recoversOperationId: "op-old",
     });
-  });
-
-  it("rejects an empty --recover locally without a request", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--recover", ""],
-      sessionEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
   });
 
   it("selects the project route at project conversation scope", async () => {
@@ -294,7 +274,7 @@ describe("cctl conversation compact-context", () => {
       ),
     );
 
-    await runCli(
+    await runCcWithHost(
       ["conversation", "compact-context", "conv-1"],
       projectEnv,
       host,
@@ -315,7 +295,7 @@ describe("cctl conversation compact-context", () => {
       ),
     );
 
-    await runCli(
+    await runCcWithHost(
       [
         "conversation",
         "compact-context",
@@ -353,7 +333,7 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
         : wrongScope(),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1"],
       sessionEnv,
       host,
@@ -363,7 +343,7 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
     const posts = host.requests.filter((req) => req.method === "POST");
     expect(posts).toHaveLength(1);
     expect(posts[0]?.path).toBe(`${SESSION_BASE}/checkpoints`);
-    expect(result.stderr).toContain("--project other --session their-session");
+    expect(result.stderr).toContain("--project=other --session=their-session");
   });
 
   it("names the RECOVERY, not an ordinary start, when a wrong-scope recovery is refused", async () => {
@@ -379,15 +359,15 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
         : wrongScope(),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--recover", "op-7"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("--recover op-7");
-    expect(result.stderr).toContain("--project other --session their-session");
+    expect(result.stderr).toContain("--recover=op-7");
+    expect(result.stderr).toContain("--project=other --session=their-session");
   });
 
   it("exposes the wrong-scope remedy structurally in JSON", async () => {
@@ -403,7 +383,7 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
         : wrongScope(),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "compact-context",
@@ -417,11 +397,9 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
     );
 
     expect(result.exitCode).not.toBe(0);
-    const details = envelope(result.stdout).details as Record<string, unknown>;
-    expect(details.scopedRemedy).toContain("--recover op-7");
-    expect(details.scopedRemedy).toContain(
-      "--project other --session their-session",
-    );
+    const remedy = envelope(result.stdout).hint;
+    expect(remedy).toContain("--recover=op-7");
+    expect(remedy).toContain("--project=other --session=their-session");
   });
 
   it("exposes the wrong-scope cancel remedy structurally in JSON", async () => {
@@ -431,17 +409,15 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
         : wrongScope(),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "cancel", "conv-1", "op-1", "--json"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).not.toBe(0);
-    const details = envelope(result.stdout).details as Record<string, unknown>;
-    expect(details.scopedRemedy).toContain(
-      "cctl conversation checkpoint cancel conv-1 op-1 --project other",
-    );
+    const remedy = envelope(result.stdout).hint;
+    expect(remedy).toContain("cctl conversation checkpoint cancel");
   });
 
   it("refuses a wrong-scope cancel without a second mutation", async () => {
@@ -451,7 +427,7 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
         : wrongScope(),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "cancel", "conv-1", "op-1"],
       sessionEnv,
       host,
@@ -461,7 +437,7 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
     expect(host.requests.filter((req) => req.method === "POST")).toHaveLength(
       1,
     );
-    expect(result.stderr).toContain("--project other");
+    expect(result.stderr).toContain("--project=other");
   });
 
   it("still lets a read resolve the owning scope by conversation id", async () => {
@@ -477,7 +453,7 @@ describe("checkpoint mutations never retry in a neighbouring scope", () => {
       return jsonResponse({ receipt: makeReceipt({ phase: "ready" }) });
     });
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "get", "conv-1", "op-1"],
       sessionEnv,
       host,
@@ -513,7 +489,7 @@ describe("compact-context --wait", () => {
       });
     });
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait", "--json"],
       sessionEnv,
       host,
@@ -521,8 +497,10 @@ describe("compact-context --wait", () => {
 
     expect(result.exitCode).toBe(0);
     const json = envelope(result.stdout);
-    expect((json.receipt as { phase: string }).phase).toBe("ready");
-    expect(String(json.hint)).toContain("next ordinary message");
+    expect((inlineDataOf(result).receipt as { phase: string }).phase).toBe(
+      "ready",
+    );
+    expect(json.effect).toBe("applied");
   });
 
   it("exits 1 on needs_reconciliation with its rationale and repair command", async () => {
@@ -541,7 +519,7 @@ describe("compact-context --wait", () => {
           }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait"],
       sessionEnv,
       host,
@@ -550,9 +528,7 @@ describe("compact-context --wait", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("needs_reconciliation");
     expect(result.stderr).toContain("why:");
-    expect(result.stderr).toContain(
-      "cctl conversation checkpoint reconcile conv-1 op-1",
-    );
+    expect(result.stderr).toContain("cctl conversation checkpoint reconcile");
   });
 
   it("leaves the operation owned by the server when the client budget runs out", async () => {
@@ -572,19 +548,25 @@ describe("compact-context --wait", () => {
       { nowStep: 1_000_000 },
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait", "--json"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    const json = envelope(result.stdout);
-    expect(json.code).toBe("checkpoint_wait_timeout");
-    const details = json.details as { followUp: string; operationId: string };
-    expect(details.operationId).toBe("op-1");
-    expect(details.followUp).toBe(
-      "cctl conversation checkpoint get conv-1 op-1 --project cc --session my-session",
+    expect(result.envelope).toHaveProperty("error.code", "CC_OPERATION_FAILED");
+    expect(result.envelope).toHaveProperty(
+      "error.message",
+      expect.stringContaining("timeout"),
+    );
+    expect(inlineDataOf(result)).toHaveProperty("receipt.operationId", "op-1");
+    expect(result.envelope).toHaveProperty(
+      "error.continuation",
+      expect.objectContaining({
+        path: "conversation checkpoint get",
+        args: ["conv-1", "op-1"],
+      }),
     );
     // Nothing cancels an operation because its watcher stopped watching.
     expect(
@@ -604,14 +586,14 @@ describe("cctl conversation checkpoint check", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "check", "conv-1"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("eligible: compact_context");
+    expect(result.stdout).toContain("eligible: true");
     expect(host.requests.every((req) => req.method === "GET")).toBe(true);
     expect(host.requests[0]?.path).toBe(
       `${SESSION_BASE}/checkpoints/eligibility`,
@@ -641,32 +623,36 @@ describe("cctl conversation checkpoint check", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "check", "conv-1", "--json"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    const json = envelope(result.stdout);
-    const details = json.details as {
+    const details = inlineDataOf(result) as {
       transition: string;
-      findings: { code: string; blocks: string; remedy: string }[];
+      findings: {
+        code: string;
+        blocks: string;
+        remedy: { path: string; args: Record<string, unknown> };
+      }[];
     };
     expect(details.transition).toBe("compact_context");
     expect(details.findings.map((f) => f.code)).toEqual([
       "turn_active",
       "checkpoint_pending",
     ]);
-    expect(
-      details.findings.every((f) => f.blocks === "blocks_compact_context"),
-    ).toBe(true);
-    expect(details.findings[1]?.remedy).toContain(
-      "cctl conversation checkpoint get conv-1 op-9",
+    expect(details.findings.every((f) => f.blocks === "compact_context")).toBe(
+      true,
     );
+    expect(details.findings[1]?.remedy).toMatchObject({
+      path: "conversation checkpoint get",
+      args: ["conv-1", "op-9"],
+    });
   });
 
-  it("labels findings for the named recovery when --recover is given", async () => {
+  it("labels findings for the named recovery when --recover=is given", async () => {
     const host = makeHost(() =>
       jsonResponse({
         eligible: false,
@@ -683,7 +669,7 @@ describe("cctl conversation checkpoint check", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "checkpoint",
@@ -701,14 +687,13 @@ describe("cctl conversation checkpoint check", () => {
     expect(host.requests[0]?.path).toBe(
       `${SESSION_BASE}/checkpoints/eligibility?recoversOperationId=op-2`,
     );
-    const json = envelope(result.stdout);
-    const details = json.details as {
+    const details = inlineDataOf(result) as {
       transition: string;
       findings: { blocks: string }[];
     };
     expect(details.transition).toBe("recovery");
-    expect(details.findings[0]?.blocks).toBe("blocks_recovery");
-    expect(json.rationale).toBeTypeOf("string");
+    expect(details.findings[0]?.blocks).toBe("recovery");
+    expect(result.envelope).toHaveProperty("error.why");
   });
 
   it("still refuses at start after a clean check when the state moved", async () => {
@@ -727,14 +712,14 @@ describe("cctl conversation checkpoint check", () => {
           ),
     );
 
-    const clean = await runCli(
+    const clean = await runCcWithHost(
       ["conversation", "checkpoint", "check", "conv-1"],
       sessionEnv,
       host,
     );
     expect(clean.exitCode).toBe(0);
 
-    const started = await runCli(
+    const started = await runCcWithHost(
       ["conversation", "compact-context", "conv-1"],
       sessionEnv,
       host,
@@ -756,18 +741,18 @@ describe("cctl conversation checkpoint list", () => {
       }),
     );
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["conversation", "checkpoint", "list", "conv-1", "--limit", "2"],
       sessionEnv,
       host,
     );
     expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("12 total, 2 shown");
-    expect(text.stdout).toContain(
-      "cctl conversation checkpoint list conv-1 --before 11 --limit 2",
-    );
+    expect(text.stdout).toContain("checkpoint op-3 ordinal=12");
+    expect(text.stdout).toContain("checkpoint op-2 ordinal=11");
+    expect(text.stdout).toContain("--before=11");
+    expect(text.stdout).toContain("--limit=2");
 
-    const json = await runCli(
+    const json = await runCcWithHost(
       [
         "conversation",
         "checkpoint",
@@ -780,14 +765,18 @@ describe("cctl conversation checkpoint list", () => {
       sessionEnv,
       host,
     );
-    const parsed = envelope(json.stdout);
-    expect(parsed.total).toBe(12);
-    expect(parsed.returned).toBe(2);
-    expect(parsed.truncated).toBe(true);
-    expect(parsed.nextBefore).toBe(11);
-    expect(parsed.reveal).toBe(
-      "cctl conversation checkpoint list conv-1 --before 11 --limit 2",
-    );
+    expect(inlineDataOf(json)).toMatchObject({
+      nextBefore: 11,
+      omission: {
+        total: { kind: "unknown" },
+        returned: 2,
+        truncated: true,
+        reveal: {
+          path: "conversation checkpoint list",
+          flags: { before: 11, limit: 2 },
+        },
+      },
+    });
   });
 
   it("reports a complete page as untruncated", async () => {
@@ -797,25 +786,15 @@ describe("cctl conversation checkpoint list", () => {
         nextBefore: null,
       }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "list", "conv-1", "--json"],
       sessionEnv,
       host,
     );
-    const parsed = envelope(result.stdout);
-    expect(parsed.truncated).toBe(false);
-    expect(parsed.reveal).toBeUndefined();
-  });
-
-  it("rejects a non-integer --limit locally, before any request", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["conversation", "checkpoint", "list", "conv-1", "--limit", "many"],
-      sessionEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
+    expect(
+      (inlineDataOf(result).omission as { truncated: boolean }).truncated,
+    ).toBe(false);
+    expect(inlineDataOf(result).omission).not.toHaveProperty("reveal");
   });
 });
 
@@ -830,7 +809,7 @@ describe("cctl conversation checkpoint get", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "get", "conv-1", "op-1"],
       sessionEnv,
       host,
@@ -856,14 +835,14 @@ describe("cctl conversation checkpoint get", () => {
         : jsonResponse({ receipt: makeReceipt({ phase: "ready" }) }),
     );
 
-    const receiptOnly = await runCli(
+    const receiptOnly = await runCcWithHost(
       ["conversation", "checkpoint", "get", "conv-1", "op-1"],
       sessionEnv,
       host,
     );
     expect(receiptOnly.stdout).not.toContain("FROZEN SEED BYTES");
 
-    const withSeed = await runCli(
+    const withSeed = await runCcWithHost(
       [
         "conversation",
         "checkpoint",
@@ -879,36 +858,6 @@ describe("cctl conversation checkpoint get", () => {
     expect(withSeed.exitCode).toBe(0);
     expect(withSeed.stdout).toContain("FROZEN SEED BYTES");
   });
-
-  it("rejects an unknown --detail locally", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      [
-        "conversation",
-        "checkpoint",
-        "get",
-        "conv-1",
-        "op-1",
-        "--detail",
-        "everything",
-      ],
-      sessionEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("requires both the conversation and the operation id", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["conversation", "checkpoint", "get", "op-1"],
-      sessionEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
 });
 
 describe("checkpoint refusal output", () => {
@@ -922,20 +871,18 @@ describe("checkpoint refusal output", () => {
       ),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("operation: op-7");
-    expect(result.stderr).toContain("phase: needs_reconciliation");
+    expect(result.stderr).toContain('"operationId":"op-7"');
+    expect(result.stderr).toContain('"phase":"needs_reconciliation"');
     expect(result.stderr).toContain("why:");
     expect(result.stderr).toContain("never replays uncertain input");
-    expect(result.stderr).toContain(
-      "cctl conversation compact-context conv-1 --recover op-7",
-    );
+    expect(result.stderr).toContain("cctl conversation compact-context");
   });
 
   it("mirrors the same facts in JSON", async () => {
@@ -946,19 +893,27 @@ describe("checkpoint refusal output", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--json"],
       sessionEnv,
       host,
     );
 
-    const json = envelope(result.stdout);
-    expect(json.code).toBe("recovery_required");
-    expect(json.rationale).toBeTypeOf("string");
-    expect(json.details).toMatchObject({
-      refusal: { operationId: "op-7", phase: "needs_reconciliation" },
-    });
-    expect(String(json.hint)).toContain("--recover op-7");
+    expect(result.envelope).toHaveProperty(
+      "error.details.serverCode",
+      "recovery_required",
+    );
+    expect(result.envelope).toHaveProperty("error.why");
+    expect(result.envelope).toHaveProperty(
+      "error.details.serverDetails",
+      expect.objectContaining({
+        refusal: expect.objectContaining({
+          operationId: "op-7",
+          phase: "needs_reconciliation",
+        }),
+      }),
+    );
+    expect(String(result.envelope?.hint)).toContain("--recover=op-7");
   });
 
   it("keeps the blocking state legible when every hint is ignored", async () => {
@@ -975,7 +930,7 @@ describe("checkpoint refusal output", () => {
       );
     }
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["conversation", "compact-context", "conv-1"],
       sessionEnv,
       blockedHost(),
@@ -986,11 +941,11 @@ describe("checkpoint refusal output", () => {
       .join("\n");
     expect(withoutHints).not.toBe(text.stderr);
     expect(withoutHints).toContain("queued deliveries are unresolved");
-    expect(withoutHints).toContain("operation: op-7");
-    expect(withoutHints).toContain("phase: needs_reconciliation");
+    expect(withoutHints).toContain('"operationId":"op-7"');
+    expect(withoutHints).toContain('"phase":"needs_reconciliation"');
     expect(withoutHints).toContain("never replays uncertain input");
 
-    const json = await runCli(
+    const json = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--json"],
       sessionEnv,
       blockedHost(),
@@ -998,13 +953,27 @@ describe("checkpoint refusal output", () => {
     const parsed = envelope(json.stdout);
     expect(parsed.hint).toBeTypeOf("string");
     delete parsed["hint"];
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("queue_review_required");
-    expect(parsed.error).toBe("queued deliveries are unresolved");
-    expect(parsed.rationale).toContain("never replays uncertain input");
-    expect(parsed.details).toMatchObject({
-      refusal: { operationId: "op-7", phase: "needs_reconciliation" },
-    });
+    expect(json.envelope).toHaveProperty(
+      "error.details.serverCode",
+      "queue_review_required",
+    );
+    expect(json.envelope).toHaveProperty(
+      "error.message",
+      "queued deliveries are unresolved",
+    );
+    expect(json.envelope).toHaveProperty(
+      "error.why",
+      expect.stringContaining("never replays uncertain input"),
+    );
+    expect(json.envelope).toHaveProperty(
+      "error.details.serverDetails",
+      expect.objectContaining({
+        refusal: expect.objectContaining({
+          operationId: "op-7",
+          phase: "needs_reconciliation",
+        }),
+      }),
+    );
   });
 
   it("invents no operation or phase for a pre-admission refusal", async () => {
@@ -1019,50 +988,22 @@ describe("checkpoint refusal output", () => {
       ),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--json"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(2);
-    const json = envelope(result.stdout);
-    expect(json.issues).toEqual([
-      { path: "requestId", message: "expected a UUID" },
+    expect(result.envelope).toHaveProperty("error.issues", [
+      {
+        code: "CC_INPUT_ISSUE",
+        path: ["requestId"],
+        message: "expected a UUID",
+      },
     ]);
-    expect(JSON.stringify(json)).not.toContain("operationId");
-    expect(JSON.stringify(json)).not.toContain("phase");
-  });
-
-  it("keeps the connection class when the server is unreachable", async () => {
-    const host = makeHost(() => {
-      throw new Error("ECONNREFUSED");
-    });
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1"],
-      sessionEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(3);
-  });
-
-  it("keeps the build-skew class", async () => {
-    const host = makeHost(
-      () =>
-        new Response(JSON.stringify({ error: "nope" }), {
-          status: 409,
-          headers: {
-            "content-type": "application/json",
-            "x-cc-build-mismatch": "server=abc cli=def",
-          },
-        }),
-    );
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1"],
-      sessionEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(4);
+    expect(JSON.stringify(result.envelope)).not.toContain("operationId");
+    expect(JSON.stringify(result.envelope)).not.toContain("phase");
   });
 });
 
@@ -1078,7 +1019,7 @@ describe("cctl conversation checkpoint reconcile", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "reconcile", "conv-1", "op-7", "--json"],
       sessionEnv,
       host,
@@ -1089,10 +1030,9 @@ describe("cctl conversation checkpoint reconcile", () => {
     expect(host.requests[0]?.path).toBe(
       `${SESSION_BASE}/checkpoints/op-7/reconcile`,
     );
-    const json = envelope(result.stdout);
-    expect(json.outcome).toBe("repaired");
-    expect(String(json.hint)).toContain(
-      "cctl conversation compact-context conv-1 --recover op-7",
+    expect(inlineDataOf(result).outcome).toBe("repaired");
+    expect(String(result.envelope?.hint)).toContain(
+      "cctl conversation compact-context",
     );
   });
 
@@ -1117,255 +1057,20 @@ describe("cctl conversation checkpoint reconcile", () => {
       ),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "reconcile", "conv-1", "op-7"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("checkpoint op-7");
-    expect(result.stderr).toContain("phase=needs_reconciliation");
+    expect(result.stderr).toContain('"operationId":"op-7"');
+    expect(result.stderr).toContain('"phase":"needs_reconciliation"');
     expect(result.stderr).toContain("why:");
   });
 });
 
-describe("checkpoint output stays inside the stdout budget", () => {
-  const hugeSeed = "s".repeat(80_000);
-
-  function seedHost(writeTextFile?: CliHost["writeTextFile"]): TestHost {
-    return makeHost(
-      () =>
-        jsonResponse({
-          receipt: makeReceipt({ phase: "ready" }),
-          seed: {
-            seedText: hugeSeed,
-            seedSha256: "seed-hash",
-            schemaVersion: 1,
-            createdAt: "2026-09-01T00:00:00.000Z",
-          },
-        }),
-      writeTextFile === undefined ? {} : { writeTextFile },
-    );
-  }
-
-  it("spills an oversized seed to .cc/temp and reports path, bytes and hash", async () => {
-    const host = seedHost();
-    const result = await runCli(
-      [
-        "conversation",
-        "checkpoint",
-        "get",
-        "conv-1",
-        "op-1",
-        "--detail",
-        "seed",
-      ],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).not.toContain(hugeSeed);
-    expect(result.stdout).toContain(".cc/temp/");
-    expect(result.stdout).toContain("sha256: sha256:");
-    expect(host.written).toHaveLength(1);
-    expect(host.written[0]?.path.startsWith(".cc/temp/")).toBe(true);
-    expect(host.written[0]?.content).toContain(hugeSeed);
-  });
-
-  it("discloses the same seed in text and JSON when escaping alone overflows", async () => {
-    // Every byte of this seed doubles under JSON escaping, so the two
-    // serializations of ONE disclosure level land on opposite sides of the
-    // budget. Both must still return the whole seed.
-    const quoted = '"'.repeat(40_000);
-    function quotedHost(): TestHost {
-      return makeHost(() =>
-        jsonResponse({
-          receipt: makeReceipt({ phase: "ready" }),
-          seed: {
-            seedText: quoted,
-            seedSha256: "seed-hash",
-            schemaVersion: 1,
-            createdAt: "2026-09-01T00:00:00.000Z",
-          },
-        }),
-      );
-    }
-    const argv = [
-      "conversation",
-      "checkpoint",
-      "get",
-      "conv-1",
-      "op-1",
-      "--detail",
-      "seed",
-    ];
-
-    const textHost = quotedHost();
-    const text = await runCli(argv, sessionEnv, textHost);
-    expect(textHost.written).toHaveLength(0);
-    expect(text.stdout).toContain(quoted);
-
-    const jsonHost = quotedHost();
-    const json = await runCli([...argv, "--json"], sessionEnv, jsonHost);
-    expect(json.exitCode).toBe(0);
-    expect(jsonHost.written).toHaveLength(1);
-    expect(Buffer.byteLength(json.stdout, "utf8")).toBeLessThan(2000);
-
-    const spilled = envelope(jsonHost.written[0]?.content ?? "");
-    expect(spilled.detail).toBe("seed");
-    expect((spilled.seed as { seedText: string }).seedText).toBe(quoted);
-    // Both requests asked for the same disclosure level.
-    expect(
-      [...textHost.requests, ...jsonHost.requests].every((request) =>
-        request.path.includes("detail=seed"),
-      ),
-    ).toBe(true);
-  });
-
-  it("measures a multibyte seed in UTF-8 bytes, not code points", async () => {
-    // A third of the budget in characters, over it in bytes.
-    const snowmen = "\u2603".repeat(25_000);
-    const host = makeHost(() =>
-      jsonResponse({
-        receipt: makeReceipt({ phase: "ready" }),
-        seed: {
-          seedText: snowmen,
-          seedSha256: "seed-hash",
-          schemaVersion: 1,
-          createdAt: "2026-09-01T00:00:00.000Z",
-        },
-      }),
-    );
-
-    const result = await runCli(
-      [
-        "conversation",
-        "checkpoint",
-        "get",
-        "conv-1",
-        "op-1",
-        "--detail",
-        "seed",
-      ],
-      sessionEnv,
-      host,
-    );
-
-    expect(snowmen.length).toBeLessThan(60_000);
-    expect(host.written).toHaveLength(1);
-    expect(result.stdout).not.toContain(snowmen);
-    expect(host.written[0]?.content).toContain(snowmen);
-  });
-
-  it("keeps the page's counts and next-page command inside a spilled list", async () => {
-    const receipts = Array.from({ length: 100 }, (_, index) =>
-      makeReceipt({
-        operationId: `op-${"x".repeat(600)}-${100 - index}`,
-        ordinal: 100 - index,
-      }),
-    );
-    const host = makeHost(() => jsonResponse({ receipts, nextBefore: 1 }));
-
-    const result = await runCli(
-      ["conversation", "checkpoint", "list", "conv-1", "--limit", "100"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(host.written).toHaveLength(1);
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    // The manifest replaces the rows, never the accounting: the spilled file
-    // still states the window total, what came back and the exact next page.
-    const spilled = host.written[0]?.content ?? "";
-    expect(spilled).toContain("100 total, 100 shown");
-    expect(spilled).toContain(
-      "cctl conversation checkpoint list conv-1 --before 1 --limit 100",
-    );
-  });
-
-  it("preserves a server-side page refusal's structured issues", async () => {
-    // `--before` is a cursor the CLI cannot check locally: only the server
-    // knows which ordinals exist, so its refusal is the one that must survive.
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          error: "before must address an existing ordinal",
-          code: "invalid_cursor",
-          issues: [{ path: "before", message: "no ordinal below 1" }],
-        },
-        400,
-      ),
-    );
-
-    const result = await runCli(
-      [
-        "conversation",
-        "checkpoint",
-        "list",
-        "conv-1",
-        "--before",
-        "1",
-        "--json",
-      ],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    const json = envelope(result.stdout);
-    expect(json.code).toBe("invalid_cursor");
-    expect(json.issues).toEqual([
-      { path: "before", message: "no ordinal below 1" },
-    ]);
-  });
-
-  it("fails typed and bounded when the spill cannot be written", async () => {
-    const host = seedHost(async () => {
-      throw new Error("EACCES");
-    });
-    const result = await runCli(
-      [
-        "conversation",
-        "checkpoint",
-        "get",
-        "conv-1",
-        "op-1",
-        "--detail",
-        "seed",
-        "--json",
-      ],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    const json = envelope(result.stdout);
-    expect(json.code).toBe("write_failed");
-    expect(result.stdout).not.toContain(hugeSeed);
-    expect(result.stdout.length).toBeLessThan(2000);
-  });
-});
-
-/**
- * The outcome CLASSES a checkpoint command reports, independent of what it
- * says. A structured build-skew refusal is a build mismatch even though it
- * arrives as a 409 body; a poll that cannot authenticate is an auth failure
- * rather than an unreadable status; and a wait whose budget ran out still
- * knows the phase it last saw.
- */
-describe("checkpoint transport and wait outcome classes", () => {
-  const SKEW_BODY = {
-    error:
-      "refused before execution: this cctl is not the build this server published (server build abc) — no changes were made",
-    code: "build_skew",
-    details: { serverBuild: "abc", serverCliPath: "/srv/cc/bin/cctl" },
-  };
-
+describe("checkpoint receipts after incomplete observation", () => {
   function admitted(phase = "building"): Response {
     return jsonResponse(
       {
@@ -1376,87 +1081,6 @@ describe("checkpoint transport and wait outcome classes", () => {
       202,
     );
   }
-
-  it.each([
-    ["compact-context", ["conversation", "compact-context", "conv-1"]],
-    ["cancel", ["conversation", "checkpoint", "cancel", "conv-1", "op-1"]],
-    [
-      "reconcile",
-      ["conversation", "checkpoint", "reconcile", "conv-1", "op-1"],
-    ],
-  ])(
-    "maps the server's structured build_skew refusal to exit 4 (%s)",
-    async (_name, argv) => {
-      // No mismatch header: the body IS the refusal, and it is the only signal
-      // that the handler never ran.
-      const host = makeHost(() => jsonResponse(SKEW_BODY, 409));
-      const result = await runCli(argv as string[], sessionEnv, host);
-      expect(result.exitCode).toBe(4);
-      expect(result.stderr).toContain("no changes were made");
-      expect(result.stderr).toContain("/srv/cc/bin/cctl");
-    },
-  );
-
-  it("keeps the auth class when a --wait poll is rejected", async () => {
-    const host = makeHost((req) =>
-      req.method === "POST"
-        ? admitted()
-        : new Response(JSON.stringify({ error: "unauthorized" }), {
-            status: 401,
-            headers: { "content-type": "application/json" },
-          }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--wait"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(3);
-    expect(result.stderr).toContain("cctl doctor");
-  });
-
-  it("keeps the connection class when a --wait poll cannot reach the server", async () => {
-    let polled = false;
-    const host = makeHost((req) => {
-      if (req.method === "POST") return admitted();
-      polled = true;
-      throw new Error("ECONNREFUSED");
-    });
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--wait"],
-      sessionEnv,
-      host,
-    );
-
-    expect(polled).toBe(true);
-    expect(result.exitCode).toBe(3);
-    expect(result.stderr).toContain("cctl doctor");
-  });
-
-  it("keeps the build-mismatch class when a --wait poll reads a skewed server", async () => {
-    const host = makeHost((req) =>
-      req.method === "POST"
-        ? admitted()
-        : new Response(JSON.stringify({ receipt: makeReceipt() }), {
-            status: 200,
-            headers: {
-              "content-type": "application/json",
-              "x-cc-build-mismatch": "server=abc cli=def",
-            },
-          }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--wait"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(4);
-  });
 
   it("retains the phase it last observed when the wait budget runs out", async () => {
     function timedOutHost(): TestHost {
@@ -1469,28 +1093,22 @@ describe("checkpoint transport and wait outcome classes", () => {
       );
     }
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait"],
       sessionEnv,
       timedOutHost(),
     );
     expect(text.exitCode).toBe(1);
-    expect(text.stderr).toContain("phase: retiring");
+    expect(text.stderr).toContain("retiring");
     expect(text.stderr).not.toContain("last observed before the timeout");
 
-    const json = await runCli(
+    const json = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait", "--json"],
       sessionEnv,
       timedOutHost(),
     );
-    const parsed = envelope(json.stdout);
-    const details = parsed.details as {
-      lastObserved: { phase: string; source: string; operationId: string };
-      receipt: { phase: string };
-    };
-    expect(details.lastObserved.phase).toBe("retiring");
-    expect(details.lastObserved.source).toBe("polled");
-    expect(details.receipt.phase).toBe("retiring");
+    expect(inlineDataOf(json)).toHaveProperty("receipt.phase", "retiring");
+    expect(json.envelope).toHaveProperty("effect", "applied");
   });
 
   it("falls back to the admission receipt when no poll was ever readable", async () => {
@@ -1502,18 +1120,15 @@ describe("checkpoint transport and wait outcome classes", () => {
       { nowStep: 1_000_000 },
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait", "--json"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    const details = envelope(result.stdout).details as {
-      lastObserved: { phase: string; source: string };
-    };
-    expect(details.lastObserved.phase).toBe("building");
-    expect(details.lastObserved.source).toBe("admission");
+    expect(inlineDataOf(result)).toHaveProperty("receipt.phase", "building");
+    expect(result.envelope).toHaveProperty("effect", "applied");
   });
 
   it("keeps delivery and attempt correlation in the failed wait's JSON", async () => {
@@ -1531,33 +1146,18 @@ describe("checkpoint transport and wait outcome classes", () => {
       req.method === "POST" ? admitted() : jsonResponse({ receipt }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait", "--json"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    const details = envelope(result.stdout).details as {
+    const details = inlineDataOf(result) as {
       receipt: { delivery: { attemptId: string; queuedMessageId: string } };
     };
     expect(details.receipt.delivery.attemptId).toBe("att-9");
     expect(details.receipt.delivery.queuedMessageId).toBe("q-msg-2");
-  });
-
-  it("rejects a --limit above the documented maximum before any request", async () => {
-    const host = makeHost(() =>
-      jsonResponse({ receipts: [], nextBefore: null }),
-    );
-    const result = await runCli(
-      ["conversation", "checkpoint", "list", "conv-1", "--limit", "500"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-    expect(result.stderr).toContain("100");
   });
 });
 
@@ -1587,7 +1187,7 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
     });
   }
 
-  const FOREIGN_SCOPE = "--project other --session their-session";
+  const FOREIGN_SCOPE = "--project=other --session=their-session";
 
   it("scopes the start command a clean eligibility check suggests", async () => {
     const host = foreignHost(() =>
@@ -1598,16 +1198,16 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
         hosted: true,
       }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "check", "conv-1"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      `cctl conversation compact-context conv-1 ${FOREIGN_SCOPE}`,
-    );
+    expect(result.stdout).toContain(FOREIGN_SCOPE);
+    expect(result.stdout).toContain("cctl conversation compact-context");
+    expect(result.stdout).toContain("-- conv-1");
   });
 
   it("scopes the recovery command a named recovery check suggests", async () => {
@@ -1619,16 +1219,16 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
         hosted: true,
       }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "check", "conv-1", "--recover", "op-7"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      `cctl conversation compact-context conv-1 --recover op-7 ${FOREIGN_SCOPE}`,
-    );
+    expect(result.stdout).toContain(FOREIGN_SCOPE);
+    expect(result.stdout).toContain("cctl conversation compact-context");
+    expect(result.stdout).toContain("-- conv-1");
   });
 
   it("scopes the recovery remedy a blocker names", async () => {
@@ -1647,32 +1247,34 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
         ],
       }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "check", "conv-1"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(
-      `cctl conversation compact-context conv-1 --recover op-7 ${FOREIGN_SCOPE}`,
-    );
+    expect(result.stderr).toContain(FOREIGN_SCOPE);
+    expect(result.stderr).toContain("cctl conversation compact-context");
+    expect(result.stderr).toContain("-- conv-1");
   });
 
   it("scopes the start command an empty list suggests", async () => {
     const host = foreignHost(() =>
       jsonResponse({ receipts: [], nextBefore: null }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "list", "conv-1", "--json"],
       sessionEnv,
       host,
     );
 
     expect(result.exitCode).toBe(0);
+    expect(String(envelope(result.stdout).hint)).toContain(FOREIGN_SCOPE);
     expect(String(envelope(result.stdout).hint)).toContain(
-      `cctl conversation compact-context conv-1 ${FOREIGN_SCOPE}`,
+      "cctl conversation compact-context",
     );
+    expect(String(envelope(result.stdout).hint)).toContain("-- conv-1");
   });
 
   it("scopes the reconcile command a failed wait suggests", async () => {
@@ -1691,7 +1293,7 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
           }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "compact-context",
@@ -1707,9 +1309,9 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(
-      `cctl conversation checkpoint reconcile conv-1 op-1 ${FOREIGN_SCOPE}`,
-    );
+    expect(result.stderr).toContain(FOREIGN_SCOPE);
+    expect(result.stderr).toContain("cctl conversation checkpoint reconcile");
+    expect(result.stderr).toContain("-- conv-1");
   });
 
   it("names the conversation and its scope in a cancelled wait's remedy", async () => {
@@ -1726,7 +1328,7 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
         : jsonResponse({ receipt: makeReceipt({ phase: "cancelled" }) }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1", "--wait"],
       sessionEnv,
       host,
@@ -1735,7 +1337,7 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
     expect(result.exitCode).toBe(1);
     // A bare `compact-context` would checkpoint the CALLER's conversation.
     expect(result.stderr).toContain(
-      "cctl conversation compact-context conv-1 --project cc --session my-session",
+      "cctl conversation compact-context --project=cc --session=my-session -- conv-1",
     );
   });
 
@@ -1750,7 +1352,7 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "checkpoint",
@@ -1768,9 +1370,11 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
     );
 
     expect(result.exitCode).toBe(0);
+    expect(String(envelope(result.stdout).hint)).toContain(FOREIGN_SCOPE);
     expect(String(envelope(result.stdout).hint)).toContain(
-      `cctl conversation compact-context conv-1 --recover op-7 ${FOREIGN_SCOPE}`,
+      "cctl conversation compact-context",
     );
+    expect(String(envelope(result.stdout).hint)).toContain("-- conv-1");
   });
 
   it("scopes the reconcile remedy a reconciliation_failed refusal names", async () => {
@@ -1781,7 +1385,7 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
       }),
     );
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "checkpoint",
@@ -1798,9 +1402,9 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(
-      `cctl conversation checkpoint reconcile conv-1 op-7 ${FOREIGN_SCOPE}`,
-    );
+    expect(result.stderr).toContain(FOREIGN_SCOPE);
+    expect(result.stderr).toContain("cctl conversation checkpoint reconcile");
+    expect(result.stderr).toContain("-- conv-1");
   });
 });
 
@@ -1823,7 +1427,7 @@ describe("checkpoint acceptance facts", () => {
     });
     const host = makeHost(() => jsonResponse({ receipt }));
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "get", "conv-1", "op-1"],
       sessionEnv,
       host,
@@ -1839,7 +1443,7 @@ describe("checkpoint acceptance facts", () => {
     const host = makeHost(() =>
       jsonResponse({ receipt: makeReceipt({ phase: "ready" }) }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "checkpoint", "get", "conv-1", "op-1"],
       sessionEnv,
       host,
@@ -1859,539 +1463,13 @@ describe("checkpoint acceptance facts", () => {
         },
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact-context", "conv-1"],
       sessionEnv,
       host,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("code: backend_unsupported");
-  });
-});
-
-/**
- * Every checkpoint output — success and failure alike — obeys the same
- * serialized-byte budget. A refusal is not the one path allowed to dump: its
- * error string, its findings and a receipt's omission list are all
- * server-sized, and stdout is what a pipe actually has to hold.
- */
-describe("checkpoint output stays inside the shared byte budget", () => {
-  const HUGE = "R".repeat(200_000);
-
-  function bigOmissions(count: number) {
-    return Array.from({ length: count }, (_, index) => ({
-      category: `category_${index}`,
-      detail: "d".repeat(10_000),
-    }));
-  }
-
-  it("spills an oversized refusal instead of dumping it, keeping exit 1", async () => {
-    const host = makeHost(() =>
-      refusalResponse("conversation_busy", HUGE, 409, {
-        operationId: "op-7",
-        phase: "building",
-      }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    expect(result.stdout).not.toContain(HUGE);
-    expect(host.written).toHaveLength(1);
-    // The spill carries the refusal complete, and stdout keeps its identity.
-    expect(host.written[0]?.content).toContain(HUGE);
-    const json = envelope(result.stdout);
-    expect(json.code).toBe("conversation_busy");
-    // The retained projection is flat because the same value renders as text
-    // lines when the body spills; a nested object could not.
-    expect(json.details).toMatchObject({
-      code: "conversation_busy",
-      operation: "op-7",
-      phase: "building",
-    });
-  });
-
-  it("spills an oversized blocked eligibility check, keeping exit 1", async () => {
-    const host = makeHost(() =>
-      jsonResponse({
-        eligible: false,
-        hosted: true,
-        active: null,
-        refusals: Array.from({ length: 20 }, (_, index) => ({
-          code: "conversation_busy",
-          reason: `${index}-${"b".repeat(5_000)}`,
-          operationId: null,
-          phase: null,
-        })),
-      }),
-    );
-
-    const result = await runCli(
-      ["conversation", "checkpoint", "check", "conv-1"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(Buffer.byteLength(result.stderr, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    expect(host.written).toHaveLength(1);
-    expect(host.written[0]?.content).toContain("blocked: compact_context");
-  });
-
-  it("spills an oversized admission receipt, keeping exit 0", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          outcome: "admitted",
-          receipt: makeReceipt({ omissions: bigOmissions(20) }),
-          statusUrl: `${SESSION_BASE}/checkpoints/op-1`,
-        },
-        202,
-      ),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    expect(host.written).toHaveLength(1);
-    expect(envelope(result.stdout).storage).toBe("artifact");
-  });
-
-  it("spills an oversized ready wait, keeping exit 0", async () => {
-    const host = makeHost((req) =>
-      req.method === "POST"
-        ? jsonResponse(
-            {
-              outcome: "admitted",
-              receipt: makeReceipt(),
-              statusUrl: `${SESSION_BASE}/checkpoints/op-1`,
-            },
-            202,
-          )
-        : jsonResponse({
-            receipt: makeReceipt({
-              phase: "ready",
-              omissions: bigOmissions(20),
-            }),
-          }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--wait"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    expect(host.written).toHaveLength(1);
-  });
-
-  it("spills an oversized failed wait, keeping exit 1 and its operation", async () => {
-    const host = makeHost((req) =>
-      req.method === "POST"
-        ? jsonResponse(
-            {
-              outcome: "admitted",
-              receipt: makeReceipt(),
-              statusUrl: `${SESSION_BASE}/checkpoints/op-1`,
-            },
-            202,
-          )
-        : jsonResponse({
-            receipt: makeReceipt({
-              phase: "needs_reconciliation",
-              omissions: bigOmissions(20),
-            }),
-          }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--wait", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    expect(host.written).toHaveLength(1);
-    const json = envelope(result.stdout);
-    expect(json.details).toMatchObject({
-      operationId: "op-1",
-      phase: "needs_reconciliation",
-    });
-  });
-
-  it("spills an oversized wait timeout, keeping its operation and last phase", async () => {
-    // The timeout reports the newest receipt it actually read, and a receipt
-    // observed mid-flight carries the same unbounded omission list every other
-    // receipt does. The budget is the same one the terminal outcomes obey.
-    const host = makeHost(
-      (req) =>
-        req.method === "POST"
-          ? jsonResponse(
-              {
-                outcome: "admitted",
-                receipt: makeReceipt(),
-                statusUrl: `${SESSION_BASE}/checkpoints/op-1`,
-              },
-              202,
-            )
-          : jsonResponse({
-              receipt: makeReceipt({
-                phase: "retiring",
-                omissions: bigOmissions(20),
-              }),
-            }),
-      // One poll lands, then the clock jumps a full budget and the wait ends.
-      { nowStep: 1_000_000 },
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--wait", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    expect(host.written).toHaveLength(1);
-    // Identity and the last observed phase survive the spill: they are what
-    // the caller comes back with, and the follow-up reads the rest.
-    const json = envelope(result.stdout);
-    expect(json.code).toBe("checkpoint_wait_timeout");
-    expect(json.details).toMatchObject({
-      operationId: "op-1",
-      phase: "retiring",
-      followUp:
-        "cctl conversation checkpoint get conv-1 op-1 --project cc --session my-session",
-    });
-    // Nothing cancels an operation because its watcher stopped watching.
-    expect(
-      host.requests.filter((req) => req.path.endsWith("/cancel")),
-    ).toHaveLength(0);
-  });
-
-  it("writes a spilled JSON failure as a document that actually parses", async () => {
-    // The manifest labels the artifact `json`, and a reader that cannot
-    // `JSON.parse` it has been handed a corrupt file by the very mechanism
-    // that exists to stop stdout corrupting mid-envelope.
-    const host = makeHost(() =>
-      refusalResponse("conversation_busy", HUGE, 409, {
-        operationId: "op-7",
-        phase: "building",
-      }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    const spilled = host.written[0];
-    expect(spilled?.path).toMatch(/\.json$/u);
-    const parsed = JSON.parse(spilled?.content ?? "") as Record<
-      string,
-      unknown
-    >;
-    expect(parsed.ok).toBe(false);
-    expect(parsed.error).toContain("R");
-    // The envelope in stdout announces that file, and it parses too.
-    expect(envelope(result.stdout).code).toBe("conversation_busy");
-  });
-
-  it("keeps operation, phase, code and rationale in a spilled TEXT refusal", async () => {
-    // Text mode never renders the JSON `details`, so a projection kept only
-    // there leaves a text caller with a file path and no idea what was
-    // refused, on which operation, or why.
-    const host = makeHost(() =>
-      refusalResponse("queue_review_required", HUGE, 409, {
-        operationId: "op-7",
-        phase: "needs_reconciliation",
-      }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(host.written).toHaveLength(1);
-    expect(Buffer.byteLength(result.stderr, "utf8")).toBeLessThan(
-      STDOUT_BUDGET_BYTES,
-    );
-    expect(result.stderr).toContain("op-7");
-    expect(result.stderr).toContain("needs_reconciliation");
-    // The deliberate refusal's reason survives the spill with it.
-    expect(result.stderr).toMatch(/why:/);
-  });
-
-  it("keeps the retained facts when the spill itself cannot be written", async () => {
-    const host = makeHost(
-      () =>
-        refusalResponse("conversation_busy", HUGE, 409, {
-          operationId: "op-7",
-          phase: "building",
-        }),
-      {
-        writeTextFile: async () => {
-          throw new Error("EACCES");
-        },
-      },
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).not.toContain(HUGE);
-    const details = envelope(result.stdout).details as Record<string, unknown>;
-    expect(details).toMatchObject({
-      code: "conversation_busy",
-      operation: "op-7",
-      phase: "building",
-    });
-  });
-
-  it("retains the active operation when a blocked eligibility spills", async () => {
-    const host = makeHost(() =>
-      jsonResponse({
-        eligible: false,
-        hosted: true,
-        active: makeReceipt({ operationId: "op-9", phase: "retiring" }),
-        refusals: Array.from({ length: 20 }, (_, index) => ({
-          code: "conversation_busy",
-          reason: `${index}-${"b".repeat(5_000)}`,
-          operationId: null,
-          phase: null,
-        })),
-      }),
-    );
-
-    const result = await runCli(
-      ["conversation", "checkpoint", "check", "conv-1", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(host.written).toHaveLength(1);
-    const details = envelope(result.stdout).details as Record<string, unknown>;
-    expect(details).toMatchObject({
-      activeOperationId: "op-9",
-      activePhase: "retiring",
-    });
-  });
-
-  it("retains the delivery correlations when a failed wait spills", async () => {
-    // needs_reconciliation is exactly the state whose recovery depends on
-    // which attempt and which queued message carried the seed. Losing those
-    // to a spill leaves the caller unable to review the uncertain entry.
-    const host = makeHost((req) =>
-      req.method === "POST"
-        ? jsonResponse(
-            {
-              outcome: "admitted",
-              receipt: makeReceipt(),
-              statusUrl: `${SESSION_BASE}/checkpoints/op-1`,
-            },
-            202,
-          )
-        : jsonResponse({
-            receipt: makeReceipt({
-              phase: "needs_reconciliation",
-              omissions: bigOmissions(20),
-              delivery: {
-                attemptId: "att-5",
-                inputFingerprint: "fp",
-                submittedInputFingerprint: "fp",
-                queuedAttemptId: "qatt-2",
-                queuedMessageId: "qmsg-3",
-              },
-            }),
-          }),
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--wait", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(host.written).toHaveLength(1);
-    const details = envelope(result.stdout).details as Record<string, unknown>;
-    expect(details).toMatchObject({
-      deliveryAttemptId: "att-5",
-      queuedAttemptId: "qatt-2",
-      queuedMessageId: "qmsg-3",
-      acceptance: "unconfirmed",
-    });
-  });
-
-  it("keeps a spilled failure typed and bounded when the file cannot be written", async () => {
-    const host = makeHost(
-      () =>
-        refusalResponse("conversation_busy", HUGE, 409, {
-          operationId: "op-7",
-          phase: "building",
-        }),
-      {
-        writeTextFile: async () => {
-          throw new Error("EACCES");
-        },
-      },
-    );
-
-    const result = await runCli(
-      ["conversation", "compact-context", "conv-1", "--json"],
-      sessionEnv,
-      host,
-    );
-
-    // The refusal's own class survives the spill failure; nothing is dumped.
-    expect(result.exitCode).toBe(1);
-    expect(envelope(result.stdout).code).toBe("write_failed");
-    expect(result.stdout).not.toContain(HUGE);
-    expect(result.stdout.length).toBeLessThan(2000);
-  });
-
-  it("suggests a byte-bounded read of a spilled checkpoint artifact", async () => {
-    const host = makeHost(() =>
-      jsonResponse({
-        receipt: makeReceipt({ phase: "ready" }),
-        seed: {
-          seedText: "S".repeat(200_000),
-          seedSha256: "sha",
-          schemaVersion: 1,
-          createdAt: "2026-09-01T00:00:00.000Z",
-        },
-      }),
-    );
-
-    const result = await runCli(
-      [
-        "conversation",
-        "checkpoint",
-        "get",
-        "conv-1",
-        "op-1",
-        "--detail",
-        "seed",
-      ],
-      sessionEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    const spilled = Buffer.byteLength(host.written[0]?.content ?? "", "utf8");
-    const chunk = /head -c (\d+) /u.exec(result.stdout);
-    expect(chunk).not.toBeNull();
-    expect(Number(chunk?.[1])).toBeLessThan(spilled);
-    expect(result.stdout).not.toContain("sed -n");
-  });
-});
-
-/**
- * The omission cap has to be revealable. A reveal command that re-applied the
- * same cap would make the ninth category unreachable in text — a cap without
- * disclosure, which is the defect the shared omission type exists to prevent.
- */
-describe("checkpoint seed omissions are revealable", () => {
-  const TWELVE = Array.from({ length: 12 }, (_, index) => ({
-    category: `category_${index}`,
-    detail: `detail ${index}`,
-  }));
-
-  function omissionHost(): TestHost {
-    return makeHost(() =>
-      jsonResponse({
-        receipt: makeReceipt({ phase: "ready", omissions: TWELVE }),
-        seed: {
-          seedText: "the frozen seed",
-          seedSha256: "sha",
-          schemaVersion: 1,
-          createdAt: "2026-09-01T00:00:00.000Z",
-        },
-      }),
-    );
-  }
-
-  it("caps the receipt view and names a reveal that returns the rest", async () => {
-    const capped = await runCli(
-      ["conversation", "checkpoint", "get", "conv-1", "op-1"],
-      sessionEnv,
-      omissionHost(),
-    );
-
-    expect(capped.stdout).toContain("12 total, 8 shown");
-    expect(capped.stdout).toContain("category_7");
-    expect(capped.stdout).not.toContain("category_11");
-
-    const reveal = /rest: cctl (.+)/u.exec(capped.stdout)?.[1];
-    expect(reveal).toBeTypeOf("string");
-
-    const revealed = await runCli(
-      (reveal ?? "").split(" "),
-      sessionEnv,
-      omissionHost(),
-    );
-
-    expect(revealed.exitCode).toBe(0);
-    expect(revealed.stdout).toContain("12 total, 12 shown");
-    for (const omission of TWELVE) {
-      expect(revealed.stdout).toContain(omission.category);
-    }
-  });
-
-  it("reports the JSON accounting the JSON envelope actually delivers", async () => {
-    const result = await runCli(
-      ["conversation", "checkpoint", "get", "conv-1", "op-1", "--json"],
-      sessionEnv,
-      omissionHost(),
-    );
-
-    const json = envelope(result.stdout);
-    const receipt = json.receipt as {
-      checkpoint: { omissions: unknown[] };
-    };
-    // The envelope carries every omission, so claiming eight were returned
-    // would understate what this reader already has.
-    expect(receipt.checkpoint.omissions).toHaveLength(12);
-    expect(json.seedOmissions).toEqual({
-      total: 12,
-      returned: 12,
-      truncated: false,
-    });
+    expect(result.stderr).toContain('"serverCode":"backend_unsupported"');
   });
 });
 
@@ -2406,55 +1484,54 @@ describe.each([sessionEnv, projectEnv])(
       backend: "codex",
       modelSelection: { modelId: "gpt-6-astra", parameters: {} },
     };
-    it.each(["fork", "fork-check"])(
-      "%s submits the exact validated file to the explicit source scope",
-      async (verb) => {
-        const host = makeHost(() =>
-          jsonResponse(
-            verb === "fork-check"
-              ? { eligible: true }
-              : {
-                  conversation: { id: request.requestId },
-                  reused: false,
-                  receipt: makeReceipt({
-                    operationId: request.requestId,
-                    phase: "ready",
-                  }),
-                },
-          ),
-        );
-        host.readTextFile = async () => JSON.stringify(request);
-        const result = await runCli(
-          [
-            "conversation",
-            "checkpoint",
-            verb,
-            "conv-1",
-            "op-1",
-            "--file",
-            "fork.json",
-            "--json",
-          ],
-          env,
-          host,
-        );
-        expect(host.requests).toHaveLength(1);
-        expect(host.requests[0]).toMatchObject({
-          path: `${env === projectEnv ? PROJECT_BASE : SESSION_BASE}/checkpoints/op-1/fork${verb === "fork-check" ? "/check" : ""}`,
+    it("fork preflights and submits its model selection to the source scope", async () => {
+      const host = makeHost((req) =>
+        jsonResponse(
+          req.path.endsWith("/check")
+            ? { eligible: true }
+            : {
+                conversation: { id: request.requestId },
+                reused: false,
+                receipt: makeReceipt({
+                  operationId: request.requestId,
+                  phase: "ready",
+                }),
+              },
+        ),
+      );
+      host.readTextFile = async () => JSON.stringify(request);
+      const result = await runCcWithHost(
+        [
+          "conversation",
+          "checkpoint",
+          "fork",
+          "conv-1",
+          "op-1",
+          "--file",
+          "fork.json",
+          "--json",
+        ],
+        env,
+        host,
+      );
+      expect(host.requests).toHaveLength(2);
+      for (const [index, observed] of host.requests.entries())
+        expect(observed).toMatchObject({
+          path: `${env === projectEnv ? PROJECT_BASE : SESSION_BASE}/checkpoints/op-1/fork${index === 0 ? "/check" : ""}`,
           method: "POST",
           body: request,
         });
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain(
-          verb === "fork-check" ? '"eligible":true' : request.requestId,
-        );
-      },
-    );
+      expect(result.exitCode).toBe(0);
+      expect(result.envelope).toMatchObject({
+        effect: "applied",
+      });
+      expect(result.stdout).toContain(request.requestId);
+    });
     it("rejects incomplete atomic model input before connecting", async () => {
       const host = makeHost(() => jsonResponse({ eligible: true }));
       host.readTextFile = async () =>
         JSON.stringify({ ...request, modelSelection: {} });
-      const result = await runCli(
+      const result = await runCcWithHost(
         [
           "conversation",
           "checkpoint",

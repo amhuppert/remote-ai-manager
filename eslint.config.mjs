@@ -313,6 +313,7 @@ const eslintConfig = defineConfig([
   prettier,
   globalIgnores([
     ".cc/**",
+    ".yalc/**",
     ".config/**",
     ".next/**",
     "out/**",

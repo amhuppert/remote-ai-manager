@@ -117,3 +117,8 @@ status lines, session notes offered for promotion); `cctl memory promote`
 carries a session note up to project scope before the session ends; `cctl
 memory archive` retires a note that stopped being true without destroying the
 evidence of what was believed.
+
+`cctl memory export` writes the exact Markdown export as a library artifact.
+Use `--out <path>` to select a destination. With `--json`, scalar command data
+is under `payload.data`; recall and index preserve their exact server-authored
+text there, including the index block.

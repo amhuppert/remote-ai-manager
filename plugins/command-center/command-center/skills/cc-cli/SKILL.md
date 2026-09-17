@@ -38,6 +38,7 @@ is available when an offline catalog is useful.
 | Read native specs and artifact receipts | [Spec reads](references/spec-reads.md) |
 | Submit an authorized Alignment charter or decision batch | [Alignment](references/alignment.md) |
 | Delegate a one-shot agent task or inspect agent profiles | [Agents](references/agents.md) |
+| Analyze local logs and export a trace | [Logs](references/logs.md) |
 | Diagnose identity, connectivity, build skew, or help output | [Environment and help](references/environment-and-help.md) |
 
 For plan design, use [graph-workflow-planning](../graph-workflow-planning/SKILL.md).
@@ -57,18 +58,25 @@ For prose containing quotes, backticks, `$`, or newlines, use the command's
 inline flag or its file variant, never both. This prevents shell expansion from
 changing the text the user will review.
 
-Text output is intended for reading; `--json` is for programmatic consumers.
-The envelope includes `ok`, optional `error`/`code`/`issues`, command-specific
-fields, and the guidance fields below. `--json` changes representation, not
-scope: omitted rows stay omitted. Follow returned handles and omission commands
-to retrieve needed detail. Full documents can spill to files with a manifest
-containing path, format, size, and hash; read or search those files in bounded
-chunks. Use byte ranges for a single-line JSON artifact.
+Text output is for reading; `--json` emits one JSON document for programmatic
+consumers. Domain results use a library envelope: `ok`, `effect`, optional
+`recovery`, `payload`, `error`, and guidance. For an inline result, command data
+is under `payload.data` with `payload.kind: "inline"`. An artifact result has
+`payload.kind: "artifact"`, a bounded `payload.summary`, and
+`payload.artifact` containing the file path, media type, byte count, and hash.
+Read that file in bounded chunks or search it locally.
 
-When parsing output, redirect it to a file first instead of piping a potentially
-large response through another process. Some commands, including validation,
-append runner output after their JSON envelope; decode the first JSON object
-and inspect its outcome rather than assuming the entire stdout is JSON.
+`--json` changes representation, not scope: omitted rows stay omitted. Follow
+returned handles and omission commands. Where help offers `--full`, use it to
+request complete data; `--out <path>` selects the artifact destination. Binary
+exports always return an artifact receipt. Structured input commands have a
+validation twin, such as `ask-check` or `spec draft-check`; it admits the same
+file without applying the write. Check leaf help for any server preflight.
+
+Redirect output to a file before parsing a potentially large response. Parse
+that complete JSON document; validation runner output is inside the result
+payload, never appended after the envelope. Offline `--help`, `--version`, and
+`exit-codes` return their own native metadata objects with `--json`.
 
 ## Output tiers
 
@@ -76,7 +84,7 @@ and inspect its outcome rather than assuming the entire stdout is JSON.
 |---|---|---|
 | `hint` | Advisory next step | Use it when relevant; it grants no authority and imposes no gate. |
 | `reminders[]` | State-dependent invariants | Keep them true while continuing the authorized work. |
-| `instruction` / `stopInstruction` | Immediate protocol action | Follow it before the next tool call, subject to higher-priority instructions. |
+| `instruction` | Immediate protocol action | Follow it before the next tool call, subject to higher-priority instructions. |
 
 A successful `cctl ask` or `cctl decisions propose` registers an asynchronous
 human handoff. Give a brief note explaining what is pending, then end the turn;
@@ -90,23 +98,17 @@ the workflow reference for the command's continuation contract.
 
 ## Exit codes
 
-<!-- BEGIN GENERATED EXIT CODES -->
-_Generated from the CLI exit taxonomy. `cctl exit-codes` prints the same table offline._
+Run `cctl exit-codes` for the runtime's exit classes and domain error catalog;
+add `--json` for structured metadata. An error has `code`, `exitClass`, and
+`message`, with optional `why`, `issues`, and server details. Fix the named
+input or refusal, and use `cctl doctor` for connectivity, token, or build skew.
 
-| Code | Meaning | Recovery |
-|---|---|---|
-| `0` | the command did what was asked | — |
-| `1` | the server refused the operation, or a server-side job it started failed | — |
-| `2` | a local flag, identity, or payload check failed before any request was sent | `cctl <command> --help` |
-| `3` | the CC server could not be reached, or it rejected the API token | `cctl doctor` |
-| `4` | this binary and the server are different builds — nothing changed | `cctl doctor --server <url>` |
-
-<!-- END GENERATED EXIT CODES -->
-
-Errors lead with an actionable line on stderr. Exit `4` is a build mismatch:
-run `cctl doctor` and use the binary the intended server publishes. Diagnose `3` with `cctl doctor`; inspect leaf help and payload issues
-for `2`. An exit `0` can still represent a documented no-op or a status read of
-a failed job, so verify the command-specific outcome before reporting success.
+Inspect `effect` before retrying a failed write: `not_applied` means it did not
+apply, `applied` means an effect occurred, and `unknown` needs a state check.
+Use the actual resource identities in `recovery` to find that state. A nonzero
+exit can follow a successful mutation whose later observation or artifact
+write failed. A successful status read can describe a failed job; inspect the
+job's terminal state before reporting success.
 
 Finish once the authorized action has a success receipt and any necessary
 state check confirms its result. For an asynchronous launch, report the run id

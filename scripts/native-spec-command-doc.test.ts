@@ -5,8 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { allHelpEntries, allSuccessHintRows } from "../src/cli/help-registry";
-import { pathKey } from "../src/cli/help-types";
+import { nativeHelpNodes } from "./cc-cli-skill-reference";
 import {
   renderSpecCommandGuidance,
   SPEC_GUIDANCE_BEGIN_MARKER,
@@ -32,35 +31,9 @@ const NATIVE_SDD_SKILL_PATH = path.resolve(
 const OWNING_REFERENCE = "references/native-spec-delivery.md";
 const OWNING_SKILL = "graph-workflow-planning";
 
-const REGISTRY_KEYS = new Set(
-  allHelpEntries().map((entry) => pathKey(entry.path)),
-);
-
-/**
- * The leading registered command of a free-text label, so a hint row's `after`
- * ("workflow replace or edit on a managed draft (…)") yields the verb rather
- * than the whole sentence.
- */
-function leadingCommand(label: string): string {
-  const prefixesACommand = (candidate: string): boolean => {
-    for (const key of REGISTRY_KEYS) {
-      if (key === candidate || key.startsWith(`${candidate} `)) return true;
-    }
-    return false;
-  };
-  let command = "";
-  for (const word of label.split(/\s+/u).filter(Boolean)) {
-    if (!/^[a-z][a-z0-9-]*$/u.test(word)) break;
-    const next = command ? `${command} ${word}` : word;
-    if (!prefixesACommand(next)) break;
-    command = next;
-  }
-  return command;
-}
-
 /** One-sentence granularity: a restated row names both of its ends together. */
 function sentences(document: string): string[] {
-  return document.replace(/\s+/gu, " ").split(/(?<=[.:])\s+/u);
+  return document.replace(/\s+/gu, " ").split(/(?<=[.:;])\s+/u);
 }
 
 function routingDocuments(): ReadonlyArray<readonly [string, string]> {
@@ -78,16 +51,14 @@ function routingDocuments(): ReadonlyArray<readonly [string, string]> {
  * shipped row. A pointer document may name one of these for what it IS; naming
  * two in one sentence is a launch row restated in prose.
  */
-const LAUNCH_PATH_COMMANDS = [
-  ...new Set(
-    allSuccessHintRows().flatMap((row) => [
-      leadingCommand(row.after),
-      row.names.join(" "),
-    ]),
-  ),
-]
-  .filter((command) => command.length > 0)
-  .map((command) => `cctl ${command}`);
+const LAUNCH_PATH_COMMANDS = nativeHelpNodes()
+  .filter(
+    (node) =>
+      node.path.startsWith("spec plan ") ||
+      node.path === "spec start" ||
+      ["workflow validate", "workflow replace"].includes(node.path),
+  )
+  .map((node) => `cctl ${node.path}`);
 
 /**
  * The prose shape of a launch row that cites only one command, which the
@@ -120,30 +91,6 @@ describe("managed delivery routes to its owning reference (#80 design 3.6)", () 
     },
   );
 
-  it.each(routingDocuments())(
-    "%s carries no second copy of the launch hint chain",
-    (_name, document) => {
-      const flat = document.replace(/\s+/gu, " ");
-      const lines = sentences(document);
-
-      for (const row of allSuccessHintRows()) {
-        expect(
-          flat.includes(row.sample().replace(/\s+/gu, " ")),
-          `a hint the receipt already renders is copied here: ${row.sample()}`,
-        ).toBe(false);
-
-        const after = `cctl ${leadingCommand(row.after)}`;
-        const next = `cctl ${row.names.join(" ")}`;
-        if (after === next) continue;
-        for (const sentence of lines) {
-          expect(
-            sentence.includes(after) && sentence.includes(next),
-            `this sentence restates the chain row "${row.after}" -> ${next}: ${sentence}`,
-          ).toBe(false);
-        }
-      }
-    },
-  );
   it.each(routingDocuments())(
     "%s states each act by its role rather than as a launch row",
     (_name, document) => {

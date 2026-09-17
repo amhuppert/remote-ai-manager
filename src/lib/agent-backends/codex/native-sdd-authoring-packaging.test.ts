@@ -7,8 +7,8 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runCli } from "@/cli/core";
-import type { CliHost } from "@/cli/shared";
+import { runCcWithHost } from "@/cli/testing/domain-runtime";
+import type { CliHost } from "@/cli/transport";
 import { publishManagedSkillBundle } from "@/lib/managed-skills/publisher";
 import {
   NATIVE_SDD_CLAIMS_SOURCE_ID,
@@ -73,7 +73,11 @@ function helpHost(): CliHost {
 }
 
 async function helpText(pathSegments: string[]): Promise<string> {
-  const result = await runCli([...pathSegments, "--help"], {}, helpHost());
+  const result = await runCcWithHost(
+    [...pathSegments, "--help"],
+    {},
+    helpHost(),
+  );
   expect(result.exitCode).toBe(0);
   return result.stdout;
 }
@@ -139,7 +143,7 @@ describe("native-sdd-authoring managed skill", () => {
       sectionBody(loadedSkill, "Reading specs without flooding context"),
     ).toContain(READ_ENVELOPE_REFERENCE_COMMAND);
     expect(loadedSkill).toContain(GENERATED_REFERENCE_COMMAND);
-    expect(loadedSkill).toContain("cctl spec start <slug> --inputs");
+    expect(loadedSkill).toContain("cctl spec start <slug> --file");
     expect(loadedSkill).toContain("cctl workflow live edit");
     expect(loadedSkill).toMatch(/destructive cutover/i);
     expect(loadedSkill).toContain("legacy-retirement boundary");
@@ -341,7 +345,7 @@ describe("native-sdd-authoring managed skill", () => {
       "cctl spec draft",
       "cctl spec remove",
       "cctl spec lint",
-      "cctl spec propose <slug> --notes <notes.md>",
+      "cctl spec propose <slug> --notes-file <notes.md>",
     ]) {
       expect(skill).toContain(expected);
     }

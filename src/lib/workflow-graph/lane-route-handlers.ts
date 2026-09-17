@@ -231,7 +231,7 @@ async function prepareContext(
     // (`reminderState`) supplies the same iteration/threshold pair the engine
     // compares, so a near-budget halt surfaces iteration-budget alongside
     // halted-stop (doc 04 §6.4).
-    const { reminders, ruleIds } = evaluateLaneReminders({
+    const { reminders, ruleIds, guidance } = evaluateLaneReminders({
       verb,
       halted: haltReason,
       iterationCount: result.reminderState.iterationCount,
@@ -241,6 +241,8 @@ async function prepareContext(
       allowAgentCollaboration: context.allowAgentCollaboration,
     });
     if (reminders.length > 0) {
+      for (const event of guidance.firings)
+        log.info(event.type, { ...event, authority: guidance.authority });
       log.info("graph-workflow-lane.reminders_emitted", {
         contextId,
         verb,
@@ -254,7 +256,7 @@ async function prepareContext(
           error: haltReason,
           halt: true,
           reason: haltReason,
-          ...(reminders.length > 0 ? { reminders } : {}),
+          ...(reminders.length > 0 ? { guidance } : {}),
         },
         { status: 409 },
       ),
@@ -299,7 +301,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         ok: true;
         remainingTaskCount: number;
         stopInstruction?: string;
-        reminders?: string[];
+        guidance?: ReturnType<typeof evaluateLaneReminders>["guidance"];
       } = { ok: true, remainingTaskCount };
       if (contextLimitStop) {
         body.stopInstruction =
@@ -312,7 +314,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
       const contextDef = execution.workingDefinition.executionContexts.find(
         (definition) => definition.id === cid,
       );
-      const { reminders, ruleIds } = evaluateLaneReminders({
+      const { reminders, ruleIds, guidance } = evaluateLaneReminders({
         verb: "task-complete",
         halted: null,
         iterationCount: state?.iterationCount ?? 0,
@@ -324,7 +326,9 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         allowAgentCollaboration: prepared.context.allowAgentCollaboration,
       });
       if (reminders.length > 0) {
-        body.reminders = reminders;
+        for (const event of guidance.firings)
+          log.info(event.type, { ...event, authority: guidance.authority });
+        body.guidance = guidance;
         log.info("graph-workflow-lane.reminders_emitted", {
           contextId,
           verb: "task-complete",

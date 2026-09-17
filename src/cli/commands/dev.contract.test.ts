@@ -25,8 +25,8 @@ import type { PortOwnershipInput } from "@/lib/dev-server/port-ownership";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
-import { runCli } from "../core";
-import type { CliEnv, CliHost } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost } from "../transport";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real dev-server
@@ -166,7 +166,7 @@ describe("cctl dev against the real dev-server route handlers", () => {
       },
     };
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "ensure"],
       env,
       routeHost(makeDeps(service)),
@@ -175,11 +175,7 @@ describe("cctl dev against the real dev-server route handlers", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("http://localhost:5010");
     expect(result.stdout).toContain("https://web.example.ts.net");
-    expect(
-      result.stdout
-        .trimEnd()
-        .endsWith("re-check liveness with 'cctl dev list'"),
-    ).toBe(true);
+    expect(result.stdout).toContain("cctl dev list");
   });
 
   it("list renders the derived localUrl for a running server", async () => {
@@ -201,13 +197,15 @@ describe("cctl dev against the real dev-server route handlers", () => {
       },
     };
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "list", "--json"],
       env,
       routeHost(makeDeps(service)),
     );
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.servers[0].localUrl).toBe("http://localhost:5010");
+    expect(envelope.payload.data.servers[0].localUrl).toBe(
+      "http://localhost:5010",
+    );
   });
 
   it("ensure (named) exits 1 with a CommandCenter.json pointer when nothing is configured", async () => {
@@ -229,7 +227,7 @@ describe("cctl dev against the real dev-server route handlers", () => {
       },
     };
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "ensure", "web"],
       env,
       routeHost(makeDeps(service)),
@@ -257,7 +255,7 @@ describe("cctl dev against the real dev-server route handlers", () => {
       },
     };
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["dev", "stop", "web"],
       env,
       routeHost(makeDeps(service)),
@@ -420,28 +418,32 @@ describe("cctl dev workflow-lane isolation", () => {
         },
       };
 
-      const before = await runCli(["dev", "list", "--json"], laneEnv, host);
+      const before = await runCcWithHost(
+        ["dev", "list", "--json"],
+        laneEnv,
+        host,
+      );
       expect(before.exitCode).toBe(0);
       const beforeEnvelope = JSON.parse(before.stdout);
-      expect(beforeEnvelope.servers).toHaveLength(1);
-      expect(beforeEnvelope.servers[0]).toMatchObject({
+      expect(beforeEnvelope.payload.data.servers).toHaveLength(1);
+      expect(beforeEnvelope.payload.data.servers[0]).toMatchObject({
         status: "stopped",
         worktreePath: null,
         localUrl: null,
       });
 
-      const ensured = await runCli(
+      const ensured = await runCcWithHost(
         ["dev", "ensure", "web", "--json"],
         laneEnv,
         host,
       );
       expect(ensured.exitCode).toBe(0);
       const ensuredEnvelope = JSON.parse(ensured.stdout);
-      expect(ensuredEnvelope.server).toMatchObject({
+      expect(ensuredEnvelope.payload.data.server).toMatchObject({
         worktreePath: laneWorktree,
         localUrl: "http://localhost:59961",
       });
-      expect(ensuredEnvelope.server.localUrl).not.toBe(
+      expect(ensuredEnvelope.payload.data.server.localUrl).not.toBe(
         "http://localhost:59960",
       );
       await vi.waitFor(() => {
@@ -455,13 +457,13 @@ describe("cctl dev workflow-lane isolation", () => {
         ).toContain(realpathSync(laneWorktree));
       });
 
-      const fixture = await runCli(
+      const fixture = await runCcWithHost(
         ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
         laneEnv,
         host,
       );
       expect(fixture.exitCode).toBe(0);
-      expect(JSON.parse(fixture.stdout)).toMatchObject({
+      expect(JSON.parse(fixture.stdout).payload.data).toMatchObject({
         target: "http://localhost:59961",
         worktreePath: laneWorktree,
         dbPath: path.join(laneWorktree, ".config", "command-center.db"),
@@ -481,7 +483,11 @@ describe("cctl dev workflow-lane isolation", () => {
         "http://localhost:59961/api/projects/scratch/sessions",
       ]);
 
-      const stopped = await runCli(["dev", "stop", "web"], laneEnv, host);
+      const stopped = await runCcWithHost(
+        ["dev", "stop", "web"],
+        laneEnv,
+        host,
+      );
       expect(stopped.exitCode).toBe(0);
       expect(
         registry.getServer({

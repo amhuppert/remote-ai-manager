@@ -1,480 +1,589 @@
 <!-- BEGIN GENERATED COMMAND REFERENCE -->
 ### Command reference
 
-_Generated from the `cctl` help registry. Read a command's `--help` for its current contract._
+_Generated from the native `cctl` registry. Leaf `--help` owns descriptions, examples, input limits, and recovery edges. Use `cctl --help` for global flags and `cctl exit-codes` for the runtime error catalog._
 
-- `cctl ask` — ask the user a question batch, then end your turn
-  - `cctl ask --file .cc/temp/questions.json`
-  - `cctl ask --question "<text>" --option <label> --option <label> [--multi-select] [--header "<h>"] [--context "<c>"]`
-
-- `cctl notify` — send a push notification to the user
-  - `cctl notify "<message>" [--title "<title>"]`
-
-- `cctl docs` — register, list, and delete reference documents
-  - `cctl docs <register|list|delete>`
-- `cctl docs register` — register (or update) a reference document
-  - `cctl docs register <path> --description "<why it matters>"`
-- `cctl docs list` — list registered reference documents
-  - `cctl docs list [--json]`
-- `cctl docs delete` — deregister a reference document
-  - `cctl docs delete <id>`
-
-- `cctl dev` — list, ensure, stop, and diagnose dev servers
-  - `cctl dev <list|ensure|stop|doctor>`
-- `cctl dev list` — show configured dev servers with status and URLs
-  - `cctl dev list [--json]`
-- `cctl dev ensure` — start a dev server and block until it is live
-  - `cctl dev ensure [<serverName>]`
-- `cctl dev stop` — stop a running dev server
-  - `cctl dev stop <serverName>`
-- `cctl dev doctor` — show which CC instance you are driving (managing vs dev server)
-  - `cctl dev doctor [<serverName>]`
-
-- `cctl fixture` — scaffold test sessions and run prompts against a dev server
-  - `cctl fixture <session create|session delete|prompt|status>`
-- `cctl fixture session` — create and delete throwaway test sessions
-  - `cctl fixture session <create|delete>`
-- `cctl fixture prompt` — run a real LLM turn in a test session
-  - `cctl fixture prompt <project> <sessionName> --text "<prompt>" [--conversation <id>] [--wait [--timeout <sec>]]`
-- `cctl fixture status` — list a test session's conversations and their status
-  - `cctl fixture status <project> <sessionName>`
-- `cctl fixture session create` — create a throwaway test session and pre-warm its routes
-  - `cctl fixture session create <project> [--name <n>] [--dev <serverName>] [--target <url>] [--skip-warm]`
-- `cctl fixture session delete` — tear down a throwaway test session
-  - `cctl fixture session delete <project> <sessionName>`
-
-- `cctl workflow` — list, inspect, start, and delete graph workflows
-  - `cctl workflow <validate|create|replace|review|edit|list|get|status|start|run|wait|abandon|delete|templates>`
-  - `cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)`
-- `cctl workflow validate` — check a plan.json without saving anything
-  - `cctl workflow validate --file .cc/temp/plan.json [--definition <id>] [--tier global|project] [--json]`
-- `cctl workflow create` — save a new definition for visual review before launch
-  - `cctl workflow create --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]`
-- `cctl workflow replace` — overwrite an existing definition from a plan file
-  - `cctl workflow replace <id> --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]`
-- `cctl workflow review` — read or record the review verdict bound to a plan revision
-  - `cctl workflow review --file .cc/temp/plan.json [--json]`
-  - `cctl workflow review --file .cc/temp/plan.json --verdict approved|changes-requested [--findings <path>] [--reviewer <conversation-id>] [--json]`
-- `cctl workflow list` — list this project's saved workflow definitions
-  - `cctl workflow list [--json]`
-- `cctl workflow get` — print a definition's outline (or one section, or the full JSON)
-  - `cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]`
-- `cctl workflow edit` — apply targeted, atomic edits to a saved definition
-  - `cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]`
-- `cctl workflow status` — show a Current or History execution projection
-  - `cctl workflow status [<executionId>] [--halt | --full] [--json]`
-- `cctl workflow start` — launch an execution from a saved definition
-  - `cctl workflow start <id> [--file .cc/temp/inputs.json] [--json]`
-- `cctl workflow run` — launch a one-off execution directly from a plan file
-  - `cctl workflow run --file .cc/temp/plan.json [--inputs .cc/temp/inputs.json] [--wait [--timeout <dur>]] [--json]`
-- `cctl workflow wait` — wait for the next durable execution boundary
-  - `cctl workflow wait <executionId> [--cursor <cursor>] [--timeout <dur>] [--json]`
-- `cctl workflow abandon` — audit and abandon a resumably halted execution
-  - `cctl workflow abandon <executionId> --reason <reason> [--json]`
-- `cctl workflow delete` — permanently remove a saved definition
-  - `cctl workflow delete <id>`
-- `cctl workflow templates` — list saved workflow templates across both tiers
-  - `cctl workflow templates [--tier global|project] [--json]`
-- `cctl workflow live` — act on this session's ACTIVE launched execution
-  - `cctl workflow live <get|ledger|edit|pause|resume|abort>`
-- `cctl workflow task` — advance a running lane — complete or add tasks
-  - `cctl workflow task <complete|add>`
-- `cctl workflow graph` — grow the running graph from inside a lane
-  - `cctl workflow graph expand --file .cc/temp/expansion.json`
-- `cctl workflow shared-doc` — share a document with other lanes
-  - `cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json`
-- `cctl workflow collab` — request a second opinion from another agent
-  - `cctl workflow collab request --brief "<question with context>"`
-- `cctl workflow live get` — print the live outline of the active execution
-  - `cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --outputs | --full] [--json]`
-- `cctl workflow live ledger` — print the active execution's loop ledger
-  - `cctl workflow live ledger [--cursor <seq>] [--max-pages <n>] [--json]`
-- `cctl workflow live edit` — apply live edits to the running execution's working copy
-  - `cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]`
-- `cctl workflow live amend` — add contexts, tasks, or edges to a running or paused delivery-plan run
-  - `cctl workflow live amend --reason <rationale> --file <live-ops.json> [--json]`
-- `cctl workflow live pause` — pause the active execution to unlock started contexts
-  - `cctl workflow live pause [--json]`
-- `cctl workflow live resume` — resume a paused or resumably-halted execution
-  - `cctl workflow live resume [--json]`
-- `cctl workflow live abort` — abort the active execution
-  - `cctl workflow live abort --reason <reason> [--json]`
-- `cctl workflow task complete` — mark the current lane task done (advances the workflow)
-  - `cctl workflow task complete <taskId> --summary "<what changed, how verified>"`
-- `cctl workflow task add` — append a newly-discovered task to this lane
-  - `cctl workflow task add --title "<name>" --instructions "<self-contained steps>" [--slug <slug>]`
-- `cctl workflow graph expand` — append new contexts, tasks, and edges to the running graph
-  - `cctl workflow graph expand --file .cc/temp/expansion.json`
-- `cctl workflow shared-doc upsert` — register or update a shared document for other lanes
-  - `cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json`
-- `cctl workflow collab request` — ask another agent to weigh in on an ambiguous decision
-  - `cctl workflow collab request --brief "<question with context>"`
-
-- `cctl charter` — submit the session's Alignment charter
-  - `cctl charter write --file .cc/temp/charter.json`
-- `cctl charter write` — submit the Alignment charter draft
-  - `cctl charter write --file .cc/temp/charter.json`
-
-- `cctl decisions` — propose decisions for the user's review
-  - `cctl decisions propose --file .cc/temp/decisions.json`
-- `cctl decisions propose` — propose a decision batch for review
-  - `cctl decisions propose --file .cc/temp/decisions.json`
-
-- `cctl agent` — run one-shot sub-agent jobs; read the agent profile library
-  - `cctl agent <run|status|cancel|list|get>`
-- `cctl agent run` — start an agent run (optionally waiting for it)
-  - `cctl agent run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]`
-- `cctl agent status` — read a run's state (and recover its result)
-  - `cctl agent status <runId> [--json]`
-- `cctl agent cancel` — abort a live agent run
-  - `cctl agent cancel <runId>`
-- `cctl agent list` — list the agent profile library across every tier
-  - `cctl agent list [--json]`
-- `cctl agent get` — read one agent profile, including its instructions
-  - `cctl agent get <tier:id> [--json]`
-
-- `cctl validate` — list and run registered validation under the global cost budget
-  - `cctl validate <list|run|status|cancel>`
-- `cctl validate list` — list commands, policy enablement, and current capacity
-  - `cctl validate list [--json]`
-- `cctl validate run` — run one registered validation command
-  - `cctl validate run <name> [--scope changed|full] [--queue-if-busy] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]`
-- `cctl validate status` — inspect active validation or one run
-  - `cctl validate status [run-id] [--json]`
-- `cctl validate cancel` — cancel an owned validation run
-  - `cctl validate cancel <run-id> [--json]`
-
-- `cctl conversation` — read conversation transcripts and manage compaction artifacts
-  - `cctl conversation <read|compact|compact-context|compaction get|compaction list|checkpoint check|checkpoint list|checkpoint get|checkpoint cancel|checkpoint reconcile|checkpoint fork-check|checkpoint fork|entry get|image get>`
-- `cctl conversation read` — render a bounded window of a transcript
-  - `cctl conversation read [<conversation-id>] [--outline] [--message N] [--message-range A:B] [--seq-range A:B] [--include-tools none|summary|full] [--include-thinking] [--search <regex>] [--max-bytes N] [--format json|markdown] [--json]`
-- `cctl conversation compact` — create or refresh a compaction artifact
-  - `cctl conversation compact <conversation-id> [--message N] [--force] [--wait] [--json]`
-- `cctl conversation compaction` — read compaction artifacts
-  - `cctl conversation compaction <get|list>`
-- `cctl conversation compact-context` — start a CC checkpoint that retires this conversation's context
-  - `cctl conversation compact-context [<conversation-id>] [--wait] [--recover <operation-id>] [--json]`
-- `cctl conversation checkpoint` — inspect and repair conversation checkpoint operations
-  - `cctl conversation checkpoint <check|list|get|cancel|reconcile|fork-check|fork>`
-- `cctl conversation entry` — export one complete archive entry
-  - `cctl conversation entry <get>`
-- `cctl conversation image` — materialize an archived image
-  - `cctl conversation image <get>`
-- `cctl conversation compaction get` — fetch the newest matching compaction envelope
-  - `cctl conversation compaction get <conversation-id> [--message N] [--format json|markdown] [--json]`
-- `cctl conversation compaction list` — list a conversation's compaction artifacts
-  - `cctl conversation compaction list <conversation-id> [--json]`
-- `cctl conversation checkpoint fork-check` — check checkpoint fork admission without creating a conversation
-  - `cctl conversation checkpoint fork-check <conversation-id> <operation-id> --file <request.json> [--json]`
-- `cctl conversation checkpoint fork` — create a focused conversation from a saved checkpoint
-  - `cctl conversation checkpoint fork <conversation-id> <operation-id> --file <request.json> [--json]`
-- `cctl conversation checkpoint check` — report whether a checkpoint would be admitted right now
-  - `cctl conversation checkpoint check [<conversation-id>] [--recover <operation-id>] [--json]`
-- `cctl conversation checkpoint list` — list a conversation's checkpoint receipts, newest first
-  - `cctl conversation checkpoint list [<conversation-id>] [--before <ordinal>] [--limit <n>] [--json]`
-- `cctl conversation checkpoint get` — read one checkpoint receipt, or its exact frozen seed
-  - `cctl conversation checkpoint get <conversation-id> <operation-id> [--detail receipt|seed] [--json]`
-- `cctl conversation checkpoint cancel` — cancel an in-flight checkpoint operation
-  - `cctl conversation checkpoint cancel <conversation-id> <operation-id> [--json]`
-- `cctl conversation checkpoint reconcile` — retry the deterministic repair of a stuck checkpoint operation
-  - `cctl conversation checkpoint reconcile <conversation-id> <operation-id> [--json]`
-- `cctl conversation entry get` — export one complete archive entry at a raw sequence
-  - `cctl conversation entry get <conversation-id> <seq> [--include-thinking] [--json]`
-- `cctl conversation image get` — write an archived image to a file and report its hash
-  - `cctl conversation image get <conversation-id> <seq> <block-index> [--json]`
-
-- `cctl ticket` — create, list, read, update, link, post updates to, and attach context to work tickets
-  - `cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment|export|import>`
-- `cctl ticket export` — export one portable ticket bundle
-  - `cctl ticket export <number | project#number> --out <archive.cc-ticket.gz> [--prepared <id> --acknowledge <digest>]`
-- `cctl ticket import` — import a portable bundle as an independent ticket
-  - `cctl ticket import --file <archive.cc-ticket.gz> [--allow-duplicate]`
-  - `cctl ticket import --prepared <id> [--allow-duplicate]`
-- `cctl ticket create` — create a ticket in the ambient project
-  - `cctl ticket create --title "<title>" --type <feature|bug|research|tech_debt|performance> [--description "<markdown>"] [--status <not_started|in_progress|done|blocked|closed>]`
-- `cctl ticket list` — list tickets with filters
-  - `cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all] [--limit <n>] [--attachments]`
-- `cctl ticket get` — read one ticket with bounded collaboration outlines
-  - `cctl ticket get <number | project#number>`
-- `cctl ticket update` — update a ticket's fields or status
-  - `cctl ticket update <number | project#number> [--title "<title>"] [--description "<markdown>"] [--type <type>] [--status <status>]`
-- `cctl ticket delete` — delete a ticket
-  - `cctl ticket delete <number | project#number>`
-- `cctl ticket start` — start work on a ticket in a new session
-  - `cctl ticket start <number | project#number> --mode <agent|prepared> [--backend <backend>] [--model <model> [--model-param <id=value> ...]]`
-- `cctl ticket relation` — list, read, add, edit, and remove ticket relationships
-  - `cctl ticket relation <list|get|add|update|remove>`
-- `cctl ticket status-update` — post and read append-only ticket status updates
-  - `cctl ticket status-update <add|list|get>`
-- `cctl ticket attach` — attach described context to a ticket
-  - `cctl ticket attach <file|conversation|session|ticket|note> <number | project#number> … --description "<what and why>"`
-- `cctl ticket attachment` — read, edit, refresh, and remove ticket attachments
-  - `cctl ticket attachment <get|update|refresh|remove> <number | project#number> <attachmentId>`
-- `cctl ticket relation list` — list newest relationships as bounded outlines
-  - `cctl ticket relation list <number | project#number> [--role <related|depends_on|blocks|parent|child>] [--limit <n>] [--cursor <opaque>]`
-- `cctl ticket relation get` — read one relationship and its full rationale
-  - `cctl ticket relation get <number | project#number> <relationshipId>`
-- `cctl ticket relation add` — add a relationship relative to one ticket
-  - `cctl ticket relation add <number | project#number> <otherNumber | project#number> --role <related|depends_on|blocks|parent|child> [--description "<markdown>"]`
-- `cctl ticket relation update` — replace or clear a relationship rationale
-  - `cctl ticket relation update <number | project#number> <relationshipId> --description "<markdown>"`
-- `cctl ticket relation remove` — remove a relationship
-  - `cctl ticket relation remove <number | project#number> <relationshipId>`
-- `cctl ticket status-update add` — append a Markdown status update
-  - `cctl ticket status-update add <number | project#number> --body "<markdown>"`
-- `cctl ticket status-update list` — list newest status updates as bounded outlines
-  - `cctl ticket status-update list <number | project#number> [--limit <n>] [--cursor <opaque>]`
-- `cctl ticket status-update get` — read one full status update and provenance snapshot
-  - `cctl ticket status-update get <number | project#number> <updateId>`
-- `cctl ticket attach file` — attach a file snapshot
-  - `cctl ticket attach file <number | project#number> <path> --description "<what and why>" [--media-type <mime>]`
-- `cctl ticket attach conversation` — attach a conversation's compaction snapshot
-  - `cctl ticket attach conversation <number | project#number> [<conversationId>] --description "<what and why>"`
-- `cctl ticket attach session` — attach a live session pointer
-  - `cctl ticket attach session <number | project#number> <sessionName> --description "<what and why>"`
-- `cctl ticket attach note` — attach a markdown note
-  - `cctl ticket attach note <number | project#number> "<markdown>" --description "<what and why>"`
-- `cctl ticket attachment get` — retrieve an attachment's full content
-  - `cctl ticket attachment get <number | project#number> <attachmentId>`
-- `cctl ticket attachment update` — edit an attachment's description or note body
-  - `cctl ticket attachment update <number | project#number> <attachmentId> [--description "<what and why>"] [--markdown "<note body>"]`
-- `cctl ticket attachment refresh` — retry a conversation snapshot capture
-  - `cctl ticket attachment refresh <number | project#number> <attachmentId>`
-- `cctl ticket attachment remove` — remove an attachment
-  - `cctl ticket attachment remove <number | project#number> <attachmentId>`
-
-- `cctl memory` — recall, capture, and maintain Command Center's shared memory
-  - `cctl memory <recall|index|list|get|create|update|link|unlink|mark-reviewed|observe-rederivation|promote|review|archive|delete|export>`
-- `cctl memory recall` — read a bounded pack of the memory most relevant to a question
-  - `cctl memory recall ["<query>"] [--related <handle>] [--scope <scope>] [--budget <chars>]`
-- `cctl memory index` — render the memory block a conversation is due on its next turn
-  - `cctl memory index [--conversation <id>] [--full]`
-- `cctl memory list` — list the notes visible to this conversation with their slugs
-  - `cctl memory list [--scope <scope>] [--lifecycle <lifecycle>] [--archived] [--limit <n>]`
-- `cctl memory get` — read one note in full, with its links and current revision
-  - `cctl memory get <slug> [--scope <scope>] [--archived]`
-- `cctl memory create` — capture a new note in global, project, or session scope
-  - `cctl memory create --hook "<one line>" [--body "<markdown>"] [--scope <scope>] [--kind <kind>] [--slug <slug>] [--alias <text>] [--status-note "<line>"] [--index-mode <mode>] [--review-after <iso>] [--expires-at <iso>] [--supersedes <slug>]`
-- `cctl memory update` — correct a note under compare-and-swap
-  - `cctl memory update <slug> --if-revision <n> [--hook "<line>"] [--body "<markdown>"] [--slug <new-slug>] [--alias <text>] [--status-note "<line>"] [--index-mode <mode>] [--review-after <iso>] [--expires-at <iso>] [--scope <scope>]`
-- `cctl memory link` — bind a note to the ticket, spec, session, or lane it concerns
-  - `cctl memory link <slug> --artifact <handle> [--kind <about|source>] [--scope <scope>]`
-- `cctl memory unlink` — remove a note's link to an artifact
-  - `cctl memory unlink <slug> --artifact <handle> [--kind <about|source>] [--scope <scope>]`
-- `cctl memory mark-reviewed` — confirm a note is still true and re-lease it
-  - `cctl memory mark-reviewed <slug> [--status] [--if-revision <n>] [--scope <scope>]`
-- `cctl memory promote` — carry a session note up to project scope before the session ends
-  - `cctl memory promote <slug> [--slug <new-slug>] [--hook "<line>"] [--body "<markdown>"] [--status-note "<line>"] [--index-mode <mode>] [--if-revision <n>]`
-- `cctl memory review` — list the notes that have gone stale or await promotion
-  - `cctl memory review [--promotable] [--project-candidates] [--limit <n>]`
-- `cctl memory observe-rederivation` — record that a round re-derived what a note already held
-  - `cctl memory observe-rederivation <slug> [--artifact <handle>] [--scope <scope>]`
-- `cctl memory archive` — retire a note without destroying it
-  - `cctl memory archive <slug> [--if-revision <n>] [--scope <scope>]`
-- `cctl memory delete` — permanently destroy a note and its whole history
-  - `cctl memory delete <slug> --confirm [--scope <scope>]`
-- `cctl memory export` — write every visible note to a portable markdown archive
-  - `cctl memory export --output <path> [--scope <scope>]`
-
-- `cctl notepad` — list, read, create, update, and append to notepads
-  - `cctl notepad <list|get|create|update|append|comment>`
-- `cctl notepad list` — list notepads in scope with their ids and revisions
-  - `cctl notepad list [--global] [--archived] [--limit <n>]`
-- `cctl notepad get` — read a notepad's canonical content by id
-  - `cctl notepad get <notepadId>`
-- `cctl notepad create` — create a notepad in the ambient project or the global scope
-  - `cctl notepad create --name "<name>" [--global] [--content "<markdown>"]`
-- `cctl notepad update` — replace a notepad's content, stating the revision you read
-  - `cctl notepad update <notepadId> --if-revision <n> --content "<markdown>"`
-- `cctl notepad append` — append to a notepad, stating the revision you read
-  - `cctl notepad append <notepadId> --if-revision <n> --content "<markdown>"`
-- `cctl notepad comment` — read the user's review comments on a notepad and answer them
-  - `cctl notepad comment <list|reply> <notepadId>`
-- `cctl notepad comment list` — list a notepad's comments with their quoted passages
-  - `cctl notepad comment list <notepadId> [--status <open|resolved>] [--limit <n>]`
-- `cctl notepad comment reply` — reply to one comment on a notepad
-  - `cctl notepad comment reply <notepadId> <commentId> --body "<markdown>"`
-
-- `cctl spec` — author, review, execute, and verify durable specs
-  - `cctl spec list`
-  - `cctl spec measures`
-  - `cctl spec show <slug>`
-  - `cctl spec status <slug>`
-  - `cctl spec comments <slug> [--element <handle>] [--open]`
-  - `cctl spec reply <slug> --thread <threadId> --body <text>`
-  - `cctl spec lint <slug>`
-  - `cctl spec get <slug>/<handle>`
-  - `cctl spec section get <slug> --id <element-id>`
-  - `cctl spec search <slug> <query>`
-  - `cctl spec search --all <query>`
-  - `cctl spec diff <slug> [--from <revisionId>] [--to <revisionId>] [--baseline governance]`
-  - `cctl spec schema [<document>]`
-  - `cctl spec delta <slug> [--since <executionId>] [--out <delta.json>]`
-  - `cctl spec export <slug> [--out <bundle.json>] [--stdout]`
-  - `cctl spec verify <slug> [--against <bundle.json>]`
-  - `cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>`
-  - `cctl spec import --file <bundle.json> [--dry-run]`
-  - `cctl spec amend <slug>`
-  - `cctl spec draft <slug> --file <element.json>`
-  - `cctl spec remove <slug> <handle...>`
-  - `cctl spec propose <slug>`
-  - `cctl spec advance <slug> --from <requirements>`
-  - `cctl spec question <slug> --text <text> [--element <handle>]`
-  - `cctl spec answer <slug>/Q2 --answer <text>`
-  - `cctl spec assume <slug> --text <text> [--element <handle>]`
-  - `cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n>`
-  - `cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n>`
-  - `cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>`
-  - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
-  - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
-  - `cctl spec plan open <slug>`
-  - `cctl spec plan propose <slug>`
-  - `cctl spec plan reopen <slug> --reason <why>`
-  - `cctl spec plan get <slug>`
-  - `cctl spec plan status <slug>`
-  - `cctl spec plan preview <slug> --stage draft|proposed`
-  - `cctl spec plan sign-off <slug>`
-  - `cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]`
-  - `cctl spec capture <slug> --file <task.json>`
-- `cctl spec list` — list native specs in the current project
-  - `cctl spec list`
-- `cctl spec measures` — compute native SDD pilot measures
-  - `cctl spec measures`
-- `cctl spec show` — inspect a bounded spec outline or write a detailed artifact
-  - `cctl spec show <slug> [--summary]`
-  - `cctl spec show <slug> --rendered [--out <file>]`
-  - `cctl spec show <slug> --full [--out <file>]`
-- `cctl spec status` — inspect a spec's phase and gate readiness
-  - `cctl spec status <slug> [--full] [--json]`
-- `cctl spec comments` — read reviewer comments as typed rows
-  - `cctl spec comments <slug> [--element <handle>] [--open]`
-- `cctl spec reply` — answer a review thread in place
-  - `cctl spec reply <slug> --thread <threadId> --body <text>`
-- `cctl spec lint` — read every deterministic lint finding on the open draft
-  - `cctl spec lint <slug>`
-- `cctl spec get` — read one spec element with approval and evidence state
-  - `cctl spec get <slug>/<handle>`
-  - `cctl spec get <slug> <handle>`
-- `cctl spec section` — read the prose sections, which carry no element handle
-  - `cctl spec section get <slug> --id <element-id>`
-- `cctl spec search` — search requirement and decision text in one spec or across all
-  - `cctl spec search <slug> <query>`
-  - `cctl spec search --all <query>`
-- `cctl spec diff` — read the semantic changelog between two revisions
-  - `cctl spec diff <slug>`
-  - `cctl spec diff <slug> --baseline governance`
-  - `cctl spec diff <slug> --from <revisionId> --to <revisionId>`
-- `cctl spec schema` — list offline input and response contract documents
-  - `cctl spec schema`
-  - `cctl spec schema <document>`
-- `cctl spec delta` — compare the approved spec against a delivered execution
-  - `cctl spec delta <slug> [--since <executionId>] [--out <delta.json>]`
-- `cctl spec export` — write a canonical portable spec bundle
-  - `cctl spec export <slug>`
-  - `cctl spec export <slug> --out <bundle.json>`
-  - `cctl spec export <slug> --stdout`
-- `cctl spec verify` — recompute spec integrity and report consistency findings
-  - `cctl spec verify <slug> [--against <bundle.json>]`
-- `cctl spec create` — create a durable spec from its first draft save
-  - `cctl spec create --slug <slug> --name <name> --preset <contract-bearing|exploratory|fast-path> --file <element.json>`
-- `cctl spec import` — create a new spec in one act from an external source bundle
-  - `cctl spec import --file <bundle.json>`
-  - `cctl spec import --file <bundle.json> --dry-run`
-- `cctl spec amend` — reopen authoring on an approved spec as an amendment draft
-  - `cctl spec amend <slug>`
-- `cctl spec draft` — save a draft element at the version it replaces
-  - `cctl spec draft <slug> --file <element.json>`
-  - `cctl spec draft <slug> --file <elements.json>`
-  - `cctl spec draft <slug> --file <batch.json>`
-- `cctl spec remove` — take evergreen draft elements out in one transaction
-  - `cctl spec remove <slug> <handle...>`
-- `cctl spec propose` — propose the current authoring stage for review
-  - `cctl spec propose <slug>`
-  - `cctl spec propose <slug> --notes <notes.md>`
-- `cctl spec withdraw-proposal` — take back your own proposal and reopen it as a draft
-  - `cctl spec withdraw-proposal <slug> --revision <revision-id>`
-- `cctl spec dismiss-superseded` — the human act that ends a proposal an approval forked past
-  - `cctl spec dismiss-superseded <slug> --revision <revision-id> --reason <text>`
-- `cctl spec advance` — conclude a Notify/Off authoring stage explicitly
-  - `cctl spec advance <slug> --from <requirements>`
-- `cctl spec return-to-requirements` — withdraw Design and reopen from approved Requirements
-  - `cctl spec return-to-requirements <slug> --reason <why>`
-- `cctl spec question` — open a visible spec question for human answer
-  - `cctl spec question <slug> --text <text> [--element <handle>]`
-- `cctl spec answer` — answer an open spec question
-  - `cctl spec answer <slug>/Q2 --answer <text>`
-- `cctl spec assume` — propose a visible authoring assumption
-  - `cctl spec assume <slug> --text <text> [--element <handle>]`
-- `cctl spec attention` — correct and cite durable question and assumption records
-  - `cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n> [--if-citation-version <n>]`
-  - `cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n> [--if-citation-version <n>]`
-  - `cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>`
-  - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
-  - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
-- `cctl spec plan` — author the delivery plan attempt that becomes the executed graph
-  - `cctl spec plan open <slug>`
-  - `cctl spec plan propose <slug>`
-  - `cctl spec plan reopen <slug> --reason <why>`
-  - `cctl spec plan sign-off <slug> [--candidate <id> --candidate-hash <hash>]`
-  - `cctl spec plan get <slug>`
-  - `cctl spec plan status <slug>`
-  - `cctl spec plan preview <slug> --stage draft|proposed`
-- `cctl spec request-approval` — repair or re-fire a gate's approval request
-  - `cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]`
-- `cctl spec start` — launch the approved delivery-plan candidate, exactly as approved
-  - `cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]`
-- `cctl spec capture` — record work discovered during a running execution as a durable discovery
-  - `cctl spec capture <slug> --file <task.json> [--execution <workflow-execution-id>] [--blocking-reason <reason>]`
-- `cctl spec rename` — rename a spec's slug, keeping the old slug as an alias
-  - `cctl spec rename <slug> --to <new-slug> [--name <name>]`
-- `cctl spec abandon` — abandon one execution, or retire the whole spec as a human
-  - `cctl spec abandon <slug> --reason <reason>`
-  - `cctl spec abandon <slug> --execution <workflow-execution-id> --reason <reason>`
-- `cctl spec section get` — read one section by its element id
-  - `cctl spec section get <slug> --id <element-id>`
-- `cctl spec attention edit` — correct an open question or proposed assumption
-  - `cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n> [--if-citation-version <n>]`
-- `cctl spec attention withdraw` — retire an obsolete open question or proposed assumption
-  - `cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n> [--if-citation-version <n>]`
-- `cctl spec attention supersede` — replace a terminal assumption while preserving lineage
-  - `cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>`
-- `cctl spec attention cite` — cite an assumption on one draft element
-  - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
-- `cctl spec attention uncite` — uncite an assumption on one draft element
-  - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
-- `cctl spec plan open` — open a delivery plan attempt against the approved revision
-  - `cctl spec plan open <slug>`
-- `cctl spec plan propose` — finalize and freeze an immutable candidate envelope
-  - `cctl spec plan propose <slug>`
-- `cctl spec plan sign-off` — approve the stored candidate and admit the execution_start gate
-  - `cctl spec plan sign-off <slug> [--candidate <id> --candidate-hash <hash>]`
-- `cctl spec plan reopen` — return an unlaunched attempt to draft, invalidating its approval
-  - `cctl spec plan reopen <slug> --reason <why>`
-- `cctl spec plan abandon` — retire a never-launched attempt so a fresh open can pin
-  - `cctl spec plan abandon <slug> --reason <why>`
-- `cctl spec plan get` — read the plan document the attempt carries
-  - `cctl spec plan get <slug>`
-- `cctl spec plan status` — read the attempt's state, findings, and the act it owes next
-  - `cctl spec plan status <slug>`
-- `cctl spec plan preview` — read an authored or finalized launch envelope
-  - `cctl spec plan preview <slug> --stage draft|proposed [--outline] [--expected-draft-revision <n>]`
-
-- `cctl logs` — analyze this machine's CC server logs offline
-  - `cctl logs <report|trace|compare>`
-- `cctl logs report` — rank slow requests, hotspots, duplicate work, and errors
-  - `cctl logs report [--in <path>] [--since <iso>] [--until <iso>] [--top <n>] [--out <path>] [--json]`
-- `cctl logs trace` — deep-dive one trace: timeline, spans, and unexplained time
-  - `cctl logs trace <traceId> [--in <path>] [--top <n>] [--out <path>] [--json]`
-- `cctl logs compare` — compare two logs for regressions and improvements
-  - `cctl logs compare --before <path> --after <path> [--path <api-path>] [--out <path>] [--json]`
-
-- `cctl exit-codes` — what each cctl exit code means and how to recover from it
-  - `cctl exit-codes [--json]`
-
-- `cctl doctor` — check connectivity, auth, and build parity with the CC server
-  - `cctl doctor [--server <url>]`
-
-- `cctl version` — print the cctl build stamp
-  - `cctl version`
+- `cctl agent` — Run agents and inspect profiles
+  - `cctl agent <command> [options]`
+- `cctl agent cancel` — Cancel a session agent run
+  - `cctl agent cancel <run-id> [options]`
+- `cctl agent get` — Read an agent profile
+  - `cctl agent get <profile> [options]`
+- `cctl agent list` — List available agent profiles
+  - `cctl agent list [options]`
+- `cctl agent run` — Start a one-shot agent run
+  - `cctl agent run --file <path> [options]`
+  - Flags: `--wait`, `--timeout`, `--file` (required).
+- `cctl agent run-check` — Validate: Start a one-shot agent run
+  - `cctl agent run-check --file <path> [options]`
+  - Flags: `--wait`, `--timeout`, `--file` (required).
+- `cctl agent status` — Read a durable agent run
+  - `cctl agent status <run-id> [options]`
+- `cctl ask` — Ask the user a batch of questions
+  - `cctl ask --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl ask-check` — Validate: Ask the user a batch of questions
+  - `cctl ask-check --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl charter` — Submit Alignment charter content
+  - `cctl charter <command> [options]`
+- `cctl charter write` — Submit the open Alignment charter draft
+  - `cctl charter write --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl charter write-check` — Validate: Submit the open Alignment charter draft
+  - `cctl charter write-check --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl conversation` — Read original history and manage context checkpoints
+  - `cctl conversation <command> [options]`
+- `cctl conversation checkpoint` — Manage durable context checkpoints
+  - `cctl conversation checkpoint <command> [options]`
+- `cctl conversation checkpoint cancel` — Cancel a cancellable checkpoint operation
+  - `cctl conversation checkpoint cancel <conversation-id> <operation-id> [options]`
+- `cctl conversation checkpoint check` — Check checkpoint admission without starting work
+  - `cctl conversation checkpoint check [conversation-id] [options]`
+  - Flags: `--recover`.
+- `cctl conversation checkpoint fork` — Create a conversation draft from a saved checkpoint
+  - `cctl conversation checkpoint fork <conversation-id> <operation-id> --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl conversation checkpoint fork-check` — Validate: Create a conversation draft from a saved checkpoint
+  - `cctl conversation checkpoint fork-check <conversation-id> <operation-id> --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl conversation checkpoint get` — Inspect a durable checkpoint receipt or saved seed
+  - `cctl conversation checkpoint get <conversation-id> <operation-id> [options]`
+  - Flags: `--detail`.
+- `cctl conversation checkpoint list` — Page through durable checkpoint receipts
+  - `cctl conversation checkpoint list [conversation-id] [options]`
+  - Flags: `--before`, `--limit`.
+- `cctl conversation checkpoint reconcile` — Reconcile checkpoint delivery deterministically
+  - `cctl conversation checkpoint reconcile <conversation-id> <operation-id> [options]`
+- `cctl conversation compact` — Generate or refresh a compaction artifact
+  - `cctl conversation compact [conversation-id] [options]`
+  - Flags: `--message`, `--force`, `--wait`.
+- `cctl conversation compact-context` — Start a durable context checkpoint
+  - `cctl conversation compact-context [conversation-id] [options]`
+  - Flags: `--wait`, `--recover`.
+- `cctl conversation compaction` — Inspect summary artifacts
+  - `cctl conversation compaction <command> [options]`
+- `cctl conversation compaction get` — Read the newest matching compaction artifact
+  - `cctl conversation compaction get [conversation-id] [options]`
+  - Flags: `--message`, `--format`.
+- `cctl conversation compaction list` — List conversation compaction artifacts
+  - `cctl conversation compaction list [conversation-id] [options]`
+- `cctl conversation entry` — Recover original archive entries
+  - `cctl conversation entry <command> [options]`
+- `cctl conversation entry get` — Export one complete original archive entry
+  - `cctl conversation entry get <conversation-id> <seq> [options]`
+  - Flags: `--include-thinking`.
+- `cctl conversation image` — Recover original archive images
+  - `cctl conversation image <command> [options]`
+- `cctl conversation image get` — Export original image bytes from an archive entry
+  - `cctl conversation image get <conversation-id> <seq> <block-index> [options]`
+  - Flags: `--out`.
+- `cctl conversation read` — Read a bounded window of original conversation history
+  - `cctl conversation read [conversation-id] [options]`
+  - Flags: `--outline`, `--message`, `--message-range`, `--seq-range`, `--include-tools`, `--include-thinking`, `--search`, `--max-bytes`, `--format`.
+- `cctl decisions` — Propose Alignment decisions
+  - `cctl decisions <command> [options]`
+- `cctl decisions propose` — Propose a decision batch for human review
+  - `cctl decisions propose --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl decisions propose-check` — Validate: Propose a decision batch for human review
+  - `cctl decisions propose-check --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl dev` — Manage development servers
+  - `cctl dev <command> [options]`
+- `cctl dev doctor` — Compare managing and development CC instances
+  - `cctl dev doctor [server-name] [options]`
+- `cctl dev ensure` — Start a development server and await readiness
+  - `cctl dev ensure [server-name] [options]`
+- `cctl dev list` — Read development server status
+  - `cctl dev list [options]`
+- `cctl dev stop` — Stop an addressed development server
+  - `cctl dev stop <server-name> [options]`
+- `cctl docs` — Manage this session's reference documents
+  - `cctl docs <command> [options]`
+- `cctl docs delete` — Deregister a reference document and remove its file
+  - `cctl docs delete <id> [options]`
+- `cctl docs list` — List registered reference documents
+  - `cctl docs list [options]`
+- `cctl docs register` — Register or update a reference document
+  - `cctl docs register <path> --description <string> [options]`
+  - Flags: `--description` (required).
+- `cctl doctor` — Check connectivity, identity, and build parity
+  - `cctl doctor [options]`
+- `cctl fixture` — Create test state on the dev instance
+  - `cctl fixture <command> [options]`
+- `cctl fixture prompt` — Run a prompt in a development fixture
+  - `cctl fixture prompt <project> <session-name> (--text <string> | --text-file <path>) [options]`
+  - Flags: `--target`, `--dev`, `--text` / `--text-file` (required), `--text-file`, `--wait`, `--timeout`.
+- `cctl fixture session` — Create and delete fixture sessions
+  - `cctl fixture session <command> [options]`
+- `cctl fixture session create` — Create a session on the development instance
+  - `cctl fixture session create <project> [options]`
+  - Flags: `--target`, `--dev`, `--name`, `--skip-warm`.
+- `cctl fixture session delete` — Delete a development fixture session
+  - `cctl fixture session delete <project> <session-name> [options]`
+  - Flags: `--target`, `--dev`.
+- `cctl fixture status` — Read fixture conversation state
+  - `cctl fixture status <project> <session-name> [options]`
+  - Flags: `--target`, `--dev`.
+- `cctl logs` — Analyze local structured logs
+  - `cctl logs <command> [options]`
+- `cctl logs compare` — Compare performance before and after a change
+  - `cctl logs compare --before <string> --after <string> [options]`
+  - Flags: `--since`, `--until`, `--project-name`, `--session-name`, `--conversation-id`, `--path`, `--action`, `--include-self`, `--top`, `--slow-ms`, `--hotspot-ms`, `--before` (required), `--after` (required), `--full`, `--out`.
+- `cctl logs report` — Rank slow requests and performance findings
+  - `cctl logs report [options]`
+  - Flags: `--since`, `--until`, `--project-name`, `--session-name`, `--conversation-id`, `--path`, `--action`, `--include-self`, `--top`, `--slow-ms`, `--hotspot-ms`, `--in`, `--client-log`, `--full`, `--speedscope`, `--out`.
+- `cctl logs trace` — Explain a trace's timeline and spans
+  - `cctl logs trace <trace-id> [options]`
+  - Flags: `--since`, `--until`, `--project-name`, `--session-name`, `--conversation-id`, `--path`, `--action`, `--include-self`, `--top`, `--slow-ms`, `--hotspot-ms`, `--in`, `--full`, `--speedscope`, `--out`.
+- `cctl memory` — Recall and maintain shared memory
+  - `cctl memory <command> [options]`
+- `cctl memory archive` — Archive a note while retaining history
+  - `cctl memory archive <slug> [options]`
+  - Flags: `--scope`, `--if-revision`.
+- `cctl memory create` — Capture durable knowledge
+  - `cctl memory create (--hook <string> | --hook-file <path>) [options]`
+  - Flags: `--hook` / `--hook-file` (required), `--hook-file`, `--body` / `--body-file`, `--body-file`, `--status-note` / `--status-note-file`, `--status-note-file`, `--index-mode`, `--slug`, `--alias`, `--review-after`, `--expires-at`, `--scope`, `--kind`, `--supersedes`.
+- `cctl memory delete` — Permanently delete a note and its history
+  - `cctl memory delete <slug> [options]`
+  - Flags: `--scope`, `--confirm`.
+- `cctl memory export` — Export a portable memory archive
+  - `cctl memory export [options]`
+  - Flags: `--scope`, `--out`.
+- `cctl memory get` — Read a note, links, and lineage
+  - `cctl memory get <slug> [options]`
+  - Flags: `--scope`, `--archived`.
+- `cctl memory index` — Read the memory index due for a conversation
+  - `cctl memory index [options]`
+  - Flags: `--full`.
+- `cctl memory link` — Link a note to a native artifact
+  - `cctl memory link <slug> --artifact <string> [options]`
+  - Flags: `--scope`, `--kind`, `--artifact` (required).
+- `cctl memory list` — List visible memory notes
+  - `cctl memory list [options]`
+  - Flags: `--scope`, `--lifecycle`, `--archived`, `--limit`.
+- `cctl memory mark-reviewed` — Reaffirm a note or its leased status
+  - `cctl memory mark-reviewed <slug> [options]`
+  - Flags: `--scope`, `--if-revision`, `--status`.
+- `cctl memory observe-rederivation` — Record a round that re-derived known knowledge
+  - `cctl memory observe-rederivation <slug> [options]`
+  - Flags: `--scope`, `--artifact`.
+- `cctl memory promote` — Promote session knowledge into the project
+  - `cctl memory promote <slug> [options]`
+  - Flags: `--slug`, `--hook` / `--hook-file`, `--hook-file`, `--body` / `--body-file`, `--body-file`, `--status-note` / `--status-note-file`, `--status-note-file`, `--index-mode`, `--if-revision`.
+- `cctl memory recall` — Retrieve a bounded memory pack
+  - `cctl memory recall [query] [options]`
+  - Flags: `--related`, `--scope`, `--budget`.
+- `cctl memory review` — Read stale notes and promotion candidates
+  - `cctl memory review [options]`
+  - Flags: `--limit`, `--project-candidates`, `--promotable`.
+- `cctl memory unlink` — Remove a native artifact link
+  - `cctl memory unlink <slug> --artifact <string> [options]`
+  - Flags: `--scope`, `--kind`, `--artifact` (required).
+- `cctl memory update` — Update a note at its observed revision
+  - `cctl memory update <slug> --if-revision <integer> [options]`
+  - Flags: `--hook` / `--hook-file`, `--hook-file`, `--body` / `--body-file`, `--body-file`, `--status-note` / `--status-note-file`, `--status-note-file`, `--index-mode`, `--slug`, `--alias`, `--review-after`, `--expires-at`, `--scope`, `--if-revision` (required).
+- `cctl notepad` — Read and write shared notepads
+  - `cctl notepad <command> [options]`
+- `cctl notepad append` — Append content at the revision you read
+  - `cctl notepad append <notepad-id> --if-revision <integer> (--content <string> | --content-file <path>) [options]`
+  - Flags: `--if-revision` (required), `--content` / `--content-file` (required), `--content-file`.
+- `cctl notepad comment` — Read and answer review comments
+  - `cctl notepad comment <command> [options]`
+- `cctl notepad comment list` — Read comments, quoted passages, and replies
+  - `cctl notepad comment list <notepad-id> [options]`
+  - Flags: `--status`, `--limit`.
+- `cctl notepad comment reply` — Reply to one notepad comment
+  - `cctl notepad comment reply <notepad-id> <comment-id> (--body <string> | --body-file <path>) [options]`
+  - Flags: `--body` / `--body-file` (required), `--body-file`.
+- `cctl notepad create` — Create a project or global notepad
+  - `cctl notepad create --name <string> [options]`
+  - Flags: `--name` (required), `--global`, `--content` / `--content-file`, `--content-file`.
+- `cctl notepad get` — Read a notepad's canonical content
+  - `cctl notepad get <notepad-id> [options]`
+- `cctl notepad list` — List notepads with ids and revisions
+  - `cctl notepad list [options]`
+  - Flags: `--global`, `--archived`, `--limit`.
+- `cctl notepad update` — Replace content at the revision you read
+  - `cctl notepad update <notepad-id> --if-revision <integer> (--content <string> | --content-file <path>) [options]`
+  - Flags: `--if-revision` (required), `--content` / `--content-file` (required), `--content-file`.
+- `cctl notify` — Send a push notification to the user
+  - `cctl notify <message> [options]`
+  - Flags: `--title`.
+- `cctl spec` — Author and inspect native specifications
+  - `cctl spec <command> [options]`
+- `cctl spec abandon` — Abandon one workflow execution or request spec retirement
+  - `cctl spec abandon <slug> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--execution`, `--reason` / `--reason-file` (required), `--reason-file`.
+- `cctl spec advance` — Advance concluded requirements into design
+  - `cctl spec advance <slug> --from <enum> [options]`
+  - Flags: `--from` (required).
+- `cctl spec amend` — Open an editable amendment
+  - `cctl spec amend <slug> [options]`
+- `cctl spec answer` — Attempt to answer a spec question
+  - `cctl spec answer <target> (--answer <string> | --answer-file <path>) [options]`
+  - Flags: `--answer` / `--answer-file` (required), `--answer-file`.
+- `cctl spec assume` — Propose an assumption for human disposition
+  - `cctl spec assume <slug> (--text <string> | --text-file <path>) [options]`
+  - Flags: `--text` / `--text-file` (required), `--text-file`, `--element`.
+- `cctl spec attention` — Maintain questions, assumptions, and draft citations
+  - `cctl spec attention <command> [options]`
+- `cctl spec attention cite` — Cite an assumption against a draft content element
+  - `cctl spec attention cite <slug> <handle> --element <string> --revision <string> --if-citation-version <integer> [options]`
+  - Flags: `--element` (required), `--revision` (required), `--if-citation-version` (required).
+- `cctl spec attention edit` — Edit a question or assumption using observed versions
+  - `cctl spec attention edit <slug> <handle> --if-version <integer> --file <path> [options]`
+  - Flags: `--if-version` (required), `--if-citation-version`, `--file` (required).
+- `cctl spec attention edit-check` — Validate: Edit a question or assumption using observed versions
+  - `cctl spec attention edit-check <slug> <handle> --if-version <integer> --file <path> [options]`
+  - Flags: `--if-version` (required), `--if-citation-version`, `--file` (required).
+- `cctl spec attention supersede` — Create the durable successor of an assumption
+  - `cctl spec attention supersede <slug> <handle> --if-version <integer> --if-citation-version <integer> --file <path> [options]`
+  - Flags: `--if-version` (required), `--if-citation-version` (required), `--file` (required).
+- `cctl spec attention supersede-check` — Validate: Create the durable successor of an assumption
+  - `cctl spec attention supersede-check <slug> <handle> --if-version <integer> --if-citation-version <integer> --file <path> [options]`
+  - Flags: `--if-version` (required), `--if-citation-version` (required), `--file` (required).
+- `cctl spec attention uncite` — Remove a draft citation of an assumption
+  - `cctl spec attention uncite <slug> <handle> --element <string> --revision <string> --if-citation-version <integer> [options]`
+  - Flags: `--element` (required), `--revision` (required), `--if-citation-version` (required).
+- `cctl spec attention withdraw` — Withdraw an attention record with a durable reason
+  - `cctl spec attention withdraw <slug> <handle> (--reason <string> | --reason-file <path>) --if-version <integer> [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`, `--if-version` (required), `--if-citation-version`.
+- `cctl spec capture` — Capture discovered work without changing pinned scope
+  - `cctl spec capture <slug> --file <path> [options]`
+  - Flags: `--execution`, `--blocking-reason` / `--blocking-reason-file`, `--blocking-reason-file`, `--file` (required).
+- `cctl spec capture-check` — Validate: Capture discovered work without changing pinned scope
+  - `cctl spec capture-check <slug> --file <path> [options]`
+  - Flags: `--execution`, `--blocking-reason` / `--blocking-reason-file`, `--blocking-reason-file`, `--file` (required).
+- `cctl spec comments` — Read spec review threads
+  - `cctl spec comments <slug> [options]`
+  - Flags: `--element`, `--open`.
+- `cctl spec create` — Create a spec with its first draft element
+  - `cctl spec create --slug <string> --name <string> --preset <enum> --file <path> [options]`
+  - Flags: `--slug` (required), `--name` (required), `--preset` (required), `--file` (required).
+- `cctl spec create-check` — Validate: Create a spec with its first draft element
+  - `cctl spec create-check --slug <string> --name <string> --preset <enum> --file <path> [options]`
+  - Flags: `--slug` (required), `--name` (required), `--preset` (required), `--file` (required).
+- `cctl spec delta` — Read changes since delivery
+  - `cctl spec delta <slug> [options]`
+  - Flags: `--since`, `--full`, `--out`.
+- `cctl spec diff` — Compare spec revisions
+  - `cctl spec diff <slug> [options]`
+  - Flags: `--from`, `--to`, `--baseline`, `--full`, `--out`.
+- `cctl spec dismiss-superseded` — Request dismissal of a superseded proposal
+  - `cctl spec dismiss-superseded <slug> --revision <string> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--revision` (required), `--reason` / `--reason-file` (required), `--reason-file`.
+- `cctl spec draft` — Write draft elements with optimistic concurrency
+  - `cctl spec draft <slug> --file <path> [options]`
+  - Flags: `--quiet`, `--file` (required).
+- `cctl spec draft-check` — Validate: Write draft elements with optimistic concurrency
+  - `cctl spec draft-check <slug> --file <path> [options]`
+  - Flags: `--quiet`, `--file` (required).
+- `cctl spec export` — Export a canonical spec bundle
+  - `cctl spec export <slug> [options]`
+  - Flags: `--stdout`, `--out`.
+- `cctl spec get` — Read one addressed spec element
+  - `cctl spec get <target> [handle] [options]`
+  - Flags: `--revision`.
+- `cctl spec import` — Import a reviewed external specification
+  - `cctl spec import --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl spec import-check` — Validate: Import a reviewed external specification
+  - `cctl spec import-check --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl spec import-preview` — Preview an external specification import
+  - `cctl spec import-preview --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl spec lint` — Read the draft's lint findings
+  - `cctl spec lint <slug> [options]`
+- `cctl spec list` — List the project's specs
+  - `cctl spec list [options]`
+- `cctl spec measures` — Read spec quality and delivery measures
+  - `cctl spec measures [options]`
+- `cctl spec plan` — Author and review delivery candidates
+  - `cctl spec plan <command> [options]`
+- `cctl spec plan abandon` — Retire a delivery attempt before launch
+  - `cctl spec plan abandon <slug> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`.
+- `cctl spec plan get` — Read the authored delivery plan
+  - `cctl spec plan get <slug> [options]`
+  - Flags: `--full`, `--out`.
+- `cctl spec plan open` — Open a delta-seeded delivery attempt
+  - `cctl spec plan open <slug> [options]`
+- `cctl spec plan preview` — Read the authored or frozen launch candidate
+  - `cctl spec plan preview <slug> --stage <enum> [options]`
+  - Flags: `--stage` (required), `--expected-draft-revision`, `--outline`, `--full`, `--out`.
+- `cctl spec plan propose` — Freeze a delivery plan candidate for review
+  - `cctl spec plan propose <slug> [options]`
+- `cctl spec plan reopen` — Reopen delivery planning and invalidate candidate approval
+  - `cctl spec plan reopen <slug> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`.
+- `cctl spec plan sign-off` — Request sign-off of the exact proposed candidate
+  - `cctl spec plan sign-off <slug> [options]`
+  - Flags: `--candidate`, `--candidate-hash`.
+- `cctl spec plan status` — Read delivery plan obligations
+  - `cctl spec plan status <slug> [options]`
+  - Flags: `--full`, `--out`.
+- `cctl spec propose` — Propose the current revision for review
+  - `cctl spec propose <slug> [options]`
+  - Flags: `--notes` / `--notes-file`, `--notes-file`.
+- `cctl spec question` — Open a question for a human decision
+  - `cctl spec question <slug> (--text <string> | --text-file <path>) [options]`
+  - Flags: `--text` / `--text-file` (required), `--text-file`, `--element`.
+- `cctl spec remove` — Remove addressed elements atomically
+  - `cctl spec remove <slug> <handles...> [options]`
+- `cctl spec rename` — Rename a spec while preserving its alias
+  - `cctl spec rename <slug> --to <string> [options]`
+  - Flags: `--to` (required), `--name`.
+- `cctl spec reply` — Reply to a spec review thread
+  - `cctl spec reply <slug> --thread <string> (--body <string> | --body-file <path>) [options]`
+  - Flags: `--thread` (required), `--body` / `--body-file` (required), `--body-file`.
+- `cctl spec request-approval` — Request human review of a gate or subject
+  - `cctl spec request-approval <slug> --gate <enum> [options]`
+  - Flags: `--gate` (required), `--subject`.
+- `cctl spec return-to-requirements` — Return design work to an editable requirements revision
+  - `cctl spec return-to-requirements <slug> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`.
+- `cctl spec schema` — Read generated authoring schemas offline
+  - `cctl spec schema [document] [options]`
+  - Flags: `--full`, `--out`.
+- `cctl spec search` — Search one spec or the whole project
+  - `cctl spec search <target> [query] [options]`
+  - Flags: `--all`.
+- `cctl spec section` — Read handle-less sections
+  - `cctl spec section <command> [options]`
+- `cctl spec section get` — Read a handle-less section by id
+  - `cctl spec section get <slug> --id <string> [options]`
+  - Flags: `--id` (required), `--revision`.
+- `cctl spec show` — Read a spec's current outline or full content
+  - `cctl spec show <slug> [options]`
+  - Flags: `--summary`, `--rendered`, `--full`, `--out`.
+- `cctl spec start` — Launch the approved delivery candidate with ordinary inputs
+  - `cctl spec start <slug> --file <path> [options]`
+  - Flags: `--park`, `--file` (required).
+- `cctl spec start-check` — Validate: Launch the approved delivery candidate with ordinary inputs
+  - `cctl spec start-check <slug> --file <path> [options]`
+  - Flags: `--park`, `--file` (required).
+- `cctl spec status` — Read lifecycle gates and delivery progress
+  - `cctl spec status <slug> [options]`
+  - Flags: `--full`, `--out`.
+- `cctl spec verify` — Verify content and lifecycle integrity
+  - `cctl spec verify <slug> [options]`
+  - Flags: `--against`.
+- `cctl spec withdraw-proposal` — Withdraw the exact proposal previously read
+  - `cctl spec withdraw-proposal <slug> --revision <string> [options]`
+  - Flags: `--revision` (required).
+- `cctl ticket` — Track and execute project work
+  - `cctl ticket <command> [options]`
+- `cctl ticket attach` — Attach reusable work context
+  - `cctl ticket attach <command> [options]`
+- `cctl ticket attach conversation` — Attach a conversation snapshot
+  - `cctl ticket attach conversation <ticket> [conversation-id] (--description <string> | --description-file <path>) [options]`
+  - Flags: `--description` / `--description-file` (required), `--description-file`.
+- `cctl ticket attach file` — Attach original file bytes
+  - `cctl ticket attach file <ticket> <path> (--description <string> | --description-file <path>) [options]`
+  - Flags: `--description` / `--description-file` (required), `--description-file`, `--media-type`.
+- `cctl ticket attach note` — Attach Markdown context
+  - `cctl ticket attach note <ticket> [markdown] (--description <string> | --description-file <path>) [options]`
+  - Flags: `--description` / `--description-file` (required), `--description-file`, `--markdown` / `--markdown-file`, `--markdown-file`.
+- `cctl ticket attach session` — Attach session context
+  - `cctl ticket attach session <ticket> <session-name> (--description <string> | --description-file <path>) [options]`
+  - Flags: `--description` / `--description-file` (required), `--description-file`.
+- `cctl ticket attachment` — Resolve and maintain attachment context
+  - `cctl ticket attachment <command> [options]`
+- `cctl ticket attachment get` — Resolve an attachment
+  - `cctl ticket attachment get <ticket> <attachment-id> [options]`
+  - Flags: `--out`.
+- `cctl ticket attachment refresh` — Refresh a conversation snapshot
+  - `cctl ticket attachment refresh <ticket> <attachment-id> [options]`
+- `cctl ticket attachment remove` — Remove an attachment
+  - `cctl ticket attachment remove <ticket> <attachment-id> [options]`
+- `cctl ticket attachment update` — Update attachment metadata or note prose
+  - `cctl ticket attachment update <ticket> <attachment-id> [options]`
+  - Flags: `--description` / `--description-file`, `--description-file`, `--markdown` / `--markdown-file`, `--markdown-file`.
+- `cctl ticket create` — Create a ticket
+  - `cctl ticket create --title <string> --type <enum> [options]`
+  - Flags: `--title` (required), `--type` (required), `--description` / `--description-file`, `--description-file`, `--status`.
+- `cctl ticket delete` — Delete a ticket
+  - `cctl ticket delete <ticket> [options]`
+- `cctl ticket export` — Prepare and export a ticket bundle
+  - `cctl ticket export <ticket> [options]`
+  - Flags: `--prepared`, `--acknowledge`, `--out`.
+- `cctl ticket get` — Read a ticket and its context outlines
+  - `cctl ticket get <ticket> [options]`
+- `cctl ticket import` — Import a ticket bundle
+  - `cctl ticket import [options]`
+  - Flags: `--archive`, `--prepared`, `--allow-duplicate`.
+- `cctl ticket list` — List tickets
+  - `cctl ticket list [options]`
+  - Flags: `--status`, `--type`, `--sort`, `--all`, `--attachments`, `--limit`.
+- `cctl ticket relation` — Maintain ticket relationships
+  - `cctl ticket relation <command> [options]`
+- `cctl ticket relation add` — Add a relationship
+  - `cctl ticket relation add <ticket> <other> --role <enum> [options]`
+  - Flags: `--role` (required), `--description` / `--description-file`, `--description-file`.
+- `cctl ticket relation get` — Read a relationship in full
+  - `cctl ticket relation get <ticket> <relationship-id> [options]`
+- `cctl ticket relation list` — List ticket relationships
+  - `cctl ticket relation list <ticket> [options]`
+  - Flags: `--limit`, `--cursor`, `--role`.
+- `cctl ticket relation remove` — Remove a relationship
+  - `cctl ticket relation remove <ticket> <relationship-id> [options]`
+- `cctl ticket relation update` — Update relationship rationale
+  - `cctl ticket relation update <ticket> <relationship-id> (--description <string> | --description-file <path>) [options]`
+  - Flags: `--description` / `--description-file` (required), `--description-file`.
+- `cctl ticket start` — Start a ticket work session
+  - `cctl ticket start <ticket> --mode <enum> [options]`
+  - Flags: `--mode` (required), `--backend`, `--model`, `--model-param`.
+- `cctl ticket status-update` — Append and read progress records
+  - `cctl ticket status-update <command> [options]`
+- `cctl ticket status-update add` — Append a status update
+  - `cctl ticket status-update add <ticket> (--body <string> | --body-file <path>) [options]`
+  - Flags: `--body` / `--body-file` (required), `--body-file`.
+- `cctl ticket status-update get` — Read a status update in full
+  - `cctl ticket status-update get <ticket> <update-id> [options]`
+- `cctl ticket status-update list` — List status updates
+  - `cctl ticket status-update list <ticket> [options]`
+  - Flags: `--limit`, `--cursor`.
+- `cctl ticket update` — Update ticket fields
+  - `cctl ticket update <ticket> [options]`
+  - Flags: `--title`, `--description` / `--description-file`, `--description-file`, `--type`, `--status`.
+- `cctl validate` — Run registered project checks
+  - `cctl validate <command> [options]`
+- `cctl validate cancel` — Cancel a validation run you submitted
+  - `cctl validate cancel <run-id> [options]`
+- `cctl validate list` — List registered validation commands
+  - `cctl validate list [options]`
+- `cctl validate run` — Run a registered validation and await its verdict
+  - `cctl validate run <name> [options] [-- <tokens...>]`
+  - Flags: `--scope`, `--queue-if-busy`, `--require-match`, `--timeout`.
+- `cctl validate status` — Read validation runs and results
+  - `cctl validate status [run-id] [options]`
+- `cctl workflow` — Author and operate workflows
+  - `cctl workflow <command> [options]`
+- `cctl workflow abandon` — Abandon a halted execution
+  - `cctl workflow abandon <execution-id> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`.
+- `cctl workflow collab` — Request lane collaboration
+  - `cctl workflow collab <command> [options]`
+- `cctl workflow collab request` — Request lane collaboration
+  - `cctl workflow collab request (--brief <string> | --brief-file <path>) [options]`
+  - Flags: `--brief` / `--brief-file` (required), `--brief-file`.
+- `cctl workflow create` — Save a new workflow definition
+  - `cctl workflow create --file <path> [options]`
+  - Flags: `--acknowledge-review`, `--file` (required).
+- `cctl workflow create-check` — Validate: Save a new workflow definition
+  - `cctl workflow create-check --file <path> [options]`
+  - Flags: `--acknowledge-review`, `--file` (required).
+- `cctl workflow delete` — Delete a saved workflow definition
+  - `cctl workflow delete <definition-id> [options]`
+- `cctl workflow edit` — Apply atomic definition edits
+  - `cctl workflow edit <definition-id> --file <path> [options]`
+  - Flags: `--tier`, `--file` (required).
+- `cctl workflow edit-check` — Validate: Apply atomic definition edits
+  - `cctl workflow edit-check <definition-id> --file <path> [options]`
+  - Flags: `--tier`, `--file` (required).
+- `cctl workflow edit-preview` — Preview definition edits
+  - `cctl workflow edit-preview <definition-id> --file <path> [options]`
+  - Flags: `--tier`, `--file` (required).
+- `cctl workflow get` — Read a workflow outline or addressed section
+  - `cctl workflow get <definition-id> [options]`
+  - Flags: `--tier`, `--context`, `--task`, `--charter`, `--config`, `--params`, `--full`, `--out`.
+- `cctl workflow graph` — Expand this lane graph
+  - `cctl workflow graph <command> [options]`
+- `cctl workflow graph expand` — Expand the graph from this lane
+  - `cctl workflow graph expand --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow graph expand-check` — Validate: Expand the graph from this lane
+  - `cctl workflow graph expand-check --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow list` — List saved workflow definitions
+  - `cctl workflow list [options]`
+- `cctl workflow live` — Inspect and change the active execution
+  - `cctl workflow live <command> [options]`
+- `cctl workflow live abort` — Abort the active execution
+  - `cctl workflow live abort (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`.
+- `cctl workflow live amend` — Amend a launched delivery plan
+  - `cctl workflow live amend (--reason <string> | --reason-file <path>) --file <path> [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`, `--file` (required).
+- `cctl workflow live amend-check` — Validate: Amend a launched delivery plan
+  - `cctl workflow live amend-check (--reason <string> | --reason-file <path>) --file <path> [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`, `--file` (required).
+- `cctl workflow live edit` — Apply atomic live edits
+  - `cctl workflow live edit --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow live edit-check` — Validate: Apply atomic live edits
+  - `cctl workflow live edit-check --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow live edit-preview` — Preview live edits
+  - `cctl workflow live edit-preview --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow live get` — Read the live execution edit map
+  - `cctl workflow live get [options]`
+  - Flags: `--context`, `--task`, `--config`, `--charter`, `--outputs`, `--full`, `--out`.
+- `cctl workflow live ledger` — Read loop decision history
+  - `cctl workflow live ledger [options]`
+  - Flags: `--cursor`, `--max-pages`.
+- `cctl workflow live pause` — Pause the active execution
+  - `cctl workflow live pause [options]`
+- `cctl workflow live resume` — Resume the active execution
+  - `cctl workflow live resume [options]`
+- `cctl workflow replace` — Replace a saved workflow definition
+  - `cctl workflow replace <definition-id> --file <path> [options]`
+  - Flags: `--acknowledge-review`, `--file` (required).
+- `cctl workflow replace-check` — Validate: Replace a saved workflow definition
+  - `cctl workflow replace-check <definition-id> --file <path> [options]`
+  - Flags: `--acknowledge-review`, `--file` (required).
+- `cctl workflow review` — Read and record content-bound plan reviews
+  - `cctl workflow review <command> [options]`
+- `cctl workflow review get` — Read the review of exact plan content
+  - `cctl workflow review get --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow review record` — Record an advisory plan review
+  - `cctl workflow review record --verdict <enum> --file <path> [options]`
+  - Flags: `--verdict` (required), `--findings` / `--findings-file`, `--findings-file`, `--reviewer`, `--file` (required).
+- `cctl workflow review record-check` — Validate: Record an advisory plan review
+  - `cctl workflow review record-check --verdict <enum> --file <path> [options]`
+  - Flags: `--verdict` (required), `--findings` / `--findings-file`, `--findings-file`, `--reviewer`, `--file` (required).
+- `cctl workflow run` — Launch a one-off authored workflow
+  - `cctl workflow run --file <path> [options]`
+  - Flags: `--inputs`, `--wait`, `--timeout`, `--file` (required).
+- `cctl workflow run-check` — Validate: Launch a one-off authored workflow
+  - `cctl workflow run-check --file <path> [options]`
+  - Flags: `--inputs`, `--wait`, `--timeout`, `--file` (required).
+- `cctl workflow shared-doc` — Publish lane shared documents
+  - `cctl workflow shared-doc <command> [options]`
+- `cctl workflow shared-doc upsert` — Register a shared lane document
+  - `cctl workflow shared-doc upsert <relative-path> --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow shared-doc upsert-check` — Validate: Register a shared lane document
+  - `cctl workflow shared-doc upsert-check <relative-path> --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl workflow start` — Launch a saved workflow
+  - `cctl workflow start <definition-id> [options]`
+  - Flags: `--inputs`.
+- `cctl workflow status` — Read execution status
+  - `cctl workflow status [execution-id] [options]`
+  - Flags: `--halt`, `--full`, `--out`.
+- `cctl workflow task` — Transition current lane tasks
+  - `cctl workflow task <command> [options]`
+- `cctl workflow task add` — Add a task to the current lane
+  - `cctl workflow task add --title <string> (--instructions <string> | --instructions-file <path>) [options]`
+  - Flags: `--title` (required), `--instructions` / `--instructions-file` (required), `--instructions-file`, `--slug`.
+- `cctl workflow task complete` — Complete the current lane task
+  - `cctl workflow task complete <task-id> (--summary <string> | --summary-file <path>) [options]`
+  - Flags: `--summary` / `--summary-file` (required), `--summary-file`.
+- `cctl workflow templates` — List reusable workflow templates
+  - `cctl workflow templates [options]`
+  - Flags: `--tier`.
+- `cctl workflow validate` — Validate a plan without saving
+  - `cctl workflow validate --file <path> [options]`
+  - Flags: `--tier`, `--definition`, `--file` (required).
+- `cctl workflow wait` — Wait for an execution boundary
+  - `cctl workflow wait <execution-id> [options]`
+  - Flags: `--cursor`, `--timeout`.
 
 <!-- END GENERATED COMMAND REFERENCE -->

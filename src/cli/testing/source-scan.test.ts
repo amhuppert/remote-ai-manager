@@ -1,3 +1,4 @@
+// @vitest-inputs src/cli/**/*.ts
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -76,9 +77,9 @@ describe("cli source scan", () => {
     const sources = await readCliSources(CLI_ROOT);
     const paths = sources.map((file) => file.relativePath);
 
-    expect(paths).toContain("shared.ts");
-    expect(paths).toContain("commands/workflow.ts");
-    expect(paths).toContain("commands/spec/read.ts");
+    expect(paths).toContain("transport.ts");
+    expect(paths).toContain("commands/workflow/definitions.ts");
+    expect(paths).toContain("commands/spec/native-read.ts");
     expect(paths.filter((file) => file.includes(".test."))).toEqual([]);
   });
 });

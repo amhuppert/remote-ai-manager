@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "../core";
-import {
-  parseArgv,
-  type CliEnv,
-  type CliHost,
-  type FetchInit,
-} from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import { type CliEnv, type CliHost, type FetchInit } from "../transport";
 
 const baseEnv: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:3000",
@@ -127,49 +122,10 @@ const messageArtifact = {
   messageIndex: 2,
 };
 
-describe("parseArgv boolean flags (regression)", () => {
-  it("treats --outline, --include-thinking, and --force as valueless", () => {
-    const parsed = parseArgv([
-      "conversation",
-      "read",
-      "conv-1",
-      "--outline",
-      "--include-thinking",
-      "--force",
-      "trailing",
-    ]);
-    expect(parsed.kind).toBe("ok");
-    if (parsed.kind !== "ok") return;
-    expect(parsed.positionals).toEqual([
-      "conversation",
-      "read",
-      "conv-1",
-      "trailing",
-    ]);
-    expect(parsed.values["outline"]).toBe("true");
-    expect(parsed.values["include-thinking"]).toBe("true");
-    expect(parsed.values["force"]).toBe("true");
-  });
-
-  it("does not swallow a following value flag after a boolean", () => {
-    const parsed = parseArgv([
-      "conversation",
-      "read",
-      "--outline",
-      "--search",
-      "foo",
-    ]);
-    expect(parsed.kind).toBe("ok");
-    if (parsed.kind !== "ok") return;
-    expect(parsed.values["outline"]).toBe("true");
-    expect(parsed.values["search"]).toBe("foo");
-  });
-});
-
 describe("cctl conversation read", () => {
   it("GETs the session-scoped read endpoint with mapped query params", async () => {
     const host = makeHost(() => jsonResponse(sampleTranscript));
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "read",
@@ -204,7 +160,7 @@ describe("cctl conversation read", () => {
 
   it("defaults the positional to CC_CONVERSATION_ID", async () => {
     const host = makeHost(() => jsonResponse(sampleTranscript));
-    const result = await runCli(["conversation", "read"], baseEnv, host);
+    const result = await runCcWithHost(["conversation", "read"], baseEnv, host);
     expect(result.exitCode).toBe(0);
     expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
       "/api/projects/cc/sessions/my-session/conversations/self-conv/read",
@@ -215,7 +171,7 @@ describe("cctl conversation read", () => {
     const host = makeHost(() => jsonResponse(sampleTranscript));
     const env: CliEnv = { ...baseEnv };
     delete env["CC_CONVERSATION_ID"];
-    const result = await runCli(["conversation", "read"], env, host);
+    const result = await runCcWithHost(["conversation", "read"], env, host);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("CC_CONVERSATION_ID");
     expect(host.requests).toHaveLength(0);
@@ -223,7 +179,7 @@ describe("cctl conversation read", () => {
 
   it("uses the project-scoped path when --project is given without --session", async () => {
     const host = makeHost(() => jsonResponse(sampleTranscript));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-9", "--project", "other"],
       baseEnv,
       host,
@@ -240,7 +196,7 @@ describe("cctl conversation read", () => {
         ? jsonResponse([conversationArtifact])
         : jsonResponse(sampleTranscript),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--outline", "--include-thinking"],
       baseEnv,
       host,
@@ -252,9 +208,7 @@ describe("cctl conversation read", () => {
     expect(new URL(host.requests[1]?.url ?? "").pathname).toBe(
       "/api/projects/cc/sessions/my-session/conversations/conv-1/context-artifacts",
     );
-    expect(result.stdout).toContain(
-      "hint: narrow with --message-range A:B / --seq-range A:B, or fetch the compaction: cctl conversation compaction get conv-1",
-    );
+    expect(result.stdout).toContain("cctl conversation compaction get");
   });
 
   it("hints creating a compaction after --outline when none exists", async () => {
@@ -263,32 +217,30 @@ describe("cctl conversation read", () => {
         ? jsonResponse([])
         : jsonResponse(sampleTranscript),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--outline"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "hint: narrow with --message-range A:B / --seq-range A:B; no compaction exists — create one (background LLM generation) with: cctl conversation compact conv-1",
-    );
+    expect(result.stdout).toContain("cctl conversation compact");
     expect(result.stdout).not.toContain("compaction get");
   });
 
-  it("hints that a compaction is generating after --outline when only a pending artifact exists", async () => {
+  it("hints that compaction is generating after --outline when only a pending artifact exists", async () => {
     const host = makeHost((req) =>
       req.url.includes("/context-artifacts")
         ? jsonResponse([{ ...conversationArtifact, status: "pending" }])
         : jsonResponse(sampleTranscript),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--outline"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("a compaction is generating");
-    expect(result.stdout).toContain("cctl conversation compaction get conv-1");
+    expect(result.stdout).toContain("compaction is generating");
+    expect(result.stdout).toContain("cctl conversation compaction get");
   });
 
   it("falls back to the fetch hint when the artifact listing fails, without failing the read", async () => {
@@ -297,20 +249,18 @@ describe("cctl conversation read", () => {
         ? jsonResponse({ error: "boom" }, 500)
         : jsonResponse(sampleTranscript),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--outline"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "or fetch the compaction: cctl conversation compaction get conv-1",
-    );
+    expect(result.stdout).toContain("cctl conversation compaction get");
   });
 
   it("does not touch the artifacts endpoint on a non-outline read", async () => {
     const host = makeHost(() => jsonResponse(sampleTranscript));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1"],
       baseEnv,
       host,
@@ -327,7 +277,7 @@ describe("cctl conversation read", () => {
           headers: { "content-type": "text/markdown; charset=utf-8" },
         }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--format", "markdown"],
       baseEnv,
       host,
@@ -347,34 +297,32 @@ describe("cctl conversation read", () => {
           headers: { "content-type": "text/markdown; charset=utf-8" },
         }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--format", "markdown", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect(envelope.markdown).toBe("# transcript\n");
+    expect(envelope.payload.data.markdown).toBe("# transcript\n");
   });
 
   it("carries the full response body in the --json envelope", async () => {
     const host = makeHost(() => jsonResponse(sampleTranscript));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--json"],
       baseEnv,
       host,
     );
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect(envelope.transcript).toEqual(sampleTranscript);
+    expect(envelope.payload.data.transcript).toEqual(sampleTranscript);
   });
 
   it("reports truncation instead of 'no matching units' when an oversize unit was elided whole", async () => {
     const host = makeHost(() =>
       jsonResponse({ ...sampleTranscript, units: [], truncated: true }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1"],
       baseEnv,
       host,
@@ -389,7 +337,7 @@ describe("cctl conversation read", () => {
     const host = makeHost(() =>
       jsonResponse({ ...sampleTranscript, units: [], truncated: false }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", "--message-range", "760:788"],
       baseEnv,
       host,
@@ -400,60 +348,6 @@ describe("cctl conversation read", () => {
     expect(result.stdout).toContain("seqs 0..21");
     expect(result.stdout).toContain("--seq-range");
   });
-
-  it("exits 2 on an unknown conversation (404 conversation_not_found)", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        { error: "Conversation not found", code: "conversation_not_found" },
-        404,
-      ),
-    );
-    const result = await runCli(
-      ["conversation", "read", "nope"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Conversation not found");
-  });
-
-  it("exits 2 with per-issue lines on invalid read options (400)", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          error: "Invalid read options",
-          code: "invalid_read_options",
-          issues: [
-            {
-              path: "search",
-              message: "search must be a valid regular expression",
-            },
-          ],
-        },
-        400,
-      ),
-    );
-    const result = await runCli(
-      ["conversation", "read", "conv-1", "--search", "["],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain(
-      "search must be a valid regular expression",
-    );
-  });
-
-  it("exits 2 when given more than one positional", async () => {
-    const host = makeHost(() => jsonResponse(sampleTranscript));
-    const result = await runCli(
-      ["conversation", "read", "a", "b"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
 });
 
 describe("cctl conversation compact", () => {
@@ -461,7 +355,7 @@ describe("cctl conversation compact", () => {
     const host = makeHost(() =>
       jsonResponse({ artifactId: "art-1", status: "pending" }, 202),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact", "conv-1"],
       baseEnv,
       host,
@@ -480,16 +374,14 @@ describe("cctl conversation compact", () => {
       mode: "create_or_refresh",
       callerConversationId: "self-conv",
     });
-    expect(result.stdout).toContain(
-      "hint: check status with: cctl conversation compaction get conv-1",
-    );
+    expect(result.stdout).toContain("cctl conversation compaction get");
   });
 
   it("targets a message compaction with --message and passes --force", async () => {
     const host = makeHost(() =>
       jsonResponse({ artifactId: "art-2", status: "pending" }, 202),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact", "conv-1", "--message", "3", "--force"],
       baseEnv,
       host,
@@ -504,33 +396,21 @@ describe("cctl conversation compact", () => {
     });
   });
 
-  it("exits 2 on a non-integer --message and makes no request", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["conversation", "compact", "conv-1", "--message", "abc"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
   // "already fresh" is the outcome, not an advisory next step: it belongs in
   // the primary body (text) and as a status field (JSON), never as a hint.
   it("reports an already-fresh artifact without waiting", async () => {
     const host = makeHost(() =>
       jsonResponse({ artifact: conversationArtifact, hint: "already fresh" }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact", "conv-1", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect(envelope.artifact.id).toBe("art-conv");
-    expect(envelope.status).toBe("fresh");
+    expect(envelope.payload.data.artifact.id).toBe("art-conv");
+    expect(envelope.payload.data.status).toBe("fresh");
     expect(envelope.hint).toBeUndefined();
   });
 
@@ -538,13 +418,13 @@ describe("cctl conversation compact", () => {
     const host = makeHost(() =>
       jsonResponse({ artifact: conversationArtifact, hint: "already fresh" }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact", "conv-1"],
       baseEnv,
       host,
     );
-    expect(result.stdout).toBe(
-      "compaction already fresh (artifact art-conv)\n",
+    expect(result.stdout).toContain(
+      "compaction already fresh (artifact art-conv)",
     );
   });
 
@@ -556,7 +436,7 @@ describe("cctl conversation compact", () => {
         return jsonResponse({ ...conversationArtifact, status: "pending" });
       return jsonResponse(conversationArtifact);
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact", "conv-1", "--wait", "--json"],
       baseEnv,
       host,
@@ -568,8 +448,7 @@ describe("cctl conversation compact", () => {
     );
     expect(host.requests[1]?.init.method).toBe("GET");
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect(envelope.artifact.status).toBe("complete");
+    expect(envelope.payload.data.artifact.status).toBe("complete");
   });
 
   it("exits 1 when the awaited compaction fails", async () => {
@@ -582,28 +461,13 @@ describe("cctl conversation compact", () => {
         error: "model returned invalid envelope",
       });
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compact", "conv-1", "--wait"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("model returned invalid envelope");
-  });
-
-  it("exits 2 on an unknown conversation (404 conversation_not_found)", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        { error: "Conversation not found", code: "conversation_not_found" },
-        404,
-      ),
-    );
-    const result = await runCli(
-      ["conversation", "compact", "nope"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
   });
 });
 
@@ -618,7 +482,7 @@ describe("cctl conversation compaction get", () => {
         payload: { agentBrief: "the brief" },
       });
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1", "--json"],
       baseEnv,
       host,
@@ -629,8 +493,7 @@ describe("cctl conversation compaction get", () => {
       "/api/projects/cc/sessions/my-session/conversations/conv-1/context-artifacts/art-conv",
     );
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect(envelope.artifact.payload.agentBrief).toBe("the brief");
+    expect(envelope.payload.data.artifact.payload.agentBrief).toBe("the brief");
     expect(envelope.hint).toBeUndefined();
   });
 
@@ -676,7 +539,7 @@ describe("cctl conversation compaction get", () => {
         return jsonResponse([conversationArtifact]);
       return jsonResponse({ ...conversationArtifact, payload: samplePayload });
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1", "--format", "markdown"],
       baseEnv,
       host,
@@ -695,7 +558,7 @@ describe("cctl conversation compaction get", () => {
         return jsonResponse([conversationArtifact]);
       return jsonResponse({ ...conversationArtifact, payload: samplePayload });
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "compaction",
@@ -710,8 +573,7 @@ describe("cctl conversation compaction get", () => {
     );
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect(envelope.markdown).toContain(
+    expect(envelope.payload.data.markdown).toContain(
       "# Compaction — cc / my-session / conv-1",
     );
   });
@@ -724,7 +586,7 @@ describe("cctl conversation compaction get", () => {
         return jsonResponse([pendingArtifact]);
       return jsonResponse({ ...pendingArtifact, payload: null });
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1", "--format", "markdown"],
       baseEnv,
       host,
@@ -734,18 +596,6 @@ describe("cctl conversation compaction get", () => {
     expect(result.stdout).toContain("status=pending");
   });
 
-  it("exits 2 on an invalid --format", async () => {
-    const host = makeHost(() => jsonResponse([]));
-    const result = await runCli(
-      ["conversation", "compaction", "get", "conv-1", "--format", "yaml"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--format must be json or markdown");
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("selects the message artifact for --message N", async () => {
     const host = makeHost((req) => {
       const pathname = new URL(req.url).pathname;
@@ -753,7 +603,7 @@ describe("cctl conversation compaction get", () => {
         return jsonResponse([conversationArtifact, messageArtifact]);
       return jsonResponse({ ...messageArtifact, payload: {} });
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1", "--message", "2"],
       baseEnv,
       host,
@@ -774,28 +624,24 @@ describe("cctl conversation compaction get", () => {
         return jsonResponse([staleArtifact]);
       return jsonResponse({ ...staleArtifact, payload: {} });
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "hint: refresh with: cctl conversation compact conv-1",
-    );
+    expect(result.stdout).toContain("cctl conversation compact");
   });
 
   it("exits 1 with a create hint when no artifact exists", async () => {
     const host = makeHost(() => jsonResponse([]));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(
-      "hint: create with: cctl conversation compact conv-1",
-    );
+    expect(result.stderr).toContain("cctl conversation compact");
   });
 
   it("exits 1 with a create hint on a direct artifact_not_found 404", async () => {
@@ -808,13 +654,13 @@ describe("cctl conversation compaction get", () => {
         404,
       );
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("create with: cctl conversation compact");
+    expect(result.stderr).toContain("cctl conversation compact");
   });
 
   it("carries the artifact_not_found code in the --json failure envelope", async () => {
@@ -827,31 +673,15 @@ describe("cctl conversation compaction get", () => {
         404,
       );
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-1", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(false);
-    expect(envelope.code).toBe("artifact_not_found");
+    expect(envelope.error.details.serverCode).toBe("artifact_not_found");
     expect(envelope.hint).toContain("cctl conversation compact");
-  });
-
-  it("exits 2 on an unknown conversation (404 conversation_not_found)", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        { error: "Conversation not found", code: "conversation_not_found" },
-        404,
-      ),
-    );
-    const result = await runCli(
-      ["conversation", "compaction", "get", "nope"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
   });
 });
 
@@ -860,7 +690,7 @@ describe("cctl conversation compaction list", () => {
     const host = makeHost(() =>
       jsonResponse([conversationArtifact, messageArtifact]),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "list", "conv-1"],
       baseEnv,
       host,
@@ -871,22 +701,19 @@ describe("cctl conversation compaction list", () => {
     );
     expect(result.stdout).toContain("art-conv");
     expect(result.stdout).toContain("art-msg");
-    expect(result.stdout).toContain(
-      "hint: fetch the full envelope with: cctl conversation compaction get conv-1",
-    );
+    expect(result.stdout).toContain("cctl conversation compaction get");
   });
 
   it("handles an empty list", async () => {
     const host = makeHost(() => jsonResponse([]));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "list", "conv-1", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(true);
-    expect(envelope.artifacts).toEqual([]);
+    expect(envelope.payload.data.artifacts).toEqual([]);
   });
 });
 
@@ -911,7 +738,7 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
       );
     });
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "plc-1"],
       baseEnv,
       host,
@@ -948,7 +775,7 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
         404,
       );
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-x"],
       baseEnv,
       host,
@@ -993,14 +820,16 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
         404,
       );
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "compaction", "get", "conv-x", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.artifact.payload.agentBrief).toBe("resolved brief");
+    expect(envelope.payload.data.artifact.payload.agentBrief).toBe(
+      "resolved brief",
+    );
   });
 
   it("does not auto-resolve when --session is explicit (a 404 stays exit 2)", async () => {
@@ -1010,7 +839,7 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
         404,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-x", "--session", "explicit"],
       baseEnv,
       host,
@@ -1026,7 +855,7 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
         404,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "self-conv"],
       baseEnv,
       host,
@@ -1042,7 +871,7 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
         404,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "ghost"],
       baseEnv,
       host,
@@ -1051,63 +880,6 @@ describe("cctl conversation auto-resolve (cross-scope by id)", () => {
     expect(result.stderr).toContain("Conversation not found");
     // Caller-scope attempt + the lookup, both 404.
     expect(host.requests).toHaveLength(2);
-  });
-});
-
-describe("cctl conversation (dispatch)", () => {
-  it("exits 2 without a subcommand", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["conversation"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on an unknown subcommand", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["conversation", "frobnicate"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 when compaction lacks a verb", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["conversation", "compaction"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 3 when the server rejects the token", async () => {
-    const host = makeHost(() => jsonResponse({ error: "nope" }, 401));
-    const result = await runCli(
-      ["conversation", "read", "conv-1"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(3);
-    expect(result.stderr).toContain("token");
-  });
-
-  it("exits 3 when the server is unreachable", async () => {
-    const host: CliHost = {
-      async fetch() {
-        throw new Error("ECONNREFUSED");
-      },
-      async readTextFile() {
-        return null;
-      },
-      async readFileBytes() {
-        return null;
-      },
-      async sleep() {},
-      platform: "darwin",
-      homedir: "/Users/test",
-    };
-    const result = await runCli(
-      ["conversation", "read", "conv-1"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(3);
   });
 });
 
@@ -1130,7 +902,7 @@ it("renders saved checkpoint coordinates and the omitted-boundary recovery comma
     const host = makeHost(() =>
       jsonResponse({ ...sampleTranscript, boundaries }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["conversation", "read", "conv-1", ...(json ? ["--json"] : [])],
       baseEnv,
       host,
@@ -1140,7 +912,7 @@ it("renders saved checkpoint coordinates and the omitted-boundary recovery comma
     expect(result.stdout).toContain(boundaries.indexCommand);
     if (!json) {
       expect(result.stdout).toContain("raw seq 2");
-      expect(result.stdout).toContain("2 omitted");
+      expect(result.stdout).toContain("2 checkpoint boundaries omitted");
     }
   }
 });

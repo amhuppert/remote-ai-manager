@@ -39,7 +39,7 @@ cctl docs delete <id>
   **no hint**.
 - `list` — print every registered document (`id  path  —  description`). Ends
   with a hint pointing at `register`/`delete`. With `--json`, the documents are
-  in the `documents` array and the hint is in the reserved `hint` field.
+  in `payload.data.documents` and the hint is in the reserved `hint` field.
 - `delete` — deregister by `<id>` (from `list`) and remove the file from disk.
   An unknown id exits `2`. Terminal — **no hint**.
 

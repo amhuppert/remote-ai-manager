@@ -1,0 +1,1 @@
+{"version":3,"file":"process.d.ts","sourceRoot":"","sources":["../../src/internal/process.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,GAAG,EAAE,MAAM,qBAAqB,CAAC;AA8C/C,gGAAgG;AAChG,wBAAsB,OAAO,CAAC,QAAQ,EAAE,GAAG,EAAE,GAAG,CAAC,QAAQ,CAAC,EAAE,OAAO,CAAC,EAAE;IAAE,QAAQ,CAAC,YAAY,CAAC,EAAE,OAAO,CAAA;CAAE,GAAG,OAAO,CAAC,KAAK,CAAC,CAsBzH"}

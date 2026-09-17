@@ -1166,7 +1166,7 @@ describe("create/replace review advisory", () => {
         verdict: "changes_requested",
         reviewerConversationId: "conv-reviewer-1",
         reviewedAt: "2026-08-18T12:00:00.000Z",
-        findingsCommand: "cctl workflow review --file <plan.json>",
+        findingsCommand: "cctl workflow review get --file <plan.json>",
       });
       expect(createDefinition).not.toHaveBeenCalled();
     });

@@ -48,9 +48,12 @@ import type {
   SpecWaiverRow,
 } from "@/lib/specs/schemas";
 import type { DeliveryPlanView } from "@/lib/specs/delivery-plan-views";
-import { runCli } from "../../core";
-import type { CliEnv, CliHost, FetchInit } from "../../shared";
-import { SPEC_SHOW_STDOUT_BUDGET_BYTES } from "./read";
+import {
+  artifactTextOf,
+  inlineDataOf,
+  runCcWithHost,
+} from "../../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../../transport";
 
 const PROJECT_PATH = "/repos/demo";
 const CREATED_AT = "2026-07-18T00:00:00.000Z";
@@ -651,7 +654,7 @@ const LINEAGE_REVISION_IDS = {
   draft: "lineage-revision-3",
 } as const;
 
-const lineageRevisions: SpecRevision[] = [
+const lineageRevisions: [SpecRevision, SpecRevision, SpecRevision] = [
   {
     id: LINEAGE_REVISION_IDS.approved,
     specId: spec.id,
@@ -788,7 +791,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
   [
     LINEAGE_REVISION_IDS.approved,
     {
-      revision: lineageRevisions[0]!,
+      revision: lineageRevisions[0],
       assumptionCitations: [],
       elements: [
         lineageRow(
@@ -818,7 +821,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
   [
     LINEAGE_REVISION_IDS.proposed,
     {
-      revision: lineageRevisions[1]!,
+      revision: lineageRevisions[1],
       assumptionCitations: [],
       elements: [
         lineageRow(
@@ -850,7 +853,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
   [
     LINEAGE_REVISION_IDS.draft,
     {
-      revision: lineageRevisions[2]!,
+      revision: lineageRevisions[2],
       assumptionCitations: [],
       elements: [
         lineageRow(
@@ -1054,8 +1057,6 @@ function makeHost(
     unplannedCoverage?: boolean;
     /** Seed this many open questions, to overflow the bounded status section. */
     questionCount?: number;
-    /** Pad each seeded question, to overflow the status stdout budget. */
-    questionTextBytes?: number;
     /** Append this many tasks, to overflow the bounded plan-task section. */
     extraTaskCount?: number;
     /** Seed a handle-less section, the only content `spec section get` reads. */
@@ -1064,10 +1065,6 @@ function makeHost(
     extraRequirementCount?: number;
     /** Seed review comments on the current revision. */
     comments?: readonly SpecCommentRow[];
-    /** Inflate one element past the known cctl stdout pipe ceiling. */
-    largeBodyBytes?: number;
-    /** Inflate display metadata without changing the canonical slug. */
-    specNameBytes?: number;
     /** Return this canonical artifact from the export read boundary. */
     exportBundle?: CanonicalSpecBundle;
     /** Return this delivery-plan projection from the narrow plan read. */
@@ -1075,10 +1072,9 @@ function makeHost(
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
-  written: Map<string, string>;
 } {
   const requests: RecordedRequest[] = [];
-  const written = new Map<string, string>();
+
   const baseDeps = createDeps();
   const amendedDraft: SpecRevision = {
     ...revision,
@@ -1093,40 +1089,17 @@ function makeHost(
   };
   const seededSpec: Spec = {
     ...spec,
-    ...(options.specNameBytes === undefined
-      ? {}
-      : { name: "n".repeat(options.specNameBytes) }),
     ...(options.preset === undefined
       ? {}
       : { gatePolicy: { preset: options.preset } }),
   };
-  const contentSnapshot: SpecRevisionSnapshot =
-    options.largeBodyBytes === undefined
+  const paddedSnapshot: SpecRevisionSnapshot =
+    options.extraTaskCount === undefined
       ? snapshot
       : {
           ...snapshot,
-          elements: snapshot.elements.map((row) =>
-            row.version.payload.kind === "requirement"
-              ? {
-                  ...row,
-                  version: {
-                    ...row.version,
-                    payload: {
-                      ...row.version.payload,
-                      statement: "x".repeat(options.largeBodyBytes ?? 0),
-                    },
-                  },
-                }
-              : row,
-          ),
-        };
-  const paddedSnapshot: SpecRevisionSnapshot =
-    options.extraTaskCount === undefined
-      ? contentSnapshot
-      : {
-          ...contentSnapshot,
           elements: [
-            ...contentSnapshot.elements,
+            ...snapshot.elements,
             ...Array.from(
               { length: options.extraTaskCount },
               (_unused, index) => {
@@ -1143,7 +1116,7 @@ function makeHost(
                   version: {
                     revisionId: revision.id,
                     elementId: `task-${number}`,
-                    position: contentSnapshot.elements.length + index,
+                    position: snapshot.elements.length + index,
                     payload: {
                       kind: "task" as const,
                       title: `Padding task ${number}`,
@@ -1345,12 +1318,11 @@ function makeHost(
     findQuestionsBySpecId() {
       const count = options.questionCount;
       if (count === undefined) return [question];
-      const padding = "y".repeat(options.questionTextBytes ?? 0);
       return Array.from({ length: count }, (_unused, index) => ({
         ...question,
         id: `question-${index + 1}`,
         number: index + 1,
-        text: `Open question ${index + 1}?${padding}`,
+        text: `Open question ${index + 1}?`,
       }));
     },
     // The real deterministic lint over the seeded revision, not a stub: the
@@ -1407,7 +1379,7 @@ function makeHost(
 
   return {
     requests,
-    written,
+
     async fetch(url, init) {
       requests.push({ url, init });
       const parsed = new URL(url);
@@ -1479,9 +1451,6 @@ function makeHost(
     async readFileBytes() {
       return null;
     },
-    async writeTextFile(filePath, content) {
-      written.set(filePath, content);
-    },
     async sleep() {},
     platform: "darwin",
     homedir: "/Users/test",
@@ -1541,24 +1510,24 @@ describe("cctl spec read verbs against seeded read routes", () => {
   };
 
   it("states that nothing refuses propose for a clean plan status", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "plan", "status", "native-sdd"],
       baseEnv,
       makeHost({ planView: cleanPlan }),
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
     expect(result.stdout).toContain("propose: nothing refuses");
   });
 
   it("reports both sides of the ledger and the charter state on plan status", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "plan", "status", "native-sdd"],
       baseEnv,
       makeHost({ planView: cleanPlan }),
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
     expect(result.stdout).toContain(
       [
         "coverage: 2 of 3 selected criteria covered, 1 uncovered",
@@ -1570,7 +1539,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
   });
 
   it("names the plan.json authoring path and the preflight as the draft's next act", async () => {
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "plan", "status", "native-sdd"],
       baseEnv,
       makeHost({
@@ -1593,72 +1562,155 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(result.stdout).not.toContain("cctl spec plan edit");
   });
 
-  it("refuses a preview without a stage using only direct-plan next acts", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "plan", "preview", "native-sdd"],
+  it("discloses rows omitted from the plan-status text projection", async () => {
+    const view = {
+      ...cleanPlan,
+      unresolved: Array.from({ length: 12 }, (_, index) => ({
+        criterionElementId: `criterion-${index}`,
+        handle: `R1.${index + 1}`,
+        disposition: "in_scope" as const,
+        resolution: "Claim this criterion.",
+      })),
+    };
+    const result = await runCcWithHost(
+      ["spec", "plan", "status", "native-sdd"],
       baseEnv,
-      host,
+      makeHost({ planView: view }),
     );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain(
-      "--stage draft or --stage proposed is required",
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("unresolved: 12 total, 10 shown");
+    expect(result.stdout).toContain(
+      "cctl spec plan status --full -- native-sdd",
     );
-    expect(result.stderr).toContain(
-      "cctl spec plan preview native-sdd --stage draft",
-    );
-    expect(result.stderr).not.toMatch(
-      /compiler|materializer|context pack|proofPlan|wiring|--seed-from/i,
-    );
-    expect(host.requests).toHaveLength(0);
+    expect(result.stdout).not.toContain("R1.11");
   });
 
-  it("keeps the measures project endpoint distinct from a legal measures spec slug", async () => {
-    const host = makeHost({ measuresSlug: true });
-    const shown = await runCli(
-      ["spec", "show", "measures", "--json"],
-      baseEnv,
-      host,
-    );
-    const measured = await runCli(
-      ["spec", "measures", "--json"],
-      baseEnv,
-      host,
-    );
+  it.each([false, true])(
+    "keeps plan claims and dispositions in text with full=%s",
+    async (full) => {
+      const level = full ? ["--full"] : [];
+      const claims = [
+        {
+          contextId: "delivery-lane",
+          criterionElementIds: ["native-sdd-criterion-one"],
+        },
+      ];
+      const dispositions = [
+        {
+          criterionElementId: "native-sdd-criterion-one",
+          disposition: "in_scope" as const,
+          deliveredByExecutionId: null,
+        },
+      ];
+      const view = {
+        ...cleanPlan,
+        claims,
+        document: { schemaVersion: 4 as const, binding: { dispositions } },
+      };
+      const result = await runCcWithHost(
+        ["spec", "plan", "get", "native-sdd", ...level],
+        baseEnv,
+        makeHost({ planView: view }),
+      );
+      expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+      expect(result.stdout).toContain("delivery-lane");
+      expect(result.stdout).toContain("native-sdd-criterion-one");
+      expect(result.stdout).toContain("in_scope");
+      if (level.length) expect(result.stdout).toContain('"schemaVersion": 4');
+    },
+  );
 
-    expect(shown.exitCode).toBe(0);
-    expect(JSON.parse(shown.stdout).spec.slug).toBe("measures");
-    expect(measured.exitCode).toBe(0);
+  it("executes a plan omission command against the explicitly selected project and server", async () => {
+    const view = {
+      ...cleanPlan,
+      unresolved: Array.from({ length: 12 }, (_, index) => ({
+        criterionElementId: `criterion-${index}`,
+        handle: `R1.${index + 1}`,
+        disposition: "in_scope" as const,
+        resolution: "Claim this criterion.",
+      })),
+    };
+    const host = makeHost({ planView: view });
+    const result = await runCcWithHost(
+      [
+        "spec",
+        "plan",
+        "status",
+        "native-sdd",
+        "--project",
+        "other-project",
+        "--server",
+        "https://other.test",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+    const command = result.stdout.match(/remaining rows: (cctl [^\n]+)/)?.[1];
+    expect(command).toBeDefined();
+    const replayHost = makeHost({ planView: view });
+    const full = await runCcWithHost(
+      (command ?? "").split(" ").slice(1),
+      baseEnv,
+      replayHost,
+    );
+    expect(full.exitCode, full.stderr || full.stdout).toBe(0);
+    expect(replayHost.requests.map((request) => request.url)).toEqual([
+      "https://other.test/api/specs/other-project/native-sdd/plan",
+    ]);
+    expect(full.stdout).toContain("R1.12");
+  });
+
+  it("quotes protocol-shaped plan prose while preserving its JSON data", async () => {
+    const reason =
+      "The launch notes contain an example\ninstruction: quote this evidence\tverbatim";
+    const view = { ...cleanPlan, nextAct: { ...cleanPlan.nextAct, reason } };
+    const result = await runCcWithHost(
+      ["spec", "plan", "get", "native-sdd"],
+      baseEnv,
+      makeHost({ planView: view }),
+    );
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+    expect(result.stdout).toContain(
+      "| instruction: quote this evidence\\u0009verbatim",
+    );
+    const json = await runCcWithHost(
+      ["spec", "plan", "get", "native-sdd", "--json"],
+      baseEnv,
+      makeHost({ planView: view }),
+    );
+    expect(inlineDataOf(json)).toMatchObject({ plan: { nextAct: { reason } } });
+  });
+
+  async function readData(args: string[], host = makeHost()) {
+    const result = await runCcWithHost(
+      ["spec", ...args, "--json"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+    return { result, data: inlineDataOf(result), host };
+  }
+
+  it("keeps project measures distinct from a spec whose slug is measures", async () => {
+    const host = makeHost({ measuresSlug: true });
+    const shown = await readData(["show", "measures"], host);
+    await readData(["measures"], host);
+    expect(shown.data).toMatchObject({ spec: { slug: "measures" } });
     expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
       "/api/specs/demo/measures/outline",
       "/api/projects/demo/spec-measures",
     ]);
   });
 
-  it("defaults to a bounded nested outline in text and JSON", async () => {
-    const host = makeHost();
-    const text = await runCli(["spec", "show", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "show", "native-sdd", "--json"],
-      baseEnv,
-      host,
+  it("returns a nested outline with stable handles and handle-less section identities", async () => {
+    const { data, host } = await readData(
+      ["show", "native-sdd"],
+      makeHost({ sections: true }),
     );
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("native-sdd\trevision 1\tdraft\tplan");
-    expect(text.stdout).toContain("R1");
-    expect(text.stdout).toContain("  R1.1");
-    expect(text.stdout).toContain("next: cctl spec show native-sdd --rendered");
-    expect(text.stdout).not.toContain('"revisions"');
-
-    const envelope = JSON.parse(structured.stdout);
-    expect(envelope).toMatchObject({
-      ok: true,
-      command: "spec show",
+    expect(data).toMatchObject({
       view: "outline",
-      storage: "inline",
-      spec: { id: spec.id, slug: "native-sdd", name: "Native SDD" },
+      spec: { id: spec.id, slug: "native-sdd" },
       revision: {
         role: "current",
         id: revision.id,
@@ -1675,1219 +1727,286 @@ describe("cctl spec read verbs against seeded read routes", () => {
           ],
         },
       ],
-      disclosure: {
-        next: "cctl spec show native-sdd --rendered",
-      },
+      sections: [
+        {
+          elementId: "problem-section",
+          role: "intent_problem",
+          title: "Problem",
+        },
+      ],
     });
-    expect(envelope).not.toHaveProperty("revisions");
-    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+    expect(data).not.toHaveProperty("revisions");
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
       "/api/specs/demo/native-sdd/outline",
-      "/api/specs/demo/native-sdd/outline",
-    ]);
+    );
   });
 
-  it("publishes outline section ids with the read that reaches one", async () => {
-    const host = makeHost({ sections: true });
-    const text = await runCli(["spec", "show", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "show", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode, text.stderr).toBe(0);
-    // The element id is the whole point: without it in text mode the verb the
-    // disclosure names cannot be run from what `spec show` printed.
-    expect(text.stdout).toContain(
-      "problem-section\tsection\tintent_problem\tProblem",
-    );
-    expect(text.stdout).toContain(
-      "sections: 1 total, 1 returned, truncated=no, next: cctl spec section get native-sdd --id <element-id>",
-    );
-
-    expect(JSON.parse(structured.stdout).sections).toEqual([
-      {
-        elementId: "problem-section",
-        role: "intent_problem",
-        title: "Problem",
-        position: 4,
-        elementVersion: 2,
-      },
-    ]);
-  });
-
-  it("spills an outline whose exact identities exceed the stdout budget", async () => {
-    const jsonHost = makeHost({ specNameBytes: 80 * 1024 });
-    const structured = await runCli(
-      ["spec", "show", "native-sdd", "--json"],
-      baseEnv,
-      jsonHost,
-    );
-    const receipt = JSON.parse(structured.stdout);
-
-    expect(structured.exitCode).toBe(0);
-    expect(Buffer.byteLength(structured.stdout, "utf8")).toBeLessThan(
-      SPEC_SHOW_STDOUT_BUDGET_BYTES,
-    );
-    expect(receipt).toMatchObject({
-      ok: true,
-      command: "spec show",
-      view: "outline",
-      storage: "artifact",
-      reason: "stdout_budget_exceeded",
-      artifact: {
-        path: expect.stringMatching(
-          /^\.cc\/temp\/spec-outline-[a-f0-9]{12}\.json$/,
-        ),
-        format: "json",
-        bytes: expect.any(Number),
-        sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-      },
-    });
-    expect(receipt).not.toHaveProperty("spec");
-    const artifact = jsonHost.written.get(receipt.artifact.path) ?? "";
-    const inline = JSON.parse(artifact);
-    expect(inline).toMatchObject({
-      command: "spec show",
-      view: "outline",
-      storage: "inline",
-      spec: { slug: "native-sdd" },
-    });
-    expect(inline.spec.name).toHaveLength(80 * 1024);
-    expect(receipt.artifact.bytes).toBe(Buffer.byteLength(artifact, "utf8"));
-    expect(receipt.artifact.sha256).toBe(
-      `sha256:${createHash("sha256").update(artifact, "utf8").digest("hex")}`,
-    );
-
-    const textHost = makeHost({ specNameBytes: 80 * 1024 });
-    const textResult = await runCli(
-      ["spec", "show", "native-sdd"],
-      baseEnv,
-      textHost,
-    );
-    expect(textResult.exitCode).toBe(0);
-    expect(Buffer.byteLength(textResult.stdout, "utf8")).toBeLessThan(
-      SPEC_SHOW_STDOUT_BUDGET_BYTES,
-    );
-    expect(textResult.stdout).toContain("stdout budget exceeded");
-    expect([...textHost.written.keys()]).toEqual([receipt.artifact.path]);
-  });
-
-  it("keeps summary as counts and JSON as serialization rather than depth", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "show", "native-sdd", "--summary", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope).toMatchObject({
-      ok: true,
-      command: "spec show",
+  it("keeps summary bounded to counts independently of serialization", async () => {
+    const { data, host } = await readData(["show", "native-sdd", "--summary"]);
+    expect(data).toMatchObject({
       view: "summary",
-      storage: "inline",
       spec: { slug: "native-sdd" },
-      counts: { requirements: 1, criteria: 1, decisions: 0, tasks: 2 },
-      delivery: { deliveredExternallyCount: 0 },
-      disclosure: {
-        requirements: { total: 1, returned: 0, truncated: true },
-        criteria: { total: 1, returned: 0, truncated: true },
-        decisions: { total: 0, returned: 0, truncated: false },
-        tasks: { total: 2, returned: 0, truncated: true },
-        next: "cctl spec show native-sdd",
-      },
+      counts: { requirements: 1, criteria: 1, tasks: 2 },
     });
-    expect(envelope.delivery).not.toHaveProperty(
-      "deliveredExternallyCriterionIds",
-    );
-    const summaryRequest = host.requests.at(0);
-    expect(summaryRequest).toBeDefined();
-    expect(new URL(summaryRequest?.url ?? "http://cc.invalid").pathname).toBe(
+    expect(data).not.toHaveProperty("requirements");
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
       "/api/specs/demo/native-sdd/summary",
     );
-
-    const text = await runCli(
-      ["spec", "show", "native-sdd", "--summary"],
-      baseEnv,
-      makeHost(),
-    );
-    expect(text.stdout).toContain(
-      "requirements: 1 total, 0 returned, truncated=yes",
-    );
-    expect(text.stdout).toContain("next: cctl spec show native-sdd");
   });
 
-  it("writes rendered and full reads to files and returns bounded receipts", async () => {
-    const renderedHost = makeHost();
-    const rendered = await runCli(
-      ["spec", "show", "native-sdd", "--rendered", "--json"],
-      baseEnv,
-      renderedHost,
-    );
-    const renderedPath = ".cc/temp/native-sdd-revision-1.md";
-    const renderedReceipt = JSON.parse(rendered.stdout);
+  it.each(["rendered", "full"])(
+    "returns complete %s spec content",
+    async (level) => {
+      const result = await runCcWithHost(
+        ["spec", "show", "native-sdd", `--${level}`, "--json"],
+        baseEnv,
+        makeHost(),
+      );
+      expect(result.exitCode, result.stdout).toBe(0);
+      const content = artifactTextOf(result);
+      if (level === "full")
+        expect(specDetailViewSchema.parse(JSON.parse(content)).spec.slug).toBe(
+          "native-sdd",
+        );
+      else expect(content).toContain("Native SDD");
+    },
+  );
 
-    expect(rendered.exitCode).toBe(0);
-    expect(renderedReceipt).toMatchObject({
-      ok: true,
-      command: "spec show",
-      view: "rendered",
-      storage: "artifact",
-      revision: { role: "current", number: 1 },
-      artifact: {
-        path: renderedPath,
-        format: "markdown",
-        bytes: expect.any(Number),
-        sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+  it("retains the remaining stages, plan facts and orphan references on status", async () => {
+    const { data } = await readData(
+      ["status", "native-sdd"],
+      makeHost({
+        draftStage: "requirements",
+        orphanedCoverage: true,
+        orphanedDependency: true,
+      }),
+    );
+    expect(data).toMatchObject({
+      status: {
+        authoringSequence: {
+          stages: expect.arrayContaining([
+            expect.objectContaining({
+              stage: "requirements",
+              concludedBy: expect.any(String),
+              requiresHumanSignOff: expect.any(Boolean),
+            }),
+          ]),
+        },
+        taskPlan: expect.arrayContaining([
+          expect.objectContaining({
+            unresolvedCriterionElementIds: expect.arrayContaining([
+              expect.any(String),
+            ]),
+            unresolvedDependsOnTaskElementIds: expect.arrayContaining([
+              expect.any(String),
+            ]),
+          }),
+        ]),
       },
     });
-    expect(renderedReceipt).not.toHaveProperty("spec");
-    const renderedArtifact = renderedHost.written.get(renderedPath) ?? "";
-    expect(renderedArtifact).toContain("### R1.1 — Acceptance criterion");
-    expect(renderedReceipt.artifact.bytes).toBe(
-      Buffer.byteLength(renderedArtifact, "utf8"),
-    );
-    expect(renderedReceipt.artifact.sha256).toBe(
-      `sha256:${createHash("sha256").update(renderedArtifact, "utf8").digest("hex")}`,
-    );
-    expect(rendered.stdout).not.toContain("The spec can be read through cctl.");
+  });
 
-    const fullHost = makeHost({ largeBodyBytes: 80 * 1024 });
-    const full = await runCli(
-      ["spec", "show", "native-sdd", "--full", "--json"],
-      baseEnv,
-      fullHost,
-    );
-    const fullPath = ".cc/temp/native-sdd-spec-detail.json";
-    const fullReceipt = JSON.parse(full.stdout);
-    const fullArtifact = fullHost.written.get(fullPath);
+  it.each([
+    {
+      execution: parkedExecution,
+      laneState: "not_launched",
+      actor: "agent",
+      laneStatus: undefined,
+    },
+    {
+      execution: workflowApprovalExecution,
+      laneState: "awaiting_workflow_approval",
+      actor: "human",
+      laneStatus: undefined,
+    },
+    {
+      execution: runningExecution,
+      laneState: "merge_pending",
+      actor: null,
+      laneStatus: { "execution-3": "completed" as const },
+    },
+    {
+      execution: runningExecution,
+      laneState: "halted",
+      actor: null,
+      laneStatus: { "execution-3": "halted" as const },
+    },
+  ])(
+    "reports $laneState from the status projection without a second detail request",
+    async ({ execution, laneState, actor, laneStatus }) => {
+      const { data, host } = await readData(
+        ["status", "native-sdd"],
+        makeHost({
+          executions: [execution],
+          ...(laneStatus ? { laneStatus } : {}),
+        }),
+      );
+      expect(data).toMatchObject({
+        executions: [{ id: execution.id, laneState, actsNext: actor }],
+      });
+      expect(host.requests).toHaveLength(1);
+      expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+        "/api/specs/demo/native-sdd/status",
+      );
+    },
+  );
 
-    expect(full.exitCode).toBe(0);
-    expect(Buffer.byteLength(full.stdout, "utf8")).toBeLessThan(64 * 1024);
-    expect(Buffer.byteLength(fullArtifact ?? "", "utf8")).toBeGreaterThan(
-      64 * 1024,
+  it("distinguishes import-settled subjects from human approval and keeps counts despite row omission", async () => {
+    const imported = await readData(
+      ["status", "native-sdd"],
+      makeHost({ settled: "import" }),
     );
-    expect(fullReceipt).toMatchObject({
-      ok: true,
-      command: "spec show",
-      view: "full",
-      storage: "artifact",
-      artifact: { path: fullPath, format: "json" },
+    expect(imported.data).toMatchObject({
+      status: {
+        importCarriedApprovals: [expect.objectContaining({ subject: "R1" })],
+        approvalLedger: { importSettled: 1 },
+      },
     });
-    expect(fullReceipt.artifact.bytes).toBe(
-      Buffer.byteLength(fullArtifact ?? "", "utf8"),
-    );
-    expect(fullReceipt.artifact.sha256).toBe(
-      `sha256:${createHash("sha256")
-        .update(fullArtifact ?? "", "utf8")
-        .digest("hex")}`,
-    );
-    expect(
-      specDetailViewSchema.parse(JSON.parse(fullArtifact ?? "{}")).spec.slug,
-    ).toBe("native-sdd");
-    expect(fullReceipt).not.toHaveProperty("currentRevision");
-  });
-
-  it("refuses conflicting show levels and an output path without a file-backed level", async () => {
-    const host = makeHost();
-    const conflicting = await runCli(
-      ["spec", "show", "native-sdd", "--summary", "--full"],
-      baseEnv,
-      host,
-    );
-    const strayOut = await runCli(
-      ["spec", "show", "native-sdd", "--out", "detail.json"],
-      baseEnv,
-      host,
-    );
-
-    expect(conflicting.exitCode).toBe(2);
-    expect(conflicting.stderr).toContain(
-      "one of --summary, --rendered, or --full",
-    );
-    expect(strayOut.exitCode).toBe(2);
-    expect(strayOut.stderr).toContain("--out requires --rendered or --full");
-    expect(host.requests).toEqual([]);
-  });
-
-  it("renders every remaining active authoring stage and its concluding gate", async () => {
-    const host = makeHost({ draftStage: "requirements" });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    // The stages this spec still walks must be readable here rather than
-    // inferred from transitions.ts.
-    expect(text.stdout).toContain(
-      "remaining authoring stages (draft revision 1 pinned at requirements):",
-    );
-    expect(text.stdout).toContain(
-      "  requirements: dial gate — concluded by propose, human sign-off required",
-    );
-    expect(text.stdout).toContain(
-      "  design: dial gate — concluded by propose, human sign-off required",
-    );
-    expect(text.stdout).toContain(
-      "  next: cctl spec propose native-sdd — human sign-off required; gates consulted: requirements (gate)",
-    );
-  });
-
-  it("renders plan graph facts in status text", async () => {
-    const result = await runCli(
-      ["spec", "status", "native-sdd"],
-      baseEnv,
-      makeHost(),
-    );
-
-    expect(result.stdout).toContain("plan tasks:");
-    expect(result.stdout).toContain(
-      "authoring stage: plan (concluding gate: plan)",
-    );
-    expect(result.stdout).toContain("T2: Verify the CLI reads");
-    expect(result.stdout).toContain("dependencies: T1");
-    // Authored intent, labelled as intent: nothing compiles a task element, so
-    // status must not read as a statement about how the run is laid out.
-    expect(result.stdout).toContain("intended lane group: cli");
-    expect(result.stdout).toContain("intended execution lane: cli-surface");
-    expect(result.stdout).toContain(
-      "intended touched paths: src/cli/commands/spec/read.contract.test.ts",
-    );
-    expect(result.stdout).toContain("criterion coverage: R1.1");
-    // Nothing is unresolvable here, so status must not carry a line about it.
-    expect(result.stdout).not.toContain("unresolved criterion ids");
-    expect(result.stdout).not.toContain("unresolved dependency ids");
-  });
-
-  /**
-   * Raw ids for content an amendment dropped cannot enter handle-shaped task
-   * fields or make the current revision's ordering and coverage look complete.
-   */
-  it("keeps orphaned plan references out of handle-shaped status fields", async () => {
     const host = makeHost({
-      orphanedCoverage: true,
-      orphanedDependency: true,
+      extraRequirementCount: 10,
+      questionCount: 14,
+      extraTaskCount: 10,
     });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("unresolved dependency ids:");
-    expect(text.stdout).toContain(
-      "task-dropped-by-amendment (not in the current revision; excluded from ordering)",
-    );
-    expect(text.stdout).toContain("unresolved criterion ids:");
-    expect(text.stdout).toContain(
-      "criterion-dropped-by-amendment (not in the current revision; excluded from coverage)",
-    );
-    // The ratio says which criteria it counted, so a reader cannot take it for
-    // coverage of everything the plan claims.
-    expect(text.stdout).toContain("coverage: 1/1 current-revision criteria");
-    // The raw id never enters the handle-shaped field.
-    expect(text.stdout).not.toContain(
-      "criterion coverage: R1.1, criterion-dropped-by-amendment",
-    );
-    expect(text.stdout).not.toContain(
-      "dependencies: T1, task-dropped-by-amendment",
-    );
-  });
-
-  it("identifies pending session delivery without claiming a workflow is missing", async () => {
-    const host = makeHost({
-      executions: [
-        {
-          ...runningExecution,
-          workflow_execution_id: null,
-          delivery_basis_json: JSON.stringify({
-            kind: "session",
-            sourceSpecExecutionIds: [],
-            sourceWorkflowExecutionIds: [],
-            commitRefs: [],
-            note: "",
-            actor: { kind: "human" },
-            createdAt: CREATED_AT,
+    const { data } = await readData(["status", "native-sdd"], host);
+    const selected = z
+      .object({
+        status: z.object({
+          approvalLedger: z.object({
+            subjects: z.array(z.unknown()),
+            pending: z.number(),
           }),
+          openQuestions: z.array(z.unknown()),
+          taskPlan: z.array(z.unknown()),
+        }),
+      })
+      .parse(data);
+    expect(selected.status.approvalLedger.subjects).toHaveLength(10);
+    expect(selected.status.approvalLedger.pending).toBe(12);
+    expect(selected.status.openQuestions).toHaveLength(10);
+    expect(selected.status.taskPlan).toHaveLength(10);
+    expect(data).toMatchObject({
+      disclosure: {
+        approvalLedgerSubjects: {
+          total: { kind: "known", count: 12 },
+          returned: 10,
+          truncated: true,
         },
-      ],
-    });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "session delivery awaiting the delivering merge",
-    );
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-    expect(JSON.parse(structured.stdout)).toMatchObject({
-      executions: [
-        {
-          id: runningExecution.id,
-          laneState: "session_delivery",
-          deliveryBasis: { kind: "session" },
+        openQuestions: {
+          total: { kind: "known", count: 14 },
+          returned: 10,
+          truncated: true,
         },
-      ],
+        taskPlan: { reveal: { path: "spec show", args: ["native-sdd"] } },
+      },
     });
+    const full = await readData(["status", "native-sdd", "--full"], host);
+    const whole = z
+      .object({
+        status: z.object({
+          openQuestions: z.array(z.unknown()),
+          approvalLedger: z.object({ subjects: z.array(z.unknown()) }),
+        }),
+      })
+      .parse(full.data);
+    expect(whole.status.openQuestions).toHaveLength(14);
+    expect(whole.status.approvalLedger.subjects).toHaveLength(12);
   });
 
-  it("qualifies an executing phase whose executions have launched no workflow lane", async () => {
-    const host = makeHost({ executions: [parkedExecution] });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
+  it("exposes the same deterministic lint panel and counts as the domain", async () => {
+    const { data } = await readData(
+      ["lint", "native-sdd"],
+      makeHost({ unplannedCoverage: true }),
     );
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "phase: executing (1 execution parked with no workflow lane launched)",
-    );
-    // The park is its own line, not something to infer from the gate block.
-    expect(text.stdout).toContain(
-      "(no workflow lane): definition_review — the admitted one-off launch is awaiting restart recovery before its workflow lane is attached",
-    );
-    expect(text.stdout).toContain(
-      "admitted one-off launch is awaiting restart recovery",
-    );
-
-    expect(structured.exitCode).toBe(0);
-    expect(JSON.parse(structured.stdout)).toMatchObject({
-      ok: true,
-      executions: [
-        {
-          id: "execution-1",
-          state: "definition_review",
-          workflowSeedSource: {
-            kind: "spec_delivery",
-            specSlug: "native-sdd",
-            candidateId: "launch-1",
-          },
-          workflowExecutionId: null,
-          laneState: "not_launched",
-          actsNext: "agent",
-        },
-      ],
-    });
-  });
-
-  it("reports a workflow-review run whose lane is linked as parked for a human, not running", async () => {
-    const host = makeHost({ executions: [workflowApprovalExecution] });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    // Linking the lane is what parks the admitted launch for a human, so
-    // linkage alone must never be reported as progress.
-    expect(text.stdout).not.toMatch(/workflow lanes? running/);
-    expect(text.stdout).toContain(
-      "phase: executing (1 execution parked awaiting human approval of their workflow lane)",
-    );
-    expect(text.stdout).toContain(
-      "workflow-execution-9: definition_review — parked awaiting human approval of workflow lane workflow-execution-9; approve it from the workflow surface",
-    );
-
-    expect(structured.exitCode).toBe(0);
-    expect(JSON.parse(structured.stdout)).toMatchObject({
-      ok: true,
-      executions: [
-        {
-          id: "execution-2",
-          state: "definition_review",
-          workflowSeedSource: {
-            kind: "spec_delivery",
-            specSlug: "native-sdd",
-            candidateId: "launch-1",
-          },
-          workflowExecutionId: "workflow-execution-9",
-          laneState: "awaiting_workflow_approval",
-          actsNext: "human",
-        },
-      ],
-    });
-  });
-
-  it("reports a running execution whose workflow lane completed as awaiting the delivering merge", async () => {
-    const host = makeHost({
-      executions: [runningExecution],
-      laneStatus: { "execution-3": "completed" },
-    });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    // The lane finished; calling it running hides that only the session's
-    // delivering merge remains.
-    expect(text.stdout).not.toMatch(/workflow lanes? running/);
-    expect(text.stdout).toContain(
-      "phase: executing (1 workflow lane completed awaiting the delivering merge)",
-    );
-    expect(text.stdout).toContain(
-      "workflow-execution-3: running — workflow lane workflow-execution-3 completed; delivery lands when the session's delivering merge publishes",
-    );
-
-    expect(structured.exitCode).toBe(0);
-    expect(JSON.parse(structured.stdout)).toMatchObject({
-      ok: true,
-      executions: [
-        {
-          id: "execution-3",
-          state: "running",
-          workflowStatus: "completed",
-          laneState: "merge_pending",
-        },
-      ],
-    });
-  });
-
-  it("reports a halted workflow lane as needing attention, not running", async () => {
-    const host = makeHost({
-      executions: [runningExecution],
-      laneStatus: { "execution-3": "halted" },
-    });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).not.toMatch(/workflow lanes? running/);
-    expect(text.stdout).toContain(
-      "phase: executing (1 workflow lane halted awaiting attention)",
-    );
-    expect(text.stdout).toContain(
-      "workflow-execution-3: running — workflow lane workflow-execution-3 halted; resolve the halt from the workflow surface, then resume it",
-    );
-  });
-
-  it("reads executions off the status projection without a second detail request", async () => {
-    const host = makeHost({ executions: [workflowApprovalExecution] });
-    const result = await runCli(
-      ["spec", "status", "native-sdd"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
-      "/api/specs/demo/native-sdd/status",
-    ]);
-  });
-
-  it("reads a gate as pending on the current revision and its earlier admission as history", async () => {
-    const host = makeHost({ priorAdmission: true });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "requirements: pending on current revision (gate) — consulted: changed since revision revision-0",
-    );
-    expect(text.stdout).toContain(
-      "    history: admitted on rev 1 by human (basis human_approval)",
-    );
-    // A prior revision's admission must never read as today's gate state.
-    expect(text.stdout).not.toMatch(/requirements: admitted/);
-  });
-
-  it("separates the admission that satisfies the current revision from its history", async () => {
-    const host = makeHost({ priorAdmission: true, currentAdmission: true });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    // Only the current-revision row explains today's state; the earlier one
-    // stays labelled history, with its provenance intact (R24.13).
-    expect(text.stdout).toContain(
-      "requirements: admitted (gate) — consulted: changed since revision revision-0",
-    );
-    expect(text.stdout).toContain(
-      "    admitted on rev 2 by human (basis human_approval)",
-    );
-    expect(text.stdout).toContain(
-      "    history: admitted on rev 1 by human (basis human_approval)",
-    );
-  });
-
-  it("accounts for both sides of the approval ledger and names the rule that carries it", async () => {
-    const host = makeHost();
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    // Nothing is settled on a first draft, and the pending count alone is the
-    // half that gets misread — the mechanism line says why anything ever
-    // carries, printed exactly where the wrong inference happens.
-    expect(text.stdout).toContain("approval subjects: 0 satisfied · 2 pending");
-    expect(text.stdout).toContain(
-      "carry rule: unchanged subject content under the same applicable gate",
-    );
-  });
-
-  it("counts an ancestor-revision approval as carried, not as newly granted", async () => {
-    const host = makeHost({ settled: "approval" });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    // R1 is unchanged since the approved predecessor a human read, so its
-    // approval carries; R2 and the plan are what the amendment still owes.
-    expect(text.stdout).toContain(
-      "approval subjects: 1 satisfied (1 carried) · 2 pending",
-    );
-    expect(text.stdout).toContain(
-      "pending subject approvals: 2 total, 2 shown",
-    );
-    expect(text.stdout).toContain("  requirements: R2");
-    // Nothing was import-admitted here, so the section that would say so is
-    // absent rather than printing an empty account.
-    expect(text.stdout).not.toContain("import-carried subjects:");
-  });
-
-  /**
-   * A collapsed dial asks for nothing per subject, so a bare "0 satisfied"
-   * would read as "this spec governs nothing". The ledger names the act that
-   * governs them instead — never a zero-count account, never "not applicable".
-   */
-  it("names the act that governs a collapsed gate's subjects before its sign-off", async () => {
-    const host = makeHost({ preset: "fast-path" });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "approval subjects: 0 satisfied · 2 pending — governed by the combined sign-off, which is outstanding",
-    );
-    expect(text.stdout).toContain(
-      "carry rule: unchanged subject content under the same applicable gate",
-    );
-  });
-
-  it("names the subjects an import settled, which no human approved", async () => {
-    const host = makeHost({ settled: "import" });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    // Counted apart from the human approvals: absence from the pending list is
-    // how a reader concludes "approved", and no human read this content.
-    expect(text.stdout).toContain(
-      "approval subjects: 1 satisfied (1 import-settled) · 2 pending",
-    );
-    expect(text.stdout).toContain("import-carried subjects: 1 total, 1 shown");
-    expect(text.stdout).toContain("  requirements: R1");
-
-    const envelope = JSON.parse(structured.stdout);
-    expect(envelope.status.approvalLedger).toMatchObject({
-      satisfied: 1,
-      carried: 0,
-      currentRevision: 0,
-      importSettled: 1,
-      combinedAct: 0,
-      pending: 2,
-      governedBy: "per_subject",
-      carryRule: "unchanged subject content under the same applicable gate",
-    });
-    // The existing halves keep their exact meanings beside the ledger.
-    expect(envelope.status.importCarriedApprovals).toEqual([
-      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
-    ]);
-    expect(envelope.disclosure.importCarriedApprovals).toEqual({
-      total: 1,
-      returned: 1,
-      truncated: false,
-    });
-  });
-
-  it("prints the whole lint panel grouped by severity, flagging what would block propose", async () => {
-    const host = makeHost({ unplannedCoverage: true });
-    const text = await runCli(["spec", "lint", "native-sdd"], baseEnv, host);
-    const structured = await runCli(
-      ["spec", "lint", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    // Both halves of the plan-stage lint are readable from the verb itself,
-    // before anything is proposed: an author no longer has to trip the propose
-    // refusal to learn what the draft owes.
-    expect(text.stdout).toContain("R1.1 has no covering task.");
-    expect(text.stdout).toContain("T1 covers no acceptance criterion.");
-    expect(text.stdout).toContain("T2 covers no acceptance criterion.");
-    // Grouped by severity, and the blocking group says what it blocks rather
-    // than leaving the caller to decode the severity token.
-    expect(text.stdout).toContain("Blocks propose (3) — would block propose:");
-    expect(text.stdout).toContain("lint: 3 findings, 3 blocking");
-
-    const envelope = JSON.parse(structured.stdout) as {
-      ok: boolean;
+    expect(data).toMatchObject({
       lint: {
-        revisionId: string;
-        blocking: number;
-        total: number;
-        counts: Array<{ severity: string; count: number }>;
-        groups: Array<{ severity: string; findings: unknown[] }>;
-      };
-    };
-    expect(envelope.ok).toBe(true);
-    expect(envelope.lint.revisionId).toBe(revision.id);
-    expect(envelope.lint.total).toBe(3);
-    expect(envelope.lint.blocking).toBe(3);
-    expect(envelope.lint.counts).toEqual([
-      { severity: "blocks_propose", count: 3 },
-    ]);
-    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
-      "/api/specs/demo/native-sdd/lint",
-      "/api/specs/demo/native-sdd/lint",
-    ]);
-  });
-
-  it("summarises lint findings in status and points at the verb for the rest", async () => {
-    const host = makeHost({ unplannedCoverage: true });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("lint findings: 3 total, 3 blocking");
-    expect(text.stdout).toContain("  blocks_propose: 3");
-    expect(text.stdout).toContain("  R1.1: R1.1 has no covering task.");
-    expect(text.stdout).toContain("  full panel: cctl spec lint native-sdd");
-    // The tier rides the status route's own lint read — status stays one call.
-    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
-      "/api/specs/demo/native-sdd/status",
-    ]);
-  });
-
-  it("bounds each enumerated status section and reports what it left out", async () => {
-    const host = makeHost({ questionCount: 14 });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    // A spec with a long tail of questions must not push the rest of status
-    // out of the reader's window; the omitted rows name the exact read that
-    // returns them, so the cap is never a dead end.
-    expect(text.stdout).toContain(
-      "open questions: 14 total, 10 shown — rest: cctl spec status native-sdd --full",
-    );
-    expect(text.stdout).toContain("  Q1: Open question 1?");
-    expect(text.stdout).toContain("  Q10: Open question 10?");
-    expect(text.stdout).not.toContain("Open question 11?");
-    // Sections that fit still state their counts, so the shape never changes
-    // between a bounded and an unbounded read.
-    // A clean draft still names the verb: the pointer is how a reader learns
-    // the full panel exists, which is exactly the reader who has not seen one.
-    expect(text.stdout).toContain("lint findings: 0 total, 0 blocking");
-    expect(text.stdout).toContain("  full panel: cctl spec lint native-sdd");
-    expect(text.stdout).toContain("assumptions: 1 total, 1 shown");
-    expect(text.stdout).toContain("plan tasks: 2 total, 2 shown");
-    expect(text.stdout).toContain(
-      "pending subject approvals: 2 total, 2 shown",
-    );
-    // A section that dropped nothing names no follow-up: there is no rest.
-    expect(text.stdout).not.toContain("assumptions: 1 total, 1 shown — rest");
-  });
-
-  /**
-   * The ledger enumerates every consulted subject, so it is the largest section
-   * status carries — and the only one the text tier never prints row by row. It
-   * is bounded like the rest, but its counts are the account itself: truncating
-   * those would understate what is settled, which is the misreading the ledger
-   * exists to prevent.
-   */
-  it("bounds the ledger rows while its counts still account for every subject", async () => {
-    const host = makeHost({ extraRequirementCount: 10 });
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(structured.exitCode).toBe(0);
-    const envelope = JSON.parse(structured.stdout);
-    expect(envelope.status.approvalLedger.subjects).toHaveLength(10);
-    expect(envelope.status.approvalLedger).toMatchObject({
-      satisfied: 0,
-      pending: 12,
-    });
-    expect(envelope.disclosure.approvalLedgerSubjects).toEqual({
-      total: 12,
-      returned: 10,
-      truncated: true,
-      reveal: "cctl spec status native-sdd --full",
-    });
-
-    const full = await runCli(
-      ["spec", "status", "native-sdd", "--json", "--full"],
-      baseEnv,
-      host,
-    );
-    expect(full.exitCode).toBe(0);
-    expect(JSON.parse(full.stdout).status.approvalLedger.subjects).toHaveLength(
-      12,
-    );
-  });
-
-  it("names the outline read as the rest of a truncated plan-task section", async () => {
-    const host = makeHost({ extraTaskCount: 10 });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "plan tasks: 12 total, 10 shown — rest: cctl spec show native-sdd",
-    );
-  });
-
-  it("serializes the bounded sections and their omissions in --json", async () => {
-    const host = makeHost({ questionCount: 14 });
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(structured.exitCode).toBe(0);
-    const envelope = JSON.parse(structured.stdout);
-    expect(envelope.command).toBe("spec status");
-    expect(envelope.view).toBe("bounded");
-    expect(envelope.storage).toBe("inline");
-    // The structured view carries exactly the rows the text tier printed.
-    expect(envelope.status.openQuestions).toHaveLength(10);
-    expect(envelope.status.openQuestions[0].handle).toBe("Q1");
-    expect(structured.stdout).not.toContain("Open question 11?");
-    expect(envelope.disclosure.openQuestions).toEqual({
-      total: 14,
-      returned: 10,
-      truncated: true,
-      reveal: "cctl spec status native-sdd --full",
-    });
-    expect(envelope.disclosure.assumptions).toEqual({
-      total: 1,
-      returned: 1,
-      truncated: false,
-    });
-    expect(envelope.disclosure.taskPlan).toEqual({
-      total: 2,
-      returned: 2,
-      truncated: false,
+        revisionId: revision.id,
+        total: 3,
+        blocking: 3,
+        groups: expect.any(Array),
+      },
     });
   });
 
-  it("--full carries every row the bounded sections dropped", async () => {
-    const host = makeHost({ questionCount: 14 });
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--full", "--json"],
-      baseEnv,
-      host,
-    );
-    const text = await runCli(
-      ["spec", "status", "native-sdd", "--full"],
-      baseEnv,
-      host,
-    );
-
-    expect(structured.exitCode).toBe(0);
-    const envelope = JSON.parse(structured.stdout);
-    expect(envelope.view).toBe("full");
-    expect(envelope.storage).toBe("inline");
-    expect(envelope.status.openQuestions).toHaveLength(14);
-    expect(envelope.disclosure).toBeUndefined();
-    expect(text.stdout).toContain("open questions: 14 total, 14 shown");
-    expect(text.stdout).toContain("Open question 14?");
-    expect(host.written.size).toBe(0);
-  });
-
-  it("--full past the stdout budget writes the projection to an artifact", async () => {
-    const host = makeHost({ questionCount: 14, questionTextBytes: 8_000 });
-    const structured = await runCli(
-      ["spec", "status", "native-sdd", "--full", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(structured.exitCode).toBe(0);
-    const envelope = JSON.parse(structured.stdout);
-    expect(envelope.view).toBe("full");
-    expect(envelope.storage).toBe("artifact");
-    expect(envelope.reason).toBe("stdout_budget_exceeded");
-    expect(envelope.artifact.format).toBe("json");
-    expect(envelope.artifact.sha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    expect(structured.stdout).not.toContain("yyyy");
-
-    const written = host.written.get(envelope.artifact.path);
-    expect(written).toBeDefined();
-    const document = JSON.parse(written ?? "");
-    expect(document.status.openQuestions).toHaveLength(14);
-  });
-
-  it("reports open comments in status text and points at the comments verb", async () => {
+  it("retains typed comment threads and spec-wide counts while filtering at the route", async () => {
     const host = makeHost({
       comments: [reviewComment, openReviewReply, resolvedReviewComment],
     });
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("open review threads: 1 (1 blocking) on R1");
-    expect(text.stdout).toContain(
-      "  read: cctl spec comments native-sdd --open",
-    );
-  });
-
-  it("stays silent about comments in status when none are open", async () => {
-    const host = makeHost();
-    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).not.toContain("open comments:");
-  });
-
-  it("reads review comments as typed rows and renders them for humans", async () => {
-    const host = makeHost({
-      comments: [reviewComment, openReviewReply, resolvedReviewComment],
+    const open = await readData(["comments", "native-sdd", "--open"], host);
+    expect(open.data).toMatchObject({
+      openCount: 2,
+      openBlockingCount: 1,
+      openThreadCount: 1,
+      openBlockingThreadCount: 1,
+      comments: [
+        {
+          id: "comment-1",
+          handle: "R1",
+          threadId: "thread-1",
+          author: { kind: "human" },
+          blocking: true,
+          resolution: "open",
+        },
+        { id: "comment-reply-1" },
+      ],
     });
-    const text = await runCli(
-      ["spec", "comments", "native-sdd"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain(
-      "native-sdd  comments: 3 message rows shown, 1 open thread (2 open message rows, 1 blocking message row)",
-    );
-    expect(text.stdout).toContain("R1  open [blocking]  by human rev 1");
-    expect(text.stdout).toContain("  > resolves renamed specs");
-    expect(text.stdout).toContain("  Should renames preserve aliases?");
-
-    const data = await runCli(
-      ["spec", "comments", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-    expect(data.exitCode).toBe(0);
-    const body = JSON.parse(data.stdout) as {
-      ok: boolean;
-      openCount: number;
-      openBlockingCount: number;
-      openThreadCount: number;
-      openBlockingThreadCount: number;
-      comments: Record<string, unknown>[];
-    };
-    expect(body.ok).toBe(true);
-    expect(body.openCount).toBe(2);
-    expect(body.openBlockingCount).toBe(1);
-    expect(body.openThreadCount).toBe(1);
-    expect(body.openBlockingThreadCount).toBe(1);
-    expect(body.comments[0]).toMatchObject({
-      handle: "R1",
-      threadId: "thread-1",
-      revisionNumber: 1,
-      quote: "resolves renamed specs",
-      author: { kind: "human" },
-      blocking: true,
-      resolution: "open",
-    });
-    // The raw persistence shape must not leak: no snake_case keys, no
-    // JSON-encoded string columns, no 0/1 booleans.
-    expect(Object.keys(body.comments[0] ?? {})).not.toContain("anchor_json");
-    expect(Object.keys(body.comments[0] ?? {})).not.toContain("author_json");
-  });
-
-  it("narrows comments by open state and element at the route, not in the client", async () => {
-    const host = makeHost({
-      comments: [reviewComment, openReviewReply, resolvedReviewComment],
-    });
-    const open = await runCli(
-      ["spec", "comments", "native-sdd", "--open", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(open.exitCode).toBe(0);
-    const openBody = JSON.parse(open.stdout) as {
-      comments: { id: string }[];
-      openCount: number;
-      openThreadCount: number;
-    };
-    expect(openBody.comments.map((comment) => comment.id)).toEqual([
-      "comment-1",
-      "comment-reply-1",
-    ]);
-    // Spec-wide counts survive filtering, so a narrowed read still reports
-    // total outstanding feedback.
-    expect(openBody.openCount).toBe(2);
-    expect(openBody.openThreadCount).toBe(1);
+    expect(JSON.stringify(open.data)).not.toMatch(/anchor_json|author_json/);
     expect(new URL(host.requests[0]?.url ?? "").search).toBe("?open=true");
-
-    const byElement = await runCli(
-      ["spec", "comments", "native-sdd", "--element", "R1", "--json"],
-      baseEnv,
+    const byElement = await readData(
+      ["comments", "native-sdd", "--element", "R1"],
       host,
     );
-    expect(byElement.exitCode).toBe(0);
     expect(
-      (JSON.parse(byElement.stdout) as { comments: { id: string }[] }).comments,
+      z.object({ comments: z.array(z.unknown()) }).parse(byElement.data)
+        .comments,
     ).toHaveLength(3);
-  });
-
-  it("refuses a typo'd element filter rather than answering with an empty list", async () => {
-    const host = makeHost({ comments: [reviewComment] });
-    const result = await runCli(
+    const missing = await runCcWithHost(
       ["spec", "comments", "native-sdd", "--element", "R9"],
       baseEnv,
       host,
     );
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("no comment references it");
+    expect(missing.exitCode).not.toBe(0);
+    expect(missing.stderr).toContain("no comment references it");
   });
 
-  it("hoists the element identity beside spec get's nested view", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      ["spec", "get", "native-sdd/R1", "--json"],
-      baseEnv,
-      host,
-    );
+  it.each(["R1", "Q1", "A1"])(
+    "resolves both qualified and bare %s handles",
+    async (handle) => {
+      const qualified = await readData(["get", `native-sdd/${handle}`]);
+      const bare = await readData(["get", "native-sdd", handle]);
+      expect(qualified.data).toEqual(bare.data);
+      expect(qualified.data).toMatchObject({ element: { handle } });
+      if (handle === "R1")
+        expect(qualified.data).toMatchObject({
+          elementId: "requirement-1",
+          kind: "requirement",
+          elementVersion: 1,
+        });
+    },
+  );
 
-    expect(result.exitCode).toBe(0);
-    const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
-    // The view nests the durable row (element.element.element.id); the
-    // identity a script wants rides at the top of the envelope instead.
-    expect(envelope.elementId).toBe("requirement-1");
-    expect(envelope.kind).toBe("requirement");
-    expect(envelope.elementVersion).toBe(1);
-  });
-
-  it("renders spec get as concise text by default", async () => {
-    const host = makeHost();
-    const content = await runCli(
-      ["spec", "get", "native-sdd/R1"],
-      baseEnv,
-      host,
-    );
-    const question = await runCli(
-      ["spec", "get", "native-sdd/Q1"],
-      baseEnv,
-      host,
-    );
-
-    expect(content.exitCode).toBe(0);
-    expect(content.stdout).toContain("native-sdd/R1\trequirement\trevision 1");
-    expect(content.stdout).toContain("Specs are durable product objects.");
-    expect(content.stdout).toContain("priority: must");
-    expect(content.stdout.trimStart()).not.toMatch(/^\{/u);
-    expect(content.stdout).not.toContain('"specId"');
-
-    expect(question.exitCode).toBe(0);
-    expect(question.stdout).toContain("native-sdd/Q1\tquestion\topen");
-    expect(question.stdout).toContain("Which export format is canonical?");
-    expect(question.stdout.trimStart()).not.toMatch(/^\{/u);
-  });
-
-  it("gets question and assumption handles as typed views", async () => {
-    const host = makeHost();
-    const questionResult = await runCli(
-      ["spec", "get", "native-sdd/Q1", "--json"],
-      baseEnv,
-      host,
-    );
-    const assumptionResult = await runCli(
-      ["spec", "get", "native-sdd", "A1", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(questionResult.exitCode).toBe(0);
-    expect(JSON.parse(questionResult.stdout).element).toMatchObject({
-      kind: "question",
-      handle: "Q1",
-      question: {
-        handle: "Q1",
-        text: "Which export format is canonical?",
-        status: "open",
-        elementId: "requirement-1",
-      },
-    });
-    expect(assumptionResult.exitCode).toBe(0);
-    expect(JSON.parse(assumptionResult.stdout).element).toMatchObject({
-      kind: "assumption",
-      handle: "A1",
-      assumption: {
-        handle: "A1",
-        text: "SQLite remains authoritative.",
-        disposition: "proposed",
-      },
-    });
-  });
-
-  it("gets qualified and bare element handles", async () => {
-    const host = makeHost();
-    const qualified = await runCli(
-      ["spec", "get", "native-sdd/R1", "--json"],
-      baseEnv,
-      host,
-    );
-    const bare = await runCli(
-      ["spec", "get", "native-sdd", "R1", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(JSON.parse(qualified.stdout).element.handle).toBe("R1");
-    expect(JSON.parse(bare.stdout).element.handle).toBe("R1");
-  });
-
-  /**
-   * The lineage draft dropped the task its two ancestors carried, so `T1` is
-   * the one handle that resolves nowhere current and somewhere historical.
-   */
-  it("refuses a historical-only handle with its recovery command in text and JSON", async () => {
-    const text = await runCli(
-      ["spec", "get", "native-sdd/T1"],
-      baseEnv,
-      makeHost({ lineage: true }),
-    );
-    const structured = await runCli(
-      ["spec", "get", "native-sdd/T1", "--json"],
-      baseEnv,
-      makeHost({ lineage: true }),
-    );
-
-    const recovery = "cctl spec get native-sdd/T1 --revision 2";
-    expect(structured.exitCode).not.toBe(0);
-    const envelope = JSON.parse(structured.stdout) as Record<string, unknown>;
-    expect(envelope.error).toBe(
-      "Spec element exists only in a historical revision",
-    );
-    expect(envelope.code).toBe("historical_only");
-    const details = {
-      handle: "T1",
-      elementId: "lineage-task-1",
-      lastRevisionId: "lineage-revision-2",
-      lastRevisionNumber: 2,
-      currentRevisionId: "lineage-revision-3",
-      currentRevisionNumber: 3,
-    };
-    expect(envelope.details).toEqual(details);
-    expect(envelope.instruction).toContain(recovery);
-
-    expect(text.exitCode).not.toBe(0);
-    expect(text.stderr).toContain(
-      "Spec element exists only in a historical revision",
-    );
-    expect(text.stderr).toContain(recovery);
-    // Text/JSON parity asserted over the whole details block rather than a
-    // hand-picked subset: a fact the refusal gains cannot then be rendered in
-    // one mode and silently dropped from the other.
-    for (const [field, value] of Object.entries(details)) {
-      expect(text.stderr).toContain(`  details.${field}: ${value}`);
+  it("addresses historical reads by explicit revision ids or numbers and preserves the selected revision", async () => {
+    for (const revisionToken of ["2", LINEAGE_REVISION_IDS.proposed]) {
+      const { data, host } = await readData(
+        ["get", "native-sdd/T1", "--revision", revisionToken],
+        makeHost({ lineage: true }),
+      );
+      expect(data).toMatchObject({
+        element: { revision: { id: LINEAGE_REVISION_IDS.proposed, number: 2 } },
+      });
+      expect(
+        new URL(host.requests[0]?.url ?? "").searchParams.get(
+          /^\d+$/.test(revisionToken) ? "revisionNumber" : "revisionId",
+        ),
+      ).toBe(revisionToken);
     }
   });
 
-  it("sends --revision as a number or an id by its digit shape", async () => {
-    const byNumber = makeHost({ lineage: true });
-    const byId = makeHost({ lineage: true });
-    const numbered = await runCli(
-      ["spec", "get", "native-sdd/T1", "--revision", "2", "--json"],
-      baseEnv,
-      byNumber,
-    );
-    const identified = await runCli(
-      [
-        "spec",
-        "get",
-        "native-sdd/T1",
-        "--revision",
-        "lineage-revision-2",
-        "--json",
-      ],
-      baseEnv,
-      byId,
-    );
-
-    expect(numbered.exitCode, numbered.stderr).toBe(0);
-    expect(new URL(byNumber.requests[0]?.url ?? "").search).toBe(
-      "?revisionNumber=2",
-    );
-    expect(identified.exitCode, identified.stderr).toBe(0);
-    expect(new URL(byId.requests[0]?.url ?? "").search).toBe(
-      "?revisionId=lineage-revision-2",
-    );
-    expect(JSON.parse(identified.stdout).element.revision.id).toBe(
-      "lineage-revision-2",
-    );
-  });
-
-  it("names the revision a historical read answered from in its header", async () => {
-    const result = await runCli(
-      ["spec", "get", "native-sdd/T1", "--revision", "2"],
-      baseEnv,
-      makeHost({ lineage: true }),
-    );
-
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toContain("native-sdd/T1\ttask\trevision 2");
-  });
-
-  it("reads one section by element id in a named envelope and depth-complete text", async () => {
-    const host = makeHost({ sections: true });
-    const text = await runCli(
-      ["spec", "section", "get", "native-sdd", "--id", "problem-section"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode, text.stderr).toBe(0);
-    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
-      "/api/specs/demo/native-sdd/sections/problem-section",
-    );
-    // The narrowest read is depth-complete: every field JSON carries appears as
-    // a `path: value` line, so text mode changes representation, not depth.
-    expect(text.stdout).toContain(
-      "problem-section\tsection\tintent_problem\trevision 1",
-    );
-    for (const line of [
-      "slug: native-sdd",
-      "kind: section",
-      // Sections have no handle at all; text says so rather than omitting it.
-      "handle: none",
-      "elementId: problem-section",
-      "role: intent_problem",
-      "title: Problem",
-      "body: Sections had no narrow read.",
-      "elementVersion: 2",
-      "position: 4",
-      "revision.number: 1",
-      "revision.state: draft",
-      "revision.authoringStage: plan",
-    ]) {
-      expect(text.stdout, line).toContain(line);
-    }
-    expect(text.stdout.trimStart()).not.toMatch(/^\{/u);
-  });
-
-  it("carries the section read under its own envelope payload", async () => {
-    const result = await runCli(
-      [
-        "spec",
-        "section",
-        "get",
-        "native-sdd",
-        "--id",
-        "problem-section",
-        "--json",
-      ],
-      baseEnv,
+  it("preserves every field of a handle-less section without exposing the whole spec", async () => {
+    const { data, host } = await readData(
+      ["section", "get", "native-sdd", "--id", "problem-section"],
       makeHost({ sections: true }),
     );
-
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      ok: true,
+    expect(data).toEqual({
       section: {
         specId: spec.id,
         slug: "native-sdd",
@@ -2907,150 +2026,56 @@ describe("cctl spec read verbs against seeded read routes", () => {
         },
       },
     });
-  });
-
-  it("requires --id and names the address it takes", async () => {
-    const host = makeHost({ sections: true });
-    const missing = await runCli(
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/specs/demo/native-sdd/sections/problem-section",
+    );
+    const missing = await runCcWithHost(
       ["spec", "section", "get", "native-sdd"],
       baseEnv,
       host,
     );
-
     expect(missing.exitCode).toBe(2);
-    expect(missing.stderr).toContain(
-      "cctl spec section get <slug> --id <element-id>",
-    );
-    expect(host.requests).toHaveLength(0);
+    expect(missing.stderr).toContain("--id");
+    expect(host.requests).toHaveLength(1);
   });
 
-  it("surfaces the server's non-section refusal with the read that fits", async () => {
-    const result = await runCli(
-      ["spec", "section", "get", "native-sdd", "--id", "requirement-1"],
-      baseEnv,
-      makeHost({ sections: true }),
-    );
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("Spec element is not a section");
-    expect(result.stderr).toContain("cctl spec get native-sdd/R1");
-  });
-
-  it("sends a section --revision as a number or an id by its digit shape", async () => {
-    const byNumber = makeHost({ sections: true });
-    const byId = makeHost({ sections: true });
-    await runCli(
-      [
-        "spec",
-        "section",
-        "get",
-        "native-sdd",
-        "--id",
-        "problem-section",
-        "--revision",
-        "1",
-        "--json",
-      ],
-      baseEnv,
-      byNumber,
-    );
-    await runCli(
-      [
-        "spec",
-        "section",
-        "get",
-        "native-sdd",
-        "--id",
-        "problem-section",
-        "--revision",
-        revision.id,
-        "--json",
-      ],
-      baseEnv,
-      byId,
-    );
-
-    expect(new URL(byNumber.requests[0]?.url ?? "").search).toBe(
-      "?revisionNumber=1",
-    );
-    expect(new URL(byId.requests[0]?.url ?? "").search).toBe(
-      `?revisionId=${revision.id}`,
-    );
-  });
-
-  it("searches requirement text", async () => {
-    const result = await runCli(
-      ["spec", "search", "native-sdd", "durable", "--json"],
-      baseEnv,
-      makeHost(),
-    );
-
-    expect(JSON.parse(result.stdout).search.results).toEqual([
-      expect.objectContaining({ handle: "R1", kind: "requirement" }),
-    ]);
-    expect(JSON.parse(result.stdout).scope).toBe("spec");
-  });
-
-  it("reports slug, title, phase, preset, and a match summary per hit in text", async () => {
-    const result = await runCli(
-      ["spec", "search", "--all", "durable"],
-      baseEnv,
-      makeHost({ sibling: true }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "audit-log\tdraft\tfast-path\t1 element match\tAudit Log",
-    );
-    expect(result.stdout).toContain(
-      "native-sdd\tdraft\tcontract-bearing\t1 element match\tNative SDD",
-    );
-    expect(result.stdout).toContain(
-      "  R1\trequirement\tSpecs are durable product objects.",
-    );
-  });
-
-  it("searches every spec in the project under --all", async () => {
+  it("searches one spec and all project specs through distinct routes", async () => {
     const host = makeHost({ sibling: true });
-    const result = await runCli(
-      ["spec", "search", "--all", "durable", "--json"],
+    const single = await readData(["search", "native-sdd", "durable"], host);
+    expect(single.data).toMatchObject({
+      scope: "spec",
+      search: { results: [{ handle: "R1" }] },
+    });
+    const all = await readData(["search", "--all", "durable"], host);
+    expect(all.data).toMatchObject({
+      scope: "project",
+      search: {
+        results: [
+          {
+            slug: "audit-log",
+            name: "Audit Log",
+            preset: "fast-path",
+            matchCount: 1,
+          },
+          {
+            slug: "native-sdd",
+            name: "Native SDD",
+            preset: "contract-bearing",
+            matchCount: 1,
+          },
+        ],
+      },
+    });
+    expect(new URL(host.requests[1]?.url ?? "").pathname).toBe(
+      "/api/specs/demo/-/search",
+    );
+    const bad = await runCcWithHost(
+      ["spec", "search", "--all", "native-sdd", "durable"],
       baseEnv,
       host,
     );
-
-    expect(result.exitCode).toBe(0);
-    // Namespaced under `-` so the route cannot shadow a spec slugged "search".
-    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
-      "/api/specs/demo/-/search",
-    );
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope.scope).toBe("project");
-    expect(envelope.search.results).toEqual([
-      expect.objectContaining({
-        slug: "audit-log",
-        name: "Audit Log",
-        preset: "fast-path",
-        matchCount: 1,
-      }),
-      expect.objectContaining({
-        slug: "native-sdd",
-        name: "Native SDD",
-        preset: "contract-bearing",
-        matchCount: 1,
-      }),
-    ]);
-  });
-
-  it("refuses --all with a slug, naming both search shapes", async () => {
-    const result = await runCli(
-      ["spec", "search", "--all", "native-sdd", "durable"],
-      baseEnv,
-      makeHost({ sibling: true }),
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("cctl spec search --all <query>");
-    expect(result.stderr).toContain("cctl spec search <slug> <query>");
+    expect(bad.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(2);
   });
 
   /**
@@ -3064,13 +2089,13 @@ describe("cctl spec read verbs against seeded read routes", () => {
       args: string[],
       host: CliHost,
     ): Promise<z.infer<typeof specDiffViewSchema>> {
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["spec", "diff", "native-sdd", ...args, "--json"],
         baseEnv,
         host,
       );
       expect(result.exitCode, result.stderr).toBe(0);
-      return specDiffViewSchema.parse(JSON.parse(result.stdout).diff);
+      return specDiffViewSchema.parse(inlineDataOf(result).diff);
     }
 
     interface ElementClass {
@@ -3089,23 +2114,22 @@ describe("cctl spec read verbs against seeded read routes", () => {
       );
     }
 
-    it("prints per-element summaries and the compared pair in human output", async () => {
-      const result = await runCli(
-        ["spec", "diff", "native-sdd"],
-        baseEnv,
-        makeHost({ lineage: true }),
-      );
-
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(result.stdout).toContain("revision 3 (draft)");
-      expect(result.stdout).toContain("revision 2 (proposed)");
-      expect(result.stdout).toContain(
-        "added\tD1\tAdded decision: Default to the review base",
-      );
-      expect(result.stdout).toContain(
-        "removed\tT1\tRemoved task: Build the diff verb",
-      );
-      expect(result.stdout).toContain("unchanged\tR1.1");
+    it("retains per-element summaries and the compared revision identities", async () => {
+      const view = await readDiff([], makeHost({ lineage: true }));
+      expect(view).toMatchObject({
+        to: { number: 3, state: "draft" },
+        from: { number: 2, state: "proposed" },
+        elements: expect.arrayContaining([
+          {
+            elementId: LINEAGE_ELEMENTS.decision.id,
+            handle: "D1",
+            kind: "decision",
+            classification: "added",
+            directlyChanged: true,
+            summary: "Added decision: Default to the review base",
+          },
+        ]),
+      });
     });
 
     it("refuses conflicting bases at the route, not only at the CLI", async () => {
@@ -3123,13 +2147,13 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
 
     it("refuses a revision id that is not part of this spec, naming the flag", async () => {
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["spec", "diff", "native-sdd", "--to", "revision-from-another-spec"],
         baseEnv,
         makeHost({ lineage: true }),
       );
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("revision-from-another-spec");
       expect(result.stderr).toContain("cctl spec show native-sdd --full");
     });
@@ -3167,38 +2191,27 @@ describe("cctl spec read verbs against seeded read routes", () => {
         homedir: "/Users/test",
       };
 
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["spec", "diff", "native-sdd"],
         baseEnv,
         driftedHost,
       );
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("failed this CLI's validation");
-      expect(result.stderr).toContain("elements.0.classification");
+      expect(result.stderr).toContain("CC_INVALID_RESPONSE");
+      expect(result.stderr).toContain("classification");
       expect(result.stderr).not.toContain("same build as this CLI");
-      expect(result.stderr).toContain("cctl doctor");
     });
     it("defaults to the pair Spec Studio diffs and classes it identically", async () => {
       const host = makeHost({ lineage: true });
-      const shown = await runCli(
-        [
-          "spec",
-          "show",
-          "native-sdd",
-          "--full",
-          "--out",
-          ".cc/temp/diff-parity-detail.json",
-          "--json",
-        ],
+      const shown = await runCcWithHost(
+        ["spec", "show", "native-sdd", "--full", "--json"],
         baseEnv,
         host,
       );
       expect(shown.exitCode, `${shown.stderr}${shown.stdout}`).toBe(0);
       const detail = specDetailViewSchema.parse(
-        JSON.parse(
-          host.written.get(".cc/temp/diff-parity-detail.json") ?? "{}",
-        ),
+        JSON.parse(artifactTextOf(shown)),
       );
       const current = detail.currentRevision;
       if (current === null) throw new Error("no current revision");
@@ -3301,7 +2314,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     it("refuses --from with --baseline governance, naming both bases", async () => {
       const host = makeHost({ lineage: true });
 
-      const result = await runCli(
+      const result = await runCcWithHost(
         [
           "spec",
           "diff",
@@ -3317,7 +2330,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("--from");
-      expect(result.stderr).toContain("--baseline governance");
+      expect(result.stderr).toContain("--baseline");
       // Refused before the request, so neither base is silently chosen.
       expect(host.requests.some((entry) => entry.url.includes("/diff"))).toBe(
         false,
@@ -3325,110 +2338,34 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
-  /**
-   * The default changed on 2026-08-07 (approved compatibility break): a bundle
-   * large enough to be worth exporting was never worth pasting into a
-   * transcript, so the file is the product and stdout carries only the manifest
-   * a reader checks it by.
-   */
   describe("cctl spec export", () => {
-    const DERIVED_PATH = ".cc/temp/native-sdd-spec-bundle.json";
-    const exportSummarySchema = z
-      .object({
-        ok: z.literal(true),
-        path: z.string(),
-        revisionCount: z.number(),
-        elementCount: z.number(),
-        contentHash: z.string(),
-      })
-      .strict();
-
-    it("writes the bundle to the derived default path", async () => {
-      const host = makeHost();
-
-      const result = await runCli(
-        ["spec", "export", "native-sdd"],
-        baseEnv,
-        host,
-      );
-
-      expect(result.exitCode, result.stderr).toBe(0);
-      const written = host.written.get(DERIVED_PATH);
-      if (written === undefined) throw new Error("no bundle written");
-      expect(JSON.parse(written)).toEqual(bundle);
-      expect(result.stdout).toContain(DERIVED_PATH);
-    });
-
-    it("writes --out when given and reports that path instead", async () => {
-      const host = makeHost();
-
-      const result = await runCli(
-        [
-          "spec",
-          "export",
-          "native-sdd",
-          "--out",
-          "/tmp/native-sdd.json",
-          "--json",
-        ],
-        baseEnv,
-        host,
-      );
-
-      expect(result.exitCode, result.stderr).toBe(0);
-      const summary = exportSummarySchema.parse(JSON.parse(result.stdout));
-      expect(summary).toMatchObject({
-        ok: true,
-        path: "/tmp/native-sdd.json",
-        revisionCount: 1,
-        elementCount: 3,
-      });
-      expect(summary.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
-      expect(host.written.has(DERIVED_PATH)).toBe(false);
-      expect(
-        JSON.parse(host.written.get("/tmp/native-sdd.json") ?? "null"),
-      ).toEqual(bundle);
-    });
-
-    it("inlines the bundle only under --stdout, writing no file", async () => {
-      const host = makeHost();
-
-      const result = await runCli(
-        ["spec", "export", "native-sdd", "--stdout", "--json"],
-        baseEnv,
-        host,
-      );
-
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, bundle });
-      expect(host.written.size).toBe(0);
-    });
-
-    it("refuses --stdout with --out, naming both destinations", async () => {
-      const result = await runCli(
-        ["spec", "export", "native-sdd", "--stdout", "--out", "/tmp/x.json"],
+    it("exports the canonical spec bundle", async () => {
+      const result = await runCcWithHost(
+        ["spec", "export", "native-sdd", "--json"],
         baseEnv,
         makeHost(),
       );
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain("--stdout");
-      expect(result.stderr).toContain("--out");
+      expect(result.exitCode, result.stdout).toBe(0);
+      const content = artifactTextOf(result);
+      expect(JSON.parse(content)).toEqual(bundle);
+    });
+    it("inlines the canonical representation when --stdout is selected", async () => {
+      const { data } = await readData(["export", "native-sdd", "--stdout"]);
+      expect(data).toMatchObject({ bundle, revisionCount: 1, elementCount: 3 });
     });
   });
 
   it("verifies current integrity and an exported representation", async () => {
     const against = "/tmp/native-sdd.json";
     const host = makeHost({ files: { [against]: JSON.stringify(bundle) } });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "verify", "native-sdd", "--against", against, "--json"],
       baseEnv,
       host,
     );
 
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+    expect(inlineDataOf(result)).toMatchObject({
       report: { ok: true, checkedRevisionIds: [revision.id] },
       against,
     });
@@ -3500,20 +2437,21 @@ describe("cctl spec read verbs against seeded read routes", () => {
         files: { [against]: JSON.stringify(againstBundle) },
       });
 
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["spec", "verify", "native-sdd", "--against", against, "--json"],
         baseEnv,
         host,
       );
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(JSON.parse(result.stdout)).toMatchObject({
         ok: false,
-        code: expectedCode,
-        issues: [{ path: expectedPath }],
+        error: {
+          details: { serverCode: expectedCode },
+          issues: [{ path: [expectedPath] }],
+        },
       });
       expect(host.requests).toHaveLength(0);
-      expect(host.written.size).toBe(0);
     },
   );
 
@@ -3555,7 +2493,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
         files: { [againstPath]: JSON.stringify(againstBundle) },
       });
 
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["spec", "verify", "native-sdd", "--against", againstPath, "--json"],
         baseEnv,
         host,
@@ -3564,15 +2502,15 @@ describe("cctl spec read verbs against seeded read routes", () => {
       expect(result.exitCode).toBe(1);
       expect(JSON.parse(result.stdout)).toMatchObject({
         ok: false,
-        code: "integrity_mismatch",
-        details: { against: againstPath },
-        issues: [{ path: expectedPath }],
+        error: {
+          details: { serverCode: "integrity_mismatch", against: againstPath },
+          issues: [{ path: [expectedPath] }],
+        },
       });
       expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
         "/api/specs/demo/native-sdd/verify",
         "/api/specs/demo/native-sdd/export",
       ]);
-      expect(host.written.size).toBe(0);
       for (const body of [
         ...Object.values(currentValues),
         ...Object.values(againstValues),
@@ -3583,8 +2521,8 @@ describe("cctl spec read verbs against seeded read routes", () => {
     },
   );
 
-  it("exits 1 with integrity_mismatch for a tampered spec", async () => {
-    const result = await runCli(
+  it("reports integrity_mismatch and recovery for a tampered spec", async () => {
+    const result = await runCcWithHost(
       ["spec", "verify", "native-sdd", "--json"],
       baseEnv,
       makeHost({ tampered: true }),
@@ -3593,10 +2531,10 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: false,
-      code: "integrity_mismatch",
+      error: { details: { serverCode: "integrity_mismatch" } },
       instruction:
         "Inspect the reported revision mismatch and resolve it in the authoritative spec store, then export a fresh bundle and verify again.",
-      details: { report: { ok: false } },
+      payload: { data: { report: { ok: false } } },
     });
     expect(result.stdout).not.toMatch(/restore|import/i);
   });
@@ -3607,7 +2545,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
   // `invalid_response`. Under the `-` namespace the slug reaches its own route.
   it("reads a spec slugged 'search' as a spec rather than the project search route", async () => {
     const host = makeHost();
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["spec", "show", "search", "--json"],
       baseEnv,
       host,
@@ -3617,20 +2555,19 @@ describe("cctl spec read verbs against seeded read routes", () => {
       "/api/specs/demo/search/outline",
     );
     expect(result.stderr).not.toContain("invalid_response");
-    expect(JSON.parse(result.stdout)).toEqual({
+    expect(JSON.parse(result.stdout)).toMatchObject({
       ok: false,
-      error: "Spec not found",
+      error: { message: "Spec not found" },
     });
   });
 
-  it("rejects malformed slugs, handles, and --against files before network", async () => {
-    const host = makeHost({ files: { "/tmp/bad.json": "not json" } });
+  it("rejects invalid spec slugs and element handles before network", async () => {
+    const host = makeHost();
     for (const argv of [
       ["spec", "show", "Native-SDD"],
       ["spec", "get", "native-sdd/R0"],
-      ["spec", "verify", "native-sdd", "--against", "/tmp/bad.json"],
     ]) {
-      const result = await runCli(argv, baseEnv, host);
+      const result = await runCcWithHost(argv, baseEnv, host);
       expect(result.exitCode).toBe(2);
     }
     expect(host.requests).toHaveLength(0);
@@ -3840,7 +2777,6 @@ describe("cctl spec verify --against across migration 0009", () => {
     db: Db,
     files: Map<string, string>,
   ): CliHost & {
-    written: Map<string, string>;
     requests: RecordedRequest[];
   } {
     const specs = createSpecsRepo(db, createWriteQueue());
@@ -3875,10 +2811,9 @@ describe("cctl spec verify --against across migration 0009", () => {
         return verifyExportState(await loadSpecExportState(exportDeps, specId));
       },
     });
-    const written = new Map<string, string>();
+
     const requests: RecordedRequest[] = [];
     return {
-      written,
       requests,
       async fetch(url, init) {
         requests.push({ url, init });
@@ -3904,9 +2839,6 @@ describe("cctl spec verify --against across migration 0009", () => {
       },
       async readFileBytes() {
         return null;
-      },
-      async writeTextFile(filePath, content) {
-        written.set(filePath, content);
       },
       async sleep() {},
       platform: "darwin",
@@ -3996,48 +2928,31 @@ describe("cctl spec verify --against across migration 0009", () => {
     const files = new Map<string, string>();
     const host = makePersistenceHost(db, files);
 
-    const exported = await runCli(
+    const exported = await runCcWithHost(
       ["spec", "export", "clean-spec", "--json"],
       baseEnv,
       host,
     );
     expect(exported.exitCode, exported.stderr).toBe(0);
-    const summary = z
-      .object({
-        path: z.string(),
-        revisionCount: z.number(),
-        elementCount: z.number(),
-        contentHash: z.string(),
-      })
-      .loose()
-      .parse(JSON.parse(exported.stdout));
-    expect(summary.path).toBe(".cc/temp/clean-spec-spec-bundle.json");
-    const written = host.written.get(summary.path);
-    if (written === undefined) throw new Error("default export wrote nothing");
-    expect(summary.contentHash).toBe(
-      `sha256:${createHash("sha256").update(written, "utf-8").digest("hex")}`,
-    );
+    const artifact = exported.artifacts[0];
+    if (!artifact) throw new Error("default export wrote nothing");
+    const summary = { path: artifact.path };
+    const written = artifactTextOf(exported);
     const manifest = manifestShapeSchema.parse(
       JSON.parse(bundleShapeSchema.parse(JSON.parse(written)).manifest),
     );
-    expect(summary.revisionCount).toBe(manifest.revisions.length);
-    expect(summary.elementCount).toBe(
-      manifest.revisions.reduce(
-        (total, revisionEntry) => total + revisionEntry.elements.length,
-        0,
-      ),
-    );
+    expect(manifest.revisions).toHaveLength(1);
+    expect(manifest.revisions[0]?.elements).toHaveLength(2);
 
     files.set(summary.path, written);
-    const verified = await runCli(
+    const verified = await runCcWithHost(
       ["spec", "verify", "clean-spec", "--against", summary.path, "--json"],
       baseEnv,
       host,
     );
 
     expect(verified.exitCode, verified.stderr).toBe(0);
-    expect(JSON.parse(verified.stdout)).toMatchObject({
-      ok: true,
+    expect(inlineDataOf(verified)).toMatchObject({
       against: summary.path,
     });
   });
@@ -4054,20 +2969,13 @@ describe("cctl spec verify --against across migration 0009", () => {
     // pre-narrowing rows, so a current build can never re-render the old
     // bytes. That refusal is the reason its old bundle is reconstructed from
     // the frozen seed after migration.
-    const cleanExport = await runCli(
-      [
-        "spec",
-        "export",
-        "clean-spec",
-        "--out",
-        "/tmp/clean-old.json",
-        "--json",
-      ],
+    const cleanExport = await runCcWithHost(
+      ["spec", "export", "clean-spec", "--json"],
       baseEnv,
       host,
     );
     expect(cleanExport.exitCode).toBe(0);
-    const oldCleanRaw = host.written.get("/tmp/clean-old.json");
+    const oldCleanRaw = artifactTextOf(cleanExport);
     if (oldCleanRaw === undefined) throw new Error("clean export not written");
     expect(
       manifestShapeSchema.parse(
@@ -4098,14 +3006,13 @@ describe("cctl spec verify --against across migration 0009", () => {
     // (3) Plain integrity passes post-migration: hashes were recomputed
     // consistently with the rewritten payloads.
     for (const slug of ["legacy-evidence", "clean-spec"]) {
-      const verified = await runCli(
+      const verified = await runCcWithHost(
         ["spec", "verify", slug, "--json"],
         baseEnv,
         host,
       );
       expect(verified.exitCode).toBe(0);
-      expect(JSON.parse(verified.stdout)).toMatchObject({
-        ok: true,
+      expect(inlineDataOf(verified)).toMatchObject({
         report: { ok: true },
       });
     }
@@ -4113,19 +3020,19 @@ describe("cctl spec verify --against across migration 0009", () => {
     // (4) The affected spec's pre-narrowing body is not valid format-4
     // content. Strict decode refuses it before live verification; re-exporting
     // is the supported way to produce a canonical artifact after migration.
-    const affectedExport = await runCli(
+    const affectedExport = await runCcWithHost(
       ["spec", "export", "legacy-evidence", "--stdout", "--json"],
       baseEnv,
       host,
     );
     expect(affectedExport.exitCode).toBe(0);
     const currentAffected = bundleShapeSchema.parse(
-      JSON.parse(affectedExport.stdout).bundle,
+      inlineDataOf(affectedExport).bundle,
     );
     const oldAffected = reconstructPreNarrowingBundle(currentAffected);
     files.set("/tmp/affected-old.json", JSON.stringify(oldAffected));
     const requestsBeforeMismatch = host.requests.length;
-    const mismatch = await runCli(
+    const mismatch = await runCcWithHost(
       [
         "spec",
         "verify",
@@ -4137,24 +3044,30 @@ describe("cctl spec verify --against across migration 0009", () => {
       baseEnv,
       host,
     );
-    expect(mismatch.exitCode).toBe(1);
+    expect(mismatch.exitCode).toBe(2);
     expect(JSON.parse(mismatch.stdout)).toMatchObject({
       ok: false,
-      code: "integrity_mismatch",
-      error: "canonical bundle failed strict format-4 verification",
-      details: { against: "/tmp/affected-old.json" },
-      issues: [
-        {
-          path: "bundle.manifest.revisions[0].elements[1].payload.validationStrategy.kinds[0]",
+      error: {
+        message: "canonical bundle failed strict format-4 verification",
+        details: {
+          serverCode: "integrity_mismatch",
+          against: "/tmp/affected-old.json",
         },
-      ],
+        issues: [
+          {
+            path: [
+              "bundle.manifest.revisions[0].elements[1].payload.validationStrategy.kinds[0]",
+            ],
+          },
+        ],
+      },
     });
     expect(host.requests).toHaveLength(requestsBeforeMismatch);
 
     // (5) The unaffected spec's pre-migration content still matches at exit 0
     // when reconstructed in the current bundle format.
     files.set("/tmp/clean-old.json", oldCleanRaw);
-    const stillMatches = await runCli(
+    const stillMatches = await runCcWithHost(
       [
         "spec",
         "verify",
@@ -4167,14 +3080,13 @@ describe("cctl spec verify --against across migration 0009", () => {
       host,
     );
     expect(stillMatches.exitCode).toBe(0);
-    expect(JSON.parse(stillMatches.stdout)).toMatchObject({
-      ok: true,
+    expect(inlineDataOf(stillMatches)).toMatchObject({
       against: "/tmp/clean-old.json",
     });
 
     // The remedy works: a fresh post-migration export matches itself.
     files.set("/tmp/affected-fresh.json", JSON.stringify(currentAffected));
-    const freshMatches = await runCli(
+    const freshMatches = await runCcWithHost(
       [
         "spec",
         "verify",

@@ -1,28 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { createCcRuntimeFixture, jsonReply } from "../testing/framework";
+
 import type {
   TicketDetail,
   TicketRelationshipView,
   TicketStatusUpdate,
 } from "@/lib/tickets/schemas";
-import type { CliHost } from "../shared";
 import {
   buildRelationshipOutline,
   buildRelationshipPageProjection,
   buildStatusUpdateOutline,
   buildStatusUpdatePageProjection,
   buildTicketGetProjection,
-  emitTicketDisclosure,
-  relationshipGetCommand,
   relationshipListCommand,
   renderRelationshipPageText,
   renderStatusUpdatePageText,
-  statusUpdateGetCommand,
   statusUpdateListCommand,
   ticketDisclosureMetadataSchema,
   ticketGetProjectionSchema,
   ticketRelationshipOutlineSchema,
   ticketStatusUpdateOutlineSchema,
-} from "./ticket-disclosure";
+} from "./ticket/disclosure";
+
+beforeAll(() => {
+  createCcRuntimeFixture({ respond: () => jsonReply({}) });
+});
 
 const relationship: TicketRelationshipView = {
   id: "rel-1",
@@ -81,34 +83,8 @@ const detail: TicketDetail = {
   statusUpdates: { total: 3, recent: [agentUpdate, userUpdate] },
 };
 
-function host(
-  writeTextFile?: (path: string, content: string) => Promise<void>,
-): CliHost {
-  return {
-    async fetch() {
-      throw new Error("network is outside disclosure tests");
-    },
-    async readTextFile() {
-      return null;
-    },
-    async readFileBytes() {
-      return null;
-    },
-    ...(writeTextFile === undefined ? {} : { writeTextFile }),
-    async sleep() {},
-    platform: "darwin",
-    homedir: "/Users/test",
-  };
-}
-
 describe("ticket disclosure command builders", () => {
-  it("shell-quotes stable handles and preserves every active page filter", () => {
-    expect(relationshipGetCommand("other repo#12", "rel $1")).toBe(
-      "cctl ticket relation get 'other repo#12' 'rel $1'",
-    );
-    expect(statusUpdateGetCommand("other repo#12", "update $1")).toBe(
-      "cctl ticket status-update get 'other repo#12' 'update $1'",
-    );
+  it("preserves every active page filter in ticket continuations", () => {
     expect(
       relationshipListCommand("other repo#12", {
         role: "depends_on",
@@ -116,7 +92,7 @@ describe("ticket disclosure command builders", () => {
         cursor: "opaque_cursor",
       }),
     ).toBe(
-      "cctl ticket relation list 'other repo#12' --role depends_on --limit 37 --cursor 'opaque_cursor'",
+      "cctl ticket relation list --role=depends_on --limit=37 --cursor=opaque_cursor -- 'other repo#12'",
     );
     expect(
       statusUpdateListCommand("other repo#12", {
@@ -124,7 +100,7 @@ describe("ticket disclosure command builders", () => {
         cursor: "opaque_cursor",
       }),
     ).toBe(
-      "cctl ticket status-update list 'other repo#12' --limit 40 --cursor 'opaque_cursor'",
+      "cctl ticket status-update list --limit=40 --cursor=opaque_cursor -- 'other repo#12'",
     );
   });
 });
@@ -140,7 +116,7 @@ describe("ticket bounded outline projections", () => {
       otherTitle: "Ship the prerequisite",
       descriptionPreview: "Needs the API contract first",
       updatedAt: "2026-08-31T13:00:00.000Z",
-      getCommand: "cctl ticket relation get 'cc#12' 'rel-1'",
+      getCommand: "cctl ticket relation get -- 'cc#12' rel-1",
     });
 
     const updateOutline = buildStatusUpdateOutline(agentUpdate, "cc#12");
@@ -152,7 +128,7 @@ describe("ticket bounded outline projections", () => {
       backend: "codex",
       conversationId: "conversation-2",
       bodyPreview: "Agent report",
-      getCommand: "cctl ticket status-update get 'cc#12' 'update-2'",
+      getCommand: "cctl ticket status-update get -- 'cc#12' update-2",
     });
   });
 
@@ -191,11 +167,11 @@ describe("ticket bounded outline projections", () => {
       next: {
         cursor: "next_relation",
         command:
-          "cctl ticket relation list 'cc#12' --role depends_on --limit 1 --cursor 'next_relation'",
+          "cctl ticket relation list --role=depends_on --limit=1 --cursor=next_relation -- 'cc#12'",
       },
     });
     expect(renderRelationshipPageText(relationProjection)).toContain(
-      "relationships: total=4 returned=1 truncated=true — next: cctl ticket relation list 'cc#12' --role depends_on --limit 1 --cursor 'next_relation'",
+      "relationships: total=4 returned=1 truncated=true — next: cctl ticket relation list --role=depends_on --limit=1 --cursor=next_relation -- 'cc#12'",
     );
 
     const updateProjection = buildStatusUpdatePageProjection(
@@ -210,11 +186,11 @@ describe("ticket bounded outline projections", () => {
       next: {
         cursor: "next_update",
         command:
-          "cctl ticket status-update list 'cc#12' --limit 1 --cursor 'next_update'",
+          "cctl ticket status-update list --limit=1 --cursor=next_update -- 'cc#12'",
       },
     });
     expect(renderStatusUpdatePageText(updateProjection)).toContain(
-      "status updates: total=3 returned=1 truncated=true — next: cctl ticket status-update list 'cc#12' --limit 1 --cursor 'next_update'",
+      "status updates: total=3 returned=1 truncated=true — next: cctl ticket status-update list --limit=1 --cursor=next_update -- 'cc#12'",
     );
 
     const completeRelation = buildRelationshipPageProjection(
@@ -246,7 +222,7 @@ describe("ticket bounded outline projections", () => {
     const relationships = Array.from({ length: 25 }, (_unused, index) => ({
       ...relationship,
       id: `rel-${String(index).padStart(2, "0")}`,
-      role: roles[index % roles.length]!,
+      role: roles[index % roles.length] ?? "related",
       updatedAt: `2026-08-31T13:${String(index).padStart(2, "0")}:00.000Z`,
     }));
     const projection = buildTicketGetProjection(
@@ -263,7 +239,7 @@ describe("ticket bounded outline projections", () => {
     }
     expect(parsed.ticket.relationships.next).toEqual({
       cursor: null,
-      command: "cctl ticket relation list 'cc#12' --limit 20",
+      command: "cctl ticket relation list --limit=20 -- 'cc#12'",
     });
     expect(parsed.ticket.relationships.items.map((item) => item.role)).toEqual([
       ...Array(5).fill("parent"),
@@ -304,7 +280,7 @@ describe("ticket bounded outline projections", () => {
           truncated: true,
           next: {
             cursor: null,
-            command: "cctl ticket status-update list 'cc#12' --limit 20",
+            command: "cctl ticket status-update list --limit=20 -- 'cc#12'",
           },
         },
       },
@@ -327,99 +303,5 @@ describe("ticket bounded outline projections", () => {
         next: { cursor: null, command: "cctl ticket get 'cc#12'" },
       }).success,
     ).toBe(false);
-  });
-});
-
-describe("ticket disclosure stdout budget", () => {
-  it("keeps content below 60,000 UTF-8 bytes inline", async () => {
-    const writes: string[] = [];
-    const result = await emitTicketDisclosure({
-      host: host(async (_path, content) => {
-        writes.push(content);
-      }),
-      json: false,
-      command: "ticket relation get",
-      namePrefix: "ticket-relation",
-      text: "x".repeat(59_999),
-      payload: { relationship: { id: "rel-1" } },
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toHaveLength(59_999);
-    expect(writes).toEqual([]);
-  });
-
-  it("spills text at 60,000 bytes and returns only an artifact receipt", async () => {
-    const writes: Array<{ path: string; content: string }> = [];
-    const body = "sensitive rationale ".repeat(3_000);
-    const result = await emitTicketDisclosure({
-      host: host(async (path, content) => {
-        writes.push({ path, content });
-      }),
-      json: false,
-      command: "ticket relation get",
-      namePrefix: "ticket-relation",
-      text: body,
-      payload: { relationship: { description: body } },
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("artifact:");
-    expect(result.stdout).not.toContain("sensitive rationale");
-    expect(writes).toHaveLength(1);
-    expect(writes[0]?.content).toBe(body);
-  });
-
-  it("measures JSON independently so structured output cannot bypass the budget", async () => {
-    const writes: Array<{ path: string; content: string }> = [];
-    const body = "sensitive update ".repeat(4_000);
-    const result = await emitTicketDisclosure({
-      host: host(async (path, content) => {
-        writes.push({ path, content });
-      }),
-      json: true,
-      command: "ticket status-update get",
-      namePrefix: "ticket-update",
-      text: "short text mode",
-      payload: { update: { bodyMarkdown: body } },
-    });
-
-    expect(result.exitCode).toBe(0);
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope).toMatchObject({
-      ok: true,
-      command: "ticket status-update get",
-      storage: "artifact",
-      artifact: { reason: "stdout_budget_exceeded", format: "json" },
-    });
-    expect(result.stdout).not.toContain("sensitive update");
-    expect(writes[0]?.content).toContain(body);
-  });
-
-  it("refuses unavailable and failed artifact writes without dumping content", async () => {
-    const unavailable = await emitTicketDisclosure({
-      host: host(),
-      json: true,
-      command: "ticket get",
-      namePrefix: "ticket-get",
-      text: "short text mode",
-      payload: { ticket: { description: "x".repeat(60_000) } },
-    });
-    expect(unavailable.exitCode).toBe(1);
-    expect(JSON.parse(unavailable.stdout).code).toBe("write_unavailable");
-
-    const failed = await emitTicketDisclosure({
-      host: host(async () => {
-        throw new Error("disk full");
-      }),
-      json: false,
-      command: "ticket get",
-      namePrefix: "ticket-get",
-      text: "x".repeat(60_000),
-      payload: {},
-    });
-    expect(failed.exitCode).toBe(1);
-    expect(failed.stderr).toContain("could not write");
-    expect(failed.stdout).not.toContain("x".repeat(100));
   });
 });

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Generate the cc-cli command reference and exit-code table from the help
- * registry and taxonomy. --check also checks hand-authored usage shapes in
- * SKILL.md and its references against the registry.
+ * Generate the cc-cli command reference from the public native HelpNode API.
+ * --check also checks hand-authored command paths and flags in SKILL.md and
+ * its references against the registry.
  *
  * Usage:
  *   bun scripts/cc-cli-skill-reference.ts
@@ -12,13 +12,8 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { EXIT_TAXONOMY, type ExitCodeMeaning } from "../src/cli/exit-taxonomy";
-import {
-  allHelpEntries,
-  buildHelpRegistry,
-  childHelpEntries,
-} from "../src/cli/help-registry";
-import { pathKey, type CommandHelpEntry } from "../src/cli/help-types";
+import { helpNode, type HelpNode } from "cli-for-agents/runtime";
+import { createCommandCenterCli } from "../src/cli/framework/application";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -37,206 +32,177 @@ export const COMMAND_REFERENCE_PATH = path.join(
 );
 
 export function skillDocumentPaths(): string[] {
-  return [
-    SKILL_MD_PATH,
-    ...readdirSync(REFERENCE_DIR)
-      .filter((name) => name.endsWith(".md"))
-      .sort()
-      .map((name) => path.join(REFERENCE_DIR, name)),
-  ];
+  const visit = (directory: string): string[] =>
+    readdirSync(directory, { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .flatMap((entry) =>
+        entry.isDirectory()
+          ? visit(path.join(directory, entry.name))
+          : entry.name.endsWith(".md")
+            ? [path.join(directory, entry.name)]
+            : [],
+      );
+  return visit(path.dirname(path.dirname(SKILL_MD_PATH)));
 }
 
 export const BEGIN_MARKER = "<!-- BEGIN GENERATED COMMAND REFERENCE -->";
 export const END_MARKER = "<!-- END GENERATED COMMAND REFERENCE -->";
-export const EXIT_CODES_BEGIN_MARKER = "<!-- BEGIN GENERATED EXIT CODES -->";
-export const EXIT_CODES_END_MARKER = "<!-- END GENERATED EXIT CODES -->";
-
-/**
- * The exit-code table as markdown, rendered from the taxonomy the binary itself
- * exits with. A skill that tells an agent what exit `4` means while the binary
- * behaves differently is worse than silence — the agent acts on the doc.
- */
-export function renderExitCodeTable(
-  taxonomy: readonly ExitCodeMeaning[] = EXIT_TAXONOMY,
-): string {
-  const lines = [
-    "_Generated from the CLI exit taxonomy. `cctl exit-codes` prints the same table offline._",
-    "",
-    "| Code | Meaning | Recovery |",
-    "|---|---|---|",
-    ...taxonomy.map(
-      (row) =>
-        `| \`${row.code}\` | ${row.meaning} | ${
-          row.recovery === null ? "—" : `\`${row.recovery}\``
-        } |`,
-    ),
-  ];
-  return `${lines.join("\n")}\n`;
+/** Traverse the public native projection; context and handler loaders stay cold. */
+export function nativeHelpNodes(cli = createCommandCenterCli()): HelpNode[] {
+  const nodes: HelpNode[] = [];
+  const visit = (commandPath: string): void => {
+    const node = helpNode(cli, commandPath);
+    nodes.push(node);
+    for (const child of node.children) visit(child.path);
+  };
+  visit("");
+  return nodes;
 }
 
 export interface ProseUsageFinding {
-  /** 1-indexed line in the source document. */
+  /** 1-indexed source line. */
   line: number;
   text: string;
-  reason: "unknown-command" | "usage-drift";
-  /** The registry's shapes for the entry the line names, on a drift. */
+  reason: "unknown-command" | "unknown-flag";
   expected: string[];
 }
 
-/**
- * A usage SHAPE carries at least one placeholder — `<name>` or an `[optional]`
- * fragment. A concrete example carries argument VALUES instead, and the registry
- * has no opinion about those; only a shape is a restatement of the contract, so
- * only a shape has to match the contract. The `<` must open a word so an
- * example's prose comparison (`<10k sessions`) is not read as a placeholder.
- */
-const USAGE_PLACEHOLDER = /<[A-Za-z][^>]*>|\[[^\]]*\]/u;
-
-/** Drop a trailing ` # …` annotation; `project#number` has no space before it. */
-function withoutTrailingComment(text: string): string {
-  const comment = text.indexOf(" #");
-  return (comment === -1 ? text : text.slice(0, comment)).trim();
-}
-
-/** The command-segment run after `cctl`, stopping at the first argument or flag. */
-function commandTokens(text: string): string[] {
-  const tokens: string[] = [];
-  for (const token of text.slice("cctl ".length).split(/\s+/u)) {
-    if (!/^[a-z][a-z0-9-]*$/u.test(token)) break;
-    tokens.push(token);
-  }
-  return tokens;
-}
-
-type PathResolution =
-  | { kind: "entry"; entry: CommandHelpEntry }
-  | { kind: "unknown"; command: string };
-
-/**
- * Resolve a mentioned path, stopping at a LEAF: everything after a leaf is an
- * argument (`cctl spec show native-sdd` names a slug, not a subcommand), while
- * an unrecognized token under a GROUP is a verb the registry does not have.
- */
-function resolvePath(
-  registry: Map<string, CommandHelpEntry>,
-  tokens: string[],
-): PathResolution | null {
-  const head = tokens[0];
-  if (head === undefined) return null;
-  let entry = registry.get(head);
-  if (entry === undefined) return { kind: "unknown", command: head };
-  for (let depth = 2; depth <= tokens.length; depth++) {
-    const candidate = tokens.slice(0, depth);
-    const deeper = registry.get(pathKey(candidate));
-    if (deeper !== undefined) {
-      entry = deeper;
+/** Mask quoted prose so literal command-looking content cannot become a flag. */
+function unquoted(text: string): string {
+  let quote: string | undefined;
+  let escaped = false;
+  let result = "";
+  for (const character of text) {
+    if (escaped) {
+      result += "x";
+      escaped = false;
       continue;
     }
-    if (childHelpEntries(registry, entry.path).length > 0) {
-      return { kind: "unknown", command: candidate.join(" ") };
+    if (character === "\\" && quote !== "'") {
+      escaped = true;
+      result += "x";
+      continue;
     }
-    break;
+    if (quote) {
+      if (character === quote) quote = undefined;
+      result += "x";
+    } else if (character === '"' || character === "'") {
+      quote = character;
+      result += "x";
+    } else {
+      result += character;
+    }
   }
-  return { kind: "entry", entry };
+  return result;
 }
 
-/**
- * The hand-prose drift gate (docs/design/cc-cli/09 §10). The generated blocks
- * cannot drift by construction; the rich prose sections around them can, and the
- * 2026-08 audit found three usage lines in them that the binary no longer
- * accepted. Every `cctl …` line inside a fenced block outside the generated
- * markers must therefore either name a real command (an example) or be one of
- * that command's registry usage shapes verbatim (a restatement).
- *
- * The scan is deliberately its own small lexer rather than a markdown parse: it
- * reasons about the LINES a reader copies, and a fence plus a leading `cctl` is
- * exactly what makes a line copyable.
- */
+/** Check copyable paths and flags against HelpNode, allowing values/placeholders. */
 export function proseUsageFindings(
   source: string,
-  entries: CommandHelpEntry[],
+  nodes: readonly HelpNode[],
 ): ProseUsageFinding[] {
-  const registry = buildHelpRegistry(entries);
+  const registry = new Map(nodes.map((node) => [node.path, node]));
   const findings: ProseUsageFinding[] = [];
   let inGenerated = false;
   let inFence = false;
+  let pending = "";
+  let pendingLine = 0;
 
   source.split("\n").forEach((raw, index) => {
-    if (raw.includes(BEGIN_MARKER) || raw.includes(EXIT_CODES_BEGIN_MARKER)) {
+    if (raw.includes(BEGIN_MARKER)) {
       inGenerated = true;
       return;
     }
-    if (raw.includes(END_MARKER) || raw.includes(EXIT_CODES_END_MARKER)) {
+    if (raw.includes(END_MARKER)) {
       inGenerated = false;
       return;
     }
+    if (inGenerated) return;
     if (raw.trimStart().startsWith("```")) {
       inFence = !inFence;
       return;
     }
-    if (inGenerated || !inFence) return;
-
-    const text = withoutTrailingComment(raw.trim());
-    if (!text.startsWith("cctl ")) return;
-    const resolution = resolvePath(registry, commandTokens(text));
-    if (resolution === null) return;
-    if (resolution.kind === "unknown") {
+    if (!inFence) return;
+    const line = raw.trim();
+    if (!pending && !line.startsWith("cctl ")) return;
+    if (!pending) pendingLine = index + 1;
+    pending += ` ${line}`;
+    if (line.endsWith("\\")) {
+      pending = pending.slice(0, -1);
+      return;
+    }
+    const text = pending.trim();
+    pending = "";
+    const comment = unquoted(text).indexOf(" #");
+    const tokens = unquoted(
+      comment === -1 ? text : text.slice(0, comment),
+    ).split(/\s+/u);
+    // exit-codes is the runtime's built-in offline route, outside the command tree.
+    if (tokens[1] === "exit-codes") return;
+    let node = registry.get("");
+    let cursor = 1;
+    while (node && (node.kind === "root" || node.kind === "group")) {
+      const token = tokens[cursor];
+      if (!token || !/^[a-z][a-z0-9-]*$/u.test(token)) break;
+      const nextPath = [node.path, token].filter(Boolean).join(" ");
+      const next = registry.get(nextPath);
+      if (!next) {
+        findings.push({
+          line: pendingLine,
+          text,
+          reason: "unknown-command",
+          expected: node.children.map((child) => `cctl ${child.path}`),
+        });
+        return;
+      }
+      node = next;
+      cursor++;
+    }
+    if (!node) return;
+    const known = new Set(
+      node.flags.flatMap((flag) => [
+        flag.name,
+        ...(flag.fileAlternative ? [flag.fileAlternative.name] : []),
+      ]),
+    );
+    const flags =
+      tokens
+        .slice(cursor)
+        .join(" ")
+        .split(/(?:^|\s)--(?:\s|$)/u)[0] ?? "";
+    for (const match of flags.matchAll(/(?:^|[\s[(|])--([a-z][a-z0-9-]*)/gu)) {
+      if (known.has(match[1] ?? "")) continue;
       findings.push({
-        line: index + 1,
+        line: pendingLine,
         text,
-        reason: "unknown-command",
-        expected: [],
+        reason: "unknown-flag",
+        expected: [...known].map((name) => `--${name}`),
       });
       return;
     }
-    if (!USAGE_PLACEHOLDER.test(text)) return;
-    if (resolution.entry.usage.includes(text)) return;
-    findings.push({
-      line: index + 1,
-      text,
-      reason: "usage-drift",
-      expected: [...resolution.entry.usage],
-    });
   });
-
   return findings;
 }
 
-/**
- * Render the registry as the markdown reference block (between, not including,
- * the markers). Pure — takes entries, returns the block text — so the format is
- * unit-tested against crafted entry sets without touching disk.
- *
- * Grouped by top-level command in registry order; each portable entry is one bullet
- * `` `cctl <path>` — <summary> `` followed by its usage shapes as inline code.
- * A trailing newline is included so the block sits cleanly between its markers.
- */
-export function renderCommandReference(entries: CommandHelpEntry[]): string {
-  const portableEntries = entries.filter(
-    (entry) => entry.includeInGeneratedReference !== false,
-  );
-  const level1 = portableEntries.filter((entry) => entry.path.length === 1);
-  const lines: string[] = [
+export function renderCommandReference(nodes: readonly HelpNode[]): string {
+  const root = nodes.find((node) => node.kind === "root");
+  const sharedFlags = new Set(root?.flags.map((flag) => flag.name));
+  const lines = [
     "### Command reference",
     "",
-    "_Generated from the `cctl` help registry. Read a command's `--help` for its current contract._",
+    "_Generated from the native `cctl` registry. Leaf `--help` owns descriptions, examples, input limits, and recovery edges. Use `cctl --help` for global flags and `cctl exit-codes` for the runtime error catalog._",
     "",
   ];
-
-  for (const top of level1) {
-    const family = portableEntries
-      .filter((entry) => entry.path[0] === top.path[0])
-      .sort((a, b) => a.path.length - b.path.length);
-    for (const entry of family) {
-      const key = pathKey(entry.path);
-      lines.push(`- \`cctl ${key}\` — ${entry.summary}`);
-      for (const shape of entry.usage) {
-        lines.push(`  - \`${shape}\``);
-      }
-    }
-    lines.push("");
+  for (const node of nodes) {
+    if (node.kind === "root") continue;
+    lines.push(`- \`cctl ${node.path}\` — ${node.summary}`);
+    for (const shape of node.usage) lines.push(`  - \`${shape}\``);
+    const flags = node.flags.filter((flag) => !sharedFlags.has(flag.name));
+    if (flags.length)
+      lines.push(
+        `  - Flags: ${flags.map((flag) => `\`--${flag.name}\`${flag.fileAlternative ? ` / \`--${flag.fileAlternative.name}\`` : ""}${flag.required ? " (required)" : ""}`).join(", ")}.`,
+      );
   }
-
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
@@ -299,14 +265,7 @@ function generatedBlocks(): GeneratedBlock[] {
       label: "command reference",
       beginMarker: BEGIN_MARKER,
       endMarker: END_MARKER,
-      block: renderCommandReference(allHelpEntries()),
-    },
-    {
-      filePath: SKILL_MD_PATH,
-      label: "exit-code table",
-      beginMarker: EXIT_CODES_BEGIN_MARKER,
-      endMarker: EXIT_CODES_END_MARKER,
-      block: renderExitCodeTable(),
+      block: renderCommandReference(nativeHelpNodes()),
     },
   ];
 }
@@ -349,13 +308,13 @@ function main(): void {
     for (const filePath of skillDocumentPaths()) {
       for (const finding of proseUsageFindings(
         readFileSync(filePath, "utf8"),
-        allHelpEntries(),
+        nativeHelpNodes(),
       )) {
         console.error(
           `${path.relative(repoRoot, filePath)}:${finding.line} "${finding.text}" ${
             finding.reason === "unknown-command"
               ? "names a command the registry does not have"
-              : `does not match the registry usage: ${finding.expected.join(" | ")}`
+              : `names an unknown flag; accepted: ${finding.expected.join(", ")}`
           }`,
         );
         stale = true;

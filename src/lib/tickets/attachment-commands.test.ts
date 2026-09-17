@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { runCli } from "@/cli/core";
-import type { CliEnv, CliHost } from "@/cli/shared";
+import { runCcWithHost } from "@/cli/testing/domain-runtime";
+import type { CliEnv, CliHost } from "@/cli/transport";
 import {
   attachmentRefreshCommand,
   conversationReadCommands,
@@ -63,6 +63,19 @@ describe("ticket attachment conversation commands", () => {
           maxSeq: 0,
           units: [],
           truncated: false,
+          boundaries: {
+            entries: [],
+            totalInRange: 0,
+            nextBefore: null,
+            indexCommand: null,
+          },
+          truncation: {
+            omittedAfter: null,
+            partialEntry: null,
+            excerptedEntries: [],
+            excerptedEntriesOmitted: 0,
+            excerptedEntriesNext: null,
+          },
           omissions: {
             thinkingOmitted: 0,
             toolResultBytesElided: 0,
@@ -88,7 +101,7 @@ describe("ticket attachment conversation commands", () => {
       CC_CONVERSATION_ID: "ticket-conversation",
     };
 
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "conversation",
         "read",

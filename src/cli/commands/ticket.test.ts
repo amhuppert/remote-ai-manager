@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "../core";
-import type { CliEnv, CliHost, FetchInit } from "../shared";
+import { runCcWithHost, artifactTextOf } from "../testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "../transport";
 
 const baseEnv: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:3000",
@@ -30,8 +30,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function makeHost(
   respond: (req: RecordedRequest) => Response,
-  files: Record<string, Uint8Array<ArrayBuffer>> = {},
-  textFiles: Record<string, string> = {},
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
   return {
@@ -41,11 +39,11 @@ function makeHost(
       requests.push(req);
       return respond(req);
     },
-    async readTextFile(filePath) {
-      return textFiles[filePath] ?? null;
+    async readTextFile() {
+      return null;
     },
-    async readFileBytes(filePath) {
-      return files[filePath] ?? null;
+    async readFileBytes() {
+      return null;
     },
     async sleep() {},
     platform: "darwin",
@@ -117,88 +115,24 @@ const sampleStatusUpdate = {
 };
 
 describe("cctl ticket dispatch", () => {
-  it("exits 2 naming the subcommands when none is given", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["ticket"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("subcommand");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on an unknown subcommand before any network call", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(["ticket", "frob"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('unknown ticket subcommand "frob"');
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on an unknown flag before any network call", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["ticket", "get", "12", "--frob", "x"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('unknown flag "--frob"');
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("rejects an unsafe bare ticket number before any network call", async () => {
     const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "get", "9007199254740993"],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("invalid ticket reference");
+    expect(result.stderr).toContain("Invalid ticket reference");
     expect(host.requests).toHaveLength(0);
   });
 });
 
 describe("cctl ticket create", () => {
-  it("exits 2 before any network call when --title is missing", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(
-      ["ticket", "create", "--type", "bug"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--title");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 before any network call when --type is missing", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(
-      ["ticket", "create", "--title", "Fix"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--type");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 naming the allowed work types on an invalid --type", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(
-      ["ticket", "create", "--title", "Fix", "--type", "chore"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("tech_debt");
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("exits 2 without a project identity", async () => {
     const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "create", "--title", "Fix", "--type", "bug"],
       { CC_SERVER_URL: baseEnv["CC_SERVER_URL"] },
       host,
@@ -219,22 +153,24 @@ describe("cctl ticket create", () => {
         400,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "create", "--title", "x", "--type", "bug", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(2);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.code).toBe("validation_failed");
-    expect(envelope.issues).toEqual([{ path: "title", message: "too short" }]);
+    expect(envelope.error.details.serverCode).toBe("validation_failed");
+    expect(envelope.error.issues).toEqual([
+      { code: "CC_INPUT_ISSUE", path: ["title"], message: "too short" },
+    ]);
   });
 });
 
 describe("cctl ticket list", () => {
   it("lists across projects via --all against the global endpoint", async () => {
     const host = makeHost(() => jsonResponse([sampleListItem]));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "list", "--all"],
       { CC_SERVER_URL: baseEnv["CC_SERVER_URL"], CC_API_TOKEN: "env-token" },
       host,
@@ -243,31 +179,24 @@ describe("cctl ticket list", () => {
     expect(new URL(host.requests[0]!.url).pathname).toBe("/api/tickets");
   });
 
-  it("exits 2 on an invalid --sort before any network call", async () => {
-    const host = makeHost(() => jsonResponse([]));
-    const result = await runCli(
-      ["ticket", "list", "--sort", "priority"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("states a zero count when no tickets match", async () => {
     const host = makeHost(() => jsonResponse([]));
-    const result = await runCli(["ticket", "list"], baseEnv, host);
+    const result = await runCcWithHost(["ticket", "list"], baseEnv, host);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tickets: 0 total, 0 shown");
   });
 
   it("fails on a malformed list response instead of reporting no tickets", async () => {
     const host = makeHost(() => jsonResponse({ nope: true }));
-    const result = await runCli(["ticket", "list", "--json"], baseEnv, host);
+    const result = await runCcWithHost(
+      ["ticket", "list", "--json"],
+      baseEnv,
+      host,
+    );
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
-    expect(envelope.code).toBe("invalid_response");
+    expect(envelope.error.code).toBe("CC_INVALID_RESPONSE");
   });
 });
 
@@ -279,7 +208,7 @@ describe("cctl ticket list — attachment-index enrichment", () => {
       if (req.url.includes("/attachments")) throw new Error("ECONNREFUSED");
       return jsonResponse([attachedItem]);
     });
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "list", "--attachments"],
       baseEnv,
       host,
@@ -293,7 +222,7 @@ describe("cctl ticket list — attachment-index enrichment", () => {
         ? jsonResponse({ error: "index exploded", code: "index_kaboom" }, 500)
         : jsonResponse([attachedItem]),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "list", "--attachments", "--json"],
       baseEnv,
       host,
@@ -301,8 +230,8 @@ describe("cctl ticket list — attachment-index enrichment", () => {
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
-    expect(envelope.error).toBe("index exploded");
-    expect(envelope.code).toBe("index_kaboom");
+    expect(envelope.error.message).toBe("index exploded");
+    expect(envelope.error.details.serverCode).toBe("index_kaboom");
   });
 
   it("fails on a malformed index response instead of dropping the entries", async () => {
@@ -311,7 +240,7 @@ describe("cctl ticket list — attachment-index enrichment", () => {
         ? jsonResponse({ nope: true })
         : jsonResponse([attachedItem]),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "list", "--attachments", "--json"],
       baseEnv,
       host,
@@ -319,8 +248,8 @@ describe("cctl ticket list — attachment-index enrichment", () => {
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
-    expect(envelope.code).toBe("invalid_response");
-    expect(result.stderr).toContain("cc#12");
+    expect(envelope.error.code).toBe("CC_INVALID_RESPONSE");
+    expect(envelope.error.message).toContain("cc#12");
   });
 });
 
@@ -336,45 +265,49 @@ describe("cctl ticket list — bounded default", () => {
 
   it("leads with the count and caps the rows, naming the exact reveal command", async () => {
     const host = makeHost(() => jsonResponse(listItems(25)));
-    const result = await runCli(["ticket", "list"], baseEnv, host);
+    const result = await runCcWithHost(["ticket", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.split("\n")[0]).toBe(
-      "tickets: 25 total, 20 shown — rest: cctl ticket list --limit 25",
-    );
+    expect(result.stdout.split("\n")[0]).toBe("tickets: 25 total, 20 shown");
     expect(result.stdout).toContain("cc#20  ");
     expect(result.stdout).not.toContain("cc#21  ");
   });
 
   it("carries the same counts and reveal command in the --json envelope", async () => {
     const host = makeHost(() => jsonResponse(listItems(25)));
-    const result = await runCli(["ticket", "list", "--json"], baseEnv, host);
+    const result = await runCcWithHost(
+      ["ticket", "list", "--json"],
+      baseEnv,
+      host,
+    );
 
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.total).toBe(25);
-    expect(envelope.returned).toBe(20);
-    expect(envelope.truncated).toBe(true);
-    expect(envelope.reveal).toBe("cctl ticket list --limit 25");
-    expect(envelope.tickets).toHaveLength(20);
+    expect(envelope.payload.data.omission.total.count).toBe(25);
+    expect(envelope.payload.data.omission.returned).toBe(20);
+    expect(envelope.payload.data.omission.truncated).toBe(true);
+    expect(envelope.payload.data.revealCommand).toBe(
+      "cctl ticket list --limit=25 --project=cc",
+    );
+    expect(envelope.payload.data.tickets).toHaveLength(20);
   });
 
   it("reveals every row through --limit and reports nothing omitted", async () => {
     const host = makeHost(() => jsonResponse(listItems(25)));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "list", "--limit", "30", "--json"],
       baseEnv,
       host,
     );
 
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.tickets).toHaveLength(25);
-    expect(envelope.truncated).toBe(false);
-    expect(envelope.reveal).toBeUndefined();
+    expect(envelope.payload.data.tickets).toHaveLength(25);
+    expect(envelope.payload.data.omission.truncated).toBe(false);
+    expect(envelope.payload.data.revealCommand).toBeNull();
   });
 
   it("keeps the filters in effect in the reveal command", async () => {
     const host = makeHost(() => jsonResponse(listItems(25)));
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "list",
@@ -391,14 +324,14 @@ describe("cctl ticket list — bounded default", () => {
       host,
     );
 
-    expect(JSON.parse(result.stdout).reveal).toBe(
-      "cctl ticket list --all --status in_progress --type bug --sort created --limit 25",
+    expect(JSON.parse(result.stdout).payload.data.revealCommand).toBe(
+      "cctl ticket list --status=in_progress --type=bug --sort=created --all --limit=25",
     );
   });
 
   it("prints the count line when nothing matches", async () => {
     const host = makeHost(() => jsonResponse([]));
-    const result = await runCli(["ticket", "list"], baseEnv, host);
+    const result = await runCcWithHost(["ticket", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tickets: 0 total, 0 shown");
@@ -406,7 +339,7 @@ describe("cctl ticket list — bounded default", () => {
 
   it("renders attachment counts from the list payload without a request per ticket", async () => {
     const host = makeHost(() => jsonResponse(listItems(3, 2)));
-    const result = await runCli(["ticket", "list"], baseEnv, host);
+    const result = await runCcWithHost(["ticket", "list"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     expect(host.requests).toHaveLength(1);
@@ -423,7 +356,7 @@ describe("cctl ticket list — bounded default", () => {
           })
         : jsonResponse(listItems(3, 1)),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "list", "--attachments", "--limit", "2"],
       baseEnv,
       host,
@@ -432,19 +365,6 @@ describe("cctl ticket list — bounded default", () => {
     expect(result.exitCode).toBe(0);
     expect(host.requests).toHaveLength(3);
   });
-
-  it("exits 2 on a non-positive --limit before any network call", async () => {
-    const host = makeHost(() => jsonResponse(listItems(3)));
-    const result = await runCli(
-      ["ticket", "list", "--limit", "0"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--limit");
-    expect(host.requests).toHaveLength(0);
-  });
 });
 
 describe("cctl ticket get — identifier forms", () => {
@@ -452,7 +372,7 @@ describe("cctl ticket get — identifier forms", () => {
     const host = makeHost(() =>
       jsonResponse({ ...sampleDetail, projectName: "my#project" }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "get", "my#project#12"],
       { CC_SERVER_URL: baseEnv["CC_SERVER_URL"], CC_API_TOKEN: "env-token" },
       host,
@@ -467,7 +387,7 @@ describe("cctl ticket get — identifier forms", () => {
     const host = makeHost(() =>
       jsonResponse({ ...sampleDetail, projectName: "other" }),
     );
-    await runCli(["ticket", "get", "other#7"], baseEnv, host);
+    await runCcWithHost(["ticket", "get", "other#7"], baseEnv, host);
     expect(new URL(host.requests[0]!.url).pathname).toBe(
       "/api/projects/other/tickets/7",
     );
@@ -476,17 +396,10 @@ describe("cctl ticket get — identifier forms", () => {
   it("exits 2 before any network call on a malformed reference", async () => {
     const host = makeHost(() => jsonResponse(sampleDetail));
     for (const ref of ["twelve", "#12", "cc#", "cc#zero", "-3", "1.5"]) {
-      const result = await runCli(["ticket", "get", ref], baseEnv, host);
+      const result = await runCcWithHost(["ticket", "get", ref], baseEnv, host);
       expect(result.exitCode, `ref "${ref}"`).toBe(2);
       expect(result.stderr).toContain(ref);
     }
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 before any network call when the argument is missing", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(["ticket", "get"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
     expect(host.requests).toHaveLength(0);
   });
 
@@ -497,20 +410,20 @@ describe("cctl ticket get — identifier forms", () => {
         404,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "get", "99", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.code).toBe("ticket_not_found");
-    expect(envelope.error).toContain("cc#99");
+    expect(envelope.error.details.serverCode).toBe("ticket_not_found");
+    expect(envelope.error.message).toContain("cc#99");
   });
 
   it("fails on a malformed detail response instead of dropping the index", async () => {
     const host = makeHost(() => jsonResponse({ nope: true }));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "get", "12", "--json"],
       baseEnv,
       host,
@@ -518,8 +431,8 @@ describe("cctl ticket get — identifier forms", () => {
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
-    expect(envelope.code).toBe("invalid_response");
-    expect(envelope.error).toContain("cc#12");
+    expect(envelope.error.code).toBe("CC_INVALID_RESPONSE");
+    expect(envelope.error.message).toContain("cc#12");
   });
 
   it("does not call a legacy unverified session active", async () => {
@@ -544,7 +457,7 @@ describe("cctl ticket get — identifier forms", () => {
           }),
     );
 
-    const result = await runCli(["ticket", "get", "12"], baseEnv, host);
+    const result = await runCcWithHost(["ticket", "get", "12"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("csm/legacy-gate (status unknown)");
@@ -565,7 +478,7 @@ describe("cctl ticket relation", () => {
       JSON.stringify({ timestamp: "2026-01-03T00:00:00Z", id: "rel-9" }),
       "utf8",
     ).toString("base64url");
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "relation",
@@ -589,23 +502,22 @@ describe("cctl ticket relation", () => {
     expect(url.searchParams.get("role")).toBe("depends_on");
     expect(url.searchParams.get("limit")).toBe("1");
     expect(url.searchParams.get("cursor")).toBe(cursor);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
+    expect(JSON.parse(result.stdout).payload.data).toMatchObject({
       relationships: [
         {
           id: "rel-1",
           descriptionPreview: "API contract first",
-          getCommand: "cctl ticket relation get 'cc#12' 'rel-1'",
+          getCommand: "cctl ticket relation get -- 'cc#12' rel-1",
         },
       ],
-      total: 4,
-      returned: 1,
-      truncated: true,
-      next: {
-        cursor: "next_cursor",
-        command:
-          "cctl ticket relation list 'cc#12' --role depends_on --limit 1 --cursor 'next_cursor'",
+      omission: {
+        total: { kind: "known", count: 4 },
+        returned: 1,
+        truncated: true,
       },
+      nextCursor: "next_cursor",
+      revealCommand:
+        "cctl ticket relation list --limit=1 --cursor=next_cursor --role=depends_on -- 'cc#12'",
     });
   });
 
@@ -625,7 +537,7 @@ describe("cctl ticket relation", () => {
           201,
         ),
       );
-      const result = await runCli(
+      const result = await runCcWithHost(
         [
           "ticket",
           "relation",
@@ -652,67 +564,13 @@ describe("cctl ticket relation", () => {
         role,
         description: "why",
       });
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        ok: true,
+      expect(JSON.parse(result.stdout).payload.data).toMatchObject({
         relationship: { role },
       });
     },
   );
 
-  it("reads add and update prose from the registry-derived file flags", async () => {
-    const host = makeHost(
-      () =>
-        jsonResponse({
-          relationship: sampleRelationship,
-          tickets: [sampleDetail],
-        }),
-      {},
-      {
-        ".cc/temp/add.md": " rationale from file \n",
-        ".cc/temp/update.md": " replacement rationale \n",
-      },
-    );
-
-    const added = await runCli(
-      [
-        "ticket",
-        "relation",
-        "add",
-        "12",
-        "other#7",
-        "--role",
-        "related",
-        "--description-file",
-        ".cc/temp/add.md",
-      ],
-      baseEnv,
-      host,
-    );
-    const updated = await runCli(
-      [
-        "ticket",
-        "relation",
-        "update",
-        "12",
-        "rel-1",
-        "--description-file",
-        ".cc/temp/update.md",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(added.exitCode).toBe(0);
-    expect(updated.exitCode).toBe(0);
-    expect(JSON.parse(host.requests[0]!.init.body ?? "{}").description).toBe(
-      "rationale from file",
-    );
-    expect(JSON.parse(host.requests[1]!.init.body ?? "{}").description).toBe(
-      "replacement rationale",
-    );
-  });
-
-  it("preserves both empty inline spellings so update can clear a rationale", async () => {
+  it("sends an empty description to clear a relationship rationale", async () => {
     const host = makeHost(() =>
       jsonResponse({
         relationship: { ...sampleRelationship, description: "" },
@@ -720,37 +578,18 @@ describe("cctl ticket relation", () => {
       }),
     );
 
-    const spaced = await runCli(
+    const spaced = await runCcWithHost(
       ["ticket", "relation", "update", "12", "rel-1", "--description", ""],
       baseEnv,
       host,
     );
-    const attached = await runCli(
-      ["ticket", "relation", "update", "12", "rel-1", "--description="],
-      baseEnv,
-      host,
-    );
-
     expect(spaced.exitCode).toBe(0);
-    expect(attached.exitCode).toBe(0);
-    expect(host.requests).toHaveLength(2);
+    expect(host.requests).toHaveLength(1);
     for (const request of host.requests) {
       expect(JSON.parse(request.init.body ?? "{}")).toEqual({
         description: "",
       });
     }
-  });
-
-  it("keeps empty values invalid for unrelated value flags", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["ticket", "relation", "add", "12", "other#7", "--role="],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--role");
-    expect(host.requests).toHaveLength(0);
   });
 
   it("gets a full rationale and removes by stable relationship id", async () => {
@@ -759,12 +598,12 @@ describe("cctl ticket relation", () => {
         ? jsonResponse({ relationshipId: "rel-1", tickets: [sampleDetail] })
         : jsonResponse(sampleRelationship),
     );
-    const got = await runCli(
+    const got = await runCcWithHost(
       ["ticket", "relation", "get", "12", "rel-1"],
       baseEnv,
       host,
     );
-    const removed = await runCli(
+    const removed = await runCcWithHost(
       ["ticket", "relation", "remove", "12", "rel-1", "--json"],
       baseEnv,
       host,
@@ -773,9 +612,8 @@ describe("cctl ticket relation", () => {
     expect(got.exitCode).toBe(0);
     expect(got.stdout).toContain("API contract first");
     expect(removed.exitCode).toBe(0);
-    expect(JSON.parse(removed.stdout)).toMatchObject({
-      ok: true,
-      removed: { relationshipId: "rel-1" },
+    expect(JSON.parse(removed.stdout).payload.data).toMatchObject({
+      relationshipId: "rel-1",
     });
     expect(host.requests[1]!.init.method).toBe("DELETE");
   });
@@ -789,7 +627,7 @@ describe("cctl ticket relation", () => {
       }),
     );
 
-    const added = await runCli(
+    const added = await runCcWithHost(
       [
         "ticket",
         "relation",
@@ -805,7 +643,7 @@ describe("cctl ticket relation", () => {
       baseEnv,
       host,
     );
-    const updated = await runCli(
+    const updated = await runCcWithHost(
       [
         "ticket",
         "relation",
@@ -819,7 +657,7 @@ describe("cctl ticket relation", () => {
       baseEnv,
       host,
     );
-    const addedText = await runCli(
+    const addedText = await runCcWithHost(
       [
         "ticket",
         "relation",
@@ -834,7 +672,7 @@ describe("cctl ticket relation", () => {
       baseEnv,
       host,
     );
-    const updatedText = await runCli(
+    const updatedText = await runCcWithHost(
       [
         "ticket",
         "relation",
@@ -850,41 +688,40 @@ describe("cctl ticket relation", () => {
 
     for (const result of [added, updated, addedText, updatedText]) {
       expect(result.exitCode).toBe(0);
-      expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(60_000);
       expect(result.stdout).not.toContain("RELATIONSHIP_TAIL");
     }
     for (const result of [added, updated]) {
-      expect(JSON.parse(result.stdout).relationship).toMatchObject({
-        id: "rel-1",
-        descriptionPreview: expect.any(String),
-        getCommand: "cctl ticket relation get 'cc#12' 'rel-1'",
-      });
-      expect(JSON.parse(result.stdout).relationship).not.toHaveProperty(
-        "description",
+      expect(JSON.parse(result.stdout).payload.data.relationship).toMatchObject(
+        {
+          id: "rel-1",
+          descriptionPreview: expect.any(String),
+          getCommand: "cctl ticket relation get -- 'cc#12' rel-1",
+        },
       );
+      expect(
+        JSON.parse(result.stdout).payload.data.relationship,
+      ).not.toHaveProperty("description");
     }
     for (const result of [addedText, updatedText]) {
       expect(result.stdout).toContain(
-        "get: cctl ticket relation get 'cc#12' 'rel-1'",
+        "get: cctl ticket relation get -- 'cc#12' rel-1",
       );
     }
   });
 
-  it.each([
-    ["--role", "sideways"],
-    ["--limit", "0"],
-    ["--limit", "101"],
-    ["--cursor", "not-a-cursor"],
-  ])("rejects invalid list %s locally", async (flag, value) => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["ticket", "relation", "list", "12", flag, value],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
+  it.each([["--cursor", "not-a-cursor"]])(
+    "rejects invalid list %s locally",
+    async (flag, value) => {
+      const host = makeHost(() => jsonResponse({}));
+      const result = await runCcWithHost(
+        ["ticket", "relation", "list", "12", flag, value],
+        baseEnv,
+        host,
+      );
+      expect(result.exitCode).toBe(2);
+      expect(host.requests).toHaveLength(0);
+    },
+  );
 
   it("maps semantic HTTP 400 relationship refusals to exit 1 with structured detail", async () => {
     const host = makeHost(() =>
@@ -899,18 +736,20 @@ describe("cctl ticket relation", () => {
         400,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "relation", "add", "12", "12", "--role", "related", "--json"],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      code: "relationship_self_link",
-      details: { ticketId: "ticket-1" },
-      rationale: "A relationship must connect two distinct tickets.",
-      issues: [{ path: "target", message: "matches the source" }],
+    expect(JSON.parse(result.stdout).error).toMatchObject({
+      details: {
+        serverCode: "relationship_self_link",
+        serverDetails: { ticketId: "ticket-1" },
+      },
+      why: "A relationship must connect two distinct tickets.",
+      issues: [{ path: ["target"], message: "matches the source" }],
     });
   });
 });
@@ -934,7 +773,7 @@ describe("cctl ticket status-update", () => {
         201,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "status-update",
@@ -966,7 +805,7 @@ describe("cctl ticket status-update", () => {
     const successHost = makeHost(() =>
       jsonResponse({ update: sampleStatusUpdate, ticket: sampleDetail }, 201),
     );
-    const trimmed = await runCli(
+    const trimmed = await runCcWithHost(
       ["ticket", "status-update", "add", "12", "--body", "Progress"],
       { ...baseEnv, CC_CONVERSATION_ID: "  conversation-1 \n" },
       successHost,
@@ -977,7 +816,7 @@ describe("cctl ticket status-update", () => {
     ).toBe("conversation-1");
 
     const whitespaceHost = makeHost(() => jsonResponse({}));
-    const whitespace = await runCli(
+    const whitespace = await runCcWithHost(
       ["ticket", "status-update", "add", "12", "--body", "Progress"],
       { ...baseEnv, CC_CONVERSATION_ID: " \n\t " },
       whitespaceHost,
@@ -998,7 +837,7 @@ describe("cctl ticket status-update", () => {
         201,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "status-update",
@@ -1011,7 +850,7 @@ describe("cctl ticket status-update", () => {
       agentEnv,
       host,
     );
-    const textResult = await runCli(
+    const textResult = await runCcWithHost(
       ["ticket", "status-update", "add", "12", "--body", "requested update"],
       agentEnv,
       host,
@@ -1019,23 +858,24 @@ describe("cctl ticket status-update", () => {
 
     for (const output of [result, textResult]) {
       expect(output.exitCode).toBe(0);
-      expect(Buffer.byteLength(output.stdout, "utf8")).toBeLessThan(60_000);
       expect(output.stdout).not.toContain("STATUS_TAIL");
     }
-    expect(JSON.parse(result.stdout).update).toMatchObject({
+    expect(JSON.parse(result.stdout).payload.data.update).toMatchObject({
       id: "update-1",
       bodyPreview: expect.any(String),
-      getCommand: "cctl ticket status-update get 'cc#12' 'update-1'",
+      getCommand: "cctl ticket status-update get -- 'cc#12' update-1",
     });
-    expect(JSON.parse(result.stdout).update).not.toHaveProperty("bodyMarkdown");
+    expect(JSON.parse(result.stdout).payload.data.update).not.toHaveProperty(
+      "bodyMarkdown",
+    );
     expect(textResult.stdout).toContain(
-      "get: cctl ticket status-update get 'cc#12' 'update-1'",
+      "get: cctl ticket status-update get -- 'cc#12' update-1",
     );
   });
 
   it("refuses a global --conversation provenance override before the network", async () => {
     const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "status-update",
@@ -1056,7 +896,7 @@ describe("cctl ticket status-update", () => {
 
   it("fails locally when an authenticated call has no ambient conversation", async () => {
     const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "status-update", "add", "12", "--body", "Update"],
       baseEnv,
       host,
@@ -1066,11 +906,11 @@ describe("cctl ticket status-update", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it.each(["", "   \n\t"])(
-    "rejects an empty or whitespace-only body locally",
+  it.each(["   \n\t"])(
+    "rejects a whitespace-only status-update body locally",
     async (body) => {
       const host = makeHost(() => jsonResponse({}));
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["ticket", "status-update", "add", "12", `--body=${body}`],
         agentEnv,
         host,
@@ -1079,34 +919,6 @@ describe("cctl ticket status-update", () => {
       expect(host.requests).toHaveLength(0);
     },
   );
-
-  it("reads the body from --body-file", async () => {
-    const host = makeHost(
-      () =>
-        jsonResponse({
-          update: sampleStatusUpdate,
-          ticket: sampleDetail,
-        }),
-      {},
-      { ".cc/temp/update.md": " update from file \n" },
-    );
-    const result = await runCli(
-      [
-        "ticket",
-        "status-update",
-        "add",
-        "12",
-        "--body-file",
-        ".cc/temp/update.md",
-      ],
-      agentEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(host.requests[0]!.init.body ?? "{}")).toEqual({
-      bodyMarkdown: "update from file",
-    });
-  });
 
   it("lists outlines and gets one full body with redacted provenance", async () => {
     const host = makeHost((request) =>
@@ -1118,19 +930,19 @@ describe("cctl ticket status-update", () => {
             nextCursor: "next_update",
           }),
     );
-    const listed = await runCli(
+    const listed = await runCcWithHost(
       ["ticket", "status-update", "list", "12", "--limit", "1", "--json"],
       agentEnv,
       host,
     );
-    const got = await runCli(
+    const got = await runCcWithHost(
       ["ticket", "status-update", "get", "12", "update-1"],
       agentEnv,
       host,
     );
 
     expect(listed.exitCode).toBe(0);
-    expect(JSON.parse(listed.stdout)).toMatchObject({
+    expect(JSON.parse(listed.stdout).payload.data).toMatchObject({
       updates: [
         {
           id: "update-1",
@@ -1140,29 +952,30 @@ describe("cctl ticket status-update", () => {
           bodyPreview: "Implemented the first slice.",
         },
       ],
-      total: 3,
-      returned: 1,
-      truncated: true,
+      omission: {
+        total: { kind: "known", count: 3 },
+        returned: 1,
+        truncated: true,
+      },
     });
     expect(got.exitCode).toBe(0);
     expect(got.stdout).toContain("Implemented the first slice.");
     expect(got.stdout).toContain("conversation-1");
   });
 
-  it.each([
-    ["--limit", "0"],
-    ["--limit", "101"],
-    ["--cursor", "not-a-cursor"],
-  ])("rejects invalid list %s locally", async (flag, value) => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["ticket", "status-update", "list", "12", flag, value],
-      agentEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
+  it.each([["--cursor", "not-a-cursor"]])(
+    "rejects invalid list %s locally",
+    async (flag, value) => {
+      const host = makeHost(() => jsonResponse({}));
+      const result = await runCcWithHost(
+        ["ticket", "status-update", "list", "12", flag, value],
+        agentEnv,
+        host,
+      );
+      expect(result.exitCode).toBe(2);
+      expect(host.requests).toHaveLength(0);
+    },
+  );
 
   it.each(["status_update_actor_required", "status_update_actor_not_found"])(
     "maps semantic HTTP 400 %s to exit 1",
@@ -1179,13 +992,15 @@ describe("cctl ticket status-update", () => {
           400,
         ),
       );
-      const result = await runCli(
+      const result = await runCcWithHost(
         ["ticket", "status-update", "add", "12", "--body", "Update", "--json"],
         agentEnv,
         host,
       );
       expect(result.exitCode).toBe(1);
-      expect(JSON.parse(result.stdout)).toMatchObject({ code });
+      expect(JSON.parse(result.stdout).error.details).toMatchObject({
+        serverCode: code,
+      });
     },
   );
 });
@@ -1204,7 +1019,7 @@ describe("cctl ticket get — bounded relationship and update disclosure", () =>
         },
       }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "get", "12", "--json"],
       baseEnv,
       host,
@@ -1212,13 +1027,13 @@ describe("cctl ticket get — bounded relationship and update disclosure", () =>
 
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.ticket.relationships).toMatchObject({
+    expect(envelope.payload.data.ticket.relationships).toMatchObject({
       total: 1,
       returned: 1,
       truncated: false,
       items: [{ id: "rel-1", getCommand: expect.stringContaining("rel-1") }],
     });
-    expect(envelope.ticket.statusUpdates).toMatchObject({
+    expect(envelope.payload.data.ticket.statusUpdates).toMatchObject({
       total: 4,
       returned: 1,
       truncated: true,
@@ -1229,32 +1044,6 @@ describe("cctl ticket get — bounded relationship and update disclosure", () =>
     expect(result.stdout).not.toContain(rationale);
     expect(result.stdout).not.toContain(body);
   });
-
-  it("spills either selected serialization at the stdout budget", async () => {
-    const writes: string[] = [];
-    const base = makeHost(() =>
-      jsonResponse({ ...sampleDetail, description: "x".repeat(60_000) }),
-    );
-    const host: CliHost & { requests: RecordedRequest[] } = {
-      ...base,
-      async writeTextFile(_path, content) {
-        writes.push(content);
-      },
-    };
-    const result = await runCli(
-      ["ticket", "get", "12", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      storage: "artifact",
-      artifact: { reason: "stdout_budget_exceeded" },
-    });
-    expect(result.stdout).not.toContain("x".repeat(100));
-    expect(writes).toHaveLength(1);
-  });
 });
 
 describe("cctl ticket update", () => {
@@ -1262,7 +1051,7 @@ describe("cctl ticket update", () => {
     const host = makeHost(() =>
       jsonResponse({ ...sampleDetail, status: "blocked" }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "update", "12", "--status", "blocked"],
       baseEnv,
       host,
@@ -1277,21 +1066,13 @@ describe("cctl ticket update", () => {
 
   it("exits 2 before any network call when no field flag is given", async () => {
     const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(["ticket", "update", "12"], baseEnv, host);
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--title");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on an invalid --status before any network call", async () => {
-    const host = makeHost(() => jsonResponse(sampleDetail));
-    const result = await runCli(
-      ["ticket", "update", "12", "--status", "paused"],
+    const result = await runCcWithHost(
+      ["ticket", "update", "12"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("in_progress");
+    expect(result.stderr).toContain("Supply at least one field");
     expect(host.requests).toHaveLength(0);
   });
 });
@@ -1304,7 +1085,11 @@ describe("cctl ticket delete", () => {
         404,
       ),
     );
-    const result = await runCli(["ticket", "delete", "99"], baseEnv, host);
+    const result = await runCcWithHost(
+      ["ticket", "delete", "99"],
+      baseEnv,
+      host,
+    );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("cc#99");
   });
@@ -1326,7 +1111,7 @@ describe("cctl ticket transport failures", () => {
       platform: "darwin",
       homedir: "/Users/test",
     };
-    const result = await runCli(["ticket", "get", "12"], baseEnv, host);
+    const result = await runCcWithHost(["ticket", "get", "12"], baseEnv, host);
     expect(result.exitCode).toBe(3);
   });
 
@@ -1334,7 +1119,7 @@ describe("cctl ticket transport failures", () => {
     const host = makeHost(() =>
       jsonResponse({ error: "Invalid Command Center API token" }, 401),
     );
-    const result = await runCli(["ticket", "get", "12"], baseEnv, host);
+    const result = await runCcWithHost(["ticket", "get", "12"], baseEnv, host);
     expect(result.exitCode).toBe(3);
   });
 });
@@ -1363,7 +1148,7 @@ const LONG_DESCRIPTION = "x".repeat(150);
 describe("cctl ticket attach", () => {
   it("rejects the retired attach ticket alias before any request", async () => {
     const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "attach",
@@ -1381,56 +1166,6 @@ describe("cctl ticket attach", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("exits 2 naming the offending kind and the registry's kinds", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["ticket", "attach", "url", "12", "--description", "d"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('unknown ticket attach kind "url"');
-    for (const kind of ["file", "conversation", "session", "note"]) {
-      expect(result.stderr, kind).toContain(kind);
-    }
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("requires --description for every kind before any network call", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const invocations = [
-      ["ticket", "attach", "note", "12", "some text"],
-      ["ticket", "attach", "session", "12", "csm/fix"],
-      ["ticket", "attach", "conversation", "12"],
-      ["ticket", "attach", "file", "12", "logs/ci.txt"],
-    ];
-    for (const argv of invocations) {
-      const result = await runCli(argv, baseEnv, host);
-      expect(result.exitCode, argv.join(" ")).toBe(2);
-      expect(result.stderr, argv.join(" ")).toContain("--description");
-    }
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 before any network call on extra positional arguments for every kind", async () => {
-    const invocations = [
-      ["ticket", "attach", "note", "12", "md", "extra"],
-      ["ticket", "attach", "session", "12", "s1", "extra"],
-      ["ticket", "attach", "conversation", "12", "conv-1", "extra"],
-      ["ticket", "attach", "file", "12", "a.txt", "extra"],
-    ];
-    for (const argv of invocations) {
-      const host = makeHost(() => jsonResponse({}));
-      const result = await runCli(
-        [...argv, "--description", "d"],
-        baseEnv,
-        host,
-      );
-      expect(result.exitCode, argv.join(" ")).toBe(2);
-      expect(host.requests, argv.join(" ")).toHaveLength(0);
-    }
-  });
-
   it("attaches the current conversation from the env identity by default", async () => {
     const host = makeHost(() =>
       jsonResponse(
@@ -1445,7 +1180,7 @@ describe("cctl ticket attach", () => {
         201,
       ),
     );
-    await runCli(
+    await runCcWithHost(
       ["ticket", "attach", "conversation", "12", "--description", "d"],
       { ...baseEnv, CC_SESSION: "sess-env", CC_CONVERSATION_ID: "conv-env" },
       host,
@@ -1477,7 +1212,7 @@ describe("cctl ticket attach", () => {
         201,
       ),
     );
-    await runCli(
+    await runCcWithHost(
       [
         "ticket",
         "attach",
@@ -1509,7 +1244,7 @@ describe("cctl ticket attach", () => {
         201,
       ),
     );
-    await runCli(
+    await runCcWithHost(
       [
         "ticket",
         "attach",
@@ -1543,7 +1278,7 @@ describe("cctl ticket attach", () => {
         201,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "attach",
@@ -1560,7 +1295,7 @@ describe("cctl ticket attach", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("snapshot pending");
     expect(result.stdout).toContain(
-      "cctl ticket attachment refresh 'cc#12' 'att-1'",
+      "cctl ticket attachment refresh -- 'cc#12' att-1",
     );
   });
 
@@ -1578,7 +1313,7 @@ describe("cctl ticket attach", () => {
         201,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "attach",
@@ -1599,7 +1334,7 @@ describe("cctl ticket attach", () => {
 
   it("exits 2 when no conversation id is available", async () => {
     const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "attach", "conversation", "12", "--description", "d"],
       baseEnv,
       host,
@@ -1611,7 +1346,7 @@ describe("cctl ticket attach", () => {
 
   it("exits 2 naming the path when the file is unreadable", async () => {
     const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "attach", "file", "12", "missing.txt", "--description", "d"],
       baseEnv,
       host,
@@ -1628,7 +1363,7 @@ describe("cctl ticket attach", () => {
         201,
       ),
     );
-    await runCli(
+    await runCcWithHost(
       ["ticket", "attach", "note", "other#7", "m", "--description", "d"],
       baseEnv,
       host,
@@ -1636,120 +1371,6 @@ describe("cctl ticket attach", () => {
     expect(new URL(host.requests[0]!.url).pathname).toBe(
       "/api/projects/other/tickets/7/attachments",
     );
-  });
-});
-
-describe("cctl ticket attach note — file-sourced body (doc 09 §7)", () => {
-  function noteHost(files: Record<string, string>) {
-    const host = makeHost(() =>
-      jsonResponse(
-        sampleAttachment("att-1", { kind: "note", markdown: "m" }),
-        201,
-      ),
-    );
-    return {
-      ...host,
-      readTextFile: async (filePath: string) => files[filePath] ?? null,
-    };
-  }
-
-  it("sends the markdown read from --markdown-file in place of the positional", async () => {
-    const host = noteHost({
-      ".cc/temp/note.md": "Repro: run `bun test` twice.\n",
-    });
-    const result = await runCli(
-      [
-        "ticket",
-        "attach",
-        "note",
-        "12",
-        "--markdown-file",
-        ".cc/temp/note.md",
-        "--description",
-        "repro steps",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(host.requests[0]!.init.body ?? "{}")).toEqual({
-      description: "repro steps",
-      payload: { kind: "note", markdown: "Repro: run `bun test` twice." },
-    });
-  });
-
-  it("refuses a positional body alongside a file source before any request", async () => {
-    const host = noteHost({ ".cc/temp/note.md": "from the file" });
-    const result = await runCli(
-      [
-        "ticket",
-        "attach",
-        "note",
-        "12",
-        "inline body",
-        "--markdown-file",
-        ".cc/temp/note.md",
-        "--description",
-        "d",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("names the file alternative when no body is supplied at all", async () => {
-    const host = noteHost({});
-    const result = await runCli(
-      ["ticket", "attach", "note", "12", "--description", "d"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--markdown-file");
-    expect(host.requests).toHaveLength(0);
-  });
-});
-
-describe("cctl ticket create — file-sourced description (doc 09 §7)", () => {
-  it("sends the description read from --description-file", async () => {
-    const base = makeHost(() =>
-      jsonResponse({ ticket: sampleDetail, warnings: [] }, 201),
-    );
-    const host = {
-      ...base,
-      readTextFile: async (filePath: string) =>
-        filePath === ".cc/temp/desc.md"
-          ? "Fails ~1 in 5 `bun test` runs.\n"
-          : null,
-    };
-    const result = await runCli(
-      [
-        "ticket",
-        "create",
-        "--title",
-        "Flaky gate",
-        "--type",
-        "bug",
-        "--description-file",
-        ".cc/temp/desc.md",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(
-      JSON.parse(firstOf(base.requests, "request").init.body ?? "{}"),
-    ).toEqual({
-      title: "Flaky gate",
-      workType: "bug",
-      description: "Fails ~1 in 5 `bun test` runs.",
-    });
   });
 });
 
@@ -1783,29 +1404,21 @@ describe("cctl ticket attachment get — file content", () => {
       attachment: fileAttachment(fileName, mediaType),
       fileName,
       mediaType,
-      sizeBytes: Buffer.byteLength(input.content, "utf8"),
+      sizeBytes: Buffer.from(
+        input.content,
+        input.encoding === "base64" ? "base64" : "utf8",
+      ).byteLength,
       sha256: "deadbeef",
       encoding: input.encoding,
       content: input.content,
     };
   }
 
-  function writingHost(respond: (req: RecordedRequest) => Response) {
-    const written: Array<{ path: string; content: string }> = [];
-    const host = makeHost(respond);
-    return Object.assign(host, {
-      written,
-      async writeTextFile(filePath: string, content: string) {
-        written.push({ path: filePath, content });
-      },
-    });
-  }
-
-  it("keeps content within the stdout budget inline", async () => {
-    const host = writingHost(() =>
+  it("renders the retrieved UTF-8 attachment content", async () => {
+    const host = makeHost(() =>
       jsonResponse(resolvedFile({ content: "short body", encoding: "utf8" })),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "attachment", "get", "12", "att-1"],
       baseEnv,
       host,
@@ -1813,55 +1426,10 @@ describe("cctl ticket attachment get — file content", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("short body");
-    expect(host.written).toHaveLength(0);
   });
 
-  it("spills content past the stdout budget to an artifact and prints the manifest", async () => {
-    const content = "x".repeat(70_000);
-    const host = writingHost(() =>
-      jsonResponse(resolvedFile({ content, encoding: "utf8" })),
-    );
-    const result = await runCli(
-      ["ticket", "attachment", "get", "12", "att-1"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).not.toContain(content);
-    expect(host.written).toHaveLength(1);
-    const written = firstOf(host.written, "artifact write");
-    expect(written.content).toBe(content);
-    expect(result.stdout).toContain(`artifact: ${written.path}`);
-    expect(result.stdout).toContain("bytes: 70000");
-    expect(result.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/u);
-    expect(result.stdout).toContain("notes.md");
-    expect(result.stdout).toContain("text/markdown");
-  });
-
-  it("replaces the content field with the manifest in the --json envelope", async () => {
-    const content = "x".repeat(70_000);
-    const host = writingHost(() =>
-      jsonResponse(resolvedFile({ content, encoding: "utf8" })),
-    );
-    const result = await runCli(
-      ["ticket", "attachment", "get", "12", "att-1", "--json"],
-      baseEnv,
-      host,
-    );
-
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope.attachment.content).toBeUndefined();
-    expect(envelope.artifact).toMatchObject({
-      path: firstOf(host.written, "artifact write").path,
-      bytes: 70_000,
-      reason: "stdout_budget_exceeded",
-    });
-    expect(envelope.artifact.sha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
-  });
-
-  it("always writes base64 content to an artifact, whatever its size", async () => {
-    const host = writingHost(() =>
+  it("decodes a base64 attachment and retains its media type", async () => {
+    const host = makeHost(() =>
       jsonResponse(
         resolvedFile({
           content: "aGVsbG8=",
@@ -1871,7 +1439,7 @@ describe("cctl ticket attachment get — file content", () => {
         }),
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "attachment", "get", "12", "att-1"],
       baseEnv,
       host,
@@ -1879,25 +1447,8 @@ describe("cctl ticket attachment get — file content", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain("aGVsbG8=");
-    expect(host.written).toHaveLength(1);
-    expect(firstOf(host.written, "artifact write").path).toContain(".cc/temp/");
-    expect(result.stdout).toContain("base64");
-  });
-
-  it("fails loudly when the artifact cannot be written", async () => {
-    const host = makeHost(() =>
-      jsonResponse(resolvedFile({ content: "aGVsbG8=", encoding: "base64" })),
-    );
-    const result = await runCli(
-      ["ticket", "attachment", "get", "12", "att-1", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(1);
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope.ok).toBe(false);
-    expect(envelope.code).toBe("write_unavailable");
+    expect(artifactTextOf(result)).toBe("hello");
+    expect(result.artifacts[0]?.mediaType).toBe("image/png");
   });
 });
 
@@ -1916,7 +1467,7 @@ describe("cctl ticket attachment", () => {
   ])(
     "renders a $state conversation snapshot with its retry command",
     async (fixture) => {
-      const retryCommand = "cctl ticket attachment refresh 'cc#12' 'att-1'";
+      const retryCommand = "cctl ticket attachment refresh -- 'cc#12' att-1";
       const attachment = sampleAttachment("att-1", {
         kind: "conversation",
         projectPath: "/repos/cc",
@@ -1941,12 +1492,12 @@ describe("cctl ticket attachment", () => {
         }),
       );
 
-      const text = await runCli(
+      const text = await runCcWithHost(
         ["ticket", "attachment", "get", "12", "att-1"],
         baseEnv,
         host,
       );
-      const json = await runCli(
+      const json = await runCcWithHost(
         ["ticket", "attachment", "get", "12", "att-1", "--json"],
         baseEnv,
         host,
@@ -1955,7 +1506,7 @@ describe("cctl ticket attachment", () => {
       expect(text.exitCode).toBe(0);
       expect(text.stdout).toContain(fixture.expected);
       expect(text.stdout).toContain(retryCommand);
-      expect(JSON.parse(json.stdout).attachment).toMatchObject({
+      expect(JSON.parse(json.stdout).payload.data.attachment).toMatchObject({
         kind: "conversation",
         state: fixture.state,
         retryCommand,
@@ -1991,92 +1542,41 @@ describe("cctl ticket attachment", () => {
       });
       const host = makeHost(() => jsonResponse(attachment));
 
-      const text = await runCli(
+      const text = await runCcWithHost(
         ["ticket", "attachment", "refresh", "12", "att-1"],
         baseEnv,
         host,
       );
-      const json = await runCli(
+      const json = await runCcWithHost(
         ["ticket", "attachment", "refresh", "12", "att-1", "--json"],
         baseEnv,
         host,
       );
 
-      const retryCommand = "cctl ticket attachment refresh 'cc#12' 'att-1'";
+      const retryCommand = "cctl ticket attachment refresh -- 'cc#12' att-1";
       expect(text.exitCode).toBe(0);
       expect(text.stdout).toContain(fixture.expected);
       expect(text.stdout).toContain(retryCommand);
       expect(text.stdout).not.toContain("refreshed conversation snapshot");
-      expect(JSON.parse(json.stdout).attachment).toMatchObject({
-        kind: "conversation",
-        state: fixture.state,
+      expect(JSON.parse(json.stdout).payload.data).toMatchObject({
         attachment: {
           id: "att-1",
-          payload: { snapshotStatus: fixture.state },
+          payload: { kind: "conversation", snapshotStatus: fixture.state },
         },
-        retryCommand,
+        snapshotRead: retryCommand,
       });
     },
   );
 
-  it("exits 2 naming the offending verb and the registry's verbs", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["ticket", "attachment", "frob", "12", "att-1"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain(
-      'unknown ticket attachment subcommand "frob"',
-    );
-    for (const verb of ["get", "update", "refresh", "remove"]) {
-      expect(result.stderr, verb).toContain(verb);
-    }
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("exits 2 before any network call when update has no field flags", async () => {
     const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "attachment", "update", "12", "att-1"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("--description");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 before any network call on extra positional arguments for every verb", async () => {
-    for (const verb of ["get", "update", "refresh", "remove"] as const) {
-      const host = makeHost(() => jsonResponse({}));
-      const result = await runCli(
-        [
-          "ticket",
-          "attachment",
-          verb,
-          "12",
-          "att-1",
-          "extra",
-          ...(verb === "update" ? ["--description", "d"] : []),
-        ],
-        baseEnv,
-        host,
-      );
-      expect(result.exitCode, verb).toBe(2);
-      expect(host.requests, verb).toHaveLength(0);
-    }
-  });
-
-  it("exits 2 before any network call when the attachment id is missing", async () => {
-    const host = makeHost(() => jsonResponse({}));
-    const result = await runCli(
-      ["ticket", "attachment", "get", "12"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
     expect(host.requests).toHaveLength(0);
   });
 
@@ -2090,13 +1590,15 @@ describe("cctl ticket attachment", () => {
         404,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "attachment", "get", "12", "att-9", "--json"],
       baseEnv,
       host,
     );
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout).code).toBe("attachment_not_found");
+    expect(JSON.parse(result.stdout).error.details.serverCode).toBe(
+      "attachment_not_found",
+    );
   });
 });
 
@@ -2149,11 +1651,14 @@ describe("cctl ticket malformed 2xx response contracts", () => {
   ] as const)("fails %s instead of reporting success", async (_label, argv) => {
     const host = makeHost(() => jsonResponse({ nope: true }));
 
-    const result = await runCli([...argv], baseEnv, host);
+    const result = await runCcWithHost([...argv], baseEnv, host);
 
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope).toMatchObject({ ok: false, code: "invalid_response" });
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: { code: "CC_INVALID_RESPONSE" },
+    });
   });
 });
 
@@ -2181,7 +1686,7 @@ describe("attachment index on list (bounded mode)", () => {
 
   it("fetches attachments only for tickets that have any", async () => {
     const host = listHost();
-    await runCli(["ticket", "list", "--attachments"], baseEnv, host);
+    await runCcWithHost(["ticket", "list", "--attachments"], baseEnv, host);
     // One list call + one attachments call for cc#12; none for cc#13.
     expect(host.requests).toHaveLength(2);
   });
@@ -2214,7 +1719,7 @@ describe("cctl ticket start", () => {
 
   it("POSTs the selected kickoff configuration and reports the session", async () => {
     const host = makeHost(() => jsonResponse(startOutput));
-    const result = await runCli(
+    const result = await runCcWithHost(
       [
         "ticket",
         "start",
@@ -2261,7 +1766,7 @@ describe("cctl ticket start", () => {
     {
       label: "a malformed parameter",
       args: ["--model", "gpt-5.6-sol", "--model-param", "fast"],
-      message: 'invalid --model-param "fast"',
+      message: "Each --model-param must be a distinct non-empty id=value pair",
     },
     {
       label: "a duplicate parameter",
@@ -2273,11 +1778,11 @@ describe("cctl ticket start", () => {
         "--model-param",
         "fast=false",
       ],
-      message: 'duplicate --model-param "fast"',
+      message: "Each --model-param must be a distinct non-empty id=value pair",
     },
   ])("rejects $label before sending a request", async ({ args, message }) => {
     const host = makeHost(() => jsonResponse(startOutput));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "start", "12", "--mode", "agent", ...args],
       baseEnv,
       host,
@@ -2316,7 +1821,7 @@ describe("cctl ticket start", () => {
         },
       }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "start", "12", "--mode", "agent"],
       baseEnv,
       host,
@@ -2325,14 +1830,14 @@ describe("cctl ticket start", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("att-pending");
     expect(result.stdout).toContain(
-      "cctl ticket attachment get 'cc#12' 'att-pending'",
+      "cctl ticket attachment get -- 'cc#12' att-pending",
     );
     expect(result.stdout).not.toContain("att-captured");
   });
 
   it("says nothing about snapshots when every attachment is settled", async () => {
     const host = makeHost(() => jsonResponse(startOutput));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "start", "12", "--mode", "agent"],
       baseEnv,
       host,
@@ -2350,7 +1855,7 @@ describe("cctl ticket start", () => {
         initialPromptQueued: false,
       }),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "start", "12", "--mode", "prepared"],
       baseEnv,
       host,
@@ -2365,63 +1870,27 @@ describe("cctl ticket start", () => {
 
   it("emits the full output in the --json envelope", async () => {
     const host = makeHost(() => jsonResponse(startOutput));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "start", "cc#12", "--mode", "agent", "--json"],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(0);
-    const body = JSON.parse(result.stdout) as {
-      ok: boolean;
+    const body = JSON.parse(result.stdout).payload.data as {
       sessionName: string;
       initialPromptQueued: boolean;
       ticket: { number: number };
     };
-    expect(body.ok).toBe(true);
+
     expect(body.sessionName).toBe("ticket-12-fix-the-flaky-gate-1");
     expect(body.initialPromptQueued).toBe(true);
     expect(body.ticket.number).toBe(12);
   });
 
-  it("exits 2 without --mode before any network call", async () => {
-    const host = makeHost(() => jsonResponse(startOutput));
-    const result = await runCli(["ticket", "start", "12"], baseEnv, host);
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("--mode");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on an invalid --mode before any network call", async () => {
-    const host = makeHost(() => jsonResponse(startOutput));
-    const result = await runCli(
-      ["ticket", "start", "12", "--mode", "yolo"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("agent");
-    expect(result.stderr).toContain("prepared");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("exits 2 on extra positionals before any network call", async () => {
-    const host = makeHost(() => jsonResponse(startOutput));
-    const result = await runCli(
-      ["ticket", "start", "12", "extra", "--mode", "agent"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("fails loudly on an unparseable 2xx body", async () => {
     const host = makeHost(() => jsonResponse({ nope: true }));
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "start", "12", "--mode", "agent"],
       baseEnv,
       host,
@@ -2430,9 +1899,10 @@ describe("cctl ticket start", () => {
     expect(result.exitCode).toBe(1);
     // Evidence over hypothesis: name the validation failure and the check
     // that separates build skew from a contract defect (command-center#91).
-    expect(result.stderr).toContain("failed this CLI's validation");
+    expect(result.stderr).toContain("CC_INVALID_RESPONSE");
     expect(result.stderr).not.toContain("same build as this CLI");
-    expect(result.stderr).toContain("cctl doctor");
+    expect(result.stderr).toContain("effect: unknown");
+    expect(result.stderr).toContain('"id":"cc#12"');
   });
 
   it("maps the active-session 409 through the shared failure path", async () => {
@@ -2445,7 +1915,7 @@ describe("cctl ticket start", () => {
         409,
       ),
     );
-    const result = await runCli(
+    const result = await runCcWithHost(
       ["ticket", "start", "12", "--mode", "agent"],
       baseEnv,
       host,

@@ -13,33 +13,28 @@ Use `cctl spec schema guidance` for the current lint and evidence contract.
 Start with `cctl spec show <slug>`. Its default is a bounded nested outline with
 stable handles, per-element state, and explicit omission metadata, which is the
 navigation map for targeted `cctl spec get <slug>/<handle>` calls; get renders
-complete line-oriented text by default and a named `element` envelope only
+complete line-oriented text by default and `payload.data.element` only
 with `--json`. Use `--summary` when counts alone answer the question; its
 disclosure reports zero returned rows, truncation by collection, and the exact
 default-outline next command.
 
-Use `cctl spec show <slug> --rendered` for the canonical current-revision
-Markdown and `--full` for the complete JSON view. Both are file-backed: stdout
-is a small artifact manifest, and `--json` serializes that same manifest rather
-than widening the selected disclosure level or embedding the document. Read or
-search the returned path progressively. If even a bounded summary or outline
-would exceed the stdout budget, the CLI writes that exact inline envelope to a
-JSON file and returns an artifact receipt with
-`reason: "stdout_budget_exceeded"`.
+Use `cctl spec show <slug> --rendered` for canonical current-revision Markdown
+and `--full` for the complete JSON view. Both return artifact receipts with
+`payload.kind: "artifact"`, bounded `payload.summary`, and `payload.artifact`
+metadata; `--out <path>` chooses the destination. Read or search the file
+progressively. JSON artifacts may contain one long line; use byte ranges.
 
-Inline summary and outline show envelopes are flattened: `spec` is identity,
-while view data such as `counts`, `requirements`, and `tasks` are sibling
-fields. Artifact receipts instead carry `storage: "artifact"` and
-`artifact: {path, format, bytes, sha256}`; rendered/full receipts also carry a
-bounded `revision`. Status, lint, get, and section get keep named payloads under
-`status`, `lint`, `element`, and `section`. Get also hoists
-`elementId`/`kind`/`elementVersion`, so
-identity never requires traversing the nested snapshot row. In a full show
-artifact, `baseRevision` is the immediate parent named by the current revision's
-`basedOnRevisionId`, `currentRevision` is the spec's latest revision regardless
-of state, and `currentApprovedRevision` is the latest revision whose state is
-approved. Inspect the offline field map and revision semantics with
-`cctl spec schema read-envelopes`.
+Inline command data lives under `payload.data`. Show data contains spec
+identity and the selected view fields. Status, lint, get, and section get keep
+named `status`, `lint`, `element`, and `section` data there. Get exposes
+`elementId`, `kind`, and `elementVersion` beside its element snapshot. Status,
+diff, delta, plan get, and plan status default to bounded collections; use
+returned omission commands or `--full` for complete data.
+
+`baseRevision` names the current revision's immediate parent;
+`currentRevision` is the latest revision regardless of state;
+`currentApprovedRevision` is the latest approved one. Inspect the offline
+field map and revision semantics with `cctl spec schema read-envelopes`.
 
 Every read answers from the current revision. A handle the current revision no
 longer carries is refused with `historical_only` rather than answered from an
@@ -71,7 +66,7 @@ Inspect stage and return-path contracts with `cctl spec status --help`,
 
 A delivery attempt (`cctl spec plan open <slug>`) owns one real project workflow definition. That definition is authored as an ordinary graph `plan.json` and written with `cctl workflow replace <definitionId>`, using the definition revision as its compare-and-swap token. What is specific to a spec delivery — the pinned revision, how criteria reach contexts, phase-scoped authoring, and the preflight that reports what would refuse a propose — is owned by [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md). Every receipt on this path names the act that follows it, so follow the hint rather than a sequence restated here. Workflow Builder is the human's review surface: the managed definition is reviewed there before sign-off, and pending reaffirmations are cleared there in one batch. The charter (mission, invariants, conventions, sources) is part of that same plan while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the server-owned pinned-spec, context-excerpt and claims sources are re-injected at propose, so leave them out of what you author. `cctl spec plan propose` freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
 
-The version-4 binding contains dispositions only. Read it with `cctl spec plan get <slug>` and author criterion coverage in the linked workflow definition; [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md) owns that contract. Keep payloads under `.cc/temp/`. Human disposition decisions stay on the review surface. Graph and binding revisions are independent; re-read the surface whose write was refused. Every unlaunched version-3 candidate must reopen, re-propose and receive fresh sign-off; historical snapshots remain readable.
+The version-4 binding contains dispositions only. Read its summary with `cctl spec plan get <slug>` and the complete document with `--full`. Author criterion coverage in the linked workflow definition; [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md) owns that contract. Keep payloads under `.cc/temp/`. Human disposition decisions stay on the review surface. Graph and binding revisions are independent; re-read the surface whose write was refused. Every unlaunched version-3 candidate must reopen, re-propose and receive fresh sign-off; historical snapshots remain readable.
 
 Every open derives its scope from the delivery delta. A criterion the last delivery accepted and nothing invalidated becomes `delivered_elsewhere`; one whose governing content moved becomes `pending_reaffirmation`; undelivered, hard-stale, and deferred criteria are selected again. Only a human clears pending reaffirmations, as one batch on that review surface, against the binding revision they read.
 
@@ -99,7 +94,7 @@ Merge initiation assesses delivery before validation and conflict resolution. Fo
 
 Review the managed definition and the binding with `cctl spec plan get` before proposing. `cctl spec plan propose <slug>` freezes the exact definition id, revision, definition hash, binding hash, candidate id, and candidate hash. A draft never has a candidate identity. A proposed definition is read-only; `cctl spec plan reopen <slug> --reason <why>` clones it to a new editable definition and preserves the frozen candidate as history.
 
-Only a human can sign off. `cctl spec start <slug> --inputs .cc/temp/inputs.json` is the one-off start of an approved attempt; the file is the exact JSON object sent to the shared graph start boundary for ordinary input validation. `--park` is only prelaunch review and creates no execution. Read `cctl spec start --help` and `cctl spec schema guidance` before launch.
+Only a human can sign off. `cctl spec start <slug> --file .cc/temp/inputs.json` is the one-off start of an approved attempt; the file is the exact JSON object sent to the shared graph start boundary for ordinary input validation. `--park` is only prelaunch review and creates no execution. Read `cctl spec start --help` and `cctl spec schema guidance` before launch.
 
 ## Ordinary live edit, capture, and replacement
 
@@ -117,7 +112,7 @@ Inspect lifecycle refusals and bounded file payloads with `cctl workflow live ed
 
 Remove draft elements by handle with `cctl spec remove`. When a surviving element refers to the target, update or remove both sides in one `cctl spec draft` batch so the transaction never leaves a dangling reference.
 
-Treat removal as reversible history, not deletion. Reintroduce the same element id with `"reintroduceHistorical": true` and `"baseElementVersion": null`; this restores its original number and handle. Follow the exact recovery printed by the removal receipt.
+Treat removal as reversible history, not deletion. Reintroduce the same element id with `"reintroduceHistorical": true` and `"baseElementVersion": null`; this restores its original number and handle. Use the removed element identity in the receipt to address its history.
 
 Inspect both acts with `cctl spec remove --help`, `cctl spec draft --help`, and `cctl spec schema element-batch`.
 
@@ -135,7 +130,7 @@ Use `cctl spec withdraw-proposal` only to take back a proposal authored by the c
 
 Use dismiss-superseded only for a stranded proposal that a later approved lineage forked past. This is a human act, records the superseding revision and reason, and opens no draft. Never substitute withdrawal when stale content must stay closed.
 
-Reopening costs far less than a pending count suggests: approvals on unchanged subjects carry into the reopened draft under the same applicable gate, and only edited subjects need re-approval. `cctl spec status`, the propose and withdrawal receipts, and the Request Changes notice all print both sides of that ledger — satisfied, split into carried, current-revision, import-settled, and combined-act, beside pending — above the `carry rule:` line stating the mechanism. Price a repair round off that ledger rather than re-litigating settled content.
+Reopening costs far less than a pending count suggests: approvals on unchanged subjects carry into the reopened draft under the same applicable gate, and only edited subjects need re-approval. `cctl spec status`, the propose and withdrawal receipts, and the Request Changes notice report both sides of that ledger — satisfied, split into carried, current-revision, import-settled, and combined-act, beside pending — together with its carry rule. Price a repair round off that ledger rather than re-litigating settled content.
 
 Inspect the distinct guards and outcomes with `cctl spec withdraw-proposal --help` and `cctl spec dismiss-superseded --help`.
 
@@ -153,7 +148,7 @@ Inspect the write contract with `cctl spec draft --help` and the relevant `cctl 
 
 Bring a spec authored outside CC in whole with `cctl spec import --file <bundle.json>`. The imported spec is born approved at design on import provenance: it records that an agent imported the content and from which source, and no approval of any kind is written, so every human gate on it stays as strong as on a spec authored here.
 
-Run the act in one order. Check `cctl spec list` and `cctl spec search --all <query>` and stop if an existing spec already covers the work. Author the bundle from the source documents yourself: you are the parser, and the server never reads a source file. Iterate with `--dry-run` until it reports no blocking finding and prints the handles it would allocate, so bundle-local refs resolve against the real numbering. Then import once and read the receipt. Treat a refusal as unfinished work — nothing was written, so follow the named remedy and import again.
+Run the act in one order. Check `cctl spec list` and `cctl spec search --all <query>` and stop if an existing spec already covers the work. Author the bundle from the source documents yourself: you are the parser, and the server never reads a source file. Iterate with `cctl spec import-preview --file <bundle.json>` until it reports no blocking finding and prints the handles it would allocate, so bundle-local refs resolve against the real numbering. Then import once and read the receipt. Treat a refusal as unfinished work. Inspect its `effect` and recovery facts before retrying; follow the named remedy.
 
 Import creates new specs only; change an existing spec with `cctl spec amend` instead. Import is never an approval shortcut for work authored here — content drafted in conversation earns its approval through `cctl spec propose` and human sign-off. Once the imported spec is ready, use its ordinary managed delivery lifecycle.
 
@@ -167,9 +162,9 @@ Before proposing, run `cctl spec lint`, repair its consistency findings, and swe
 
 Lint reads handle tokens in element prose as real references, so a renumbered or removed element cannot ship a wrong `R3.2` through a clean pass. To name a handle token literally without asserting a reference, mask it as code: an inline backtick span or a fenced block, both of which lint skips, as it does link destinations and autolinks. Four-space indented code is not masked, so use a fence there.
 
-For every review repair round, write a bounded notes file that maps prior findings to dispositions, names changed elements, and states deliberate non-changes. Attach it with `cctl spec propose <slug> --notes <notes.md>` so the reviewer starts from the disposition and diff rather than reconstructing intent.
+For every review repair round, write a bounded notes file that maps prior findings to dispositions, names changed elements, and states deliberate non-changes. Attach it with `cctl spec propose <slug> --notes-file <notes.md>` so the reviewer starts from the disposition and diff rather than reconstructing intent.
 
-A successful propose files the gate-scoped approval request itself, so the human already has the entry. The receipt reports one outcome per consulted gate — filed, already filed, not needed, filed with notice delivery uncertain, or not filed — with the attention id the human's row carries. Do not re-file what it filed: `cctl spec request-approval` is the recovery for the last two outcomes only, and the receipt prints it as the next command when one occurs.
+A successful propose files the gate-scoped approval request itself, so the human already has the entry. The receipt reports one outcome per consulted gate — filed, already filed, not needed, filed with notice delivery uncertain, or not filed — with the attention id the human's row carries. Do not re-file what it filed: `cctl spec request-approval` is the recovery for the last two outcomes only, so repair only the gates reporting those outcomes. Read `cctl spec request-approval --help` for the gate flags.
 
 Inspect the loop with `cctl spec lint --help`, `cctl spec diff --help`, and `cctl spec propose --help`.
 

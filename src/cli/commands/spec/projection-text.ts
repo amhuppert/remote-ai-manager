@@ -4,6 +4,7 @@
  * projection through this module, so the two surfaces cannot word the same fact
  * differently and neither reaches a verdict of its own.
  */
+import type { JsonData } from "cli-for-agents";
 import {
   approvalLedgerSentence,
   REOPEN_CARRY_NOTE,
@@ -15,10 +16,10 @@ import type {
   SpecStatusView,
 } from "@/lib/specs/view-schemas";
 
-type ProjectedGate = SpecStatusView["gates"][number];
+type ProjectedGate = JsonData<SpecStatusView["gates"][number]>;
 type GateApplicability = ProjectedGate["applicability"];
 type GateState = ProjectedGate["state"];
-type RevisionSignOff = SpecStatusView["revisionSignOff"];
+type RevisionSignOff = JsonData<SpecStatusView["revisionSignOff"]>;
 
 /**
  * `pending` is evaluated against the current revision (or the selected run),
@@ -71,7 +72,7 @@ function gateLine(
  * `priorAdmissions` — so this text never claims either. `basis` stays visible
  * so a policy admission is not read as a human approval.
  */
-function admissionText(admission: SpecGatePriorAdmission): string {
+function admissionText(admission: JsonData<SpecGatePriorAdmission>): string {
   const run =
     admission.executionId === null ? "" : ` for run ${admission.executionId}`;
   const actor = admission.actor === null ? "" : ` by ${admission.actor.kind}`;
@@ -129,8 +130,16 @@ export function signOffLines(signOff: RevisionSignOff): string[] {
  * rides along because a pending count read alone is heard as "these approvals
  * were lost" rather than "these were never given".
  */
-export function approvalLedgerLines(ledger: ApprovalLedger): string[] {
-  return [approvalLedgerSentence(ledger), `carry rule: ${ledger.carryRule}`];
+export function approvalLedgerLines(
+  ledger: JsonData<ApprovalLedger>,
+): string[] {
+  return [
+    approvalLedgerSentence({
+      ...ledger,
+      subjects: ledger.subjects.map((subject) => ({ ...subject })),
+    }),
+    `carry rule: ${ledger.carryRule}`,
+  ];
 }
 
 /**
@@ -138,7 +147,9 @@ export function approvalLedgerLines(ledger: ApprovalLedger): string[] {
  * moment the carry is misread as a loss, so what carries is stated outright
  * rather than left to be inferred from two counts.
  */
-export function reopenedApprovalLedgerLines(ledger: ApprovalLedger): string[] {
+export function reopenedApprovalLedgerLines(
+  ledger: JsonData<ApprovalLedger>,
+): string[] {
   return [...approvalLedgerLines(ledger), REOPEN_CARRY_NOTE];
 }
 
@@ -148,7 +159,9 @@ export function reopenedApprovalLedgerLines(ledger: ApprovalLedger): string[] {
  * outstanding subject does, so every unmet condition travels rather than one
  * subjects-or-sign-off scalar.
  */
-export function pendingBlockLines(block: AuthoringPendingBlockView): string[] {
+export function pendingBlockLines(
+  block: JsonData<AuthoringPendingBlockView>,
+): string[] {
   return [
     ...(block.gates.length === 0
       ? []

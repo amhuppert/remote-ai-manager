@@ -10,8 +10,8 @@ vi.mock("@/lib/logging", async (importOriginal) => ({
   }),
 }));
 
-import { runCli } from "@/cli/core";
-import type { CliEnv, CliHost } from "@/cli/shared";
+import { runCcWithHost } from "@/cli/testing/domain-runtime";
+import type { CliEnv, CliHost } from "@/cli/transport";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import {
   _resetPublicationForTesting,
@@ -530,7 +530,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
 
     // CLI surface: the same server throw, rendered by the real CLI in both
     // modes — no hand-written body stands between them.
-    const cliJson = await runCli(
+    const cliJson = await runCcWithHost(
       ["spec", "amend", SLUG, "--json"],
       cliEnv,
       bridgeHost(world),
@@ -538,14 +538,19 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(cliJson.exitCode).toBe(1);
     expect(JSON.parse(cliJson.stdout)).toMatchObject({
       ok: false,
-      code: "revision_in_review",
+      effect: "not_applied",
       instruction: AMEND_INSTRUCTION,
-      details: {
-        proposals: [{ id: authored.draftRevisionId, number: 3 }],
-        approvedBaseRevisionId: authored.designRevisionId,
+      error: {
+        details: {
+          serverCode: "revision_in_review",
+          serverDetails: {
+            proposals: [{ id: authored.draftRevisionId, number: 3 }],
+            approvedBaseRevisionId: authored.designRevisionId,
+          },
+        },
       },
     });
-    const cliText = await runCli(
+    const cliText = await runCcWithHost(
       ["spec", "amend", SLUG],
       cliEnv,
       bridgeHost(world),
@@ -555,7 +560,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
 
     // The write half of the pair: an element write into the proposed revision
     // names the same revision the same way, and names the act it refused.
-    const elementWrite = await runCli(
+    const elementWrite = await runCcWithHost(
       ["spec", "draft", SLUG, "--file", ELEMENT_FILE],
       cliEnv,
       bridgeHost(world, {
@@ -598,13 +603,22 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
 
     // The revision id is the caller's compare-and-swap token, so the CLI
     // refuses locally at exit 2 rather than inferring the current proposal.
-    const missingToken = await runCli(
-      ["spec", "withdraw-proposal", SLUG],
+    const missingToken = await runCcWithHost(
+      ["spec", "withdraw-proposal", SLUG, "--json"],
       cliEnv,
       bridgeHost(world),
     );
     expect(missingToken.exitCode).toBe(2);
-    expect(missingToken.stderr).toContain("--revision <revision-id>");
+    expect(JSON.parse(missingToken.stdout)).toMatchObject({
+      error: {
+        issues: [
+          expect.objectContaining({
+            code: "invalid_value",
+            path: ["flags", "revision"],
+          }),
+        ],
+      },
+    });
 
     // A human transport is not the author: the refusal names the two exits
     // Spec Studio actually offers instead of the agent verb.
@@ -624,7 +638,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
 
     // A stale token — a revision this spec approved earlier — carries no
     // proposal, so the CAS check refuses rather than withdrawing something.
-    const staleToken = await runCli(
+    const staleToken = await runCcWithHost(
       [
         "spec",
         "withdraw-proposal",
@@ -639,12 +653,13 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(staleToken.exitCode).toBe(1);
     expect(JSON.parse(staleToken.stdout)).toMatchObject({
       ok: false,
-      code: "gate_blocked",
+      effect: "not_applied",
+      error: { details: { serverCode: "gate_blocked" } },
     });
 
     // The proposing conversation's own exit, through the real CLI: the
     // revision the amend refusal named is taken back and reopened as a draft.
-    const withdrawn = await runCli(
+    const withdrawn = await runCcWithHost(
       [
         "spec",
         "withdraw-proposal",
@@ -657,25 +672,19 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       bridgeHost(world),
     );
     expect(withdrawn.exitCode).toBe(0);
-    const receipt = JSON.parse(withdrawn.stdout) as {
-      ok: boolean;
-      withdrawal: {
-        withdrawn: { id: string; state: string };
-        draft: { id: string; state: string; basedOnRevisionId: string };
-      };
+    const receipt = JSON.parse(withdrawn.stdout).payload.data as {
+      withdrawn: { id: string; state: string };
+      draft: { id: string; state: string; basedOnRevisionId: string };
     };
     expect(receipt).toMatchObject({
-      ok: true,
-      withdrawal: {
-        withdrawn: { id: authored.draftRevisionId, state: "withdrawn" },
-        draft: { state: "draft", basedOnRevisionId: authored.draftRevisionId },
-      },
+      withdrawn: { id: authored.draftRevisionId, state: "withdrawn" },
+      draft: { state: "draft", basedOnRevisionId: authored.draftRevisionId },
     });
 
     const reloaded = await world.repos.specs.listRevisions(authored.specId);
     expect(
       reloaded.filter((revision) => revision.state === "draft"),
-    ).toMatchObject([{ id: receipt.withdrawal.draft.id }]);
+    ).toMatchObject([{ id: receipt.draft.id }]);
     // The follow-up carries evergreen reviewed content forward. Legacy task
     // elements remain readable on the withdrawn Plan revision and are not
     // copied into the design draft that replaces it.
@@ -683,7 +692,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       await world.repos.specs.getRevisionSnapshot(authored.draftRevisionId)
     )?.elements.map(({ element }) => element.id);
     const replacementElements = (
-      await world.repos.specs.getRevisionSnapshot(receipt.withdrawal.draft.id)
+      await world.repos.specs.getRevisionSnapshot(receipt.draft.id)
     )?.elements.map(({ element }) => element.id);
     expect(withdrawnElements).toEqual(
       expect.arrayContaining([authored.taskOneId, authored.taskTwoId]),
@@ -738,7 +747,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
 
     // CLI rejects locally, before reading the retired file or contacting the
     // route, and returns the same migration act.
-    const cliResult = await runCli(
+    const cliResult = await runCcWithHost(
       ["spec", "start", SLUG, "--file", SCOPE_FILE, "--json"],
       cliEnv,
       bridgeHost(world, { [SCOPE_FILE]: JSON.stringify(scope) }),
@@ -929,28 +938,28 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     // CLI surface (21.3): `cctl workflow status --json` reads the same route
     // and names the halt code; the selector it points at carries the whole
     // machine-readable reason with its instruction.
-    const cliStatus = await runCli(
+    const cliStatus = await runCcWithHost(
       ["workflow", "status", "--json"],
       cliEnv,
       bridgeHost(world),
     );
     expect(cliStatus.exitCode).toBe(0);
-    const cliBody = JSON.parse(cliStatus.stdout) as {
+    const statusEnvelope = JSON.parse(cliStatus.stdout);
+    const cliBody = statusEnvelope.payload.data as {
       ok: boolean;
       execution: { status: string; halted: boolean; haltType: string | null };
-      next: string;
     };
     expect(cliBody.execution.status).toBe("halted");
     expect(cliBody.execution.halted).toBe(true);
     expect(cliBody.execution.haltType).toBe("delivery_gate_failed");
-    expect(cliBody.next).toBe("cctl workflow status --halt");
+    expect(statusEnvelope.hint).toContain("--halt");
 
-    const cliHalt = await runCli(
+    const cliHalt = await runCcWithHost(
       ["workflow", "status", "--halt", "--json"],
       cliEnv,
       bridgeHost(world),
     );
-    const haltBody = JSON.parse(cliHalt.stdout) as {
+    const haltBody = JSON.parse(cliHalt.stdout).payload.data as {
       haltReason: { type: string; instruction: string } | null;
     };
     expect(haltBody.haltReason).toMatchObject({
@@ -958,12 +967,12 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     });
     expect(haltBody.haltReason?.instruction.length).toBeGreaterThan(0);
     // The compact human rendering names the halt code too.
-    const cliHuman = await runCli(
+    const cliHuman = await runCcWithHost(
       ["workflow", "status"],
       cliEnv,
       bridgeHost(world),
     );
-    expect(cliHuman.stdout).toContain("halted: delivery_gate_failed");
+    expect(cliHuman.stdout).toContain("Halt: delivery_gate_failed");
   });
 });
 
@@ -1182,54 +1191,48 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
     )?.revision.authoringStage;
     expect(stage).toBe("design");
 
-    const structured = await runCli(
+    const structured = await runCcWithHost(
       ["spec", "propose", slug, "--json"],
       cliEnv,
       bridgeHost(world),
     );
     expect(structured.exitCode, structured.stderr).toBe(0);
-    const envelope = JSON.parse(structured.stdout) as {
-      blocked: string;
-      next: string;
-      instruction: string;
-      proposal: {
-        pendingBlock: {
-          display: string;
-          instruction: string;
-          outstandingSubjects: Array<{ gate: string; subject: string }>;
-        };
-        nextAction: { kind: string; gate: string; subject: string };
-        approvalRequests: Array<{
-          gate: string;
-          outcome: string;
-          attentionId: string | null;
-        }>;
+    const nativeEnvelope = JSON.parse(structured.stdout);
+    const proposal = nativeEnvelope.payload.data as {
+      pendingBlock: {
+        display: string;
+        instruction: string;
+        outstandingSubjects: Array<{ gate: string; subject: string }>;
       };
+      nextAction: { kind: string; gate: string; subject: string };
+      approvalRequests: Array<{
+        gate: string;
+        outcome: string;
+        attentionId: string | null;
+      }>;
     };
     // The gate that is actually outstanding is requirements, introduced
     // through the withdrawn attempt — not the revision's own design stage.
-    expect(envelope.proposal.pendingBlock.outstandingSubjects).toEqual([
+    expect(proposal.pendingBlock.outstandingSubjects).toEqual([
       {
         gate: "requirements",
         subject: "R1",
         elementId: `${slug}-element-requirement-1`,
       },
     ]);
-    expect(envelope.proposal.nextAction).toMatchObject({
+    expect(proposal.nextAction).toMatchObject({
       kind: "approve_subject",
       gate: "requirements",
       subject: "R1",
     });
     // The CLI renders the server's block rather than authoring its own.
-    expect(envelope.blocked).toBe(envelope.proposal.pendingBlock.display);
-    expect(envelope.instruction).toBe(
-      envelope.proposal.pendingBlock.instruction,
-    );
+    expect(proposal.pendingBlock.display).toContain("requirements");
+    expect(nativeEnvelope.instruction).toBe(proposal.pendingBlock.instruction);
     // The propose filed an ask per pending gate on its way out — this
     // cumulative propose leaves both the withdrawn attempt's requirements gate
     // and its own design gate open — so the caller is not sent to
     // `request-approval` for requests that already exist.
-    expect(envelope.proposal.approvalRequests).toEqual([
+    expect(proposal.approvalRequests).toEqual([
       {
         gate: "requirements",
         outcome: "filed",
@@ -1237,23 +1240,29 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       },
       { gate: "design", outcome: "filed", attentionId: expect.any(String) },
     ]);
-    expect(envelope.next).toBe(`cctl spec status ${slug}`);
+    expect(nativeEnvelope.effect).toBe("applied");
+    expect(nativeEnvelope.recovery.references).toContainEqual(
+      expect.objectContaining({
+        kind: "spec-revision",
+        id: attempt.followUpRevisionId,
+      }),
+    );
 
     // A second spec in the same shape, because the propose above already
     // consumed the first one's draft.
     const textSlug = "withdrawn-attempt-text";
     await withdrawnAttempt(textSlug);
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["spec", "propose", textSlug],
       cliEnv,
       bridgeHost(world),
     );
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain(
-      `acts next: human — ${envelope.proposal.pendingBlock.display}`,
+      `acts next: human — ${proposal.pendingBlock.display}`,
     );
     expect(text.stdout).toContain("approval requests:\n  requirements filed (");
-    expect(text.stdout).toContain(`next: cctl spec status ${textSlug}`);
+    expect(text.stdout).toContain(proposal.pendingBlock.display);
     // The stage-derived blocker named the wrong gate and offered a subjectless
     // request the server refuses as invalid_subject.
     expect(text.stdout).not.toContain("the design gate needs human sign-off");
@@ -1284,13 +1293,13 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       ),
     );
 
-    const structured = await runCli(
+    const structured = await runCcWithHost(
       ["spec", "status", slug, "--json"],
       cliEnv,
       bridgeHost(world),
     );
     expect(structured.exitCode, structured.stderr).toBe(0);
-    const status = JSON.parse(structured.stdout).status as {
+    const status = JSON.parse(structured.stdout).payload.data.status as {
       pendingApprovals: unknown[];
       revisionSignOff: { revisionNumber: number; state: string };
       gates: Array<{ gate: string; state: string }>;
@@ -1304,7 +1313,7 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       status.gates.find((gate) => gate.gate === "requirements")?.state,
     ).toBe("pending");
 
-    const text = await runCli(
+    const text = await runCcWithHost(
       ["spec", "status", slug],
       cliEnv,
       bridgeHost(world),
@@ -1319,13 +1328,13 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
     // The inventory rollup reads the same position: a revision whose sign-off
     // a human still owes is not approvals-complete, or it disappears from the
     // "needs a human" counts the specs list is for.
-    const summary = await runCli(
+    const summary = await runCcWithHost(
       ["spec", "show", slug, "--summary", "--json"],
       cliEnv,
       bridgeHost(world),
     );
     expect(summary.exitCode).toBe(0);
-    expect(JSON.parse(summary.stdout)).toMatchObject({
+    expect(JSON.parse(summary.stdout).payload.data).toMatchObject({
       approvalState: "pending",
       pendingApprovalCount: 1,
     });

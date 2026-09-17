@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "./core";
-import type { CliEnv, CliHost, FetchInit } from "./shared";
+import { runCcWithHost } from "./testing/domain-runtime";
+import type { CliEnv, CliHost, FetchInit } from "./transport";
 
 /**
  * R2.4's "project-supported commands select a project route" is a claim about the
@@ -115,6 +115,10 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
       });
     },
     async readTextFile(filePath) {
+      if (filePath === ".cc/temp/question.json")
+        return JSON.stringify({
+          questions: [{ question: "Which?", options: [{ label: "A" }] }],
+        });
       if (filePath === ".cc/temp/fork.json")
         return JSON.stringify({
           requestId: "88d015fc-dd0e-4610-bf59-f5d56b9c9833",
@@ -130,7 +134,6 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
     async readFileBytes() {
       return null;
     },
-    async writeTextFile() {},
     async sleep() {},
     platform: "darwin",
     homedir: "/Users/test",
@@ -257,17 +260,7 @@ const PROJECT_SCOPE_INVOCATIONS: {
   { name: "notify", argv: ["notify", "done"], body: { ok: true } },
   {
     name: "ask",
-    argv: [
-      "ask",
-      "--question",
-      "Ship it?",
-      "--option",
-      "Yes",
-      "--option",
-      "No",
-      "--header",
-      "Ship",
-    ],
+    argv: ["ask", "--file", ".cc/temp/question.json"],
     body: { ok: true, questionBatchId: "b-1" },
   },
   {
@@ -530,7 +523,7 @@ const PROJECT_SCOPE_INVOCATIONS: {
   { name: "memory review", argv: ["memory", "review"], body: { entries: [] } },
   {
     name: "memory export",
-    argv: ["memory", "export", "--output", "/tmp/memory-archive.md"],
+    argv: ["memory", "export", "--out", "/artifacts/memory-archive.md"],
     body: {
       archive: '---\narchive: "command-center-memory"\n---\n',
       noteCount: 0,
@@ -695,7 +688,7 @@ describe("every project-supported cctl command reaches a real Next.js route", ()
   for (const { name, argv, body } of PROJECT_SCOPE_INVOCATIONS) {
     it(`${name} builds a path served by an existing route module`, async () => {
       const host = makeHost(body);
-      await runCli(argv, projectEnv, host);
+      await runCcWithHost(argv, projectEnv, host);
 
       expect(host.requests.length).toBeGreaterThan(0);
       for (const { path, method } of host.requests) {
@@ -785,7 +778,7 @@ describe("one-off execution commands reach real session route modules", () => {
   for (const testCase of invocationCases) {
     it(`${testCase.name} builds a path with the exported HTTP method`, async () => {
       const host = makeHost(testCase.body);
-      await runCli([...testCase.argv], sessionEnv, host);
+      await runCcWithHost([...testCase.argv], sessionEnv, host);
 
       expect(host.requests.length).toBeGreaterThan(0);
       for (const { path, method } of host.requests) {

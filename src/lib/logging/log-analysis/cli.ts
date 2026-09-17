@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { buildTrace } from "@/lib/logging/speedscope-export";
 import { createLogger } from "@/lib/logging";
 import { buildLogComparisonReport } from "./analyses/compare";
-import { analyzeTrace } from "./analyses/trace";
+import { buildTraceAnalysisReport } from "./analysis";
 import {
   resolveDefaultServerLogPath,
   type ResolvedServerLogPath,
@@ -359,20 +359,6 @@ function stringifyJson(value: unknown, pretty: boolean): string {
   return `${JSON.stringify(value, null, pretty ? 2 : 0)}\n`;
 }
 
-function asUnknownRecord<T extends object>(value: T): Record<string, unknown> {
-  const record: Record<string, unknown> = {};
-  for (const [key, entryValue] of Object.entries(value)) {
-    record[key] = entryValue;
-  }
-  return record;
-}
-
-function asUnknownRecords<T extends object>(
-  values: readonly T[],
-): Record<string, unknown>[] {
-  return values.map(asUnknownRecord);
-}
-
 async function emitOutput(
   runtime: LogAnalysisCliRuntime,
   options: ParsedCliOptions,
@@ -485,27 +471,11 @@ async function runTrace(
     return 3;
   }
 
-  const traceAnalysis = analyzeTrace(
-    filtered,
-    options.traceId,
-    options.thresholds,
-  );
-  const report: AgentTraceAnalysisReport = {
-    schemaVersion: 1,
+  const report = buildTraceAnalysisReport(parsed.records, options.traceId, {
+    filters: options.filters,
+    thresholds: options.thresholds,
     generatedAt: runtime.now?.() ?? new Date().toISOString(),
-    command: "trace",
-    traceId: options.traceId,
-    request: traceAnalysis.request,
-    summary: traceAnalysis.summary,
-    timeline: asUnknownRecords(traceAnalysis.timeline),
-    inclusiveSpans: asUnknownRecords(traceAnalysis.inclusiveSpans),
-    exclusiveSpans: asUnknownRecords(traceAnalysis.exclusiveSpans),
-    duplicateWork: asUnknownRecords(traceAnalysis.duplicateWork),
-    warningsAndErrors: asUnknownRecords(traceAnalysis.warningsAndErrors),
-    unexplainedTime: asUnknownRecord(traceAnalysis.unexplainedTime),
-    findings: traceAnalysis.findings,
-    artifacts: [],
-  };
+  });
   await emitOutput(
     runtime,
     options,

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { formatBuildStamp } from "./stamp-value";
+export { formatBuildStamp } from "./stamp-value";
 
 export const buildInfoSchema = z.object({
   sha: z.string().min(1),
@@ -14,15 +16,6 @@ export const versionResponseSchema = buildInfoSchema.extend({
 });
 
 export type VersionResponse = z.infer<typeof versionResponseSchema>;
-
-/**
- * The stamp identifies one build of the server/CLI pair. It travels in the
- * X-CC-CLI-Build header and `cctl --version` output, so it must stay a
- * single header-safe token (no spaces).
- */
-export function formatBuildStamp(info: BuildInfo): string {
-  return `${info.sha}-${info.buildTime}`;
-}
 
 /** Project build info onto the wire shape served by GET /api/version. */
 export function toVersionResponse(info: BuildInfo): VersionResponse {

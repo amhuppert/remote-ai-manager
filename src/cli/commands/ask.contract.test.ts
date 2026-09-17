@@ -15,8 +15,8 @@ import {
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
-import { runCli } from "../core";
-import type { CliEnv, CliHost } from "../shared";
+import { runCcWithHost } from "../testing/domain-runtime";
+import type { CliEnv, CliHost } from "../transport";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real ask route
@@ -58,7 +58,13 @@ afterEach(async () => {
 
 function makeHost(
   conversation: ConversationState,
-  files: Record<string, string> = {},
+  files: Record<string, string> = {
+    ".cc/temp/question.json": JSON.stringify({
+      questions: [
+        { question: "Which order?", options: [{ label: "A" }, { label: "B" }] },
+      ],
+    }),
+  },
 ): CliHost & { send: ReturnType<typeof vi.fn> } {
   const send = vi.fn(async () => true);
   const deps: AskRouteDeps = {
@@ -124,16 +130,14 @@ function makeEnv(overrides: CliEnv = {}): CliEnv {
 describe("cctl ask against the real ask handlers", () => {
   it("registers the batch, fires ASK_QUESTION with parsed questions, and prints the §2.1 message", async () => {
     const host = makeHost(conv());
-    const result = await runCli(
-      ["ask", "--question", "Which order?", "--option", "A", "--option", "B"],
+    const result = await runCcWithHost(
+      ["ask", "--file", ".cc/temp/question.json"],
       makeEnv(),
       host,
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(
-      "Question batch q_contract1 registered. The user has been notified.",
-    );
+    expect(result.stdout).toContain("q_contract1");
     expect(result.stdout).toContain("End your turn now");
 
     expect(host.send).toHaveBeenCalledWith(
@@ -169,22 +173,22 @@ describe("cctl ask against the real ask handlers", () => {
         ],
       }),
     );
-    const result = await runCli(
-      ["ask", "--question", "Again?", "--option", "A"],
+    const result = await runCcWithHost(
+      ["ask", "--file", ".cc/temp/question.json"],
       makeEnv(),
       host,
     );
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("q_pending7");
-    expect(result.stderr).toContain("you already asked — end your turn");
+    expect(result.stderr).toContain("You already asked — end your turn");
     expect(host.send).not.toHaveBeenCalled();
   });
 
   it("maps the real autonomous 403 to exit 1 with proceed-with-best-judgment", async () => {
     const host = makeHost(conv({ role: "iteration" }));
-    const result = await runCli(
-      ["ask", "--question", "Which?", "--option", "A"],
+    const result = await runCcWithHost(
+      ["ask", "--file", ".cc/temp/question.json"],
       makeEnv(),
       host,
     );
@@ -198,8 +202,8 @@ describe("cctl ask against the real ask handlers", () => {
 
   it("maps the real no-turn 409 to exit 1", async () => {
     const host = makeHost(conv({ status: "awaiting" }));
-    const result = await runCli(
-      ["ask", "--question", "Which?", "--option", "A"],
+    const result = await runCcWithHost(
+      ["ask", "--file", ".cc/temp/question.json"],
       makeEnv(),
       host,
     );
@@ -209,8 +213,8 @@ describe("cctl ask against the real ask handlers", () => {
 
   it("exits 3 through the real token gate when the token is wrong", async () => {
     const host = makeHost(conv());
-    const result = await runCli(
-      ["ask", "--question", "Which?", "--option", "A"],
+    const result = await runCcWithHost(
+      ["ask", "--file", ".cc/temp/question.json"],
       makeEnv({ CC_API_TOKEN: "wrong" }),
       host,
     );
