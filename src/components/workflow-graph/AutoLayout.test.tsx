@@ -79,6 +79,56 @@ function makeDefinition(contextIds: string[]): WorkflowSemanticDefinition {
 }
 
 describe("AutoLayout", () => {
+  it("lays out a different draft even when its context ids and dimensions match", () => {
+    const onLayout = vi.fn();
+    const definition = makeDefinition(["a", "b"]);
+    const layout: GraphWorkflowVisualLayout = {
+      workflowId: "wf-1",
+      contextPositions: {},
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+    mockedNodes = [
+      { id: "a", measured: { width: 248, height: 200 } },
+      { id: "b", measured: { width: 248, height: 200 } },
+    ];
+    mockedInitialized = true;
+    const { rerender } = render(
+      <AutoLayout
+        definition={definition}
+        existingLayout={layout}
+        onLayout={onLayout}
+      />,
+    );
+    expect(onLayout).toHaveBeenCalledTimes(1);
+
+    const nextDefinition = makeDefinition(["b", "a"]);
+    rerender(
+      <AutoLayout
+        definition={nextDefinition}
+        existingLayout={layout}
+        onLayout={onLayout}
+      />,
+    );
+    expect(onLayout).toHaveBeenCalledTimes(2);
+
+    const nextLayout = {
+      ...layout,
+      contextPositions: { a: { x: 900, y: 40 } },
+    };
+    rerender(
+      <AutoLayout
+        definition={nextDefinition}
+        existingLayout={nextLayout}
+        onLayout={onLayout}
+      />,
+    );
+    expect(onLayout).toHaveBeenCalledTimes(3);
+    expect(onLayout.mock.lastCall?.[0].contextPositions.a).toEqual({
+      x: 900,
+      y: 40,
+    });
+  });
+
   it("regenerates layout when measured node dimensions change", () => {
     const onLayout = vi.fn();
     const definition = makeDefinition(["a", "b"]);

@@ -215,6 +215,13 @@ export const RepresentativeLayout = {
   },
 } satisfies Story;
 
+export const ReadOnlyLayout = {
+  args: {
+    ...RepresentativeLayout.args,
+    readOnly: true,
+  },
+} satisfies Story;
+
 export const EmptyWorkflow = {
   args: (() => {
     const record = createWorkflowDefinitionRecord({

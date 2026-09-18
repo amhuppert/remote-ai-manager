@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { ReactFlowProvider } from "@xyflow/react";
+import { useEffect, useState } from "react";
+import {
+  ReactFlowProvider,
+  useReactFlow,
+  type ReactFlowInstance,
+} from "@xyflow/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   act,
@@ -11,6 +16,7 @@ import {
 import { renderWithQuery } from "@/test/component-mocks";
 import {
   createWorkflowDefinition,
+  createWorkflowDefinitionRecord,
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
@@ -626,5 +632,164 @@ describe("WorkflowBuilderCanvas inline agent configuration", () => {
     expect(
       screen.queryByRole("combobox", { name: "Implementer level" }),
     ).toBeNull();
+  });
+});
+
+function NodesProbe({ onReady }: { onReady(flow: ReactFlowInstance): void }) {
+  const flow = useReactFlow();
+  useEffect(() => onReady(flow), [flow, onReady]);
+  return null;
+}
+
+function EditablePreview({
+  onReady,
+}: {
+  onReady(flow: ReactFlowInstance): void;
+}) {
+  const [readOnly, setReadOnly] = useState(true);
+  return (
+    <ReactFlowProvider>
+      <button onClick={() => setReadOnly(false)}>Edit preview</button>
+      <WorkflowBuilderCanvas readOnly={readOnly} />
+      <NodesProbe onReady={onReady} />
+    </ReactFlowProvider>
+  );
+}
+
+async function measureCards(flow: ReactFlowInstance) {
+  await act(async () => {
+    flow.setNodes((nodes) =>
+      nodes.map((node) => ({
+        ...node,
+        measured: { width: 264, height: 420 },
+      })),
+    );
+  });
+}
+
+describe("WorkflowBuilderCanvas read-only layout", () => {
+  it("separates unpositioned cards using measured sizes without editing the draft", async () => {
+    const record = createWorkflowDefinitionRecord();
+    record.layout.contextPositions = {};
+    record.definition.edges = [];
+    _useGraphWorkflowBuilderStore.getState().loadPersistedDraft(record);
+    let instance: ReactFlowInstance | undefined;
+    const observe = (flow: ReactFlowInstance) => {
+      instance = flow;
+    };
+
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas readOnly />
+        <NodesProbe onReady={observe} />
+      </ReactFlowProvider>,
+    );
+
+    if (!instance) throw new Error("React Flow did not mount");
+    const flow = instance;
+    // jsdom cannot measure cards; supply the measurements through React
+    // Flow's public API so the real AutoLayout observes tall crew cards.
+    await measureCards(flow);
+
+    await waitFor(() => {
+      const renderedNodes = flow.getNodes();
+      expect(renderedNodes).toHaveLength(
+        record.definition.executionContexts.length,
+      );
+      expect(renderedNodes.length).toBeGreaterThan(1);
+      for (const [index, node] of renderedNodes.entries()) {
+        for (const other of renderedNodes.slice(index + 1)) {
+          const overlap =
+            node.position.x < other.position.x + 264 &&
+            node.position.x + 264 > other.position.x &&
+            node.position.y < other.position.y + 420 &&
+            node.position.y + 420 > other.position.y;
+          expect(overlap, `${node.id} overlaps ${other.id}`).toBe(false);
+        }
+      }
+    });
+
+    const state = _useGraphWorkflowBuilderStore.getState();
+    expect(state.draftLayout).toEqual(record.layout);
+    expect(state.draftDefinition).toEqual(record.definition);
+    expect(state.dirty).toBe(false);
+  });
+
+  it("generates editable positions when the same read-only draft becomes editable", async () => {
+    const record = createWorkflowDefinitionRecord();
+    record.layout.contextPositions = {};
+    _useGraphWorkflowBuilderStore.getState().loadPersistedDraft(record);
+    let instance: ReactFlowInstance | undefined;
+    renderWithQuery(
+      <EditablePreview
+        onReady={(flow) => {
+          instance = flow;
+        }}
+      />,
+    );
+    if (!instance) throw new Error("React Flow did not mount");
+    const flow = instance;
+    await measureCards(flow);
+    expect(_useGraphWorkflowBuilderStore.getState().dirty).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit preview" }));
+    await measureCards(flow);
+
+    await waitFor(() => {
+      expect(
+        Object.keys(
+          _useGraphWorkflowBuilderStore.getState().draftLayout
+            ?.contextPositions ?? {},
+        ),
+      ).toHaveLength(record.definition.executionContexts.length);
+    });
+  });
+
+  it("preserves saved positions and recalculates a different draft with matching card sizes", async () => {
+    const record = createWorkflowDefinitionRecord();
+    record.layout.contextPositions = { "context-plan": { x: 900, y: 40 } };
+    _useGraphWorkflowBuilderStore.getState().loadPersistedDraft(record);
+    let instance: ReactFlowInstance | undefined;
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas readOnly />
+        <NodesProbe
+          onReady={(flow) => {
+            instance = flow;
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+    if (!instance) throw new Error("React Flow did not mount");
+    const flow = instance;
+    await measureCards(flow);
+    expect(flow.getNode("context-plan")?.position).toEqual({ x: 900, y: 40 });
+    expect(_useGraphWorkflowBuilderStore.getState().draftLayout).toEqual(
+      record.layout,
+    );
+
+    const next = createWorkflowDefinitionRecord();
+    next.layout.contextPositions = {};
+    next.definition.edges = [];
+    next.definition.executionContexts.reverse();
+    act(() =>
+      _useGraphWorkflowBuilderStore.getState().loadPersistedDraft(next),
+    );
+    await measureCards(flow);
+
+    await waitFor(() => {
+      const plan = flow.getNode("context-plan");
+      const verify = flow.getNode("context-verify");
+      expect(plan).toBeDefined();
+      expect(verify).toBeDefined();
+      expect(plan?.position).not.toEqual({ x: 900, y: 40 });
+      expect(
+        (plan?.position.y ?? 0) - (verify?.position.y ?? 0),
+      ).toBeGreaterThan(420 * 2);
+    });
+    expect(_useGraphWorkflowBuilderStore.getState().draftLayout).toEqual(
+      next.layout,
+    );
+    expect(_useGraphWorkflowBuilderStore.getState().dirty).toBe(false);
   });
 });

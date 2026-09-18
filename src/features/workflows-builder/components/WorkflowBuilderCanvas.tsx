@@ -48,7 +48,12 @@ import {
 import {
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
+  generateWorkflowLayout,
 } from "@/lib/workflow-graph/layout";
+import type {
+  GraphWorkflowVisualLayout,
+  WorkflowSemanticDefinition,
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   deriveNodes,
   deriveEdges,
@@ -202,6 +207,37 @@ export default function WorkflowBuilderCanvas({
 
   const isDraggingRef = useRef(false);
 
+  const [previewLayout, setPreviewLayout] = useState<{
+    definition: WorkflowSemanticDefinition;
+    authoredLayout: GraphWorkflowVisualLayout;
+    layout: GraphWorkflowVisualLayout;
+  } | null>(null);
+  const displayLayout = useMemo(() => {
+    if (!readOnly || !draftDefinition || !draftLayout) return draftLayout;
+    if (
+      previewLayout?.definition === draftDefinition &&
+      previewLayout.authoredLayout === draftLayout
+    ) {
+      return previewLayout.layout;
+    }
+    return generateWorkflowLayout(draftDefinition, draftLayout);
+  }, [readOnly, draftDefinition, draftLayout, previewLayout]);
+  const handleAutoLayout = useCallback(
+    (layout: GraphWorkflowVisualLayout) => {
+      if (!readOnly) {
+        updateLayout(layout);
+      } else if (draftDefinition && draftLayout) {
+        // Review geometry is local to this draft, never a change to the plan.
+        setPreviewLayout({
+          definition: draftDefinition,
+          authoredLayout: draftLayout,
+          layout,
+        });
+      }
+    },
+    [readOnly, draftDefinition, draftLayout, updateLayout],
+  );
+
   const handleNodeAgentChange = useCallback(
     (
       contextId: string,
@@ -233,7 +269,7 @@ export default function WorkflowBuilderCanvas({
   );
 
   const derivedNodes = useMemo(() => {
-    if (!draftDefinition || !draftLayout) return [];
+    if (!draftDefinition || !displayLayout) return [];
     const resolved = resolveWorkflowDefinition(
       { workflowDefaults: globalDefaults } as GlobalConfig,
       draftDefinition,
@@ -242,7 +278,7 @@ export default function WorkflowBuilderCanvas({
     // itself, so the set-here marker is exact here rather than inferred from
     // the resolved definition's per-field provenance.
     const highlighted = new Set(highlightedContextIds);
-    return deriveNodes(resolved, draftLayout, null, {
+    return deriveNodes(resolved, displayLayout, null, {
       authoredDefinition: draftDefinition,
     }).map((node) => ({
       ...node,
@@ -261,7 +297,7 @@ export default function WorkflowBuilderCanvas({
     }));
   }, [
     draftDefinition,
-    draftLayout,
+    displayLayout,
     globalDefaults,
     highlightedContextIds,
     readOnly,
@@ -858,9 +894,10 @@ export default function WorkflowBuilderCanvas({
             not re-place contexts the author already positioned. Regenerating
             the whole graph is Re-layout's act, in the toolbar. */}
         <AutoLayout
+          key={readOnly ? "preview" : "draft"}
           definition={draftDefinition}
           existingLayout={draftLayout}
-          onLayout={readOnly ? () => {} : updateLayout}
+          onLayout={handleAutoLayout}
         />
         <LaneBandLayer
           bands={bands}

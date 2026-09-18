@@ -66,7 +66,11 @@ export default function AutoLayout({
 }: AutoLayoutProps) {
   const nodes = useNodes();
   const nodesInitialized = useNodesInitialized();
-  const lastDimsKeyRef = useRef<string>("");
+  const lastInputsRef = useRef<{
+    dimensions: string;
+    definition: AutoLayoutProps["definition"];
+    existingLayout: AutoLayoutProps["existingLayout"];
+  } | null>(null);
 
   useEffect(() => {
     if (!nodesInitialized) return;
@@ -75,8 +79,14 @@ export default function AutoLayout({
     if (dims.size === 0) return;
 
     const key = dimensionsKey(dims);
-    if (key === lastDimsKeyRef.current) return;
-    lastDimsKeyRef.current = key;
+    const previous = lastInputsRef.current;
+    if (
+      key === previous?.dimensions &&
+      definition === previous.definition &&
+      existingLayout === previous.existingLayout
+    )
+      return;
+    lastInputsRef.current = { dimensions: key, definition, existingLayout };
 
     const next = generateWorkflowLayout(definition, existingLayout, dims);
     // A layout that places nothing new is not an edit: reporting it would mark
