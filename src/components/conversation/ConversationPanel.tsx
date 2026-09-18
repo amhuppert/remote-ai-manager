@@ -144,7 +144,7 @@ export default function ConversationPanel({
       {activeConversation?.checkpointFork && (
         <CheckpointForkProvenance origin={activeConversation.checkpointFork} />
       )}
-      {contextPercent != null && (
+      {(contextPercent != null || activeConversation) && (
         <div className="mobile-context-fill">
           <ContextFillIndicator percentage={contextPercent} />
         </div>

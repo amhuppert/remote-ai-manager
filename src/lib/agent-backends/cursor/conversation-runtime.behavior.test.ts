@@ -1,11 +1,17 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  readLiveOccupancy,
+  type LiveOccupancySnapshot,
+} from "@/lib/conversations/live-occupancy";
 import { elementAt } from "@/lib/shared/testing/element-at";
 import { z } from "zod";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import {
   _resetTranscriptDepsForTesting,
+  _resetTranscriptReadCacheForTesting,
+  readConversationMessages,
   safeAppendTranscriptEntry,
   safeAppendTranscriptEntryOnce,
   setTranscriptDeps,
@@ -1097,7 +1103,13 @@ describe("live input archive barrier", () => {
             } as const;
             worker.send(frame);
             worker.send(frame);
-            worker.sendNativeEvent(input.runId, 0, ASSISTANT("after steering"));
+            worker.sendNativeEvent(input.runId, 0, {
+              type: "task",
+              agent_id: "agent-1",
+              run_id: "provider-run",
+              text: "Native summary before archive settlement",
+            });
+            worker.sendNativeEvent(input.runId, 1, ASSISTANT("after steering"));
             worker.settle(input.runId, "completed");
           },
         },
@@ -1129,6 +1141,7 @@ describe("live input archive barrier", () => {
         await delivery;
       }
       const result = await turn;
+      expect(result.compacted).toBe(true);
       expect(callbacks).toBe(1);
       expect(harness.events.some((event) => event.type === "content")).toBe(
         !archiveFails,
@@ -1138,6 +1151,122 @@ describe("live input archive barrier", () => {
         expect(result.contentBlocks).toEqual([]);
         expect(result.failure).toMatchObject({ retryable: false });
       }
+      await harness.runtime.close();
+    },
+  );
+});
+
+describe("native context summary observation", () => {
+  const summary = {
+    type: "task",
+    agent_id: "agent-1",
+    run_id: "native-run-1",
+    text: "The provider-generated context summary",
+  };
+
+  it.each(["completed", "aborted", "failed"] as const)(
+    "preserves compaction evidence when the turn ends %s, with unknown occupancy",
+    async (outcome) => {
+      const live: (LiveOccupancySnapshot | null)[] = [];
+      const harness = createPersistingHarness({
+        worker: {
+          onTurn: (turn, worker) => {
+            worker.sendNativeEvent(turn.runId, 0, summary);
+            live.push(readLiveOccupancy(CONVERSATION_ID));
+            worker.sendNativeEvent(turn.runId, 0, summary);
+            worker.sendNativeEvent(turn.runId, 1, ASSISTANT("answer"));
+            worker.sendUsage(turn.runId, {
+              inputTokens: 900_000,
+              outputTokens: 10,
+              cacheReadTokens: 800_000,
+              cacheWriteTokens: 0,
+              totalTokens: 900_010,
+            });
+            worker.settle(turn.runId, outcome);
+          },
+        },
+      });
+      const result = await harness.send();
+      expect(result.compacted).toBe(true);
+      expect(live).toEqual([{ contextTokens: null, compactedThisTurn: true }]);
+      expect(readLiveOccupancy(CONVERSATION_ID)).toBeNull();
+      expect(result.contextTokens).toBeNull();
+      expect(result.contextWindowMax).toBeNull();
+      expect(result.contentBlocks).toEqual([{ type: "text", text: "answer" }]);
+      const lines = await harness.transcriptLines();
+      const notices = lines.filter((line) => line.role === "notice");
+      expect(notices).toHaveLength(1);
+      expect(elementAt(notices, 0).raw).toEqual(summary);
+
+      _resetTranscriptReadCacheForTesting();
+      const reloaded = await readConversationMessages(
+        path.join(TEST_DIR, "transcripts", `${CONVERSATION_ID}.jsonl`),
+      );
+      expect(
+        reloaded.filter((message) => message.role === "notice"),
+      ).toHaveLength(1);
+      expect(JSON.stringify(reloaded)).toContain("native context summary");
+      await harness.runtime.close();
+    },
+  );
+
+  it("does not replay prior compaction on a later turn or recreated runtime", async () => {
+    const first = createPersistingHarness({
+      worker: {
+        onTurn: (turn, worker) => {
+          if (turn.runId === "run-1")
+            worker.sendNativeEvent(turn.runId, 0, summary);
+          worker.sendNativeEvent(turn.runId, 1, ASSISTANT("answer"));
+          worker.settle(turn.runId, "completed");
+        },
+      },
+    });
+    expect((await first.send()).compacted).toBe(true);
+    expect((await first.send()).compacted).toBe(false);
+    const persistedRef = {
+      backend: CURSOR_BACKEND_ID,
+      ref: first.persistedRef.value ?? "",
+    };
+    await first.runtime.close();
+    const resumed = createPersistingHarness({ create: { persistedRef } });
+    const result = await resumed.send();
+    expect(result.compacted).toBe(false);
+    expect(result.contextTokens).toBeNull();
+    expect(result.contextWindowMax).toBeNull();
+    await resumed.runtime.close();
+  });
+
+  it.each([
+    { type: "task", agent_id: "agent-1", run_id: "provider-run", text: "" },
+    { type: "task", agent_id: "agent-1", run_id: "provider-run", text: 12 },
+    {
+      type: "assistant",
+      message: { content: [{ type: "text", text: "I compacted context" }] },
+    },
+    {
+      type: "cursor_task_delta",
+      update: {
+        type: "tool-call-delta",
+        taskUpdate: { type: "summary", summary: "child context" },
+      },
+    },
+  ])(
+    "ignores malformed, nested, or assistant-authored summary claims: %j",
+    async (event) => {
+      const harness = createPersistingHarness({
+        worker: {
+          onTurn: (turn, worker) => {
+            worker.sendNativeEvent(turn.runId, 0, event);
+            worker.settle(turn.runId, "completed");
+          },
+        },
+      });
+      expect((await harness.send()).compacted).toBe(false);
+      expect(
+        (await harness.transcriptLines()).filter(
+          (line) => line.role === "notice",
+        ),
+      ).toHaveLength(0);
       await harness.runtime.close();
     },
   );

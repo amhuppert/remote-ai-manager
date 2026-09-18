@@ -150,7 +150,12 @@ export interface ConversationBackendTurnResult {
   finalText?: string | null;
   structuredOutput?: unknown;
   aborted: boolean;
-  /** True when the SDK auto-compacted the context at least once this turn. */
+  /**
+   * Provider-native compaction observed this turn. Conservative invalidation
+   * signal: some providers expose a generated summary without confirming that
+   * context replacement succeeded. False means no observation, not a guarantee
+   * that context was retained.
+   */
   compacted: boolean;
   /**
    * Normalized classification of the turn's failure (via the backend's

@@ -65,14 +65,17 @@ describe("evaluateContextLimit", () => {
     ).toBe("disabled");
   });
 
-  it("returns unsupported when the backend is codex", () => {
-    expect(
-      evaluateContextLimit({
-        metrics: codexMetrics(),
-        policy: { contextLimitTokens: 100_000 },
-      }),
-    ).toBe("unsupported");
-  });
+  it.each(["codex", "cursor"] as const)(
+    "returns unsupported for %s when occupancy and compaction are unknown",
+    (backend) => {
+      expect(
+        evaluateContextLimit({
+          metrics: { backend, rotateBeforeNextTurn: false },
+          policy: { contextLimitTokens: 100_000 },
+        }),
+      ).toBe("unsupported");
+    },
+  );
 
   it("returns metrics_unavailable when a Claude lane has not recorded contextTokens", () => {
     expect(
@@ -121,15 +124,31 @@ describe("evaluateContextLimit", () => {
     ).toBe("disabled");
   });
 
-  it("returns unsupported for a compacted turn on a codex backend", () => {
-    expect(
-      evaluateContextLimit({
-        metrics: codexMetrics(),
-        policy: { contextLimitTokens: 100_000 },
-        compactedThisTurn: true,
-      }),
-    ).toBe("unsupported");
-  });
+  it.each(["codex", "cursor"] as const)(
+    "rotates after observed %s compaction without occupancy metrics",
+    (backend) => {
+      expect(
+        evaluateContextLimit({
+          metrics: { backend, rotateBeforeNextTurn: false },
+          policy: { contextLimitTokens: 100_000 },
+          compactedThisTurn: true,
+        }),
+      ).toBe("rotation_required");
+    },
+  );
+
+  it.each(["codex", "cursor"] as const)(
+    "leaves %s compaction rotation disabled without a limit policy",
+    (backend) => {
+      expect(
+        evaluateContextLimit({
+          metrics: { backend, rotateBeforeNextTurn: false },
+          policy: {},
+          compactedThisTurn: true,
+        }),
+      ).toBe("disabled");
+    },
+  );
 
   it("returns rotation_required when compacted with no recorded contextTokens (compaction masks the metric before metrics_unavailable)", () => {
     expect(

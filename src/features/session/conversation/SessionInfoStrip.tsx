@@ -252,7 +252,7 @@ function SessionInfoStrip({
               layoutClassName="max-w-full"
             />
           </div>
-          {contextPercent != null && (
+          {(contextPercent != null || activeConversation) && (
             <div
               data-session-context-region
               className="inline-flex shrink-0 items-center gap-lg max-768:hidden"

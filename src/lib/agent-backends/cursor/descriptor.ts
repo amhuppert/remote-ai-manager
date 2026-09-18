@@ -126,6 +126,9 @@ export const cursorConversationCapabilities: BackendConversationCapabilities = {
   continuationStrength: "precise_session",
   fork: "synthetic",
   structuredOutput: "post_validation",
+  // Public usage is billing, not occupancy. Enable only when the provider
+  // exposes current tokens + effective window with post-compaction/resume
+  // freshness; native summary observation alone cannot measure either.
   contextWindowMetrics: false,
   nativeMidTurnAskUser: false,
   externalTurns: false,

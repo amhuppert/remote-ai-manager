@@ -31,7 +31,8 @@ export const PLAN_REPAIR_SCREEN_ID = "planrepair";
 const CONTINUITY_HINT =
   "Keep one conversation across iterations, rotating it when the context limit is reached.";
 
-const CONTEXT_LIMIT_HINT = "Leave empty for auto.";
+const CONTEXT_LIMIT_HINT =
+  "Leave empty for auto. Numeric limits require provider context occupancy measurements; otherwise the threshold is not enforced. Observed native compaction can still trigger rotation.";
 
 const FAILURE_THRESHOLD_HINT =
   "Consecutive failures before the context is halted.";

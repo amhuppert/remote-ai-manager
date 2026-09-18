@@ -5,6 +5,14 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { buildArtifactListItem } from "@/components/context-artifacts/fixtures";
 import { contextArtifactKeys } from "@/lib/context-artifacts/query-keys";
 import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
+import { checkpointKeys } from "@/lib/conversation-checkpoints/query-keys";
+import {
+  CHECKPOINT_RECENT_LIMIT,
+  checkpointEligibilityResponseSchema,
+  checkpointListResponseSchema,
+} from "@/lib/conversation-checkpoints/queries";
+import { toPublicConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { alignmentKeys } from "@/lib/session-alignment/query-keys";
 import {
@@ -139,6 +147,32 @@ const withStripQueries: Decorator = (Story, context) => {
   queryClient.setQueryData(
     ticketKeys.sessionLinks(storyProjectName),
     storyTicketLinks,
+  );
+  const checkpointTarget = {
+    scope: "session" as const,
+    projectName: storyProjectName,
+    sessionName: storySessionName,
+    conversationId: storyConversationId,
+  };
+  queryClient.setQueryData(
+    checkpointKeys.list(checkpointTarget, { limit: CHECKPOINT_RECENT_LIMIT }),
+    checkpointListResponseSchema.parse({ receipts: [], nextBefore: null }),
+  );
+  queryClient.setQueryData(
+    checkpointKeys.eligibility(checkpointTarget),
+    checkpointEligibilityResponseSchema.parse({
+      eligible: false,
+      refusals: [
+        {
+          code: "no_recorded_history",
+          reason: "No recorded history in this story.",
+          operationId: null,
+          phase: null,
+        },
+      ],
+      active: null,
+      hosted: false,
+    }),
   );
 
   return (
@@ -393,6 +427,26 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+export const UnknownCursor: Story = {
+  decorators: [atWidth(1440)],
+  args: {
+    activeConversation: toPublicConversationState(
+      makeConversationState({
+        id: CONVERSATION_ID,
+        agentBackend: "cursor",
+        name: "Cursor context observation",
+        status: "running",
+      }),
+    ),
+    contextPercent: null,
+  },
+};
+
+export const UnknownCursorNarrow: Story = {
+  ...UnknownCursor,
+  decorators: [atWidth(429)],
+};
 
 export const Wide: Story = {
   decorators: [atWidth(1440)],

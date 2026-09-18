@@ -1,11 +1,12 @@
 import { Progress } from "@/components/ui/Progress";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import { cn } from "@/lib/ui/cn";
 
 type FillLevel = "normal" | "warning" | "danger";
 
 interface ContextFillIndicatorProps {
   /** Context window fill percentage (0–100). Values outside range are clamped. */
-  percentage: number;
+  percentage: number | null;
   condenseAtNarrow?: boolean;
 }
 
@@ -52,6 +53,18 @@ export function ContextFillIndicator({
   percentage,
   condenseAtNarrow = false,
 }: ContextFillIndicatorProps) {
+  if (percentage === null || !Number.isFinite(percentage)) {
+    return (
+      <WithTooltip label="The provider has not reported both current context occupancy and window size. Cumulative token usage is not context occupancy.">
+        <span
+          tabIndex={0}
+          className="shrink-0 cursor-help font-mono text-[0.7rem] text-text-secondary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+        >
+          Context unknown
+        </span>
+      </WithTooltip>
+    );
+  }
   const clamped = Math.max(0, Math.min(100, Math.round(percentage)));
   const level = getLevel(clamped);
 

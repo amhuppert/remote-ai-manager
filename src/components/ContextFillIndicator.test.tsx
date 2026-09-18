@@ -4,6 +4,14 @@ import { render, screen } from "@testing-library/react";
 import { ContextFillIndicator } from "./ContextFillIndicator";
 
 describe("ContextFillIndicator", () => {
+  it("shows unknown without inventing a percentage when measurements are missing", () => {
+    render(<ContextFillIndicator percentage={null} />);
+
+    expect(screen.getByText("Context unknown")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+  });
+
   it("clamps and rounds the visible and accessible percentage", () => {
     const { rerender } = render(<ContextFillIndicator percentage={0} />);
 

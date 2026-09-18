@@ -8,6 +8,10 @@ import {
 import type { CursorCapabilityDelivery } from "./capability-delivery";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
+import {
+  clearLiveOccupancy,
+  markLiveCompaction,
+} from "@/lib/conversations/live-occupancy";
 import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -155,6 +159,7 @@ interface ActiveTurn {
    */
   finalText: string | null;
   usage: ConversationTokenUsage | null;
+  compacted: boolean;
   stallTimer: ReturnType<typeof setTimeout> | null;
   cancelTimer: ReturnType<typeof setTimeout> | null;
   /** Set when the caller aborted; the outcome is aborted regardless of how the
@@ -420,7 +425,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       await this.deps.capabilityDelivery?.markDelivered();
 
     if (this.liveInputArchiveFailure !== null) {
-      return this.settleWithFailure(this.liveInputArchiveFailure, startedAt);
+      return {
+        ...this.settleWithFailure(this.liveInputArchiveFailure, startedAt),
+        compacted: turn.state.compacted,
+      };
     }
     return this.buildResult(turn.state, turn.outcome, startedAt);
   }
@@ -440,6 +448,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       forceExpirePersistedRun: boolean;
     },
   ): Promise<{ state: ActiveTurn; outcome: TurnOutcome }> {
+    clearLiveOccupancy(this.conversationId);
     const turn: ActiveTurn = {
       onUserQuestion: input.onUserQuestion,
       questionController: new AbortController(),
@@ -454,6 +463,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       contentDeltaCount: 0,
       finalText: null,
       usage: null,
+      compacted: false,
       stallTimer: null,
       cancelTimer: null,
       aborted: false,
@@ -483,6 +493,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     input.signal.removeEventListener("abort", onAbort);
     this.clearTurnTimers(turn);
     this.activeTurn = null;
+    clearLiveOccupancy(this.conversationId);
     return { state: turn, outcome };
   }
 
@@ -1102,6 +1113,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // Envelope first, interpretation second: the lossless record is durable
     // before any block derived from it reaches a consumer.
     this.emit({ type: "transcript_entry", entry: projection.entry });
+    turn.compacted ||= projection.compacted;
+    if (projection.compacted) markLiveCompaction(this.conversationId);
     const tasks = applyCursorTaskEvent(
       this.tasks,
       decoded.value,
@@ -1289,12 +1302,15 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       });
     }
     if (outcome.kind === "failed") {
-      return this.failureResult(
-        outcome.error,
-        turn.contentBlocks,
-        startedAt,
-        false,
-      );
+      return {
+        ...this.failureResult(
+          outcome.error,
+          turn.contentBlocks,
+          startedAt,
+          false,
+        ),
+        compacted: turn.compacted,
+      };
     }
 
     const aborted = outcome.kind === "aborted";
@@ -1308,7 +1324,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       contentBlocks: turn.contentBlocks,
       finalText: turn.finalText,
       aborted,
-      compacted: false,
+      compacted: turn.compacted,
       failure: null,
       continuationDisposition: "retain",
       // A cancelled turn's counts are unknowable, so absence is reported

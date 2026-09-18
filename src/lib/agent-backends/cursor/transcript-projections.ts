@@ -45,6 +45,8 @@ export interface CursorNativeEventProjection {
   entry: AgentTranscriptEntry;
   /** Blocks to surface as neutral `content` events; empty for inert types. */
   blocks: readonly MessageContentBlock[];
+  /** Native summary observed; the SDK does not expose replacement completion. */
+  compacted: boolean;
 }
 
 /**
@@ -165,8 +167,9 @@ function projectAssistantBlocks(
 
 /**
  * Content-worthy classes only. `user` echoes the prompt Command Center already
- * persisted and `system`/`status`/`request`/`task`/`usage` carry no
- * conversation content, so they project nothing and persist as themselves.
+ * persisted and `system`/`status`/`request`/`usage` carry no
+ * conversation content. Native summaries become notices separately, never
+ * assistant content or part of the final response.
  */
 function projectBlocks(decoded: unknown): MessageContentBlock[] {
   const source = record(decoded);
@@ -206,8 +209,32 @@ export function projectCursorNativeEvent(
     event.eventIndex,
   );
   const blocks = projectBlocks(event.decoded);
-  const frame: TranscriptEntry =
-    terminalToolCall(event.decoded) !== null
+  // The pinned local SDK maps its native `summary` update exclusively to
+  // SDKTaskMessage. Its public callback filters summary-started/completed, so
+  // this is evidence of compaction activity, not confirmed replacement success.
+  // Nested task deltas and assistant-authored text are deliberately excluded.
+  const source = record(event.decoded);
+  const compacted =
+    source?.type === "task" &&
+    readString(source, "agent_id") !== null &&
+    readString(source, "run_id") !== null &&
+    typeof source.text === "string" &&
+    source.text.trim().length > 0;
+  const frame: TranscriptEntry = compacted
+    ? {
+        id,
+        timestamp: context.timestamp,
+        type: "notice",
+        role: "notice",
+        content: [
+          {
+            type: "text",
+            text: "Cursor produced a native context summary. Context occupancy and window size remain unknown; the provider does not report whether context replacement completed.",
+          },
+        ],
+        raw: event.tagged,
+      }
+    : terminalToolCall(event.decoded) !== null
       ? {
           id,
           timestamp: context.timestamp,
@@ -238,6 +265,7 @@ export function projectCursorNativeEvent(
       raw: frame,
     },
     blocks,
+    compacted,
   };
 }
 

@@ -153,7 +153,7 @@ function MobileInfoPanel({
           <MobileInfoCopyRow label="Session Ref" value={backendRefDisplay} />
         </>
       )}
-      {contextPercent != null && (
+      {(contextPercent != null || activeConversation) && (
         <div className={ROW_CLASS}>
           <span className={LABEL_CLASS}>Context</span>
           <span className={VALUE_CLASS}>

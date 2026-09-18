@@ -164,6 +164,62 @@ function buildComposition(database: Db): Composition {
 }
 
 describe("graph lane outcome recording — full-composition contract (finding 2)", () => {
+  it.each(["cursor", "codex"] as const)(
+    "preserves %s compaction rotation through restart and a later turn without inventing occupancy",
+    async (backend) => {
+      const repo = createGraphWorkflowExecutionsRepo(db);
+      const lane: GraphWorkflowAgentSessionState = {
+        ...seedImplementerLane(),
+        backend,
+        sessionRef: { backend, ref: "conv-compacted" },
+        workflowConversationId: "conv-compacted",
+      };
+      const execution = createWorkflowExecution({
+        id: EXECUTION_ID,
+        status: "running",
+        laneStates: { [CONTEXT_ID]: { implementer: lane } },
+      });
+      repo.setActive(PROJECT_PATH, SESSION_NAME, execution, NOW);
+
+      await buildComposition(db).continuity.recordLaneTurnOutcome({
+        execution,
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        contextId: CONTEXT_ID,
+        lane: "implementer",
+        outcome: {
+          backend,
+          compactedThisTurn: true,
+          contextLimitTokens: 1_000,
+        },
+      });
+
+      const restartedExecution = readActiveFresh(db);
+      if (!restartedExecution) throw new Error("missing persisted execution");
+      const restartedLane =
+        restartedExecution.laneStates[CONTEXT_ID]?.implementer;
+      expect(restartedLane?.metrics.rotateBeforeNextTurn).toBe(true);
+      expect(restartedLane?.metrics.contextTokens).toBeUndefined();
+      expect(restartedLane?.metrics.contextWindowMax).toBeUndefined();
+
+      await buildComposition(db).continuity.recordLaneTurnOutcome({
+        execution: restartedExecution,
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        contextId: CONTEXT_ID,
+        lane: "implementer",
+        outcome: { backend, compactedThisTurn: false },
+      });
+
+      const persisted =
+        readActiveFresh(db)?.laneStates[CONTEXT_ID]?.implementer;
+      expect(persisted?.metrics.rotateBeforeNextTurn).toBe(true);
+      expect(persisted?.metrics.contextTokens).toBeUndefined();
+      expect(persisted?.metrics.contextWindowMax).toBeUndefined();
+      expect(persisted?.sessionRef).toEqual({ backend, ref: "conv-compacted" });
+    },
+  );
+
   it("retains Cursor conversation continuity and unknown occupancy through SQLite reload", async () => {
     const repo = createGraphWorkflowExecutionsRepo(db);
     const lane: GraphWorkflowAgentSessionState = {

@@ -12,10 +12,12 @@
  *  - `pass` with `evaluation: "disabled"` when no `contextLimitTokens` policy
  *    is configured for the lane.
  *  - `pass` with `evaluation: "unsupported"` when a policy is configured but
- *    the backend's descriptor declares no context-window metrics.
+ *    the backend's descriptor declares no context-window metrics and the turn
+ *    has not reported compaction.
  *  - `fail` with `evaluation: "rotation_required"` when the turn auto-compacted
  *    (`compactedThisTurn`) under a configured limit — compaction deflates the
  *    occupancy metric, so the reading can no longer be trusted below the limit.
+ *    Observed compaction remains actionable without occupancy measurements.
  *  - `pass` with `evaluation: "metrics_unavailable"` when the backend
  *    supports metrics but has not yet recorded a `contextTokens` value (e.g.
  *    before the first turn, or for an outcome the backend skipped).
@@ -43,13 +45,13 @@ import type { LanePolicy } from "./lane-vocabulary";
  *
  *  - `disabled` — no `contextLimitTokens` policy configured.
  *  - `unsupported` — a policy is set but the backend's descriptor declares
- *    it cannot report context occupancy.
+ *    it cannot report context occupancy and no compaction is reported.
  *  - `rotation_required` (compaction) — the optional `compactedThisTurn` input
  *    is true under a configured limit; the occupancy metric is masked by the
  *    auto-compaction, so the branch fires before `metrics_unavailable` and the
- *    numeric comparison, but after `disabled`/`unsupported` so a disabled
- *    feature never rotates and a metrics-less backend stays honestly
- *    unsupported.
+ *    numeric comparison. It fires after `disabled` but before `unsupported`:
+ *    a disabled policy never rotates, while observed compaction is actionable
+ *    independently of occupancy support.
  *  - `metrics_unavailable` — the backend supports occupancy metrics but has
  *    not yet recorded a `contextTokens` value.
  *  - `no_rotation` — occupancy is at or below the configured limit.
@@ -99,9 +101,9 @@ function backendSupportsContextMetrics(backend: AgentBackendId): boolean {
  * already-flagged `rotateBeforeNextTurn` sticks regardless of occupancy, and a
  * missing policy short-circuits before any capability/occupancy inspection.
  * The optional, outcome-scoped `compactedThisTurn` forces rotation when a turn
- * auto-compacted under a configured limit — after `disabled`/`unsupported` so
- * those short-circuits win, but before the occupancy checks the compaction
- * would otherwise mask.
+ * auto-compacted under a configured limit — after `disabled`, but before
+ * capability/occupancy checks, because native compaction is independent
+ * evidence even when occupancy measurements are unsupported.
  */
 export function evaluateContextLimit(input: {
   metrics: ContextLimitMetrics;
@@ -119,12 +121,12 @@ export function evaluateContextLimit(input: {
     return "disabled";
   }
 
-  if (!backendSupportsContextMetrics(metrics.backend)) {
-    return "unsupported";
-  }
-
   if (compactedThisTurn === true) {
     return "rotation_required";
+  }
+
+  if (!backendSupportsContextMetrics(metrics.backend)) {
+    return "unsupported";
   }
 
   if (metrics.contextTokens === undefined) {

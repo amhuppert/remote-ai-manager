@@ -22,6 +22,10 @@ type Story = StoryObj<typeof meta>;
 
 // --- Static stories ---
 
+export const Unknown: Story = {
+  args: { percentage: null },
+};
+
 export const Low: Story = {
   args: { percentage: 25 },
 };

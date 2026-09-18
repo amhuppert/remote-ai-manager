@@ -96,7 +96,8 @@ const APPROVAL_HINT =
 const QUESTIONS_HINT =
   "Agents may ask questions at consequential decision points. The context parks until answered.";
 
-const CONTEXT_LIMIT_HINT = "Leave empty for auto.";
+const CONTEXT_LIMIT_HINT =
+  "Leave empty for auto. Numeric limits require provider context occupancy measurements; otherwise the threshold is not enforced. Observed native compaction can still trigger rotation.";
 
 /** What a verdict from this seat can actually do to the context. */
 const AUTHORITY_HINT: Record<ValidatorAuthority, string> = {

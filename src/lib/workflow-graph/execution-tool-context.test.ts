@@ -1034,13 +1034,15 @@ function makeClaudeImplementerLane(
   };
 }
 
-function makeCodexImplementerLane(): GraphWorkflowAgentSessionState {
+function makeImplementerLaneWithoutOccupancy(
+  backend: "codex" | "cursor",
+): GraphWorkflowAgentSessionState {
   return {
-    backend: "codex",
+    backend,
     refKind: "backend",
     lane: "implementer",
     contextId: "context-plan",
-    sessionRef: { backend: "codex", ref: "thread-1" },
+    sessionRef: { backend, ref: "thread-1" },
     metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
     limitEvaluation: "disabled",
     lastUsedAt: "2026-03-27T11:00:00.000Z",
@@ -1248,22 +1250,85 @@ describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => 
     });
   });
 
-  it("skips the check for a codex lane and never reads live occupancy", async () => {
-    const readLiveOccupancy = vi.fn(() => null);
-    const { store, toolContext } = buildToolContext({
-      initialExecution: buildContextLimitExecution({
-        limit: 100,
-        lane: makeCodexImplementerLane(),
-      }),
-      readLiveOccupancy,
-    });
+  it.each(["codex", "cursor"] as const)(
+    "schedules rotation for %s native compaction without occupancy",
+    async (backend) => {
+      const { store, toolContext } = buildToolContext({
+        initialExecution: buildContextLimitExecution({
+          limit: 100,
+          lane: makeImplementerLaneWithoutOccupancy(backend),
+        }),
+        readLiveOccupancy: () => ({
+          contextTokens: null,
+          compactedThisTurn: true,
+        }),
+      });
 
-    const result = await toolContext.completeTask("task-plan-1", "done");
+      const result = await toolContext.completeTask("task-plan-1", "done");
 
-    expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
-    expect(result.contextLimitStop).toBeNull();
-    expect(readLiveOccupancy).not.toHaveBeenCalled();
-  });
+      expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+      expect(
+        store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+          .rotateBeforeNextTurn,
+      ).toBe(true);
+      expect(result.contextLimitStop).toEqual({
+        contextTokens: null,
+        contextLimitTokens: 100,
+        compactedThisTurn: true,
+        alreadyScheduled: false,
+        source: "none",
+      });
+    },
+  );
+
+  it.each(["codex", "cursor"] as const)(
+    "does not rotate %s with unknown occupancy and no compaction",
+    async (backend) => {
+      const { store, toolContext } = buildToolContext({
+        initialExecution: buildContextLimitExecution({
+          limit: 100,
+          lane: makeImplementerLaneWithoutOccupancy(backend),
+        }),
+        readLiveOccupancy: () => ({
+          contextTokens: null,
+          compactedThisTurn: false,
+        }),
+      });
+
+      const result = await toolContext.completeTask("task-plan-1", "done");
+
+      expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+      expect(
+        store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+          .rotateBeforeNextTurn,
+      ).toBe(false);
+      expect(result.contextLimitStop).toBeNull();
+    },
+  );
+
+  it.each(["codex", "cursor"] as const)(
+    "does not rotate %s after compaction when the context limit is disabled",
+    async (backend) => {
+      const { store, toolContext } = buildToolContext({
+        initialExecution: buildContextLimitExecution({
+          lane: makeImplementerLaneWithoutOccupancy(backend),
+        }),
+        readLiveOccupancy: () => ({
+          contextTokens: null,
+          compactedThisTurn: true,
+        }),
+      });
+
+      const result = await toolContext.completeTask("task-plan-1", "done");
+
+      expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+      expect(
+        store.current.laneStates["context-plan"]?.["implementer"]?.metrics
+          .rotateBeforeNextTurn,
+      ).toBe(false);
+      expect(result.contextLimitStop).toBeNull();
+    },
+  );
 
   it("evaluates the gate on an idempotent re-completion and can set the flag", async () => {
     const base = buildContextLimitExecution({ limit: 100 });

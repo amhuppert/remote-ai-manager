@@ -301,7 +301,7 @@ export const agentCallResultSchema = z.object({
    * retain the prior continuation because no adapter invalidation exists.
    */
   continuationDisposition: continuationDispositionSchema.optional(),
-  /** True when the backend auto-compacted context at least once this call. */
+  /** Native compaction observed; may be a summary without confirmed replacement. */
   compacted: z.boolean().optional(),
   /** Bounded background-task wait the turn performed, when one occurred. */
   backgroundWait: backgroundWaitSummaryInputSchema.optional(),

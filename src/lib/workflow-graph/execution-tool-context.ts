@@ -12,7 +12,6 @@ import {
 } from "@/lib/workflows/primitives/context-limit-gate";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { buildLifecycleSnapshot } from "@/lib/workflow-graph/context-transitions";
-import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { getExecutionLogger } from "./execution-logger";
 import { graphLaneContextMetrics } from "./graph-lane-store";
 import type {
@@ -221,7 +220,8 @@ export function createGraphWorkflowExecutionToolContext(
      * `evaluateContextLimit` (never an inline numeric comparison), and on
      * `rotation_required` sets the sticky `rotateBeforeNextTurn` flag and
      * returns the stop descriptor. Skipped when the lane is missing, the
-     * policy is disabled, or the backend does not expose occupancy metrics.
+     * policy is disabled. Native compaction can trigger rotation independently
+     * of occupancy measurement support.
      */
     function evaluateMidTurnContextLimit(
       execution: GraphWorkflowExecution,
@@ -241,13 +241,6 @@ export function createGraphWorkflowExecutionToolContext(
       if (contextLimitTokens === undefined) {
         return null;
       }
-      const supportsContextMetrics =
-        getBackendDescriptor(lane.backend).conversation?.capabilities
-          .contextWindowMetrics === true;
-      if (!supportsContextMetrics) {
-        return null;
-      }
-
       const live = deps.readLiveOccupancy(conversationId);
       const persisted = graphLaneContextMetrics(lane);
 
