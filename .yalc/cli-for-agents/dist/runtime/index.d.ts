@@ -19,12 +19,6 @@ export interface Host {
         readonly canonicalPath: (path: string) => Promise<string>;
         /** Follows canonical path checks; reference tooling distinguishes missing files. */
         readonly kind: (path: string) => Promise<"file" | "directory" | "missing">;
-        /** Optional opt-in cleanup capabilities. Names are direct regular-file children;
-         * remove refuses symlinks or content changed since inspection. */
-        readonly retention?: {
-            readonly list: (directory: string) => Promise<readonly string[]>;
-            readonly remove: (path: string, expected: Uint8Array) => Promise<boolean>;
-        };
         readonly writeAtomic: (path: string, data: Uint8Array, collision: "reuse-identical-or-refuse") => Promise<void>;
     };
     readonly now: () => number;
@@ -88,10 +82,8 @@ export type PostOperationContext<Contexts> = SelectedContext<Contexts> & {
     readonly host: Host;
     readonly signal: AbortSignal;
 };
-/** Separate authority batches retain their provenance through one arbitration. */
-export type GuidanceSources = EvaluatedGuidance | readonly EvaluatedGuidance[];
-/** Loaded only for execution, while the selected app is still alive. */
-export type GuidanceProvider<Contexts> = (input: PostOperationContext<Contexts>) => Promise<GuidanceSources>;
+/** Loaded only for execution, while the selected app is still alive; rules run in this process. */
+export type GuidanceProvider<Contexts> = (input: PostOperationContext<Contexts>) => Promise<EvaluatedGuidance>;
 export type ArtifactPolicySource<Contexts> = ArtifactPolicy | {
     readonly resolve: (input: PostOperationContext<Contexts>) => ArtifactPolicy | Promise<ArtifactPolicy>;
 };
@@ -110,8 +102,6 @@ export type CliOptions<Contexts, D extends ErrorDefinitions, G extends Readonly<
     readonly groups?: readonly Group[];
     readonly flows?: readonly Flow[];
     readonly contexts: ContextProviders<NoInfer<Contexts>, NoInfer<D>, NoInfer<G>>;
-    readonly errors?: never;
-    readonly application?: never;
     readonly guidance?: {
         readonly load: () => Promise<{
             readonly default: GuidanceProvider<Contexts>;
@@ -247,10 +237,9 @@ export type ReferenceValidation = {
 };
 export type ReferenceHost = {
     readonly files: Host["files"] & {
-        /** Reference-tool-only replacement of an existing document. Refuse stale
-         * expected bytes; preserve unrelated content. Absent capability permits check
-         * mode only. The kernel artifact writer remains no-clobber. */
-        readonly replace?: (path: string, data: Uint8Array, expected: Uint8Array, signal: AbortSignal) => Promise<void>;
+        /** Reference-tool-only replacement of an existing document. Absent capability
+         * permits check mode only. The kernel artifact writer remains no-clobber. */
+        readonly replace?: (path: string, data: Uint8Array, signal: AbortSignal) => Promise<void>;
     };
 };
 export type ReferenceOptions = {

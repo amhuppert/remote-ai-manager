@@ -1,13 +1,3 @@
-// Only an owning constructor marks an immutable token. Internal JSON snapshots
-// retain that token's origin; serialization through a real wire never carries it.
-const jsonOrigins = new WeakMap();
-export function retainJsonIdentity(value) { jsonOrigins.set(value, value); }
-export function jsonIdentity(value) { return jsonOrigins.get(value) ?? value; }
-function copyJsonIdentity(source, copy) {
-    const origin = jsonOrigins.get(source);
-    if (origin)
-        jsonOrigins.set(copy, origin);
-}
 /** Shared boundary checks stay free of host capabilities and package dependencies. */
 export function assertNonnegativeInteger(value) {
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
@@ -42,86 +32,43 @@ export function assertArtifactMetadata({ mediaType, format, reason, contains }) 
                 || contains !== "response" && contains !== "data"))
         throw new TypeError("Invalid artifact metadata.");
 }
-/** Capture only checked descriptor values; never read caller properties or toJSON. */
-function materializeJson(value) {
-    const active = new Set();
-    const copies = new Map();
-    let snapshot = null;
-    const pending = [{ value, assign: copy => { snapshot = copy; } }];
-    while (pending.length > 0) {
-        const entry = pending.pop();
-        if ("complete" in entry) {
-            active.delete(entry.complete);
-            continue;
+/** JSON is the only data the kernel carries across a boundary: plain objects and
+ * arrays holding finite numbers, strings, booleans and null. Values that
+ * JSON.stringify would drop or rewrite silently (undefined, functions, NaN,
+ * holes, class instances) are caller bugs and fail here instead. */
+function replacer(key, value) {
+    const raw = this[key];
+    if (raw === undefined || typeof raw === "function" || typeof raw === "symbol" || typeof raw === "bigint"
+        || typeof raw === "number" && !Number.isFinite(raw))
+        throw new TypeError("Expected finite JSON data.");
+    if (raw !== null && typeof raw === "object") {
+        if (Array.isArray(raw)) {
+            if (Object.keys(raw).length !== raw.length)
+                throw new TypeError("JSON arrays must be dense and undecorated.");
         }
-        const current = entry.value;
-        if (current === null || typeof current === "string" || typeof current === "boolean"
-            || typeof current === "number" && Number.isFinite(current)) {
-            entry.assign(current);
-            continue;
-        }
-        if (typeof current !== "object")
-            throw new TypeError("Expected finite JSON data.");
-        if (active.has(current))
-            throw new TypeError("JSON data cannot contain cycles.");
-        const existing = copies.get(current);
-        if (existing !== undefined) {
-            entry.assign(existing);
-            continue;
-        }
-        const array = Array.isArray(current);
-        const prototype = Object.getPrototypeOf(current);
-        if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
-            throw new TypeError("JSON data must contain only plain objects and arrays.");
-        }
-        const keys = Reflect.ownKeys(current);
-        const length = array ? Object.getOwnPropertyDescriptor(current, "length")?.value : 0;
-        assertNonnegativeInteger(length);
-        if (array && (length > 0xffffffff || keys.length !== length + 1)) {
-            throw new TypeError("JSON arrays must be dense and undecorated.");
-        }
-        // Null prototypes keep serialization independent of inherited hooks as well.
-        const copy = array ? Object.setPrototypeOf([], null) : Object.create(null);
-        copyJsonIdentity(current, copy);
-        copies.set(current, copy);
-        active.add(current);
-        entry.assign(copy);
-        pending.push({ complete: current });
-        for (const key of keys) {
-            if (array && key === "length")
-                continue;
-            if (typeof key !== "string")
-                throw new TypeError("JSON keys must be strings.");
-            if (array && (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length)) {
-                throw new TypeError("JSON arrays cannot contain named properties.");
-            }
-            const descriptor = Object.getOwnPropertyDescriptor(current, key);
-            if (!descriptor?.enumerable || !("value" in descriptor)) {
-                throw new TypeError("JSON properties must be enumerable data properties.");
-            }
-            // Establish key order now; child visits replace only the captured value.
-            Object.defineProperty(copy, key, { value: null, enumerable: true, writable: true, configurable: true });
-            pending.push({ value: descriptor.value, assign: child => {
-                    Object.defineProperty(copy, key, { value: child });
-                } });
+        else {
+            const prototype = Object.getPrototypeOf(raw);
+            if (prototype !== Object.prototype && prototype !== null)
+                throw new TypeError("JSON data must contain only plain objects and arrays.");
         }
     }
-    return snapshot;
+    return value;
+}
+export function serializedJson(value) {
+    let text;
+    try {
+        text = JSON.stringify(value, replacer);
+    }
+    catch (error) {
+        throw error instanceof TypeError ? error : new TypeError("JSON data could not be serialized.");
+    }
+    if (text === undefined)
+        throw new TypeError("Expected finite JSON data.");
+    return text;
 }
 /** An observation only; constructors must retain a snapshot before checking shape/size. */
 export function assertJsonValue(value) {
-    materializeJson(value);
-}
-export function serializedJson(value) {
-    return stringifyJson(materializeJson(value));
-}
-function stringifyJson(snapshot) {
-    try {
-        return JSON.stringify(snapshot);
-    }
-    catch {
-        throw new TypeError("JSON data could not be serialized.");
-    }
+    serializedJson(value);
 }
 /** Count the actual JSON representation, including quotes, escapes and UTF-8 expansion. */
 export function assertSerializedLimit(value, limit) {
@@ -130,20 +77,16 @@ export function assertSerializedLimit(value, limit) {
         throw new TypeError("Serialized JSON exceeds its byte limit.");
     }
 }
-/** Capture once before domain/size checks; return the same snapshot after those checks. */
+/** Detach and deep-freeze: the caller keeps its object, the kernel keeps a JSON copy. */
 export function frozenJson(value) {
-    const captured = materializeJson(value);
-    const snapshot = JSON.parse(stringifyJson(captured));
-    const pending = [[captured, snapshot]];
+    const snapshot = JSON.parse(serializedJson(value));
+    const pending = [snapshot];
     while (pending.length > 0) {
-        const [source, current] = pending.pop();
+        const current = pending.pop();
         if (current !== null && typeof current === "object") {
-            // Both sides are already descriptor-checked JSON, never caller objects.
-            const original = source;
-            copyJsonIdentity(original, current);
-            for (const [key, child] of Object.entries(current))
-                pending.push([original[key], child]);
             Object.freeze(current);
+            for (const key of Object.keys(current))
+                pending.push(current[key]);
         }
     }
     return snapshot;

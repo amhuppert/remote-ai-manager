@@ -2,7 +2,6 @@ import type { ArtifactPolicy, ResolvedArtifactPolicy, ArtifactManifest, AnyBinar
 import type { Host, RunResult } from "../runtime/index.js";
 import type { AssembledResponse } from "./response.js";
 import type { Bytes } from "../values.js";
-export declare function checkResolvedArtifactPolicy(value: unknown): asserts value is ResolvedArtifactPolicy;
 /** Resolves canonical roots, validates policy and freezes an app-free snapshot. */
 export declare function resolveArtifactPolicy(policy: ArtifactPolicy, host: Host): Promise<ResolvedArtifactPolicy>;
 /** One bounded writer for automatic spill, explicit out and finite binary exports. */

@@ -14,12 +14,15 @@ export type ExecutionResult<Code extends string = string> = OperationOutcome<Cod
      * summary) only. Response calls this after release; artifact-delivery bounds the assembled output.
      * Default structural rendering uses the same seam; throws are secondary output failures. */
     readonly renderPrimary: () => string;
+    /** Help, version and exit-code text is framework output, not a handler primary. */
+    readonly offline: boolean;
 };
 /** Uses only registry path and the already-computed payload hash; no durable ID is invented. */
 export declare function unknownAcknowledgment<Contexts, Code extends string, G extends Readonly<Record<string, Flag>>>(invocation: ParsedInvocation<Contexts, Code, G>, payloadHash?: Sha256): UnknownAcknowledgment;
 /** Hook facts must be detached from app before the finalizer; delivery is host-only. */
 export type PostOperationFacts = {
-    readonly guidance: readonly EvaluatedGuidance[];
+    /** Missing when no guidance is configured or the provider failed. */
+    readonly guidance?: EvaluatedGuidance;
     /** Missing when policy resolution fails; collected guidance still survives. */
     readonly artifacts?: ResolvedArtifactPolicy;
     readonly issues: readonly Issue[];
@@ -41,7 +44,6 @@ export type CompletedExecution<Code extends string = string> = {
     readonly postOperation: "skipped";
     readonly facts?: never;
 });
-export declare function isOfflineExecution(execution: ExecutionResult): boolean;
 /** Composition may repair optional references while preserving the observed operation. */
 export declare function withExecutionResult(execution: ExecutionResult, result: AnyResult): ExecutionResult;
 /** Offline routes have no application operation; reuse the execution outcome owner. */

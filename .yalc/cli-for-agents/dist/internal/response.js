@@ -1,15 +1,12 @@
-import { isOfflineExecution } from "./execution.js";
-import { decodeEvaluatedGuidance, hint, instruction } from "../guidance/index.js";
+import { hint, instruction } from "../guidance/index.js";
 import { decodeWireEnvelope, kernelError, protocolLimits } from "../results.js";
 import { assertFields, assertInvocation, assertRecord, assertSerializedLimit, assertText, frozenJson } from "./validation.js";
-import { referenceTokens, renderDetachedReference } from "./invocations.js";
+import { referenceTokens, renderReference } from "./invocations.js";
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 function byRule(a, b) {
-    return compare(a.provenance.ruleId, b.provenance.ruleId)
-        || compare(a.provenance.authority, b.provenance.authority)
-        || compare(JSON.stringify(a.value), JSON.stringify(b.value));
+    return compare(a.provenance.ruleId, b.provenance.ruleId) || compare(JSON.stringify(a.value), JSON.stringify(b.value));
 }
-/** The only arbiter: handler plus local and authoritative candidates enter once. */
+/** The only arbiter: handler guidance and rule candidates enter once. */
 export async function arbitrate(input) {
     const issues = [];
     const failures = [];
@@ -36,16 +33,12 @@ export async function arbitrate(input) {
         invalid("Invalid handler guidance.");
     }
     const candidates = [];
-    for (const source of input.candidates) {
-        try {
-            const batch = decodeEvaluatedGuidance(source);
-            if (batch.commandPath !== input.commandPath)
-                throw new TypeError("Wrong guidance command.");
-            candidates.push(...batch.candidates);
-            issues.push(...batch.issues.map(issue => ({ ...issue, path: ["guidance", batch.authority, ...issue.path ?? []] })));
-        }
-        catch {
-            invalid("Invalid post-operation guidance batch.");
+    if (input.evaluated) {
+        if (input.evaluated.commandPath !== input.commandPath)
+            invalid("Wrong guidance command.");
+        else {
+            candidates.push(...input.evaluated.candidates);
+            issues.push(...input.evaluated.issues.map(issue => ({ ...issue, path: ["guidance", ...issue.path ?? []] })));
         }
     }
     candidates.sort(byRule);
@@ -129,7 +122,7 @@ export async function assembleResponse(execution, options) {
             // Observe invalid native promises without accepting asynchronous renderers.
             if (rendered instanceof Promise)
                 void rendered.catch(() => { });
-            if (isOfflineExecution(execution)) {
+            if (execution.offline) {
                 // Help/version/catalog text is framework output from accepted metadata,
                 // not a handler primary. Keep its labels and Unicode separators intact.
                 if (typeof rendered !== "string")
@@ -149,7 +142,7 @@ export async function assembleResponse(execution, options) {
     const texts = guidance.reminders.map(value => value.text);
     const wire = { reminders: texts[0] ? texts[1] ? [texts[0], texts[1]] : [texts[0]] : [],
         ...(guidance.instruction ? { instruction: guidance.instruction.text } : guidance.hint
-            ? { hint: `${guidance.hint.action}: ${renderDetachedReference(guidance.hint.invocation, options.executable)}` } : {}) };
+            ? { hint: `${guidance.hint.action}: ${renderReference(guidance.hint.invocation, options.executable)}` } : {}) };
     const payload = data !== undefined ? { payload: { kind: "inline", data } } : {};
     const first = failures[0];
     const error = !result.ok ? result.error : first ? kernelError(first.code, { message: first.message,
@@ -204,7 +197,7 @@ export function renderResponse(response, format, compactReferences = false) {
             if (reference)
                 lines.push(compactReferences
                     ? `${label} argv: ${JSON.stringify(referenceTokens(reference, reference.passthrough !== undefined))}`
-                    : `${label}: ${renderDetachedReference(reference, executable)}`);
+                    : `${label}: ${renderReference(reference, executable)}`);
         }
         lines.push(`effect: ${envelope.effect}`);
         if (envelope.recovery)

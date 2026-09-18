@@ -1,13 +1,11 @@
 import { checkCaller, checkFlags, checkPath, inputModel } from "./input-model.js";
 import { assertFields, assertIdentifier, assertRecord, assertText, frozenJson } from "./validation.js";
 const commands = new WeakMap();
-const families = new WeakSet();
-const groups = new WeakSet();
 const flows = new WeakMap();
 export function commandData(command) {
     const data = commands.get(command);
     if (!data)
-        throw new TypeError("Unknown or forged command token.");
+        throw new TypeError("Unknown command token.");
     return data;
 }
 /** Family identity is checked before erasing its compile-time catalog keys. */
@@ -17,11 +15,11 @@ export function commandErrors(command) {
     return family.errors;
 }
 export function checkFamily(family) {
-    if (!families.has(family))
+    if (!("defineCommand" in family) || typeof family.defineCommand !== "function" || !("errors" in family))
         throw new TypeError("Unknown command family.");
 }
 export function checkGroup(group) {
-    if (!groups.has(group))
+    if (!("kind" in group) || group.kind !== "group")
         throw new TypeError("Unknown group token.");
 }
 export function flowSteps(flow) {
@@ -111,7 +109,6 @@ export function makeFamily(options) {
         return command;
     };
     const family = Object.freeze({ errors: options.errors, globalFlags, defineCommand });
-    families.add(family);
     return family;
 }
 export function makeGroup(definition) {
@@ -119,9 +116,7 @@ export function makeGroup(definition) {
     assertRecord(snapshot);
     assertFields(snapshot, ["path", "summary", "description"], ["related", "skills", "sections", "dynamicHelp"]);
     checkMetadata(snapshot);
-    const group = Object.freeze({ ...snapshot, kind: "group" });
-    groups.add(group);
-    return group;
+    return Object.freeze({ ...snapshot, kind: "group" });
 }
 export function makeFlow(definition) {
     assertIdentifier(definition.id);

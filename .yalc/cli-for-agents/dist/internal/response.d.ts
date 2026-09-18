@@ -7,7 +7,8 @@ import type { Brand } from "./brand.js";
 export type ArbitrationInput = {
     readonly commandPath: string;
     readonly handler: HandlerGuidance;
-    readonly candidates: readonly EvaluatedGuidance[];
+    /** The one batch evaluated for this run, when guidance is configured. */
+    readonly evaluated?: EvaluatedGuidance;
     readonly conflictSink: ConflictSink;
 };
 export type ArbitratedGuidance = Brand<"ArbitratedGuidance"> & {
@@ -17,7 +18,7 @@ export type ArbitratedGuidance = Brand<"ArbitratedGuidance"> & {
     /** Contract-invalid sources are isolated without losing other valid protocol. */
     readonly failures?: readonly SecondaryFailure[];
 };
-/** The only arbiter: handler plus local and authoritative candidates enter once. */
+/** The only arbiter: handler guidance and rule candidates enter once. */
 export declare function arbitrate(input: ArbitrationInput): Promise<ArbitratedGuidance>;
 /** Structured handoff, not a final byte-bound promise. Delivery owns spill and limits. */
 export type AssembledResponse = Brand<"AssembledResponse"> & {

@@ -33,5 +33,5 @@
     "typecheck": "./scripts/validate/typecheck.sh",
     "build": "./scripts/validate/build.sh"
   },
-  "yalcSig": "397a4a7425b30a8da2684fb696b8bd8b"
+  "yalcSig": "cf950cb9653d7ff36a1ca662578329a1"
 }

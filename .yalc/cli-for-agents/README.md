@@ -6,9 +6,9 @@ references. The runtime owns lazy execution, guidance arbitration, bounded outpu
 artifacts and process draining. The kernel has **no runtime package dependencies**.
 
 Start with [adding a command](docs/implementation/add-a-command.md). Read the
-[public contract](docs/design/public-contract.md) for API guarantees and the
-[final verification report](docs/implementation/final-verification.md) for evidence
-and limits. [HANDOFF](HANDOFF.md) orients the next implementer.
+[public contract](docs/design/public-contract.md) for API guarantees and
+[ENVELOPE](ENVELOPE.md) for the conditions this code is built for — and the ones it
+will never meet. [HANDOFF](HANDOFF.md) orients the next implementer.
 
 ## Package surfaces
 
@@ -16,17 +16,17 @@ and limits. [HANDOFF](HANDOFF.md) orients the next implementer.
 | --- | --- |
 | `cli-for-agents` | `commandsFor`, command/group/flow declarations, inputs/results, pages, finite binary requests and checked values |
 | `cli-for-agents/runtime` | `createCli`, `runCli`, `main`, Node host, help, reference generation/checking and envelope decoding |
-| `cli-for-agents/guidance` | Hints/instructions, rule definitions, candidate evaluation and authoritative decoding |
+| `cli-for-agents/guidance` | Hints/instructions, rule definitions and candidate evaluation |
 | `cli-for-agents/testing` | Injectable test host, production-runtime observations and seven inherited contract cases |
 
-The [complete inventory](docs/implementation/api-inventory.md) maps all 40
+The [complete inventory](docs/implementation/api-inventory.md) maps all 39
 functions and two constants to owners. Internal paths are private. The package
 emits ESM and declarations; consumer applications can bundle into one executable.
 
 ## Develop and verify
 
-Use Node 20+, npm and the lockfile. TypeScript 5.9.3 and esbuild 0.25.12 are
-**development-only** dependencies.
+Use Node 20+, npm and the lockfile. TypeScript 5.9.3, esbuild 0.25.12 and
+`@types/node` are **development-only** dependencies.
 
 ```sh
 bash scripts/worktree-init.sh
@@ -44,11 +44,11 @@ cctl validate run test --queue-if-busy -- tests/execution.test.mjs
 ```
 
 `CommandCenter.json` registers these commands; `cctl validate list` shows the live
-registry. Full distribution tests require the pinned Node 20.20.2, Node 24.16.0
-and Bun 1.3.14 executables in [runtimes.json](scripts/distribution/runtimes.json).
-Missing runtimes fail. The [distribution guide](docs/implementation/distribution-guards.md)
-describes CI provisioning, executable bundling and the downward-only size/import
-guards. Timings are advisory. CC manages git lifecycle actions.
+registry. Full distribution tests require the Node 20, Node 24 and Bun 1 executables
+pinned in [runtimes.json](scripts/distribution/runtimes.json); only the major version
+must match. Missing runtimes fail. The [distribution guide](docs/implementation/distribution-guards.md)
+describes CI provisioning, executable bundling and the bundle-size/import
+guards. CC manages git lifecycle actions.
 
 ## Run the pilots
 
@@ -77,7 +77,7 @@ cctl validate run test --queue-if-busy -- tests/pilots/remote.test.mjs
 ```
 
 The remote test bundles the actual CLI and runs it against an ephemeral loopback
-service, including disconnect, cancellation, authoritative guidance and recovery.
+service, including disconnect, cancellation, rule guidance and recovery.
 `examples/notebook` remains a compile-only type fixture with deliberate stubs.
 
 ## Delivered scope

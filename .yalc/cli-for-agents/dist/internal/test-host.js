@@ -89,24 +89,6 @@ export function makeTestHost(options = {}) {
                 const path = canonical(input);
                 return files.has(path) ? "file" : directories.has(path) ? "directory" : "missing";
             },
-            retention: {
-                async list(directory) {
-                    record({ kind: "retention-list", path: directory });
-                    const root = canonical(directory);
-                    if (!directories.has(root))
-                        throw fileError("ENOENT");
-                    return [...files.keys()].filter(path => parent(path) === root).map(path => path.slice(root.length + (root === "/" ? 0 : 1)));
-                },
-                async remove(input, expected) {
-                    record({ kind: "retention-remove", path: input });
-                    const path = canonical(input);
-                    const existing = files.get(path);
-                    if (path !== input || !existing || !sameBytes(existing, expected))
-                        return false;
-                    files.delete(path);
-                    return true;
-                },
-            },
             async writeAtomic(input, data, collision) {
                 record({ kind: "write", path: input });
                 if (collision !== "reuse-identical-or-refuse")

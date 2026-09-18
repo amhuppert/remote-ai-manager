@@ -143,9 +143,12 @@ the resolved scope and matched-file count so callers know what passed.
 
 Use library guidance constructors and typed invocations. Authenticated server
 instructions are carried through `framework/request.ts`; do not reinterpret them
-as locally fired reminder rules. Server lane reminders are evaluated by the real
-state rules in `src/lib/workflow-graph/lane-reminders.ts`, which publish evaluated
-provenance. The CLI validates and composes those batches in `framework/guidance.ts`.
+as locally fired reminder rules. Lane routes return `laneReminderState` facts from
+the completed operation or halt snapshot. `framework/guidance.ts` validates those
+facts with the domain schema, checks their verb against the invoked command, and
+evaluates the shared rules in `src/lib/workflow-graph/lane-reminders.ts` together
+with local filesystem rules in one library evaluation. Remote framework candidate
+batches are not part of the CC transport contract.
 
 The client reminder exception is `CLIENT_ADVISORIES` in
 `framework/payload-location.ts`: filesystem facts only the caller can observe,

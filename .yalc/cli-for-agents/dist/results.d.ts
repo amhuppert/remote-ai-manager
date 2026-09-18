@@ -234,11 +234,5 @@ export type Envelope<Data> = EnvelopeShape<Payload<Data>>;
 export type AnyEnvelope = EnvelopeShape<AnyPayload>;
 /** Wire admission validates shape and bounds, not registry or filesystem authority. */
 export declare function decodeWireEnvelope(value: unknown): AnyEnvelope;
-/** Describes checks to inherit later; these cases are not implemented in this scaffold. */
-export type ContractViolation = {
-    readonly code: "duplicate_path" | "missing_parent" | "dangling_reference" | "flag_conflict" | "reserved_flag" | "invalid_example" | "invalid_payload_twin" | "invalid_rule" | "invalid_value";
-    readonly message: string;
-    readonly paths: NonEmpty<string>;
-};
 export {};
 //# sourceMappingURL=results.d.ts.map

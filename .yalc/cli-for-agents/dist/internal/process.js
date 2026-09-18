@@ -69,8 +69,11 @@ export async function runMain(cli, options) {
     try {
         if (options?.compileCache) {
             // Acceleration is optional even when supported but unavailable (e.g. permissions).
+            const loaded = { ...(await import("node:module")) };
+            const enable = loaded["enableCompileCache"];
             try {
-                (await import("node:module")).enableCompileCache?.();
+                if (typeof enable === "function")
+                    enable();
             }
             catch { /* Continue without cache. */ }
         }

@@ -35,7 +35,6 @@ export type Resolution<Contexts = never, Code extends string = string, G extends
 /** Synchronous graph/shape validation only, including docs root/reference syntax. */
 export declare function register<Contexts, D extends ErrorDefinitions, G extends Readonly<Record<string, Flag>>>(options: CliOptions<Contexts, D, G>): Registry<Contexts, FamilyCode<D>, G>;
 export declare function resolve<Contexts, Code extends string, G extends Readonly<Record<string, Flag>>>(registry: Registry<Contexts, Code, G>, argv: readonly string[]): Resolution<Contexts, Code, G>;
-export declare function checkParsedInvocation(invocation: object): void;
 /** Static projections and lazy binding lookup for help, execution and composition. */
 export type RegistryNode = {
     readonly path: string;
@@ -58,16 +57,9 @@ export declare function checkMembership(registry: object, command: object): void
 export declare function commandCli<Contexts>(command: object): import("../runtime/index.js").Cli<Contexts>;
 export declare function retainCli<Contexts, D extends ErrorDefinitions, G extends Readonly<Record<string, Flag>>>(options: CliOptions<Contexts, D, G>): import("../runtime/index.js").Cli<Contexts>;
 export declare function cliRegistry<Contexts>(cli: import("../runtime/index.js").Cli<Contexts>): Registry<Contexts>;
-/** Lazy guidance calls this after loading rules; registration never imports them. */
-export declare function checkRuleReferences(registry: object, rules: readonly {
-    readonly id: string;
-    readonly appliesTo: readonly object[];
-}[]): void;
 /** Composition retrieves retained configuration only after checking the CLI token. */
 export declare function cliConfiguration<Contexts>(cli: import("../runtime/index.js").Cli<Contexts>): CliOptions<Contexts, ErrorDefinitions, Readonly<Record<string, Flag>>>;
-/** Current-CLI validation is required even when a target is registered elsewhere. */
-export declare function validateInvocation(registry: object, reference: import("../commands.js").Invocation): void;
-/** Detached JSON references regain provenance only through complete input validation. */
+/** References are plain JSON; they become runnable here through complete input validation. */
 export declare function rebindInvocation(registry: object, value: unknown): import("../commands.js").Invocation;
 export {};
 //# sourceMappingURL=registry.d.ts.map

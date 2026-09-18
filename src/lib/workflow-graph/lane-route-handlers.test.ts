@@ -506,12 +506,10 @@ describe("lane route handlers — complete task", () => {
     });
   });
 
-  it("attaches lane reminders to the success body when the iteration budget is near the threshold", async () => {
-    // iterationCount 2, default threshold 3 → iteration-budget fires (3−2=1≤2),
-    // and completing the fixture's only task makes this a final completion, so
-    // final-task-self-check fires too; lane-autonomy (2≥2) is capped out.
+  it("returns the post-completion lane state used to evaluate reminders", async () => {
     const { context } = buildContext({
       execution: buildRunningExecution({ iterationCount: 2 }),
+      allowAgentCollaboration: true,
     });
     const handlers = createLaneRouteHandlers(makeDeps(context));
 
@@ -523,21 +521,18 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.ok).toBe(true);
-    expect(body.guidance.candidates).toHaveLength(2);
-    expect(body.guidance.candidates[0].value.text).toContain(
-      "used 2 of 3 iterations",
-    );
-    expect(body.guidance.candidates[0].value.text).toContain(
-      "script validators run before agent validators",
-    );
-    expect(body.guidance.candidates[1].value.text).toContain(
-      "acceptance criterion",
-    );
+    expect(body.laneReminderState).toEqual({
+      verb: "task-complete",
+      iterationCount: 2,
+      circuitBreakerThreshold: 3,
+      remainingTaskCount: 0,
+      halted: null,
+      allowAgentCollaboration: true,
+      contextLimitStopped: false,
+    });
   });
 
-  it("attaches the final-task self-check reminder when the last task completes", async () => {
-    // Default fixture: single task, iterationCount 0 → the self-check is the
-    // only rule firing on the final completion.
+  it("reports no remaining tasks in reminder state when the last task completes", async () => {
     const { context } = buildContext();
     const handlers = createLaneRouteHandlers(makeDeps(context));
 
@@ -550,16 +545,14 @@ describe("lane route handlers — complete task", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.remainingTaskCount).toBe(0);
-    expect(body.guidance.candidates).toHaveLength(1);
-    expect(body.guidance.candidates[0].value.text).toContain(
-      "acceptance criterion",
-    );
-    expect(body.guidance.candidates[0].value.text).toContain(
-      "charter invariant",
-    );
+    expect(body.laneReminderState).toMatchObject({
+      remainingTaskCount: 0,
+      halted: null,
+      contextLimitStopped: false,
+    });
   });
 
-  it("omits the reminders field entirely when no rule fires", async () => {
+  it("returns lane state even when no reminder rule fires", async () => {
     // Second pending task keeps the completion non-final; iterationCount 0,
     // threshold 3 → no rule fires.
     const { context } = buildContext({
@@ -576,11 +569,18 @@ describe("lane route handlers — complete task", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.remainingTaskCount).toBe(1);
-    expect(body.guidance).toBeUndefined();
-    expect("guidance" in body).toBe(false);
+    expect(body.laneReminderState).toEqual({
+      verb: "task-complete",
+      iterationCount: 0,
+      circuitBreakerThreshold: 3,
+      remainingTaskCount: 1,
+      halted: null,
+      allowAgentCollaboration: false,
+      contextLimitStopped: false,
+    });
   });
 
-  it("suppresses the final-task self-check when the rotation gate stops the turn", async () => {
+  it("reports the rotation stop in reminder state for the completed task", async () => {
     // Over-limit occupancy issues the stopInstruction on the final completion;
     // the self-check must not compete with the immediate-handoff order.
     const { context } = buildContext({
@@ -600,12 +600,28 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.stopInstruction).toContain("CONTEXT LIMIT REACHED");
-    expect(body.guidance).toBeUndefined();
+    expect(body.laneReminderState).toMatchObject({
+      remainingTaskCount: 0,
+      contextLimitStopped: true,
+    });
   });
 
-  it("attaches the halted-stop reminder to the 409 halt body", async () => {
-    const { context } = buildContext({ pendingHaltReason: HALT_REASON });
-    const handlers = createLaneRouteHandlers(makeDeps(context));
+  it("returns the loader's lane state and halt reason without completing the task", async () => {
+    const { store, context } = buildContext({
+      pendingHaltReason: HALT_REASON,
+      allowAgentCollaboration: true,
+    });
+    const handlers = createLaneRouteHandlers(
+      makeDeps(context, {
+        ok: true,
+        context,
+        reminderState: {
+          iterationCount: 2,
+          circuitBreakerThreshold: 7,
+          remainingTaskCount: 3,
+        },
+      }),
+    );
 
     const response = await handlers.completeTask(
       req({ executionId: "execution-1", summary: "done" }),
@@ -615,11 +631,16 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body.halt).toBe(true);
-    expect(body.guidance.candidates).toHaveLength(1);
-    expect(body.guidance.candidates[0].value.text).toContain(
-      "iteration halted: circuit_breaker",
-    );
-    expect(body.guidance.candidates[0].value.text).toContain("end your turn");
+    expect(body.laneReminderState).toEqual({
+      verb: "task-complete",
+      iterationCount: 2,
+      circuitBreakerThreshold: 7,
+      remainingTaskCount: 3,
+      halted: "iteration halted: circuit_breaker",
+      allowAgentCollaboration: true,
+      contextLimitStopped: false,
+    });
+    expect(store.mutateCount).toBe(0);
   });
 
   it("attaches the rotation-gate stopInstruction verbatim and omits it otherwise", async () => {

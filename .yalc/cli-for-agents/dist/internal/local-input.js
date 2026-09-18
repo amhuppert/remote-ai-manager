@@ -1,5 +1,4 @@
 import { recordTestEvent } from "./test-observation.js";
-import { checkParsedInvocation } from "./registry.js";
 import { scalar } from "./input-model.js";
 import { kernelError } from "../results.js";
 import { commandData } from "./declarations.js";
@@ -32,7 +31,6 @@ function schemaIssues(value) {
 export async function resolveLocalInput(invocation, request) {
     let phase = "KERNEL_CONTRACT";
     try {
-        checkParsedInvocation(invocation);
         const { input, command } = invocation;
         const { model, handler } = commandData(command);
         const args = { ...input.args };
@@ -85,14 +83,9 @@ export async function resolveLocalInput(invocation, request) {
         recordTestEvent(request.signal, { type: "handler.load", commandPath: command.spec.path });
         const loaded = await handler();
         request.signal.throwIfAborted();
-        if (loaded === null || typeof loaded !== "object")
-            throw new TypeError("Expected a lazy module namespace.");
-        // ESM namespaces include Symbol.toStringTag and may have unrelated named exports.
-        // Capture only the declared default export, without invoking arbitrary getters.
-        const exported = Object.getOwnPropertyDescriptor(loaded, "default");
-        if (!exported?.enumerable || !("value" in exported))
-            throw new TypeError("Missing lazy default export.");
-        const defaultExport = exported.value;
+        if (loaded === null || typeof loaded !== "object" || !("default" in loaded))
+            throw new TypeError("Expected a lazy module with a default export.");
+        const defaultExport = loaded.default;
         let module;
         let decoder;
         if (model.spec.payload) {

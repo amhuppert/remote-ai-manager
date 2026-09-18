@@ -1,14 +1,8 @@
 import { commandData } from "./declarations.js";
 import { checkCaller } from "./input-model.js";
-import { assertInvocation, assertText, frozenJson, jsonIdentity, retainJsonIdentity } from "./validation.js";
-const references = new WeakMap();
-export function invocationTarget(reference) {
-    const target = references.get(jsonIdentity(reference));
-    if (!target)
-        throw new TypeError("Unknown or forged invocation token.");
-    return target;
-}
-/** This boundary is also used for createCli's mandatory runnable doctor. */
+import { assertInvocation, assertText, frozenJson } from "./validation.js";
+/** An invocation is plain JSON. The registry resolves it by path when it is used,
+ * so references survive JSON transport unchanged. Also used for createCli's doctor. */
 export function makeInvocation(command, input, validation) {
     const data = commandData(command);
     const spec = data.model.spec;
@@ -46,21 +40,12 @@ export function makeInvocation(command, input, validation) {
         effects: validation ? "read" : spec.effects, args, flags,
         ...(checked.passthrough !== undefined ? { passthrough: checked.passthrough } : {}) });
     assertInvocation(value);
-    const reference = value;
-    references.set(reference, Object.freeze({ command, validation }));
-    retainJsonIdentity(reference);
-    return reference;
+    return value;
 }
-const registeredCommands = new WeakSet();
-/** Called only after the complete graph has passed register's checks. */
-export function markRegistered(command) {
-    commandData(command);
-    registeredCommands.add(command);
-}
-/** argv construction and shell rendering share exactly these token boundaries. */
+/** argv construction and shell rendering share exactly these token boundaries.
+ * A passthrough command always carries its passthrough tokens, possibly empty. */
 export function invocationArgv(reference) {
-    const { command } = invocationTarget(reference);
-    return referenceTokens(reference, commandData(command).model.spec.passthrough === true);
+    return referenceTokens(reference, reference.passthrough !== undefined);
 }
 /** Also used after detached reference shape validation at the registry boundary. */
 export function referenceTokens(reference, passthrough) {
@@ -79,14 +64,8 @@ export function referenceTokens(reference, passthrough) {
         tokens.push("--", ...reference.passthrough);
     return Object.freeze(tokens);
 }
+/** Shape-checked rendering; current-registry rebinding is caller-owned. */
 export function renderReference(reference, executable) {
-    const target = invocationTarget(reference);
-    if (!registeredCommands.has(target.command))
-        throw new TypeError("Invocation target is not registered.");
-    return renderTokens(invocationArgv(reference), executable);
-}
-/** Shape-checked detached references; current-registry rebinding is caller-owned. */
-export function renderDetachedReference(reference, executable) {
     assertInvocation(reference);
     return renderTokens(referenceTokens(reference, reference.passthrough !== undefined), executable);
 }
@@ -98,7 +77,6 @@ function renderTokens(tokens, executable) {
     return [quote(executable, executable.includes("=") || reserved.includes(executable)),
         ...tokens.map(token => quote(token))].join(" ");
 }
-export function hasInvocationProvenance(value) { return references.has(jsonIdentity(value)); }
 /** Protect the positional/passthrough boundary before tokens enter the parser. */
 function checkPositionalTokens(args, passthrough) {
     if (passthrough && args.some(token => token.startsWith("-") && token !== "-" && !/^-[0-9]+$/.test(token))) {

@@ -1,6 +1,5 @@
-import { invocationTarget } from "./internal/invocations.js";
 import { makeBinaryRequest } from "./internal/binary.js";
-import { assertFields, assertRecord, frozenJson } from "./internal/validation.js";
+import { assertFields, assertInvocation, assertRecord, frozenJson } from "./internal/validation.js";
 import { count } from "./values.js";
 /** Accepts an already-paged source; it never loads an entire dataset to slice it. */
 export function page(source) {
@@ -28,15 +27,8 @@ export function page(source) {
     }
     let omission;
     if (snapshot.more) {
-        // JSON snapshots lose token identity. Keep the original checked, immutable
-        // reference so filters, cursor and view remain renderable without rebuilding.
-        const reveal = source.reveal;
-        if (!reveal)
-            throw new TypeError("Truncated pages require a read continuation.");
-        invocationTarget(reveal);
-        if (reveal.effects !== "read")
-            throw new TypeError("Page continuation must have read effects.");
-        omission = { truncated: true, returned, total: snapshot.total, reveal };
+        assertInvocation(snapshot.reveal, "read");
+        omission = { truncated: true, returned, total: snapshot.total, reveal: snapshot.reveal };
     }
     else {
         omission = { truncated: false, returned, total: snapshot.total };

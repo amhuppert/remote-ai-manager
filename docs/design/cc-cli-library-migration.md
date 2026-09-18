@@ -29,7 +29,7 @@ remain covered. Generated payload validation twins add read-only operations.
 | Job observation, timeouts, owned cancellation, continuation details | CC job observer using the runtime clock and signal |
 | Successful data and primary text projection | Typed CC DTOs and `runner`/`writeRunner` renderers |
 | Exit taxonomy, envelope assembly, guidance arbitration, byte bounds and atomic artifacts | Library runtime |
-| Server reminder predicates and real firing events | Existing server rule owners using the library guidance API |
+| Workflow reminder facts and predicates | Server state snapshots and shared CC domain rules; CLI evaluates through the library guidance API |
 | Caller filesystem advisory | CC's local rule and firing sink |
 | Final stdout/stderr draining and exit | Library `main` |
 
@@ -98,12 +98,13 @@ does not claim a rule fired. The same principle applies to the explicit context
 rotation outcome. Ordinary refusal services and their policy schemas remain in
 their existing owners.
 
-Actual reminder rules are evaluated where their facts are authoritative: workflow
-lane reminders and validation policy on the server, and the payload filesystem
-advisory on the client. Their transported batches preserve authority, command,
-rule IDs and real firing events. The library's public guidance provider must admit
-multiple batches so the runtime can arbitrate these authorities together. No
-synthetic combined authority or client-reconstructed server firing is used.
+Lane routes return ordinary `laneReminderState` facts from the post-operation
+execution or the halt snapshot. The CLI validates those facts and their verb,
+then evaluates the shared CC lane rules with the local payload filesystem rule
+in one library guidance evaluation. Rule predicates, evidence, wording, and
+priority stay in the domain rule owner. Server domain logs retain the selected
+rule IDs; the CLI logs the actual library rule firings. Neither side transports
+library candidates or synthesizes evaluation provenance.
 
 Keep existing rule wording and predicates unless a concrete contract requires a
 change. Required ask and decision-review handoffs remain command-owned
@@ -136,7 +137,7 @@ linting and typechecking inventory; installed declarations still check consumers
 2. Migrate command families into static declarations, lazy handlers and meaningful
    tests against the new application factory. Preserve their endpoint/domain
    behavior and record intentional CLI shape changes.
-3. Integrate server reminder batches and local guidance, then exercise their
+3. Integrate server lane facts and local guidance, then exercise their
    composition through actual route-to-runtime tests. Complete job cancellation,
    artifact and binary-export cases.
 4. Derive help/reference tooling from the adopted declarations. Update affected
@@ -165,8 +166,8 @@ are retired; retained domain and persistence contracts exercise the native entry
   owned-cancellation behavior.
 - Text and JSON disclose equivalent selected data; oversized output yields a
   verified artifact, and binary exports round-trip without conversion loss.
-- Required instructions survive failure/spill and suppress hints; reminder
-  authority and firing evidence survive transport and multi-source arbitration.
+- Required instructions survive failure/spill and suppress hints; server lane
+  facts drive the shared rules and compose with local filesystem guidance.
 - Registered format, lint, typecheck, seams and affected tests pass. Real
   route/persistence contract tests remain part of the evidence; no fake-only
   replacement removes a durable-state assertion.
@@ -174,9 +175,31 @@ are retired; retained domain and persistence contracts exercise the native entry
   the intended isolated CC instance. Installed managing-server cctl behavior is
   not used as evidence for branch changes.
 
-## Verification recorded 2026-09-17
+## Simplified library update, 2026-09-17
 
-The pinned library revision is `126776e4821527e6cd61219f7dc46690bb1b7286`;
+The consumer now pins `0e99b77b3eaad3aac3df20733ceab16efaf631fe`. This revision
+removes remote guidance decoding and multiple authority batches, artifact
+retention and sidecars, and defensive registries for trusted in-process callers.
+CC uses one local guidance evaluation over domain state instead of rebuilding
+the removed protocol. Its artifact policy did not enable retention, and its
+other declarations and handlers continue using the supported APIs.
+
+The snapshot is rebuilt from the committed source archive with SHA-256
+`5aa62265927dd4bfea09b8a8c888097e3d09415df01ad373ab2856fe886ae410`.
+
+Verification passes: changed-scope tests
+(`vrun-c31803a1-d92b-4977-9049-597da42d4376`), focused guidance boundary tests
+(`vrun-00c300e7-4bed-4c5e-a863-22b938bf81dc`), and route-to-CLI integration
+(`vrun-0c78a19e-1b6c-4ab9-a315-06b221f134de`). Registered format, lint,
+typecheck, and seams also pass. The regenerated command reference is unchanged.
+The standalone Node bundle passes offline help and authenticated loopback HTTP
+checks for task receipts, lane reminders, and halt refusals; these use a test
+HTTP peer, not a running workflow. Added tests cover CC state and routing contracts,
+not the removed library internals.
+
+## Initial migration verification recorded 2026-09-17
+
+The initial library revision was `126776e4821527e6cd61219f7dc46690bb1b7286`;
 the snapshot records its source archive SHA-256. Comparing the original command
 inventory with the library help graph accounts for all 160 application operations.
 The generated command reference, package refresh contract, and focused domain

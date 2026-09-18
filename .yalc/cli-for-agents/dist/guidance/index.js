@@ -1,8 +1,7 @@
-import { retainEvaluationRules, evaluatedRules, captureArray, captureRecord, checkEvidence, checkGuidanceId, checkPriority, checkRule, makeReminderRule, makeSteering } from "../internal/guidance-rules.js";
+import { captureArray, captureRecord, checkRule, makeReminderRule, makeSteering } from "../internal/guidance-rules.js";
 import { commandData } from "../internal/declarations.js";
-import { checkPath } from "../internal/input-model.js";
 import { protocolLimits } from "../results.js";
-import { assertFields, assertIdentifier, assertInvocation, assertNonnegativeInteger, assertRecord, assertSerializedLimit, assertText, frozenJson } from "../internal/validation.js";
+import { assertFields, assertIdentifier, assertInvocation, assertSerializedLimit, assertText, frozenJson } from "../internal/validation.js";
 export function hint(invocation, action) {
     const value = frozenJson({ invocation, action });
     assertInvocation(value.invocation);
@@ -25,21 +24,19 @@ export function defineReminderRule(definition) {
 export function defineSteering(definition) {
     return makeSteering(definition);
 }
-/** Evaluate at the state authority; response assembly alone selects final tiers/conflicts. */
+/** Evaluate rules in the CLI process; response assembly alone selects final tiers/conflicts. */
 export async function evaluateGuidance(input) {
     const snapshot = captureRecord(input);
-    assertFields(snapshot, ["command", "authority", "state"], ["rules", "eventSink"]);
+    assertFields(snapshot, ["command", "state"], ["rules", "eventSink"]);
     const command = snapshot["command"];
     if (command === null || typeof command !== "object")
         throw new TypeError("Expected a command token.");
     const family = commandData(command).family;
     const commandPath = command.spec.path;
-    const authority = snapshot["authority"];
-    checkGuidanceId(authority);
     const rules = Object.hasOwn(snapshot, "rules") ? captureArray(snapshot["rules"]) : [];
     const eventSink = snapshot["eventSink"];
     if ((rules.length > 0 || Object.hasOwn(snapshot, "eventSink")) && typeof eventSink !== "function") {
-        throw new TypeError("Rules require a firing sink at their authority.");
+        throw new TypeError("Rules require a firing sink.");
     }
     // Admit the whole source before executing any application callback.
     const admitted = [];
@@ -65,18 +62,14 @@ export async function evaluateGuidance(input) {
             throw new TypeError("Rule predicates must return a boolean synchronously.");
         if (!active)
             continue;
-        const provenance = { authority, commandPath, ruleId: rule.id,
+        const provenance = { commandPath, ruleId: rule.id,
             ...(rule.tier === "reminder" && rule.evidence !== undefined ? { evidence: rule.evidence } : {}) };
-        const value = rule.tier === "reminder"
-            ? { ruleId: rule.id, text: synchronousValue(() => rule.text(snapshot["state"])) }
-            : synchronousValue(() => rule.render(snapshot["state"]));
-        candidates.push(frozenJson({ tier: rule.tier, value, provenance,
-            ...(rule.tier === "reminder" ? { priority: rule.priority } : {}) }));
-        firings.push({ type: "guidance.rule_fired", commandPath, ruleId: rule.id, tier: rule.tier });
+        const rendered = synchronousValue(() => rule.tier === "reminder" ? rule.text(snapshot["state"]) : rule.render(snapshot["state"]));
+        candidates.push(candidate(rule, rendered, provenance));
+        firings.push(Object.freeze({ type: "guidance.rule_fired", commandPath, ruleId: rule.id, tier: rule.tier }));
     }
-    const batch = decodeEvaluatedGuidance({ authority, commandPath, candidates, firings, issues: [] });
     const issues = [];
-    for (const event of batch.firings) {
+    for (const event of firings) {
         try {
             // Nonempty sources were checked above; inactive/empty sources never call a sink.
             if (typeof eventSink === "function")
@@ -86,9 +79,25 @@ export async function evaluateGuidance(input) {
             issues.push({ code: "KERNEL_GUIDANCE", message: "Guidance firing sink failed.", path: ["rules", event.ruleId] });
         }
     }
-    const evaluated = frozenJson({ ...batch, issues });
-    retainEvaluationRules(evaluated, admitted);
-    return evaluated;
+    const batch = { commandPath, candidates, firings, issues };
+    return frozenJson(batch);
+}
+/** Rendered values are rebuilt through the bounded constructors before they are retained. */
+function candidate(rule, rendered, provenance) {
+    if (rule.tier === "reminder") {
+        assertText(rendered);
+        const value = { ruleId: rule.id, text: rendered };
+        // A candidate must fit alone. Only assembly checks the selected aggregate.
+        assertSerializedLimit([value], protocolLimits.reminders);
+        return frozenJson({ tier: "reminder", value: value, provenance, priority: rule.priority });
+    }
+    const record = captureRecord(rendered);
+    if (rule.tier === "instruction") {
+        assertFields(record, ["ownerId", "text"]);
+        return frozenJson({ tier: "instruction", value: instruction(record["ownerId"], record["text"]), provenance });
+    }
+    assertFields(record, ["action", "invocation"]);
+    return frozenJson({ tier: "hint", value: hint(record["invocation"], record["action"]), provenance });
 }
 function synchronousValue(call) {
     try {
@@ -103,94 +112,5 @@ function synchronousValue(call) {
     catch {
         throw new TypeError("Guidance rule callback failed or returned asynchronously.");
     }
-}
-/** Validate remote candidate provenance and protocol bounds; transport owns authenticity. */
-export function decodeEvaluatedGuidance(value) {
-    const snapshot = frozenJson(value);
-    assertRecord(snapshot);
-    assertFields(snapshot, ["authority", "commandPath", "candidates", "firings", "issues"]);
-    checkGuidanceId(snapshot["authority"]);
-    assertText(snapshot["commandPath"]);
-    checkPath(snapshot["commandPath"]);
-    const candidates = snapshot["candidates"];
-    const firings = snapshot["firings"];
-    const issues = snapshot["issues"];
-    if (!Array.isArray(candidates) || !Array.isArray(firings) || !Array.isArray(issues))
-        throw new TypeError("Expected guidance batch arrays.");
-    const tiers = new Map();
-    for (const candidate of candidates) {
-        assertRecord(candidate);
-        const tier = candidate["tier"];
-        if (tier !== "hint" && tier !== "instruction" && tier !== "reminder")
-            throw new TypeError("Unsupported guidance tier.");
-        assertFields(candidate, tier === "reminder" ? ["tier", "value", "provenance", "priority"] : ["tier", "value", "provenance"]);
-        const provenance = candidate["provenance"];
-        assertRecord(provenance);
-        assertFields(provenance, ["authority", "commandPath", "ruleId"], ["evidence"]);
-        checkGuidanceId(provenance["ruleId"]);
-        if (provenance["authority"] !== snapshot["authority"] || provenance["commandPath"] !== snapshot["commandPath"]) {
-            throw new TypeError("Candidate provenance does not match its batch.");
-        }
-        if (Object.hasOwn(provenance, "evidence"))
-            checkEvidence(provenance["evidence"]);
-        const ruleId = provenance["ruleId"];
-        if (tiers.has(ruleId))
-            throw new TypeError("Duplicate candidate rule id.");
-        tiers.set(ruleId, tier);
-        const guidance = candidate["value"];
-        assertRecord(guidance);
-        if (tier === "instruction") {
-            assertFields(guidance, ["ownerId", "text"]);
-            assertIdentifier(guidance["ownerId"]);
-            assertText(guidance["text"]);
-            instruction(guidance["ownerId"], guidance["text"]);
-        }
-        else if (tier === "hint") {
-            assertFields(guidance, ["action", "invocation"]);
-            assertText(guidance["action"]);
-            assertInvocation(guidance["invocation"]);
-            // Transport validates structure only. Current-registry rebinding remains required.
-            hint(guidance["invocation"], guidance["action"]);
-        }
-        else {
-            assertFields(guidance, ["ruleId", "text"]);
-            if (guidance["ruleId"] !== ruleId)
-                throw new TypeError("Reminder rule id does not match its provenance.");
-            assertText(guidance["text"]);
-            checkPriority(candidate["priority"]);
-            // A candidate must fit alone. Only assembly checks the selected aggregate.
-            assertSerializedLimit([guidance], protocolLimits.reminders);
-        }
-    }
-    const fired = new Set();
-    for (const event of firings) {
-        assertRecord(event);
-        assertFields(event, ["type", "commandPath", "ruleId", "tier"]);
-        checkGuidanceId(event["ruleId"]);
-        if (event["type"] !== "guidance.rule_fired" || event["commandPath"] !== snapshot["commandPath"]
-            || !tiers.has(event["ruleId"]) || tiers.get(event["ruleId"]) !== event["tier"] || fired.has(event["ruleId"])) {
-            throw new TypeError("Firing does not match a unique candidate.");
-        }
-        fired.add(event["ruleId"]);
-    }
-    if (fired.size !== tiers.size)
-        throw new TypeError("Every candidate requires a firing event.");
-    for (const issue of issues) {
-        assertRecord(issue);
-        assertFields(issue, ["code", "message"], ["path"]);
-        checkGuidanceId(issue["code"]);
-        assertText(issue["message"]);
-        assertSerializedLimit(issue["message"], protocolLimits.diagnosticSummary);
-        if (Object.hasOwn(issue, "path")) {
-            if (!Array.isArray(issue["path"]))
-                throw new TypeError("Expected an issue path.");
-            for (const part of issue["path"])
-                if (typeof part !== "string")
-                    assertNonnegativeInteger(part);
-        }
-    }
-    // Complete ingress checks establish this brand; authenticity is transport-owned.
-    retainEvaluationRules(snapshot, evaluatedRules(value));
-    return snapshot;
 }
 //# sourceMappingURL=index.js.map

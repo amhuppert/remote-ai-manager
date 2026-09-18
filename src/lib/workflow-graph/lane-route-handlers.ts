@@ -40,7 +40,11 @@ import {
 } from "./lane-tool-context-loader";
 import { resolveLaneHaltReason } from "./tool-dispatcher";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
-import { evaluateLaneReminders, type LaneVerb } from "./lane-reminders";
+import {
+  evaluateLaneReminders,
+  type LaneReminderInput,
+  type LaneVerb,
+} from "./lane-reminders";
 import {
   addTaskSchema,
   buildContextLimitStopInstruction,
@@ -231,7 +235,7 @@ async function prepareContext(
     // (`reminderState`) supplies the same iteration/threshold pair the engine
     // compares, so a near-budget halt surfaces iteration-budget alongside
     // halted-stop (doc 04 §6.4).
-    const { reminders, ruleIds, guidance } = evaluateLaneReminders({
+    const laneReminderState: LaneReminderInput = {
       verb,
       halted: haltReason,
       iterationCount: result.reminderState.iterationCount,
@@ -239,10 +243,9 @@ async function prepareContext(
       remainingTaskCount: result.reminderState.remainingTaskCount,
       contextLimitStopped: false,
       allowAgentCollaboration: context.allowAgentCollaboration,
-    });
+    };
+    const { reminders, ruleIds } = evaluateLaneReminders(laneReminderState);
     if (reminders.length > 0) {
-      for (const event of guidance.firings)
-        log.info(event.type, { ...event, authority: guidance.authority });
       log.info("graph-workflow-lane.reminders_emitted", {
         contextId,
         verb,
@@ -256,7 +259,7 @@ async function prepareContext(
           error: haltReason,
           halt: true,
           reason: haltReason,
-          ...(reminders.length > 0 ? { guidance } : {}),
+          laneReminderState,
         },
         { status: 409 },
       ),
@@ -297,24 +300,14 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         ? Math.max(0, state.totalTaskCount - state.completedTaskCount)
         : 0;
 
-      const body: {
-        ok: true;
-        remainingTaskCount: number;
-        stopInstruction?: string;
-        guidance?: ReturnType<typeof evaluateLaneReminders>["guidance"];
-      } = { ok: true, remainingTaskCount };
-      if (contextLimitStop) {
-        body.stopInstruction =
-          buildContextLimitStopInstruction(contextLimitStop);
-      }
-
       // Reminders derive from the freshest post-completion state — the same
       // iteration/threshold pair the circuit-breaker gate compares
-      // (execution-loop.ts). Attach only when a rule fires (doc 04 §6.4).
+      // (execution-loop.ts). Return the state even when no rule fires so the
+      // CLI can evaluate the shared rules against the full completion facts.
       const contextDef = execution.workingDefinition.executionContexts.find(
         (definition) => definition.id === cid,
       );
-      const { reminders, ruleIds, guidance } = evaluateLaneReminders({
+      const laneReminderState: LaneReminderInput = {
         verb: "task-complete",
         halted: null,
         iterationCount: state?.iterationCount ?? 0,
@@ -324,11 +317,9 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         remainingTaskCount,
         contextLimitStopped: contextLimitStop !== null,
         allowAgentCollaboration: prepared.context.allowAgentCollaboration,
-      });
+      };
+      const { reminders, ruleIds } = evaluateLaneReminders(laneReminderState);
       if (reminders.length > 0) {
-        for (const event of guidance.firings)
-          log.info(event.type, { ...event, authority: guidance.authority });
-        body.guidance = guidance;
         log.info("graph-workflow-lane.reminders_emitted", {
           contextId,
           verb: "task-complete",
@@ -342,7 +333,17 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         remainingTaskCount,
         stopped: contextLimitStop !== null,
       });
-      return NextResponse.json(body);
+      return NextResponse.json({
+        ok: true,
+        remainingTaskCount,
+        laneReminderState,
+        ...(contextLimitStop
+          ? {
+              stopInstruction:
+                buildContextLimitStopInstruction(contextLimitStop),
+            }
+          : {}),
+      });
     } catch (error) {
       if (error instanceof GraphExecutionContractViolationError) {
         log.warn("graph-workflow-lane.task_completion.contract_rejected", {

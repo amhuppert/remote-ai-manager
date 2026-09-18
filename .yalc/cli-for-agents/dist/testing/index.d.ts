@@ -15,7 +15,7 @@ export type ContractCase = {
     readonly run: () => Promise<void>;
 };
 export type HostCall = {
-    readonly kind: "read" | "write" | "canonicalPath" | "kind" | "retention-list" | "retention-remove";
+    readonly kind: "read" | "write" | "canonicalPath" | "kind";
     readonly path: string;
 } | {
     readonly kind: "stdin" | "sha256" | "clock";

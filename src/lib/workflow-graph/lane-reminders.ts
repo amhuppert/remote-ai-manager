@@ -1,7 +1,6 @@
-import {
-  decodeEvaluatedGuidance,
-  type EvaluatedGuidance,
-} from "cli-for-agents/guidance";
+import type { LaneReminderInput, LaneVerb } from "./lane-reminder-schemas";
+
+export type { LaneReminderInput, LaneVerb } from "./lane-reminder-schemas";
 
 /**
  * Lane-reminder rule engine (doc 04 §6.3, §6.4).
@@ -17,32 +16,8 @@ import {
  * tested directly at each predicate boundary (engineering-principles: extract
  * pure functions, test without mocks). The route handlers
  * (`lane-route-handlers.ts`) build the `LaneReminderInput` from execution state
- * and render whatever this returns.
+ * and log the rules selected here; the CLI evaluates these shared rules locally.
  */
-
-export type LaneVerb =
-  | "task-complete"
-  | "task-add"
-  | "shared-doc-upsert"
-  | "collab-request";
-
-export interface LaneReminderInput {
-  verb: LaneVerb;
-  /** `contextState.iterationCount` — iterations this context has consumed. */
-  iterationCount: number;
-  /** `contextDef.circuitBreaker.consecutiveFailureThreshold` — the halt ceiling. */
-  circuitBreakerThreshold: number;
-  remainingTaskCount: number;
-  /** Halt reason when the verb hit the 409 halt path; `null` on the success path. */
-  halted: string | null;
-  allowAgentCollaboration: boolean;
-  /**
-   * True when this task-complete response carries the rotation-gate
-   * `stopInstruction`. A context-limit stop demands an immediate handoff, so
-   * work-prompting reminders must not compete with it.
-   */
-  contextLimitStopped: boolean;
-}
 
 export interface LaneReminderRule {
   id: string;
@@ -121,8 +96,6 @@ export interface LaneReminderResult {
   reminders: string[];
   /** Ids of the rules that fired, parallel to `reminders` — for the log event. */
   ruleIds: string[];
-  /** Actual evaluated rules and their authority, transported without client re-evaluation. */
-  guidance: EvaluatedGuidance;
 }
 
 /**
@@ -136,48 +109,17 @@ export function evaluateLaneReminders(
 ): LaneReminderResult {
   const reminders: string[] = [];
   const ruleIds: string[] = [];
-  const commandPath = {
-    "task-complete": "workflow task complete",
-    "task-add": "workflow task add",
-    "shared-doc-upsert": "workflow shared-doc upsert",
-    "collab-request": "workflow collab request",
-  }[input.verb];
-  const authority = "cc-server-lane";
-  const candidates = [];
   for (const rule of LANE_REMINDER_RULES) {
     if (!rule.verbs.includes(input.verb)) continue;
     if (!rule.when(input)) continue;
     const text = rule.text(input);
     reminders.push(text);
     ruleIds.push(rule.id);
-    candidates.push({
-      tier: "reminder",
-      value: { ruleId: rule.id, text },
-      priority: LANE_REMINDER_RULES.length - LANE_REMINDER_RULES.indexOf(rule),
-      provenance: {
-        authority,
-        commandPath,
-        ruleId: rule.id,
-        evidence: rule.evidence,
-      },
-    });
     if (reminders.length === MAX_REMINDERS) break;
   }
   return {
     reminders,
     ruleIds,
-    guidance: decodeEvaluatedGuidance({
-      authority,
-      commandPath,
-      candidates,
-      firings: ruleIds.map((ruleId) => ({
-        type: "guidance.rule_fired",
-        commandPath,
-        ruleId,
-        tier: "reminder",
-      })),
-      issues: [],
-    }),
   };
 }
 

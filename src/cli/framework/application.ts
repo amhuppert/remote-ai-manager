@@ -96,13 +96,15 @@ export function createCommandCenterCli(
     contexts: {
       cc: async ({ env, globals, signal }) => {
         const transport = await resolveCcHost(host, env, signal);
-        const guidance: unknown[] = [];
+        let laneReminderState: unknown;
         return {
           ok: true,
           app: {
             env,
             globals,
-            guidance,
+            get laneReminderState() {
+              return laneReminderState;
+            },
             host: {
               ...transport,
               onJsonResponse(body: unknown) {
@@ -110,9 +112,9 @@ export function createCommandCenterCli(
                 if (
                   typeof body === "object" &&
                   body !== null &&
-                  "guidance" in body
+                  "laneReminderState" in body
                 )
-                  guidance.push(body.guidance);
+                  laneReminderState = body.laneReminderState;
               },
             },
           },

@@ -1,17 +1,18 @@
 import { recordTestEvent } from "./test-observation.js";
 import { nodeHost } from "../runtime/index.js";
 import { checkedError, kernelErrors } from "../results.js";
-import { decodeEvaluatedGuidance, hint } from "../guidance/index.js";
-import { cliConfiguration, cliRegistry, resolve, checkRuleReferences, rebindInvocation } from "./registry.js";
+import { hint } from "../guidance/index.js";
+import { cliConfiguration, cliRegistry, resolve, rebindInvocation } from "./registry.js";
 import { execute, offlineExecution, usageExecution, withExecutionResult } from "./execution.js";
-import { captureArray, evaluatedRules } from "./guidance-rules.js";
+import { checkEvaluatedGuidance } from "./guidance-rules.js";
+import { frozenJson } from "./validation.js";
 import { renderOffline } from "./help.js";
 import { arbitrate, assembleResponse } from "./response.js";
 import { deliver, resolveArtifactPolicy, validateOutputBudget } from "./artifacts.js";
 const diagnostic = (code) => ({ code, message: kernelErrors[code].description });
 /** Collect independent sources while the execution owner still holds the app. */
 async function collect(registry, input, source, load) {
-    const guidance = [];
+    let guidance;
     const issues = [];
     if (load) {
         let provided;
@@ -24,39 +25,29 @@ async function collect(registry, input, source, load) {
             issues.push(diagnostic(input.signal.aborted ? "KERNEL_CANCELLED" : "KERNEL_GUIDANCE"));
         }
         if (returned) {
-            let batches = [];
             try {
-                batches = Array.isArray(provided) ? captureArray(provided) : [provided];
+                const checked = checkEvaluatedGuidance(provided);
+                if (checked.commandPath !== input.command.spec.path)
+                    throw new TypeError("Wrong guidance command.");
+                const candidates = checked.candidates.filter(candidate => {
+                    if (candidate.tier !== "hint")
+                        return true;
+                    try {
+                        rebindInvocation(registry, candidate.value.invocation);
+                        return true;
+                    }
+                    catch {
+                        issues.push(diagnostic("KERNEL_CONTRACT"));
+                        return false;
+                    }
+                });
+                const ids = new Set(candidates.map(candidate => candidate.provenance.ruleId));
+                for (const event of checked.firings)
+                    recordTestEvent(input.signal, event);
+                guidance = frozenJson({ ...checked, candidates, firings: checked.firings.filter(event => ids.has(event.ruleId)) });
             }
             catch {
                 issues.push(diagnostic("KERNEL_CONTRACT"));
-            }
-            for (const batch of batches) {
-                try {
-                    checkRuleReferences(registry, evaluatedRules(batch));
-                    const checked = decodeEvaluatedGuidance(batch);
-                    if (checked.commandPath !== input.command.spec.path)
-                        throw new TypeError("Wrong guidance command.");
-                    const candidates = checked.candidates.filter(candidate => {
-                        if (candidate.tier !== "hint")
-                            return true;
-                        try {
-                            rebindInvocation(registry, candidate.value.invocation);
-                            return true;
-                        }
-                        catch {
-                            issues.push(diagnostic("KERNEL_CONTRACT"));
-                            return false;
-                        }
-                    });
-                    const ids = new Set(candidates.map(candidate => candidate.provenance.ruleId));
-                    for (const event of checked.firings)
-                        recordTestEvent(input.signal, event);
-                    guidance.push(decodeEvaluatedGuidance({ ...checked, candidates, firings: checked.firings.filter(event => ids.has(event.ruleId)) }));
-                }
-                catch {
-                    issues.push(diagnostic("KERNEL_CONTRACT"));
-                }
             }
         }
     }
@@ -67,7 +58,7 @@ async function collect(registry, input, source, load) {
     catch {
         issues.push(diagnostic(input.signal.aborted ? "KERNEL_CANCELLED" : "KERNEL_OUTPUT"));
     }
-    return { guidance, issues, ...(artifacts ? { artifacts } : {}) };
+    return { issues, ...(guidance ? { guidance } : {}), ...(artifacts ? { artifacts } : {}) };
 }
 /** The public production caller: owners retain parsing, lifetime, arbitration and bounds. */
 export async function runProduction(cli, request) {
@@ -133,7 +124,7 @@ export async function runProduction(cli, request) {
     recordTestEvent(request.signal, { type: "guidance.arbitrate" });
     const guidance = await arbitrate({ commandPath: resolution.kind === "leaf" ? resolution.invocation.command.spec.path : "",
         handler: result.instruction ? { instruction: result.instruction } : result.hint ? { hint: result.hint } : {},
-        candidates: facts?.guidance ?? [], conflictSink: async (event) => {
+        ...(facts?.guidance ? { evaluated: facts.guidance } : {}), conflictSink: async (event) => {
             recordTestEvent(request.signal, event);
             await options.guidance?.conflictSink(event);
         } });

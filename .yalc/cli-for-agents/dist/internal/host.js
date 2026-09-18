@@ -1,4 +1,3 @@
-/// <reference path="./node-builtins.d.ts" />
 import { bytes, milliseconds } from "../values.js";
 export function checkLimit(limit) { bytes(limit); }
 export function checkDuration(duration) { milliseconds(duration); }

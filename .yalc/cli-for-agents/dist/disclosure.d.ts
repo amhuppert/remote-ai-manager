@@ -66,10 +66,6 @@ export type ArtifactPolicy = {
     readonly directory: string;
     /** Resolve roots and destination ancestors through symlinks before checking containment. */
     readonly forbiddenRoots: readonly string[];
-    /** Retention defaults to off. Unrelated existing --out files are always refused. */
-    readonly retention?: {
-        readonly maxAgeMs: import("./values.js").Milliseconds;
-    };
 };
 /** Finite bytes are never JSON data or a streaming source. The constructor validates
  * media type/basename/JSON summary and snapshots bytes before retaining the request.

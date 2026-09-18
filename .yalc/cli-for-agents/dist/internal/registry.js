@@ -1,7 +1,7 @@
 import { parseTokens } from "./parser.js";
 import { commandData, checkFamily, checkGroup, flowSteps } from "./declarations.js";
-import { invocationTarget, invocationArgv, markRegistered, makeInvocation, referenceTokens, hasInvocationProvenance } from "./invocations.js";
-import { assertIdentifier, assertInvocation, assertSerializedLimit, assertText, frozenJson, serializedJson } from "./validation.js";
+import { invocationArgv, makeInvocation, referenceTokens } from "./invocations.js";
+import { assertInvocation, assertSerializedLimit, assertText, frozenJson, serializedJson } from "./validation.js";
 import { protocolLimits } from "../results.js";
 import { InputValidationError, scalar } from "./input-model.js";
 /** Synchronous graph/shape validation only, including docs root/reference syntax. */
@@ -9,8 +9,6 @@ export function register(options) {
     checkFamily(options.family);
     assertText(options.name);
     assertText(options.version);
-    if (options.errors !== undefined || options.application !== undefined)
-        throw new TypeError("Obsolete CLI configuration.");
     if (!options.contexts || typeof options.contexts !== "object" || Object.hasOwn(options.contexts, "none"))
         throw new TypeError("Invalid context providers.");
     for (const provider of Object.values(options.contexts))
@@ -68,21 +66,17 @@ export function register(options) {
             if (!tokens.has(step.command))
                 throw new TypeError("Flow references nonmember command.");
     }
-    if (!options.doctor)
+    if (!options.doctor || typeof options.doctor !== "object")
         throw new TypeError("Missing runnable read doctor invocation.");
-    const doctorTarget = invocationTarget(options.doctor);
-    if (!tokens.has(doctorTarget.command) || options.doctor.effects !== "read" || !nodes[options.doctor.path])
+    assertInvocation(options.doctor);
+    if (options.doctor.effects !== "read" || !nodes[options.doctor.path]?.command)
         throw new TypeError("Doctor must be a member read invocation.");
     const parsedDoctor = parseTokens(nodes, invocationArgv(options.doctor));
-    if (parsedDoctor.kind !== "leaf" || parsedDoctor.node !== nodes[options.doctor.path]
-        || parsedDoctor.node.command !== doctorTarget.command
-        || (parsedDoctor.node.kind === "validation") !== doctorTarget.validation) {
+    if (parsedDoctor.kind !== "leaf" || parsedDoctor.node !== nodes[options.doctor.path]) {
         throw new TypeError("Doctor invocation does not resolve to its registered target.");
     }
     assertSerializedLimit({ doctor: options.doctor }, protocolLimits.references);
     const registry = Object.freeze({});
-    for (const command of tokens)
-        markRegistered(command);
     registryStates.set(registry, Object.freeze({ name: options.name, version: options.version, nodes: Object.freeze(nodes), tokens }));
     return registry;
 }
@@ -98,7 +92,6 @@ export function resolve(registry, argv) {
         const invocation = Object.freeze({ command, input: resolved.input,
             path: resolved.node.path, validation: resolved.node.kind === "validation", json: resolved.json,
         });
-        parsedTokens.add(invocation);
         return { kind: "leaf", invocation };
     }
     catch (error) {
@@ -106,11 +99,6 @@ export function resolve(registry, argv) {
             throw error;
         return { kind: "invalid", json, issues: [error instanceof InputValidationError ? error.issue : { code: "invalid_value", message: error.message }] };
     }
-}
-const parsedTokens = new WeakSet();
-export function checkParsedInvocation(invocation) {
-    if (!parsedTokens.has(invocation))
-        throw new TypeError("Unknown parsed invocation token.");
 }
 const registryStates = new WeakMap();
 export function registryState(registry) {
@@ -158,23 +146,6 @@ export function cliRegistry(cli) {
         throw new TypeError("Unknown CLI token.");
     return registry;
 }
-/** Lazy guidance calls this after loading rules; registration never imports them. */
-export function checkRuleReferences(registry, rules) {
-    registryState(registry);
-    if (!Array.isArray(rules))
-        throw new TypeError("Expected rule reference inventory.");
-    const ids = new Set();
-    for (const rule of rules) {
-        assertIdentifier(rule.id);
-        if (ids.has(rule.id))
-            throw new TypeError("Duplicate rule id.");
-        ids.add(rule.id);
-        if (!Array.isArray(rule.appliesTo) || !rule.appliesTo.length)
-            throw new TypeError("Missing rule references.");
-        for (const command of rule.appliesTo)
-            checkMembership(registry, command);
-    }
-}
 /** Composition retrieves retained configuration only after checking the CLI token. */
 export function cliConfiguration(cli) {
     const options = cliConfigurations.get(cli);
@@ -184,23 +155,8 @@ export function cliConfiguration(cli) {
     // checking identity. Runtime uses the retained family's validated input model.
     return options;
 }
-/** Current-CLI validation is required even when a target is registered elsewhere. */
-export function validateInvocation(registry, reference) {
-    const target = invocationTarget(reference);
-    checkMembership(registry, target.command);
-    const node = registryState(registry).nodes[reference.path];
-    if (!node || node.command !== target.command || (node.kind === "validation") !== target.validation)
-        throw new TypeError("Invocation does not match its registry target.");
-}
-/** Detached JSON references regain provenance only through complete input validation. */
+/** References are plain JSON; they become runnable here through complete input validation. */
 export function rebindInvocation(registry, value) {
-    // Live references must retain their original family membership, even if another
-    // registry happens to install an identically spelled command.
-    if (typeof value === "object" && value !== null && hasInvocationProvenance(value)) {
-        const reference = value;
-        validateInvocation(registry, reference);
-        return reference;
-    }
     const reference = frozenJson(value);
     assertInvocation(reference);
     const state = registryState(registry);

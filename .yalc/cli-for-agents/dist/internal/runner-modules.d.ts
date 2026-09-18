@@ -1,9 +1,5 @@
 import type { StandardSchema } from "../input.js";
-/** Lazy executable objects are captured by descriptors without invoking accessors. */
-export declare function captureExecutable(value: unknown, separatelyCaptured?: readonly string[]): {
-    readonly fields: Record<string, unknown>;
-    readonly valid: boolean;
-};
+/** Application modules are the author's own objects; copy their own fields as they are. */
 export declare function executableRecord(value: unknown): Record<string, unknown>;
 export type LazyPayload = {
     readonly kind: "read" | "write";

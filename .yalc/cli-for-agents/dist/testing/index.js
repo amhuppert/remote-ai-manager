@@ -4,7 +4,7 @@ export { createContractFixtures } from "./fixtures.js";
 export { expectDisclosureParity } from "./contracts.js";
 import { captureHost } from "../internal/test-host-capture.js";
 import { makeTestHost } from "../internal/test-host.js";
-import { cliConfiguration, cliRegistry, commandCli, checkMembership, validateInvocation, resolve } from "../internal/registry.js";
+import { cliConfiguration, cliRegistry, commandCli, checkMembership, rebindInvocation, resolve } from "../internal/registry.js";
 import { invocationArgv } from "../internal/invocations.js";
 import { observeRun } from "../internal/test-observation.js";
 import { createCli, runCli, decodeEnvelope } from "../runtime/index.js";
@@ -15,11 +15,8 @@ export async function runForTest(cli, input, options) {
     let tokens;
     if (Array.isArray(input))
         tokens = input;
-    else {
-        const reference = input;
-        validateInvocation(registry, reference);
-        tokens = invocationArgv(reference);
-    }
+    else
+        tokens = invocationArgv(rebindInvocation(registry, input));
     if (options.format !== "text" && options.format !== "json")
         throw new TypeError("Invalid test format.");
     const initial = resolve(registry, tokens);

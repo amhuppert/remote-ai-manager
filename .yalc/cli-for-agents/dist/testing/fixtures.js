@@ -57,7 +57,7 @@ export function createContractFixtures(consumer) {
             const { family, doctor, common } = foundation();
             const command = family.defineCommand(base, { examples: [{ why: "Conflict" }], handler: async () => ({ default: { run: async () => ({ ok: true, data: {}, instruction: instruction("handler", "Inspect local state.") }) } }) });
             const cli = createCli({ ...common, commands: [doctor, command], guidance: {
-                    load: async () => ({ default: async () => evaluateGuidance({ command, authority: "remote", state: {}, rules: [defineSteering({ id: "remote-step", appliesTo: [command], when: () => true, tier: "instruction", render: () => instruction("remote", "Inspect remote state.") })], eventSink: () => { } }) }),
+                    load: async () => ({ default: async () => evaluateGuidance({ command, state: {}, rules: [defineSteering({ id: "remote-step", appliesTo: [command], when: () => true, tier: "instruction", render: () => instruction("remote", "Inspect remote state.") })], eventSink: () => { } }) }),
                     conflictSink: () => { },
                 } });
             return pair(cli, ["inspect"], host());

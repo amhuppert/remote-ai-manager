@@ -1,1 +1,1 @@
-{"version":3,"file":"reference-host.d.ts","sourceRoot":"","sources":["../../src/internal/reference-host.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,qBAAqB,CAAC;AAIzD,mFAAmF;AACnF,wBAAsB,mBAAmB,IAAI,OAAO,CAAC,aAAa,CAAC,CA4BlE"}
+{"version":3,"file":"reference-host.d.ts","sourceRoot":"","sources":["../../src/internal/reference-host.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,qBAAqB,CAAC;AAEzD,mFAAmF;AACnF,wBAAsB,mBAAmB,IAAI,OAAO,CAAC,aAAa,CAAC,CAsBlE"}

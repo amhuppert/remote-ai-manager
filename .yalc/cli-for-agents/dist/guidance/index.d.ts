@@ -17,7 +17,7 @@ export type Instruction = Brand<"Instruction"> & {
     readonly text: string;
 };
 export type RuleId = string & Brand<"RuleId">;
-/** Minted only by rule evaluation or validated authoritative transport. */
+/** Minted only by rule evaluation. */
 export type Reminder = Brand<"Reminder"> & {
     readonly ruleId: RuleId;
     readonly text: string;
@@ -106,7 +106,7 @@ export type GuidanceEvent = {
 };
 /** The application owns durable storage; delivery failure must not hide a conflict. */
 export type GuidanceEventSink = (event: GuidanceEvent) => void | Promise<void>;
-/** Registering even one rule requires observable firings at its authority. */
+/** Registering even one rule requires observable firings. */
 export type RuleRegistration<State> = {
     readonly rules?: readonly [];
     readonly eventSink?: FiringSink;
@@ -123,7 +123,6 @@ export type ConflictEvent = Extract<GuidanceEvent, {
 export type FiringSink = (event: RuleFiring) => void | Promise<void>;
 export type ConflictSink = (event: ConflictEvent) => void | Promise<void>;
 export type GuidanceProvenance = {
-    readonly authority: string;
     readonly commandPath: string;
     readonly ruleId: RuleId;
     readonly evidence?: string;
@@ -141,9 +140,8 @@ export type GuidanceCandidate = {
     readonly value: Reminder;
     readonly priority: number;
 });
-/** Candidates retain authority and firing events. They are never final selected guidance. */
+/** Candidates retain rule provenance and firing events. They are never final selected guidance. */
 export type EvaluatedGuidance = Brand<"EvaluatedGuidance"> & {
-    readonly authority: string;
     readonly commandPath: string;
     readonly candidates: readonly GuidanceCandidate[];
     readonly firings: readonly RuleFiring[];
@@ -152,13 +150,10 @@ export type EvaluatedGuidance = Brand<"EvaluatedGuidance"> & {
 };
 export type GuidanceEvaluation<State> = RuleRegistration<State> & {
     readonly command: Command;
-    readonly authority: string;
     readonly state: State;
     readonly handler?: never;
 };
-/** Evaluate at the state authority; response assembly alone selects final tiers/conflicts. */
+/** Evaluate rules in the CLI process; response assembly alone selects final tiers/conflicts. */
 export declare function evaluateGuidance<State>(input: GuidanceEvaluation<State>): Promise<EvaluatedGuidance>;
-/** Validate remote candidate provenance and protocol bounds; transport owns authenticity. */
-export declare function decodeEvaluatedGuidance(value: unknown): EvaluatedGuidance;
 export {};
 //# sourceMappingURL=index.d.ts.map

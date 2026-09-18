@@ -185,44 +185,6 @@ export async function createNodeHost() {
                     throw error;
                 }
             },
-            retention: {
-                async list(directory) {
-                    const names = await fs.readdir(directory);
-                    const regular = [];
-                    for (const name of names) {
-                        try {
-                            if ((await fs.lstat(path.join(directory, name))).isFile())
-                                regular.push(name);
-                        }
-                        catch (error) {
-                            if (!hasCode(error, "ENOENT"))
-                                throw error;
-                        }
-                    }
-                    return regular;
-                },
-                async remove(input, expected) {
-                    const snapshot = new Uint8Array(expected);
-                    try {
-                        if (!(await fs.lstat(input)).isFile() || await canonicalPath(input) !== input)
-                            return false;
-                        const actual = await read(input, snapshot.length, new AbortController().signal);
-                        if (!sameBytes(actual, snapshot))
-                            return false;
-                        // As with atomic publication, portable Node cannot lock directory
-                        // ancestors against concurrent external replacement.
-                        if (!(await fs.lstat(input)).isFile())
-                            return false;
-                        await fs.unlink(input);
-                        return true;
-                    }
-                    catch (error) {
-                        if (hasCode(error, "ENOENT") || error instanceof RangeError)
-                            return false;
-                        throw error;
-                    }
-                },
-            },
             async writeAtomic(input, data, collision) {
                 if (collision !== "reuse-identical-or-refuse")
                     throw new TypeError("Unsupported collision policy");
