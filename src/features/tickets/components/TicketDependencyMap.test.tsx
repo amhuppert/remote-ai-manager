@@ -63,7 +63,7 @@ function page(
 describe("TicketDependencyMap", () => {
   it("separates prerequisites from dependents and offers centered graph and ticket links", async () => {
     page(12, "depends_on", [
-      relationship(4, "Prepare the API", "depends_on", "done"),
+      relationship(4, "Prepare the API", "depends_on", "in_progress"),
     ]);
     page(12, "blocks", [
       relationship(18, "Launch to customers", "blocks", "blocked"),
@@ -72,7 +72,7 @@ describe("TicketDependencyMap", () => {
     const upstream = screen.getByRole("region", { name: "Depends on" });
     const downstream = screen.getByRole("region", { name: "Blocks" });
     expect(await within(upstream).findByText("Prepare the API")).toBeDefined();
-    expect(within(upstream).getByText("Done")).toBeDefined();
+    expect(within(upstream).getByText("In Progress")).toBeDefined();
     expect(
       await within(downstream).findByText("Launch to customers"),
     ).toBeDefined();
@@ -87,6 +87,120 @@ describe("TicketDependencyMap", () => {
         .getByRole("link", { name: "Open app#4" })
         .getAttribute("href"),
     ).toBe("/tickets/app/4");
+  });
+
+  it("hides done and closed tickets in both directions and toggles all tickets", async () => {
+    page(12, "depends_on", [
+      relationship(4, "Active prerequisite", "depends_on", "in_progress"),
+      relationship(5, "Done prerequisite", "depends_on", "done"),
+      relationship(6, "Closed prerequisite", "depends_on", "closed"),
+    ]);
+    page(12, "blocks", [
+      relationship(18, "Blocked dependent", "blocks", "blocked"),
+      relationship(19, "Done dependent", "blocks", "done"),
+      relationship(20, "Closed dependent", "blocks", "closed"),
+    ]);
+    renderWithQuery(
+      <TicketDependencyMap ticket={{ ...focus, status: "done" }} />,
+    );
+    await screen.findByText("Active prerequisite");
+    await screen.findByText("Blocked dependent");
+    expect(screen.queryByText("Done prerequisite")).toBeNull();
+    expect(screen.queryByText("Closed prerequisite")).toBeNull();
+    expect(screen.queryByText("Done dependent")).toBeNull();
+    expect(screen.queryByText("Closed dependent")).toBeNull();
+    expect(screen.getByText(focus.title)).toBeDefined();
+    const toggle = screen.getByRole("checkbox", { name: "Show all tickets" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    const user = userEvent.setup();
+    await user.click(toggle);
+    for (const title of [
+      "Done prerequisite",
+      "Closed prerequisite",
+      "Done dependent",
+      "Closed dependent",
+    ])
+      expect(screen.getByText(title)).toBeDefined();
+    await user.click(toggle);
+    expect(screen.queryByText("Done prerequisite")).toBeNull();
+    expect(screen.queryByText("Closed dependent")).toBeNull();
+  });
+
+  it("applies the filter to expanded branches in both directions", async () => {
+    page(12, "depends_on", [
+      relationship(4, "Active prerequisite", "depends_on"),
+    ]);
+    page(12, "blocks", [relationship(18, "Active dependent", "blocks")]);
+    page(4, "depends_on", [
+      relationship(2, "Nested active", "depends_on"),
+      relationship(3, "Nested done", "depends_on", "done"),
+    ]);
+    page(18, "blocks", [relationship(21, "Nested closed", "blocks", "closed")]);
+    renderWithQuery(<TicketDependencyMap ticket={focus} />);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Expand prerequisites for app#4",
+      }),
+    );
+    await screen.findByText("Nested active");
+    expect(screen.queryByText("Nested done")).toBeNull();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Expand dependents for app#18",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "Done or closed dependents are hidden. Show all tickets to view them.",
+      ),
+    ).toBeDefined();
+    expect(screen.queryByText("Nested closed")).toBeNull();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Show all tickets" }),
+    );
+    expect(await screen.findByText("Nested done")).toBeDefined();
+    expect(await screen.findByText("Nested closed")).toBeDefined();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Show all tickets" }),
+    );
+    expect(screen.queryByText("Nested done")).toBeNull();
+    expect(screen.queryByText("Nested closed")).toBeNull();
+    expect(screen.getByText("Nested active")).toBeDefined();
+  });
+
+  it("keeps pagination available when the loaded page contains only hidden tickets", async () => {
+    page(12, "blocks", []);
+    api.reply(
+      "GET",
+      /\/tickets\/12\/relationships\?.*role=depends_on/,
+      (request) => ({
+        json: request.searchParams.has("cursor")
+          ? {
+              items: [
+                relationship(5, "Later active prerequisite", "depends_on"),
+              ],
+              total: 2,
+              nextCursor: null,
+            }
+          : {
+              items: [
+                relationship(4, "Completed prerequisite", "depends_on", "done"),
+              ],
+              total: 2,
+              nextCursor: "next-page",
+            },
+      }),
+    );
+    renderWithQuery(<TicketDependencyMap ticket={focus} />);
+    const more = await screen.findByRole("button", {
+      name: "Load more prerequisites (1 of 2 loaded)",
+    });
+    expect(screen.queryByText("Completed prerequisite")).toBeNull();
+    expect(screen.queryByText("No prerequisites.")).toBeNull();
+    await userEvent.setup().click(more);
+    expect(await screen.findByText("Later active prerequisite")).toBeDefined();
+    expect(screen.queryByText("Completed prerequisite")).toBeNull();
   });
 
   it("loads transitive prerequisites only when expanded and can collapse them", async () => {
@@ -131,7 +245,7 @@ describe("TicketDependencyMap", () => {
     renderWithQuery(<TicketDependencyMap ticket={focus} />);
     await userEvent.setup().click(
       await screen.findByRole("button", {
-        name: "Load more prerequisites (1 of 2 shown)",
+        name: "Load more prerequisites (1 of 2 loaded)",
       }),
     );
     expect(await screen.findByText("Second prerequisite")).toBeDefined();

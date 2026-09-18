@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
+import { CheckboxField } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { Spinner } from "@/components/ui/Spinner";
@@ -22,8 +23,22 @@ export default function TicketDependencyMap({
 }: {
   ticket: DependencyTicket;
 }): React.JSX.Element {
+  const [showAllTickets, setShowAllTickets] = useState(false);
   return (
     <div className="flex flex-col gap-xl">
+      <div className="flex flex-wrap items-center justify-between gap-lg">
+        <p className="m-0 font-mono text-[0.74rem] text-text-secondary">
+          {showAllTickets
+            ? "Including done and closed tickets."
+            : "Done and closed tickets are hidden."}
+        </p>
+        <CheckboxField
+          label="Show all tickets"
+          checked={showAllTickets}
+          onCheckedChange={(checked) => setShowAllTickets(checked === true)}
+          touch
+        />
+      </div>
       <div className="flex flex-wrap items-center gap-sm font-mono text-[0.74rem] text-text-secondary">
         <span>Prerequisites</span>
         <Arrow />
@@ -45,6 +60,7 @@ export default function TicketDependencyMap({
             direction="depends_on"
             path={[ticket.id]}
             depth={0}
+            showAllTickets={showAllTickets}
           />
         </section>
         <div
@@ -80,13 +96,13 @@ export default function TicketDependencyMap({
             direction="blocks"
             path={[ticket.id]}
             depth={0}
+            showAllTickets={showAllTickets}
           />
         </section>
       </div>
       <p className="m-0 border-x-0 border-t border-b-0 border-solid border-border-dim pt-lg font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
-        Arrows run from prerequisite to dependent. Dependencies remain visible
-        when tickets are done or closed. Parent/child and related links are
-        shown on the ticket itself.
+        Arrows run from prerequisite to dependent. Parent/child and related
+        links are shown on the ticket itself.
       </p>
     </div>
   );
@@ -116,11 +132,13 @@ function DependencyBranch({
   direction,
   path,
   depth,
+  showAllTickets,
 }: {
   ticket: DependencyTicket;
   direction: Direction;
   path: readonly string[];
   depth: number;
+  showAllTickets: boolean;
 }): React.JSX.Element {
   const query = useTicketRelationshipsQuery(
     ticket.projectName,
@@ -130,6 +148,12 @@ function DependencyBranch({
   const noun = direction === "depends_on" ? "prerequisites" : "dependents";
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
   const total = query.data?.pages[0]?.total ?? 0;
+  const visibleItems = showAllTickets
+    ? items
+    : items.filter(
+        ({ otherTicket }) =>
+          otherTicket.status !== "done" && otherTicket.status !== "closed",
+      );
   return (
     <div className="flex min-w-0 flex-col gap-md">
       {query.isPending && (
@@ -141,15 +165,16 @@ function DependencyBranch({
           Loading {noun}…
         </div>
       )}
-      {items.length > 0 && (
+      {visibleItems.length > 0 && (
         <ul className="m-0 flex list-none flex-col gap-md p-0">
-          {items.map((relationship) => (
+          {visibleItems.map((relationship) => (
             <li key={relationship.id}>
               <ExpandableNode
                 ticket={relationship.otherTicket}
                 direction={direction}
                 path={path}
                 depth={depth}
+                showAllTickets={showAllTickets}
               />
             </li>
           ))}
@@ -175,11 +200,13 @@ function DependencyBranch({
           </Button>
         </div>
       )}
-      {!query.isPending && !query.isError && items.length === 0 && (
+      {!query.isPending && !query.isError && visibleItems.length === 0 && (
         <p className="m-0 rounded-md border border-dashed border-border-subtle p-lg font-mono text-[0.74rem] text-text-tertiary">
-          {direction === "depends_on"
-            ? "No prerequisites."
-            : "No tickets depend on this ticket."}
+          {items.length > 0
+            ? `Done or closed ${noun} are hidden. Show all tickets to view them.`
+            : direction === "depends_on"
+              ? "No prerequisites."
+              : "No tickets depend on this ticket."}
         </p>
       )}
       {query.hasNextPage && !query.isError && (
@@ -189,7 +216,7 @@ function DependencyBranch({
           loading={query.isFetchingNextPage}
           onClick={() => void query.fetchNextPage()}
         >
-          Load more {noun} ({items.length} of {total} shown)
+          Load more {noun} ({items.length} of {total} loaded)
         </Button>
       )}
     </div>
@@ -201,11 +228,13 @@ function ExpandableNode({
   direction,
   path,
   depth,
+  showAllTickets,
 }: {
   ticket: DependencyTicket;
   direction: Direction;
   path: readonly string[];
   depth: number;
+  showAllTickets: boolean;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const branchId = useId();
@@ -271,6 +300,7 @@ function ExpandableNode({
             direction={direction}
             path={[...path, ticket.id]}
             depth={depth + 1}
+            showAllTickets={showAllTickets}
           />
         </div>
       )}

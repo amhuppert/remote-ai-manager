@@ -92,7 +92,7 @@ function makeClient(empty: boolean): QueryClient {
       53,
       "Publish ticket workflow documentation",
       "blocks",
-      "blocked",
+      "closed",
     ),
   ]);
   seed(31, "depends_on", [
@@ -183,6 +183,9 @@ export const ExpandedChains: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(
+      canvas.getByRole("checkbox", { name: "Show all tickets" }),
+    );
+    await userEvent.click(
       await canvas.findByRole("button", {
         name: "Expand prerequisites for command-center#31",
       }),
@@ -263,6 +266,9 @@ export const RetryDirection: Story = {
   ...FailedDirection,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("checkbox", { name: "Show all tickets" }),
+    );
     await userEvent.click(
       await canvas.findByRole("button", { name: "Retry prerequisites" }),
     );
