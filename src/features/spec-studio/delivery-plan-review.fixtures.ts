@@ -11,6 +11,7 @@ type ReviewOverrides = {
   criteria?: DeliveryPlanReviewView["criteria"];
   comments?: DeliveryPlanReviewView["comments"];
   nextAct?: DeliveryPlanReviewView["nextAct"];
+  health?: DeliveryPlanReviewView["health"];
 };
 
 export function reviewView(
@@ -70,6 +71,69 @@ export function reviewView(
     ...overrides,
     attempt: { ...base.attempt, ...overrides.attempt },
   };
+}
+
+export function pendingReaffirmationReview(): DeliveryPlanReviewView {
+  const criteria: DeliveryPlanReviewView["criteria"] = [
+    {
+      criterionElementId: "criterion-1",
+      handle: "R1.1",
+      text: "A successful checkpoint preserves the conversation identity and transcript.",
+      disposition: "pending_reaffirmation",
+      deliveredByExecutionId: "execution-previous",
+      accountabilitySourceIds: [],
+    },
+    {
+      criterionElementId: "criterion-2",
+      handle: "R1.2",
+      text: "Checkpoint capture remains an explicitly requested action.",
+      disposition: "pending_reaffirmation",
+      deliveredByExecutionId: "execution-previous",
+      accountabilitySourceIds: [],
+    },
+    {
+      criterionElementId: "criterion-3",
+      handle: "R1.3",
+      text: "Show the current checkpoint status.",
+      disposition: "in_scope",
+      deliveredByExecutionId: null,
+      accountabilitySourceIds: ["implementation"],
+    },
+  ];
+  return reviewView({
+    attempt: {
+      status: "draft",
+      proposedSnapshotId: null,
+      candidateHash: null,
+      candidateId: null,
+    },
+    criteria,
+    health: {
+      total: 2,
+      blocking: 2,
+      counts: [{ severity: "blocks_propose", count: 2 }],
+      findings: criteria
+        .filter(({ disposition }) => disposition === "pending_reaffirmation")
+        .map(({ handle }) => ({
+          ruleId: "binding/pending-reaffirmation",
+          severity: "blocks_propose",
+          elementHandle: handle,
+          message: `${handle} needs human reaffirmation or in-scope delivery before proposal.`,
+        })),
+    },
+    document: {
+      schemaVersion: 4,
+      binding: {
+        dispositions: criteria.map(
+          ({ criterionElementId, disposition, deliveredByExecutionId }) => ({
+            criterionElementId,
+            disposition: disposition ?? "in_scope",
+            deliveredByExecutionId,
+          }),
+        ),
+      },
+    },
+  });
 }
 
 /**

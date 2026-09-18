@@ -31,6 +31,10 @@ export default function SpecLifecycleLanes({
   const extension =
     current && approved && current.id !== approved.id ? current : null;
   const execution = detail.executions.at(-1) ?? null;
+  const pendingReaffirmation =
+    deliveryPlan?.criteria.filter(
+      ({ disposition }) => disposition === "pending_reaffirmation",
+    ).length ?? 0;
 
   return (
     <section
@@ -101,6 +105,11 @@ export default function SpecLifecycleLanes({
                 ? "In review"
                 : deliveryPlan.attempt.status}
             </StatusChip>
+            {pendingReaffirmation > 0 && (
+              <StatusChip tone="amber">
+                Reaffirmation needed · {pendingReaffirmation}
+              </StatusChip>
+            )}
           </>
         ) : (
           <span className="font-mono text-[0.7rem] text-text-tertiary">

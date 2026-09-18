@@ -21,7 +21,10 @@ import {
   SPEC_CONTROLS_FIXTURE_NOW,
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
-import { reviewView } from "./delivery-plan-review.fixtures";
+import {
+  pendingReaffirmationReview,
+  reviewView,
+} from "./delivery-plan-review.fixtures";
 import { deliveryDashboardFixture } from "./SpecDeliveryScope.fixtures";
 import { SpecDetailContent } from "./SpecDetailPage";
 
@@ -145,14 +148,31 @@ function StoryQueryBoundary({
   detail,
   projectName,
   children,
+  needsReaffirmation = false,
 }: {
   detail: SpecDetailView;
   projectName: string;
   children: ReactNode;
+  needsReaffirmation?: boolean;
 }): React.JSX.Element {
-  const [queryClient] = useState(() =>
-    createStoryQueryClient(detail, projectName),
-  );
+  const [queryClient] = useState(() => {
+    const client = createStoryQueryClient(detail, projectName);
+    if (needsReaffirmation) {
+      const review = pendingReaffirmationReview();
+      review.attempt.pinnedRevisionId =
+        detail.currentApprovedRevision?.revision.id ??
+        review.attempt.pinnedRevisionId;
+      client.setQueryData(
+        specQueries.planReview(projectName, detail.spec.slug).queryKey,
+        review,
+      );
+      client.setQueryData(
+        specQueries.deliveryReview(projectName, detail.spec.slug).queryKey,
+        null,
+      );
+    }
+    return client;
+  });
   return (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
@@ -694,6 +714,19 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Approved: Story = {};
+
+export const NeedsReaffirmation: Story = {
+  args: { view: "delivery" },
+  render: (args) => (
+    <StoryQueryBoundary
+      detail={args.detail}
+      projectName={args.projectName}
+      needsReaffirmation
+    >
+      <AddressBarHarness {...args} />
+    </StoryQueryBoundary>
+  ),
+};
 
 export const ExpandedStructureRail: Story = {
   args: {

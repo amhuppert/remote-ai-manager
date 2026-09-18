@@ -132,15 +132,15 @@ export default function SpecDetailViews({
             title="Delivery"
             description="Review acceptance, choose how to finish the work, and approve delivery."
           />
-          <SpecDeliveryReviewPanel
-            projectName={projectName}
-            slug={detail.spec.slug}
-          />
           <SpecDeliveryDeltaPanel
             plan={
               <SpecDeliveryBridge detail={detail} projectName={projectName} />
             }
             detail={detail}
+            projectName={projectName}
+            slug={detail.spec.slug}
+          />
+          <SpecDeliveryReviewPanel
             projectName={projectName}
             slug={detail.spec.slug}
           />

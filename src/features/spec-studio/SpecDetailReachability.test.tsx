@@ -1,9 +1,31 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveRequestedDetailView } from "./SpecDetailPage";
+import {
+  detailStatePresentation,
+  resolveRequestedDetailView,
+} from "./SpecDetailPage";
+import { pendingReaffirmationReview } from "./delivery-plan-review.fixtures";
 import { initialDetailViewForDeepLink } from "./SpecDetailViews";
 
 describe("Spec Studio surface reachability", () => {
+  it.each(["approved", "delivered"] as const)(
+    "routes %s specs with pending reaffirmation to the required human action",
+    (phase) => {
+      expect(
+        detailStatePresentation(
+          phase,
+          [],
+          "design",
+          pendingReaffirmationReview(),
+        ),
+      ).toMatchObject({
+        tone: "amber",
+        banner: "Acceptance criteria need reaffirmation",
+        action: "Review criteria",
+        view: "delivery",
+      });
+    },
+  );
   it.each([
     ["R1", "requirements"],
     ["R1.1", "requirements"],

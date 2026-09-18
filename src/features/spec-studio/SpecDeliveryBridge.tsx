@@ -18,6 +18,7 @@ import {
   deliveryPlanMutationViewSchema,
   type DeliveryPlanMutationView,
 } from "@/lib/specs/delivery-plan-views";
+import SpecPlanReaffirmation from "./SpecPlanReaffirmation";
 
 const logger = createClientLogger("spec-studio-delivery-plan");
 
@@ -137,6 +138,9 @@ export default function SpecDeliveryBridge({
   }
 
   const totalScope = review.document.binding.dispositions.length;
+  const needsReaffirmation = review.criteria.some(
+    ({ disposition }) => disposition === "pending_reaffirmation",
+  );
   const launchedExecution =
     review.attempt.launchedExecutionId === null
       ? null
@@ -181,9 +185,11 @@ export default function SpecDeliveryBridge({
           <p className="m-0 font-mono text-[0.78rem] leading-relaxed text-text-secondary">
             {launchedExecution?.state === "running"
               ? "Execution is running with its pinned scope."
-              : review.attempt.status === "launched"
-                ? "Inspect execution outcomes and remaining scope below."
-                : "Configure and review this plan in Workflow Builder."}
+              : needsReaffirmation
+                ? "Reaffirm pending acceptance criteria below before plan review."
+                : review.attempt.status === "launched"
+                  ? "Inspect execution outcomes and remaining scope below."
+                  : "Configure and review this plan in Workflow Builder."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-sm">
@@ -222,6 +228,13 @@ export default function SpecDeliveryBridge({
           }
         />
       </dl>
+      <SpecPlanReaffirmation
+        key={review.attempt.id}
+        review={review}
+        projectName={projectName}
+        slug={detail.spec.slug}
+        readOnly={detail.spec.abandonedAt !== null}
+      />
       <Collapsible asChild>
         <div className="mt-lg border-x-0 border-t border-b-0 border-solid border-border-dim pt-md font-mono text-[0.7rem] text-text-secondary">
           <CollapsibleTrigger asChild>

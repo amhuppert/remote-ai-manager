@@ -904,6 +904,22 @@ export function detailStatePresentation(
    */
   frozenRevisionImported?: boolean,
 ): DetailStatePresentation {
+  if (
+    (phase === "approved" || phase === "delivered") &&
+    deliveryPlan?.attempt.status === "draft" &&
+    deliveryPlan.criteria.some(
+      ({ disposition }) => disposition === "pending_reaffirmation",
+    )
+  ) {
+    return {
+      tone: "amber",
+      banner: "Acceptance criteria need reaffirmation",
+      description:
+        "Requirements or design changed. Confirm which earlier deliveries still satisfy the criteria before proposing this plan.",
+      action: "Review criteria",
+      view: "delivery",
+    };
+  }
   // An imported stage is frozen on the source's word with no approval row
   // behind it, so every banner names the admission instead of reading like a
   // human froze it.

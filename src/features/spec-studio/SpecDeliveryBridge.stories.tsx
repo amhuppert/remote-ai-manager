@@ -6,7 +6,10 @@ import { specQueries, type SpecDetailView } from "@/lib/specs/queries";
 import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
-import { reviewView } from "./delivery-plan-review.fixtures";
+import {
+  pendingReaffirmationReview,
+  reviewView,
+} from "./delivery-plan-review.fixtures";
 import SpecDeliveryBridge from "./SpecDeliveryBridge";
 
 function BridgeState({
@@ -53,6 +56,14 @@ export const Draft: Story = {
     <BridgeState
       detail={specControlsDetailFixture()}
       review={reviewView({ attempt: { status: "draft" } })}
+    />
+  ),
+};
+export const NeedsReaffirmation: Story = {
+  render: () => (
+    <BridgeState
+      detail={specControlsDetailFixture()}
+      review={pendingReaffirmationReview()}
     />
   ),
 };

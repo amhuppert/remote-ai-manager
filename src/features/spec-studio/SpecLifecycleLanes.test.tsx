@@ -3,10 +3,26 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
-import { reviewView } from "./delivery-plan-review.fixtures";
+import {
+  pendingReaffirmationReview,
+  reviewView,
+} from "./delivery-plan-review.fixtures";
 import SpecLifecycleLanes from "./SpecLifecycleLanes";
 
 describe("SpecLifecycleLanes", () => {
+  it("distinguishes pending reaffirmation from the approved spec and earlier delivery", () => {
+    render(
+      <SpecLifecycleLanes
+        detail={specControlsDetailFixture()}
+        deliveryPlan={pendingReaffirmationReview()}
+      />,
+    );
+    expect(
+      within(
+        screen.getByRole("group", { name: "Delivery lifecycle" }),
+      ).getByText("Reaffirmation needed · 2"),
+    ).toBeVisible();
+  });
   it("shows an older execution alongside a newer requirements extension", () => {
     const detail = specControlsDetailFixture("running");
     const approved = detail.currentApprovedRevision;
