@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * First-turn checkpoint delivery through the actual provided manager and
  * machine over real SQLite rows: the next ordinary turn after readiness runs
@@ -17,6 +18,8 @@ import type { MemoryIndexContextRequest } from "@/lib/memory/index-live-context"
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 import {
+  capturedHandoffResult,
+  deferred,
   createCheckpointHarness,
   type CheckpointHarness,
 } from "./testing/checkpoint-harness";
@@ -1048,3 +1051,103 @@ describe("pre-send failures and settlement", () => {
     expect(h.state.dispatches).toHaveLength(dispatches + 1);
   });
 });
+
+describe.each(["session", "project"] as const)(
+  "capture then queued checkpoint delivery (%s)",
+  (scope) => {
+    it.each([
+      { backend: "claude" as const, mode: "tool-disabled" as const },
+      { backend: "codex" as const, mode: "instruction-only" as const },
+    ])(
+      "$backend captures once and delivers exact seed with one ordinary queued turn",
+      async ({ backend, mode }) => {
+        const gate = deferred();
+        const entered = deferred();
+        const requests: MemoryIndexContextRequest[] = [];
+        const capture = vi.fn(async () => {
+          entered.resolve();
+          await gate.promise;
+          return capturedHandoffResult(
+            h.hosted().actor?.getSnapshot().context.backendRef ?? null,
+          );
+        });
+        harness = await createCheckpointHarness({
+          scope,
+          conversation: { agentBackend: backend },
+          seededRef: { backend, ref: "original-source" },
+          captureAvailability: () => ({ available: true, mode }),
+          captureHandoff: capture,
+          actorDeps: {
+            getMemoryIndexBlock: async (request) => {
+              requests.push(request);
+              return null;
+            },
+          },
+        });
+        const h = harness;
+        await h.runOrdinaryTurn("ordinary source work");
+        const source = h.latestRuntime().ref;
+        const requestId = randomUUID();
+        const started = h.admittedOr(
+          await h.fixture.manager.startConversationCheckpoint({
+            address: h.fixture.binding.address,
+            requestId,
+            handoff: { mode },
+          }),
+        );
+        try {
+          await entered.promise;
+          const rejoined = h.admittedOr(
+            await h.fixture.manager.startConversationCheckpoint({
+              address: h.fixture.binding.address,
+              requestId,
+              handoff: {
+                mode:
+                  mode === "tool-disabled"
+                    ? "instruction-only"
+                    : "tool-disabled",
+              },
+            }),
+          );
+          expect(rejoined.kind).toBe("reused");
+          expect(rejoined.operation.handoff?.requestedMode).toBe(mode);
+          const queued = await h.enqueue("QUEUED_ACTUAL_NEXT_TASK");
+          await h.nudge();
+          expect(h.state.dispatches).toEqual(["ordinary source work"]);
+          expect(requests).toHaveLength(1);
+          expect((await h.readRow()).promptCount).toBe(3);
+          gate.resolve();
+          const ready = await started.completion;
+          expect(ready.handoff?.stage).toBe("included");
+          const payload = await payloadOf(h, ready.id);
+          expect(payload.seedText).not.toContain("QUEUED_ACTUAL_NEXT_TASK");
+          await vi.waitFor(async () =>
+            expect((await h.operation(ready.id))?.phase).toBe("applied"),
+          );
+          await vi.waitFor(async () =>
+            expect((await h.readRow()).pendingQueue).toEqual([]),
+          );
+          expect(h.state.dispatches).toEqual([
+            "ordinary source work",
+            `${payload.seedText}\n\nQUEUED_ACTUAL_NEXT_TASK`,
+          ]);
+          expect(h.latestRuntime().input.persistedRef).toBeNull();
+          expect(h.latestRuntime().ref).not.toEqual(source);
+          expect(requests).toHaveLength(2);
+          expect(requests[1]?.runtimeCreatedWithoutResume).toBe(true);
+          expect((await h.operation(ready.id))?.delivery?.queuedMessageId).toBe(
+            queued.id,
+          );
+          expect(capture).toHaveBeenCalledTimes(1);
+          expect((await h.readRow()).promptCount).toBe(4);
+          await h.runOrdinaryTurn("ordinary follow-up");
+          expect(h.state.dispatches.at(-1)).toBe("ordinary follow-up");
+          expect(requests.at(-1)?.runtimeCreatedWithoutResume).toBe(false);
+          expect(capture).toHaveBeenCalledTimes(1);
+        } finally {
+          gate.resolve();
+        }
+      },
+    );
+  },
+);

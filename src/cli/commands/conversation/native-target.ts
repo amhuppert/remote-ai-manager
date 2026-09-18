@@ -185,7 +185,12 @@ export async function mutationFailure(
       result: {
         ok: false,
         error: failure.result.error,
-        hint: checkpointAdvice(target, refusal.code, refusal.operationId),
+        hint: checkpointAdvice(
+          target,
+          refusal.code,
+          refusal.operationId,
+          refusal.receipt,
+        ),
       },
     };
   if (

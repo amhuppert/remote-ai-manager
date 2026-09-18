@@ -23,6 +23,7 @@ import {
   type EnvelopeGenerationRequest,
 } from "./envelope-generation";
 import { compactionEnvelopeSchema, type CompactionEnvelope } from "./schemas";
+import { deriveFreshness } from "./freshness";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
@@ -288,6 +289,81 @@ describe("generateCompactionEnvelope — pass accounting", () => {
     ]);
     expect(passes.map((pass) => pass.mode)).toEqual(["full", "delta"]);
   });
+
+  it.each(["full", "delta"] as const)(
+    "keeps a %s fold fresh through the excluded capture tail",
+    async (mode) => {
+      const priorSource = capturedSource([makeEntry(0, "user", "prior task")]);
+      const prior = await generateCompactionEnvelope(
+        makeRequest({ source: priorSource }),
+        deps(echo),
+      );
+      if (!prior.ok) throw new Error("prior envelope generation failed");
+      calls = [];
+      passes = [];
+
+      const body = "a".repeat(200_000);
+      const captureText = "excluded capture settlement";
+      const source = capturedSource([
+        ...priorSource.entries,
+        makeEntry(1, "assistant", body),
+        makeEntry(2, "user", body),
+        makeEntry(3, "assistant", body),
+        makeEntry(4, "user", body),
+        {
+          seq: 5,
+          entryId: "capture-settlement",
+          role: "notice",
+          timestamp: "2026-01-01T00:00:00Z",
+          content: [{ type: "text", text: captureText }],
+          origin: {
+            source: "checkpoint_capture",
+            checkpointCapture: {
+              operationId: "op",
+              captureId: "op:capture",
+              part: "settlement",
+            },
+          },
+        },
+      ]);
+      const outcome = await generateCompactionEnvelope(
+        makeRequest({
+          source,
+          plan: {
+            mode,
+            previousEnvelope: mode === "delta" ? prior.envelope : null,
+            expected: { startSeq: 0, endSeq: source.capturedThroughSeq },
+          },
+        }),
+        deps(echo),
+      );
+
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.passCount).toBe(2);
+      expect(calls.every((call) => !call.prompt.includes(captureText))).toBe(
+        true,
+      );
+      expect(outcome.envelope.source.coveredStartSeq).toBe(0);
+      expect(outcome.envelope.source.coveredEndSeq).toBe(
+        source.capturedThroughSeq,
+      );
+      const versions = {
+        promptVersion: "4",
+        normalizerVersion: "2",
+        schemaVersion: 1,
+      };
+      expect(
+        deriveFreshness(
+          {
+            ...versions,
+            coveredEndSeq: outcome.envelope.source.coveredEndSeq,
+          },
+          { ...versions, maxSeq: source.maxSeq },
+        ).stale,
+      ).toBe(false);
+    },
+  );
 
   it("fails with the oversize error when one message alone exceeds the budget", async () => {
     const source = capturedSource([

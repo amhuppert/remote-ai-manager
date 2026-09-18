@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { CLAUDE_NATIVE_MEMORY_SETTINGS } from "./native-memory";
 /**
  * QuerySession — owns a single long-lived SDK subprocess and its message pump.
  *
@@ -18,6 +20,7 @@ import type {
   CanUseTool,
   Options,
   Settings,
+  SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   MessageContentBlock,
@@ -81,6 +84,7 @@ const BACKGROUND_PROGRESS_LOG_INTERVAL_MS = 60_000;
 // ============================================================
 
 interface TurnOptions {
+  captureInputUuid?: SDKUserMessage["uuid"];
   /** When true, AskUserQuestion tool is denied (used by autonomous callers) */
   autonomous?: boolean;
 }
@@ -128,6 +132,8 @@ type TurnEmit = (event: string, data: unknown) => void;
  * suite's fake provider port can implement it without type fictions.
  */
 export interface ClaudeSdkQueryPort extends AsyncIterable<SDKMessage> {
+  /** Injected SDK ports expose collection of their simulated child here. */
+  awaitChildCollection?(): Promise<void>;
   close(): void;
   supportedCommands(): ReturnType<Query["supportedCommands"]>;
   supportedAgents(): ReturnType<Query["supportedAgents"]>;
@@ -235,11 +241,21 @@ export interface QuerySession {
    */
   notifyTurnStarting(): void;
 
+  /** Private capture observer remains attached through pump shutdown. */
+  observeCapture(listener: ((message: SDKMessage) => void) | null): void;
+  interruptCapture(): void;
+  /** Diagnostic snapshot for capture continuation assessment after collection. */
+  readCaptureDiagnostics(): string;
+
+  /** Wait for both the message pump and observed child collection after close. */
+  awaitClosed(): Promise<void>;
+
   /** Terminate the subprocess and clean up all resources */
   close(): void;
 }
 
 export interface QuerySessionOptions {
+  checkpointCapture?: boolean;
   conversationId: string;
   cwd: string;
   model: string | undefined;
@@ -377,6 +393,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
 
   let status: "alive" | "dead" = "alive";
+  let captureObserver: ((message: SDKMessage) => void) | null = null;
   let pendingTurn: PendingTurn | null = null;
   let currentTurnOptions: TurnOptions | null = null;
   let isFirstPrompt = true;
@@ -483,7 +500,80 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     return result.envelope;
   })();
 
+  const children: Promise<void>[] = [];
+  const captureAbortController = options.checkpointCapture
+    ? new AbortController()
+    : undefined;
   const sdkOptions: Options = {
+    ...(captureAbortController
+      ? { abortController: captureAbortController }
+      : {}),
+    spawnClaudeCodeProcess(spawnOptions) {
+      const child = spawn(spawnOptions.command, spawnOptions.args, {
+        cwd: spawnOptions.cwd,
+        // Next augments ProcessEnv with required NODE_ENV; Node spawn accepts the SDK's optional environment values verbatim.
+        env: spawnOptions.env as NodeJS.ProcessEnv,
+        signal: spawnOptions.signal,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      // Custom spawning replaces the SDK's default stderr forwarding too.
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (data: string) => stderrChunks.push(data));
+      const sdkExit = "cc-claude-diagnostic-exit";
+      let exitPublished = false;
+      let exitTimer: ReturnType<typeof setTimeout> | undefined;
+      const publishExit = () => {
+        if (exitPublished) return;
+        exitPublished = true;
+        clearTimeout(exitTimer);
+        child.emit(sdkExit, child.exitCode, child.signalCode);
+      };
+      child.once("exit", () => {
+        // SDK 0.3.257 bounds ordinary stderr drainage at 200 ms. Capture must
+        // instead retain uncertainty until its owned child is fully collected.
+        if (!options.checkpointCapture)
+          exitTimer = setTimeout(publishExit, 200);
+      });
+      children.push(
+        new Promise<void>((resolve) =>
+          child.once("close", () => {
+            publishExit();
+            resolve();
+          }),
+        ),
+      );
+      // Match the default SDK spawner's diagnostic ordering. Raw exit can
+      // precede stderr delivery. Capture exit events and polling wait for
+      // stream closure, bounded by capture's execution/collection limits;
+      // ordinary queries keep the SDK's finite diagnostic grace.
+      const observed: SpawnedProcess = {
+        stdin: child.stdin,
+        stdout: child.stdout,
+        get killed() {
+          return child.killed;
+        },
+        get exitCode() {
+          return exitPublished ? child.exitCode : null;
+        },
+        get signalCode() {
+          return exitPublished ? child.signalCode : null;
+        },
+        kill(signal) {
+          return child.kill(signal);
+        },
+        on(event, listener) {
+          child.on(event === "exit" ? sdkExit : "error", listener);
+        },
+        once(event, listener) {
+          child.once(event === "exit" ? sdkExit : "error", listener);
+        },
+        off(event, listener) {
+          child.off(event === "exit" ? sdkExit : "error", listener);
+        },
+      };
+      return observed;
+    },
     // A confined turn runs from the envelope's own working root, not the
     // worktree: the sandbox makes the working directory and its subdirectories
     // writable by default, so a confined turn left in the worktree could write
@@ -546,6 +636,27 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     mcpServers: options.mcpServers as Record<string, never>,
     strictMcpConfig: true,
     canUseTool: options.canUseTool,
+    ...(options.checkpointCapture
+      ? {
+          systemPrompt: { ...options.systemPrompt, append: undefined },
+          env: { ...options.env, CLAUDE_CODE_MAX_RETRIES: "0" },
+          tools: [],
+          plugins: [],
+          mcpServers: {},
+          settingSources: [],
+          permissionMode: "dontAsk" as const,
+          allowDangerouslySkipPermissions: false,
+          maxTurns: 1,
+          includePartialMessages: true,
+          settings: {
+            ...CLAUDE_NATIVE_MEMORY_SETTINGS,
+            disableAllHooks: true,
+            disableAgentView: true,
+            disableWorkflows: true,
+            remoteControlAtStartup: false,
+          },
+        }
+      : {}),
     stderr: (data: string) => {
       stderrChunks.push(data);
     },
@@ -586,6 +697,26 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     sendPrompt,
     queueUserInput,
     notifyTurnStarting,
+    observeCapture(listener) {
+      if (!options.checkpointCapture)
+        throw new Error("Capture observer requires restricted purpose");
+      captureObserver = listener;
+    },
+    readCaptureDiagnostics() {
+      if (!options.checkpointCapture)
+        throw new Error("Capture diagnostics require restricted purpose");
+      return stderrChunks.join("");
+    },
+    interruptCapture() {
+      captureAbortController?.abort();
+      close();
+    },
+    async awaitClosed() {
+      await pump;
+      if (children.length > 0) await Promise.all(children);
+      else if (q.awaitChildCollection) await q.awaitChildCollection();
+      else throw new Error("Claude child collection was not observed");
+    },
     close,
   };
 
@@ -596,7 +727,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   });
 
   // Start the background message pump
-  void runPump();
+  const pump = runPump();
 
   return session;
 
@@ -653,7 +784,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         // prompt never reached the CLI and can redeliver.
         awaitingSubsequentPromptDelivery = true;
       }
-      pushInput(buildUserMessage(prompt)).then(
+      const message = buildUserMessage(prompt);
+      if (turnOptions?.captureInputUuid)
+        message.uuid = turnOptions.captureInputUuid;
+      pushInput(message).then(
         () => {
           awaitingSubsequentPromptDelivery = false;
         },
@@ -959,6 +1093,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   function close(): void {
+    // EOF-only shutdown permits native output recovery during its grace window.
+    if (pendingTurn) captureAbortController?.abort();
     // Clear idle timer
     if (idleTimer) {
       clearTimeout(idleTimer);
@@ -976,7 +1112,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       pendingTurn = null;
       currentTurnOptions = null;
       awaitingSubsequentPromptDelivery = false;
-      clearLiveOccupancy(options.conversationId);
+      if (!options.checkpointCapture)
+        clearLiveOccupancy(options.conversationId);
       turn.reject(new Error("QuerySession closed while turn was in progress"));
     }
 
@@ -1120,6 +1257,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   function processMessageBody(message: SDKMessage): void {
+    captureObserver?.(message);
     // Ingest background-task lifecycle BEFORE the idle-discard branch so a task
     // started/settled between turns is still tracked. applyTaskMessage ignores
     // non-task messages by returning the state unchanged. The per-turn
@@ -1206,13 +1344,21 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
     // Forward to turn's emit callback
     turn.emit("__raw_message", message);
+    if (pendingTurn !== turn) return;
+    if (
+      message.type === "result" &&
+      currentTurnOptions?.captureInputUuid &&
+      message.user_message_uuid !== currentTurnOptions.captureInputUuid
+    )
+      return;
 
     switch (message.type) {
       case "system": {
         if (message.subtype === "compact_boundary") {
           const { compact_metadata } = message as SDKCompactBoundaryMessage;
           turn.compacted = true;
-          markLiveCompaction(options.conversationId);
+          if (!options.checkpointCapture)
+            markLiveCompaction(options.conversationId);
           logger.info("query-session.compact_boundary", {
             conversationId: options.conversationId,
             trigger: compact_metadata.trigger,
@@ -1250,7 +1396,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           // mid-turn complete_task gate sees identical semantics to the
           // recorded last-wins value, but observable while the turn is in
           // flight (before a compaction can mask it).
-          recordLiveOccupancy(options.conversationId, contextTokens);
+          if (!options.checkpointCapture)
+            recordLiveOccupancy(options.conversationId, contextTokens);
         }
         break;
       }
@@ -1329,7 +1476,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const resolve = turn.resolve;
         pendingTurn = null;
         currentTurnOptions = null;
-        clearLiveOccupancy(options.conversationId);
+        if (!options.checkpointCapture)
+          clearLiveOccupancy(options.conversationId);
 
         logger.debug("query-session.turn_complete", {
           conversationId: options.conversationId,
@@ -1356,7 +1504,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     pendingTurn = null;
     currentTurnOptions = null;
     awaitingSubsequentPromptDelivery = false;
-    clearLiveOccupancy(options.conversationId);
+    if (!options.checkpointCapture) clearLiveOccupancy(options.conversationId);
     turn.reject(error);
   }
 

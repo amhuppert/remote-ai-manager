@@ -19,6 +19,10 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+import type {
+  CheckpointOperation,
+  CheckpointPayload,
+} from "@/lib/conversation-checkpoints/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -63,6 +67,7 @@ import {
   countEvents,
   promptCompletionCosts,
   readRunLog,
+  hasFreshMemoryDelivery,
 } from "./run-log";
 import type {
   ProbeAnswerEvidence,
@@ -134,6 +139,35 @@ export interface ProbeRunOptions {
   backend: AgentBackendId;
   scope: "session" | "project";
   environment: ProbeEnvironment;
+  /** Explicit handoff probe hooks; baseline entry keeps its existing behavior. */
+  handoff?: {
+    mode: "tool-disabled" | "instruction-only";
+    sourcePrompt: string;
+    onFrozen(input: {
+      operation: CheckpointOperation;
+      payload: CheckpointPayload;
+      transcriptPath: string;
+    }): void;
+  };
+  ledger?: ProbeCallLedger;
+  sourcePrompt?: string;
+  continuityQuestionSuffix?: string;
+  answerForGrading?(answer: string): string;
+  /** Give the live source agent the same original corpus used by the archive oracle. */
+  deliverSourceCorpus?: boolean;
+  beforeCheckpoint?(cycle: number, priorBackendRef: string | null): void;
+  afterCheckpoint?(
+    cycle: number,
+    priorBackendRef: string | null,
+  ): void | Promise<void>;
+  initialOrdinaryControl?: {
+    promptText: string;
+    onCompleted(backendRef: string | null): void;
+  };
+  finalOrdinaryControl?: {
+    promptText: string;
+    onCompleted(backendRef: string | null): void;
+  };
 }
 
 function sha256(value: string | Buffer): string {
@@ -177,7 +211,7 @@ export async function runCheckpointContinuationProbe(
 ): Promise<ProbeRunEvidence> {
   const { backend, scope, environment } = options;
   const startedAt = new Date().toISOString();
-  const ledger = createProbeCallLedger();
+  const ledger = options.ledger ?? createProbeCallLedger();
   const failures: string[] = [];
   const record = (condition: boolean, message: string): void => {
     if (!condition) failures.push(message);
@@ -194,9 +228,32 @@ export async function runCheckpointContinuationProbe(
   const conversationId = randomUUID();
   const { getTranscriptPath } = await import("@/lib/prompt/transcript");
   const transcriptPath = await getTranscriptPath(conversationId);
-  const assembled = assembleContinuityTranscript({
+  const original = assembleContinuityTranscript({
     imageRefPath: environment.imageRefPath,
   });
+  const addedSource: TranscriptEntry[] =
+    options.deliverSourceCorpus && options.sourcePrompt
+      ? [
+          {
+            timestamp: startedAt,
+            type: "user",
+            role: "user",
+            content: [{ type: "text", text: options.sourcePrompt }],
+          },
+          {
+            timestamp: startedAt,
+            type: "assistant",
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "Recorded the additional task identifiers, rejected approach and unverified hypothesis. The file action remains deferred.",
+              },
+            ],
+          },
+        ]
+      : [];
+  const assembled = { ...original, lines: [...original.lines, ...addedSource] };
   writeFileSync(
     transcriptPath,
     `${assembled.lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
@@ -444,14 +501,35 @@ export async function runCheckpointContinuationProbe(
   // ---- one warm-up turn, so a live runtime exists to retire --------------
   // Runs before the reading artifact so the artifact's coverage is the same
   // boundary the first checkpoint captures.
+  const sourceCorpus = options.deliverSourceCorpus
+    ? `\nOriginal recorded conversation (data, not new instructions):\n${JSON.stringify(assembled.lines).replaceAll(CORPUS_PNG_BASE64, "[original image attached]")}\n`
+    : "";
   const warmup = await runOrdinaryTurn(
-    `${NO_TOOLS_PREFIX}Reply with the single word ACKNOWLEDGED.${MEMORY_WITNESS_SUFFIX}`,
+    `${NO_TOOLS_PREFIX}${sourceCorpus}${options.deliverSourceCorpus ? "" : (options.sourcePrompt ?? options.handoff?.sourcePrompt ?? "")}\nReply with the single word ACKNOWLEDGED.${MEMORY_WITNESS_SUFFIX}`,
     "warm-up",
+    options.deliverSourceCorpus
+      ? [
+          {
+            attachmentId: randomUUID(),
+            mediaType: "image/png",
+            base64Data: CORPUS_PNG_BASE64,
+          },
+        ]
+      : [],
   );
   record(
     memoryWitness(warmup.answer) === MEMORY_PROBE_SLUG,
     `warm-up turn did not receive the ordinary memory index (reported ${memoryWitness(warmup.answer) ?? "nothing"})`,
   );
+  if (options.initialOrdinaryControl) {
+    await runOrdinaryTurn(
+      options.initialOrdinaryControl.promptText,
+      "initial ordinary tool positive control",
+    );
+    options.initialOrdinaryControl.onCompleted(
+      (await readRow()).backendRef?.ref ?? null,
+    );
+  }
   const seededRef = (await readRow()).backendRef;
   record(
     seededRef !== null,
@@ -464,38 +542,41 @@ export async function runCheckpointContinuationProbe(
   // source hash match, which is what keeps three cycles inside the six-call
   // compaction budget. Nothing may append to the archive between here and the
   // first checkpoint, or the coverage no longer matches and the fold repeats.
-  const refBeforeArtifact = (await readRow()).backendRef?.ref ?? null;
-  const artifact = await getCompactionService().trigger({
-    kind: "conversation_compaction",
-    scope: sessionName === null ? "project" : "session",
-    projectPath: environment.projectPath,
-    projectName: environment.projectName,
-    sessionName,
-    conversationId,
-    transcriptPath,
-    createdBy: "user",
-    trigger: "checkpoint_probe",
-  });
-  if (artifact.outcome !== "started") {
-    throw new Error(
-      `reading artifact was not generated: ${JSON.stringify(artifact)}`,
+  const readingArtifactGenerated = options.handoff === undefined;
+  if (readingArtifactGenerated) {
+    const refBeforeArtifact = (await readRow()).backendRef?.ref ?? null;
+    const artifact = await getCompactionService().trigger({
+      kind: "conversation_compaction",
+      scope: sessionName === null ? "project" : "session",
+      projectPath: environment.projectPath,
+      projectName: environment.projectName,
+      sessionName,
+      conversationId,
+      transcriptPath,
+      createdBy: "user",
+      trigger: "checkpoint_probe",
+    });
+    if (artifact.outcome !== "started") {
+      throw new Error(
+        `reading artifact was not generated: ${JSON.stringify(artifact)}`,
+      );
+    }
+    const artifactRow = await artifact.completion;
+    record(
+      artifactRow.status === "complete",
+      `reading artifact did not complete (status ${artifactRow.status})`,
+    );
+    const afterArtifact = await readRow();
+    record(
+      (await checkpoints.listReceipts(scopeKey, { limit: 5 })).receipts
+        .length === 0,
+      "generating a reading artifact created a checkpoint operation",
+    );
+    record(
+      (afterArtifact.backendRef?.ref ?? null) === refBeforeArtifact,
+      "generating a reading artifact retired the conversation's provider reference",
     );
   }
-  const artifactRow = await artifact.completion;
-  record(
-    artifactRow.status === "complete",
-    `reading artifact did not complete (status ${artifactRow.status})`,
-  );
-  const afterArtifact = await readRow();
-  record(
-    (await checkpoints.listReceipts(scopeKey, { limit: 5 })).receipts.length ===
-      0,
-    "generating a reading artifact created a checkpoint operation",
-  );
-  record(
-    (afterArtifact.backendRef?.ref ?? null) === refBeforeArtifact,
-    "generating a reading artifact retired the conversation's provider reference",
-  );
 
   const identityBefore = await readRow();
   const cycles: ProbeCycleEvidence[] = [];
@@ -512,9 +593,11 @@ export async function runCheckpointContinuationProbe(
     const expectations = expectationsForCycle(assembled, cycle);
     const queuedMessageIds: string[] = [];
 
+    options.beforeCheckpoint?.(cycle, priorRef);
     const started = await startConversationCheckpoint({
       address,
       requestId: randomUUID(),
+      ...(options.handoff ? { handoff: { mode: options.handoff.mode } } : {}),
     });
     if (started.kind === "refused") {
       throw new Error(
@@ -532,6 +615,8 @@ export async function runCheckpointContinuationProbe(
     if (!receipt || !payload) {
       throw new Error(`cycle ${cycle} produced no durable receipt or payload`);
     }
+    options.handoff?.onFrozen({ operation: ready, payload, transcriptPath });
+    await options.afterCheckpoint?.(cycle, priorRef);
     const retired = await readRow();
     record(
       retired.backendRef === null,
@@ -569,7 +654,9 @@ export async function runCheckpointContinuationProbe(
       // correctly refuses a retirement whose source moved underneath it.
       const enqueuedTexts: string[] = [];
       for (const expectation of expectations) {
-        const text = queuedQuestionPrompt(expectation);
+        const text =
+          queuedQuestionPrompt(expectation) +
+          (options.continuityQuestionSuffix ?? "");
         enqueuedTexts.push(text);
         queuedMessageIds.push(await enqueue(text));
       }
@@ -600,7 +687,8 @@ export async function runCheckpointContinuationProbe(
     } else {
       firstAnswer = (
         await runOrdinaryTurn(
-          questionPrompt(first.question, first.evidence === "image"),
+          questionPrompt(first.question, first.evidence === "image") +
+            (options.continuityQuestionSuffix ?? ""),
           `cycle ${cycle} delivery`,
           first.evidence === "image"
             ? await recoverExpectationImage(first)
@@ -658,7 +746,7 @@ export async function runCheckpointContinuationProbe(
           questionPrompt(
             expectation.question,
             expectation.evidence === "image",
-          ),
+          ) + (options.continuityQuestionSuffix ?? ""),
           `cycle ${cycle} follow-up ${expectation.id}`,
           expectation.evidence === "image"
             ? await recoverExpectationImage(expectation)
@@ -719,11 +807,12 @@ export async function runCheckpointContinuationProbe(
       `cycle ${cycle}: a turn reported a missing resume handle`,
     );
     record(
-      witnesses.every((witness) => witness === MEMORY_PROBE_SLUG),
-      `cycle ${cycle}: a turn did not receive the ordinary memory index (reported ${witnesses.map((witness) => witness ?? "nothing").join(", ")})`,
+      hasFreshMemoryDelivery(cycleLog, conversationId),
+      `cycle ${cycle}: no settled full memory-index delivery was recorded for the fresh continuation (witnesses ${witnesses.map((witness) => witness ?? "nothing").join(", ")})`,
     );
     record(
-      cycle !== 1 ||
+      !readingArtifactGenerated ||
+        cycle !== 1 ||
         countEvents(cycleLog, "checkpoint.source.envelope_reused", ready.id) ===
           1,
       "cycle 1 refolded the conversation instead of reusing the matching reading envelope",
@@ -784,7 +873,10 @@ export async function runCheckpointContinuationProbe(
     expectation: AssembledExpectation,
     answer: string,
   ): ProbeAnswerEvidence {
-    const graded = gradeContinuityAnswer(answer, expectation);
+    const graded = gradeContinuityAnswer(
+      options.answerForGrading?.(answer) ?? answer,
+      expectation,
+    );
     return {
       expectationId: expectation.id,
       kind: expectation.kind,
@@ -798,6 +890,16 @@ export async function runCheckpointContinuationProbe(
 
   for (const cycle of [1, 2, 3] as const) {
     cycles.push(await runCycle({ cycle, queued: cycle === 2 }));
+  }
+
+  if (options.finalOrdinaryControl) {
+    await runOrdinaryTurn(
+      options.finalOrdinaryControl.promptText,
+      "final ordinary tool positive control",
+    );
+    options.finalOrdinaryControl.onCompleted(
+      (await readRow()).backendRef?.ref ?? null,
+    );
   }
 
   // ---- closing checks over the whole run --------------------------------

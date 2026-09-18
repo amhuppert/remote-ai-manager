@@ -1,5 +1,11 @@
+import { mkdtemp, appendFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { CHECKPOINT_CAPTURE_LIMITS } from "@/lib/conversation-checkpoints/budget";
+import { captureHandoffResultSchema } from "../schemas";
 import { describe, expect, it, vi } from "vitest";
 import type {
+  CaptureHandoffInput,
   ConversationBackendCreateInput,
   ConversationBackendEvent,
   ConversationBackendTurnInput,
@@ -17,6 +23,7 @@ import {
 } from "./app-server-protocol";
 import {
   CodexConversationRuntime,
+  codexConversationBackendFactory,
   type CodexConversationRuntimeDeps,
 } from "./conversation-runtime";
 import type { CodexInstructionRecord } from "./instruction-state";
@@ -43,7 +50,10 @@ const createInput: ConversationBackendCreateInput = {
   tooling: {},
 };
 
-function harness(overrides: Partial<ConversationBackendCreateInput> = {}) {
+function harness(
+  overrides: Partial<ConversationBackendCreateInput> = {},
+  extraDeps: Partial<CodexConversationRuntimeDeps> = {},
+) {
   const requests: { method: string; params: unknown }[] = [];
   const events: ConversationBackendEvent[] = [];
   const records: CodexInstructionRecord[] = [];
@@ -140,7 +150,7 @@ function harness(overrides: Partial<ConversationBackendCreateInput> = {}) {
   };
   const runtime = new CodexConversationRuntime(
     { ...createInput, ...overrides },
-    deps,
+    { ...deps, ...extraDeps },
   );
   const input: ConversationBackendTurnInput = {
     promptText: "hello",
@@ -774,3 +784,551 @@ describe("Codex app-server conversation runtime", () => {
     expect(h.events.filter((event) => event.type === "content")).toEqual([]);
   });
 });
+
+const captureInput = (): CaptureHandoffInput => ({
+  captureId: "capture-1",
+  mode: "instruction-only",
+  promptText: "Record current working state only. No tools.",
+  outputSchema: { type: "object", required: ["capturePlan"] },
+  limits: CHECKPOINT_CAPTURE_LIMITS,
+  signal: new AbortController().signal,
+  onTranscript: async () => {},
+});
+const captureSource = {
+  persistedRef: { backend: "codex", ref: "thread-1" },
+} as const;
+function answerCapture(h: ReturnType<typeof harness>) {
+  h.notify("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    item: {
+      id: "answer",
+      type: "agentMessage",
+      phase: "final_answer",
+      text: '{"plan":[]}',
+    },
+  });
+  h.finish();
+}
+
+describe("Codex instruction-only capture", () => {
+  it("exposes the operation through the registered factory and binds initialPurpose", async () => {
+    const runtime = await codexConversationBackendFactory.createRuntime({
+      ...createInput,
+      ...captureSource,
+      initialPurpose: {
+        kind: "checkpoint_handoff",
+        captureId: "bound-id",
+        mode: "instruction-only",
+      },
+    });
+    expect(runtime.captureHandoff).toBeTypeOf("function");
+    expect(await runtime.captureHandoff?.(captureInput())).toMatchObject({
+      submitted: false,
+      omissionReason: "mode_changed",
+    });
+    await runtime.close();
+  });
+  it("resumes selected continuity with stable callable tools and one submission", async () => {
+    const h = harness({
+      ...captureSource,
+      initialPurpose: {
+        kind: "checkpoint_handoff",
+        captureId: "capture-1",
+        mode: "instruction-only",
+      },
+    });
+    const archive: unknown[] = [];
+    const pending = h.runtime.captureHandoff({
+      ...captureInput(),
+      onTranscript: async (entry) => {
+        archive.push(entry);
+      },
+    });
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    answerCapture(h);
+    const result = await pending;
+    expect(result.candidateText).toBe('{"plan":[]}');
+    expect(result.activity).toMatchObject({
+      native: "unavailable",
+      prohibited: "not_observed",
+    });
+    expect(result).toMatchObject({
+      modeEstablished: true,
+      submitted: true,
+      correlatedCompletion: true,
+      executionSettled: true,
+    });
+    expect(captureHandoffResultSchema.safeParse(result).success).toBe(true);
+    expect(h.requests.filter((r) => r.method === "turn/start")).toHaveLength(1);
+    expect(
+      h.requests.find((r) => r.method === "initialize")?.params,
+    ).toMatchObject({ capabilities: { experimentalApi: false } });
+    expect(
+      h.requests.find((r) => r.method === "thread/resume")?.params,
+    ).toMatchObject({
+      threadId: "thread-1",
+      model: "gpt-5.4",
+      approvalPolicy: "never",
+    });
+    expect(h.requests.some((r) => r.method === "thread/start")).toBe(false);
+    expect(
+      JSON.stringify(h.requests.find((r) => r.method === "turn/start")?.params),
+    ).toContain("capturePlan");
+    expect(h.requests.some((r) => r.method === "thread/inject_items")).toBe(
+      false,
+    );
+    expect(archive.length).toBeGreaterThan(0);
+    expect(h.events).toEqual([]);
+    expect((await h.runtime.captureHandoff(captureInput())).submitted).toBe(
+      false,
+    );
+  });
+  it.each([null, { backend: "claude", ref: "other" }] as const)(
+    "refuses missing or wrong continuity %s",
+    async (persistedRef) => {
+      const h = harness({ persistedRef });
+      expect(await h.runtime.captureHandoff(captureInput())).toMatchObject({
+        submitted: false,
+        omissionReason: "continuity_unavailable",
+      });
+      expect(h.requests).toEqual([]);
+    },
+  );
+  it("refuses mode mismatch before allocation", async () => {
+    const h = harness(captureSource);
+    expect(
+      await h.runtime.captureHandoff({
+        ...captureInput(),
+        mode: "tool-disabled",
+      }),
+    ).toMatchObject({ submitted: false, omissionReason: "mode_changed" });
+    expect(h.requests).toEqual([]);
+  });
+  it("does not substitute a different resumed thread", async () => {
+    const h = harness({
+      ...captureSource,
+      persistedRef: { backend: "codex", ref: "wrong-thread" },
+    });
+    expect(await h.runtime.captureHandoff(captureInput())).toMatchObject({
+      submitted: false,
+      omissionReason: "continuity_unavailable",
+    });
+    expect(h.requests.some((r) => r.method === "turn/start")).toBe(false);
+  });
+  it("declines approval and reports transport activity without ordinary questions", async () => {
+    const h = harness(captureSource);
+    const pending = h.runtime.captureHandoff(captureInput());
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    expect(await h.serverRequest("mcpServer/elicitation/request")).toEqual({
+      result: { action: "decline" },
+    });
+    h.finish();
+    expect(await pending).toMatchObject({
+      candidateText: null,
+      omissionReason: "prohibited_activity",
+      activity: { prohibited: "observed" },
+    });
+  });
+  it.each([
+    "custom_tool_call",
+    "local_shell_call",
+    "tool_search_call",
+    "image_generation_call",
+    "malformed",
+    "unreadable",
+    "clean",
+  ])("inspects supplied native interval: %s", async (kind) => {
+    const dir = await mkdtemp(path.join(tmpdir(), "cc-capture-native-"));
+    const nativePath = path.join(dir, "native.jsonl");
+    await appendFile(nativePath, '"old history"\n');
+    try {
+      const h = harness(captureSource);
+      const original = h.client.request;
+      h.client.request = async (method, params) => {
+        if (method === "thread/resume")
+          return {
+            thread: { id: "thread-1", path: nativePath },
+            model: "gpt-5.4",
+            cwd: "/repo",
+            approvalPolicy: "never",
+            sandbox: { type: "dangerFullAccess" },
+          };
+        if (method === "turn/start")
+          await appendFile(
+            nativePath,
+            JSON.stringify({
+              type: "event_msg",
+              payload: { type: "task_started", turn_id: "turn-1" },
+            }) + "\n",
+          );
+        return original(method, params);
+      };
+      const pending = h.runtime.captureHandoff(captureInput());
+      await vi.waitFor(() =>
+        expect(h.requests.some((r) => r.method === "turn/start")).toBe(true),
+      );
+      await appendFile(
+        nativePath,
+        kind.endsWith("_call")
+          ? JSON.stringify({
+              type: "response_item",
+              payload: { type: kind, name: "exec" },
+            }) + "\n"
+          : kind === "malformed"
+            ? "bad\n"
+            : "",
+      );
+      await appendFile(
+        nativePath,
+        JSON.stringify({
+          type: "event_msg",
+          payload: { type: "task_complete", turn_id: "turn-1" },
+        }) + "\n",
+      );
+      if (kind === "unreadable") await rm(nativePath);
+      answerCapture(h);
+      const result = await pending;
+      expect(result).toMatchObject(
+        kind === "clean"
+          ? { candidateText: '{"plan":[]}', activity: { native: "complete" } }
+          : kind.endsWith("_call")
+            ? {
+                candidateText: null,
+                omissionReason: "prohibited_activity",
+                activity: { prohibited: "observed", native: "complete" },
+              }
+            : {
+                candidateText: null,
+                omissionReason: "native_inspection_incomplete",
+                activity: { native: "incomplete" },
+              },
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Codex bounded capture settlement and usage", () => {
+  it("allows terminal completion before the turn/start acknowledgement", async () => {
+    const h = harness(captureSource);
+    const ack = Promise.withResolvers<void>();
+    let acknowledged = false;
+    const original = h.client.request;
+    h.client.request = async (method, params) => {
+      const result = await original(method, params);
+      if (method === "turn/start") {
+        await ack.promise;
+        acknowledged = true;
+      }
+      return result;
+    };
+    const close = h.client.close;
+    h.client.close = async () => {
+      if (!acknowledged) throw new Error("closed before start acknowledgement");
+      await close();
+    };
+    const pending = h.runtime.captureHandoff(captureInput());
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    answerCapture(h);
+    ack.resolve();
+    expect(await pending).toMatchObject({
+      candidateText: '{"plan":[]}',
+      executionSettled: true,
+    });
+  });
+
+  it("waits for child close after turn completion and retains cleanup uncertainty", async () => {
+    const h = harness(captureSource);
+    const held = Promise.withResolvers<void>();
+    h.client.close = () => held.promise;
+    let done = false;
+    const pending = h.runtime.captureHandoff(captureInput()).then((r) => {
+      done = true;
+      return r;
+    });
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    answerCapture(h);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(done).toBe(false);
+    held.reject(new Error("unaccounted child"));
+    expect(await pending).toMatchObject({
+      executionSettled: false,
+      candidateText: null,
+      omissionReason: "cleanup_unverified",
+      cleanupFailure: { code: "cleanup_unverified" },
+    });
+  });
+  it("preserves known cleanup uncertainty on a repeated capture call", async () => {
+    const h = harness(captureSource);
+    h.client.close = async () => {
+      throw new Error("unaccounted child");
+    };
+    const pending = h.runtime.captureHandoff(captureInput());
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    answerCapture(h);
+    await pending;
+    expect(await h.runtime.captureHandoff(captureInput())).toMatchObject({
+      submitted: false,
+      executionSettled: false,
+      omissionReason: "cleanup_unverified",
+      cleanupFailure: { code: "cleanup_unverified" },
+    });
+  });
+  it.each(["skip", "cancel"])(
+    "interrupts once for %s and keeps normal recreation usable",
+    async (reason) => {
+      const h = harness(captureSource);
+      const controller = new AbortController();
+      const pending = h.runtime.captureHandoff({
+        ...captureInput(),
+        signal: controller.signal,
+      });
+      await until(() => h.requests.some((r) => r.method === "turn/start"));
+      controller.abort(reason);
+      const result = await pending;
+      expect(result).toMatchObject({
+        omissionReason: reason === "skip" ? "skipped" : "cancelled",
+        executionSettled: true,
+        continuation: { nextRuntime: "recreate_from_ref" },
+      });
+      expect(
+        h.requests.filter((r) => r.method === "turn/interrupt"),
+      ).toHaveLength(1);
+      const recreated = harness({
+        persistedRef: result.continuation.backendRef,
+      });
+      const ordinary = recreated.runtime.sendTurn(recreated.input);
+      await until(() =>
+        recreated.requests.some((r) => r.method === "turn/start"),
+      );
+      recreated.finish();
+      expect((await ordinary).failure).toBeNull();
+    },
+  );
+  it("bounds execution and submits only one interrupt", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(captureSource);
+      const pending = h.runtime.captureHandoff({
+        ...captureInput(),
+        limits: { ...CHECKPOINT_CAPTURE_LIMITS, executionMs: 10 },
+      });
+      await until(() => h.requests.some((r) => r.method === "turn/start"));
+      await vi.advanceTimersByTimeAsync(11);
+      expect(await pending).toMatchObject({
+        omissionReason: "execution_limit",
+        candidateText: null,
+        executionSettled: true,
+      });
+      expect(
+        h.requests.filter((r) => r.method === "turn/interrupt"),
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("counts streamed and completed answer bytes once, but sums distinct messages", async () => {
+    const h = harness(captureSource);
+    const pending = h.runtime.captureHandoff({
+      ...captureInput(),
+      limits: { ...CHECKPOINT_CAPTURE_LIMITS, outputBytes: 4 },
+    });
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    h.notify("item/agentMessage/delta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "a",
+      delta: "🙂",
+    });
+    h.notify("item/completed", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: {
+        id: "a",
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "🙂",
+      },
+    });
+    h.notify("item/completed", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: {
+        id: "a",
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "🙂",
+      },
+    });
+    await h.client.flush();
+    expect(
+      h.requests.filter((r) => r.method === "turn/interrupt"),
+    ).toHaveLength(0);
+    h.notify("item/agentMessage/delta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "b",
+      delta: "x",
+    });
+    await h.client.flush();
+    h.finish();
+    expect(await pending).toMatchObject({
+      omissionReason: "output_limit",
+      candidateText: null,
+    });
+    expect(
+      h.requests.filter((r) => r.method === "turn/interrupt"),
+    ).toHaveLength(1);
+  });
+  it("differences available counters and labels estimated pricing", async () => {
+    const h = harness(captureSource);
+    const original = h.client.request;
+    const counters = (
+      inputTokens: number,
+      cachedInputTokens: number,
+      outputTokens: number,
+    ) => ({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      tokenUsage: {
+        total: {
+          inputTokens,
+          cachedInputTokens,
+          outputTokens,
+          reasoningOutputTokens: 0,
+          totalTokens: inputTokens + outputTokens,
+        },
+      },
+    });
+    h.client.request = async (method, params) => {
+      const result = await original(method, params);
+      if (method === "thread/resume")
+        h.notify("thread/tokenUsage/updated", counters(100, 20, 10));
+      return result;
+    };
+    const pending = h.runtime.captureHandoff(captureInput());
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    h.notify("thread/tokenUsage/updated", counters(140, 30, 20));
+    answerCapture(h);
+    expect((await pending).usage).toMatchObject({
+      inputTokens: 40,
+      cachedInputTokens: 10,
+      outputTokens: 10,
+      costBasis: "pricing_estimate",
+      costUsd: expect.any(Number),
+    });
+  });
+  it("keeps counters absent when no baseline can establish a difference", async () => {
+    const h = harness(captureSource);
+    const pending = h.runtime.captureHandoff(captureInput());
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    answerCapture(h);
+    expect((await pending).usage).toMatchObject({
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+      costUsd: null,
+      costBasis: null,
+    });
+  });
+});
+
+it("omits a timed-out native read after execution and archive are known collected", async () => {
+  vi.useFakeTimers();
+  const held = Promise.withResolvers<void>();
+  try {
+    const h = harness(captureSource, {
+      inspectNativeWindow: async () => {
+        await held.promise;
+        return { coverage: "incomplete", observedToolActivity: false };
+      },
+    });
+    const pending = h.runtime.captureHandoff({
+      ...captureInput(),
+      limits: { ...CHECKPOINT_CAPTURE_LIMITS, settlementMs: 10 },
+    });
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    answerCapture(h);
+    await vi.advanceTimersByTimeAsync(11);
+    expect(await pending).toMatchObject({
+      executionSettled: true,
+      cleanupFailure: null,
+      candidateText: null,
+      omissionReason: "native_inspection_incomplete",
+    });
+  } finally {
+    held.resolve();
+    vi.useRealTimers();
+  }
+});
+
+it("retains a hold when a capture transcript callback rejects", async () => {
+  const h = harness(captureSource);
+  const original = h.client.request;
+  h.client.request = async (method, params) => {
+    const result = await original(method, params);
+    if (method === "thread/resume")
+      h.notify("future/additive", { threadId: "thread-1" });
+    return result;
+  };
+  const result = await h.runtime.captureHandoff({
+    ...captureInput(),
+    onTranscript: async () => {
+      throw new Error("required write rejected");
+    },
+  });
+  expect(result).toMatchObject({
+    candidateText: null,
+    executionSettled: false,
+    cleanupFailure: { code: "cleanup_unverified" },
+    omissionReason: "cleanup_unverified",
+  });
+});
+
+it.each([true, false])(
+  "excludes commentary bytes from the final-answer limit (early phase=%s)",
+  async (earlyPhase) => {
+    const h = harness(captureSource);
+    const pending = h.runtime.captureHandoff({
+      ...captureInput(),
+      limits: { ...CHECKPOINT_CAPTURE_LIMITS, outputBytes: 12 },
+    });
+    await until(() => h.requests.some((r) => r.method === "turn/start"));
+    if (earlyPhase)
+      h.notify("item/started", {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: { id: "comment", type: "agentMessage", phase: "commentary" },
+      });
+    const commentary = earlyPhase
+      ? "commentary exceeds the answer budget"
+      : "commentary";
+    h.notify("item/agentMessage/delta", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "comment",
+      delta: commentary,
+    });
+    h.notify("item/completed", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: {
+        id: "comment",
+        type: "agentMessage",
+        phase: "commentary",
+        text: commentary,
+      },
+    });
+    answerCapture(h);
+    expect(await pending).toMatchObject({
+      candidateText: '{"plan":[]}',
+      omissionReason: null,
+    });
+    expect(
+      h.requests.filter((r) => r.method === "turn/interrupt"),
+    ).toHaveLength(0);
+  },
+);

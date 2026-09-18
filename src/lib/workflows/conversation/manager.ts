@@ -1,3 +1,20 @@
+import { isDeepStrictEqual } from "node:util";
+import { conversationTranscriptFrame } from "@/lib/agent-backends/transcript";
+import {
+  type CaptureHandoffResult,
+  captureHandoffResultSchema,
+} from "@/lib/agent-backends/schemas";
+import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
+import type { CheckpointCaptureRuntimeInput } from "./actor-implementations";
+import {
+  omittedCaptureResult,
+  pendingCheckpointCapture,
+} from "./checkpoint-capture";
+import type {
+  BackendModelSelection,
+  CaptureAvailability,
+} from "@/lib/agent-backends/schemas";
+import type { CheckpointHandoffRequest } from "@/lib/conversation-checkpoints/schemas";
 import type { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { readRuntimeInstructions } from "./runtime-instructions";
@@ -60,7 +77,11 @@ import {
 } from "@/lib/conversation-checkpoints/admission";
 import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostics";
 import type { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
-import type { CheckpointReceipt } from "@/lib/conversation-checkpoints/receipt";
+import {
+  CHECKPOINT_CAPTURE_POLICY,
+  type CheckpointReceipt,
+  type CheckpointHandoffEligibility,
+} from "@/lib/conversation-checkpoints/receipt";
 import type { ConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
 import { isTerminalCheckpointPhase } from "@/lib/conversation-checkpoints/transitions";
 import {
@@ -164,6 +185,20 @@ export interface ConversationCheckpointDependencies {
   resolveConfig(projectPath: string): Promise<CompactionConfig>;
   executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
   backendSupportsCheckpoint(backend: AgentBackendId): boolean;
+  captureAvailability(backend: AgentBackendId): CaptureAvailability;
+  acquireCaptureRuntime(
+    input: CheckpointCaptureRuntimeInput,
+    signal: AbortSignal,
+  ): Promise<ConversationBackendRuntime | undefined>;
+  appendCaptureEntryOnce(
+    conversationId: string,
+    entry: TranscriptEntry & { id: string },
+  ): Promise<void>;
+  resolveCaptureModel(input: {
+    agentBackend: AgentBackendId;
+    transcriptPath: string | null;
+    projectPath: string;
+  }): Promise<BackendModelSelection>;
   /**
    * Append the user entry a crashed delivery turn owed the archive, at most
    * once per stable id; see `checkpoint-queue-repair`.
@@ -190,6 +225,7 @@ export interface ConversationCheckpointDependencies {
 }
 
 export interface ConversationCheckpointRequest {
+  handoff?: CheckpointHandoffRequest;
   address: ConversationAddress;
   /** Caller-generated UUID: the operation id, and the reuse key on retransmit. */
   requestId: string;
@@ -221,6 +257,7 @@ export type ConversationCheckpointStart =
   | { kind: "refused"; refusal: CheckpointRefusal };
 
 export interface ConversationCheckpointCheck {
+  handoff: CheckpointHandoffEligibility;
   eligible: boolean;
   /** Every failing predicate, primary first; empty when eligible. */
   refusals: CheckpointRefusal[];
@@ -237,6 +274,10 @@ export type ConversationCheckpointCancel =
 /** The manager's owned reservation; `runtime.maintenance` aliases it once hosted. */
 interface ManagedCheckpointMaintenance extends ConversationCheckpointMaintenance {
   /** Settles once the repository admitted the operation, or null when refused first. */
+  readonly captureController: AbortController;
+  captureMutation: Promise<unknown>;
+  reconcileCapture?: () => Promise<boolean>;
+  sealCapture?: () => void;
   readonly admitted: Promise<CheckpointOperation | null>;
   admit(operation: CheckpointOperation): void;
   settle(operation: CheckpointOperation | null): void;
@@ -1929,7 +1970,9 @@ export function createConversationManager(
     address: ConversationAddress,
     request: { requestId: string | null; recover: string | null },
     options: { self?: ManagedCheckpointMaintenance; hydrate?: boolean } = {},
-  ): Promise<CheckpointAdmissionObservation> {
+  ): Promise<
+    CheckpointAdmissionObservation & { hasCaptureContinuity: boolean }
+  > {
     const identity = conversationStoreIdentity(address);
     const key = conversationRuntimeKey(
       identity.projectPath,
@@ -1971,6 +2014,7 @@ export function createConversationManager(
           }
         : null;
     return {
+      hasCaptureContinuity: liveRef !== null,
       continuationLost,
       requestId: request.requestId,
       recover: request.recover,
@@ -2170,7 +2214,28 @@ export function createConversationManager(
     const verdict = evaluateCheckpointAdmission(observation);
     const active = observation.checkpoints.active;
     const repo = await deps.checkpoint.repo();
+    const availability =
+      observation.conversation === null
+        ? {
+            available: false as const,
+            mode: null,
+            reason: "conversation_not_found",
+          }
+        : deps.checkpoint.captureAvailability(
+            observation.conversation.agentBackend,
+          );
+    const handoff: CheckpointHandoffEligibility = {
+      available: availability.available && observation.hasCaptureContinuity,
+      mode: availability.mode,
+      reason: !availability.available
+        ? availability.reason
+        : observation.hasCaptureContinuity
+          ? null
+          : "continuity_unavailable",
+      policy: CHECKPOINT_CAPTURE_POLICY,
+    };
     return {
+      handoff,
       eligible: verdict.eligible,
       refusals: verdict.eligible ? [] : verdict.refusals,
       active: active
@@ -2207,6 +2272,8 @@ export function createConversationManager(
       phase: "reserving",
       outcome: "pending",
       controller: new AbortController(),
+      captureController: new AbortController(),
+      captureMutation: Promise.resolve(),
       work,
       admitted,
       released,
@@ -2396,12 +2463,51 @@ export function createConversationManager(
       }
 
       const repo = await deps.checkpoint.repo();
+      const captureContext = actor.getSnapshot().context;
+      const captureModel =
+        input.handoff === undefined
+          ? null
+          : (runtime.managed.backend?.modelSelection ??
+            (await deps.checkpoint.resolveCaptureModel({
+              agentBackend: captureContext.agentBackend,
+              transcriptPath: captureContext.transcriptPath,
+              projectPath: captureContext.projectPath,
+            })));
+      const beforeAdmission = maintenanceHost.observe();
+      if (
+        !beforeAdmission.settled ||
+        beforeAdmission.backendRef !== settled.backendRef ||
+        beforeAdmission.activityEpoch !== settled.activityEpoch ||
+        beforeAdmission.backgroundEpoch !== settled.backgroundEpoch ||
+        actor.getSnapshot().context.agentBackend !== captureContext.agentBackend
+      ) {
+        return {
+          kind: "refused",
+          refusal: checkpointRefusal(
+            "conversation_busy",
+            "the source changed while binding checkpoint admission",
+          ),
+        };
+      }
+      const requestedAt = deps.checkpoint.now();
       const admissionInput = {
+        ...(input.handoff === undefined || captureModel === null
+          ? {}
+          : {
+              handoff: pendingCheckpointCapture({
+                requestId: input.requestId,
+                request: input.handoff,
+                backend: captureContext.agentBackend,
+                modelSelection: captureModel,
+                sourceBasis: source.basis,
+                at: requestedAt,
+              }),
+            }),
         key: scopeKey,
         requestId: input.requestId,
         sourceBasis: source.basis,
         priorBackendRef: settled.backendRef,
-        requestedAt: deps.checkpoint.now(),
+        requestedAt,
       };
       const admission =
         recover === null
@@ -2534,6 +2640,279 @@ export function createConversationManager(
       worktreePath: context().worktreePath,
       transcriptPath: context().transcriptPath,
       signal: maintenance.controller.signal,
+      captureSignal: maintenance.captureController.signal,
+      mutateCapture: (work) => mutateCapture(maintenance, work),
+      async captureHandoff(operation, captureInput, expected) {
+        const handoff = operation.handoff;
+        if (!handoff) throw new Error("Capture has no admitted intent");
+        const ref = context().backendRef;
+        const initiallyHosted = runtime.managed.backend;
+        let sourceChanged = false;
+        const auditEntryIds: string[] = [];
+        const startActivity = runtime.managed.activityEpoch;
+        const startBackground = deps.checkpoint.getBackgroundActivityEpoch(
+          context().target.conversationId,
+        );
+        const sourceIsCurrent = () =>
+          context().agentBackend === handoff.backend &&
+          (context().backendRef?.ref ?? null) ===
+            operation.protectedReferences.priorBackendRef &&
+          runtime.managed.activityEpoch === expected.activityEpoch &&
+          deps.checkpoint.getBackgroundActivityEpoch(
+            context().target.conversationId,
+          ) === expected.backgroundEpoch;
+        const availability = deps.checkpoint.captureAvailability(
+          handoff.backend,
+        );
+        let ordinal = 0;
+        let sinkSettled = false;
+        let writes = Promise.resolve();
+        let writeFailure: unknown;
+        let captureResult: CaptureHandoffResult | null = null;
+        let invoked = false;
+        let outputAdded = false;
+        let settlementAdded = false;
+        const pendingWrites = new Map<string, () => Promise<void>>();
+        maintenance.sealCapture = () => {
+          sinkSettled = true;
+        };
+        const append = (
+          entry: TranscriptEntry,
+          part: "control" | "output" | "activity" | "settlement",
+        ) => {
+          const id = `${handoff.captureId}:${ordinal++}`;
+          auditEntryIds.push(id);
+          const persist = () =>
+            deps.checkpoint
+              .appendCaptureEntryOnce(context().target.conversationId, {
+                ...entry,
+                id,
+                role: entry.role ?? "notice",
+                content: entry.content?.length
+                  ? entry.content
+                  : [{ type: "text", text: `Checkpoint capture ${part}` }],
+                origin: {
+                  source: "checkpoint_capture",
+                  checkpointCapture: {
+                    operationId: operation.id,
+                    captureId: handoff.captureId,
+                    part,
+                  },
+                },
+              })
+              .then(() => {
+                pendingWrites.delete(id);
+              });
+          pendingWrites.set(id, persist);
+          const receipt = writes.then(persist);
+          runtime.managed.trackCaptureReceipt(handoff.captureId, id, receipt);
+          writes = receipt.catch((error: unknown) => {
+            writeFailure ??= error;
+            runtime.durabilityFailure ??= { context: context(), error };
+          });
+          return receipt;
+        };
+        const sourceRefusal = () => {
+          sourceChanged = true;
+          return omittedCaptureResult("checkpoint_failed", ref);
+        };
+        const dispatch = async () => {
+          if (captureInput.signal.aborted)
+            return omittedCaptureResult("skipped", ref);
+          if (!sourceIsCurrent()) return sourceRefusal();
+          if (handoff.requestedMode === null || !availability.available)
+            return omittedCaptureResult("unavailable", ref);
+          if (availability.mode !== handoff.requestedMode)
+            return omittedCaptureResult("mode_changed", ref);
+          if (ref === null || ref.backend !== handoff.backend)
+            return omittedCaptureResult("continuity_unavailable", null);
+          const row = await deps.checkpoint.readConversation(
+            conversationStoreIdentity({
+              projectPath: context().projectPath,
+              target: context().target,
+            }),
+          );
+          const refusals = evaluateCheckpointConversation(
+            conversationObservationFromRow(
+              row,
+              observeHostedConversation(key, actor),
+            ),
+            row !== null &&
+              deps.checkpoint.backendSupportsCheckpoint(row.agentBackend),
+          );
+          if (
+            refusals.length ||
+            !sourceIsCurrent() ||
+            deps.checkpoint.getBackgroundActivity(
+              context().target.conversationId,
+            ) !== null
+          )
+            return sourceRefusal();
+          let backend;
+          try {
+            backend = await deps.checkpoint.acquireCaptureRuntime(
+              {
+                target: context().target,
+                projectPath: context().projectPath,
+                worktreePath: context().worktreePath,
+                agentBackend: handoff.backend,
+                modelSelection: structuredClone(handoff.modelSelection),
+                backendRef: ref,
+                captureId: handoff.captureId,
+                mode: handoff.requestedMode,
+              },
+              captureInput.signal,
+            );
+          } catch {
+            await runtime.managed.close();
+            return omittedCaptureResult("mode_establishment_failed", ref);
+          }
+          if (!backend?.captureHandoff)
+            return omittedCaptureResult("unavailable", ref);
+          const bindingIsCurrent = () =>
+            sourceIsCurrent() &&
+            isDeepStrictEqual(backend.modelSelection, handoff.modelSelection) &&
+            runtime.managed.activityEpoch === startActivity &&
+            deps.checkpoint.getBackgroundActivityEpoch(
+              context().target.conversationId,
+            ) === startBackground;
+          if (!bindingIsCurrent()) return sourceRefusal();
+          await append(
+            {
+              timestamp: deps.checkpoint.now(),
+              type: "checkpoint_capture_control",
+              role: "notice",
+              content: [{ type: "text", text: captureInput.promptText }],
+            },
+            "control",
+          );
+          if (!bindingIsCurrent()) return sourceRefusal();
+          const currentMode = deps.checkpoint.captureAvailability(
+            handoff.backend,
+          );
+          if (
+            !currentMode.available ||
+            currentMode.mode !== handoff.requestedMode
+          )
+            return omittedCaptureResult("mode_changed", ref);
+          if (captureInput.signal.aborted)
+            return omittedCaptureResult("skipped", ref);
+          invoked = true;
+          const result = captureHandoffResultSchema.parse(
+            await backend.captureHandoff({
+              ...captureInput,
+              mode: handoff.requestedMode,
+              onTranscript: async (entry) => {
+                if (sinkSettled) {
+                  await runtime.managed.track(Promise.resolve());
+                  throw new Error("Capture transcript sink is settled");
+                }
+                const frame = conversationTranscriptFrame(entry);
+                return append(
+                  frame,
+                  frame.role === "user"
+                    ? "control"
+                    : frame.role === "assistant"
+                      ? "output"
+                      : "activity",
+                );
+              },
+            }),
+          );
+          captureResult = result;
+          sourceChanged = !bindingIsCurrent();
+          if (
+            result.executionSettled &&
+            result.continuation.nextRuntime !== "current"
+          )
+            await runtime.managed.close();
+          return result;
+        };
+        const finishAudit = async (result: CaptureHandoffResult) => {
+          sinkSettled = true;
+          if (!result.submitted && auditEntryIds.length === 0) return;
+          if (result.candidateText !== null && !outputAdded) {
+            outputAdded = true;
+            await append(
+              {
+                timestamp: deps.checkpoint.now(),
+                type: "checkpoint_capture_output",
+                role: "assistant",
+                content: [{ type: "text", text: result.candidateText }],
+              },
+              "output",
+            );
+          }
+          if (!settlementAdded) {
+            settlementAdded = true;
+            await append(
+              {
+                timestamp: deps.checkpoint.now(),
+                type: "checkpoint_capture_settlement",
+                role: "notice",
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      captureId: handoff.captureId,
+                      executionSettled: result.executionSettled,
+                      activity: result.activity,
+                      omissionReason: result.omissionReason,
+                    }),
+                  },
+                ],
+              },
+              "settlement",
+            );
+          }
+          await writes;
+          if (writeFailure !== undefined) throw writeFailure;
+        };
+        // Retry only known deterministic work; the source request is never replayed.
+        maintenance.reconcileCapture = async () => {
+          await writes;
+          for (const [id, persist] of pendingWrites) {
+            await runtime.managed.trackCaptureReceipt(
+              handoff.captureId,
+              id,
+              persist(),
+            );
+          }
+          writeFailure = undefined;
+          runtime.managed.reconcileClose();
+          await runtime.managed.close();
+          const known =
+            captureResult ??
+            (!invoked ? omittedCaptureResult("capture_failed", ref) : null);
+          if (!known) return false;
+          // A successful owned close verifies collection, including work that
+          // outlived the original capture deadline. Backends reject close while
+          // cleanup remains unverified; the immutable capture result cannot
+          // reflect this later observation.
+          captureResult = {
+            ...known,
+            executionSettled: true,
+            cleanupFailure: null,
+          };
+          await finishAudit(captureResult);
+          await runtime.managed.settleOwnedWork();
+          return true;
+        };
+        const result = await dispatch();
+        captureResult = result;
+        if (
+          result.executionSettled &&
+          !initiallyHosted &&
+          runtime.managed.backend
+        )
+          await runtime.managed.close();
+        await writes;
+        if (writeFailure !== undefined) throw writeFailure;
+        if (!result.executionSettled || result.cleanupFailure !== null)
+          return { ...result, auditEntryIds, sourceChanged };
+        await finishAudit(result);
+        return { ...result, auditEntryIds, sourceChanged };
+      },
       async settleReceipts() {
         // Every drain that was claiming or dispatching when the reservation
         // landed finishes first; whatever it admitted is then visible to
@@ -2688,6 +3067,110 @@ export function createConversationManager(
     if (context) drainAfterTurn(context);
   }
 
+  /** Serialize stop requests with capture start and durable result settlement. */
+  function mutateCapture<T>(
+    maintenance: ManagedCheckpointMaintenance,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const result = maintenance.captureMutation.then(work);
+    maintenance.captureMutation = result.catch(() => undefined);
+    return result;
+  }
+
+  async function stopCheckpointCapture(
+    repo: ConversationCheckpointsRepo,
+    scopeKey: CheckpointScopeKey,
+    maintenance: ManagedCheckpointMaintenance,
+    operationId: string,
+    intent: "skip" | "cancel",
+  ) {
+    return mutateCapture(maintenance, async () => {
+      const operation = await repo.getOperation(scopeKey, operationId);
+      const handoff = operation?.handoff;
+      if (
+        !operation ||
+        !handoff ||
+        operation.phase !== "building" ||
+        (handoff.stage !== "pending" &&
+          handoff.stage !== "running" &&
+          handoff.stage !== "settling")
+      )
+        return operation;
+      const stopped = await repo.settleCapture({
+        key: scopeKey,
+        operationId,
+        captureId: handoff.captureId,
+        expectedSourceBasis: operation.sourceBasis,
+        expectedStage: handoff.stage,
+        settlement: { kind: "stop", intent },
+        at: deps.checkpoint.now(),
+      });
+      if (!stopped.ok)
+        throw new Error(`Capture stop refused: ${stopped.refusal.code}`);
+      maintenance.captureController.abort(intent);
+      return stopped.value;
+    });
+  }
+
+  async function skipConversationCheckpointHandoff(input: {
+    address: ConversationAddress;
+    operationId: string;
+  }): Promise<
+    | {
+        kind: "stopping" | "handoff_already_settled";
+        operation: CheckpointOperation;
+      }
+    | { kind: "refused"; refusal: CheckpointRefusal }
+  > {
+    const identity = conversationStoreIdentity(input.address);
+    const key = conversationRuntimeKey(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+    );
+    const repo = await deps.checkpoint.repo();
+    const scopeKey = checkpointKeyFor(input.address);
+    const maintenance = activeMaintenance(key);
+    const operation =
+      maintenance?.operationId === input.operationId &&
+      maintenance.phase === "building"
+        ? await stopCheckpointCapture(
+            repo,
+            scopeKey,
+            maintenance,
+            input.operationId,
+            "skip",
+          )
+        : await repo.getOperation(scopeKey, input.operationId);
+    if (!operation)
+      return {
+        kind: "refused",
+        refusal: checkpointRefusal(
+          "checkpoint_not_found",
+          "no such checkpoint operation in this scope",
+        ),
+      };
+    if (
+      operation.handoff?.stage === "settling" &&
+      maintenance?.operationId === operation.id &&
+      maintenance.phase === "building"
+    )
+      return { kind: "stopping", operation };
+    if (
+      operation.handoff &&
+      ["pending", "running", "settling"].includes(operation.handoff.stage)
+    )
+      return {
+        kind: "refused",
+        refusal: checkpointRefusal(
+          "not_owned",
+          "capture requires reconciliation",
+          operation,
+        ),
+      };
+    return { kind: "handoff_already_settled", operation };
+  }
+
   /**
    * Cancel a building checkpoint. After the payload is frozen the transition
    * finishes forward to a safe outcome instead, and the caller learns which.
@@ -2718,7 +3201,16 @@ export function createConversationManager(
         };
       }
       const cancellable = maintenance.phase === "building";
-      if (cancellable) maintenance.controller.abort("cancelled");
+      if (cancellable) {
+        maintenance.controller.abort("cancelled");
+        await stopCheckpointCapture(
+          repo,
+          scopeKey,
+          maintenance,
+          input.operationId,
+          "cancel",
+        );
+      }
       const operation =
         (await maintenance.work) ??
         (await repo.getOperation(scopeKey, input.operationId));
@@ -2812,6 +3304,8 @@ export function createConversationManager(
   async function reconcileConversationCheckpoint(input: {
     address: ConversationAddress;
     operationId: string;
+    captureExecutionStopped?: boolean;
+    source?: "cli" | "ui" | "api";
   }): Promise<ConversationCheckpointReconcile> {
     const identity = conversationStoreIdentity(input.address);
     const key = conversationRuntimeKey(
@@ -2914,6 +3408,24 @@ export function createConversationManager(
         "no such checkpoint operation in this scope",
       );
     const operation: CheckpointOperation = read;
+    const captureCleanupHold =
+      operation.phase === "needs_reconciliation" &&
+      operation.lastStablePhase === "building" &&
+      operation.payloadId === null &&
+      operation.handoff?.stage === "omitted" &&
+      (operation.handoff.omissionReason === "interrupted" ||
+        operation.handoff.omissionReason === "cleanup_unverified");
+    if (
+      input.captureExecutionStopped &&
+      (!captureCleanupHold ||
+        (operation.handoff?.executionSettled &&
+          !operation.handoff.executionStopAttestation))
+    )
+      return refusedAfterClaim(
+        "invalid_handoff",
+        "execution acknowledgement applies only to capture execution uncertainty",
+        operation,
+      );
     if (operation.supersededByOperationId !== null)
       return refusedAfterClaim(
         "stale_operation",
@@ -3251,21 +3763,134 @@ export function createConversationManager(
       return repaired(ready);
     }
 
+    async function reconcileCaptureHold(
+      current: CheckpointOperation,
+    ): Promise<ConversationCheckpointReconcile> {
+      const observed = (await maintenance.reconcileCapture?.()) ?? false;
+      runtime.managed.reconcileClose();
+      await maintenanceHost.closeRuntime();
+      await reconcileHostFailures(key, runtime, input.address.target);
+      await maintenanceHost.awaitDurable();
+
+      if (observed && !current.handoff?.executionSettled && current.handoff) {
+        const recorded = await repo.recordOutcome({
+          key: scopeKey,
+          operationId: current.id,
+          expectedPhase: "needs_reconciliation",
+          phase: "needs_reconciliation",
+          captureCleanupObserved: { captureId: current.handoff.captureId },
+          at: at(),
+        });
+        if (!recorded.ok)
+          return blocked(
+            current,
+            "reconciliation_failed",
+            recorded.refusal.reason,
+          );
+        current = recorded.value;
+      } else if (input.captureExecutionStopped) {
+        const timestamp = at();
+        const acknowledged = await repo.recordOutcome({
+          key: scopeKey,
+          operationId: current.id,
+          expectedPhase: "needs_reconciliation",
+          phase: "needs_reconciliation",
+          captureExecutionStopAttestation: {
+            at: timestamp,
+            source: input.source ?? "api",
+          },
+          at: timestamp,
+        });
+        if (!acknowledged.ok)
+          return blocked(
+            current,
+            "reconciliation_failed",
+            acknowledged.refusal.reason,
+          );
+        current = acknowledged.value;
+      }
+      if (!current.handoff?.executionSettled)
+        return blocked(
+          current,
+          "recovery_required",
+          "capture execution remains uncertain; inspect and stop prior backend work, then reconcile with captureExecutionStopped acknowledgement",
+        );
+      maintenance.sealCapture?.();
+      actor.send({
+        type: "CHECKPOINT_PHASE",
+        checkpoint: { operationId: current.id, phase: "needs_reconciliation" },
+        clearContinuation: true,
+      });
+      await maintenanceHost.awaitDurable();
+      return blocked(
+        current,
+        "recovery_required",
+        "capture cleanup is settled; run compact-context --recover with this operation id for a fresh baseline checkpoint",
+      );
+    }
+
     try {
+      if (
+        captureCleanupHold ||
+        (operation.phase === "needs_reconciliation" &&
+          operation.lastStablePhase === "building" &&
+          operation.handoff?.executionSettled &&
+          operation.handoff.continuationDisposition === "clear")
+      )
+        return await reconcileCaptureHold(operation);
       if (existing?.outcome === "undurable") {
         // The outcome write itself failed; the durable phase says what the
         // build was doing when it did.
         switch (operation.phase) {
           case "building": {
+            const cancelled =
+              operation.handoff !== null && existing.controller.signal.aborted;
+            const lostContinuation =
+              operation.recoversOperationId === null &&
+              operation.handoff?.executionSettled &&
+              operation.handoff.continuationDisposition === "clear" &&
+              operation.protectedReferences.priorBackendRef !== null;
+            if (
+              lostContinuation ||
+              (operation.handoff &&
+                operation.handoff.stage !== "pending" &&
+                !operation.handoff.executionSettled)
+            ) {
+              const held = await repo.recordOutcome({
+                key: scopeKey,
+                operationId: operation.id,
+                expectedPhase: "building",
+                phase: "needs_reconciliation",
+                failure: {
+                  code: lostContinuation
+                    ? cancelled
+                      ? "cancelled"
+                      : "capture_continuation_lost"
+                    : "capture_cleanup_unverified",
+                  message:
+                    "capture outcome was not durable; reconciling owned cleanup",
+                },
+                at: at(),
+              });
+              if (!held.ok)
+                return blocked(
+                  operation,
+                  "reconciliation_failed",
+                  held.refusal.reason,
+                );
+              return await reconcileCaptureHold(held.value);
+            }
+
             const failed = await repo.recordOutcome({
               key: scopeKey,
               operationId: operation.id,
               expectedPhase: "building",
-              phase: "failed",
+              phase: cancelled ? "cancelled" : "failed",
               failure: {
-                code: "outcome_unrecorded",
-                message:
-                  "the build ended but its outcome could not be recorded; recorded as failed by checkpoint reconcile",
+                code: cancelled ? "cancelled" : "outcome_unrecorded",
+                message: cancelled
+                  ? "checkpoint cancellation settled but its outcome required a persistence retry"
+                  : "the build ended but its outcome could not be recorded; recorded as failed by checkpoint reconcile",
               },
               at: at(),
             });
@@ -3413,6 +4038,7 @@ export function createConversationManager(
     stopConversationActor,
     checkConversationCheckpoint,
     startConversationCheckpoint,
+    skipConversationCheckpointHandoff,
     cancelConversationCheckpoint,
     reconcileConversationCheckpoint,
   };
@@ -3604,6 +4230,8 @@ export function startConversationCheckpoint(
 export function reconcileConversationCheckpoint(input: {
   address: ConversationAddress;
   operationId: string;
+  captureExecutionStopped?: boolean;
+  source?: "cli" | "ui" | "api";
 }): Promise<ConversationCheckpointReconcile> {
   return defaultManager().reconcileConversationCheckpoint(input);
 }
@@ -3613,4 +4241,11 @@ export function cancelConversationCheckpoint(input: {
   operationId: string;
 }): Promise<ConversationCheckpointCancel> {
   return defaultManager().cancelConversationCheckpoint(input);
+}
+
+export function skipConversationCheckpointHandoff(input: {
+  address: ConversationAddress;
+  operationId: string;
+}) {
+  return defaultManager().skipConversationCheckpointHandoff(input);
 }

@@ -328,3 +328,87 @@ describe("checkpoint payloads are independent of the reading artifact", () => {
     expect(operation?.phase).toBe("retiring");
   });
 });
+
+it("cannot promote old reading artifacts or repeated capture controls into generation evidence", async () => {
+  const old = await triggerArtifact(false);
+  if (!old.payload) throw new Error("missing artifact payload");
+  artifacts.upsert({
+    ...old,
+    normalizerVersion: "1",
+    promptVersion: "3",
+    payload: { ...old.payload, agentBrief: "OLD_CAPTURE fabricated approval" },
+  });
+  const entries = [...ENTRIES];
+  for (let cycle = 0; cycle < 3; cycle++) {
+    const seq = entries.length;
+    for (const [offset, part] of [
+      "control",
+      "output",
+      "settlement",
+    ].entries()) {
+      entries.push({
+        ...text(
+          seq + offset,
+          offset === 0 ? "user" : "assistant",
+          `OLD_CAPTURE ${part} new constraints and approval`,
+        ),
+        origin: {
+          source: "checkpoint_capture",
+          checkpointCapture: {
+            operationId: `op-${cycle}`,
+            captureId: `capture-${cycle}`,
+            part:
+              part === "control"
+                ? "control"
+                : part === "output"
+                  ? "output"
+                  : "settlement",
+          },
+        },
+      });
+    }
+    const source = await captureCheckpointSource(
+      { conversationId: KEY.conversationId, transcriptPath: null },
+      { readEntries: async () => ({ entries, maxSeq: entries.length - 1 }) },
+    );
+    const prompts: string[] = [];
+    const generated = await generateCheckpoint(
+      {
+        identity: {
+          conversationId: KEY.conversationId,
+          checkpointId: `checkpoint-${cycle}`,
+          ordinal: cycle + 1,
+          scope: "session",
+        },
+        source,
+        existingArtifact: artifacts.findById(old.id),
+        lane: {
+          address: {
+            projectPath: KEY.projectPath,
+            target: sessionConversationTarget(
+              "alpha",
+              "csm-alpha",
+              `build-${cycle}`,
+            ),
+          },
+          worktreePath: "/projects/alpha/.worktrees/csm-alpha",
+          backend: "claude",
+        },
+        config: compactionConfigSchema.parse({}),
+        createdAt: "2026-07-05T00:00:02Z",
+      },
+      {
+        executeTaskRun: async (input) => {
+          prompts.push(input.prompt);
+          return executeTaskRun(input);
+        },
+      },
+    );
+    expect(prompts.join("\n")).not.toContain("OLD_CAPTURE");
+    expect(prompts.join("\n")).toContain("then checkpoint it");
+    expect(generated.ok).toBe(true);
+    if (!generated.ok) throw new Error("generation failed");
+    expect(generated.payload.seedText).not.toContain("OLD_CAPTURE");
+    expect(generated.payload.artifactProvenance).toBeNull();
+  }
+});

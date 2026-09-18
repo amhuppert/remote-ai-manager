@@ -21,7 +21,10 @@
 
 import { z } from "zod";
 
-import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import {
+  transcriptMessageOriginSchema,
+  type MessageContentBlock,
+} from "@/lib/conversations/schemas";
 
 /**
  * How many boundaries one read response carries. Past this the reader hands
@@ -152,6 +155,7 @@ export const historyEntryMetadataSchema = z
     /** Null for a stored tool-result line, which has no role of its own. */
     role: z.enum(["user", "assistant", "notice"]).nullable(),
     entryId: z.string().nullable(),
+    origin: transcriptMessageOriginSchema.optional(),
     timestamp: z.string().nullable(),
     /** Merged-message index this entry belongs to, matching the reader. */
     messageIndex: z.number().int(),

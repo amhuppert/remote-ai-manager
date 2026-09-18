@@ -1,3 +1,4 @@
+import { CHECKPOINT_CAPTURE_POLICY } from "@/lib/conversation-checkpoints/receipt";
 import { describe, expect, it } from "vitest";
 import { runCcWithHost } from "./testing/domain-runtime";
 import type { CliEnv, CliHost, FetchInit } from "./transport";
@@ -318,7 +319,18 @@ const PROJECT_SCOPE_INVOCATIONS: {
   {
     name: "conversation checkpoint check",
     argv: ["conversation", "checkpoint", "check", "conv-1"],
-    body: { eligible: true, refusals: [], active: null, hosted: false },
+    body: {
+      eligible: true,
+      refusals: [],
+      active: null,
+      hosted: false,
+      handoff: {
+        available: false,
+        mode: null,
+        reason: "unavailable",
+        policy: CHECKPOINT_CAPTURE_POLICY,
+      },
+    },
   },
   {
     name: "conversation checkpoint list",
@@ -334,6 +346,11 @@ const PROJECT_SCOPE_INVOCATIONS: {
     name: "conversation checkpoint cancel",
     argv: ["conversation", "checkpoint", "cancel", "conv-1", "op-1"],
     body: { outcome: "cancelled", receipt: CHECKPOINT_RECEIPT_BODY },
+  },
+  {
+    name: "conversation checkpoint skip-handoff",
+    argv: ["conversation", "checkpoint", "skip-handoff", "conv-1", "op-1"],
+    body: { outcome: "stopping", receipt: CHECKPOINT_RECEIPT_BODY },
   },
   {
     name: "conversation checkpoint reconcile",

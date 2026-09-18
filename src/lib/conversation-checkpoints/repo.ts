@@ -1,3 +1,4 @@
+import { discardHandoffCandidate } from "./schemas";
 import { isValidCheckpointForkPayload } from "./fork-validation";
 /**
  * The durable authority for a conversation's checkpoint phase.
@@ -20,6 +21,7 @@ import { isValidCheckpointForkPayload } from "./fork-validation";
  */
 
 import type Database from "better-sqlite3";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import { createLogger, type Logger } from "@/lib/logging";
@@ -38,9 +40,13 @@ import { checkpointReceipt, type CheckpointReceipt } from "./receipt";
 import type { CheckpointPayloadReceipt } from "./receipt";
 import {
   ACTIVE_CHECKPOINT_PHASES,
+  checkpointExecutionStopAttestationSchema,
+  checkpointHandoffSchema,
   checkpointOperationSchema,
   checkpointPayloadSchema,
   checkpointSeedBytesAgree,
+  type CheckpointHandoff,
+  type CheckpointExecutionStopAttestation,
   type CheckpointAcceptance,
   type CheckpointDeliveryBinding,
   type CheckpointFailure,
@@ -54,6 +60,7 @@ import {
   type CheckpointUsage,
 } from "./schemas";
 import {
+  validateCaptureTransition,
   validateCheckpointOutcomeEdge,
   validateCheckpointTransition,
 } from "./transitions";
@@ -91,6 +98,7 @@ export interface CreatedCheckpointFork {
 }
 
 export interface AdmitCheckpointInput {
+  handoff?: CheckpointHandoff | null;
   key: CheckpointScopeKey;
   /** Caller-generated UUID; becomes the operation and checkpoint id. */
   requestId: string;
@@ -104,7 +112,23 @@ export interface AdmitCheckpointRecoveryInput extends AdmitCheckpointInput {
   recoversOperationId: string;
 }
 
+export interface BeginCheckpointCaptureInput {
+  key: CheckpointScopeKey;
+  operationId: string;
+  captureId: string;
+  expectedSourceBasis: CheckpointSourceBasis;
+  at: string;
+}
+
+export interface SettleCheckpointCaptureInput extends BeginCheckpointCaptureInput {
+  expectedStage: "pending" | "running" | "settling";
+  settlement:
+    | { kind: "stop"; intent: "skip" | "cancel" }
+    | { kind: "result"; handoff: CheckpointHandoff };
+}
+
 export interface FreezeCheckpointPayloadInput {
+  handoffDecision?: "included" | "seed_budget";
   key: CheckpointScopeKey;
   operationId: string;
   payload: CheckpointPayload;
@@ -148,6 +172,19 @@ export interface RecordCheckpointAcceptanceInput {
 }
 
 export interface RecordCheckpointOutcomeInput {
+  /** Observations from the owned adapter result; never settlement authority. */
+  captureObservation?: Pick<
+    CheckpointHandoff,
+    | "captureId"
+    | "modeEstablished"
+    | "submitted"
+    | "correlatedCompletion"
+    | "activity"
+    | "usage"
+    | "continuationDisposition"
+  >;
+  captureCleanupObserved?: { captureId: string };
+  captureExecutionStopAttestation?: CheckpointExecutionStopAttestation;
   key: CheckpointScopeKey;
   operationId: string;
   expectedPhase: CheckpointPhase;
@@ -203,6 +240,12 @@ export interface CheckpointReceiptPage {
 }
 
 export interface ConversationCheckpointsRepo {
+  beginCapture(
+    input: BeginCheckpointCaptureInput,
+  ): Promise<CheckpointResult<CheckpointOperation>>;
+  settleCapture(
+    input: SettleCheckpointCaptureInput,
+  ): Promise<CheckpointResult<CheckpointOperation>>;
   createFork(
     input: CreateCheckpointForkInput,
   ): Promise<CheckpointResult<CreatedCheckpointFork>>;
@@ -298,6 +341,7 @@ const operationRowSchema = registerTrustedSchema(
     last_stable_phase: z.string().nullable(),
     captured_through_seq: z.number().int(),
     source_hash: z.string(),
+    handoff_json: z.string().nullable(),
     prior_backend_ref: z.string().nullable(),
     accepted_backend_ref: z.string().nullable(),
     payload_id: z.string().nullable(),
@@ -404,6 +448,16 @@ function rowToOperation(raw: unknown): CheckpointOperation {
     ordinal: row.ordinal,
     phase: row.phase,
     lastStablePhase: row.last_stable_phase,
+    handoff:
+      row.handoff_json === null
+        ? null
+        : checkpointHandoffSchema.parse(
+            jsonColumn(
+              "conversation-checkpoint-operation",
+              row.id,
+              row.handoff_json,
+            ),
+          ),
     sourceBasis: {
       capturedThroughSeq: row.captured_through_seq,
       sourceHash: row.source_hash,
@@ -668,11 +722,11 @@ export function createConversationCheckpointsRepo(
     `INSERT INTO conversation_checkpoint_operations (
        id, scope, project_path, session_name, conversation_id, ordinal, phase,
        captured_through_seq, source_hash, prior_backend_ref,
-       recovers_operation_id, requested_at, updated_at
+       recovers_operation_id, requested_at, updated_at, handoff_json
      ) VALUES (
        @id, @scope, @project_path, @session_name, @conversation_id, @ordinal,
        'building', @captured_through_seq, @source_hash, @prior_backend_ref,
-       @recovers_operation_id, @requested_at, @updated_at
+       @recovers_operation_id, @requested_at, @updated_at, @handoff_json
      )`,
   );
   const setSupersededByStmt = db.prepare(
@@ -697,7 +751,7 @@ export function createConversationCheckpointsRepo(
   );
   const freezeOperationStmt = db.prepare(
     `UPDATE conversation_checkpoint_operations
-        SET phase = 'retiring', payload_id = @id,
+        SET phase = 'retiring', payload_id = @id, handoff_json = @handoff_json,
             generation_pass_count = @generation_pass_count,
             usage_input_tokens = COALESCE(@usage_input_tokens, usage_input_tokens),
             usage_cached_input_tokens =
@@ -738,7 +792,7 @@ export function createConversationCheckpointsRepo(
   );
   const recordOutcomeStmt = db.prepare(
     `UPDATE conversation_checkpoint_operations
-        SET phase = @phase,
+        SET phase = @phase, handoff_json = @handoff_json,
             last_stable_phase = @last_stable_phase,
             failure_code = COALESCE(@failure_code, failure_code),
             failure_message = COALESCE(@failure_message, failure_message),
@@ -882,6 +936,106 @@ export function createConversationCheckpointsRepo(
     return null;
   }
 
+  function captureOperation(
+    input: BeginCheckpointCaptureInput,
+  ): CheckpointResult<CheckpointOperation> {
+    const operation = findScoped(input.key, input.operationId);
+    if (operation === null)
+      return refuse(
+        "checkpoint_not_found",
+        "no such checkpoint operation in this scope",
+        null,
+      );
+    if (
+      operation.phase !== "building" ||
+      operation.payloadId !== null ||
+      operation.supersededByOperationId !== null
+    )
+      return refuse(
+        "stale_operation",
+        "capture requires an unfrozen active build",
+        operation,
+      );
+    if (
+      operation.handoff === null ||
+      operation.handoff.captureId !== input.captureId
+    )
+      return refuse(
+        "invalid_handoff",
+        "capture identity does not match the admitted intent",
+        operation,
+      );
+    return ok(operation);
+  }
+
+  function writeCapture(
+    operation: CheckpointOperation,
+    handoff: CheckpointHandoff,
+    at: string,
+  ): CheckpointResult<CheckpointOperation> {
+    const parsed = checkpointHandoffSchema.safeParse(handoff);
+    if (!parsed.success)
+      return refuse(
+        "invalid_handoff",
+        "capture metadata does not describe a valid state",
+        operation,
+      );
+    const basis = handoff.finalSourceBasis ?? operation.sourceBasis;
+    const written = db
+      .prepare(
+        `UPDATE conversation_checkpoint_operations
+      SET handoff_json = @handoff, captured_through_seq = @seq, source_hash = @hash, updated_at = @at
+      WHERE id = @id AND phase = 'building' AND payload_id IS NULL AND superseded_by_operation_id IS NULL
+      AND captured_through_seq = @prior_seq AND source_hash = @prior_hash`,
+      )
+      .run({
+        id: operation.id,
+        handoff: JSON.stringify(parsed.data),
+        seq: basis.capturedThroughSeq,
+        hash: basis.sourceHash,
+        at,
+        prior_seq: operation.sourceBasis.capturedThroughSeq,
+        prior_hash: operation.sourceBasis.sourceHash,
+      });
+    if (written.changes !== 1)
+      return refuse(
+        "stale_operation",
+        "capture changed before the write",
+        operation,
+      );
+    logger.info("checkpoint.capture.persisted", {
+      operationId: operation.id,
+      conversationId: operation.conversationId,
+      scope: operation.scope,
+      captureId: handoff.captureId,
+      stage: handoff.stage,
+    });
+    return ok(reload(operation.id));
+  }
+
+  function invalidHandoffAdmission(
+    input: AdmitCheckpointInput,
+  ): CheckpointResult<AdmittedCheckpoint> | null {
+    if (input.handoff == null) return null;
+    const parsed = checkpointHandoffSchema.safeParse(input.handoff);
+    if (
+      !parsed.success ||
+      parsed.data.stage !== "pending" ||
+      parsed.data.captureId !== `${input.requestId}:capture` ||
+      parsed.data.admissionSourceBasis.capturedThroughSeq !==
+        input.sourceBasis.capturedThroughSeq ||
+      parsed.data.admissionSourceBasis.sourceHash !==
+        input.sourceBasis.sourceHash
+    ) {
+      return refuse(
+        "invalid_handoff",
+        "capture admission requires a pending intent bound to this operation and source",
+        null,
+      );
+    }
+    return null;
+  }
+
   function insertAdmitted(
     input: AdmitCheckpointInput,
     recoversOperationId: string | null,
@@ -903,6 +1057,10 @@ export function createConversationCheckpointsRepo(
       captured_through_seq: input.sourceBasis.capturedThroughSeq,
       source_hash: input.sourceBasis.sourceHash,
       prior_backend_ref: input.priorBackendRef,
+      handoff_json:
+        input.handoff == null
+          ? null
+          : JSON.stringify(checkpointHandoffSchema.parse(input.handoff)),
       recovers_operation_id: recoversOperationId,
       requested_at: input.requestedAt,
       updated_at: input.requestedAt,
@@ -911,6 +1069,198 @@ export function createConversationCheckpointsRepo(
   }
 
   return {
+    async beginCapture(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.beginCapture", () =>
+        db
+          .transaction((): CheckpointResult<CheckpointOperation> => {
+            const found = captureOperation(input);
+            if (!found.ok) return found;
+            const operation = found.value;
+            const handoff = operation.handoff;
+            if (handoff === null)
+              return refuse(
+                "invalid_handoff",
+                "capture was not requested",
+                operation,
+              );
+            if (
+              !isDeepStrictEqual(
+                operation.sourceBasis,
+                input.expectedSourceBasis,
+              )
+            )
+              return refuse(
+                "source_basis_mismatch",
+                "capture source changed",
+                operation,
+              );
+            if (handoff.stage === "running" && handoff.startedAt === input.at)
+              return ok(operation);
+            if (
+              !validateCaptureTransition(handoff.stage, "running") ||
+              handoff.requestedMode === null
+            )
+              return refuse(
+                "illegal_transition",
+                "capture cannot begin from this stage or without a disclosed mode",
+                operation,
+              );
+            return writeCapture(
+              operation,
+              { ...handoff, stage: "running", startedAt: input.at },
+              input.at,
+            );
+          })
+          .immediate(),
+      );
+    },
+    async settleCapture(input) {
+      return writeQueue.withWriteQueueSync("checkpoint.settleCapture", () =>
+        db
+          .transaction((): CheckpointResult<CheckpointOperation> => {
+            const found = captureOperation(input);
+            if (!found.ok) return found;
+            const operation = found.value;
+            const current = operation.handoff;
+            if (current === null)
+              return refuse(
+                "invalid_handoff",
+                "capture was not requested",
+                operation,
+              );
+            if (
+              input.settlement.kind === "result" &&
+              current.finalSourceBasis !== null &&
+              isDeepStrictEqual(current, input.settlement.handoff) &&
+              isDeepStrictEqual(
+                input.expectedSourceBasis,
+                current.admissionSourceBasis,
+              )
+            )
+              return ok(operation);
+            if (
+              !isDeepStrictEqual(
+                operation.sourceBasis,
+                input.expectedSourceBasis,
+              )
+            )
+              return refuse(
+                "source_basis_mismatch",
+                "capture source changed",
+                operation,
+              );
+            if (input.settlement.kind === "stop") {
+              const intent = input.settlement.intent;
+              if (
+                current.stage === "settling" &&
+                (current.stopIntent === intent ||
+                  current.stopIntent === "cancel")
+              )
+                return ok(operation);
+              if (
+                current.stage !== input.expectedStage ||
+                (current.stage !== "settling" &&
+                  !validateCaptureTransition(current.stage, "settling"))
+              )
+                return refuse(
+                  "stale_operation",
+                  "capture is no longer awaiting settlement",
+                  operation,
+                );
+              return writeCapture(
+                operation,
+                {
+                  ...current,
+                  stage: "settling",
+                  startedAt: current.startedAt ?? input.at,
+                  stopIntent: intent,
+                },
+                input.at,
+              );
+            }
+            const handoff = input.settlement.handoff;
+            if (handoff.omissionReason === "seed_budget")
+              return refuse(
+                "invalid_handoff",
+                "seed-budget omission requires atomic payload finalization",
+                operation,
+              );
+            const parsed = checkpointHandoffSchema.safeParse(handoff);
+            if (
+              !parsed.success ||
+              !handoff.executionSettled ||
+              !handoff.auditDurable ||
+              handoff.finalSourceBasis === null ||
+              handoff.settledAt !== input.at ||
+              handoff.finalizedAt !== null ||
+              handoff.executionStopAttestation !== null ||
+              (handoff.stage !== "captured" && handoff.stage !== "omitted")
+            )
+              return refuse(
+                "invalid_handoff",
+                "capture result requires settled execution, durable audit and a final source",
+                operation,
+              );
+            if (
+              current.stage !== input.expectedStage ||
+              current.finalSourceBasis !== null ||
+              !validateCaptureTransition(current.stage, handoff.stage)
+            )
+              return refuse(
+                "stale_operation",
+                "capture was already settled or changed stage",
+                operation,
+              );
+            const pinned = [
+              "captureId",
+              "requestedMode",
+              "policyVersion",
+              "backend",
+              "modelSelection",
+              "admissionSourceBasis",
+              "requestedAt",
+              "startedAt",
+              "stopIntent",
+            ] as const;
+            if (
+              pinned.some(
+                (field) => !isDeepStrictEqual(current[field], handoff[field]),
+              )
+            )
+              return refuse(
+                "invalid_handoff",
+                "capture result changed its admitted identity or stop intent",
+                operation,
+              );
+            if (
+              current.stopIntent !== null &&
+              handoff.omissionReason !==
+                (current.stopIntent === "cancel" ? "cancelled" : "skipped")
+            )
+              return refuse(
+                "invalid_handoff",
+                "capture result does not honor its stop intent",
+                operation,
+              );
+            if (
+              handoff.finalSourceBasis.capturedThroughSeq <
+                operation.sourceBasis.capturedThroughSeq ||
+              (handoff.sourceCoverage !== null &&
+                (handoff.sourceCoverage.seqStart <=
+                  current.admissionSourceBasis.capturedThroughSeq ||
+                  handoff.sourceCoverage.seqEnd >
+                    handoff.finalSourceBasis.capturedThroughSeq))
+            )
+              return refuse(
+                "source_basis_mismatch",
+                "capture coverage is outside the owned final source",
+                operation,
+              );
+            return writeCapture(operation, parsed.data, input.at);
+          })
+          .immediate(),
+      );
+    },
     async createFork(input) {
       return writeQueue.withWriteQueueSync("checkpoint.createFork", () =>
         db
@@ -1074,6 +1424,8 @@ export function createConversationCheckpointsRepo(
             // deletion refuses rather than persisting an unreachable row.
             const missing = missingTargetRefusal<AdmittedCheckpoint>(input.key);
             if (missing !== null) return missing;
+            const invalidHandoff = invalidHandoffAdmission(input);
+            if (invalidHandoff !== null) return invalidHandoff;
             const operation = insertAdmitted(input, null);
             logger.info("conversation-checkpoints.admitted", {
               ...operationLogFields(input.key, operation.id),
@@ -1117,8 +1469,18 @@ export function createConversationCheckpointsRepo(
               );
             }
 
+            if (target.handoff !== null && !target.handoff.executionSettled)
+              return refuse(
+                "invalid_handoff",
+                "capture execution must be settled or acknowledged before recovery",
+                target,
+              );
+
             const missing = missingTargetRefusal<AdmittedCheckpoint>(input.key);
             if (missing !== null) return missing;
+
+            const invalidHandoff = invalidHandoffAdmission(input);
+            if (invalidHandoff !== null) return invalidHandoff;
 
             // Release the gate before inserting: the partial unique index
             // permits one active operation, so the superseding link has to land
@@ -1151,6 +1513,27 @@ export function createConversationCheckpointsRepo(
                 "no such checkpoint operation in this scope",
                 null,
               );
+            }
+            if (
+              operation.payloadId !== null &&
+              operation.supersededByOperationId === null
+            ) {
+              const saved = findPayloadStmt.get({
+                ...scopeBind(input.key),
+                id: operation.id,
+              });
+              const decision =
+                operation.handoff?.stage === "included"
+                  ? "included"
+                  : operation.handoff?.omissionReason === "seed_budget"
+                    ? "seed_budget"
+                    : undefined;
+              if (
+                saved !== undefined &&
+                isDeepStrictEqual(rowToPayload(saved), input.payload) &&
+                input.handoffDecision === decision
+              )
+                return ok(operation);
             }
             const transition = validateCheckpointTransition({
               from: operation.phase,
@@ -1186,6 +1569,75 @@ export function createConversationCheckpointsRepo(
                 operation,
               );
             }
+            const capture = operation.handoff;
+            let frozenHandoff = capture;
+            if (capture !== null) {
+              if (
+                !capture.executionSettled ||
+                !capture.auditDurable ||
+                capture.finalSourceBasis === null ||
+                (capture.stage !== "captured" && capture.stage !== "omitted")
+              )
+                return refuse(
+                  "invalid_handoff",
+                  "capture must settle before payload freeze",
+                  operation,
+                );
+              if (capture.stopIntent === "cancel")
+                return refuse(
+                  "invalid_handoff",
+                  "checkpoint cancellation prevents payload freeze",
+                  operation,
+                );
+              if (capture.stage === "captured") {
+                if (input.handoffDecision === undefined)
+                  return refuse(
+                    "invalid_handoff",
+                    "captured output requires an explicit final inclusion decision",
+                    operation,
+                  );
+                frozenHandoff = checkpointHandoffSchema.parse({
+                  ...capture,
+                  ...discardHandoffCandidate(capture),
+                  stage:
+                    input.handoffDecision === "included"
+                      ? "included"
+                      : "omitted",
+                  omissionReason:
+                    input.handoffDecision === "included" ? null : "seed_budget",
+                  finalizedAt: input.at,
+                });
+              } else {
+                if (input.handoffDecision !== undefined)
+                  return refuse(
+                    "invalid_handoff",
+                    "an omitted capture cannot be included or reclassified",
+                    operation,
+                  );
+                frozenHandoff = checkpointHandoffSchema.parse({
+                  ...capture,
+                  ...discardHandoffCandidate(capture),
+                  finalizedAt: input.at,
+                });
+              }
+            } else if (input.handoffDecision !== undefined)
+              return refuse(
+                "invalid_handoff",
+                "capture was not requested",
+                operation,
+              );
+            const workingState = input.payload.sections.workingState;
+            const hasHandoff =
+              typeof workingState === "object" &&
+              workingState !== null &&
+              "agentHandoff" in workingState &&
+              workingState.agentHandoff != null;
+            if (hasHandoff !== (frozenHandoff?.stage === "included"))
+              return refuse(
+                "invalid_handoff",
+                "payload handoff presence disagrees with its inclusion outcome",
+                operation,
+              );
             const fenced = input.fence?.(continuation.find(input.key)) ?? null;
             if (fenced !== null) {
               return refuse("fence_refused", fenced.message, operation);
@@ -1195,6 +1647,8 @@ export function createConversationCheckpointsRepo(
             insertPayload(payload);
             freezeOperationStmt.run({
               id: operation.id,
+              handoff_json:
+                frozenHandoff === null ? null : JSON.stringify(frozenHandoff),
               generation_pass_count: payload.generationPassCount,
               usage_input_tokens: input.usage?.inputTokens ?? null,
               usage_cached_input_tokens: input.usage?.cachedInputTokens ?? null,
@@ -1472,6 +1926,158 @@ export function createConversationCheckpointsRepo(
               supersededRefusal<CheckpointOperation>(operation);
             if (superseded !== null) return superseded;
 
+            if (input.captureObservation !== undefined) {
+              const handoff = operation.handoff;
+              if (
+                input.captureCleanupObserved !== undefined ||
+                input.captureExecutionStopAttestation !== undefined ||
+                operation.phase !== "building" ||
+                input.phase !== "needs_reconciliation" ||
+                input.failure?.code !== "capture_cleanup_unverified" ||
+                operation.payloadId !== null ||
+                handoff === null ||
+                handoff.captureId !== input.captureObservation.captureId ||
+                handoff.executionSettled ||
+                (handoff.stage !== "running" && handoff.stage !== "settling")
+              )
+                return refuse(
+                  "invalid_handoff",
+                  "capture observations require the matching unsettled capture cleanup hold",
+                  operation,
+                );
+            }
+
+            if (input.captureCleanupObserved !== undefined) {
+              const handoff = operation.handoff;
+              if (
+                input.captureExecutionStopAttestation !== undefined ||
+                operation.phase !== "needs_reconciliation" ||
+                input.phase !== "needs_reconciliation" ||
+                operation.lastStablePhase !== "building" ||
+                operation.payloadId !== null ||
+                handoff === null ||
+                handoff.captureId !== input.captureCleanupObserved.captureId ||
+                handoff.stage !== "omitted" ||
+                handoff.executionStopAttestation !== null ||
+                (handoff.omissionReason !== "interrupted" &&
+                  handoff.omissionReason !== "cleanup_unverified")
+              )
+                return refuse(
+                  "invalid_handoff",
+                  "observed cleanup applies only to the matching capture cleanup hold",
+                  operation,
+                );
+              if (
+                handoff.executionSettled &&
+                handoff.auditDurable &&
+                handoff.continuationDisposition === "clear" &&
+                handoff.candidate === null &&
+                handoff.settledAt !== null
+              )
+                return ok(operation);
+              const settled = checkpointHandoffSchema.parse({
+                ...handoff,
+                executionSettled: true,
+                auditDurable: true,
+                ...discardHandoffCandidate(handoff),
+                continuationDisposition: "clear",
+                settledAt: handoff.settledAt ?? input.at,
+              });
+              db.prepare(
+                "UPDATE conversation_checkpoint_operations SET handoff_json = ?, updated_at = ? WHERE id = ? AND phase = 'needs_reconciliation'",
+              ).run(JSON.stringify(settled), input.at, operation.id);
+              logger.info("checkpoint.capture.cleanup_observed", {
+                ...operationLogFields(input.key, operation.id),
+                captureId: handoff.captureId,
+              });
+              return ok(reload(operation.id));
+            }
+
+            if (input.captureExecutionStopAttestation !== undefined) {
+              const handoff = operation.handoff;
+              const attestation =
+                checkpointExecutionStopAttestationSchema.safeParse(
+                  input.captureExecutionStopAttestation,
+                );
+              if (
+                !attestation.success ||
+                operation.phase !== "needs_reconciliation" ||
+                input.phase !== "needs_reconciliation" ||
+                operation.lastStablePhase !== "building" ||
+                operation.payloadId !== null ||
+                handoff === null ||
+                handoff.stage !== "omitted" ||
+                (handoff.omissionReason !== "interrupted" &&
+                  handoff.omissionReason !== "cleanup_unverified")
+              )
+                return refuse(
+                  "invalid_handoff",
+                  "execution acknowledgement applies only to a capture cleanup hold",
+                  operation,
+                );
+              if (handoff.executionStopAttestation !== null) {
+                if (
+                  handoff.executionStopAttestation.source ===
+                  attestation.data.source
+                )
+                  return ok(operation);
+                return refuse(
+                  "stale_operation",
+                  "execution acknowledgement is already durable",
+                  operation,
+                );
+              }
+              if (handoff.executionSettled || attestation.data.at !== input.at)
+                return refuse(
+                  "invalid_handoff",
+                  "execution acknowledgement does not match unsettled capture",
+                  operation,
+                );
+              const acknowledged = checkpointHandoffSchema.parse({
+                ...handoff,
+                executionSettled: true,
+                executionStopAttestation: attestation.data,
+                continuationDisposition: "clear",
+                omissionReason: "interrupted",
+                finalizedAt: input.at,
+              });
+              db.prepare(
+                "UPDATE conversation_checkpoint_operations SET handoff_json = ?, updated_at = ? WHERE id = ? AND phase = 'needs_reconciliation'",
+              ).run(JSON.stringify(acknowledged), input.at, operation.id);
+              logger.info("checkpoint.capture.execution_stop_attested", {
+                ...operationLogFields(input.key, operation.id),
+                captureId: handoff.captureId,
+                source: attestation.data.source,
+              });
+              return ok(reload(operation.id));
+            }
+            const settledContinuationLost =
+              operation.handoff !== null &&
+              (operation.handoff.stage === "captured" ||
+                operation.handoff.stage === "omitted") &&
+              operation.handoff.executionSettled &&
+              operation.handoff.auditDurable &&
+              operation.handoff.continuationDisposition === "clear" &&
+              operation.protectedReferences.priorBackendRef !== null &&
+              (input.failure?.code === "capture_continuation_lost" ||
+                input.failure?.code === "cancelled" ||
+                input.failure?.code === "interrupted");
+            if (
+              operation.phase === "building" &&
+              input.phase === "needs_reconciliation" &&
+              !settledContinuationLost &&
+              (operation.handoff === null ||
+                operation.handoff.stage === "pending" ||
+                operation.handoff.executionSettled ||
+                (input.failure?.code !== "capture_interrupted" &&
+                  input.failure?.code !== "capture_cleanup_unverified"))
+            )
+              return refuse(
+                "illegal_transition",
+                "building reconciliation requires unverified capture execution or settled loss of prior continuity",
+                operation,
+              );
+
             // An outcome reports work that finished; it carries no payload, no
             // reference clear, no attempt binding and no acceptance receipt. An
             // edge whose meaning IS one of those belongs to the method that
@@ -1561,8 +2167,71 @@ export function createConversationCheckpointsRepo(
               );
             }
 
+            let handoff = operation.handoff;
+            if (
+              handoff !== null &&
+              operation.phase === "building" &&
+              input.phase === "needs_reconciliation"
+            ) {
+              handoff = checkpointHandoffSchema.parse({
+                ...handoff,
+                ...(input.captureObservation
+                  ? {
+                      modeEstablished: input.captureObservation.modeEstablished,
+                      submitted: input.captureObservation.submitted,
+                      correlatedCompletion:
+                        input.captureObservation.correlatedCompletion,
+                      activity: input.captureObservation.activity,
+                      usage: input.captureObservation.usage,
+                      continuationDisposition:
+                        input.captureObservation.continuationDisposition,
+                    }
+                  : {}),
+                stage: "omitted",
+                omissionReason: settledContinuationLost
+                  ? (handoff.omissionReason ??
+                    (input.failure?.code === "interrupted" ||
+                    input.failure?.code === "cancelled"
+                      ? input.failure.code
+                      : "checkpoint_failed"))
+                  : input.failure?.code === "capture_interrupted"
+                    ? "interrupted"
+                    : "cleanup_unverified",
+                ...(settledContinuationLost
+                  ? discardHandoffCandidate(handoff)
+                  : {}),
+                finalizedAt: input.at,
+              });
+            }
+            if (
+              handoff !== null &&
+              (input.phase === "failed" || input.phase === "cancelled")
+            ) {
+              if (!handoff.executionSettled && handoff.stage !== "pending")
+                return refuse(
+                  "invalid_handoff",
+                  "unsettled capture must retain reconciliation ownership",
+                  operation,
+                );
+              if (handoff.stage === "captured" || handoff.stage === "pending") {
+                const reason =
+                  input.phase === "cancelled"
+                    ? "cancelled"
+                    : input.failure?.code === "interrupted"
+                      ? "interrupted"
+                      : "checkpoint_failed";
+                handoff = checkpointHandoffSchema.parse({
+                  ...handoff,
+                  stage: "omitted",
+                  omissionReason: reason,
+                  ...discardHandoffCandidate(handoff),
+                  finalizedAt: input.at,
+                });
+              }
+            }
             const written = recordOutcomeStmt.run({
               id: operation.id,
+              handoff_json: handoff === null ? null : JSON.stringify(handoff),
               expected_phase: input.expectedPhase,
               // Bound only where there is a delivery to correlate against, so
               // this CAS backstop states exactly the rule the guard above

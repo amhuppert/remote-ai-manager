@@ -99,6 +99,10 @@ export const codexConversationCapabilities: BackendConversationCapabilities = {
   // See docs/reports/checkpoint-compaction/codex-enablement.md.
   checkpoint: true,
   checkpointFork: true,
+  handoffCapture: {
+    available: true,
+    mode: "instruction-only",
+  },
   capabilityKinds: [
     { kind: "skills", applyTiming: "next_turn" },
     { kind: "plugins", applyTiming: "next_turn" },

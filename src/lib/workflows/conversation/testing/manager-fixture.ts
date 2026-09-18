@@ -110,6 +110,8 @@ export function createConversationManagerFixture(
           createFork: async () => {
             throw new Error("fork creation is outside this fixture");
           },
+          beginCapture: unavailable,
+          settleCapture: unavailable,
           admitOperation: unavailable,
           admitRecovery: unavailable,
           freezePayload: unavailable,
@@ -150,6 +152,14 @@ export function createConversationManagerFixture(
         throw new Error("Fixture has no checkpoint generation lane");
       },
       backendSupportsCheckpoint: () => false,
+      acquireCaptureRuntime: async () => undefined,
+      appendCaptureEntryOnce: async () => {},
+      captureAvailability: () => ({
+        available: false,
+        mode: null,
+        reason: "fixture",
+      }),
+      resolveCaptureModel: async () => ({ modelId: "opus", parameters: {} }),
       async appendUserEntryOnce() {},
       async confirmQueuedDelivery() {
         return 0;

@@ -56,12 +56,15 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--before`, `--limit`.
 - `cctl conversation checkpoint reconcile` — Reconcile checkpoint delivery deterministically
   - `cctl conversation checkpoint reconcile <conversation-id> <operation-id> [options]`
+  - Flags: `--capture-execution-stopped`.
+- `cctl conversation checkpoint skip-handoff` — Stop optional handoff and continue baseline checkpointing
+  - `cctl conversation checkpoint skip-handoff <conversation-id> <operation-id> [options]`
 - `cctl conversation compact` — Generate or refresh a compaction artifact
   - `cctl conversation compact [conversation-id] [options]`
   - Flags: `--message`, `--force`, `--wait`.
 - `cctl conversation compact-context` — Start a durable context checkpoint
   - `cctl conversation compact-context [conversation-id] [options]`
-  - Flags: `--wait`, `--recover`.
+  - Flags: `--wait`, `--recover`, `--handoff`.
 - `cctl conversation compaction` — Inspect summary artifacts
   - `cctl conversation compaction <command> [options]`
 - `cctl conversation compaction get` — Read the newest matching compaction artifact

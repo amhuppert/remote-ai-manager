@@ -27,7 +27,7 @@ import { sourceRefSchema } from "@/lib/conversations/schemas";
  * detect artifacts produced by an older prompt contract. Bump on any change
  * to the instruction text or prompt layout.
  */
-export const PROMPT_VERSION = "3";
+export const PROMPT_VERSION = "4";
 
 const compactionOutputSourceRefSchema = sourceRefSchema
   .extend({

@@ -303,6 +303,11 @@ describe("descriptor integrity schemas (runtime belt for values the type system 
     externalTurns: false,
     checkpoint: false,
     checkpointFork: false,
+    handoffCapture: {
+      available: false,
+      mode: null,
+      reason: "Capture is unavailable",
+    },
     capabilityKinds: [{ kind: "agents", applyTiming: "next_turn" }],
   };
 

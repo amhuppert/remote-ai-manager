@@ -31,6 +31,7 @@ import {
 } from "./query-keys";
 import {
   checkpointReceiptSchema,
+  checkpointHandoffEligibilitySchema,
   receiptSupersedes,
   type CheckpointReceipt,
 } from "./receipt";
@@ -46,6 +47,7 @@ import { foldReceiptIntoPage } from "./sse-cache";
 export const CHECKPOINT_RECENT_LIMIT = 5;
 
 export const checkpointEligibilityResponseSchema = z.object({
+  handoff: checkpointHandoffEligibilitySchema,
   eligible: z.boolean(),
   /** Every failing predicate, primary first; empty when eligible. */
   refusals: z.array(checkpointRefusalSchema),

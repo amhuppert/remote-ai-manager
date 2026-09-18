@@ -27,6 +27,7 @@ import {
 } from "@/lib/conversations/history-recovery";
 import {
   groupTranscriptEntries,
+  captureOriginLabel,
   renderCompleteEntryLines,
 } from "@/lib/conversations/transcript-render";
 import {
@@ -150,6 +151,8 @@ export function createHistoryEntryService(
     const { lines, thinkingOmitted } = renderCompleteEntryLines(entry.content, {
       includeThinking,
     });
+    const label = captureOriginLabel(entry.origin);
+    if (label) lines.unshift(label.trimEnd());
     const text = lines.join("\n");
     const unit = groupTranscriptEntries(entries).find((candidate) =>
       candidate.parts.some((part) => part.seq === seq),
@@ -163,6 +166,7 @@ export function createHistoryEntryService(
         kind: entry.kind === "tool_result" ? "tool_result" : "message",
         role: entry.kind === "tool_result" ? null : entry.role,
         entryId: entry.entryId ?? null,
+        ...(entry.origin ? { origin: entry.origin } : {}),
         timestamp: entry.timestamp ?? null,
         messageIndex: unit ? unit.messageIndex : -1,
         includeThinking,

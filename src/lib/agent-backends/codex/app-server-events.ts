@@ -271,6 +271,9 @@ export class CodexAppServerUsage {
     if (beforeStart) this.baseline = total;
     else this.measuredTurn = true;
   }
+  get hasBaseline(): boolean {
+    return this.baseline !== null;
+  }
   get tokens(): CodexUsageTokens | null {
     if (this.invalidated || !this.measuredTurn || !this.previous) return null;
     return {

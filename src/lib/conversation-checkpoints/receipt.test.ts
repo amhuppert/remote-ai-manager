@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { capturedHandoff, pendingHandoff } from "./handoff-fixture";
 
 import { checkpointReceipt, checkpointReceiptSchema } from "./receipt";
 import type { CheckpointPayloadReceipt } from "./receipt";
@@ -21,6 +22,7 @@ function buildOperation(
     conversationId: "conv-1",
     ordinal: 3,
     phase: "applied",
+    handoff: null,
     lastStablePhase: "delivering",
     sourceBasis: { capturedThroughSeq: 412, sourceHash: "sha256:source" },
     protectedReferences: {
@@ -227,5 +229,80 @@ describe("checkpointReceipt", () => {
         ? []
         : parsed.error.issues.map((issue) => issue.path.join(".")),
     ).toContain("seedTokenEstimate.estimator");
+  });
+});
+
+describe("capture receipts", () => {
+  it("projects the bound mode, actual categories and separate capture accounting without candidate text", () => {
+    const handoff = capturedHandoff({
+      modelSelection: {
+        modelId: "gpt-6-astra",
+        parameters: { privatePath: "/private/native-rollout" },
+      },
+    });
+    if (handoff.candidate) handoff.candidate.blockers = [];
+    const receipt = checkpointReceipt(buildOperation({ handoff }), null);
+    expect(receipt).toMatchObject({
+      handoff: {
+        requested: true,
+        requestedMode: "instruction-only",
+        modeEstablished: true,
+        stage: "captured",
+        finalSourceBasis: handoff.finalSourceBasis,
+        categoryCounts: {
+          plan: 1,
+          hypotheses: 1,
+          failedApproaches: 1,
+          blockers: 0,
+          nextStep: 1,
+        },
+        usage: {
+          costUsd: 0.2,
+          costBasis: "pricing_estimate",
+          inputTokens: 100,
+        },
+      },
+      contextOccupancy: null,
+      compactionUsage: { costUsd: 0.42 },
+    });
+    expect(JSON.stringify(receipt)).not.toContain(
+      "Preserve original checkpoint bytes",
+    );
+    expect(JSON.stringify(receipt)).not.toContain('"candidate"');
+    expect(JSON.stringify(receipt)).not.toContain("/private/native-rollout");
+    expect(checkpointReceiptSchema.parse(receipt)).toEqual(receipt);
+  });
+  it("distinguishes baseline, unavailable mode, and unavailable measurements", () => {
+    expect(checkpointReceipt(buildOperation(), null)).toHaveProperty(
+      "handoff",
+      null,
+    );
+    const receipt = checkpointReceipt(
+      buildOperation({ handoff: pendingHandoff({ requestedMode: null }) }),
+      null,
+    );
+    expect(receipt).toMatchObject({
+      handoff: {
+        requested: true,
+        requestedMode: null,
+        modeEstablished: false,
+        usage: null,
+        categoryCounts: null,
+        policy: {
+          limits: {
+            maxSubmissions: 1,
+            executionMs: 60000,
+            inputBytes: 8192,
+            outputBytes: 6144,
+          },
+          inputScope: "capture_added_input_only",
+          hardCostLimitUsd: null,
+          sourceContextLimitTokens: null,
+          settlementIsHardStop: false,
+          costCheck: "post_request",
+          outputCheck: "assembled_answer_bytes",
+        },
+      },
+    });
   });
 });

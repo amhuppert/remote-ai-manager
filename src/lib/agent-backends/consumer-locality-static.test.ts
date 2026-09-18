@@ -295,9 +295,9 @@ describe("consumer-locality static half: corpus E backend-id scan", () => {
 });
 
 /**
- * Reproduces the design's scoped measurement (Blocker 4 §4.1: grep for
- * `backend === "claude"|backend === "codex"|agentBackend === ` over
- * `src/lib/**` non-test outside `agent-backends/`; 55 lines at design time).
+ * Preserves the design's scoped provider-identity measurement (Blocker 4 §4.1)
+ * over `src/lib/**` non-test outside `agent-backends/`; 55 lines at design time.
+ * Like the corpus scan, exclude equality between opaque backend values.
  * Equal-to-observed ratchet: when a slice removes branch lines, this pin must
  * be ratcheted down in the same change — it may never drift upward.
  *
@@ -308,8 +308,9 @@ describe("consumer-locality static half: corpus E backend-id scan", () => {
  */
 export const SCOPED_BACKEND_IDENTITY_BRANCH_LINES = 4;
 
-const SCOPED_GREP =
-  /backend === "claude"|backend === "codex"|agentBackend === /;
+// Use the corpus's provider-literal rule without its stateful global flag.
+// Equality between opaque backend values is an ownership check, not dispatch.
+const SCOPED_GREP = new RegExp(BACKEND_IDENTITY_COMPARISON.source);
 
 function listLibSources(dir: string): string[] {
   return readdirSync(dir, { recursive: true, encoding: "utf8" })
@@ -327,6 +328,15 @@ function listLibSources(dir: string): string[] {
 }
 
 describe("consumer-locality static half: scoped backend-identity count", () => {
+  it.each([
+    ['backend === "claude"', true],
+    ["agentBackend === 'codex'", true],
+    ["context().agentBackend === handoff.backend", false],
+    ["ref.backend === handoff.backend", false],
+  ])("classifies provider identity selection: %s", (source, expected) => {
+    expect(SCOPED_GREP.test(source)).toBe(expected);
+  });
+
   it(`src/lib outside agent-backends has exactly ${SCOPED_BACKEND_IDENTITY_BRANCH_LINES} backend-identity branch lines (design grep)`, () => {
     const libDir = LIB_ROOT;
     const perFile = new Map<string, number>();

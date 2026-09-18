@@ -331,6 +331,9 @@ describe.each(["session", "project"] as const)(
         cancelCheckpoint: async () => {
           throw new Error("No compaction expected");
         },
+        skipHandoff: async () => {
+          throw new Error("No compaction expected");
+        },
         reconcileCheckpoint: async () => {
           throw new Error("No compaction expected");
         },

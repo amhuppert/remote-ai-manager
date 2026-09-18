@@ -30,6 +30,88 @@ function fixture(close: () => Promise<void>) {
 }
 
 describe("managed conversation backend lifetime", () => {
+  it("awaits capture receipts without treating them as unrelated activity", async () => {
+    const f = fixture(async () => {});
+    const receipt = deferred();
+    const epoch = f.owner.activityEpoch;
+    f.owner.trackCaptureReceipt("capture", "capture:1", receipt.promise);
+    expect(f.owner.hasTrackedWork).toBe(true);
+    expect(f.owner.activityEpoch).toBe(epoch);
+    let settled = false;
+    let closed = false;
+    const settling = f.owner.settleOwnedWork().then(() => {
+      settled = true;
+    });
+    const closing = f.owner.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(closed).toBe(false);
+    expect(f.index.get("conv-1")).toBe(f.backend);
+    receipt.resolve();
+    await Promise.all([settling, closing]);
+    expect(f.owner.hasTrackedWork).toBe(false);
+    expect(f.owner.activityEpoch).toBe(epoch);
+  });
+
+  it("retains capture receipt failure across settlement and close retries", async () => {
+    const f = fixture(async () => {});
+    await expect(
+      f.owner.trackCaptureReceipt(
+        "capture",
+        "capture:2",
+        Promise.reject(new Error("disk failed")),
+      ),
+    ).rejects.toThrow("disk failed");
+    await expect(f.owner.settleOwnedWork()).rejects.toThrow("capture:2");
+    await expect(f.owner.close()).rejects.toThrow("capture:2");
+    f.owner.reconcileClose();
+    await expect(f.owner.close()).rejects.toThrow("capture:2");
+    expect(f.owner.backend).toBe(f.backend);
+    expect(f.index.get("conv-1")).toBe(f.backend);
+  });
+
+  it("a successful capture receipt retry clears only its own failure", async () => {
+    const f = fixture(async () => {});
+    for (const id of ["first", "second"])
+      await expect(
+        f.owner.trackCaptureReceipt(
+          "capture",
+          id,
+          Promise.reject(new Error(id)),
+        ),
+      ).rejects.toThrow(id);
+    await f.owner.trackCaptureReceipt("capture", "first", Promise.resolve());
+    await expect(f.owner.settleOwnedWork()).rejects.toThrow("second");
+    await f.owner.trackCaptureReceipt("capture", "second", Promise.resolve());
+    await expect(f.owner.settleOwnedWork()).resolves.toBeUndefined();
+    f.owner.recordCleanupFailure({
+      kind: "cleanup_unverified",
+      message: "ordinary cleanup remains unknown",
+    });
+    await expect(f.owner.close()).rejects.toThrow(
+      "ordinary cleanup remains unknown",
+    );
+  });
+
+  it("awaits receipts appended after the backend already closed", async () => {
+    const f = fixture(async () => {});
+    await f.owner.close();
+    const receipt = deferred();
+    f.owner.trackCaptureReceipt("capture", "capture:3", receipt.promise);
+    let closed = false;
+    const closing = f.owner.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    receipt.resolve();
+    await closing;
+  });
+
   it("retains cleanup ownership despite close success, reconciliation, and attempted replacement", async () => {
     const close = vi.fn(async () => {});
     const f = fixture(close);

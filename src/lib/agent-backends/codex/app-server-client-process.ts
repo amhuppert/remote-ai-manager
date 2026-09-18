@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { constants, accessSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { z } from "zod";
+import { promisify } from "node:util";
 import {
   errnoCode,
   readProcessGroupIdSync,
@@ -73,6 +74,31 @@ export function resolveCodexAppServerExecutable(): string {
   return executable;
 }
 
+const execFileAsync = promisify(execFile);
+
+/** A bounded snapshot of owned descendants, including terminal groups outside the leader group. */
+async function processTable(): Promise<Map<
+  number,
+  { parent: number; start: string }
+> | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "ps",
+      ["-axo", "pid=,ppid=,lstart="],
+      { encoding: "utf8", timeout: 250, maxBuffer: 1024 * 1024 },
+    );
+    const rows = new Map<number, { parent: number; start: string }>();
+    for (const line of stdout.trim().split("\n")) {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+      if (!match?.[1] || !match[2] || !match[3]) return null;
+      rows.set(Number(match[1]), { parent: Number(match[2]), start: match[3] });
+    }
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
 export function createAppServerProcessHost(): AppServerProcessHost {
   return {
     spawn({ cwd, env }) {
@@ -112,6 +138,34 @@ export function createAppServerProcessHost(): AppServerProcessHost {
             child.off("error", listener);
           };
         },
+      };
+    },
+    async observeChildren(pid) {
+      const before = await processTable();
+      if (!before?.has(pid)) return null;
+      const owned = new Map<number, string>();
+      const parents = new Set([pid]);
+      let added = true;
+      while (added) {
+        added = false;
+        for (const [childPid, row] of before) {
+          if (
+            childPid !== pid &&
+            parents.has(row.parent) &&
+            !parents.has(childPid)
+          ) {
+            owned.set(childPid, row.start);
+            parents.add(childPid);
+            added = true;
+          }
+        }
+      }
+      return async () => {
+        const after = await processTable();
+        if (!after) return false;
+        return [...owned].every(
+          ([childPid, start]) => after.get(childPid)?.start !== start,
+        );
       };
     },
     processGroupId: readProcessGroupIdSync,

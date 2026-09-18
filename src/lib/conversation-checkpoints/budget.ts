@@ -8,7 +8,7 @@
  */
 
 /** Bumped when section layout or these limits change. Recorded in the payload. */
-export const CHECKPOINT_BUILDER_VERSION = "1";
+export const CHECKPOINT_BUILDER_VERSION = "2";
 
 /**
  * Initial fixed product defaults. The three sections partition the total
@@ -45,3 +45,15 @@ export function truncateToUtf8Bytes(text: string, maxBytes: number): string {
   }
   return text.slice(0, end);
 }
+
+/** Fixed capture limits; adapters enforce these independently of seed budgets. */
+export const CHECKPOINT_CAPTURE_POLICY_VERSION = "1";
+export const CHECKPOINT_CAPTURE_LIMITS = Object.freeze({
+  maxSubmissions: 1,
+  executionMs: 60_000,
+  settlementMs: 5_000,
+  inputBytes: 8_192,
+  outputBytes: 6_144,
+  nativeInspectionBytes: 8_388_608,
+  nativeInspectionMs: 2_000,
+} as const satisfies import("@/lib/agent-backends/schemas").CaptureLimits);

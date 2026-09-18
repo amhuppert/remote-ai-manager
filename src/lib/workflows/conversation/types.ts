@@ -184,6 +184,7 @@ export type ConversationEvent =
   | {
       type: "CHECKPOINT_PHASE";
       checkpoint: CheckpointActorProjection | null;
+      clearContinuation?: true;
     };
 
 // ============================================================

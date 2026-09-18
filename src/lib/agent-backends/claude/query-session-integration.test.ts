@@ -347,3 +347,110 @@ describe("Per-turn autonomous flag", () => {
     session.close();
   });
 });
+
+import { _setSdkQueryForTesting } from "./query-session";
+import { captureResult, scriptedCaptureSdk } from "./capture-test-support";
+import { randomUUID } from "node:crypto";
+
+it("keeps the same capture input pending across a foreign zero-turn result", async () => {
+  const uuid = randomUUID();
+  const observed: string[] = [];
+  _setSdkQueryForTesting(
+    scriptedCaptureSdk((user, emit) => {
+      expect(user.uuid).toBe(uuid);
+      emit(captureResult("lost-background-notice", "notice", 0));
+      emit(captureResult(user.uuid, "correlated"));
+    }),
+  );
+  const session = createQuerySession(makeDefaultOptions());
+  try {
+    const result = await session.sendPrompt(
+      "capture",
+      (event, data) => {
+        if (
+          event === "__raw_message" &&
+          typeof data === "object" &&
+          data !== null &&
+          "type" in data
+        )
+          observed.push(String(data.type));
+      },
+      { captureInputUuid: uuid },
+    );
+    expect(result.finalText).toBe("correlated");
+    expect(result.numTurns).toBe(1);
+    expect(observed).toEqual(["result", "result"]);
+  } finally {
+    session.close();
+    _setSdkQueryForTesting(null);
+  }
+});
+
+it("awaits pump shutdown even when child collection has already completed", async () => {
+  const pump = Promise.withResolvers<void>();
+  _setSdkQueryForTesting(
+    scriptedCaptureSdk((user, emit) => emit(captureResult(user.uuid)), {
+      childCompletion: Promise.resolve(),
+      pumpCompletion: pump.promise,
+    }),
+  );
+  const session = createQuerySession(makeDefaultOptions());
+  try {
+    await session.sendPrompt("capture", () => {}, {
+      captureInputUuid: randomUUID(),
+    });
+    session.close();
+    let collected = false;
+    const wait = session.awaitClosed().then(() => {
+      collected = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(collected).toBe(false);
+    pump.resolve();
+    await wait;
+    expect(collected).toBe(true);
+  } finally {
+    pump.resolve();
+    session.close();
+    _setSdkQueryForTesting(null);
+  }
+});
+
+import {
+  recordLiveOccupancy,
+  readLiveOccupancy,
+  clearLiveOccupancy,
+} from "@/lib/conversations/live-occupancy";
+
+it("keeps capture occupancy and native compaction out of ordinary-turn accounting", async () => {
+  const options = makeDefaultOptions({ checkpointCapture: true });
+  _setSdkQueryForTesting(
+    scriptedCaptureSdk((user, emit) => {
+      emit({
+        type: "system",
+        subtype: "compact_boundary",
+        uuid: randomUUID(),
+        session_id: "source-session",
+        compact_metadata: { trigger: "auto", pre_tokens: 100 },
+      });
+      emit(captureResult(user.uuid));
+    }),
+  );
+  const session = createQuerySession(options);
+  recordLiveOccupancy(options.conversationId, 77);
+  try {
+    await session.sendPrompt("capture", () => {}, {
+      captureInputUuid: randomUUID(),
+    });
+    session.close();
+    await session.awaitClosed();
+    expect(readLiveOccupancy(options.conversationId)).toEqual({
+      contextTokens: 77,
+      compactedThisTurn: false,
+    });
+  } finally {
+    clearLiveOccupancy(options.conversationId);
+    session.close();
+    _setSdkQueryForTesting(null);
+  }
+});

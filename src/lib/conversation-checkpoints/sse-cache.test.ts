@@ -1,3 +1,5 @@
+import { capturedHandoff } from "./handoff-fixture";
+import { checkpointHandoffReceipt } from "./receipt";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
@@ -329,3 +331,36 @@ describe("a full head page keeps its dropped tail reachable", () => {
     expect(after?.nextBefore).toBe(2);
   });
 });
+
+describe.each([sessionTarget, projectTarget])(
+  "capture progress cache ($scope)",
+  (target) => {
+    it("keeps newer capture settlement when an older running update arrives", () => {
+      const client = new QueryClient();
+      const handoff = checkpointHandoffReceipt(capturedHandoff());
+      const receipt = checkpointReceiptFixture({
+        handoff,
+        phase: "building",
+        frozen: false,
+        updatedAt: "2026-09-07T12:04:04.000Z",
+      });
+      publishCheckpointReceipt(client, target, receipt);
+      publishCheckpointReceipt(client, target, {
+        ...receipt,
+        handoff: { ...handoff, stage: "running" },
+        updatedAt: "2026-09-07T12:04:01.000Z",
+      });
+      expect(
+        client.getQueryData(checkpointKeys.detail(target, receipt.operationId)),
+      ).toEqual({ receipt });
+      expect(
+        client.getQueryData(
+          checkpointKeys.detail(
+            target.scope === "session" ? projectTarget : sessionTarget,
+            receipt.operationId,
+          ),
+        ),
+      ).toBeUndefined();
+    });
+  },
+);

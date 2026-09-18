@@ -1,3 +1,4 @@
+import { checkpointHandoffEligibilityFixture } from "@/lib/conversation-checkpoints/testing/receipt-fixture";
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
@@ -51,6 +52,7 @@ function stubApi(pages: Pages) {
           refusals: [],
           active: null,
           hosted: true,
+          handoff: checkpointHandoffEligibilityFixture(),
         }),
       );
     }
@@ -196,6 +198,7 @@ function stubIndex(all: () => CheckpointReceipt[]) {
           refusals: [],
           active: null,
           hosted: true,
+          handoff: checkpointHandoffEligibilityFixture(),
         }),
       );
     }
@@ -311,5 +314,74 @@ describe("history paging stays continuous", () => {
     // The new conversation is three operations long; a retained cursor from
     // the previous one would claim more history than it has.
     expect(view.result.current.hasOlder).toBe(false);
+  });
+});
+
+describe("explicit handoff controls", () => {
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+  it.each(["tool-disabled", "instruction-only", null] as const)(
+    "submits the explicitly bound mode %s",
+    async (mode) => {
+      stubApi({ head: { receipts: [], nextBefore: null }, older: {} });
+      const view = renderHost();
+      await waitFor(() =>
+        expect(view.result.current.surface.isLoading).toBe(false),
+      );
+      expect(view.result.current.surface.handoff?.mode).toBe("tool-disabled");
+      act(() => view.result.current.surface.startHandoff(mode));
+      await waitFor(() =>
+        expect(
+          fetchSpy.mock.calls.some(
+            ([, init]) =>
+              init?.method === "POST" &&
+              JSON.parse(String(init.body)).handoff?.mode === mode,
+          ),
+        ).toBe(true),
+      );
+    },
+  );
+  it("keeps the baseline request capture-free and exposes distinct skip and acknowledgement actions", async () => {
+    stubApi({ head: { receipts: [], nextBefore: null }, older: {} });
+    const view = renderHost();
+    await waitFor(() =>
+      expect(view.result.current.surface.isLoading).toBe(false),
+    );
+    act(() => view.result.current.surface.start());
+    await waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(([, init]) => init?.method === "POST"),
+      ).toBe(true),
+    );
+    const first = fetchSpy.mock.calls.find(
+      ([, init]) => init?.method === "POST",
+    );
+    expect(JSON.parse(String(first?.[1]?.body))).not.toHaveProperty("handoff");
+    act(() => view.result.current.surface.skipHandoff("operation-1"));
+    await waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(([url]) =>
+          String(url).endsWith("/operation-1/skip-handoff"),
+        ),
+      ).toBe(true),
+    );
+    act(() =>
+      view.result.current.surface.acknowledgeCaptureStopped("operation-1"),
+    );
+    await waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/operation-1/reconcile") &&
+            JSON.parse(String(init?.body)).captureExecutionStopped === true,
+        ),
+      ).toBe(true),
+    );
   });
 });

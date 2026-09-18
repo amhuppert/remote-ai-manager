@@ -1,3 +1,11 @@
+import {
+  captureClaudeHandoff,
+  collectClaudeCaptureSessions,
+} from "./handoff-capture";
+import type {
+  CaptureHandoffInput,
+  CaptureHandoffResult,
+} from "../conversation";
 /**
  * Claude ConversationBackendRuntime — wraps the Anthropic query() lifecycle
  * behind the backend-neutral conversation runtime interface.
@@ -186,6 +194,8 @@ function resolveClaudeContinuation(
 // Claude Conversation Runtime
 // ============================================================
 
+const RUNTIME_COLLECTION_GRACE_MS = 5000;
+
 class ClaudeConversationRuntime
   implements ConversationBackendRuntime, ClaudeCapabilityApplyTarget
 {
@@ -202,6 +212,11 @@ class ClaudeConversationRuntime
   private liveInputBarrier: Promise<void> = Promise.resolve();
   private liveInputArchiveFailure: Error | null = null;
   private querySession: QuerySession;
+  private readonly sessionOptions: QuerySessionOptions;
+  private readonly captureOwnedSessions = new Set<QuerySession>();
+  private captureGraceMs = 5000;
+  private readonly captureSettlement = new Set<Promise<void>>();
+  private captureAttempt: Promise<CaptureHandoffResult> | null = null;
   private readonly onPortableMcpApplied: (
     config: PortableMcpConfig | null,
   ) => void;
@@ -212,6 +227,7 @@ class ClaudeConversationRuntime
   constructor(
     querySession: QuerySession,
     opts: {
+      sessionOptions: QuerySessionOptions;
       resolvedModelSelection: ResolvedClaudeModelSelection;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
 
@@ -230,6 +246,7 @@ class ClaudeConversationRuntime
     },
   ) {
     this.querySession = querySession;
+    this.sessionOptions = opts.sessionOptions;
     this.modelSelection = opts.resolvedModelSelection.modelSelection;
     this.outputFormat = opts.outputFormat;
 
@@ -316,6 +333,13 @@ class ClaudeConversationRuntime
   async sendTurn(
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult> {
+    if (
+      this.captureOwnedSessions.size > 0 ||
+      this.sessionOptions.checkpointCapture
+    ) {
+      throw new Error("Claude capture binding cannot run an ordinary turn");
+    }
+    this.captureAttempt = null;
     logger.info("claude-runtime.turn_start", {
       conversationId: this.querySession.conversationId,
       autonomous: input.autonomous,
@@ -372,6 +396,7 @@ class ClaudeConversationRuntime
         const msg = data as { session_id?: string } | null;
         if (msg && typeof msg.session_id === "string" && msg.session_id) {
           lastKnownSessionId = msg.session_id;
+          this.sessionOptions.resume = msg.session_id;
         }
         // The pump only ever delivers SDK messages on this channel.
         interpreter.handleMessage(data as SDKMessage);
@@ -512,6 +537,12 @@ class ClaudeConversationRuntime
   }
 
   async queueUserInput(input: ConversationQueuedUserInput): Promise<void> {
+    if (
+      this.captureOwnedSessions.size > 0 ||
+      this.sessionOptions.checkpointCapture
+    ) {
+      throw new Error("Claude capture binding cannot queue ordinary input");
+    }
     const conversationId = this.querySession.conversationId;
 
     // Gate live delivery on the session being able to accept input. A dead
@@ -680,14 +711,71 @@ class ClaudeConversationRuntime
     }));
   }
 
+  captureHandoff(input: CaptureHandoffInput): Promise<CaptureHandoffResult> {
+    if (this.captureAttempt) return this.captureAttempt;
+    this.captureGraceMs = input.limits.settlementMs;
+    this.captureOwnedSessions.add(this.querySession);
+    this.captureAttempt = captureClaudeHandoff(
+      input,
+      this.querySession,
+      this.sessionOptions,
+      (session) => {
+        this.captureOwnedSessions.add(this.querySession);
+        this.captureOwnedSessions.add(session);
+        this.querySession = session;
+      },
+      (work) => {
+        this.captureSettlement.add(work);
+      },
+    ).then((result) => {
+      if (result.executionSettled) {
+        this.captureOwnedSessions.clear();
+        this.captureSettlement.clear();
+      }
+      return result;
+    });
+    return this.captureAttempt;
+  }
+
   async close(): Promise<void> {
-    if (this._status === "dead") return;
-    this._status = "dead";
-
-    const conversationId = this.querySession.conversationId;
-    logger.info("claude-runtime.close", { conversationId });
-
+    if (this.captureOwnedSessions.size > 0) {
+      await collectClaudeCaptureSessions(
+        this.captureOwnedSessions,
+        this.captureGraceMs,
+        this.captureSettlement,
+        this.captureAttempt,
+      );
+      this.captureOwnedSessions.clear();
+      this.captureSettlement.clear();
+    }
+    if (this._status !== "dead") {
+      this._status = "dead";
+      const conversationId = this.querySession.conversationId;
+      logger.info("claude-runtime.close", { conversationId });
+    }
     this.querySession.close();
+    // Dead prevents admission; retirement additionally requires collection.
+    // Inherited stdio can outlive the owned child. A timeout preserves the
+    // session for later collection instead of leaving retirement pending forever.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.querySession.awaitClosed(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Claude runtime collection did not settle within ${RUNTIME_COLLECTION_GRACE_MS} ms`,
+                ),
+              ),
+            RUNTIME_COLLECTION_GRACE_MS,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -761,6 +849,19 @@ const claudeConversationBackendFactory = {
   async createRuntime(
     input: ConversationBackendCreateInput,
   ): Promise<ConversationBackendRuntime> {
+    if (input.initialPurpose && input.initialPurpose.mode !== "tool-disabled") {
+      throw new Error(
+        "Claude checkpoint capture requires the bound tool-disabled mode",
+      );
+    }
+    if (
+      input.initialPurpose &&
+      (input.persistedRef?.backend !== "claude" || !input.persistedRef.ref)
+    ) {
+      throw new Error(
+        "Claude checkpoint capture requires current resumable continuity",
+      );
+    }
     const resolvedModelSelection = resolveClaudeModelSelection(
       input.modelSelection,
     );
@@ -800,7 +901,7 @@ const claudeConversationBackendFactory = {
     // delta basis never crosses upward. An unreadable native settings file
     // degrades to no capability seeding (the apply service reconciles later).
     let capabilityConfig: ClaudeRuntimeCapabilityConfig | undefined;
-    if (input.tooling.capabilities) {
+    if (!input.initialPurpose && input.tooling.capabilities) {
       try {
         // The native records only matter for the plugin delta; skip the
         // settings.json read when the cascade carries no CC plugin decisions.
@@ -848,7 +949,9 @@ const claudeConversationBackendFactory = {
     // capability cascade): the published CC plugin loads as an SDK-local
     // plugin, and a non-equivalent user-installed copy is suppressed for the
     // session via the flag layer so the same plugin never loads twice.
-    const managedSkills = await resolveClaudeManagedSkillsForLaunch();
+    const managedSkills = input.initialPurpose
+      ? { plugins: [], enabledPluginsOverride: {} }
+      : await resolveClaudeManagedSkillsForLaunch();
 
     // Build initial SDK Settings from the translated capability config so the
     // SDK applies plugin/skill overrides natively at session start. Without
@@ -911,6 +1014,7 @@ const claudeConversationBackendFactory = {
     const trustedServerUrl = getServerBaseUrl();
 
     const sessionOptions: QuerySessionOptions = {
+      checkpointCapture: input.initialPurpose?.kind === "checkpoint_handoff",
       conversationId: input.conversationId,
       cwd: input.worktreePath,
       model: resolvedModelSelection.modelId,
@@ -965,9 +1069,15 @@ const claudeConversationBackendFactory = {
             trustedServerUrl,
           }
         : {}),
-      externalTurnHandler,
-      onBackgroundTasksLost: input.onBackgroundTasksLost,
-      onBackgroundActivity: input.onBackgroundActivity,
+      externalTurnHandler: input.initialPurpose
+        ? undefined
+        : externalTurnHandler,
+      onBackgroundTasksLost: input.initialPurpose
+        ? undefined
+        : input.onBackgroundTasksLost,
+      onBackgroundActivity: input.initialPurpose
+        ? undefined
+        : input.onBackgroundActivity,
       ...(idleTtlMs !== undefined ? { idleTtlMs } : {}),
       settings: initialSettings,
     };
@@ -978,6 +1088,7 @@ const claudeConversationBackendFactory = {
     const querySession = createQuerySession(sessionOptions);
 
     const runtime = new ClaudeConversationRuntime(querySession, {
+      sessionOptions,
       resolvedModelSelection,
       outputFormat: input.outputFormat,
 

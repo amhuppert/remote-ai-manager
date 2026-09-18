@@ -8,8 +8,8 @@
  * no process owns it — which after a restart is always — applies the restart
  * rules of design §6 to whatever boundary the crash left it at:
  *
- * - `building`: the generation died with the process. It is failed before any
- *   drain; the source runtime, its reference and its history are untouched.
+ * - `building`: an undispatched or settled capture fails before drain. Unknown
+ *   capture execution retains reconciliation ownership and is never replayed.
  * - `retiring`: the payload is durable, so retirement finishes from it. There
  *   is no hosted handle to close after a restart; the reference clear is the
  *   remaining half, and it commits through the same clear-and-commit as a
@@ -155,15 +155,25 @@ export async function hydrateCheckpointAuthority(
       });
       return settled(state, { kind: "held", operation: active });
     case "building": {
+      const capture = active.handoff;
+      const unknownExecution =
+        capture !== null &&
+        capture.stage !== "pending" &&
+        !capture.executionSettled;
+      const lostContinuation =
+        capture?.continuationDisposition === "clear" &&
+        active.protectedReferences.priorBackendRef !== null;
+      const held = unknownExecution || lostContinuation;
       const failed = await repo.recordOutcome({
         key,
         operationId: active.id,
         expectedPhase: "building",
-        phase: "failed",
+        phase: held ? "needs_reconciliation" : "failed",
         failure: {
-          code: "interrupted",
-          message:
-            "generation was interrupted by a restart before its payload was frozen",
+          code: unknownExecution ? "capture_interrupted" : "interrupted",
+          message: unknownExecution
+            ? "capture execution was interrupted before durable settlement; reconcile before explicit recovery"
+            : "generation was interrupted by a restart before its payload was frozen",
         },
         at,
       });
@@ -171,7 +181,7 @@ export async function hydrateCheckpointAuthority(
         log.warn("checkpoint.restart.build_interrupted", operationFields);
         state = await repo.getStateForAdmission(key);
         return settled(state, {
-          kind: "build_interrupted",
+          kind: held ? "held" : "build_interrupted",
           operation: failed.value,
         });
       }

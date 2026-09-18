@@ -1,3 +1,4 @@
+import { checkpointHandoffEligibilityFixture } from "@/lib/conversation-checkpoints/testing/receipt-fixture";
 // @vitest-environment jsdom
 //
 // The SESSION host's checkpoint wiring, driven through the real info strip.
@@ -76,6 +77,7 @@ function stubStripFetch(options: {
             ],
         active: null,
         hosted: true,
+        handoff: checkpointHandoffEligibilityFixture(),
       });
     }
     if (url.startsWith(CHECKPOINTS_BASE)) {

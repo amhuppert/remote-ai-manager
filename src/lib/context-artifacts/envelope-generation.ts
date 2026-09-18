@@ -315,6 +315,7 @@ function renderForSpec(
       conversationId: source.conversationId,
       entries: source.entries,
       maxSeq: source.maxSeq,
+      evidenceOnly: true,
     },
     options,
   );
@@ -660,6 +661,7 @@ export async function generateCompactionEnvelope(
         conversationId: request.source.conversationId,
         entries: request.source.entries,
         maxSeq: request.source.maxSeq,
+        evidenceOnly: true,
       },
       segOptions,
       SEGMENT_WINDOW_BUDGET_BYTES,
@@ -775,17 +777,22 @@ export async function generateCompactionEnvelope(
     let previous: CompactionEnvelope | null = seededPrevious;
     let sourceHash = "";
     let inputBytes = 0;
+    const finalCoverageEnd = specFor(request, request.plan.mode).expected
+      .endSeq;
 
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]!;
+      // Filtered capture records still belong to the frozen source coverage.
+      // The last fold must cover that tail without feeding it to the model.
+      const endSeq = i === segments.length - 1 ? finalCoverageEnd : seg.seqEnd;
       const stepMode: CompactionRunMode = previous === null ? "full" : "delta";
       const windowStart =
         previous === null ? seg.seqStart : previous.source.coveredEndSeq + 1;
       const prepared = prepareRun(request, {
         mode: stepMode,
         previousEnvelope: previous,
-        window: { seqStart: windowStart, seqEnd: seg.seqEnd },
-        expected: { startSeq: coverageStart, endSeq: seg.seqEnd },
+        window: { seqStart: windowStart, seqEnd: endSeq },
+        expected: { startSeq: coverageStart, endSeq },
         allowTruncation: true,
       });
       const step = await runFoldStep(
@@ -810,7 +817,7 @@ export async function generateCompactionEnvelope(
         conversationId: request.source.conversationId,
         segment: i + 1,
         of: segments.length,
-        coveredEndSeq: seg.seqEnd,
+        coveredEndSeq: endSeq,
       });
     }
 

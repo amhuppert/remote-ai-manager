@@ -1,3 +1,9 @@
+import {
+  capturedHandoff,
+  pendingHandoff,
+} from "@/lib/conversation-checkpoints/handoff-fixture";
+import { checkpointHandoffReceipt } from "@/lib/conversation-checkpoints/receipt";
+import { checkpointHandoffEligibilityFixture } from "@/lib/conversation-checkpoints/testing/receipt-fixture";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { expect, fn, waitFor, within } from "storybook/test";
@@ -541,5 +547,151 @@ export const QueueReviewDestination = {
     await expect(
       screen.getByRole("button", { name: /discard queued message/i }),
     ).toBeEnabled();
+  },
+} satisfies Story;
+
+export const PrepareToolDisabled = {
+  args: {
+    preparation: true,
+    surface: {
+      ...checkpointSurfaceFixture({ receipts: [] }),
+      handoff: checkpointHandoffEligibilityFixture(),
+    },
+  },
+} satisfies Story;
+
+export const PrepareInstructionOnly = {
+  args: {
+    preparation: true,
+    surface: {
+      ...checkpointSurfaceFixture({ receipts: [] }),
+      handoff: checkpointHandoffEligibilityFixture({
+        mode: "instruction-only",
+      }),
+    },
+  },
+} satisfies Story;
+
+export const CaptureUnavailable = {
+  args: {
+    preparation: true,
+    surface: {
+      ...checkpointSurfaceFixture({ receipts: [] }),
+      handoff: checkpointHandoffEligibilityFixture({
+        available: false,
+        mode: null,
+        reason: "Current agent continuity is unavailable.",
+      }),
+    },
+  },
+} satisfies Story;
+
+export const CapturingHandoff = {
+  args: {
+    surface: checkpointSurfaceFixture({
+      receipts: [
+        checkpointReceiptFixture({
+          phase: "building",
+          frozen: false,
+          handoff: checkpointHandoffReceipt(pendingHandoff()),
+        }),
+      ],
+    }),
+  },
+} satisfies Story;
+
+export const StoppingHandoff = {
+  args: {
+    surface: checkpointSurfaceFixture({
+      receipts: [
+        checkpointReceiptFixture({
+          phase: "building",
+          frozen: false,
+          handoff: checkpointHandoffReceipt(
+            pendingHandoff({
+              stage: "settling",
+              stopIntent: "skip",
+              startedAt: "2026-09-07T12:04:01.000Z",
+            }),
+          ),
+        }),
+      ],
+    }),
+  },
+} satisfies Story;
+
+export const HandoffIncluded = {
+  args: {
+    surface: checkpointSurfaceFixture({
+      action: {
+        kind: "in_progress",
+        code: "checkpoint_pending",
+        reason: "A checkpoint is already running for this conversation.",
+        operationId: "op-1",
+        phase: "ready",
+      },
+      receipts: [
+        checkpointReceiptFixture({
+          handoff: checkpointHandoffReceipt(
+            capturedHandoff({
+              stage: "included",
+              finalizedAt: "2026-09-07T12:05:00.000Z",
+            }),
+          ),
+        }),
+      ],
+    }),
+  },
+} satisfies Story;
+export const HandoffSeedBudgetOmission = {
+  args: {
+    surface: checkpointSurfaceFixture({
+      action: {
+        kind: "in_progress",
+        code: "checkpoint_pending",
+        reason: "A checkpoint is already running for this conversation.",
+        operationId: "op-1",
+        phase: "ready",
+      },
+      receipts: [
+        checkpointReceiptFixture({
+          handoff: checkpointHandoffReceipt(
+            capturedHandoff({
+              stage: "omitted",
+              omissionReason: "seed_budget",
+              finalizedAt: "2026-09-07T12:05:00.000Z",
+            }),
+          ),
+        }),
+      ],
+    }),
+  },
+} satisfies Story;
+export const CaptureCleanupHold = {
+  args: {
+    surface: checkpointSurfaceFixture({
+      action: {
+        kind: "recovery",
+        code: "recovery_required",
+        reason:
+          "An earlier checkpoint's outcome is unresolved. Supersede it explicitly with a recovery checkpoint — it is never continued in place.",
+        operationId: "op-1",
+      },
+      receipts: [
+        checkpointReceiptFixture({
+          phase: "needs_reconciliation",
+          lastStablePhase: "building",
+          frozen: false,
+          handoff: checkpointHandoffReceipt(
+            pendingHandoff({
+              stage: "omitted",
+              omissionReason: "interrupted",
+              finalizedAt: "2026-09-07T12:05:00.000Z",
+              continuationDisposition: "clear",
+            }),
+          ),
+        }),
+      ],
+    }),
   },
 } satisfies Story;

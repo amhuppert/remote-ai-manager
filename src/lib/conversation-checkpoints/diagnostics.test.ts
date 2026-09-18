@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { checkpointErrorFields } from "./diagnostics";
+import { capturedHandoff } from "./handoff-fixture";
+import {
+  checkpointErrorFields,
+  checkpointHandoffLogFields,
+} from "./diagnostics";
 
 /**
  * The seed text a leaking diagnostic would reproduce. Every case below throws
@@ -69,5 +73,56 @@ describe("checkpointErrorFields", () => {
     const error = Object.assign(new Error("boom"), { code: 42 });
 
     expect(checkpointErrorFields(error).errorCode).toBeNull();
+  });
+});
+
+describe("checkpointHandoffLogFields", () => {
+  it("projects measured capture facts and channel coverage without candidate or model parameters", () => {
+    const fields = checkpointHandoffLogFields(
+      capturedHandoff({
+        modelSelection: {
+          modelId: "gpt-6-astra",
+          parameters: { privatePath: "/private/native-rollout" },
+        },
+      }),
+    );
+    expect(fields).toMatchObject({
+      captureId: "operation-maximal:capture",
+      requested: true,
+      policyVersion: "1",
+      categoryCounts: {
+        plan: 1,
+        hypotheses: 1,
+        failedApproaches: 1,
+        blockers: 1,
+        nextStep: 1,
+      },
+      requestedMode: "instruction-only",
+      modeEstablished: true,
+      stage: "captured",
+      reason: null,
+      acceptedOutputBytes: 400,
+      contentHash: "sha256:handoff",
+      activity: {
+        transport: "complete",
+        native: "complete",
+        prohibited: "not_observed",
+      },
+      captureUsage: {
+        costUsd: 0.2,
+        costBasis: "pricing_estimate",
+        executionMs: 2000,
+        settlementMs: 1000,
+      },
+    });
+    expect(JSON.stringify(fields)).not.toContain(
+      "Preserve original checkpoint bytes",
+    );
+    expect(JSON.stringify(fields)).not.toContain("/private/native-rollout");
+  });
+  it("keeps unavailable counters unavailable", () => {
+    expect(
+      checkpointHandoffLogFields(capturedHandoff({ usage: null })).captureUsage,
+    ).toBeNull();
   });
 });

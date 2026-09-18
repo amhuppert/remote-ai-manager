@@ -23,6 +23,7 @@ function operation(
     conversationId: "conv-1",
     ordinal: 1,
     phase: "building",
+    handoff: null,
     lastStablePhase: null,
     sourceBasis: { capturedThroughSeq: 12, sourceHash: "sha256:source" },
     protectedReferences: { priorBackendRef: "prior", acceptedBackendRef: null },

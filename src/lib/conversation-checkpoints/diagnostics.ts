@@ -1,3 +1,5 @@
+import { handoffCategoryCounts, type CheckpointHandoff } from "./schemas";
+
 /**
  * Structural description of a thrown error, for checkpoint diagnostics.
  *
@@ -38,5 +40,39 @@ export function checkpointErrorFields(error: unknown): CheckpointErrorFields {
     errorKind: typeof error,
     errorCode: null,
     errorChars: typeof error === "string" ? error.length : 0,
+  };
+}
+
+/** Allowlisted capture metadata: candidate text and arbitrary model parameters are private. */
+export function checkpointHandoffLogFields(
+  handoff: CheckpointHandoff,
+): Record<string, unknown> {
+  return {
+    captureId: handoff.captureId,
+    requested: true,
+    policyVersion: handoff.policyVersion,
+    categoryCounts:
+      handoff.candidate === null
+        ? (handoff.categoryCounts ?? null)
+        : handoffCategoryCounts(handoff.candidate),
+    requestedMode: handoff.requestedMode,
+    modeEstablished: handoff.modeEstablished,
+    backend: handoff.backend,
+    modelId: handoff.modelSelection.modelId,
+    stage: handoff.stage,
+    reason: handoff.omissionReason,
+    stopIntent: handoff.stopIntent,
+    submitted: handoff.submitted,
+    executionSettled: handoff.executionSettled,
+    requestedAt: handoff.requestedAt,
+    startedAt: handoff.startedAt,
+    settledAt: handoff.settledAt,
+    finalizedAt: handoff.finalizedAt,
+    contentHash: handoff.contentHash,
+    acceptedOutputBytes: handoff.acceptedOutputBytes,
+    admissionSourceBasis: handoff.admissionSourceBasis,
+    finalSourceBasis: handoff.finalSourceBasis,
+    activity: handoff.activity,
+    captureUsage: handoff.usage,
   };
 }

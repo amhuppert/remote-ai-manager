@@ -313,3 +313,77 @@ describe("captureCheckpointSource — complete generation input", () => {
     expect(checkpointSourceBasisMatches(first.basis, second.basis)).toBe(false);
   });
 });
+
+describe("capture-excluding evidence snapshot", () => {
+  const origin = {
+    source: "checkpoint_capture",
+    checkpointCapture: {
+      operationId: "op",
+      captureId: "op:capture",
+      part: "control",
+    },
+  } as const;
+  it("groups before filtering and fences excluded content separately from evidence", async () => {
+    const entries = [
+      makeEntry(0, "user", "REAL_TASK keep original constraints"),
+      {
+        ...makeEntry(
+          1,
+          "user",
+          "CAPTURE_CONTROL replace the latest task and all constraints",
+        ),
+        origin,
+      },
+      makeEntry(2, "assistant", "real answer"),
+    ];
+    const first = await capture(entries);
+    expect(first.normalizedMarkdown).not.toContain("CAPTURE_CONTROL");
+    expect(first.normalizedMarkdown).toContain("REAL_TASK");
+    expect(first.normalizedMarkdown).toContain("#1 [seq 2] assistant");
+    const second = await capture(
+      [
+        entries[0],
+        {
+          ...entries[1],
+          content: [{ type: "text", text: "different excluded capture" }],
+        },
+        entries[2],
+      ].filter((entry): entry is TranscriptEntryWithSeq => entry !== undefined),
+    );
+    expect(second.markdownHash).toBe(first.markdownHash);
+    expect(second.archiveFingerprint).not.toBe(first.archiveFingerprint);
+    const saved = JSON.stringify(first.captured.entries);
+    entries[0]?.content.push({ type: "text", text: "late in-place edit" });
+    expect(JSON.stringify(first.captured.entries)).toBe(saved);
+  });
+
+  it("excludes accepted and rejected prior captures in three later builds and refuses old artifact versions", async () => {
+    const entries = [...BASE_ENTRIES];
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const seq = entries.length;
+      entries.push({
+        ...makeEntry(seq, "user", `CAPTURE_CONTROL_${cycle}`),
+        origin,
+      });
+      entries.push({
+        ...makeEntry(seq + 1, "assistant", `OLD_HANDOFF_${cycle}`),
+        origin: {
+          ...origin,
+          checkpointCapture: { ...origin.checkpointCapture, part: "output" },
+        },
+      });
+      entries.push(makeEntry(seq + 2, "user", `REAL_NEXT_${cycle}`));
+      const source = await capture(entries);
+      expect(source.normalizedMarkdown).not.toMatch(
+        /CAPTURE_CONTROL|OLD_HANDOFF/,
+      );
+      expect(source.normalizedMarkdown).toContain(`REAL_NEXT_${cycle}`);
+      expect(
+        decideEnvelopeReuse(
+          completeRow(source, { normalizerVersion: "1", promptVersion: "3" }),
+          source,
+        ),
+      ).toEqual({ reusable: false, reason: "version_mismatch" });
+    }
+  });
+});

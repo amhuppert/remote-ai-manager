@@ -3,6 +3,12 @@
  * retaining only the opaque thread reference between turns.
  */
 
+import {
+  captureCodexNativeCursor,
+  inspectCodexNativeWindow,
+  type CodexNativeCursor,
+  type CodexNativeWindow,
+} from "./transcript-records";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,6 +37,8 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
+  CaptureHandoffInput,
+  CaptureHandoffResult,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
@@ -43,6 +51,7 @@ import type { PortableMcpToCodexResult } from "../mcp-translation";
 import type {
   BackendModelSelection,
   CodexPricingTable,
+  CaptureOmissionReason,
 } from "@/lib/agent-backends/schemas";
 import {
   estimateCodexCostUsd,
@@ -115,6 +124,7 @@ const turnSchema = z.object({
   status: z.enum(["inProgress", "completed", "failed", "interrupted"]),
   error: z.object({ message: z.string() }).nullish(),
 });
+const captureItemSchema = z.object({ item: z.object({ type: z.string() }) });
 const contextCompactionSchema = z.object({
   item: z.object({ type: z.literal("contextCompaction") }),
 });
@@ -125,7 +135,7 @@ const turnNotificationSchema = z.object({
 const turnResponseSchema = z.object({ turn: turnSchema });
 const steerResponseSchema = z.object({ turnId: z.string() });
 const threadResponseSchema = z.object({
-  thread: z.object({ id: z.string() }),
+  thread: z.object({ id: z.string(), path: z.string().nullish() }),
   model: z.string(),
   cwd: z.string(),
   approvalPolicy: z.string(),
@@ -136,6 +146,26 @@ const workspaceSandboxSchema = z.object({
   excludeTmpdirEnvVar: z.boolean(),
   excludeSlashTmp: z.boolean(),
 });
+interface CodexCaptureAttempt {
+  input: CaptureHandoffInput;
+  submitted: boolean;
+  modeEstablished: boolean;
+  correlatedCompletion: boolean;
+  executionCollected: boolean;
+  observedActivity: boolean;
+  transportIncomplete: boolean;
+  omissionReason: CaptureOmissionReason | null;
+  controller: AbortController;
+  settle(): void;
+  settlementDeadline: number | null;
+  settlementStartedAt: number | null;
+  tokens: CodexUsageTokens | null;
+  costUsd: number | null;
+  output: Map<
+    string,
+    { text: string; bytes: number; completed: boolean; commentary: boolean }
+  >;
+}
 interface CodexTurnState {
   client: AppServerClient | null;
   threadId: string | null;
@@ -182,6 +212,11 @@ function isDefiniteSteerRefusal(error: AppServerRequestError): boolean {
 // ============================================================
 
 export interface CodexConversationRuntimeDeps {
+  inspectNativeWindow?(
+    cursor: CodexNativeCursor | null,
+    turnId: string,
+    options: Parameters<typeof inspectCodexNativeWindow>[2],
+  ): Promise<CodexNativeWindow>;
   inTurnDeliveryEnabled?: boolean;
   createAppServer(options: AppServerClientOptions): AppServerClient;
   createInstructionStore(conversationId: string): CodexInstructionStore;
@@ -288,6 +323,13 @@ export class CodexConversationRuntime
   private readonly deps: CodexConversationRuntimeDeps;
   private readonly resolvedModelSelection: ResolvedCodexModelSelection;
   private active: CodexTurnState | null = null;
+  private readonly initialPurpose: ConversationBackendCreateInput["initialPurpose"];
+  private captureAttempt: CodexCaptureAttempt | null = null;
+  private captureUsed = false;
+  private nativeCaptureWindow: CodexNativeWindow = {
+    coverage: "unavailable",
+    observedToolActivity: false,
+  };
   private cleanupError: Error | null = null;
   private costLedger: number | null = null;
   private costLedgerLoaded = false;
@@ -298,6 +340,7 @@ export class CodexConversationRuntime
     input: ConversationBackendCreateInput,
     deps: Partial<CodexConversationRuntimeDeps> = {},
   ) {
+    this.initialPurpose = input.initialPurpose;
     this.threadId =
       input.persistedRef?.backend === "codex" ? input.persistedRef.ref : null;
     this.stagedPortableMcp = input.tooling.portableMcp ?? null;
@@ -343,7 +386,330 @@ export class CodexConversationRuntime
     return this._status === "dead";
   }
 
+  async captureHandoff(
+    input: CaptureHandoffInput,
+  ): Promise<CaptureHandoffResult> {
+    const base: CaptureHandoffResult = {
+      modeEstablished: false,
+      submitted: false,
+      correlatedCompletion: false,
+      candidateText: null,
+      omissionReason: "unavailable",
+      executionSettled: true,
+      cleanupFailure: null,
+      continuation: this.threadId
+        ? {
+            disposition: "retain",
+            backendRef: { backend: "codex", ref: this.threadId },
+            nextRuntime:
+              this.initialPurpose || this.isClosed()
+                ? "recreate_from_ref"
+                : "current",
+          }
+        : {
+            disposition: "clear",
+            backendRef: null,
+            nextRuntime: "unavailable",
+          },
+      activity: {
+        transport: "complete",
+        native: "unavailable",
+        prohibited: "not_observed",
+        inspectedBytes: null,
+      },
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        cachedInputTokens: null,
+        costUsd: null,
+        costBasis: null,
+        executionMs: null,
+        settlementMs: null,
+      },
+    };
+    if (this.cleanupError)
+      return {
+        ...base,
+        executionSettled: false,
+        omissionReason: "cleanup_unverified",
+        cleanupFailure: {
+          code: "cleanup_unverified",
+          message: this.cleanupError.message,
+        },
+      };
+    if (
+      input.mode !== "instruction-only" ||
+      (this.initialPurpose &&
+        (this.initialPurpose.mode !== input.mode ||
+          this.initialPurpose.captureId !== input.captureId))
+    )
+      return { ...base, omissionReason: "mode_changed" };
+    if (!this.threadId)
+      return { ...base, omissionReason: "continuity_unavailable" };
+    if (this.captureUsed || this.active || this.isClosed())
+      return { ...base, omissionReason: "unavailable" };
+    this.captureUsed = true;
+    const startedAt = this.deps.now();
+    const controller = new AbortController();
+    let settlementTimer: ReturnType<typeof setTimeout> | undefined;
+    const unsettled = Promise.withResolvers<ConversationBackendTurnResult>();
+    const attempt: CodexCaptureAttempt = {
+      input,
+      submitted: false,
+      modeEstablished: false,
+      correlatedCompletion: false,
+      executionCollected: false,
+      observedActivity: false,
+      transportIncomplete: false,
+      omissionReason: null,
+      controller,
+      settlementDeadline: null,
+      settlementStartedAt: null,
+      tokens: null,
+      costUsd: null,
+      output: new Map(),
+      settle: () => {
+        if (attempt.settlementDeadline !== null) return;
+        clearTimeout(executionTimer);
+        attempt.settlementStartedAt = this.deps.now();
+        const budget = Math.min(5000, input.limits.settlementMs);
+        attempt.settlementDeadline = Date.now() + budget;
+        settlementTimer = setTimeout(() => {
+          if (attempt.executionCollected && !this.cleanupError) {
+            this.nativeCaptureWindow = {
+              coverage: "incomplete",
+              observedToolActivity:
+                this.nativeCaptureWindow.observedToolActivity,
+            };
+            unsettled.resolve(
+              this.refusedResult(
+                startedAt,
+                new Error("Codex native inspection deadline expired"),
+              ),
+            );
+            return;
+          }
+          this.cleanupError = new AppServerTransportError(
+            "cleanup_unverified",
+            "Codex capture settlement deadline expired",
+          );
+          if (this.active) void this.stopTurn(this.active).catch(() => {});
+          unsettled.resolve(this.refusedResult(startedAt, this.cleanupError));
+        }, budget);
+      },
+    };
+    this.captureAttempt = attempt;
+    this.nativeCaptureWindow = {
+      coverage: "unavailable",
+      observedToolActivity: false,
+    };
+    const turnInput: ConversationBackendTurnInput = {
+      promptText: input.promptText,
+      imageRefs: [],
+      sessionInstructions: [],
+      modelSelection: this.modelSelection,
+      autonomous: true,
+      outputFormat: { type: "json_schema", schema: input.outputSchema },
+      signal: controller.signal,
+      onEvent: async (event) => {
+        if (event.type === "transcript_entry") {
+          try {
+            await input.onTranscript(event.entry);
+          } catch {
+            this.cleanupError = new AppServerTransportError(
+              "cleanup_unverified",
+              "Codex capture required transcript write failed",
+            );
+            throw this.cleanupError;
+          }
+        }
+      },
+    };
+    if (
+      Buffer.byteLength(
+        JSON.stringify(this.buildPromptInput(turnInput)),
+        "utf8",
+      ) > Math.min(8192, input.limits.inputBytes)
+    ) {
+      this.captureAttempt = null;
+      return { ...base, omissionReason: "input_limit" };
+    }
+    const onAbort = () => {
+      const reason: unknown = input.signal.reason;
+      this.stopCapture(
+        reason === "skip" || reason === "skipped"
+          ? "skipped"
+          : reason === "cancel" || reason === "cancelled"
+            ? "cancelled"
+            : "interrupted",
+      );
+    };
+    input.signal.addEventListener("abort", onAbort, { once: true });
+    const executionTimer = setTimeout(
+      () => this.stopCapture("execution_limit"),
+      Math.min(60000, input.limits.executionMs),
+    );
+    if (input.signal.aborted) onAbort();
+    let result: ConversationBackendTurnResult;
+    try {
+      result = await Promise.race([this.runTurn(turnInput), unsettled.promise]);
+    } finally {
+      clearTimeout(executionTimer);
+      clearTimeout(settlementTimer);
+      input.signal.removeEventListener("abort", onAbort);
+    }
+    this._status = "dead";
+    const observed =
+      attempt.observedActivity || this.nativeCaptureWindow.observedToolActivity;
+    const omissionReason = result.cleanupFailure
+      ? "cleanup_unverified"
+      : observed
+        ? "prohibited_activity"
+        : this.nativeCaptureWindow.coverage === "incomplete"
+          ? "native_inspection_incomplete"
+          : (attempt.omissionReason ??
+            (result.aborted
+              ? "interrupted"
+              : !attempt.modeEstablished
+                ? "mode_establishment_failed"
+                : result.failure ||
+                    attempt.transportIncomplete ||
+                    !attempt.correlatedCompletion ||
+                    !result.finalText
+                  ? "capture_failed"
+                  : null));
+    return {
+      ...base,
+      modeEstablished: attempt.modeEstablished,
+      submitted: attempt.submitted,
+      correlatedCompletion: attempt.correlatedCompletion,
+      candidateText:
+        omissionReason === null ? (result.finalText ?? null) : null,
+      omissionReason,
+      executionSettled: !result.cleanupFailure,
+      cleanupFailure: result.cleanupFailure
+        ? { code: "cleanup_unverified", message: result.cleanupFailure.message }
+        : null,
+      continuation: result.backendRef
+        ? {
+            disposition: "retain",
+            backendRef: result.backendRef,
+            nextRuntime: "recreate_from_ref",
+          }
+        : {
+            disposition: "clear",
+            backendRef: null,
+            nextRuntime: "unavailable",
+          },
+      usage: {
+        inputTokens: attempt.tokens?.input_tokens ?? null,
+        outputTokens: attempt.tokens?.output_tokens ?? null,
+        cachedInputTokens: attempt.tokens?.cached_input_tokens ?? null,
+        costUsd: attempt.costUsd,
+        costBasis: attempt.costUsd === null ? null : "pricing_estimate",
+        executionMs: Math.max(
+          0,
+          (attempt.settlementStartedAt ?? this.deps.now()) - startedAt,
+        ),
+        settlementMs:
+          attempt.settlementStartedAt === null
+            ? null
+            : Math.max(0, this.deps.now() - attempt.settlementStartedAt),
+      },
+      activity: {
+        transport: attempt.transportIncomplete ? "incomplete" : "complete",
+        native: this.nativeCaptureWindow.coverage,
+        prohibited: observed
+          ? "observed"
+          : attempt.transportIncomplete ||
+              this.nativeCaptureWindow.coverage === "incomplete"
+            ? "unknown"
+            : "not_observed",
+        inspectedBytes: null,
+      },
+    };
+  }
+
+  private stopCapture(reason: CaptureOmissionReason): void {
+    const attempt = this.captureAttempt;
+    if (!attempt) return;
+    attempt.omissionReason ??= reason;
+    attempt.settle();
+    if (!attempt.controller.signal.aborted) attempt.controller.abort(reason);
+  }
+
+  private observeCaptureOutput(method: string, params: unknown): void {
+    const attempt = this.captureAttempt;
+    if (!attempt || attempt.omissionReason) return;
+    const delta = z
+      .object({ itemId: z.string(), delta: z.string() })
+      .safeParse(params);
+    const item = z
+      .object({
+        item: z.object({
+          id: z.string(),
+          type: z.literal("agentMessage"),
+          text: z.string().optional(),
+          phase: z.string().optional(),
+        }),
+      })
+      .safeParse(params);
+    const id =
+      method === "item/agentMessage/delta" && delta.success
+        ? delta.data.itemId
+        : (method === "item/completed" || method === "item/started") &&
+            item.success
+          ? item.data.item.id
+          : null;
+    if (id === null) return;
+    const output = attempt.output.get(id) ?? {
+      text: "",
+      bytes: 0,
+      completed: false,
+      commentary: false,
+    };
+    if (item.success && item.data.item.phase === "commentary") {
+      output.commentary = true;
+      output.text = "";
+      output.bytes = 0;
+    }
+    attempt.output.set(id, output);
+    if (output.commentary || method === "item/started") return;
+    if (output.completed) return;
+    if (method === "item/agentMessage/delta" && delta.success)
+      output.text += delta.data.delta;
+    else if (item.success) {
+      output.bytes = Math.max(
+        output.bytes,
+        Buffer.byteLength(item.data.item.text ?? "", "utf8"),
+      );
+      output.completed = true;
+    }
+    output.bytes = Math.max(
+      output.bytes,
+      Buffer.byteLength(output.text, "utf8"),
+    );
+    attempt.output.set(id, output);
+    const bytes = [...attempt.output.values()].reduce(
+      (total, entry) => total + entry.bytes,
+      0,
+    );
+    if (bytes > Math.min(6144, attempt.input.limits.outputBytes))
+      this.stopCapture("output_limit");
+  }
+
   async sendTurn(
+    input: ConversationBackendTurnInput,
+  ): Promise<ConversationBackendTurnResult> {
+    if (this.initialPurpose || this.captureAttempt)
+      return this.refusedResult(
+        this.deps.now(),
+        new Error("Codex capture binding cannot admit an ordinary turn"),
+      );
+    return this.runTurn(input);
+  }
+
+  private async runTurn(
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult> {
     const startedAt = this.deps.now();
@@ -375,6 +741,8 @@ export class CodexConversationRuntime
       steer: Promise.resolve(),
     };
     this.active = state;
+    let nativeCursor: CodexNativeCursor | null = null;
+    let nativeCursorFailed = false;
     const projector = new CodexAppServerEvents();
     const usage = new CodexAppServerUsage();
     const blocks: MessageContentBlock[] = [];
@@ -403,6 +771,7 @@ export class CodexConversationRuntime
         state.failureOverridesAbort = true;
         if (error.code === "consumer_failed") state.suppressOutput = true;
       }
+      if (this.captureAttempt) this.captureAttempt.transportIncomplete = true;
       state.failure ??= error;
       state.completion.resolve();
     };
@@ -441,10 +810,15 @@ export class CodexConversationRuntime
       if (state.aborted || this.isClosed())
         throw new DOMException("Turn cancelled before dispatch", "AbortError");
       const client = this.deps.createAppServer({
+        ...(this.captureAttempt ? { captureCleanup: true } : {}),
         cwd: threadOptions.workingDirectory ?? this.worktreePath,
         env: options.env ?? {},
         onFailure: fail,
         onServerRequest: async (message) => {
+          if (this.captureAttempt) {
+            this.captureAttempt.observedActivity = true;
+            this.stopCapture("prohibited_activity");
+          }
           logger.warn("codex-runtime.server_request_refused", {
             conversationId: this.conversationId,
             method: message.method,
@@ -491,8 +865,12 @@ export class CodexConversationRuntime
           if (
             message.method === "turn/completed" &&
             lifecycle.data.turn.id === state.turnId
-          )
+          ) {
             state.terminal = true;
+            if (this.captureAttempt) {
+              this.captureAttempt.settle();
+            }
+          }
         },
         onFrame: async (frame) => {
           await input.onEvent({
@@ -557,12 +935,32 @@ export class CodexConversationRuntime
                   lifecycle.turn.error?.message ?? "Codex turn failed",
                 );
               if (lifecycle.turn.status === "interrupted") state.aborted = true;
+              if (this.captureAttempt)
+                this.captureAttempt.correlatedCompletion =
+                  lifecycle.turn.status === "completed";
               state.terminal = true;
               state.completion.resolve();
             }
             return;
           }
           if (!state.startRequested) return;
+          if (
+            this.captureAttempt &&
+            (message.method === "turn/plan/updated" ||
+              ((message.method === "item/started" ||
+                message.method === "item/completed") &&
+                captureItemSchema.safeParse(message.params).success &&
+                ![
+                  "agentMessage",
+                  "userMessage",
+                  "reasoning",
+                  "contextCompaction",
+                ].includes(captureItemSchema.parse(message.params).item.type)))
+          ) {
+            this.captureAttempt.observedActivity = true;
+            this.stopCapture("prohibited_activity");
+          }
+          this.observeCaptureOutput(message.method, message.params);
           if (message.method === "error") {
             logger.warn("codex-runtime.provider_diagnostic", {
               conversationId: this.conversationId,
@@ -606,34 +1004,54 @@ export class CodexConversationRuntime
         ),
       );
       this.verifyEffectiveThread(thread, threadOptions);
+      if (this.captureAttempt && thread.thread.id !== this.threadId) {
+        this.captureAttempt.omissionReason = "continuity_unavailable";
+        throw new Error("Codex capture resumed a different thread");
+      }
+      if (this.captureAttempt) this.captureAttempt.modeEstablished = true;
       state.threadId = thread.thread.id;
       this.threadId = thread.thread.id;
       await input.onEvent({
         type: "backend_init",
         backendRef: { backend: "codex", ref: thread.thread.id },
       });
-      await this.loadCostLedger(thread.thread.id, wasFresh);
-      await this.instructions.establish(
-        thread.thread.id,
-        governing,
-        wasFresh,
-        async (text) => {
-          await client.request("thread/inject_items", {
-            threadId: thread.thread.id,
-            items: [
-              {
-                type: "message",
-                role: "developer",
-                content: [{ type: "input_text", text }],
-              },
-            ],
-          });
-        },
-      );
+      if (!this.captureAttempt)
+        await this.loadCostLedger(thread.thread.id, wasFresh);
+      if (!this.captureAttempt)
+        await this.instructions.establish(
+          thread.thread.id,
+          governing,
+          wasFresh,
+          async (text) => {
+            await client.request("thread/inject_items", {
+              threadId: thread.thread.id,
+              items: [
+                {
+                  type: "message",
+                  role: "developer",
+                  content: [{ type: "input_text", text }],
+                },
+              ],
+            });
+          },
+        );
       await client.flush();
       if (state.aborted || this.isClosed())
         throw new DOMException("Turn cancelled before dispatch", "AbortError");
+      if (this.captureAttempt && thread.thread.path != null) {
+        try {
+          nativeCursor = await captureCodexNativeCursor(thread.thread.path);
+        } catch {
+          nativeCursorFailed = true;
+        }
+      }
+      if (state.aborted || this.isClosed())
+        throw new DOMException(
+          "Capture stopped before submission",
+          "AbortError",
+        );
       state.startRequested = true;
+      if (this.captureAttempt) this.captureAttempt.submitted = true;
       const started = turnResponseSchema.parse(
         await client.request("turn/start", {
           threadId: thread.thread.id,
@@ -649,6 +1067,17 @@ export class CodexConversationRuntime
       await accept();
       await state.completion.promise;
       await state.steer;
+      if (this.captureAttempt) {
+        try {
+          await client.close();
+        } catch (error) {
+          this.cleanupError =
+            error instanceof Error
+              ? error
+              : new Error("Codex capture cleanup failed");
+          throw this.cleanupError;
+        }
+      }
       await client.flush();
       if (!state.suppressOutput) await emitBlocks(projector.finish());
       if (state.failure !== null) throw state.failure;
@@ -663,18 +1092,48 @@ export class CodexConversationRuntime
           error instanceof Error ? error : new Error(getErrorMessage(error));
     } finally {
       input.signal.removeEventListener("abort", onAbort);
+      this.captureAttempt?.settle();
       try {
         if (!state.terminal && state.startRequested) await this.stopTurn(state);
         else await state.client?.close();
+        if (this.captureAttempt) this.captureAttempt.executionCollected = true;
       } catch (error) {
         const failure =
           error instanceof Error ? error : new Error(getErrorMessage(error));
         if (
-          error instanceof AppServerTransportError &&
-          error.code === "cleanup_unverified"
+          this.captureAttempt ||
+          (error instanceof AppServerTransportError &&
+            error.code === "cleanup_unverified")
         )
           this.cleanupError = failure;
         state.failure ??= failure;
+      }
+      if (this.captureAttempt) {
+        this.nativeCaptureWindow =
+          nativeCursorFailed ||
+          (this.captureAttempt.submitted && state.turnId === null)
+            ? { coverage: "incomplete", observedToolActivity: false }
+            : await (this.deps.inspectNativeWindow ?? inspectCodexNativeWindow)(
+                nativeCursor,
+                state.turnId ?? "",
+                {
+                  maxBytes:
+                    this.captureAttempt.input.limits.nativeInspectionBytes,
+                  deadline: Math.min(
+                    this.captureAttempt.settlementDeadline ?? Infinity,
+                    Date.now() +
+                      this.captureAttempt.input.limits.nativeInspectionMs,
+                  ),
+                },
+              );
+        if (this.nativeCaptureWindow.observedToolActivity)
+          state.failure ??= new Error(
+            "Codex capture observed prohibited native tool activity",
+          );
+        else if (this.nativeCaptureWindow.coverage === "incomplete")
+          state.failure ??= new Error(
+            "Codex capture native evidence is incomplete",
+          );
       }
       await state.steer;
       const cleanup = await Promise.allSettled(
@@ -715,8 +1174,14 @@ export class CodexConversationRuntime
             );
     const clear = failure?.kind === "stale_resume_ref";
     if (clear) this.threadId = null;
-    const costUsd = await this.estimateTurnCost(usage.tokens);
-    if (state.startRequested)
+    const measuredTokens =
+      this.captureAttempt && !usage.hasBaseline ? null : usage.tokens;
+    const costUsd = await this.estimateTurnCost(measuredTokens);
+    if (this.captureAttempt) {
+      this.captureAttempt.tokens = measuredTokens;
+      this.captureAttempt.costUsd = costUsd;
+    }
+    if (state.startRequested && !this.captureAttempt)
       this.costLedger =
         this.costLedger !== null && costUsd !== null
           ? this.costLedger + costUsd
@@ -741,13 +1206,18 @@ export class CodexConversationRuntime
       continuationDisposition: clear ? "clear" : "retain",
       ...(cleanupFailure ? { cleanupFailure } : {}),
     };
-    logger.info("codex-runtime.turn_end", {
-      conversationId: this.conversationId,
-      threadIdDigest: providerRefDigest(this.threadId),
-      failureKind: failure?.kind ?? null,
-      costUsd,
-      cumulativeCostUsd: result.cumulativeCostUsd,
-    });
+    logger.info(
+      this.captureAttempt
+        ? "codex-runtime.capture_end"
+        : "codex-runtime.turn_end",
+      {
+        conversationId: this.conversationId,
+        threadIdDigest: providerRefDigest(this.threadId),
+        failureKind: failure?.kind ?? null,
+        costUsd,
+        cumulativeCostUsd: result.cumulativeCostUsd,
+      },
+    );
     return result;
   }
 
@@ -857,6 +1327,28 @@ export class CodexConversationRuntime
     state.stopped ??= (async () => {
       const client = state.client;
       if (!client) return;
+      if (this.captureAttempt) {
+        this.captureAttempt.settle();
+        if (!state.terminal && state.threadId && state.turnId)
+          void client
+            .request("turn/interrupt", {
+              threadId: state.threadId,
+              turnId: state.turnId,
+            })
+            .catch(() => {});
+        try {
+          await client.close();
+        } catch (error) {
+          this.cleanupError =
+            error instanceof Error
+              ? error
+              : new Error("Codex capture cleanup failed");
+          throw this.cleanupError;
+        } finally {
+          state.completion.resolve();
+        }
+        return;
+      }
       if (!state.terminal && state.threadId && state.turnId) {
         await withinDeadline(
           (async () => {
@@ -1048,8 +1540,10 @@ export class CodexConversationRuntime
     const text = [input.syntheticForkSeed, input.promptText]
       .filter(Boolean)
       .join("\n\n");
-    const prompt = this.outputFormat
-      ? appendStructuredOutputInstruction(text, this.outputFormat.schema)
+    const schema =
+      this.captureAttempt?.input.outputSchema ?? this.outputFormat?.schema;
+    const prompt = schema
+      ? appendStructuredOutputInstruction(text, schema)
       : text;
     return [
       { type: "text", text: prompt },

@@ -22,7 +22,10 @@ import {
 } from "@/lib/events/publication";
 import { createLogger, type Logger } from "@/lib/logging";
 
-import { checkpointErrorFields } from "./diagnostics";
+import {
+  checkpointErrorFields,
+  checkpointHandoffLogFields,
+} from "./diagnostics";
 import {
   CONVERSATION_CHECKPOINT_UPDATED_EVENT,
   type ConversationCheckpointUpdatedEvent,
@@ -145,6 +148,19 @@ export function withCheckpointPublication(
     return result;
   }
 
+  function logCapture(
+    key: CheckpointScopeKey,
+    result: CheckpointResult<CheckpointOperation>,
+    event: string,
+  ): void {
+    if (!result.ok || result.value.handoff === null) return;
+    log.info(event, {
+      ...logFields(key, result.value.id),
+      phase: result.value.phase,
+      ...checkpointHandoffLogFields(result.value.handoff),
+    });
+  }
+
   return {
     async createFork(input) {
       return publishOperation(
@@ -182,11 +198,11 @@ export function withCheckpointPublication(
     async freezePayload(
       input: FreezeCheckpointPayloadInput,
     ): Promise<CheckpointResult<CheckpointOperation>> {
-      return publishOperation(
-        await repo.freezePayload(input),
-        input.key,
-        linkedIds,
-      );
+      const result = await repo.freezePayload(input);
+      if (input.handoffDecision === "seed_budget") {
+        logCapture(input.key, result, "checkpoint.handoff.omitted");
+      }
+      return publishOperation(result, input.key, linkedIds);
     },
 
     async commitReady(
@@ -222,13 +238,40 @@ export function withCheckpointPublication(
     async recordOutcome(
       input: RecordCheckpointOutcomeInput,
     ): Promise<CheckpointResult<CheckpointOperation>> {
-      return publishOperation(
-        await repo.recordOutcome(input),
-        input.key,
-        linkedIds,
-      );
+      const result = await repo.recordOutcome(input);
+      if (input.phase === "needs_reconciliation") {
+        logCapture(
+          input.key,
+          result,
+          "checkpoint.handoff.reconciliation_required",
+        );
+      }
+      return publishOperation(result, input.key, linkedIds);
     },
 
+    async beginCapture(input) {
+      const result = await repo.beginCapture(input);
+      logCapture(input.key, result, "checkpoint.handoff.started");
+      return publishOperation(result, input.key, linkedIds);
+    },
+    async settleCapture(input) {
+      const result = await repo.settleCapture(input);
+      logCapture(
+        input.key,
+        result,
+        input.settlement.kind === "stop"
+          ? "checkpoint.handoff.stop_requested"
+          : "checkpoint.handoff.settled",
+      );
+      if (
+        input.settlement.kind === "result" &&
+        result.ok &&
+        result.value.handoff?.stage === "omitted"
+      ) {
+        logCapture(input.key, result, "checkpoint.handoff.omitted");
+      }
+      return publishOperation(result, input.key, linkedIds);
+    },
     getStateForAdmission: (key) => repo.getStateForAdmission(key),
     getOperation: (key, operationId) => repo.getOperation(key, operationId),
     getReceipt: (key, operationId) => repo.getReceipt(key, operationId),

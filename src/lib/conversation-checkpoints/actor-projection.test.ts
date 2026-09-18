@@ -14,6 +14,7 @@ const OPERATION: CheckpointOperation = {
   conversationId: "conv-1",
   ordinal: 1,
   phase: "ready",
+  handoff: null,
   lastStablePhase: null,
   sourceBasis: { capturedThroughSeq: 120, sourceHash: "sha256:source" },
   protectedReferences: {

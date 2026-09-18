@@ -1,5 +1,8 @@
+import { createHistoryRouteHandlers } from "@/lib/conversations/history-route-handlers";
+import { createHistoryEntryService } from "@/lib/conversations/history-entry-service";
+import { createHistoryImageService } from "@/lib/conversations/history-image-service";
 import type Database from "better-sqlite3";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -19,7 +22,7 @@ import type {
 
 import type { CheckpointRefusal } from "./admission";
 import type { CheckpointConversationGateway } from "./continuation";
-import { checkpointReceipt } from "./receipt";
+import { CHECKPOINT_CAPTURE_POLICY, checkpointReceipt } from "./receipt";
 import {
   createConversationCheckpointsRepo,
   type ConversationCheckpointsRepo,
@@ -27,6 +30,7 @@ import {
 import { createCheckpointRouteHandlers } from "./route-handlers";
 import {
   CHECKPOINT_PAYLOAD_SCHEMA_VERSION,
+  type CheckpointHandoffRequest,
   type CheckpointOperation,
   type CheckpointPayload,
   type CheckpointScopeKey,
@@ -126,11 +130,18 @@ interface ManagerCalls {
   start: {
     address: ConversationAddress;
     requestId: string;
+    handoff?: CheckpointHandoffRequest;
     recover?: string | null;
   }[];
   check: { address: ConversationAddress; recover: string | null | undefined }[];
   cancel: { address: ConversationAddress; operationId: string }[];
-  reconcile: { address: ConversationAddress; operationId: string }[];
+  reconcile: {
+    address: ConversationAddress;
+    operationId: string;
+    captureExecutionStopped?: boolean;
+    source?: string;
+  }[];
+  skip: { address: ConversationAddress; operationId: string }[];
 }
 
 /** What the injected manager commands answer, mutable per test. */
@@ -170,10 +181,22 @@ function makeHarness(): Harness {
     check: [],
     cancel: [],
     reconcile: [],
+    skip: [],
   };
   const state: ManagerState = {
     start: { kind: "refused", refusal: refusal("conversation_busy") },
-    check: { eligible: true, refusals: [], active: null, hosted: false },
+    check: {
+      eligible: true,
+      refusals: [],
+      active: null,
+      hosted: false,
+      handoff: {
+        available: true,
+        mode: "tool-disabled",
+        reason: null,
+        policy: CHECKPOINT_CAPTURE_POLICY,
+      },
+    },
     cancel: { kind: "refused", refusal: refusal("not_cancellable") },
     reconcile: { kind: "refused", refusal: refusal("checkpoint_not_found") },
     conversations: [makeConversationState({ id: CONVERSATION_ID })],
@@ -195,6 +218,7 @@ function makeHarness(): Harness {
         address: input.address,
         requestId: input.requestId,
         recover: input.recover,
+        ...(input.handoff === undefined ? {} : { handoff: input.handoff }),
       });
       return state.start;
     },
@@ -205,6 +229,10 @@ function makeHarness(): Harness {
     cancelCheckpoint: async (input) => {
       calls.cancel.push(input);
       return state.cancel;
+    },
+    skipHandoff: async (input) => {
+      calls.skip.push(input);
+      return { kind: "refused", refusal: refusal("checkpoint_not_found") };
     },
     reconcileCheckpoint: async (input) => {
       calls.reconcile.push(input);
@@ -222,6 +250,7 @@ function makeHarness(): Harness {
 beforeEach(() => {
   harness = makeHarness();
 });
+afterEach(() => harness.db.close());
 
 function ctx(params: Record<string, string>) {
   return { params: Promise.resolve(params) };
@@ -270,6 +299,98 @@ describe.each([SESSION_CASE, PROJECT_CASE])(
         harness.handlers.sessionReconcile,
         harness.handlers.projectReconcile,
       );
+
+    it.each(["tool-disabled", "instruction-only", null] as const)(
+      "preserves explicit disclosed mode %s at start",
+      async (mode) => {
+        const response = await start()(
+          req(`${scopeCase.base}/checkpoints`, {
+            method: "POST",
+            body: JSON.stringify({ requestId: REQUEST_ID, handoff: { mode } }),
+          }),
+          ctx(scopeCase.params),
+        );
+        expect(response.status).toBe(409);
+        expect(harness.calls.start[0]?.handoff).toEqual({ mode });
+      },
+    );
+    it.each([
+      true,
+      null,
+      {},
+      { mode: "auto" },
+      { mode: "tool-disabled", extra: true },
+    ])("rejects malformed handoff %j before admission", async (handoff) => {
+      const response = await start()(
+        req(`${scopeCase.base}/checkpoints`, {
+          method: "POST",
+          body: JSON.stringify({ requestId: REQUEST_ID, handoff }),
+        }),
+        ctx(scopeCase.params),
+      );
+      expect(response.status).toBe(400);
+      expect(
+        (await response.json()).issues.some((issue: { path: string }) =>
+          issue.path.startsWith("handoff"),
+        ),
+      ).toBe(true);
+      expect(harness.calls.start).toEqual([]);
+    });
+    it("treats explicit false as baseline", async () => {
+      await start()(
+        req(`${scopeCase.base}/checkpoints`, {
+          method: "POST",
+          body: JSON.stringify({ requestId: REQUEST_ID, handoff: false }),
+        }),
+        ctx(scopeCase.params),
+      );
+      expect(harness.calls.start).toHaveLength(1);
+      expect(harness.calls.start[0]).not.toHaveProperty("handoff");
+    });
+    it("validates reconciliation testimony before calling the manager", async () => {
+      const response = await reconcile()(
+        req(`${scopeCase.base}/checkpoints/${REQUEST_ID}/reconcile`, {
+          method: "POST",
+          body: JSON.stringify({ captureExecutionStopped: "yes" }),
+        }),
+        ctx({ ...scopeCase.params, checkpointId: REQUEST_ID }),
+      );
+      expect(response.status).toBe(400);
+      expect(harness.calls.reconcile).toEqual([]);
+    });
+    it("forwards explicit stopped-execution testimony with its source", async () => {
+      await reconcile()(
+        req(`${scopeCase.base}/checkpoints/${REQUEST_ID}/reconcile`, {
+          method: "POST",
+          body: JSON.stringify({
+            captureExecutionStopped: true,
+            source: "cli",
+          }),
+        }),
+        ctx({ ...scopeCase.params, checkpointId: REQUEST_ID }),
+      );
+      expect(harness.calls.reconcile[0]).toMatchObject({
+        captureExecutionStopped: true,
+        source: "cli",
+      });
+    });
+    it("routes skip to the addressed manager operation", async () => {
+      const skip = pick(
+        harness.handlers.sessionSkipHandoff,
+        harness.handlers.projectSkipHandoff,
+      );
+      const response = await skip(
+        req(`${scopeCase.base}/checkpoints/${REQUEST_ID}/skip-handoff`, {
+          method: "POST",
+        }),
+        ctx({ ...scopeCase.params, checkpointId: REQUEST_ID }),
+      );
+      expect(response.status).toBe(404);
+      expect(harness.calls.skip[0]).toMatchObject({
+        operationId: REQUEST_ID,
+        address: { target: { scope: scopeCase.scope } },
+      });
+    });
 
     describe("POST /checkpoints", () => {
       it("returns 202 with the durable receipt and status URL after admission", async () => {
@@ -386,6 +507,7 @@ describe.each([SESSION_CASE, PROJECT_CASE])(
         const body = await response.json();
         expect(body.code).toBe(code);
         expect(body.refusal.code).toBe(code);
+        expect(body.details?.refusal).toEqual(body.refusal);
       });
 
       it("rejects an invalid bearer token with 401 before resolving anything", async () => {
@@ -400,6 +522,10 @@ describe.each([SESSION_CASE, PROJECT_CASE])(
           checkCheckpoint: async () => harness.state.check,
           cancelCheckpoint: async () => harness.state.cancel,
           reconcileCheckpoint: async () => harness.state.reconcile,
+          skipHandoff: async () => ({
+            kind: "refused",
+            refusal: refusal("checkpoint_not_found"),
+          }),
           auth: {
             requireToken: async () => null,
             validateOptionalToken: async () => ({ kind: "invalid" }) as const,
@@ -748,6 +874,7 @@ describe.each([SESSION_CASE, PROJECT_CASE])(
         expect(response.status).toBe(409);
         const body = await response.json();
         expect(body.refusal.code).toBe("reconciliation_failed");
+        expect(body.details?.receipt).toEqual(body.receipt);
         expect(body.receipt.operationId).toBe(operation.id);
       });
 
@@ -985,6 +1112,12 @@ describe.each([SESSION_CASE, PROJECT_CASE])(
           refusals: [refusal("turn_active"), refusal("background_work")],
           active: null,
           hosted: true,
+          handoff: {
+            available: true,
+            mode: "tool-disabled",
+            reason: null,
+            policy: CHECKPOINT_CAPTURE_POLICY,
+          },
         };
 
         const response = await eligibility()(
@@ -1000,6 +1133,7 @@ describe.each([SESSION_CASE, PROJECT_CASE])(
           "background_work",
         ]);
         expect(body.hosted).toBe(true);
+        expect(body.handoff).toEqual(harness.state.check.handoff);
         expect(harness.calls.start).toEqual([]);
         expect(harness.calls.cancel).toEqual([]);
         expect(harness.calls.reconcile).toEqual([]);
@@ -1030,5 +1164,110 @@ describe.each([SESSION_CASE, PROJECT_CASE])(
         expect(harness.calls.check).toEqual([]);
       });
     });
+  },
+);
+
+// Retained entry/image success, exact bytes, thinking and oversized export cases
+// live in conversations/history-route-handlers.test.ts. This matrix pins every
+// public leaf to the same addressing boundary, including the new capture control.
+describe.each([SESSION_CASE, PROJECT_CASE])(
+  "complete scoped surface matrix ($scope)",
+  (scopeCase) => {
+    it.each([
+      "eligibility",
+      "start",
+      "list",
+      "detail",
+      "cancel",
+      "skip",
+      "reconcile",
+      "history-entry",
+      "image",
+    ] as const)(
+      "refuses missing identity before %s can read or mutate",
+      async (surface) => {
+        const readTranscriptEntries = async () => {
+          throw new Error("wrong-scope history read");
+        };
+        const history = createHistoryRouteHandlers({
+          resolveProjectPath: async (name) =>
+            name === PROJECT_NAME ? PROJECT_PATH : null,
+          getSession: async (path, session) =>
+            path === PROJECT_PATH && session === SESSION_NAME
+              ? { conversations: harness.state.conversations }
+              : null,
+          getProjectConversation: async (path, id) =>
+            path === PROJECT_PATH
+              ? (harness.state.conversations.find((c) => c.id === id) ?? null)
+              : null,
+          entryService: createHistoryEntryService({ readTranscriptEntries }),
+          imageService: createHistoryImageService({
+            readTranscriptEntries,
+            readImageBytes: async () => {
+              throw new Error("wrong-scope image read");
+            },
+          }),
+          auth: {
+            requireToken: async () => null,
+            validateOptionalToken: async () => ({ kind: "absent" }),
+          },
+        });
+        const h = harness.handlers;
+        const handlers =
+          scopeCase.scope === "session"
+            ? {
+                eligibility: h.sessionEligibility,
+                start: h.sessionStart,
+                list: h.sessionList,
+                detail: h.sessionGet,
+                cancel: h.sessionCancel,
+                skip: h.sessionSkipHandoff,
+                reconcile: h.sessionReconcile,
+                "history-entry": history.sessionEntry,
+                image: history.sessionImage,
+              }
+            : {
+                eligibility: h.projectEligibility,
+                start: h.projectStart,
+                list: h.projectList,
+                detail: h.projectGet,
+                cancel: h.projectCancel,
+                skip: h.projectSkipHandoff,
+                reconcile: h.projectReconcile,
+                "history-entry": history.projectEntry,
+                image: history.projectImage,
+              };
+        const before = await harness.repo.listReceipts(scopeCase.key);
+        const invalidTargets: Record<string, string>[] = [
+          { name: "neighbor" },
+          { conversationId: "neighbor" },
+          ...(scopeCase.scope === "session" ? [{ session: "neighbor" }] : []),
+        ];
+        for (const invalid of invalidTargets) {
+          const response = await handlers[surface](
+            req(scopeCase.base, {
+              method: "POST",
+              body: JSON.stringify({ requestId: REQUEST_ID }),
+            }),
+            ctx({
+              ...scopeCase.params,
+              checkpointId: REQUEST_ID,
+              seq: "0",
+              contentBlockIndex: "0",
+              ...invalid,
+            }),
+          );
+          expect(response.status).toBe(404);
+        }
+        expect(harness.calls).toEqual({
+          start: [],
+          check: [],
+          cancel: [],
+          skip: [],
+          reconcile: [],
+        });
+        expect(await harness.repo.listReceipts(scopeCase.key)).toEqual(before);
+      },
+    );
   },
 );

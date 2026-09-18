@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
 
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
-import { _createTestDb } from "@/lib/state-store/state-db";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
+import { pendingHandoff, capturedHandoff } from "./handoff-fixture";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 import type { CheckpointConversationGateway } from "./continuation";
@@ -71,11 +75,13 @@ function recordingContinuation(): CheckpointConversationGateway & {
 }
 
 let db: Db;
+let fixture: PersistenceFixture;
 let repo: ConversationCheckpointsRepo;
 let continuation: ReturnType<typeof recordingContinuation>;
 
 beforeEach(() => {
-  db = _createTestDb({ inMemory: true });
+  fixture = createPersistenceFixture();
+  db = fixture.db;
   continuation = recordingContinuation();
   repo = createConversationCheckpointsRepo(
     db,
@@ -85,7 +91,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  db.close();
+  fixture.close();
 });
 
 function unwrap<T>(result: CheckpointResult<T>): T {
@@ -152,16 +158,27 @@ function buildMaximalPayload(id: string): CheckpointPayload {
 }
 
 /**
- * The one operation shape that carries every persisted column at once, and the
- * only lifecycle that reaches it: an original build blocked on an unknown
- * delivery, a recovery build that superseded it, was delivered from a queued
- * message, was accepted, and whose accepted continuation later became unusable,
- * and finally a second recovery that supersedes THAT one. Every column is
- * populated by a real transition — none by a whole-row write, because the
- * repository deliberately exposes none.
+ * Maximal mapping fixture: the baseline columns follow the delivery/recovery
+ * lifecycle below. Handoff metadata combines mutually exclusive lifecycle
+ * fields to exercise every persisted key without excluding nullable paths from
+ * the durability harness. Reachable capture outcomes are tested separately.
  */
 function buildMaximalOperation(): CheckpointOperation {
   return {
+    handoff: capturedHandoff({
+      categoryCounts: {
+        plan: 1,
+        hypotheses: 1,
+        failedApproaches: 1,
+        blockers: 1,
+        nextStep: 1,
+      },
+      stage: "omitted",
+      omissionReason: "cancelled",
+      stopIntent: "cancel",
+      finalizedAt: "finalized",
+      executionStopAttestation: { at: "attested", source: "cli" },
+    }),
     id: MAXIMAL_ID,
     scope: "session",
     projectPath: KEY.projectPath,
@@ -250,7 +267,7 @@ async function seedBlockedOperation(): Promise<void> {
   );
 }
 
-async function driveMaximalLifecycle(
+async function persistMaximalMappingFixture(
   fixture: CheckpointOperation,
 ): Promise<CheckpointOperation> {
   await seedBlockedOperation();
@@ -328,16 +345,21 @@ async function driveMaximalLifecycle(
       recoversOperationId: fixture.id,
     }),
   );
+  // This explicit row fixture proves the reader's complete handoff mapping;
+  // it does not claim that cancellation and accepted delivery coexist at runtime.
+  db.prepare(
+    "UPDATE conversation_checkpoint_operations SET handoff_json = ? WHERE id = ?",
+  ).run(JSON.stringify(fixture.handoff), fixture.id);
   return fixture;
 }
 
 describe("conversation-checkpoints repo durability contract", () => {
-  it("round-trips every persisted operation key path through real transitions", async () => {
+  it("round-trips every persisted operation key path from the maximal mapping fixture", async () => {
     await assertRoundTripDurability({
       label: "conversation-checkpoint-operation",
       schema: checkpointOperationSchema,
       buildMaximalFixture: buildMaximalOperation,
-      persist: driveMaximalLifecycle,
+      persist: persistMaximalMappingFixture,
       reload: (expected) => repo.getOperation(KEY, expected.id),
       fieldPolicies: {},
     });
@@ -373,12 +395,145 @@ describe("conversation-checkpoints repo durability contract", () => {
     });
   });
 
-  it("reaches the maximal operation without any whole-row write API", () => {
-    // The repository exposes no method that takes a CheckpointOperation, so the
-    // contract above can only have been satisfied by real transitions.
+  it("exposes focused transitions without a whole-row write API", () => {
+    // A mapping fixture must not turn into a production whole-row write API.
     const surface = Object.keys(repo);
     expect(surface).not.toContain("upsert");
     expect(surface).not.toContain("save");
     expect(surface).not.toContain("update");
+  });
+});
+
+describe("handoff persistence", () => {
+  it("round-trips admitted capture intent and hides it from a different scope", async () => {
+    const input = {
+      key: KEY,
+      requestId: MAXIMAL_ID,
+      sourceBasis: MAXIMAL_BASIS,
+      priorBackendRef: "prior",
+      requestedAt: "now",
+    };
+    const handoff = pendingHandoff();
+    unwrap(await repo.admitOperation({ ...input, handoff }));
+    const reloaded = await createConversationCheckpointsRepo(
+      db,
+      createWriteQueue(),
+      continuation,
+    ).getOperation(KEY, MAXIMAL_ID);
+    expect(reloaded?.handoff).toEqual(handoff);
+    expect(
+      await repo.getOperation({ ...KEY, projectPath: "/wrong" }, MAXIMAL_ID),
+    ).toBeNull();
+  });
+});
+
+describe("handoff admission validation", () => {
+  it("refuses settled metadata at admission before any operation is durable", async () => {
+    const result = await repo.admitOperation({
+      key: KEY,
+      requestId: MAXIMAL_ID,
+      sourceBasis: MAXIMAL_BASIS,
+      priorBackendRef: "prior",
+      requestedAt: "now",
+      handoff: capturedHandoff(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.refusal.code).toBe("invalid_handoff");
+    expect(await repo.getOperation(KEY, MAXIMAL_ID)).toBeNull();
+  });
+
+  it("loads an ordinary pre-feature operation with no capture metadata", async () => {
+    unwrap(
+      await repo.admitOperation({
+        key: KEY,
+        requestId: MAXIMAL_ID,
+        sourceBasis: MAXIMAL_BASIS,
+        priorBackendRef: "prior",
+        requestedAt: "now",
+      }),
+    );
+    expect((await repo.getOperation(KEY, MAXIMAL_ID))?.handoff).toBeNull();
+  });
+});
+
+describe("reachable capture durability contract", () => {
+  it("persists candidate fields through settlement and keeps their audit metadata when the frozen seed omits the handoff", async () => {
+    const pending = pendingHandoff();
+    unwrap(
+      await repo.admitOperation({
+        key: KEY,
+        requestId: MAXIMAL_ID,
+        sourceBasis: MAXIMAL_BASIS,
+        priorBackendRef: "source-continuity",
+        requestedAt: pending.requestedAt,
+        handoff: pending,
+      }),
+    );
+    const captured = capturedHandoff();
+    const startedAt = captured.startedAt;
+    const settledAt = captured.settledAt;
+    const finalSourceBasis = captured.finalSourceBasis;
+    if (startedAt === null || settledAt === null || finalSourceBasis === null) {
+      throw new Error(
+        "Captured fixture requires timestamps and a final source",
+      );
+    }
+    unwrap(
+      await repo.beginCapture({
+        key: KEY,
+        operationId: MAXIMAL_ID,
+        captureId: pending.captureId,
+        expectedSourceBasis: MAXIMAL_BASIS,
+        at: startedAt,
+      }),
+    );
+    unwrap(
+      await repo.settleCapture({
+        key: KEY,
+        operationId: MAXIMAL_ID,
+        captureId: pending.captureId,
+        expectedStage: "running",
+        expectedSourceBasis: MAXIMAL_BASIS,
+        at: settledAt,
+        settlement: { kind: "result", handoff: captured },
+      }),
+    );
+    const reloaded = createConversationCheckpointsRepo(
+      db,
+      createWriteQueue(),
+      continuation,
+    );
+    expect((await reloaded.getOperation(KEY, MAXIMAL_ID))?.handoff).toEqual(
+      captured,
+    );
+    const payload = {
+      ...buildMaximalPayload(MAXIMAL_ID),
+      sourceBasis: finalSourceBasis,
+    };
+    const at = "2026-09-07T12:05:00.000Z";
+    unwrap(
+      await repo.freezePayload({
+        key: KEY,
+        operationId: MAXIMAL_ID,
+        payload,
+        handoffDecision: "seed_budget",
+        at,
+      }),
+    );
+    expect((await reloaded.getOperation(KEY, MAXIMAL_ID))?.handoff).toEqual({
+      ...captured,
+      stage: "omitted",
+      omissionReason: "seed_budget",
+      finalizedAt: at,
+      candidate: null,
+      categoryCounts: {
+        plan: 1,
+        hypotheses: 1,
+        failedApproaches: 1,
+        blockers: 1,
+        nextStep: 1,
+      },
+    });
+    expect(await reloaded.getPayload(KEY, MAXIMAL_ID)).toEqual(payload);
   });
 });

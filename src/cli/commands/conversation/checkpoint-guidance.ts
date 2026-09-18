@@ -1,9 +1,14 @@
 import { invocation } from "cli-for-agents";
 import { hint } from "cli-for-agents/guidance";
 import { z } from "zod";
+import {
+  checkpointReceiptSchema,
+  type CheckpointReceipt,
+} from "@/lib/conversation-checkpoints/receipt";
 import { checkpointRefusalSchema } from "@/lib/conversation-checkpoints/admission";
 import {
   checkpointCheckCommand,
+  checkpointSkipHandoffCommand,
   checkpointGetCommand,
   checkpointListCommand,
   checkpointReconcileCommand,
@@ -13,13 +18,65 @@ import {
 import { scopeFlags, type NativeTarget } from "./native-target";
 import type { CcFailedRequest } from "../../framework/request";
 
-const refusalDetails = z.object({ refusal: checkpointRefusalSchema });
+const refusalDetails = z.object({
+  refusal: checkpointRefusalSchema,
+  receipt: checkpointReceiptSchema.optional(),
+});
 export function checkpointRefusal(response: CcFailedRequest) {
   const parsed =
     response.kind === "error"
       ? refusalDetails.safeParse(response.details)
       : null;
-  return parsed?.success ? parsed.data.refusal : null;
+  return parsed?.success
+    ? { ...parsed.data.refusal, receipt: parsed.data.receipt }
+    : null;
+}
+
+export function checkpointReceiptAdvice(
+  target: NativeTarget,
+  receipt: CheckpointReceipt,
+): ReturnType<typeof hint> {
+  const args = {
+    "conversation-id": target.target.conversationId,
+    "operation-id": receipt.operationId,
+  };
+  const flags = scopeFlags(target);
+  const capture = receipt.handoff;
+  if (receipt.phase === "needs_reconciliation") {
+    const cleanupHold =
+      receipt.lastStablePhase === "building" &&
+      receipt.checkpoint === null &&
+      capture?.stage === "omitted" &&
+      (capture.omissionReason === "interrupted" ||
+        capture.omissionReason === "cleanup_unverified");
+    if (cleanupHold && !capture.executionSettled)
+      return hint(
+        invocation(checkpointReconcileCommand, {
+          args,
+          flags: { ...flags, "capture-execution-stopped": true },
+        }),
+        "Inspect and stop prior backend work first; this flag records caller testimony, not CC-observed cleanup. Separate baseline recovery is still required",
+      );
+    return checkpointAdvice(
+      target,
+      cleanupHold ? "recovery_required" : "reconciliation_failed",
+      receipt.operationId,
+    );
+  }
+  if (
+    receipt.phase === "building" &&
+    capture &&
+    ["pending", "running"].includes(capture.stage) &&
+    capture.stopIntent === null
+  )
+    return hint(
+      invocation(checkpointSkipHandoffCommand, { args, flags }),
+      "Optionally skip handoff and continue baseline checkpointing; cancel stops the whole checkpoint",
+    );
+  return hint(
+    invocation(checkpointGetCommand, { args, flags }),
+    "Inspect this checkpoint's current receipt",
+  );
 }
 
 const rationales: Readonly<Partial<Record<string, string>>> = {
@@ -42,7 +99,16 @@ export function checkpointAdvice(
   target: NativeTarget,
   code: string,
   operationId: string | null,
-) {
+  receipt?: CheckpointReceipt,
+): ReturnType<typeof hint> {
+  if (
+    receipt &&
+    receipt.operationId === operationId &&
+    receipt.phase === "needs_reconciliation" &&
+    receipt.handoff &&
+    !receipt.handoff.executionSettled
+  )
+    return checkpointReceiptAdvice(target, receipt);
   const args = { "conversation-id": target.target.conversationId };
   const flags = scopeFlags(target);
   if (code === "backend_unsupported")

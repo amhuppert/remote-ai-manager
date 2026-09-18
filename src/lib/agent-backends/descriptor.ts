@@ -11,6 +11,7 @@ import type { AgentTaskRunner } from "./task";
 import type { AgentFailureClassifier } from "./errors";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
 import type {
+  CaptureAvailability,
   BackendModelCatalog,
   BackendModelSelection,
   EffortLevel,
@@ -114,6 +115,7 @@ export interface BackendConversationCapabilities {
    */
   checkpoint: boolean;
   checkpointFork: boolean;
+  handoffCapture: CaptureAvailability;
   capabilityKinds: readonly BackendCapabilityKindSupport[];
 }
 

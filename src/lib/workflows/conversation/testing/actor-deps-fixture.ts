@@ -131,6 +131,11 @@ export function createActorDependenciesFixture(
       externalTurns: true,
       checkpoint: false,
       checkpointFork: false,
+      handoffCapture: {
+        available: false as const,
+        mode: null,
+        reason: "Capture is unavailable",
+      },
       capabilityKinds: [
         { kind: "skills" as const, applyTiming: "idle_live" as const },
         { kind: "plugins" as const, applyTiming: "idle_live" as const },
@@ -375,6 +380,15 @@ export function createTestActorImplementations(
     });
   }
   return {
+    acquireCheckpointCaptureRuntime: (input, signal) =>
+      forInput({
+        ...input,
+        persistence: "durable",
+      }).acquireCheckpointCaptureRuntime(input, signal),
+    resolveCheckpointCaptureSelection: (input) =>
+      createConversationActorImplementations(
+        groups,
+      ).resolveCheckpointCaptureSelection(input),
     prepareTurnForMachine: (input, signal) =>
       forInput(input).prepareTurnForMachine(input, signal),
     executePromptForMachine: (input, signal) =>

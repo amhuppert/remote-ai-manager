@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, writeFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { readCodexTranscriptRecords } from "./transcript-records";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  captureCodexNativeCursor,
+  inspectCodexNativeWindow,
+  readCodexTranscriptRecords,
+} from "./transcript-records";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -101,4 +105,182 @@ describe("streaming Codex transcript records", () => {
       /malformed.*record 1/i,
     );
   });
+});
+
+const native = (type: string, turnId?: string) =>
+  JSON.stringify({
+    type: "event_msg",
+    payload: { type, ...(turnId ? { turn_id: turnId } : {}) },
+  }) + "\n";
+
+describe("Codex native attempt interval", () => {
+  it.each([
+    "function_call",
+    "custom_tool_call",
+    "web_search_call",
+    "computer_call",
+    "local_shell_call",
+    "tool_search_call",
+    "image_generation_call",
+  ])("detects silent native %s activity", async (type) => {
+    const target = await file("");
+    const cursor = await captureCodexNativeCursor(target);
+    await appendFile(
+      target,
+      native("task_started", "capture") +
+        JSON.stringify({ type: "response_item", payload: { type } }) +
+        "\n" +
+        native("task_complete", "capture"),
+    );
+    expect(await inspectCodexNativeWindow(cursor, "capture")).toEqual({
+      coverage: "complete",
+      observedToolActivity: true,
+    });
+  });
+
+  it("starts at the aligned byte cursor and detects silent calls only within the matching window", async () => {
+    const target = await file("old invalid history\n");
+    const cursor = await captureCodexNativeCursor(target);
+    expect(cursor.offset).toBe(Buffer.byteLength("old invalid history\n"));
+    await appendFile(
+      target,
+      native("task_started", "other") +
+        JSON.stringify({
+          type: "response_item",
+          payload: { type: "custom_tool_call" },
+        }) +
+        "\n" +
+        native("task_complete", "other") +
+        native("task_started", "capture") +
+        JSON.stringify({
+          type: "turn_context",
+          payload: { turn_id: "capture", cwd: "/scratch" },
+        }) +
+        "\n" +
+        JSON.stringify({
+          type: "response_item",
+          payload: { type: "message", text: "🙂\u2028\u2029" },
+        }) +
+        "\n" +
+        native("task_complete", "capture"),
+    );
+    expect(await inspectCodexNativeWindow(cursor, "capture")).toEqual({
+      coverage: "complete",
+      observedToolActivity: false,
+    });
+    expect(await inspectCodexNativeWindow(cursor, "other")).toEqual({
+      coverage: "complete",
+      observedToolActivity: true,
+    });
+    expect((await inspectCodexNativeWindow(cursor, "missing")).coverage).toBe(
+      "incomplete",
+    );
+  });
+  it("does not inspect unrelated records after the attempt terminal", async () => {
+    const target = await file("");
+    const cursor = await captureCodexNativeCursor(target);
+    await appendFile(
+      target,
+      native("task_started", "capture") +
+        native("task_complete", "capture") +
+        "unrelated partial history",
+    );
+    expect(await inspectCodexNativeWindow(cursor, "capture")).toEqual({
+      coverage: "complete",
+      observedToolActivity: false,
+    });
+  });
+  it("refuses an unaligned starting cursor", async () => {
+    await expect(
+      captureCodexNativeCursor(await file('{"partial":true}')),
+    ).rejects.toThrow(/LF/);
+  });
+  it.each(["malformed\n", '{"partial":true}', native("task_started", "wrong")])(
+    "omits incomplete records %s",
+    async (suffix) => {
+      const target = await file("");
+      const cursor = await captureCodexNativeCursor(target);
+      await appendFile(target, native("task_started", "capture") + suffix);
+      expect((await inspectCodexNativeWindow(cursor, "capture")).coverage).toBe(
+        "incomplete",
+      );
+    },
+  );
+  it("rejects replaced, truncated and unreadable files", async () => {
+    const target = await file('"history"\n');
+    const cursor = await captureCodexNativeCursor(target);
+    await writeFile(target, "");
+    expect((await inspectCodexNativeWindow(cursor, "capture")).coverage).toBe(
+      "incomplete",
+    );
+    await rename(target, target + ".old");
+    expect((await inspectCodexNativeWindow(cursor, "capture")).coverage).toBe(
+      "incomplete",
+    );
+    await writeFile(
+      target,
+      native("task_started", "capture") + native("task_complete", "capture"),
+    );
+    expect((await inspectCodexNativeWindow(cursor, "capture")).coverage).toBe(
+      "incomplete",
+    );
+  });
+  it("enforces cumulative 8 MiB and 2 second bounds and discloses absent facility", async () => {
+    expect((await inspectCodexNativeWindow(null, "capture")).coverage).toBe(
+      "unavailable",
+    );
+    const target = await file("");
+    const cursor = await captureCodexNativeCursor(target);
+    await appendFile(
+      target,
+      native("task_started", "capture") +
+        '"'.concat("a".repeat(8 * 1024 * 1024), '"\n') +
+        native("task_complete", "capture"),
+    );
+    expect((await inspectCodexNativeWindow(cursor, "capture")).coverage).toBe(
+      "incomplete",
+    );
+    await writeFile(
+      target,
+      native("task_started", "capture") + native("task_complete", "capture"),
+    );
+    let time = 0;
+    expect(
+      (
+        await inspectCodexNativeWindow(cursor, "capture", {
+          now: () => {
+            time += 2001;
+            return time;
+          },
+        })
+      ).coverage,
+    ).toBe("incomplete");
+  });
+});
+
+it("bounds inspection even when opening or reading a native file stalls", async () => {
+  vi.useFakeTimers();
+  const held = Promise.withResolvers<void>();
+  let done = false;
+  try {
+    const pending = inspectCodexNativeWindow(
+      { path: "unused", dev: 1, ino: 1, offset: 0 },
+      "turn",
+      {
+        readRecords: async function* () {
+          await held.promise;
+          yield {};
+        },
+      },
+    ).then((result) => {
+      done = true;
+      return result;
+    });
+    await vi.advanceTimersByTimeAsync(2001);
+    expect(done).toBe(true);
+    expect((await pending).coverage).toBe("incomplete");
+  } finally {
+    held.resolve();
+    vi.useRealTimers();
+  }
 });

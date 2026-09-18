@@ -33,9 +33,11 @@ export interface AppServerProcessHost {
   processGroupId(pid: number): number | null;
   startTicks(pid: number): Promise<string | null>;
   isGroupAlive(pgid: number): boolean;
+  observeChildren?(pid: number): Promise<(() => Promise<boolean>) | null>;
   signalGroup(pgid: number, signal: NodeJS.Signals): void;
 }
 export interface AppServerClientOptions {
+  captureCleanup?: boolean;
   cwd: string;
   env: Record<string, string>;
   /** Lossless archival and normalized content run in one ordered bounded drain. */
@@ -126,7 +128,13 @@ export function createCodexAppServerClient(
   dependencies: AppServerClientDependencies = {},
 ): AppServerClient {
   const host = dependencies.host ?? createAppServerProcessHost();
-  const limits = { ...APP_SERVER_LIMITS, ...dependencies.limits };
+  const limits = {
+    ...APP_SERVER_LIMITS,
+    ...dependencies.limits,
+    ...(options.captureCleanup
+      ? { exitGraceMs: 1000, termGraceMs: 1000, killGraceMs: 1000 }
+      : {}),
+  };
   const child = host.spawn({ cwd: options.cwd, env: options.env });
   const groupId = host.processGroupId(child.pid);
   const identity = bounded(
@@ -149,6 +157,7 @@ export function createCodexAppServerClient(
   let exited = false;
   let failed: Error | undefined;
   let contentDiscarded = false;
+  let captureWriteFailed = false;
   let cleanupFailure: AppServerTransportError | undefined;
   let closePromise: Promise<void> | undefined;
   let stderr = Buffer.alloc(0);
@@ -208,6 +217,7 @@ export function createCodexAppServerClient(
     failed ??= error;
     decoder.discard();
     if (discard) {
+      captureWriteFailed ||= options.captureCleanup === true;
       contentDiscarded = true;
       queue.length = 0;
       queuedBytes = 0;
@@ -470,6 +480,11 @@ export function createCodexAppServerClient(
     );
   }
   async function teardown(): Promise<void> {
+    const cleanupStarted = Date.now();
+    const remaining = (phase: number, normal: number) =>
+      options.captureCleanup
+        ? Math.max(0, cleanupStarted + phase * 1000 - Date.now())
+        : normal;
     closing = true;
     lifetime.abort();
     rejectPending("Codex app-server connection is closing");
@@ -487,25 +502,33 @@ export function createCodexAppServerClient(
       settleFlush();
     }
     const originalIdentity = await identity;
+    const children = options.captureCleanup
+      ? await bounded(
+          host.observeChildren?.(child.pid).catch(() => null) ??
+            Promise.resolve(null),
+          remaining(1, 1000),
+          null,
+        )
+      : null;
     try {
       // A transport failure can leave complete received frames behind an uncertain
       // input barrier. Give its rejected request and the archive drain a bounded
       // opportunity to settle before destroying streams and retained payloads.
       await bounded(
         flush().catch(() => {}),
-        limits.exitGraceMs,
+        remaining(1, limits.exitGraceMs),
         undefined,
       );
       child.stdin.end();
-      let gone = await waitForExit(limits.exitGraceMs);
-      for (const [signal, timeout] of [
-        ["SIGTERM", limits.termGraceMs],
-        ["SIGKILL", limits.killGraceMs],
+      let gone = await waitForExit(remaining(1, limits.exitGraceMs));
+      for (const [signal, timeout, phase] of [
+        ["SIGTERM", limits.termGraceMs, 2],
+        ["SIGKILL", limits.killGraceMs, 3],
       ] as const) {
         if (gone) break;
         const currentIdentity = await bounded(
           host.startTicks(child.pid).catch(() => null),
-          limits.exitGraceMs,
+          remaining(phase, limits.exitGraceMs),
           null,
         );
         if (
@@ -517,9 +540,19 @@ export function createCodexAppServerClient(
           throw unverified();
         if (turnMayBeActive) unverified();
         host.signalGroup(groupId, signal);
-        gone = await waitForExit(timeout);
+        gone = await waitForExit(remaining(phase, timeout));
       }
       if (!gone) throw unverified();
+      if (
+        options.captureCleanup &&
+        (!children ||
+          !(await bounded(
+            children().catch(() => false),
+            remaining(3, 1000),
+            false,
+          )))
+      )
+        throw unverified();
       if (cleanupFailure) throw cleanupFailure;
     } catch (error) {
       throw error instanceof AppServerTransportError &&
@@ -528,6 +561,9 @@ export function createCodexAppServerClient(
         : unverified();
     } finally {
       decoder.discard();
+      const unfinishedCaptureDrain =
+        options.captureCleanup &&
+        (captureWriteFailed || queue.length > 0 || draining);
       if (queue.length || draining) {
         failed ??= new AppServerTransportError(
           "connection_closed",
@@ -551,6 +587,7 @@ export function createCodexAppServerClient(
         stream.once("close", () => {
           stream.off("error", onStreamError);
         });
+      if (unfinishedCaptureDrain) throw unverified();
     }
   }
   function close(): Promise<void> {

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { expect, vi } from "vitest";
 
 import type {
+  CaptureHandoffResult,
   ConversationBackendCreateInput,
   ConversationBackendEvent,
   ConversationBackendRuntime,
@@ -139,13 +140,26 @@ function envelopeFromPrompt(prompt: string) {
 }
 
 /** The generation lane's model: envelope for the compaction pass, working state for the seed pass. */
-export function cannedCheckpointRunner(calls: AgentTaskRequest[]) {
+export function cannedCheckpointRunner(
+  calls: AgentTaskRequest[],
+  objectiveText?: string,
+) {
   return {
     backend: "claude" as const,
     async run(request: AgentTaskRequest): Promise<AgentTaskResult> {
       calls.push(request);
       const output = request.prompt.includes("checkpoint working state")
-        ? WORKING_STATE
+        ? {
+            ...WORKING_STATE,
+            ...(objectiveText
+              ? {
+                  objective: {
+                    ...WORKING_STATE.objective,
+                    text: objectiveText,
+                  },
+                }
+              : {}),
+          }
         : envelopeFromPrompt(request.prompt);
       return {
         text: JSON.stringify(output),
@@ -233,6 +247,10 @@ export interface CreatedRuntime {
 type CheckpointSeams = NonNullable<LifecycleFixtureOptions["checkpoint"]>;
 
 export interface CheckpointHarnessOptions {
+  workingStateObjectiveText?: string;
+  captureHandoff?: ConversationBackendRuntime["captureHandoff"];
+  appendCaptureEntryOnce?: CheckpointSeams["appendCaptureEntryOnce"];
+  captureAvailability?: CheckpointSeams["captureAvailability"];
   generate?: typeof generateCheckpoint;
   conversation?: LifecycleFixtureOptions["conversation"];
   backendSupportsCheckpoint?: () => boolean;
@@ -366,6 +384,9 @@ export async function createCheckpointHarness(
         return result;
       },
       close,
+      ...(options.captureHandoff
+        ? { captureHandoff: options.captureHandoff }
+        : {}),
     });
     // The mock's status is a plain value; a runtime that died mid-send has
     // to answer the retry policy's liveness read from the flag instead.
@@ -406,10 +427,20 @@ export async function createCheckpointHarness(
           return createRuntime(input, backend);
         },
       }),
-      getTaskRunner: () => cannedCheckpointRunner(state.laneCalls),
+      getTaskRunner: () =>
+        cannedCheckpointRunner(
+          state.laneCalls,
+          options.workingStateObjectiveText,
+        ),
       ...options.actorDeps,
     },
     checkpoint: {
+      ...(options.captureAvailability
+        ? { captureAvailability: options.captureAvailability }
+        : {}),
+      ...(options.appendCaptureEntryOnce
+        ? { appendCaptureEntryOnce: options.appendCaptureEntryOnce }
+        : {}),
       ...(options.generate ? { generate: options.generate } : {}),
       ...(options.backendSupportsCheckpoint
         ? { backendSupportsCheckpoint: options.backendSupportsCheckpoint }
@@ -552,3 +583,43 @@ export async function createCheckpointHarness(
 export type CheckpointHarness = Awaited<
   ReturnType<typeof createCheckpointHarness>
 >;
+
+export function capturedHandoffResult(
+  ref: AgentSessionRef | null,
+): CaptureHandoffResult {
+  return {
+    modeEstablished: true,
+    submitted: true,
+    correlatedCompletion: true,
+    candidateText: JSON.stringify({
+      plan: [],
+      hypotheses: [],
+      failedApproaches: [],
+      blockers: [],
+      nextStep: [],
+    }),
+    omissionReason: null,
+    executionSettled: true,
+    cleanupFailure: null,
+    continuation: {
+      disposition: "retain",
+      backendRef: ref,
+      nextRuntime: "recreate_from_ref",
+    },
+    activity: {
+      transport: "complete",
+      native: "unavailable",
+      prohibited: "not_observed",
+      inspectedBytes: null,
+    },
+    usage: {
+      inputTokens: 50,
+      outputTokens: 12,
+      cachedInputTokens: null,
+      costUsd: null,
+      costBasis: null,
+      executionMs: 1,
+      settlementMs: 1,
+    },
+  };
+}

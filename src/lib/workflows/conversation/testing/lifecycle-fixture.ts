@@ -62,7 +62,12 @@ export interface LifecycleFixtureOptions {
   checkpoint?: Partial<
     Pick<
       ConversationCheckpointDependencies,
-      "generate" | "backendSupportsCheckpoint" | "findArtifact" | "now"
+      | "generate"
+      | "backendSupportsCheckpoint"
+      | "findArtifact"
+      | "now"
+      | "captureAvailability"
+      | "resolveCaptureModel"
     >
   > & {
     readEntries?(
@@ -76,6 +81,11 @@ export interface LifecycleFixtureOptions {
       read: ConversationCheckpointDependencies["readConversation"],
     ): Promise<ConversationState | null>;
     repo?(repo: ConversationCheckpointsRepo): ConversationCheckpointsRepo;
+    appendCaptureEntryOnce?(
+      conversationId: string,
+      entry: import("@/lib/prompt/transcript").TranscriptEntry & { id: string },
+      append: ConversationCheckpointDependencies["appendCaptureEntryOnce"],
+    ): Promise<void>;
   };
   /** Queue seams layered over the fixture's real service. */
   queue?: Partial<
@@ -317,6 +327,41 @@ export async function createLifecycleFixture(
           executeTaskRun: (input) => core.executeWorkflowTaskRun(input),
           backendSupportsCheckpoint:
             options.checkpoint?.backendSupportsCheckpoint ?? (() => true),
+          captureAvailability:
+            options.checkpoint?.captureAvailability ??
+            (() => ({ available: true, mode: "tool-disabled" })),
+          resolveCaptureModel:
+            options.checkpoint?.resolveCaptureModel ??
+            ((input) =>
+              conversationActors.resolveCheckpointCaptureSelection(input)),
+          acquireCaptureRuntime: (input, signal) =>
+            conversationActors.acquireCheckpointCaptureRuntime(input, signal),
+          async appendCaptureEntryOnce(conversationId, entry) {
+            const append: ConversationCheckpointDependencies["appendCaptureEntryOnce"] =
+              async (_id, entry) => {
+                const path = options.conversation?.transcriptPath;
+                if (!path) throw new Error("Capture transcript missing");
+                const entries = transcripts.get(path) ?? [];
+                if (entries.some((existing) => existing.entryId === entry.id))
+                  return;
+                entries.push({
+                  seq: (entries.at(-1)?.seq ?? -1) + 1,
+                  entryId: entry.id,
+                  timestamp: entry.timestamp,
+                  role: entry.role ?? "notice",
+                  content: entry.content ?? [],
+                  origin: entry.origin,
+                });
+                transcripts.set(path, entries);
+              };
+            return options.checkpoint?.appendCaptureEntryOnce
+              ? options.checkpoint.appendCaptureEntryOnce(
+                  conversationId,
+                  entry,
+                  append,
+                )
+              : append(conversationId, entry);
+          },
           async appendUserEntryOnce(conversationId, entry) {
             repairedUserEntries.push({ conversationId, id: entry.id });
           },

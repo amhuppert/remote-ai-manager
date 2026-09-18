@@ -21,6 +21,7 @@ import {
 import type { HistoryImageHandle } from "@/lib/conversations/history-recovery";
 
 import CheckpointDisclosure from "./CheckpointDisclosure";
+import CheckpointHandoffAudit from "./CheckpointHandoffAudit";
 
 export interface CheckpointEvidenceProps {
   target: CheckpointTarget;
@@ -408,6 +409,8 @@ export default function CheckpointEvidence({
     : suppliedNavigation;
   const artifact = receipt.forkOrigin ? null : suppliedArtifact;
   const [seedShown, setSeedShown] = useState(false);
+  const [captureEntrySeq, setCaptureEntrySeq] = useState<number | null>(null);
+  const coverage = receipt.handoff?.sourceCoverage;
   const boundarySeq = receipt.boundary.capturedThroughSeq;
   // Which entry's body is open. It follows the selected checkpoint by
   // defaulting to the boundary, and an outlined row moves it into the window.
@@ -427,6 +430,32 @@ export default function CheckpointEvidence({
 
   return (
     <section className="flex flex-col gap-sm" data-checkpoint-evidence="">
+      <CheckpointHandoffAudit receipt={receipt}>
+        {coverage && (
+          <div className="flex min-w-0 flex-col gap-md">
+            <p className={ROW_CLASS}>
+              Original capture records — audit only. Opening records sends no
+              model input.
+            </p>
+            <EntryEvidence
+              target={target}
+              seq={captureEntrySeq ?? coverage.seqStart}
+              open={captureEntrySeq !== null}
+              onToggle={() =>
+                setCaptureEntrySeq((current) =>
+                  current === null ? coverage.seqStart : null,
+                )
+              }
+            />
+            <ArchiveRange
+              target={target}
+              fromSeq={coverage.seqStart}
+              toSeq={coverage.seqEnd}
+              onOpenEntry={setCaptureEntrySeq}
+            />
+          </div>
+        )}
+      </CheckpointHandoffAudit>
       {receipt.checkpoint !== null && (
         <CheckpointDisclosure
           title="Saved handoff"

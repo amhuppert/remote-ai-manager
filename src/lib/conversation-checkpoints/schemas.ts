@@ -16,8 +16,68 @@
 
 import { z } from "zod";
 
-import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
+import {
+  captureModeSchema,
+  captureActivitySchema,
+  captureUsageSchema,
+  captureOmissionReasonSchema,
+  backendModelSelectionSchema,
+} from "@/lib/agent-backends/schemas";
+import { CHECKPOINT_CAPTURE_LIMITS } from "./budget";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
+
+export const checkpointHandoffClaimSchema = z
+  .object({
+    kind: z.enum(["belief", "proposal", "reported_observation"]),
+    text: z
+      .string()
+      .min(1)
+      .refine(
+        (text) => new TextEncoder().encode(text).byteLength <= 2000,
+        "claim text exceeds 2000 UTF-8 bytes",
+      ),
+    sourceRefs: z
+      .array(
+        z
+          .object({
+            messageIndex: z.number().int().nonnegative(),
+            seqStart: z.number().int().nonnegative(),
+            seqEnd: z.number().int().nonnegative(),
+          })
+          .strict()
+          .refine(
+            (ref) => ref.seqEnd >= ref.seqStart,
+            "source range must be ordered",
+          ),
+      )
+      .max(4),
+  })
+  .strict()
+  .refine(
+    (claim) =>
+      claim.kind !== "reported_observation" || claim.sourceRefs.length > 0,
+    {
+      message: "reported observations require original references",
+      path: ["sourceRefs"],
+    },
+  );
+export type CheckpointHandoffClaim = z.infer<
+  typeof checkpointHandoffClaimSchema
+>;
+
+export const checkpointHandoffCandidateSchema = z
+  .object({
+    plan: z.array(checkpointHandoffClaimSchema).max(8),
+    hypotheses: z.array(checkpointHandoffClaimSchema).max(8),
+    failedApproaches: z.array(checkpointHandoffClaimSchema).max(8),
+    blockers: z.array(checkpointHandoffClaimSchema).max(8),
+    nextStep: z.array(checkpointHandoffClaimSchema).max(8),
+  })
+  .strict();
+export type CheckpointHandoffCandidate = z.infer<
+  typeof checkpointHandoffCandidateSchema
+>;
 
 /** Payload envelope version. Bump when the persisted payload shape changes. */
 export const CHECKPOINT_PAYLOAD_SCHEMA_VERSION = 1;
@@ -90,6 +150,7 @@ export function isActiveCheckpointPhase(phase: CheckpointPhase): boolean {
  * belong to the admission gate above this layer, not here.
  */
 export const checkpointStorageRefusalCodeSchema = z.enum([
+  "invalid_handoff",
   /** A different operation already holds this conversation's checkpoint slot. */
   "checkpoint_pending",
   /** The request UUID exists but addresses a different conversation. */
@@ -145,6 +206,234 @@ export const checkpointSourceBasisSchema = z
   })
   .strict();
 export type CheckpointSourceBasis = z.infer<typeof checkpointSourceBasisSchema>;
+
+/** Presence is explicit opt-in; null binds the absence of a disclosed mode. */
+export const checkpointHandoffRequestSchema = z
+  .object({ mode: captureModeSchema.nullable() })
+  .strict();
+export type CheckpointHandoffRequest = z.infer<
+  typeof checkpointHandoffRequestSchema
+>;
+
+export const checkpointHandoffStageSchema = z.enum([
+  "pending",
+  "running",
+  "settling",
+  "captured",
+  "included",
+  "omitted",
+]);
+export type CheckpointHandoffStage = z.infer<
+  typeof checkpointHandoffStageSchema
+>;
+export const checkpointHandoffStopIntentSchema = z.enum(["skip", "cancel"]);
+export const checkpointCaptureSourceCoverageSchema = z
+  .object({
+    seqStart: z.number().int().nonnegative(),
+    seqEnd: z.number().int().nonnegative(),
+    entryIds: z.array(z.string().min(1)).min(1).max(256),
+  })
+  .strict()
+  .refine(
+    (range) => range.seqEnd >= range.seqStart,
+    "source range must be ordered",
+  );
+
+/** Operator acknowledgement is not CC-observed process evidence. */
+export const checkpointExecutionStopAttestationSchema = z
+  .object({
+    at: z.string().min(1),
+    source: z.enum(["cli", "ui", "api"]),
+  })
+  .strict();
+export type CheckpointExecutionStopAttestation = z.infer<
+  typeof checkpointExecutionStopAttestationSchema
+>;
+
+export const checkpointHandoffCategoryCountsSchema = z
+  .object({
+    plan: z.number().int().min(0).max(8),
+    hypotheses: z.number().int().min(0).max(8),
+    failedApproaches: z.number().int().min(0).max(8),
+    blockers: z.number().int().min(0).max(8),
+    nextStep: z.number().int().min(0).max(8),
+  })
+  .strict();
+
+export function handoffCategoryCounts(candidate: CheckpointHandoffCandidate) {
+  return {
+    plan: candidate.plan.length,
+    hypotheses: candidate.hypotheses.length,
+    failedApproaches: candidate.failedApproaches.length,
+    blockers: candidate.blockers.length,
+    nextStep: candidate.nextStep.length,
+  };
+}
+
+const checkpointHandoffFields = {
+  /** Observed category counts survive audit-only candidate disposal. */
+  categoryCounts: checkpointHandoffCategoryCountsSchema.nullable().optional(),
+  captureId: z.string().min(1),
+  requestedMode: captureModeSchema.nullable(),
+  policyVersion: z.string().min(1),
+  backend: agentBackendSchema,
+  modelSelection: backendModelSelectionSchema,
+  admissionSourceBasis: checkpointSourceBasisSchema,
+  stage: checkpointHandoffStageSchema,
+  requestedAt: z.string().min(1),
+  startedAt: z.string().min(1).nullable(),
+  settledAt: z.string().min(1).nullable(),
+  finalizedAt: z.string().min(1).nullable(),
+  stopIntent: checkpointHandoffStopIntentSchema.nullable(),
+  modeEstablished: z.boolean(),
+  submitted: z.boolean(),
+  correlatedCompletion: z.boolean(),
+  executionSettled: z.boolean(),
+  omissionReason: captureOmissionReasonSchema.nullable(),
+  contentHash: z.string().min(1).nullable(),
+  acceptedOutputBytes: z.number().int().nonnegative().nullable(),
+  sourceCoverage: checkpointCaptureSourceCoverageSchema.nullable(),
+  activity: captureActivitySchema.nullable(),
+  usage: captureUsageSchema.nullable(),
+  continuationDisposition: z.enum(["retain", "clear"]).nullable(),
+  executionStopAttestation: checkpointExecutionStopAttestationSchema.nullable(),
+};
+
+/** Bounded public metadata; candidate text and protected provider refs stay private. */
+export const checkpointHandoffReceiptSchema = z
+  .object({
+    ...checkpointHandoffFields,
+    // Adapter parameters are arbitrary data; only the pinned model ID is public.
+    modelSelection: backendModelSelectionSchema.pick({ modelId: true }).strip(),
+  })
+  .strict();
+export type CheckpointHandoffReceipt = z.infer<
+  typeof checkpointHandoffReceiptSchema
+>;
+
+export const checkpointHandoffSchema = z
+  .object({
+    ...checkpointHandoffFields,
+    candidate: checkpointHandoffCandidateSchema.nullable(),
+    /** Non-null only after the single settled source-basis write. */
+    finalSourceBasis: checkpointSourceBasisSchema.nullable(),
+    /** Required before candidate text may be discarded. */
+    auditDurable: z.boolean(),
+  })
+  .strict()
+  .superRefine((handoff, ctx) => {
+    const invalid = (path: string, message: string) =>
+      ctx.addIssue({ code: "custom", path: [path], message });
+    const complete =
+      handoff.stage === "captured" || handoff.stage === "included";
+    const settled = complete || handoff.stage === "omitted";
+    if (
+      handoff.stage === "pending" &&
+      (handoff.startedAt !== null ||
+        handoff.submitted ||
+        handoff.modeEstablished ||
+        handoff.correlatedCompletion ||
+        handoff.executionSettled ||
+        handoff.auditDurable ||
+        handoff.stopIntent !== null ||
+        handoff.executionStopAttestation !== null ||
+        handoff.activity !== null ||
+        handoff.usage !== null ||
+        handoff.continuationDisposition !== null ||
+        handoff.contentHash !== null ||
+        handoff.acceptedOutputBytes !== null ||
+        handoff.sourceCoverage !== null)
+    )
+      invalid("stage", "pending capture cannot have started");
+    if (
+      (handoff.stage === "running" || handoff.stage === "settling") &&
+      handoff.startedAt === null
+    )
+      invalid("startedAt", "active capture requires a start timestamp");
+    if (
+      !settled &&
+      (handoff.omissionReason !== null ||
+        handoff.settledAt !== null ||
+        handoff.finalSourceBasis !== null ||
+        handoff.candidate !== null)
+    )
+      invalid("stage", "active capture cannot carry a settled outcome");
+    if (handoff.stage === "settling" && handoff.stopIntent === null)
+      invalid("stopIntent", "settling requires a stop intent");
+    if (handoff.stage === "omitted" && handoff.omissionReason === null)
+      invalid("omissionReason", "omission requires a reason");
+    if (handoff.stage !== "omitted" && handoff.omissionReason !== null)
+      invalid(
+        "omissionReason",
+        "only omitted capture carries an omission reason",
+      );
+    if (
+      complete &&
+      (!handoff.modeEstablished ||
+        !handoff.submitted ||
+        !handoff.correlatedCompletion ||
+        !handoff.executionSettled ||
+        handoff.requestedMode === null ||
+        handoff.contentHash === null ||
+        handoff.acceptedOutputBytes === null ||
+        handoff.acceptedOutputBytes < 1 ||
+        handoff.acceptedOutputBytes > CHECKPOINT_CAPTURE_LIMITS.outputBytes ||
+        handoff.sourceCoverage === null ||
+        handoff.finalSourceBasis === null ||
+        handoff.settledAt === null ||
+        !handoff.auditDurable ||
+        handoff.activity === null ||
+        handoff.activity.transport !== "complete" ||
+        handoff.activity.native === "incomplete" ||
+        handoff.activity.prohibited !== "not_observed" ||
+        handoff.stopIntent !== null)
+    )
+      invalid(
+        "stage",
+        "accepted capture requires settled, correlated, audited output with complete activity coverage",
+      );
+    if (handoff.stage === "captured" && handoff.candidate === null)
+      invalid("candidate", "captured output requires the validated candidate");
+    if (handoff.stage === "included" && handoff.finalizedAt === null)
+      invalid("finalizedAt", "included output requires payload finalization");
+    if (
+      handoff.stage !== "included" &&
+      handoff.stage !== "omitted" &&
+      handoff.finalizedAt !== null
+    )
+      invalid(
+        "finalizedAt",
+        "only final outcomes have a finalization timestamp",
+      );
+    if (
+      handoff.finalSourceBasis !== null &&
+      (!handoff.executionSettled ||
+        !handoff.auditDurable ||
+        handoff.settledAt === null)
+    )
+      invalid(
+        "finalSourceBasis",
+        "final source requires settled execution and durable audit",
+      );
+    if (handoff.correlatedCompletion && !handoff.submitted)
+      invalid("correlatedCompletion", "completion requires submission");
+    if (handoff.submitted && handoff.startedAt === null)
+      invalid("startedAt", "submission requires a durable start timestamp");
+    if (handoff.submitted && handoff.requestedMode === null)
+      invalid("requestedMode", "submission requires a bound capture mode");
+    if (handoff.modeEstablished && handoff.requestedMode === null)
+      invalid("requestedMode", "establishment requires a disclosed mode");
+    if (
+      handoff.contentHash !== null &&
+      handoff.candidate === null &&
+      !handoff.auditDurable
+    )
+      invalid(
+        "auditDurable",
+        "candidate text may be discarded only after durable audit",
+      );
+  });
+export type CheckpointHandoff = z.infer<typeof checkpointHandoffSchema>;
 
 /**
  * Measured cost of the operation's own model work — its compaction passes, and
@@ -302,6 +591,7 @@ export const checkpointOperationSchema = registerTrustedSchema(
       phase: checkpointPhaseSchema,
       /** The phase held before entering `needs_reconciliation`. */
       lastStablePhase: checkpointPhaseSchema.nullable(),
+      handoff: checkpointHandoffSchema.nullable(),
       sourceBasis: checkpointSourceBasisSchema,
       protectedReferences: checkpointProtectedReferencesSchema,
       /** Set once the immutable payload is durable; equal to `id`. */
@@ -319,7 +609,28 @@ export const checkpointOperationSchema = registerTrustedSchema(
       requestedAt: z.string().min(1),
       updatedAt: z.string().min(1),
     })
-    .strict(),
+    .strict()
+    .superRefine((operation, ctx) => {
+      const handoff = operation.handoff;
+      if (handoff === null) return;
+      const active = ["pending", "running", "settling", "captured"].includes(
+        handoff.stage,
+      );
+      if (
+        (active &&
+          (operation.phase !== "building" || operation.payloadId !== null)) ||
+        (handoff.stage === "included" &&
+          operation.payloadId !== operation.id) ||
+        handoff.captureId !== `${operation.id}:capture`
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["handoff"],
+          message:
+            "capture stage must agree with its owning operation and payload",
+        });
+      }
+    }),
   "conversation-checkpoint-operation",
 );
 export type CheckpointOperation = z.infer<typeof checkpointOperationSchema>;
@@ -473,3 +784,44 @@ export function checkpointSeedBytesAgree(payload: CheckpointPayload): boolean {
     payload.sectionBytes.total === Buffer.byteLength(payload.seedText, "utf8")
   );
 }
+
+/** Preserve observed categories when candidate content moves to audit-only storage. */
+export function discardHandoffCandidate(handoff: CheckpointHandoff) {
+  return {
+    candidate: null,
+    ...(handoff.candidate === null
+      ? {}
+      : {
+          categoryCounts: handoffCategoryCounts(handoff.candidate),
+        }),
+  };
+}
+
+/**
+ * The start body. `requestId` is a UUID the CALLER generates once per
+ * invocation and reuses on retransmit — it is the operation's identity and its
+ * idempotency key, so a client that mints a fresh value per retry would open a
+ * second operation rather than rejoin its own.
+ */
+export const startCheckpointRequestSchema = z
+  .object({
+    requestId: z.uuid(),
+    recoversOperationId: z.string().min(1).optional(),
+    handoff: z
+      .union([checkpointHandoffRequestSchema, z.literal(false)])
+      .optional(),
+  })
+  .strict();
+export type StartCheckpointRequest = z.infer<
+  typeof startCheckpointRequestSchema
+>;
+
+export const reconcileCheckpointRequestSchema = z
+  .object({
+    captureExecutionStopped: z.boolean().optional(),
+    source: z.enum(["cli", "ui", "api"]).optional(),
+  })
+  .strict();
+export type ReconcileCheckpointRequest = z.infer<
+  typeof reconcileCheckpointRequestSchema
+>;

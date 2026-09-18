@@ -158,7 +158,7 @@ and evaluates the same admission predicates the start enforces: exit `0` names
 the eligible transition, exit `1` lists each blocker with its code and remedy.
 It creates no operation and changes nothing.
 
-**Mutations stay in your scope.** `compact-context`, `checkpoint cancel` and
+**Mutations stay in your scope.** `compact-context`, `checkpoint skip-handoff`, `checkpoint cancel` and
 `checkpoint reconcile` act on your ambient project/session. Acting on a
 conversation elsewhere takes an explicit `--project` (and `--session` for a
 session conversation) — cctl never discovers another owning scope and writes
@@ -180,3 +180,51 @@ cctl conversation checkpoint get 0197a3c2-... 3f5c1e64-... --detail seed
 cctl conversation entry get 0197a3c2-... 148 --include-thinking
 cctl conversation image get 0197a3c2-... 148 2
 ```
+
+
+### Optional source-agent handoff
+
+`compact-context --handoff` requests one extra capture from the current agent
+before checkpoint generation. It reads capability in the mutation's scope and
+binds that disclosed mode without another confirmation. Without the flag, the
+baseline sends no capture request or capture preflight. Claude uses tool-disabled
+capture; Codex uses instruction-only capture with tools still callable. The agent
+is asked to record working state without using tools. A capability change or
+unavailable mode omits capture; it never switches to another mode.
+
+`checkpoint check` reports optional capability and fixed policy separately from
+baseline eligibility. `compact-context --help` publishes the finite input,
+execution, output and inspection limits. Reaching a capture limit, invalid output
+or settled failure continues baseline checkpointing with an omission reason and
+no capture retry. A valid handoff that cannot fit the seed is omitted whole.
+Settlement timeout is not proof stopped execution; cost is checked after the
+request and there is no hard dollar or inherited-context cap. Capture usage stays
+separate from compaction usage; unavailable counters remain null.
+
+During capture, `checkpoint skip-handoff <id> <operation-id>` requests capture
+settlement and continues baseline checkpointing. `checkpoint cancel` stops the
+whole pre-freeze checkpoint. Both retain queued input until execution settles.
+A skip response of `stopping` records intent; observe the durable receipt with
+`checkpoint get`. `handoff_already_settled` leaves the saved outcome unchanged.
+Neither closing a watcher nor a `--wait` timeout sends either stop command.
+
+If a capture-cleanup hold requires operator testimony, inspect and stop prior
+backend work first. Then `checkpoint reconcile --capture-execution-stopped`
+records your attestation. It is not CC-observed process evidence and cannot clear
+uncertain seed delivery. The receipt can change while the command returns exit 1
+with `recovery_required`: queued input stays held. Separately request baseline
+recovery with `compact-context --recover <operation-id>`, without `--handoff`.
+
+```sh
+cctl conversation compact-context --handoff --wait
+cctl conversation checkpoint skip-handoff conversation-one operation-one
+cctl conversation checkpoint get conversation-one operation-one
+# Only after inspecting and stopping prior backend execution:
+cctl conversation checkpoint reconcile conversation-one operation-one --capture-execution-stopped
+cctl conversation compact-context conversation-one --recover operation-one
+```
+
+Checkpoint reads preserve included/omitted/not-requested capture outcomes. A
+ready checkpoint with an omitted handoff is still successful. Frozen seed detail
+keeps exact `seedText` and `seedSha256`; an automatic spill's artifact hash covers
+the JSON response wrapper, not just the seed bytes.

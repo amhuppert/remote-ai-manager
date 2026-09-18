@@ -236,6 +236,7 @@ export function createFakeClaudeSdkController(
     })();
 
     const port: ClaudeSdkQueryPort = {
+      async awaitChildCollection() {},
       close() {
         closed = true;
         wake?.();

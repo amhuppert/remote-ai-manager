@@ -14,6 +14,7 @@
 import { z } from "zod";
 import {
   sourceRefSchema,
+  transcriptSourcePartSchema,
   type MessageContentBlock,
   type ToolResultMetrics,
 } from "@/lib/conversations/schemas";
@@ -40,7 +41,7 @@ import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
  * Stamped on compaction artifacts so consumers can detect when stored
  * artifacts were produced by an older rendering contract.
  */
-export const NORMALIZER_VERSION = "1";
+export const NORMALIZER_VERSION = "2";
 
 export const renderOptionsSchema = z
   .object({
@@ -90,6 +91,7 @@ export const renderedUnitSchema = z.object({
   ref: sourceRefSchema,
   /** Exact seq of each entry whose lines are included in this unit. */
   entrySeqs: z.array(z.number().int()),
+  sourceParts: z.array(transcriptSourcePartSchema).optional(),
   role: z.enum(["user", "assistant", "notice"]),
   timestamp: z.string(),
   /** Rendered content lines; every line carries its entry's `[s<seq>]` prefix. */
@@ -187,6 +189,8 @@ export const renderedTranscriptSchema = z.object({
 export type RenderedTranscript = z.infer<typeof renderedTranscriptSchema>;
 
 export interface RenderTranscriptInput {
+  /** Internal generation projection; history callers retain the full audit. */
+  evidenceOnly?: boolean;
   conversationId: string;
   entries: TranscriptEntryWithSeq[];
   maxSeq: number;
@@ -212,6 +216,7 @@ function toLogicalUnitEntry(entry: TranscriptEntryWithSeq): LogicalUnitEntry {
       entryId: entry.entryId,
       timestamp: entry.timestamp,
       content: entry.content,
+      ...(entry.origin ? { origin: entry.origin } : {}),
     };
   }
   return {
@@ -219,6 +224,7 @@ function toLogicalUnitEntry(entry: TranscriptEntryWithSeq): LogicalUnitEntry {
     kind: "message",
     role: entry.role,
     content: entry.content,
+    ...(entry.origin ? { origin: entry.origin } : {}),
     entryId: entry.entryId,
     timestamp: entry.timestamp,
   };
@@ -643,7 +649,7 @@ function renderUnitLines(
     const lineStart = lines.length;
     for (const block of part.content) {
       for (const line of renderBlockLines(block, options, omissions)) {
-        lines.push(`[s${part.seq}] ${line}`);
+        lines.push(`[s${part.seq}] ${captureOriginLabel(part.origin)}${line}`);
         lineSeqs.push(part.seq);
       }
     }
@@ -777,7 +783,10 @@ export function segmentTranscript(
   windowBudgetBytes: number,
 ): TranscriptSegment[] {
   const allUnits = groupTranscriptEntries(input.entries);
-  const { selected } = selectWindow(allUnits, options);
+  const { selected } = selectWindow(
+    input.evidenceOnly ? recordedEvidenceUnits(allUnits) : allUnits,
+    options,
+  );
 
   const segments: TranscriptSegment[] = [];
   let current: { seqStart: number; seqEnd: number; bytes: number } | null =
@@ -830,7 +839,10 @@ export function renderCompactTranscript(
     unitsOutsideWindow: 0,
   };
 
-  const { selected, excluded } = selectWindow(allUnits, options);
+  const { selected, excluded } = selectWindow(
+    input.evidenceOnly ? recordedEvidenceUnits(allUnits) : allUnits,
+    options,
+  );
   omissions.unitsOutsideWindow += excluded;
 
   let visible = selected;
@@ -939,6 +951,7 @@ export function renderCompactTranscript(
         renderedUnits.push({
           ref,
           entrySeqs: includedSeqs,
+          ...sourcePartOrigins(parts, includedSeqs),
           role: unit.role,
           timestamp: unit.timestamp ?? "",
           lines: includedLines,
@@ -991,6 +1004,10 @@ export function renderCompactTranscript(
     renderedUnits.push({
       ref,
       entrySeqs: parts.map((part) => part.seq),
+      ...sourcePartOrigins(
+        parts,
+        parts.map((part) => part.seq),
+      ),
       role: unit.role,
       timestamp: unit.timestamp ?? "",
       lines,
@@ -1097,4 +1114,53 @@ export function renderedTranscriptToMarkdown(
     ...checkpointBoundaryLines(rendered.boundaries),
   ].join("\n\n");
   return rendered.truncated ? `${body}\n\n… [output truncated]` : body;
+}
+
+function sourcePartOrigins(parts: UnitPart[], seqs: number[]) {
+  if (!parts.some((part) => part.origin)) return {};
+  return {
+    sourceParts: parts
+      .filter((part) => seqs.includes(part.seq))
+      .map(({ seq, origin }) => ({ seq, ...(origin ? { origin } : {}) })),
+  };
+}
+
+export function captureOriginLabel(origin: UnitPart["origin"]): string {
+  if (origin?.source !== "checkpoint_capture") return "";
+  const capture = origin.checkpointCapture;
+  return `[checkpoint capture ${capture?.part}; operation ${capture?.operationId}; capture ${capture?.captureId}] `;
+}
+
+/** Filter only after canonical grouping: retained parts keep archive coordinates. */
+export function recordedEvidenceUnits(
+  units: TranscriptUnit[],
+): TranscriptUnit[] {
+  return units
+    .map((unit) => ({
+      ...unit,
+      parts: unit.parts.filter(
+        (part) => part.origin?.source !== "checkpoint_capture",
+      ),
+    }))
+    .filter((unit) => unit.parts.length > 0);
+}
+
+/** Every cited part must belong to the original unit and be eligible evidence. */
+export function isRecordedEvidenceReference(
+  ref: { messageIndex: number; seqStart: number; seqEnd: number },
+  units: TranscriptUnit[],
+): boolean {
+  if (ref.seqStart > ref.seqEnd) return false;
+  const unit = units.find(
+    (candidate) => candidate.messageIndex === ref.messageIndex,
+  );
+  if (!unit) return false;
+  const parts = unit.parts.filter(
+    (part) => part.seq >= ref.seqStart && part.seq <= ref.seqEnd,
+  );
+  return (
+    parts[0]?.seq === ref.seqStart &&
+    parts.at(-1)?.seq === ref.seqEnd &&
+    parts.every((part) => part.origin?.source !== "checkpoint_capture")
+  );
 }

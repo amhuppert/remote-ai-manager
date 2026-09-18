@@ -86,6 +86,7 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/conversation/ArtifactMenuItems.tsx",
   "src/components/conversation/CheckpointDisclosure.tsx",
   "src/components/conversation/CheckpointEvidence.tsx",
+  "src/components/conversation/CheckpointHandoffAudit.tsx",
   "src/components/conversation/CheckpointMenuItems.tsx",
   "src/components/conversation/CheckpointMenuItems.stories.tsx",
   "src/components/conversation/CheckpointPanel.tsx",

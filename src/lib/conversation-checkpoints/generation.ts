@@ -49,15 +49,18 @@ import {
   CHECKPOINT_PAYLOAD_SCHEMA_VERSION,
   EMPTY_CHECKPOINT_USAGE,
   type CheckpointFailure,
+  type CheckpointHandoffCandidate,
   type CheckpointPayload,
   type CheckpointUsage,
 } from "./schemas";
 import { decideEnvelopeReuse, type CapturedCheckpointSource } from "./source";
 
 /** Bumped when the working-state prompt or its schema changes. */
-export const CHECKPOINT_GENERATOR_VERSION = "1";
+export const CHECKPOINT_GENERATOR_VERSION = "2";
 
 export interface GenerateCheckpointInput {
+  /** Current validated capture only; never supplied to evidence generation. */
+  agentHandoff?: CheckpointHandoffCandidate;
   identity: CheckpointSeedIdentity;
   source: CapturedCheckpointSource;
   /** The conversation's current reading artifact, when it has one. */
@@ -83,7 +86,11 @@ export interface CheckpointGenerationTelemetry {
 }
 
 export type GenerateCheckpointResult =
-  | ({ ok: true; payload: CheckpointPayload } & CheckpointGenerationTelemetry)
+  | ({
+      ok: true;
+      payload: CheckpointPayload;
+      handoffDecision?: "included" | "seed_budget";
+    } & CheckpointGenerationTelemetry)
   | ({ ok: false; failure: CheckpointFailure } & CheckpointGenerationTelemetry);
 
 const checkpointLogger = createLogger("conversation-checkpoints");
@@ -168,6 +175,7 @@ function renderArchiveTail(source: CapturedCheckpointSource): string {
     {
       conversationId: source.captured.conversationId,
       entries: source.captured.entries,
+      evidenceOnly: true,
       maxSeq: source.captured.maxSeq,
     },
     renderOptionsSchema.parse({
@@ -512,6 +520,9 @@ export async function generateCheckpoint(
         totalMessages: source.totalMessages,
       },
       workingState: attempt.state,
+      ...(input.agentHandoff !== undefined
+        ? { agentHandoff: input.agentHandoff }
+        : {}),
       entries: source.captured.entries,
     });
     if (!build.ok) {
@@ -560,6 +571,13 @@ export async function generateCheckpoint(
       generationPassCount: passCount,
       envelopeReused: reuse.reusable,
     });
-    return { ok: true, payload, ...telemetry() };
+    return {
+      ok: true,
+      payload,
+      ...(build.seed.handoffDecision
+        ? { handoffDecision: build.seed.handoffDecision }
+        : {}),
+      ...telemetry(),
+    };
   }
 }

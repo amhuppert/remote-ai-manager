@@ -15,6 +15,21 @@ export interface LogLine {
   conversationId?: string;
   hasResumeRef?: boolean;
   costUsd?: number | null;
+  mode?: string;
+  entryCount?: number;
+}
+
+export function hasFreshMemoryDelivery(
+  log: readonly LogLine[],
+  conversationId: string,
+): boolean {
+  return log.some(
+    (line) =>
+      line.message === "prompt.memory_delivery_settled" &&
+      line.conversationId === conversationId &&
+      line.mode === "full" &&
+      (line.entryCount ?? 0) > 0,
+  );
 }
 
 /** One `checkpoint.fresh_runtime`, with how its runtime was created. */

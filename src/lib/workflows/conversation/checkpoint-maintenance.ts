@@ -10,9 +10,10 @@
  *
  * The order is the design's: durable admission → immutable payload plus
  * `retiring` → awaited runtime close → actor projection and reference clear →
- * readiness commit → row and snapshot receipts → release. A failure before the
- * freeze leaves the source runtime, its reference and its history untouched; a
- * failure after the freeze stays owned as `needs_reconciliation`.
+ * readiness commit → row and snapshot receipts → release. Optional capture
+ * settles its execution and audit before generation. A failed build preserves
+ * recorded history and releases only resumable continuity; uncertain cleanup,
+ * lost continuity and failures after freeze stay owned for reconciliation.
  *
  * Private to the manager: `boundaries.arch.test.ts` refuses imports of this
  * module from outside `lib/workflows/conversation/`, so the HTTP and CLI
@@ -23,11 +24,23 @@
  * same repository.
  */
 
+import { isDeepStrictEqual } from "node:util";
+import { CHECKPOINT_CAPTURE_LIMITS } from "@/lib/conversation-checkpoints/budget";
+import {
+  buildHandoffPrompt,
+  validateHandoffCandidate,
+} from "@/lib/conversation-checkpoints/handoff";
+import type { CaptureHandoffInput } from "@/lib/agent-backends/conversation";
+import type { CaptureHandoffResult } from "@/lib/agent-backends/schemas";
+
 import type { CompactionConfig } from "@/lib/config/schemas";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostics";
 import type { CheckpointRefusalCode } from "@/lib/conversation-checkpoints/admission";
-import type { ConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
+import type {
+  ConversationCheckpointsRepo,
+  RecordCheckpointOutcomeInput,
+} from "@/lib/conversation-checkpoints/repo";
 import {
   generateCheckpoint,
   type CheckpointGenerationTelemetry,
@@ -97,8 +110,20 @@ export interface CheckpointMaintenanceHost {
   readonly transcriptPath: string | null;
   /** Cancels a build that has not frozen; retirement ignores it. */
   readonly signal: AbortSignal;
+  readonly captureSignal: AbortSignal;
+  mutateCapture<T>(work: () => Promise<T>): Promise<T>;
   /** Let owned receipts, queue drains, external frames and tracked work land before a read. */
   settleReceipts(): Promise<void>;
+  captureHandoff(
+    operation: CheckpointOperation,
+    input: Omit<CaptureHandoffInput, "mode" | "onTranscript">,
+    expected: Pick<
+      CheckpointHostObservation,
+      "activityEpoch" | "backgroundEpoch"
+    >,
+  ): Promise<
+    CaptureHandoffResult & { auditEntryIds: string[]; sourceChanged: boolean }
+  >;
   /** Synchronous: safe to call inside the repository's freeze fence. */
   observe(): CheckpointHostObservation;
   /**
@@ -184,7 +209,11 @@ export async function runCheckpointMaintenance(
   },
   infra: CheckpointMaintenanceInfrastructure,
 ): Promise<CheckpointMaintenanceResult> {
-  const { host, source } = input;
+  const { host } = input;
+  let source = input.source;
+  let operation = input.operation;
+  let captured = input.captured;
+  let continuationUnusable = false;
   const { key } = host;
   const operationId = input.operation.id;
   const fields = {
@@ -195,22 +224,29 @@ export async function runCheckpointMaintenance(
   const log = infra.log;
 
   /**
-   * A failure or cancellation before the freeze. The source runtime, its
-   * reference and its history are untouched; the queue is released only once
-   * this outcome is durable, which is why a thrown write propagates rather
-   * than releasing.
+   * A failure or cancellation before the freeze preserves the recorded
+   * archive. Release requires a durable outcome and usable source continuity;
+   * a capture that lost its prior continuation must retain the recovery hold.
    */
   async function settleBuild(
     phase: "failed" | "cancelled",
     failure: CheckpointFailure,
     telemetry: CheckpointGenerationTelemetry,
   ): Promise<CheckpointMaintenanceResult> {
+    const lostContinuationHold =
+      continuationUnusable && input.operation.recoversOperationId === null;
     const outcome = await infra.repo.recordOutcome({
       key,
       operationId,
       expectedPhase: "building",
-      phase,
-      failure,
+      phase: lostContinuationHold ? "needs_reconciliation" : phase,
+      failure: lostContinuationHold
+        ? {
+            code:
+              phase === "cancelled" ? "cancelled" : "capture_continuation_lost",
+            message: `The captured continuation is unavailable after checkpoint failure (${failure.code})`,
+          }
+        : failure,
       usage: telemetry.usage,
       generationPassCount: telemetry.generationPassCount,
       at: infra.now(),
@@ -219,7 +255,10 @@ export async function runCheckpointMaintenance(
     // the operation it superseded: the repository restored that gate in the
     // same write, and the projection follows it so nothing drains.
     const restoredGate = restoredGateFor(input.operation);
-    host.project(restoredGate);
+    const effectiveGate = lostContinuationHold
+      ? { operationId, phase: "needs_reconciliation" as const }
+      : restoredGate;
+    host.project(effectiveGate);
     if (outcome.ok) {
       log.info(`checkpoint.build.${phase}`, {
         ...fields,
@@ -229,9 +268,9 @@ export async function runCheckpointMaintenance(
           ? {}
           : { restoredOperationId: restoredGate.operationId }),
       });
-      return restoredGate === null
+      return effectiveGate === null
         ? { operation: outcome.value, released: true }
-        : { operation: outcome.value, released: false, hold: restoredGate };
+        : { operation: outcome.value, released: false, hold: effectiveGate };
     }
     // The operation already left `building` under another writer (a
     // deletion trigger or a restart's reconciliation); whatever it is now,
@@ -312,9 +351,229 @@ export async function runCheckpointMaintenance(
     message: "checkpoint generation was cancelled",
   };
 
-  if (host.signal.aborted) {
+  if (host.signal.aborted && operation.handoff === null) {
     return settleBuild("cancelled", cancelledFailure, NO_TELEMETRY);
   }
+
+  if (operation.handoff !== null) {
+    let handoff = operation.handoff;
+    let captureObservation: RecordCheckpointOutcomeInput["captureObservation"];
+    const captureController = new AbortController();
+    const abortCapture = () => captureController.abort(host.signal.reason);
+    host.signal.addEventListener("abort", abortCapture, { once: true });
+    const skipCapture = () =>
+      captureController.abort(host.captureSignal.reason);
+    host.captureSignal.addEventListener("abort", skipCapture, { once: true });
+    if (host.captureSignal.aborted) skipCapture();
+    if (host.signal.aborted) abortCapture();
+    try {
+      const prompt = buildHandoffPrompt(handoff.captureId);
+      if (!prompt.ok)
+        throw new Error("Capture prompt exceeds fixed input budget");
+      await host.mutateCapture(async () => {
+        const current = await infra.repo.getOperation(key, operationId);
+        if (!current?.handoff) throw new Error("Capture operation disappeared");
+        operation = current;
+        handoff = current.handoff;
+        if (handoff.requestedMode !== null && handoff.stage === "pending") {
+          const running = await infra.repo.beginCapture({
+            key,
+            operationId,
+            captureId: handoff.captureId,
+            expectedSourceBasis: source.basis,
+            at: infra.now(),
+          });
+          if (!running.ok || running.value.handoff === null)
+            throw new Error("Capture start refused");
+          operation = running.value;
+          handoff = running.value.handoff;
+        }
+      });
+      const result = await host.captureHandoff(
+        operation,
+        {
+          captureId: handoff.captureId,
+          promptText: prompt.promptText,
+          outputSchema: prompt.outputSchema,
+          limits: CHECKPOINT_CAPTURE_LIMITS,
+          signal: captureController.signal,
+        },
+        captured,
+      );
+      captureObservation = {
+        captureId: handoff.captureId,
+        modeEstablished: result.modeEstablished,
+        submitted: result.submitted,
+        correlatedCompletion: result.correlatedCompletion,
+        activity: result.activity,
+        usage: result.usage,
+        continuationDisposition: result.continuation.disposition,
+      };
+      if (!result.executionSettled || result.cleanupFailure)
+        throw new Error("Capture cleanup unverified");
+      continuationUnusable =
+        result.continuation.disposition === "clear" &&
+        operation.protectedReferences.priorBackendRef !== null;
+      await host.settleReceipts();
+      const finalSource = await captureCheckpointSourceForHost(host, infra);
+      const appended = finalSource.captured.entries.slice(
+        source.captured.entries.length,
+      );
+      const ownedExtension =
+        isDeepStrictEqual(
+          finalSource.captured.entries.slice(0, source.captured.entries.length),
+          source.captured.entries,
+        ) &&
+        appended.every(
+          (entry) =>
+            entry.origin?.source === "checkpoint_capture" &&
+            entry.origin.checkpointCapture?.captureId === handoff.captureId &&
+            entry.origin.checkpointCapture.operationId === operationId,
+        );
+      const observation = host.observe();
+      const sourceValid =
+        !result.sourceChanged &&
+        ownedExtension &&
+        isDeepStrictEqual(
+          appended.map((entry) => entry.entryId),
+          result.auditEntryIds,
+        ) &&
+        observation.settled &&
+        observation.activityEpoch === captured.activityEpoch &&
+        observation.backgroundEpoch === captured.backgroundEpoch &&
+        observation.backendRef ===
+          operation.protectedReferences.priorBackendRef &&
+        (result.continuation.disposition !== "retain" ||
+          (result.continuation.backendRef?.ref ===
+            operation.protectedReferences.priorBackendRef &&
+            result.continuation.backendRef.backend === handoff.backend));
+      const valid =
+        result.candidateText === null
+          ? null
+          : validateHandoffCandidate({
+              answerText: result.candidateText,
+              entries: source.captured.entries,
+            });
+      const settled = await host.mutateCapture(async () => {
+        const current = await infra.repo.getOperation(key, operationId);
+        if (!current?.handoff) throw new Error("Capture operation disappeared");
+        handoff = current.handoff;
+        if (
+          handoff.stage !== "pending" &&
+          handoff.stage !== "running" &&
+          handoff.stage !== "settling"
+        )
+          throw new Error("Capture already settled");
+        const omissionReason =
+          handoff.stopIntent === "cancel"
+            ? "cancelled"
+            : handoff.stopIntent === "skip"
+              ? "skipped"
+              : !sourceValid
+                ? "checkpoint_failed"
+                : host.signal.aborted
+                  ? "cancelled"
+                  : (result.omissionReason ??
+                    (valid?.ok ? null : (valid?.reason ?? "invalid_output")));
+        const at = infra.now();
+        return infra.repo.settleCapture({
+          key,
+          operationId,
+          captureId: handoff.captureId,
+          expectedSourceBasis: source.basis,
+          expectedStage: handoff.stage,
+          at,
+          settlement: {
+            kind: "result",
+            handoff: {
+              ...handoff,
+              stage: omissionReason === null ? "captured" : "omitted",
+              omissionReason,
+              modeEstablished: result.modeEstablished,
+              submitted: result.submitted,
+              correlatedCompletion: result.correlatedCompletion,
+              executionSettled: true,
+              auditDurable: true,
+              settledAt: at,
+              activity: result.activity,
+              usage: result.usage,
+              continuationDisposition: result.continuation.disposition,
+              candidate:
+                omissionReason === null && valid?.ok ? valid.candidate : null,
+              contentHash:
+                omissionReason === null && valid?.ok ? valid.contentHash : null,
+              acceptedOutputBytes:
+                omissionReason === null && valid?.ok ? valid.outputBytes : null,
+              sourceCoverage:
+                sourceValid && appended[0]
+                  ? {
+                      seqStart: appended[0].seq,
+                      seqEnd: appended.at(-1)?.seq ?? appended[0].seq,
+                      entryIds: appended
+                        .flatMap((entry) =>
+                          entry.entryId === null ? [] : [entry.entryId],
+                        )
+                        .slice(0, 256),
+                    }
+                  : null,
+              finalSourceBasis: sourceValid ? finalSource.basis : source.basis,
+            },
+          },
+        });
+      });
+      if (!settled.ok)
+        throw new Error(`Capture settlement refused: ${settled.refusal.code}`);
+      operation = settled.value;
+      captureObservation = undefined;
+      if (!sourceValid) {
+        return settleBuild(
+          "failed",
+          {
+            code: "source_changed",
+            message: "Unrelated activity changed the capture source",
+          },
+          NO_TELEMETRY,
+        );
+      }
+      source = finalSource;
+      captured = observation;
+    } catch (error) {
+      const held = await infra.repo.recordOutcome({
+        key,
+        operationId,
+        ...(captureObservation ? { captureObservation } : {}),
+        expectedPhase: "building",
+        phase: "needs_reconciliation",
+        failure: {
+          code: "capture_cleanup_unverified",
+          message:
+            "Capture execution or required audit writes could not be verified",
+        },
+        at: infra.now(),
+      });
+      if (!held.ok)
+        throw new Error(
+          `Capture reconciliation write refused: ${held.refusal.code}`,
+        );
+      const hold = { operationId, phase: "needs_reconciliation" as const };
+      host.project(hold);
+      log.error("checkpoint.capture.unsettled", {
+        ...fields,
+        ...checkpointErrorFields(error),
+      });
+      return {
+        operation: held.value,
+        released: false,
+        hold,
+      };
+    } finally {
+      host.signal.removeEventListener("abort", abortCapture);
+      host.captureSignal.removeEventListener("abort", skipCapture);
+    }
+  }
+
+  if (host.signal.aborted)
+    return settleBuild("cancelled", cancelledFailure, NO_TELEMETRY);
 
   let generated: Awaited<ReturnType<typeof infra.generate>>;
   try {
@@ -337,6 +596,9 @@ export async function runCheckpointMaintenance(
           scope: key.scope,
         },
         source,
+        ...(operation.handoff?.candidate
+          ? { agentHandoff: operation.handoff.candidate }
+          : {}),
         existingArtifact,
         lane: {
           address: {
@@ -405,6 +667,15 @@ export async function runCheckpointMaintenance(
     conversation: ConversationState | null,
   ): CheckpointFailure | null => {
     if (host.signal.aborted) return cancelledFailure;
+    if (
+      operation.handoff &&
+      conversation?.agentBackend !== operation.handoff.backend
+    ) {
+      return {
+        code: "source_changed",
+        message: "The selected source backend changed during generation",
+      };
+    }
     const durableRefusal = host.observeDurable(conversation);
     if (durableRefusal !== null) {
       return {
@@ -428,20 +699,23 @@ export async function runCheckpointMaintenance(
         message: "the provider continuation changed during the build",
       };
     }
-    if (observed.activityEpoch !== input.captured.activityEpoch) {
+    if (observed.activityEpoch !== captured.activityEpoch) {
       return {
         code: "late_activity",
         message: "provider or owned activity occurred during the build",
       };
     }
-    if (observed.backgroundEpoch !== input.captured.backgroundEpoch) {
+    if (observed.backgroundEpoch !== captured.backgroundEpoch) {
       return {
         code: "late_activity",
         message:
           "background work appeared or finished during the build (background_work)",
       };
     }
-    if (!checkpointSourceBasisMatches(source.basis, recaptured.basis)) {
+    if (
+      !checkpointSourceBasisMatches(source.basis, recaptured.basis) ||
+      source.archiveFingerprint !== recaptured.archiveFingerprint
+    ) {
       return {
         code: "source_changed",
         message: `the archive changed during the build (captured through ${source.basis.capturedThroughSeq}, now ${recaptured.basis.capturedThroughSeq})`,
@@ -454,6 +728,9 @@ export async function runCheckpointMaintenance(
     key,
     operationId,
     payload: generated.payload,
+    ...(generated.handoffDecision
+      ? { handoffDecision: generated.handoffDecision }
+      : {}),
     usage: generated.usage,
     at: infra.now(),
     fence: (conversation) => {

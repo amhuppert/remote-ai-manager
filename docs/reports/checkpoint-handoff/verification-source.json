@@ -1,0 +1,62 @@
+{
+  "head": "c538aa114f8910f37b922fe08fca647976170aa7",
+  "files": [
+    {
+      "path": ".prettierrc",
+      "sha256": "4b756478dfa6c60a3ab2e0321772b317cc6887208ee89b4a9fcc4615ca2bf94b"
+    },
+    {
+      "path": "eslint.config.mjs",
+      "sha256": "91de231d95c5e84e54e9979a3185e96cf8dff3c37c54ed69d3828efa1264f9f5"
+    },
+    {
+      "path": "src/components/conversation/CheckpointHandoffAudit.tsx",
+      "sha256": "56193fac64e1154230724c3063c2068478271728c288ca8f5892cba55499c530"
+    },
+    {
+      "path": "src/lib/agent-backends/claude/conversation-runtime-close.test.ts",
+      "sha256": "8344cb97395e67a890899ddd3a5cc258a1ac718fd0e039191c9cccbaa0260cf7"
+    },
+    {
+      "path": "src/lib/agent-backends/claude/conversation-runtime.test.ts",
+      "sha256": "6b0d62fa798fec796dae856ed68e0eb5881a6ed0a8896e5866a70245b63cc602"
+    },
+    {
+      "path": "src/lib/agent-backends/claude/conversation-runtime.ts",
+      "sha256": "612062eac8d769d22294fb744d6d61083dc5c95a238060722496f98f4f30ef74"
+    },
+    {
+      "path": "src/lib/agent-backends/consumer-locality-static.test.ts",
+      "sha256": "2be7ef63df917604e4c34e8056322ec09278ef0296342a45605d2080c17eb9c8"
+    },
+    {
+      "path": "src/lib/agent-backends/testing/claude-stale-resume-pump-fixture.ts",
+      "sha256": "9297f4a56a4aedfd10a244c3350abd3e2d5840e5604dd8743592daad19b56a76"
+    },
+    {
+      "path": "src/lib/agent-backends/testing/fake-claude-sdk-port.ts",
+      "sha256": "0e1b61762f258aaf65872a4e8d95b4ec3bf6d44bde2ebafca24d4701faae92b7"
+    },
+    {
+      "path": "src/lib/conversation-checkpoints/testing/pre-handoff-v1-payload.json",
+      "sha256": "cbaa3a3222150c563555720d2fdddb46f7e5e9d5119a7c4c0408c8d0a74b4411"
+    },
+    {
+      "path": "src/lib/shared/tailwind-utility-collisions.test.ts",
+      "sha256": "efb8aa8a4ed79d33fc09c3b711687e62a5bf6f4f26c064ce2f6eefcb95596e7c"
+    },
+    {
+      "path": "src/lib/workflows/conversation/checkpoint-fork.integration.test.ts",
+      "sha256": "cdddf6f18d005bc78818caabd543cbd3785a7b71c4127fc7c0beacfb3816f457"
+    },
+    {
+      "path": "src/lib/workflows/conversation/checkpoint-handoff-history.integration.test.ts",
+      "sha256": "7e1f9042c23372bea22230cea67b4cefe7c519c48d7c28b2b8bb103f5b9ec16e"
+    },
+    {
+      "path": "src/lib/workflows/conversation/checkpoint-maintenance.integration.test.ts",
+      "sha256": "6caca2f7e09e0429b3300ca1b44edbebad791e4c3fad31f2c671bad888c46b8a"
+    }
+  ],
+  "manifestSha256": "232dacb72dfffea58a78ceccd7a457349d03893cae077b4c48211d1e2402e00c"
+}

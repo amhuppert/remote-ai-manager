@@ -52,6 +52,8 @@ import type { ConversationCheckpointSurface } from "./use-conversation-checkpoin
 
 export interface CheckpointPanelProps {
   open: boolean;
+  preparation?: boolean;
+  onPreparationComplete?: () => void;
   onOpenChange: (open: boolean) => void;
   surface: ConversationCheckpointSurface;
   sourceConversation?: PublicConversationState;
@@ -97,6 +99,15 @@ function checkpointSummary(receipt: CheckpointReceipt): string {
   }
   switch (receipt.phase) {
     case "building":
+      if (receipt.handoff?.stage === "settling")
+        return "Stopping capture and waiting for execution to settle. Queued messages remain held.";
+      if (
+        receipt.handoff?.stage === "pending" ||
+        receipt.handoff?.stage === "running"
+      )
+        return "The current agent is recording advisory working state. Queued messages remain held.";
+      if (receipt.handoff?.stage === "omitted")
+        return `Handoff omitted — ${receipt.handoff.omissionReason?.replaceAll("_", " ") ?? "unavailable"}. Continuing with recorded evidence.`;
       return "Preparing a saved handoff from the recorded conversation. You can cancel while it is building.";
     case "retiring":
       return "The handoff is saved. Retiring the current provider context before the next message.";
@@ -265,6 +276,38 @@ function RecoveryControls({
   onReviewQueue: () => void;
 }): React.JSX.Element | null {
   const latest = surface.latest;
+  const capture = latest?.handoff;
+  if (
+    latest?.phase === "needs_reconciliation" &&
+    latest.lastStablePhase === "building" &&
+    latest.checkpoint === null &&
+    capture?.stage === "omitted" &&
+    ["interrupted", "cleanup_unverified"].includes(
+      capture.omissionReason ?? "",
+    ) &&
+    !capture.executionSettled
+  ) {
+    return (
+      <div className="flex flex-col gap-md rounded-md border border-solid border-amber-dim bg-bg-base p-lg">
+        <p className="text-sm text-amber">
+          Capture cleanup is unverified —{" "}
+          {capture.omissionReason?.replaceAll("_", " ")}.
+        </p>
+        <p className="text-sm leading-relaxed text-text-secondary">
+          Inspect and stop prior backend work before acknowledging. This records
+          your testimony, not CC-observed cleanup. Queued messages remain held;
+          a separate baseline recovery checkpoint is required.
+        </p>
+        <Button
+          touch
+          loading={surface.isReconciling}
+          onClick={() => surface.acknowledgeCaptureStopped(latest.operationId)}
+        >
+          I have stopped the prior execution
+        </Button>
+      </div>
+    );
+  }
   if (action.kind === "queue_review") {
     return (
       <div
@@ -347,6 +390,8 @@ function RecoveryControls({
  */
 export default function CheckpointPanel({
   open,
+  preparation = false,
+  onPreparationComplete,
   onOpenChange,
   surface,
   sourceConversation,
@@ -359,6 +404,10 @@ export default function CheckpointPanel({
   artifact = null,
 }: CheckpointPanelProps): React.JSX.Element {
   const { chip, action, latest } = surface;
+  const captureActive =
+    latest?.phase === "building" &&
+    latest.handoff !== null &&
+    ["pending", "running", "settling"].includes(latest.handoff.stage);
   const [forkReceipt, setForkReceipt] = useState<CheckpointReceipt | null>(
     null,
   );
@@ -434,9 +483,15 @@ export default function CheckpointPanel({
       >
         <div className="shrink-0 border-x-0 border-t-0 border-b border-solid border-border-subtle px-xl pt-xl pb-lg max-768:px-lg max-768:pt-lg">
           <div className="flex items-start justify-between gap-lg">
-            <DialogTitle id="checkpoint-panel-title">
-              {forkVisible ? "Fork from checkpoint" : "Context checkpoint"}
-            </DialogTitle>
+            <div className="min-w-0 flex-1">
+              <DialogTitle id="checkpoint-panel-title">
+                {forkVisible
+                  ? "Fork from checkpoint"
+                  : preparation
+                    ? "Compact with agent handoff"
+                    : "Context checkpoint"}
+              </DialogTitle>
+            </div>
             <WithTooltip label="Close checkpoint dialog">
               <DialogClose asChild>
                 <IconButton
@@ -452,7 +507,9 @@ export default function CheckpointPanel({
           <DialogDescription layoutClassName="mb-0">
             {forkVisible
               ? "Start a focused conversation from this saved handoff."
-              : "A saved handoff lets the next message start with fresh context. Your conversation history stays available."}
+              : preparation
+                ? "Ask the current agent to record its plan and next step, then create a checkpoint."
+                : "A saved handoff lets the next message start with fresh context. Your conversation history stays available."}
           </DialogDescription>
         </div>
 
@@ -485,7 +542,78 @@ export default function CheckpointPanel({
             />
           </div>
         )}
-        {!forkVisible && (
+        {preparation && !forkVisible && (
+          <div className="flex min-h-0 flex-col gap-lg overflow-y-auto p-xl max-768:p-lg">
+            <p className="text-sm text-text-secondary">
+              {sourceConversation?.agentBackend ?? "Current conversation agent"}
+              {initialForkModel ? ` · ${initialForkModel.modelId}` : ""}
+            </p>
+            <p className="text-sm text-text-primary">
+              {surface.handoff?.mode === "instruction-only"
+                ? "Instruction-only: the agent is asked not to use tools; tools remain available."
+                : surface.handoff?.mode === "tool-disabled"
+                  ? "Tools are disabled for the handoff."
+                  : "No capture mode is available."}
+            </p>
+            {surface.handoff && (
+              <p className="text-sm leading-relaxed text-text-secondary">
+                At most {surface.handoff.policy.limits.maxSubmissions} extra
+                call; {surface.handoff.policy.limits.executionMs / 1000} seconds
+                to execute. Capture-added input is limited to{" "}
+                {surface.handoff.policy.limits.inputBytes} bytes; accepted
+                output to {surface.handoff.policy.limits.outputBytes} bytes.
+                Limits omit the handoff and continue with recorded evidence
+                after execution settles. Stopping may require reconciliation.
+                Cost is checked after the request; there is no hard cost or
+                source-context limit.
+              </p>
+            )}
+            {!surface.handoff?.available && (
+              <p role="status" className="text-sm text-amber">
+                {surface.handoff?.reason ?? "Reading capture capability…"}
+              </p>
+            )}
+            {action.kind !== "available" && (
+              <p className="text-sm text-text-secondary">
+                {action.kind === "loading"
+                  ? "Checking checkpoint eligibility…"
+                  : action.reason}
+              </p>
+            )}
+            {surface.requestError && (
+              <p role="alert" className="text-sm text-red">
+                {surface.requestError}
+              </p>
+            )}
+            <div className="flex flex-wrap justify-end gap-sm max-640:flex-col">
+              <Button
+                touch
+                disabled={action.kind !== "available" || surface.isStarting}
+                onClick={() => {
+                  surface.start();
+                  onPreparationComplete?.();
+                }}
+              >
+                Compact without handoff
+              </Button>
+              <Button
+                touch
+                variant="primary"
+                loading={surface.isStarting}
+                disabled={
+                  action.kind !== "available" || !surface.handoff?.available
+                }
+                onClick={() => {
+                  surface.startHandoff(surface.handoff?.mode ?? null);
+                  onPreparationComplete?.();
+                }}
+              >
+                Capture handoff and compact
+              </Button>
+            </div>
+          </div>
+        )}
+        {!forkVisible && !preparation && (
           <>
             <div
               ref={bodyRef}
@@ -573,7 +701,7 @@ export default function CheckpointPanel({
                         {selected.checkpoint?.sectionBytes.total.toLocaleString() ??
                           "—"}
                       </span>
-                      <span className={LABEL_CLASS}>Handoff bytes</span>
+                      <span className={LABEL_CLASS}>Checkpoint bytes</span>
                       {selected.forkFramingBytes !== undefined && (
                         <span className="text-[0.7rem] text-text-secondary">
                           + {selected.forkFramingBytes.toLocaleString()} fork
@@ -719,7 +847,16 @@ export default function CheckpointPanel({
 
             <div className="flex shrink-0 items-center gap-lg border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-xl py-lg max-768:flex-wrap max-768:gap-md max-768:px-lg">
               <div className="min-w-0 flex-1 text-[0.72rem] leading-[1.6] text-text-secondary max-768:basis-full">
-                <p>No message is sent automatically.</p>
+                <p>
+                  {captureActive
+                    ? "Queued messages stay held until capture settles."
+                    : "No message is sent automatically."}
+                </p>
+                {captureActive && (
+                  <p id="checkpoint-skip-description">
+                    Continue with recorded evidence.
+                  </p>
+                )}
                 {selected !== null &&
                   latest !== null &&
                   selected.operationId !== latest.operationId && (
@@ -734,12 +871,28 @@ export default function CheckpointPanel({
                 ) : null}
               </div>
               <DialogActions layoutClassName="max-768:ml-auto">
+                {captureActive && latest && (
+                  <Button
+                    touch
+                    variant="default"
+                    aria-describedby="checkpoint-skip-description"
+                    disabled={
+                      latest.handoff?.stage === "settling" ||
+                      surface.isCancelling
+                    }
+                    loading={surface.isSkipping}
+                    onClick={() => surface.skipHandoff(latest.operationId)}
+                  >
+                    Skip handoff
+                  </Button>
+                )}
                 {latest !== null && isCancellable(chip) && (
                   <Button
                     touch
                     variant="default"
                     onClick={() => surface.cancel(latest.operationId)}
                     loading={surface.isCancelling}
+                    disabled={latest.handoff?.stopIntent === "cancel"}
                   >
                     Cancel checkpoint
                   </Button>

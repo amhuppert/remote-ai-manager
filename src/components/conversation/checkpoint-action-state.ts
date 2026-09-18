@@ -30,7 +30,7 @@ import type { CheckpointPhase } from "@/lib/conversation-checkpoints/schemas";
 
 export type CheckpointChipState =
   | { kind: "none" }
-  | { kind: "building" }
+  | { kind: "building"; captureStage?: "pending" | "running" | "settling" }
   | { kind: "retiring" }
   | { kind: "ready" }
   | { kind: "delivering" }
@@ -44,7 +44,12 @@ export function deriveCheckpointChipState(
 ): CheckpointChipState {
   if (latest === null || latest === undefined) return { kind: "none" };
   switch (latest.phase) {
-    case "building":
+    case "building": {
+      const stage = latest.handoff?.stage;
+      return stage === "pending" || stage === "running" || stage === "settling"
+        ? { kind: "building", captureStage: stage }
+        : { kind: "building" };
+    }
     case "retiring":
     case "ready":
     case "delivering":
@@ -71,7 +76,11 @@ export function checkpointChipLabel(state: CheckpointChipState): string {
     case "none":
       return "No checkpoint";
     case "building":
-      return "Checkpointing…";
+      return state.captureStage === "settling"
+        ? "Stopping handoff…"
+        : state.captureStage
+          ? "Capturing agent handoff…"
+          : "Checkpointing…";
     case "retiring":
       return "Retiring context…";
     case "ready":
@@ -99,7 +108,11 @@ export function checkpointPhaseHeadline(state: CheckpointChipState): string {
     case "none":
       return "No checkpoint has been taken for this conversation";
     case "building":
-      return "Building the checkpoint";
+      return state.captureStage === "settling"
+        ? "Stopping handoff…"
+        : state.captureStage
+          ? "Capturing agent handoff…"
+          : "Building the checkpoint";
     case "retiring":
       return "Retiring the current context";
     case "ready":

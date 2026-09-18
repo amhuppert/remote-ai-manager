@@ -895,3 +895,96 @@ describe("generateCheckpoint — diagnostics", () => {
       expect(JSON.stringify(value).length).toBeLessThan(120);
   });
 });
+
+it("passes only the current advisory candidate to the builder and preserves the evidence repair budget", async () => {
+  const agentHandoff = {
+    plan: [
+      {
+        kind: "belief" as const,
+        text: "ONLY_ADVISORY current hypothesis",
+        sourceRefs: [],
+      },
+    ],
+    hypotheses: [],
+    failedApproaches: [],
+    blockers: [],
+    nextStep: [],
+  };
+  const input = await makeInput({ agentHandoff });
+  let attempts = 0;
+  const result = await generateCheckpoint(input, {
+    executeTaskRun: async (request) => {
+      calls.push(request);
+      if (!request.prompt.includes("checkpoint working state"))
+        return structuredResult(envelopeFromPrompt(request.prompt));
+      attempts++;
+      return structuredResult(
+        attempts === 1
+          ? {
+              ...WORKING_STATE,
+              objective: { text: "unsupported fact", sourceRefs: [] },
+            }
+          : WORKING_STATE,
+      );
+    },
+  });
+  expect(result).toMatchObject({
+    ok: true,
+    handoffDecision: "included",
+    generationPassCount: 3,
+  });
+  expect(attempts).toBe(2);
+  expect(calls.map((call) => call.prompt).join("\n")).not.toContain(
+    "ONLY_ADVISORY",
+  );
+  if (!result.ok) throw new Error("generation failed");
+  expect(result.payload.seedText).toContain("ONLY_ADVISORY");
+  expect(result.payload.schemaVersion).toBe(1);
+});
+
+it("returns seed_budget omission without an extra generation or repair pass", async () => {
+  const { buildCheckpointSeed, checkpointWorkingStateSchema } =
+    await import("./builder");
+  const state = checkpointWorkingStateSchema.parse(WORKING_STATE);
+  const input = await makeInput();
+  const initial = buildCheckpointSeed({
+    identity: input.identity,
+    source: {
+      firstSeq: input.source.firstSeq,
+      capturedThroughSeq: input.source.basis.capturedThroughSeq,
+      totalMessages: input.source.totalMessages,
+    },
+    entries: input.source.captured.entries,
+    workingState: state,
+  });
+  if (!initial.ok) throw new Error("baseline failed");
+  state.objective.text += "x".repeat(
+    CHECKPOINT_SEED_BUDGET.workingState -
+      initial.seed.sectionBytes.workingState,
+  );
+  const result = await generateCheckpoint(
+    {
+      ...input,
+      agentHandoff: {
+        plan: [],
+        hypotheses: [],
+        failedApproaches: [],
+        blockers: [],
+        nextStep: [],
+      },
+    },
+    { executeTaskRun: modelDouble(state) },
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    handoffDecision: "seed_budget",
+    generationPassCount: 2,
+  });
+  expect(calls).toHaveLength(2);
+  if (!result.ok) throw new Error("generation failed");
+  expect(result.payload.sections.workingState).toEqual(state);
+  expect(result.payload.omissions).toContainEqual({
+    category: "handoff_omitted",
+    detail: "seed_budget",
+  });
+});

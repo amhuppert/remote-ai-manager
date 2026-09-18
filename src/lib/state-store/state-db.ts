@@ -150,8 +150,16 @@ const DB_FILE_NAME = "command-center.db";
  * is not: an older build sees no checkpoint obligation, so it would admit an
  * ordinary turn against a conversation mid-retirement and establish a fresh
  * provider reference the pending seed can never be delivered into.
+ *
+ * Version 19 admits checkpoint forks without related work. Older readers
+ * discard that fork provenance, so migration `0052-optional-checkpoint-fork-work`
+ * fences them before the optional shape is persisted.
+ *
+ * Version 20 adds checkpoint capture ownership and settlement metadata.
+ * Older writers cannot honor those obligations while an operation is building,
+ * so migration `0053-add-checkpoint-handoff` fences version-19 binaries too.
  */
-export const KNOWN_SCHEMA_VERSION = 19;
+export const KNOWN_SCHEMA_VERSION = 20;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -2234,6 +2242,7 @@ export const CONVERSATION_CHECKPOINTS_SCHEMA_DDL = `
     recovers_operation_id       TEXT,
     superseded_by_operation_id  TEXT,
     generation_pass_count       INTEGER,
+    handoff_json                TEXT,
     -- Measured usage stays nullable in every column: a backend that does not
     -- report a counter leaves it unavailable, which is not zero.
     usage_input_tokens          INTEGER,
@@ -2947,6 +2956,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   column: string;
   type: string;
 }> = [
+  {
+    table: "conversation_checkpoint_operations",
+    column: "handoff_json",
+    type: "TEXT",
+  },
   { table: "document_comments", column: "end_line", type: "INTEGER" },
   { table: "document_comments", column: "end_section_id", type: "TEXT" },
   { table: "notepad_comments", column: "end_line", type: "INTEGER" },

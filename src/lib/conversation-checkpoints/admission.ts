@@ -282,6 +282,14 @@ export function evaluateCheckpointAdmission(
           active,
         ),
       );
+    } else if (active.handoff !== null && !active.handoff.executionSettled) {
+      refusals.push(
+        refusal(
+          "recovery_required",
+          "capture execution remains uncertain; reconcile cleanup before explicit recovery",
+          active,
+        ),
+      );
     } else {
       recovers = active;
     }

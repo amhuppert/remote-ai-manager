@@ -13,7 +13,7 @@ import {
   structuredOutputSupportSchema,
   type AgentBackendDescriptor,
 } from "./descriptor";
-import { effortLevelSchema } from "./schemas";
+import { captureAvailabilitySchema, effortLevelSchema } from "./schemas";
 import type { ConversationBackendFactory } from "./conversation";
 import type { AgentTaskRunner } from "./task";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -66,6 +66,7 @@ export const backendConversationCapabilitiesIntegritySchema = z.object({
   externalTurns: z.boolean(),
   checkpoint: z.boolean(),
   checkpointFork: z.boolean(),
+  handoffCapture: captureAvailabilitySchema,
   capabilityKinds: z.array(
     z.object({
       kind: capabilityKindSchema,

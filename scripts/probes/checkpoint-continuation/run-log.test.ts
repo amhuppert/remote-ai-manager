@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { checkpointRuntimeCreations, countEvents } from "./run-log";
+import {
+  checkpointRuntimeCreations,
+  countEvents,
+  hasFreshMemoryDelivery,
+} from "./run-log";
 
 const OP = "op-1";
+
+it("requires the target's settled full memory delivery while allowing later empty deltas", () => {
+  const full = {
+    message: "prompt.memory_delivery_settled",
+    conversationId: "target",
+    mode: "full",
+    entryCount: 1,
+  };
+  const delta = { ...full, mode: "delta", entryCount: 0 };
+  expect(hasFreshMemoryDelivery([full, delta], "target")).toBe(true);
+  expect(hasFreshMemoryDelivery([delta], "target")).toBe(false);
+  expect(hasFreshMemoryDelivery([full], "another")).toBe(false);
+});
 
 describe("counting events in a probe run log", () => {
   it("counts by message, and by operation when one is named", () => {

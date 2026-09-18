@@ -1,0 +1,36 @@
+{
+  "id": "source-checkpoint",
+  "schemaVersion": 1,
+  "sourceBasis": {
+    "capturedThroughSeq": 42,
+    "sourceHash": "source-hash"
+  },
+  "artifactProvenance": null,
+  "versions": {
+    "generatorVersion": "1",
+    "builderVersion": "1",
+    "normalizerVersion": "1"
+  },
+  "modelSelection": {
+    "modelId": "claude-opus-5",
+    "parameters": {}
+  },
+  "sections": {
+    "workingState": {
+      "constraint": "Q-137"
+    },
+    "recentDialogue": [],
+    "recoveryMap": {}
+  },
+  "seedText": "Historical constraint: use resource Q-137. The retry failed.\n",
+  "seedSha256": "41ff46f5b361ebb2eef8e97569877073d3330bcfdb12243b5369eec83b47efcc",
+  "sectionBytes": {
+    "total": 61,
+    "workingState": 61,
+    "recentDialogue": 0,
+    "recoveryFraming": 0
+  },
+  "omissions": [],
+  "generationPassCount": 1,
+  "createdAt": "2026-09-12T15:00:00.000Z"
+}

@@ -9,6 +9,7 @@ import {
   useCancelCheckpointMutation,
   useReconcileCheckpointMutation,
   useStartCheckpointMutation,
+  useSkipCheckpointHandoffMutation,
 } from "@/lib/conversation-checkpoints/mutations";
 import {
   checkpointKeys,
@@ -21,7 +22,10 @@ import {
   useCheckpointListPages,
   type CheckpointListPage,
 } from "@/lib/conversation-checkpoints/queries";
-import type { CheckpointReceipt } from "@/lib/conversation-checkpoints/receipt";
+import type {
+  CheckpointHandoffEligibility,
+  CheckpointReceipt,
+} from "@/lib/conversation-checkpoints/receipt";
 import { conversationTargetKey } from "@/lib/conversations/conversation-target";
 
 import {
@@ -54,12 +58,17 @@ export interface ConversationCheckpointSurface {
   action: CheckpointActionState;
   /** True until the durable state behind the surfaces has been read once. */
   isLoading: boolean;
+  handoff: CheckpointHandoffEligibility | null;
   isStarting: boolean;
+  isSkipping: boolean;
   isCancelling: boolean;
   isReconciling: boolean;
   /** A failure that was not a typed refusal — shown as-is, never interpreted. */
   requestError: string | null;
   start: () => void;
+  startHandoff: (mode: CheckpointHandoffEligibility["mode"]) => void;
+  skipHandoff: (operationId: string) => void;
+  acknowledgeCaptureStopped: (operationId: string) => void;
   startRecovery: (operationId: string) => void;
   cancel: (operationId: string) => void;
   reconcile: (operationId: string) => void;
@@ -134,6 +143,7 @@ export function useConversationCheckpoint(
   });
 
   const startMutation = useStartCheckpointMutation(target);
+  const skipMutation = useSkipCheckpointHandoffMutation(target);
   const cancelMutation = useCancelCheckpointMutation(target);
   const reconcileMutation = useReconcileCheckpointMutation(target);
 
@@ -186,6 +196,7 @@ export function useConversationCheckpoint(
   const serverRefusal =
     freshRefusal(startMutation) ??
     freshRefusal(cancelMutation) ??
+    freshRefusal(skipMutation) ??
     freshRefusal(reconcileMutation);
 
   const action = deriveCheckpointActionState({
@@ -197,6 +208,22 @@ export function useConversationCheckpoint(
   const start = useCallback(() => {
     startMutation.mutate({});
   }, [startMutation]);
+
+  const startHandoff = useCallback(
+    (mode: CheckpointHandoffEligibility["mode"]) => {
+      startMutation.mutate({ handoff: { mode } });
+    },
+    [startMutation],
+  );
+  const skipHandoff = useCallback(
+    (operationId: string) => skipMutation.mutate({ operationId }),
+    [skipMutation],
+  );
+  const acknowledgeCaptureStopped = useCallback(
+    (operationId: string) =>
+      reconcileMutation.mutate({ operationId, captureExecutionStopped: true }),
+    [reconcileMutation],
+  );
 
   const startRecovery = useCallback(
     (operationId: string) => {
@@ -224,7 +251,7 @@ export function useConversationCheckpoint(
   const untypedFailure =
     serverRefusal !== null
       ? null
-      : ([startMutation, cancelMutation, reconcileMutation]
+      : ([startMutation, cancelMutation, skipMutation, reconcileMutation]
           .filter((mutation) => mutation.submittedAt >= eligibilityReadAt)
           .map((mutation) => mutation.error)
           .find((error) => error != null) ?? null);
@@ -239,11 +266,16 @@ export function useConversationCheckpoint(
     chip: deriveCheckpointChipState(latest),
     action,
     isLoading: headQuery.isLoading || eligibilityQuery.isLoading,
+    handoff: eligibilityQuery.data?.handoff ?? null,
     isStarting: startMutation.isPending,
+    isSkipping: skipMutation.isPending,
     isCancelling: cancelMutation.isPending,
     isReconciling: reconcileMutation.isPending,
     requestError: untypedFailure === null ? null : untypedFailure.message,
     start,
+    startHandoff,
+    skipHandoff,
+    acknowledgeCaptureStopped,
     startRecovery,
     cancel,
     reconcile,

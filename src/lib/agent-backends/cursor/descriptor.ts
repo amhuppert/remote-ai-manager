@@ -135,6 +135,11 @@ export const cursorConversationCapabilities: BackendConversationCapabilities = {
   // Disabled until backend-continuation-probes holds real continuation evidence.
   checkpoint: false,
   checkpointFork: false,
+  handoffCapture: {
+    available: false,
+    mode: null,
+    reason: "Capture is unavailable",
+  },
   capabilityKinds: [
     { kind: "skills", applyTiming: "next_conversation" },
     { kind: "plugins", applyTiming: "next_conversation" },

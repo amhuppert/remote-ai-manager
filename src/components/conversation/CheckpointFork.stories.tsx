@@ -174,3 +174,37 @@ export const CreationFailure = {
     await fillAndCreateFork(context);
   },
 } satisfies Story;
+
+export const LongHistoryLastCheckpoint = {
+  args: {
+    surface: checkpointSurfaceFixture({
+      receipts: Array.from({ length: 30 }, (_, index) =>
+        checkpointReceiptFixture({
+          operationId: `history-${30 - index}`,
+          ordinal: 30 - index,
+          phase: "applied",
+          capturedThroughSeq: (30 - index) * 10,
+        }),
+      ),
+    }),
+  },
+  play: async () => {
+    const page = within(document.body);
+    await userEvent.click(
+      await page.findByRole("button", { name: /Checkpoint history/ }),
+    );
+    const oldest = await page.findByRole("button", {
+      name: "#1 Checkpoint applied seq 10",
+    });
+    oldest.scrollIntoView();
+    oldest.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(
+      await page.findByRole("button", { name: "Fork from this checkpoint" }),
+    );
+    await expect(
+      await page.findByText("Checkpoint planning · Checkpoint #1"),
+    ).toBeVisible();
+    await expect(page.getByLabelText("Next task")).toBeVisible();
+  },
+} satisfies Story;

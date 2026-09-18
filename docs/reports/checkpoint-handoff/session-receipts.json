@@ -1,0 +1,133 @@
+{
+  "receipts": [
+    {
+      "handoff": {
+        "categoryCounts": {
+          "plan": 3,
+          "hypotheses": 0,
+          "failedApproaches": 0,
+          "blockers": 0,
+          "nextStep": 1
+        },
+        "captureId": "c0b7362e-7f20-4172-a0f7-7080be9bdebe:capture",
+        "requestedMode": "tool-disabled",
+        "policyVersion": "1",
+        "backend": "claude",
+        "modelSelection": {
+          "modelId": "opus"
+        },
+        "admissionSourceBasis": {
+          "capturedThroughSeq": 3,
+          "sourceHash": "3366a3e29787bfa3f37eaa389f64ed5da8753352e75653615f18babdabbb8106"
+        },
+        "stage": "included",
+        "requestedAt": "2026-09-18T09:21:15.056Z",
+        "startedAt": "2026-09-18T09:21:15.075Z",
+        "settledAt": "2026-09-18T09:21:27.287Z",
+        "finalizedAt": "2026-09-18T09:21:45.042Z",
+        "stopIntent": null,
+        "modeEstablished": true,
+        "submitted": true,
+        "correlatedCompletion": true,
+        "executionSettled": true,
+        "omissionReason": null,
+        "contentHash": "a33721203c7f7dee906c8c6a306b5753617ee034bd32374a3ba3ead6dc50f1ea",
+        "acceptedOutputBytes": 1318,
+        "sourceCoverage": {
+          "seqStart": 5,
+          "seqEnd": 213,
+          "entryCount": 209
+        },
+        "activity": {
+          "transport": "complete",
+          "native": "unavailable",
+          "prohibited": "not_observed",
+          "inspectedBytes": null
+        },
+        "usage": {
+          "inputTokens": 2,
+          "outputTokens": 779,
+          "cachedInputTokens": 0,
+          "costUsd": 0.18716500000000003,
+          "costBasis": "provider_reported",
+          "executionMs": 11868,
+          "settlementMs": 307
+        },
+        "continuationDisposition": "retain",
+        "executionStopAttestation": null,
+        "requested": true,
+        "finalSourceBasis": {
+          "capturedThroughSeq": 213,
+          "sourceHash": "dfc29a8077e939717417dc11e1e1306e18152cfb84911a73e62591d018a7be79"
+        },
+        "policy": {
+          "version": "1",
+          "limits": {
+            "maxSubmissions": 1,
+            "executionMs": 60000,
+            "settlementMs": 5000,
+            "inputBytes": 8192,
+            "outputBytes": 6144,
+            "nativeInspectionBytes": 8388608,
+            "nativeInspectionMs": 2000
+          },
+          "inputScope": "capture_added_input_only",
+          "hardCostLimitUsd": null,
+          "sourceContextLimitTokens": null,
+          "settlementIsHardStop": false,
+          "costCheck": "post_request",
+          "outputCheck": "assembled_answer_bytes"
+        }
+      },
+      "operationId": "c0b7362e-7f20-4172-a0f7-7080be9bdebe",
+      "mechanism": "cc_checkpoint",
+      "scope": "session",
+      "conversationId": "c4793979-c4b2-43b9-af8a-05b52b1f4660",
+      "ordinal": 1,
+      "phase": "ready",
+      "lastStablePhase": null,
+      "boundary": {
+        "capturedThroughSeq": 213,
+        "sourceHash": "dfc29a8077e939717417dc11e1e1306e18152cfb84911a73e62591d018a7be79"
+      },
+      "checkpoint": {
+        "checkpointId": "c0b7362e-7f20-4172-a0f7-7080be9bdebe",
+        "schemaVersion": 1,
+        "seedSha256": "2e7dae4d62c25a70a8ff238e9cf10297315548fe2b9ad2b2301ea11d78fe1e60",
+        "sectionBytes": {
+          "total": 4282,
+          "workingState": 2873,
+          "recentDialogue": 228,
+          "recoveryFraming": 1181
+        },
+        "omissions": [],
+        "versions": {
+          "generatorVersion": "2",
+          "builderVersion": "2",
+          "normalizerVersion": "2"
+        },
+        "artifactProvenance": null,
+        "createdAt": "2026-09-18T09:21:27.308Z"
+      },
+      "delivery": null,
+      "acceptance": null,
+      "hasAcceptedContinuation": false,
+      "failure": null,
+      "recoversOperationId": null,
+      "supersededByOperationId": null,
+      "generationPassCount": 2,
+      "compactionUsage": {
+        "inputTokens": 4,
+        "cachedInputTokens": 61328,
+        "outputTokens": 808,
+        "costUsd": null,
+        "durationMs": null
+      },
+      "seedTokenEstimate": null,
+      "contextOccupancy": null,
+      "requestedAt": "2026-09-18T09:21:15.056Z",
+      "updatedAt": "2026-09-18T09:21:45.062Z"
+    }
+  ],
+  "nextBefore": null
+}

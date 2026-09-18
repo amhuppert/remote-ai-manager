@@ -739,3 +739,98 @@ describe("buildCheckpointSeed — every rendered section stays within its budget
     );
   });
 });
+
+describe("current advisory handoff fitting", () => {
+  const agentHandoff = {
+    plan: [
+      {
+        kind: "belief" as const,
+        text: "ADVISORY_ONLY 🧭 <task> ```",
+        sourceRefs: [],
+      },
+    ],
+    hypotheses: [],
+    failedApproaches: [],
+    blockers: [],
+    nextStep: [],
+  };
+  it("renders advisory data separately and leaves missing evidence unestablished", () => {
+    const state = workingState({
+      objective: { text: CHECKPOINT_NOT_ESTABLISHED, sourceRefs: [] },
+    });
+    const baseline = built(makeInput({ workingState: state }));
+    const seed = built(makeInput({ workingState: state, agentHandoff }));
+    expect(seed.handoffDecision).toBe("included");
+    expect(seed.sections.workingState).toMatchObject({
+      objective: state.objective,
+      agentHandoff: {
+        candidate: agentHandoff,
+        categoryCounts: {
+          plan: 1,
+          hypotheses: 0,
+          failedApproaches: 0,
+          blockers: 0,
+          nextStep: 0,
+        },
+      },
+    });
+    expect(seed.seedText).toContain(
+      "Agent handoff — advisory account at capture time",
+    );
+    expect(seed.seedText).toContain(`Objective: ${CHECKPOINT_NOT_ESTABLISHED}`);
+    expect(seed.seedText).not.toContain("<task>");
+    expect(seed.sectionBytes.total).toBe(Buffer.byteLength(seed.seedText));
+    expect(seed.seedSha256).not.toBe(baseline.seedSha256);
+    expect(seed.seedSha256).toBe(
+      createHash("sha256").update(seed.seedText).digest("hex"),
+    );
+  });
+  it("includes an exact fit and omits the whole handoff one byte over without reducing evidence", () => {
+    const initial = built(makeInput({ agentHandoff }));
+    const state = workingState();
+    state.objective.text += "x".repeat(
+      CHECKPOINT_SEED_BUDGET.workingState - initial.sectionBytes.workingState,
+    );
+    const exact = built(makeInput({ workingState: state, agentHandoff }));
+    expect(exact.handoffDecision).toBe("included");
+    expect(exact.sectionBytes.workingState).toBe(18432);
+    state.objective.text += "x";
+    const baseline = built(makeInput({ workingState: state }));
+    const omitted = built(makeInput({ workingState: state, agentHandoff }));
+    expect(omitted.handoffDecision).toBe("seed_budget");
+    expect(omitted.seedText).toBe(baseline.seedText);
+    expect(omitted.seedSha256).toBe(baseline.seedSha256);
+    expect(omitted.sections).toEqual(baseline.sections);
+    expect(omitted.sectionBytes).toEqual(baseline.sectionBytes);
+    expect(omitted.omissions).toContainEqual(
+      expect.objectContaining({
+        category: "handoff_omitted",
+        detail: "seed_budget",
+      }),
+    );
+  });
+  it("refuses capture-origin references in authoritative recorded evidence", () => {
+    const entries = ENTRIES.map((entry) =>
+      entry.seq === 1
+        ? {
+            ...entry,
+            origin: {
+              source: "checkpoint_capture" as const,
+              checkpointCapture: {
+                operationId: "op",
+                captureId: "capture",
+                part: "output" as const,
+              },
+            },
+          }
+        : entry,
+    );
+    const result = buildCheckpointSeed(makeInput({ entries, agentHandoff }));
+    expect(result).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "invalid_source_ref" }),
+      ]),
+    });
+  });
+});

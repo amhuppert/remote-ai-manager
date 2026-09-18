@@ -283,7 +283,7 @@ const sourceMeta: CompactionSourceMeta = {
 
 describe("PROMPT_VERSION", () => {
   it("is the v3 prompt contract", () => {
-    expect(PROMPT_VERSION).toBe("3");
+    expect(PROMPT_VERSION).toBe("4");
   });
 });
 

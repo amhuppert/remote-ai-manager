@@ -1,3 +1,4 @@
+import { checkpointHandoffEligibilityFixture } from "@/lib/conversation-checkpoints/testing/receipt-fixture";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -381,12 +382,18 @@ export function checkpointSurfaceFixture(
                 ],
           active,
           hosted: true,
+          handoff: checkpointHandoffEligibilityFixture(),
         },
       }),
     isLoading: false,
     isStarting: input.isStarting ?? false,
     isCancelling: input.isCancelling ?? false,
     isReconciling: input.isReconciling ?? false,
+    handoff: null,
+    isSkipping: false,
+    startHandoff: () => {},
+    skipHandoff: () => {},
+    acknowledgeCaptureStopped: () => {},
     requestError: input.requestError ?? null,
     hasOlder: input.hasOlder ?? false,
     loadOlder: input.onLoadOlder ?? (() => {}),

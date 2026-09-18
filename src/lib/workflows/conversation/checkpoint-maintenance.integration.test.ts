@@ -31,7 +31,10 @@ import {
   type LifecycleFixtureOptions,
 } from "./testing/lifecycle-fixture";
 import { checkpointScopeKeyForStoreIdentity } from "./actor-input-loader";
-import { seededPrompt } from "./testing/checkpoint-harness";
+import {
+  createCheckpointHarness as createHandoffHarness,
+  seededPrompt,
+} from "./testing/checkpoint-harness";
 import { enqueueQueuedMessage } from "@/lib/prompt/queue-operations";
 import { toQueuedMessageView } from "@/lib/conversations/message-queue-service";
 import {
@@ -554,6 +557,19 @@ describe("checkpoint admission through the manager", () => {
       refusals: [],
       active: null,
       hosted: false,
+      handoff: {
+        available: true,
+        mode: "tool-disabled",
+        reason: null,
+        policy: expect.objectContaining({
+          limits: expect.objectContaining({
+            executionMs: 60000,
+            inputBytes: 8192,
+            outputBytes: 6144,
+            maxSubmissions: 1,
+          }),
+        }),
+      },
     });
     expect(hosted().actor).toBeUndefined();
     expect((await readRow()).pendingQueue).toMatchObject([
@@ -1773,6 +1789,59 @@ describe.each(["session", "project"] as const)(
             ?.phase,
         ).toBe("ready");
         expect(phases.filter((phase) => phase === "ready")).toHaveLength(1);
+      },
+    );
+  },
+);
+
+describe.each(["session", "project"] as const)(
+  "explicit capture preserves baseline refusals (%s)",
+  (scope) => {
+    it.each([
+      {
+        name: "archived",
+        conversation: { archived: true },
+        code: "conversation_archived",
+      },
+      {
+        name: "owned",
+        conversation: {
+          owner: {
+            kind: "collaboration" as const,
+            workflowId: "wf",
+            attemptEpoch: 0,
+          },
+        },
+        code: "conversation_owned",
+      },
+      {
+        name: "question",
+        conversation: { pendingQuestionId: "q" },
+        code: "question_pending",
+      },
+    ])(
+      "$name refuses before capture allocation",
+      async ({ conversation, code }) => {
+        const capture = vi.fn();
+        const h = await createHandoffHarness({
+          scope,
+          conversation,
+          captureHandoff: capture,
+        });
+        try {
+          expect(
+            await h.fixture.manager.startConversationCheckpoint({
+              address: h.fixture.binding.address,
+              requestId: randomUUID(),
+              handoff: { mode: "tool-disabled" },
+            }),
+          ).toMatchObject({ kind: "refused", refusal: { code } });
+          expect(h.state.created).toEqual([]);
+          expect(capture).not.toHaveBeenCalled();
+          expect((await h.readRow()).backendRef).toEqual(h.seededRef);
+        } finally {
+          await h.close();
+        }
       },
     );
   },

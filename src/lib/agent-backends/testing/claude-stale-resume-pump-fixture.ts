@@ -46,6 +46,7 @@ function createRejectableProviderPort(): {
   };
 
   const query: ClaudeSdkQueryPort = {
+    async awaitChildCollection() {},
     close() {
       settleNext?.resolve({ value: undefined, done: true });
       settleNext = undefined;

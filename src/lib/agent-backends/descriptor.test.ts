@@ -144,6 +144,11 @@ function makeDescriptor(
         externalTurns: true,
         checkpoint: false,
         checkpointFork: false,
+        handoffCapture: {
+          available: false,
+          mode: null,
+          reason: "Capture is unavailable",
+        },
         capabilityKinds: [{ kind: "skills", applyTiming: "idle_live" }],
       },
       fsWriteRestriction: "unsupported",

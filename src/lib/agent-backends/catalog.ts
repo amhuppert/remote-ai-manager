@@ -21,6 +21,7 @@ import {
   type SkillTriggerPrefix,
 } from "./descriptor";
 import {
+  captureAvailabilitySchema,
   backendModelCatalogSchema,
   effortLevelSchema,
   type BackendModelCatalog,
@@ -93,6 +94,7 @@ export const backendCatalogCapabilitiesSchema = z.object({
   externalTurns: z.boolean(),
   checkpoint: z.boolean(),
   checkpointFork: z.boolean(),
+  handoffCapture: captureAvailabilitySchema,
   capabilityKinds: z.array(
     z.object({
       kind: capabilityKindSchema,

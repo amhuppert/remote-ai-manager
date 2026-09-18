@@ -142,6 +142,11 @@ describe("cursor descriptor — conversation capabilities", () => {
       externalTurns: false,
       checkpoint: false,
       checkpointFork: false,
+      handoffCapture: {
+        available: false,
+        mode: null,
+        reason: "Capture is unavailable",
+      },
       capabilityKinds: [
         { kind: "skills", applyTiming: "next_conversation" },
         { kind: "plugins", applyTiming: "next_conversation" },

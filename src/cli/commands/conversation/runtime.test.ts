@@ -1,3 +1,4 @@
+import { CHECKPOINT_CAPTURE_POLICY } from "@/lib/conversation-checkpoints/receipt";
 import { describe, expect, it } from "vitest";
 import { milliseconds } from "cli-for-agents";
 import { runCli } from "cli-for-agents/runtime";
@@ -131,6 +132,7 @@ function receipt(phase = "building") {
   return {
     operationId: "operation-one",
     mechanism: "cc_checkpoint",
+    handoff: null,
     scope: "session",
     conversationId: "other",
     ordinal: 1,
@@ -595,6 +597,12 @@ describe("native conversation runtime", () => {
         jsonReply({
           eligible: false,
           hosted: true,
+          handoff: {
+            available: false,
+            mode: null,
+            reason: "unavailable",
+            policy: CHECKPOINT_CAPTURE_POLICY,
+          },
           active: receipt(),
           refusals: [
             {

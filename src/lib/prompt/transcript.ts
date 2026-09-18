@@ -416,6 +416,7 @@ function* toCopyEntries(
         kind: "message",
         role: entry.role,
         content: entry.content,
+        ...(entry.origin ? { origin: entry.origin } : {}),
         entryId: entry.id ?? null,
         timestamp: entry.timestamp ?? null,
         ...(entry.uuid !== undefined ? { uuid: entry.uuid } : {}),
@@ -558,6 +559,7 @@ export async function findForkAnchorUuid(
         kind: "message",
         role: entry.role,
         content: entry.content,
+        ...(entry.origin ? { origin: entry.origin } : {}),
         entryId: entry.id ?? null,
         timestamp: entry.timestamp ?? null,
         ...(entry.uuid !== undefined ? { uuid: entry.uuid } : {}),
@@ -1174,6 +1176,7 @@ async function readConversationMessagesWithSeqImpl(
       kind: "message",
       role: entry.role,
       content: entry.content,
+      ...(entry.origin ? { origin: entry.origin } : {}),
       entryId: entry.id ?? null,
       timestamp: entry.timestamp ?? null,
     });
@@ -1205,6 +1208,14 @@ async function readConversationMessagesWithSeqImpl(
               modelSelection: meta?.modelSelection,
             }),
         seq: lastPart.seq,
+        ...(unit.parts.some((part) => part.origin)
+          ? {
+              sourceParts: unit.parts.map(({ seq, origin }) => ({
+                seq,
+                ...(origin ? { origin } : {}),
+              })),
+            }
+          : {}),
       };
     },
   );
@@ -1222,6 +1233,7 @@ async function readConversationMessagesWithSeqImpl(
 // ============================================================
 
 interface TranscriptEntryBaseWithSeq {
+  origin?: TranscriptMessageOrigin;
   /** 0-based JSONL line index of this entry. */
   seq: number;
   /** `TranscriptEntry.id` when present; null on id-less/legacy entries. */
@@ -1378,6 +1390,7 @@ async function readTranscriptEntriesWithSeqImpl(
         role: entry.role,
         timestamp: entry.timestamp ?? null,
         content: entry.content,
+        ...(entry.origin ? { origin: entry.origin } : {}),
       });
       // maxSeq tracks VISIBLE entries only: a trailing tool_result line
       // belongs to an in-flight turn and must not advance staleness.
@@ -1392,6 +1405,7 @@ async function readTranscriptEntriesWithSeqImpl(
         entryId: entry.id ?? null,
         timestamp: entry.timestamp ?? null,
         content: projectStoredToolResultBlocks(entry, toolNamesById),
+        ...(entry.origin ? { origin: entry.origin } : {}),
       });
     }
   }

@@ -69,7 +69,15 @@ export default function ConversationCheckpointControls({
   const surface = useConversationCheckpoint(target);
   const artifact = useCheckpointArtifactComparison(target);
   const [panelOpen, setPanelOpen] = useState(false);
-  const openPanel = useCallback(() => setPanelOpen(true), []);
+  const [preparation, setPreparation] = useState(false);
+  const openPanel = useCallback(() => {
+    setPreparation(false);
+    setPanelOpen(true);
+  }, []);
+  const prepareHandoff = useCallback(() => {
+    setPreparation(true);
+    setPanelOpen(true);
+  }, []);
 
   // The rolling artifact is this menu's other action. It shares the list query
   // the comparison above already observes, so offering it here costs no extra
@@ -109,6 +117,7 @@ export default function ConversationCheckpointControls({
             chip={surface.chip}
             action={surface.action}
             onCompactContextNow={surface.start}
+            onPrepareHandoff={prepareHandoff}
             onViewCheckpoint={openPanel}
           />
           <DropdownMenuSeparator />
@@ -123,6 +132,8 @@ export default function ConversationCheckpointControls({
         open={panelOpen}
         onOpenChange={setPanelOpen}
         surface={surface}
+        preparation={preparation}
+        onPreparationComplete={() => setPreparation(false)}
         {...(sourceConversation ? { sourceConversation } : {})}
         {...(initialForkModel ? { initialForkModel } : {})}
         {...(onForkCreated ? { onForkCreated } : {})}

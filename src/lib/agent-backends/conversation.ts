@@ -6,7 +6,13 @@ import type {
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import type { BackendModelSelection, ConversationTokenUsage } from "./schemas";
+import type {
+  BackendModelSelection,
+  ConversationTokenUsage,
+  CaptureMode,
+  CaptureLimits,
+  CaptureHandoffResult,
+} from "./schemas";
 import type { FsWritePolicy } from "./task";
 import type { ConversationToolingOverrides } from "./types";
 import type {
@@ -239,6 +245,7 @@ export interface ConversationBackendRuntime {
    */
   readonly fsWritePolicy?: FsWritePolicy;
 
+  captureHandoff?(input: CaptureHandoffInput): Promise<CaptureHandoffResult>;
   sendTurn(
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult>;
@@ -284,6 +291,11 @@ export interface ConversationBackendRuntime {
 }
 
 export interface ConversationBackendCreateInput extends ExecutionIntent {
+  initialPurpose?: {
+    kind: "checkpoint_handoff";
+    captureId: string;
+    mode: CaptureMode;
+  };
   conversationId: string;
   /**
    * Conversation ID this runtime addresses on the CC side: the identity put
@@ -414,4 +426,16 @@ export interface ConversationBackendFactory {
 export interface WorkflowLaneIdentity {
   executionId: string;
   contextId: string;
+}
+
+export type { CaptureHandoffResult } from "./schemas";
+
+export interface CaptureHandoffInput {
+  captureId: string;
+  mode: CaptureMode;
+  promptText: string;
+  outputSchema: Record<string, unknown>;
+  limits: CaptureLimits;
+  signal: AbortSignal;
+  onTranscript(entry: AgentTranscriptEntry): Promise<void>;
 }

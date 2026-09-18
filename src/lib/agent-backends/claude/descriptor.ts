@@ -86,6 +86,10 @@ export const claudeConversationCapabilities: BackendConversationCapabilities = {
   // scripts/probes/run-checkpoint-continuation.sh.
   checkpoint: true,
   checkpointFork: true,
+  handoffCapture: {
+    available: true,
+    mode: "tool-disabled",
+  },
   capabilityKinds: [
     { kind: "skills", applyTiming: "idle_live" },
     { kind: "plugins", applyTiming: "idle_live" },

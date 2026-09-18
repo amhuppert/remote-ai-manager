@@ -1,3 +1,4 @@
+import { addCheckpointHandoff } from "./0053-add-checkpoint-handoff";
 import { optionalCheckpointForkWork } from "./0052-optional-checkpoint-fork-work";
 import { retireStoredShapeReaders } from "./0051-retire-stored-shape-readers";
 import { removeExecutionSeedFiller } from "./0050-remove-execution-seed-filler";
@@ -141,6 +142,7 @@ export const migrations: readonly StateMigration[] = [
   removeExecutionSeedFiller,
   retireStoredShapeReaders,
   optionalCheckpointForkWork,
+  addCheckpointHandoff,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

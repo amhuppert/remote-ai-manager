@@ -67,6 +67,7 @@ export interface SessionActionsMenuProps {
   checkpointChip?: CheckpointChipState;
   checkpointAction?: CheckpointActionState;
   onCompactContextNow?: () => void;
+  onPrepareHandoff?: () => void;
   onViewCheckpoint?: () => void;
 }
 
@@ -88,6 +89,7 @@ export default function SessionActionsMenu({
   checkpointChip,
   checkpointAction,
   onCompactContextNow,
+  onPrepareHandoff,
   onViewCheckpoint,
 }: SessionActionsMenuProps): React.JSX.Element {
   const showCompact =
@@ -259,6 +261,7 @@ export default function SessionActionsMenu({
                   action={checkpointAction}
                   {...(onCompactContextNow ? { onCompactContextNow } : {})}
                   {...(onViewCheckpoint ? { onViewCheckpoint } : {})}
+                  {...(onPrepareHandoff ? { onPrepareHandoff } : {})}
                 />
                 <DropdownMenuSeparator />
               </>

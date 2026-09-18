@@ -583,6 +583,54 @@ export function createProductionConversationManagerDependencies(): ConversationM
       },
       backendSupportsCheckpoint: (backend) =>
         conversationCapabilitiesForBackend(backend).checkpoint,
+      captureAvailability: (backend) =>
+        conversationCapabilitiesForBackend(backend).handoffCapture,
+      async resolveCaptureModel(input) {
+        const { resolveCheckpointCaptureSelection } =
+          await import("./actor-implementations");
+        return resolveCheckpointCaptureSelection(
+          await loadProductionActorDependencies(),
+          input,
+        );
+      },
+      async acquireCaptureRuntime(input, signal) {
+        const { acquireCheckpointCaptureRuntime } =
+          await import("./actor-implementations");
+        actorDependencies ??= loadProductionActorDependencies();
+        const deps = await actorDependencies;
+        const runtime = getConversationRuntime(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        );
+        if (!runtime) return undefined;
+        const state = createConversationPolicyState({
+          persistence: "durable",
+          managed: runtime.managed,
+          effects: deps.effects,
+          getConversation: deps.execution.getConversation,
+        });
+        const policy = createConversationRuntimePolicy(deps.policy, {
+          persistence: "durable",
+          projectName: input.target.projectName,
+          worktreePath: input.worktreePath,
+          state,
+          getRuntime: () => runtime.managed.backend,
+          getTooling: () => runtime.tooling,
+        });
+        return acquireCheckpointCaptureRuntime(
+          { execution: deps.execution, policy },
+          input,
+          signal,
+        );
+      },
+      async appendCaptureEntryOnce(conversationId, entry) {
+        const { appendTranscriptEntryOnce } =
+          await import("@/lib/prompt/transcript");
+        await appendTranscriptEntryOnce(conversationId, entry);
+      },
       async appendUserEntryOnce(conversationId, entry) {
         const { appendTranscriptEntryOnce } =
           await import("@/lib/prompt/transcript");

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { agentBackendSchema } from "@/lib/shared/schemas";
+import {
+  agentBackendSchema,
+  agentSessionRefSchema,
+} from "@/lib/shared/schemas";
 
 const backendModelIdentifierSchema = z.string().trim().min(1);
 
@@ -495,3 +498,169 @@ export const codexConfigSchema = z
   })
   .strict();
 export type CodexConfig = z.infer<typeof codexConfigSchema>;
+
+export const captureModeSchema = z.enum(["tool-disabled", "instruction-only"]);
+export type CaptureMode = z.infer<typeof captureModeSchema>;
+
+export const captureAvailabilitySchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(true), mode: captureModeSchema }).strict(),
+  z
+    .object({
+      available: z.literal(false),
+      mode: captureModeSchema.nullable(),
+      reason: z.string().min(1),
+    })
+    .strict(),
+]);
+export type CaptureAvailability = z.infer<typeof captureAvailabilitySchema>;
+
+export const captureLimitsSchema = z
+  .object({
+    maxSubmissions: z.literal(1),
+    executionMs: z.number().int().positive(),
+    settlementMs: z.number().int().positive(),
+    inputBytes: z.number().int().positive(),
+    outputBytes: z.number().int().positive(),
+    nativeInspectionBytes: z.number().int().positive(),
+    nativeInspectionMs: z.number().int().positive(),
+  })
+  .strict();
+export type CaptureLimits = z.infer<typeof captureLimitsSchema>;
+
+export const captureOmissionReasonSchema = z.enum([
+  "unavailable",
+  "continuity_unavailable",
+  "mode_establishment_failed",
+  "mode_changed",
+  "execution_limit",
+  "input_limit",
+  "output_limit",
+  "native_inspection_incomplete",
+  "prohibited_activity",
+  "invalid_output",
+  "capture_failed",
+  "skipped",
+  "cancelled",
+  "interrupted",
+  "seed_budget",
+  "checkpoint_failed",
+  "cleanup_unverified",
+]);
+export type CaptureOmissionReason = z.infer<typeof captureOmissionReasonSchema>;
+
+export const captureUsageSchema = z
+  .object({
+    inputTokens: z.number().int().nonnegative().nullable(),
+    outputTokens: z.number().int().nonnegative().nullable(),
+    cachedInputTokens: z.number().int().nonnegative().nullable(),
+    costUsd: z.number().nonnegative().nullable(),
+    costBasis: z.enum(["provider_reported", "pricing_estimate"]).nullable(),
+    executionMs: z.number().nonnegative().nullable(),
+    settlementMs: z.number().nonnegative().nullable(),
+  })
+  .strict()
+  .refine((usage) => (usage.costUsd === null) === (usage.costBasis === null), {
+    path: ["costBasis"],
+    message:
+      "Capture cost and its attribution basis must be available together",
+  });
+export type CaptureUsage = z.infer<typeof captureUsageSchema>;
+
+export const captureActivitySchema = z
+  .object({
+    transport: z.enum(["complete", "incomplete"]),
+    native: z.enum(["complete", "unavailable", "incomplete"]),
+    prohibited: z.enum(["observed", "not_observed", "unknown"]),
+    inspectedBytes: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+export type CaptureActivity = z.infer<typeof captureActivitySchema>;
+
+export const captureHandoffResultSchema = z
+  .object({
+    modeEstablished: z.boolean(),
+    submitted: z.boolean(),
+    correlatedCompletion: z.boolean(),
+    candidateText: z.string().min(1).nullable(),
+    omissionReason: captureOmissionReasonSchema.nullable(),
+    executionSettled: z.boolean(),
+    cleanupFailure: z
+      .object({
+        code: z.literal("cleanup_unverified"),
+        message: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+    continuation: z
+      .object({
+        disposition: z.enum(["retain", "clear"]),
+        backendRef: agentSessionRefSchema.nullable(),
+        nextRuntime: z.enum(["current", "recreate_from_ref", "unavailable"]),
+      })
+      .strict(),
+    activity: captureActivitySchema,
+    usage: captureUsageSchema,
+  })
+  .strict()
+  .superRefine((result, ctx) => {
+    const invalid = (path: string[], message: string) =>
+      ctx.addIssue({ code: "custom", path, message });
+    if (result.cleanupFailure !== null && result.executionSettled) {
+      invalid(
+        ["executionSettled"],
+        "Cleanup failure cannot attest settled execution",
+      );
+    }
+    if (result.correlatedCompletion && !result.submitted) {
+      invalid(
+        ["correlatedCompletion"],
+        "Completion requires a submitted capture",
+      );
+    }
+    if (
+      result.candidateText !== null &&
+      (!result.modeEstablished ||
+        !result.submitted ||
+        !result.correlatedCompletion ||
+        !result.executionSettled ||
+        result.cleanupFailure !== null ||
+        result.omissionReason !== null ||
+        result.activity.transport !== "complete" ||
+        result.activity.native === "incomplete" ||
+        result.activity.prohibited !== "not_observed")
+    ) {
+      invalid(
+        ["candidateText"],
+        "Candidate requires established mode, correlated settled completion and acceptable activity coverage",
+      );
+    }
+    if (result.candidateText === null && result.omissionReason === null) {
+      invalid(["omissionReason"], "An omitted candidate requires a reason");
+    }
+    const continuation = result.continuation;
+    if (
+      (continuation.disposition === "retain") !==
+      (continuation.backendRef !== null)
+    ) {
+      invalid(
+        ["continuation", "backendRef"],
+        "Retain requires a reference; clear requires null",
+      );
+    }
+    if (
+      continuation.disposition === "clear" &&
+      continuation.nextRuntime !== "unavailable"
+    ) {
+      invalid(
+        ["continuation", "nextRuntime"],
+        "Cleared continuity cannot restore a runtime",
+      );
+    }
+    if (result.submitted && continuation.nextRuntime === "current") {
+      invalid(
+        ["continuation", "nextRuntime"],
+        "A submitted capture must retire its runtime binding",
+      );
+    }
+  });
+export type CaptureHandoffResult = z.infer<typeof captureHandoffResultSchema>;

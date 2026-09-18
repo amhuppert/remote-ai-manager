@@ -1,3 +1,4 @@
+import { stableStringify } from "@/lib/state-store/serialization";
 import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
 import { toPromptActorResult } from "./turn-result";
 import {
@@ -2171,10 +2172,171 @@ async function finalizeQueuedDeliveryForMachine(
   }
 }
 
+export type CheckpointCaptureRuntimeInput = Pick<
+  import("@/lib/agent-backends/conversation").ConversationBackendCreateInput,
+  "projectPath" | "worktreePath"
+> & {
+  target: import("@/lib/conversations/conversation-target").ConversationTarget;
+  agentBackend: AgentBackendId;
+  modelSelection: BackendModelSelection;
+  backendRef: import("@/lib/shared/schemas").AgentSessionRef;
+  captureId: string;
+  mode: import("@/lib/agent-backends/schemas").CaptureMode;
+};
+
+export interface CheckpointCaptureSelectionInput {
+  agentBackend: AgentBackendId;
+  transcriptPath: string | null;
+  projectPath: string;
+}
+
+export async function resolveCheckpointCaptureSelection(
+  deps: Pick<ConversationActorDependencies, "execution" | "transcript">,
+  input: CheckpointCaptureSelectionInput,
+): Promise<BackendModelSelection> {
+  const [config, priorMessages] = await Promise.all([
+    deps.execution.readConfig(),
+    deps.transcript.readConversationMessages(input.transcriptPath),
+  ]);
+  return resolveTurnModelSelection({
+    backend: input.agentBackend,
+    config,
+    priorMessages,
+    explicitModelSelection: null,
+  });
+}
+
+export async function acquireCheckpointCaptureRuntime(
+  deps: {
+    execution: ConversationActorDependencies["execution"];
+    policy: Pick<
+      ConversationActorDependencies["policy"],
+      | "composePortableMcpForConversation"
+      | "composeCapabilityConfigForConversation"
+      | "composeCapabilityConfigForProjectConversation"
+    >;
+  },
+  input: CheckpointCaptureRuntimeInput,
+  signal?: AbortSignal,
+): Promise<ConversationBackendRuntime | undefined> {
+  signal?.throwIfAborted();
+  const sessionName = conversationTargetStoreSessionName(input.target);
+  const key = conversationRuntimeKey(
+    input.projectPath,
+    sessionName,
+    input.target.conversationId,
+  );
+  const host = deps.execution.getRuntime(key);
+  if (!host || input.backendRef.backend !== input.agentBackend)
+    return undefined;
+  const matches = (runtime: ConversationBackendRuntime) =>
+    runtime.backend === input.agentBackend &&
+    stableStringify(runtime.modelSelection) ===
+      stableStringify(input.modelSelection);
+  const current = host.managed.backend;
+  if (current?.status === "alive") {
+    if (!matches(current)) return undefined;
+    // Disable idle eviction while maintenance awaits control acknowledgement;
+    // a timer-driven close must not bypass the capture mode setup barrier.
+    current.notifyTurnStarting?.();
+    return current;
+  }
+  const projectName = input.target.projectName;
+  const portableMcp = await deps.policy.composePortableMcpForConversation({
+    backend: input.agentBackend,
+    projectPath: input.projectPath,
+    projectName,
+    sessionName,
+    conversationId: input.target.conversationId,
+    worktreePath: input.worktreePath,
+    ...(host.tooling?.portableMcp !== undefined
+      ? { transientPortableMcp: host.tooling.portableMcp }
+      : {}),
+  });
+  const capabilitySeed = await resolveCapabilitySeedForNewRuntime(deps.policy, {
+    projectPath: input.projectPath,
+    projectName,
+    sessionName,
+    conversationId: input.target.conversationId,
+    worktreePath: input.worktreePath,
+    backend: input.agentBackend,
+    isProjectConversation: input.target.scope === "project",
+    emitStreamError() {},
+  });
+  signal?.throwIfAborted();
+  if (host.managed.backend) await host.managed.close();
+  const incarnation = host.managed.beginCreation();
+  const backgroundIdentity = {
+    projectName,
+    sessionName,
+    conversationId: input.target.conversationId,
+  };
+  const created = await deps.execution
+    .getConversationBackendFactory(input.agentBackend)
+    .createRuntime({
+      executionClass: "ordinary-conversation",
+      initialPurpose: {
+        kind: "checkpoint_handoff",
+        captureId: input.captureId,
+        mode: input.mode,
+      },
+      conversationId: input.target.conversationId,
+      conversationTarget: input.target,
+      projectPath: input.projectPath,
+      projectName,
+      worktreePath: input.worktreePath,
+      persistedRef: input.backendRef,
+      modelSelection: input.modelSelection,
+      sessionInstructions: [],
+      tooling: {
+        portableMcp,
+        ...(capabilitySeed
+          ? { capabilities: capabilitySeed.capabilities }
+          : {}),
+      },
+      onBackgroundActivity(activity) {
+        if (
+          deps.execution.getRuntime(key) === host &&
+          host.managed.isCurrent(incarnation)
+        )
+          getBackgroundActivityChannel().record(backgroundIdentity, activity);
+      },
+    });
+  // Installation precedes cancellation checks so the existing owner retains cleanup.
+  host.managed.install(
+    incarnation,
+    created,
+    {
+      backend: input.agentBackend,
+      modelSelection: input.modelSelection,
+      alignmentVersion: null,
+      repeatableInstructions: [],
+      instructionSelection: { autonomous: false },
+    },
+    {
+      register: deps.execution.registerBackendRuntime,
+      unregister: deps.execution.unregisterBackendRuntime,
+    },
+  );
+  if (signal?.aborted || !matches(created)) {
+    await host.managed.close();
+    signal?.throwIfAborted();
+    return undefined;
+  }
+  return created;
+}
+
 export function createConversationActorImplementations(
   deps: ConversationActorDependencies,
 ) {
   return {
+    resolveCheckpointCaptureSelection: (
+      input: CheckpointCaptureSelectionInput,
+    ) => resolveCheckpointCaptureSelection(deps, input),
+    acquireCheckpointCaptureRuntime: (
+      input: CheckpointCaptureRuntimeInput,
+      signal?: AbortSignal,
+    ) => acquireCheckpointCaptureRuntime(deps, input, signal),
     prepareTurnForMachine: (input: PrepareTurnInput, signal?: AbortSignal) =>
       prepareTurnForMachine(deps, input, signal),
     executePromptForMachine: (

@@ -77,8 +77,8 @@ function render(
 }
 
 describe("NORMALIZER_VERSION", () => {
-  it("is version 1", () => {
-    expect(NORMALIZER_VERSION).toBe("1");
+  it("is version 2", () => {
+    expect(NORMALIZER_VERSION).toBe("2");
   });
 });
 
@@ -1531,5 +1531,57 @@ describe("renderCompleteEntryLines", () => {
     // "🧠 thinking:" + thinking lines + trailing empty, then the text lines.
     expect(lines).toHaveLength(2 * (ENORMOUS_LINE_COUNT + 1) + 1);
     expect(lines[0]).toBe("🧠 thinking:");
+  });
+});
+
+describe("capture audit origin", () => {
+  it("labels mixed capture/tool parts without changing original message coordinates", () => {
+    const origin = {
+      source: "checkpoint_capture",
+      checkpointCapture: {
+        operationId: "op",
+        captureId: "op:capture",
+        part: "activity",
+      },
+    } as const;
+    const entries: TranscriptEntryWithSeq[] = [
+      entry(0, "user", [text("actual task")]),
+      entry(1, "assistant", [text("ordinary")]),
+      {
+        ...entry(2, "assistant", [text("capture\nline\u2028separator")]),
+        origin,
+      },
+      {
+        kind: "tool_result",
+        seq: 3,
+        entryId: null,
+        timestamp: null,
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tool",
+            content: "tool capture result",
+          },
+        ],
+        origin,
+      },
+      entry(4, "user", [text("next task")]),
+    ];
+    const result = render(entries, { includeTools: "full" });
+    expect(result.totalMessages).toBe(3);
+    expect(result.units[1]).toMatchObject({
+      ref: { messageIndex: 1, seqStart: 1, seqEnd: 3 },
+      sourceParts: [{ seq: 1 }, { seq: 2, origin }, { seq: 3, origin }],
+    });
+    expect(result.units[1]?.lines.join("\n")).toContain(
+      "checkpoint capture activity",
+    );
+    expect(result.units[2]?.ref).toMatchObject({
+      messageIndex: 2,
+      seqStart: 4,
+    });
+    expect(renderedTranscriptSchema.parse(result).units[1]).toMatchObject({
+      sourceParts: [{ seq: 1 }, { seq: 2, origin }, { seq: 3, origin }],
+    });
   });
 });

@@ -406,7 +406,11 @@ export const conversationMachine = setup({
       return {
         checkpoint: event.checkpoint,
         backendRef:
-          event.checkpoint?.phase === "ready" ? null : context.backendRef,
+          event.checkpoint?.phase === "ready" ||
+          (event.checkpoint?.phase === "needs_reconciliation" &&
+            event.clearContinuation)
+            ? null
+            : context.backendRef,
       };
     }),
   },

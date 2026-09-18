@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  captureModeSchema,
+  captureLimitsSchema,
+} from "@/lib/agent-backends/schemas";
+import {
+  CHECKPOINT_CAPTURE_LIMITS,
+  CHECKPOINT_CAPTURE_POLICY_VERSION,
+} from "./budget";
 import { checkpointForkFraming } from "./fork-framing";
 import {
   checkpointForkOriginSchema,
@@ -7,6 +15,9 @@ import {
 
 import {
   CHECKPOINT_MECHANISM,
+  checkpointHandoffReceiptSchema,
+  checkpointHandoffCategoryCountsSchema,
+  handoffCategoryCounts,
   checkpointAcceptanceSchema,
   checkpointArtifactProvenanceSchema,
   checkpointContextOccupancySchema,
@@ -37,7 +48,48 @@ export type CheckpointPayloadReceipt = z.infer<
   typeof checkpointPayloadReceiptSchema
 >;
 
+export const checkpointCapturePolicySchema = z.object({
+  version: z.string(),
+  limits: captureLimitsSchema,
+  inputScope: z.literal("capture_added_input_only"),
+  hardCostLimitUsd: z.null(),
+  sourceContextLimitTokens: z.null(),
+  settlementIsHardStop: z.literal(false),
+  costCheck: z.literal("post_request"),
+  outputCheck: z.literal("assembled_answer_bytes"),
+});
+
+export const CHECKPOINT_CAPTURE_POLICY = {
+  version: CHECKPOINT_CAPTURE_POLICY_VERSION,
+  limits: CHECKPOINT_CAPTURE_LIMITS,
+  inputScope: "capture_added_input_only",
+  hardCostLimitUsd: null,
+  sourceContextLimitTokens: null,
+  settlementIsHardStop: false,
+  costCheck: "post_request",
+  outputCheck: "assembled_answer_bytes",
+} as const;
+
+export const checkpointHandoffEligibilitySchema = z.object({
+  available: z.boolean(),
+  mode: captureModeSchema.nullable(),
+  reason: z.string().nullable(),
+  policy: checkpointCapturePolicySchema,
+});
+export type CheckpointHandoffEligibility = z.infer<
+  typeof checkpointHandoffEligibilitySchema
+>;
+
+export const checkpointPublicHandoffSchema =
+  checkpointHandoffReceiptSchema.extend({
+    requested: z.literal(true),
+    finalSourceBasis: checkpointSourceBasisSchema.nullable(),
+    categoryCounts: checkpointHandoffCategoryCountsSchema.nullable(),
+    policy: checkpointCapturePolicySchema.nullable(),
+  });
+
 export const checkpointReceiptSchema = z.object({
+  handoff: checkpointPublicHandoffSchema.nullable(),
   forkOrigin: checkpointForkOriginSchema.optional(),
   forkFramingBytes: z.number().int().nonnegative().max(4096).optional(),
   operationId: z.string().min(1),
@@ -112,6 +164,10 @@ export function checkpointReceipt(
           ).byteLength,
         }
       : {}),
+    handoff:
+      operation.handoff === null
+        ? null
+        : checkpointHandoffReceipt(operation.handoff),
     operationId: operation.id,
     mechanism: CHECKPOINT_MECHANISM,
     scope: operation.scope,
@@ -159,4 +215,24 @@ export function receiptSupersedes(
   cached: CheckpointReceipt,
 ): boolean {
   return incoming.updatedAt >= cached.updatedAt;
+}
+
+export function checkpointHandoffReceipt(
+  handoff: NonNullable<CheckpointOperation["handoff"]>,
+) {
+  // Pick the declared public fields, never spread the persistence record.
+  const publicFields = checkpointHandoffReceiptSchema.strip().parse(handoff);
+  return checkpointPublicHandoffSchema.parse({
+    ...publicFields,
+    requested: true,
+    finalSourceBasis: handoff.finalSourceBasis,
+    categoryCounts:
+      handoff.candidate === null
+        ? (handoff.categoryCounts ?? null)
+        : handoffCategoryCounts(handoff.candidate),
+    policy:
+      handoff.policyVersion === CHECKPOINT_CAPTURE_POLICY_VERSION
+        ? CHECKPOINT_CAPTURE_POLICY
+        : null,
+  });
 }

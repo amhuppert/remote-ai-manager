@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import { pendingHandoff, capturedHandoff } from "./handoff-fixture";
 import type Database from "better-sqlite3";
 
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -559,5 +562,256 @@ describe("checkpoint publication", () => {
     );
 
     expect(source).toContain("withCheckpointPublication");
+  });
+});
+
+describe("capture repository composition", () => {
+  it("publishes unavailable capture omission without inventing mode establishment or usage", async () => {
+    const requestId = "unavailable";
+    const handoff = pendingHandoff({
+      captureId: `${requestId}:capture`,
+      requestedMode: null,
+      admissionSourceBasis: BASIS,
+    });
+    unwrap(
+      await repo.admitOperation({
+        key: PROJECT_KEY,
+        requestId,
+        sourceBasis: BASIS,
+        priorBackendRef: PRIOR_REF,
+        requestedAt: handoff.requestedAt,
+        handoff,
+      }),
+    );
+    unwrap(
+      await repo.settleCapture({
+        key: PROJECT_KEY,
+        operationId: requestId,
+        captureId: handoff.captureId,
+        expectedSourceBasis: BASIS,
+        expectedStage: "pending",
+        at: "2026-09-07T12:04:02.000Z",
+        settlement: {
+          kind: "result",
+          handoff: {
+            ...handoff,
+            stage: "omitted",
+            omissionReason: "unavailable",
+            settledAt: "2026-09-07T12:04:02.000Z",
+            executionSettled: true,
+            auditDurable: true,
+            finalSourceBasis: BASIS,
+          },
+        },
+      }),
+    );
+    expect(frames).toHaveLength(2);
+    expect(logger.entries.map((entry) => entry.message)).toEqual([
+      "checkpoint.handoff.settled",
+      "checkpoint.handoff.omitted",
+    ]);
+    expect(logger.entries.at(-1)?.fields).toMatchObject({
+      requestedMode: null,
+      modeEstablished: false,
+      reason: "unavailable",
+      captureUsage: null,
+    });
+  });
+
+  it.each([SESSION_KEY, PROJECT_KEY])(
+    "publishes stop and reconciliation progress in $scope scope with safe lifecycle facts",
+    async (key) => {
+      const requestId = "capture-controls";
+      const handoff = pendingHandoff({
+        captureId: `${requestId}:capture`,
+        admissionSourceBasis: BASIS,
+      });
+      unwrap(
+        await repo.admitOperation({
+          key,
+          requestId,
+          sourceBasis: BASIS,
+          priorBackendRef: PRIOR_REF,
+          requestedAt: handoff.requestedAt,
+          handoff,
+        }),
+      );
+      unwrap(
+        await repo.beginCapture({
+          key,
+          operationId: requestId,
+          captureId: handoff.captureId,
+          expectedSourceBasis: BASIS,
+          at: "2026-09-07T12:04:01.000Z",
+        }),
+      );
+      unwrap(
+        await repo.settleCapture({
+          key,
+          operationId: requestId,
+          captureId: handoff.captureId,
+          expectedSourceBasis: BASIS,
+          expectedStage: "running",
+          at: "2026-09-07T12:04:02.000Z",
+          settlement: { kind: "stop", intent: "skip" },
+        }),
+      );
+      unwrap(
+        await repo.recordOutcome({
+          key,
+          operationId: requestId,
+          expectedPhase: "building",
+          phase: "needs_reconciliation",
+          at: "2026-09-07T12:04:03.000Z",
+          failure: {
+            code: "capture_cleanup_unverified",
+            message: "private provider reference must not enter logs",
+          },
+        }),
+      );
+      expect(frames).toHaveLength(4);
+      expect(
+        frames.every(
+          (frame) =>
+            frame.event.scope === key.scope &&
+            frame.durablePhase === frame.event.receipt.phase &&
+            frame.durableUpdatedAt === frame.event.receipt.updatedAt,
+        ),
+      ).toBe(true);
+      expect(logger.entries.map((entry) => entry.message)).toEqual([
+        "checkpoint.handoff.started",
+        "checkpoint.handoff.stop_requested",
+        "checkpoint.handoff.reconciliation_required",
+      ]);
+      expect(logger.entries.at(-1)?.fields).toMatchObject({
+        scope: key.scope,
+        conversationId: key.conversationId,
+        operationId: requestId,
+        captureId: handoff.captureId,
+        requestedMode: "instruction-only",
+      });
+      expect(JSON.stringify(logger.entries)).not.toContain(
+        "private provider reference",
+      );
+      expect(JSON.stringify(logger.entries)).not.toContain(key.projectPath);
+    },
+  );
+
+  it("forwards capture begin and settlement through the production decorator into durable SQLite state", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(SESSION_KEY.projectPath);
+      fixture.seedSession(SESSION_KEY.projectPath, "csm-alpha");
+      await fixture.seedConversation(
+        SESSION_KEY.projectPath,
+        "csm-alpha",
+        makeConversationState({
+          id: SESSION_KEY.conversationId,
+          agentBackend: "codex",
+          backendRef: { backend: "codex", ref: "source-continuity" },
+        }),
+      );
+      const raw = createConversationCheckpointsRepo(
+        fixture.db,
+        createWriteQueue(),
+        fixture.store.checkpointContinuation,
+      );
+      const capturedFrames: ConversationCheckpointUpdatedEvent[] = [];
+      const durableHandoffs: unknown[] = [];
+      const captureLog = createCapturingLogger();
+      const decorated = withCheckpointPublication(raw, {
+        projectName: () => "alpha",
+        log: captureLog,
+        publish: (event) => {
+          if (event.type === "conversation-checkpoint-updated") {
+            capturedFrames.push(event);
+            const row = fixture.db
+              .prepare(
+                "SELECT handoff_json FROM conversation_checkpoint_operations WHERE id = ?",
+              )
+              .get(event.receipt.operationId) as { handoff_json: string };
+            durableHandoffs.push(JSON.parse(row.handoff_json));
+          }
+          return { delivered: true };
+        },
+      });
+      expect(decorated.beginCapture).toBeTypeOf("function");
+      expect(decorated.settleCapture).toBeTypeOf("function");
+      const handoff = pendingHandoff({
+        captureId: "decorated:capture",
+        admissionSourceBasis: BASIS,
+      });
+      unwrap(
+        await decorated.admitOperation({
+          key: SESSION_KEY,
+          requestId: "decorated",
+          sourceBasis: BASIS,
+          priorBackendRef: "source-continuity",
+          requestedAt: handoff.requestedAt,
+          handoff,
+        }),
+      );
+      unwrap(
+        await decorated.beginCapture({
+          key: SESSION_KEY,
+          operationId: "decorated",
+          captureId: handoff.captureId,
+          expectedSourceBasis: BASIS,
+          at: "2026-09-07T12:04:01.000Z",
+        }),
+      );
+      const reloaded = createConversationCheckpointsRepo(
+        fixture.db,
+        createWriteQueue(),
+        fixture.recreateStore().checkpointContinuation,
+      );
+      expect(
+        (await reloaded.getOperation(SESSION_KEY, "decorated"))?.handoff?.stage,
+      ).toBe("running");
+      const captured = capturedHandoff({
+        captureId: handoff.captureId,
+        admissionSourceBasis: BASIS,
+      });
+      unwrap(
+        await decorated.settleCapture({
+          key: SESSION_KEY,
+          operationId: "decorated",
+          captureId: handoff.captureId,
+          expectedStage: "running",
+          expectedSourceBasis: BASIS,
+          at: "2026-09-07T12:04:04.000Z",
+          settlement: { kind: "result", handoff: captured },
+        }),
+      );
+      const operation = await reloaded.getOperation(SESSION_KEY, "decorated");
+      expect(operation?.handoff).toEqual(captured);
+      expect(operation?.sourceBasis).toEqual(captured.finalSourceBasis);
+      expect(await reloaded.getPayload(SESSION_KEY, "decorated")).toBeNull();
+      expect(capturedFrames).toHaveLength(3);
+      expect(durableHandoffs).toMatchObject([
+        { stage: "pending" },
+        { stage: "running" },
+        { stage: "captured" },
+      ]);
+      expect(captureLog.entries.map((entry) => entry.message)).toEqual([
+        "checkpoint.handoff.started",
+        "checkpoint.handoff.settled",
+      ]);
+      expect(JSON.stringify(captureLog.entries)).not.toContain(
+        "Preserve original checkpoint bytes",
+      );
+      const refused = await decorated.beginCapture({
+        key: SESSION_KEY,
+        operationId: "decorated",
+        captureId: handoff.captureId,
+        expectedSourceBasis: BASIS,
+        at: "2026-09-07T12:04:05.000Z",
+      });
+      expect(refused.ok).toBe(false);
+      expect(capturedFrames).toHaveLength(3);
+      expect(captureLog.entries).toHaveLength(2);
+    } finally {
+      fixture.close();
+    }
   });
 });

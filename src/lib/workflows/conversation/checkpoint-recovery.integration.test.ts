@@ -15,6 +15,7 @@ import type { ConversationCheckpointsRepo } from "@/lib/conversation-checkpoints
 import { setPersistenceDeps } from "./persistence";
 import {
   CHECKPOINT_TRANSCRIPT,
+  capturedHandoffResult,
   createCheckpointHarness,
   deferred,
   gatedGenerator,
@@ -33,6 +34,488 @@ afterEach(async () => {
   await harness?.close();
   harness = undefined;
 });
+
+describe.each(["session", "project"] as const)(
+  "capture cleanup reconcile (%s)",
+  (scope) => {
+    it("records late owned capture collection without testimony and keeps recovery explicit", async () => {
+      const capture = vi.fn(async () => ({
+        ...capturedHandoffResult(harness?.seededRef ?? null),
+        candidateText: null,
+        omissionReason: "cleanup_unverified" as const,
+        executionSettled: false,
+        cleanupFailure: {
+          code: "cleanup_unverified" as const,
+          message: "capture child has not settled yet",
+        },
+      }));
+      harness = await createCheckpointHarness({
+        scope,
+        captureHandoff: capture,
+      });
+      const h = harness;
+      const started = h.admittedOr(
+        await h.fixture.manager.startConversationCheckpoint({
+          address: h.fixture.binding.address,
+          requestId: randomUUID(),
+          handoff: { mode: "tool-disabled" },
+        }),
+      );
+      expect((await started.completion).phase).toBe("needs_reconciliation");
+      const queued = await h.enqueue("continue after late collection");
+      h.state.closeRejects = true;
+      expect(await reconcile(started.operation.id)).toMatchObject({
+        kind: "blocked",
+        refusal: { code: "reconciliation_failed" },
+      });
+      expect((await h.operation(started.operation.id))?.handoff).toMatchObject({
+        executionSettled: false,
+        executionStopAttestation: null,
+      });
+
+      h.state.closeRejects = false;
+      expect(await reconcile(started.operation.id)).toMatchObject({
+        kind: "blocked",
+        refusal: { code: "recovery_required" },
+      });
+      expect(h.hosted().runtime?.managed.backend).toBeUndefined();
+      expect((await h.operation(started.operation.id))?.handoff).toMatchObject({
+        stage: "omitted",
+        executionSettled: true,
+        executionStopAttestation: null,
+        auditDurable: true,
+        candidate: null,
+        continuationDisposition: "clear",
+      });
+      const settlements = (
+        h.fixture.transcripts.get(CHECKPOINT_TRANSCRIPT) ?? []
+      ).filter(
+        (entry) => entry.origin?.checkpointCapture?.part === "settlement",
+      );
+      expect(settlements).toHaveLength(1);
+      expect(settlements).toMatchObject([
+        {
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining('"executionSettled":true'),
+            },
+          ],
+        },
+      ]);
+      expect((await h.readRow()).backendRef).toBeNull();
+      expect((await h.readRow()).pendingQueue).toMatchObject([
+        { id: queued.id, status: "pending" },
+      ]);
+      expect(h.state.dispatches).toEqual([]);
+      expect(h.state.laneCalls).toEqual([]);
+      await reconcile(started.operation.id);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(
+        (h.fixture.transcripts.get(CHECKPOINT_TRANSCRIPT) ?? []).filter(
+          (entry) => entry.origin?.checkpointCapture?.part === "settlement",
+        ),
+      ).toHaveLength(1);
+
+      const recovered = h.admittedOr(
+        await h.start(randomUUID(), started.operation.id),
+      );
+      expect((await recovered.completion).phase).toBe("ready");
+      await vi.waitFor(() =>
+        expect(h.state.dispatches).toEqual([
+          seededPrompt("continue after late collection"),
+        ]),
+      );
+      expect(capture).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["close", "audit"] as const)(
+      "retries known %s work as observed cleanup without testimony or capture replay",
+      async (failure) => {
+        let failAudit = failure === "audit";
+        const capture = vi.fn(async () =>
+          capturedHandoffResult(harness?.seededRef ?? null),
+        );
+        harness = await createCheckpointHarness({
+          scope,
+          captureHandoff: capture,
+          appendCaptureEntryOnce: async (id, entry, append) => {
+            if (
+              failAudit &&
+              entry.origin?.checkpointCapture?.part === "settlement"
+            )
+              throw new Error("capture append unavailable");
+            await append(id, entry);
+          },
+        });
+        const h = harness;
+        h.state.closeRejects = failure === "close";
+        const started = h.admittedOr(
+          await h.fixture.manager.startConversationCheckpoint({
+            address: h.fixture.binding.address,
+            requestId: randomUUID(),
+            handoff: { mode: "tool-disabled" },
+          }),
+        );
+        expect((await started.completion).phase).toBe("needs_reconciliation");
+        const queued = await h.enqueue(
+          "held after deterministic capture repair",
+        );
+        expect(
+          await h.fixture.manager.reconcileConversationCheckpoint({
+            address: h.fixture.binding.address,
+            operationId: started.operation.id,
+            captureExecutionStopped: true,
+            source: "ui",
+          }),
+        ).toMatchObject({
+          kind: "blocked",
+          refusal: { code: "reconciliation_failed" },
+        });
+        expect(
+          (await h.operation(started.operation.id))?.handoff
+            ?.executionStopAttestation,
+        ).toBeNull();
+        failAudit = false;
+        h.state.closeRejects = false;
+        expect(await reconcile(started.operation.id)).toMatchObject({
+          kind: "blocked",
+          refusal: { code: "recovery_required" },
+          operation: {
+            handoff: {
+              executionSettled: true,
+              auditDurable: true,
+              executionStopAttestation: null,
+              candidate: null,
+            },
+          },
+        });
+        expect((await h.readRow()).backendRef).toBeNull();
+        expect((await h.readRow()).pendingQueue).toMatchObject([
+          { id: queued.id, status: "pending" },
+        ]);
+        expect(capture).toHaveBeenCalledTimes(1);
+        expect(h.state.laneCalls).toEqual([]);
+        expect(h.state.dispatches).toEqual([]);
+      },
+    );
+    it("repairs an unrecorded capture outcome without replay or operator testimony", async () => {
+      let fail = true;
+      harness = await createCheckpointHarness({
+        scope,
+        captureHandoff: async () =>
+          capturedHandoffResult(harness?.seededRef ?? null),
+        repo: (real) => ({
+          ...real,
+          settleCapture: async (input) => {
+            if (fail && input.settlement.kind === "result")
+              throw new Error("result write failed");
+            return real.settleCapture(input);
+          },
+          recordOutcome: async (input) => {
+            if (fail) throw new Error("outcome write failed");
+            return real.recordOutcome(input);
+          },
+        }),
+      });
+      const h = harness;
+      const started = h.admittedOr(
+        await h.fixture.manager.startConversationCheckpoint({
+          address: h.fixture.binding.address,
+          requestId: randomUUID(),
+          handoff: { mode: "tool-disabled" },
+        }),
+      );
+      expect((await started.completion).phase).toBe("building");
+      fail = false;
+      expect(await reconcile(started.operation.id)).toMatchObject({
+        kind: "blocked",
+        refusal: { code: "recovery_required" },
+        operation: {
+          phase: "needs_reconciliation",
+          handoff: {
+            executionSettled: true,
+            auditDurable: true,
+            executionStopAttestation: null,
+          },
+        },
+      });
+      expect(h.state.laneCalls).toEqual([]);
+    });
+    it("refuses execution testimony for uncertain seed delivery", async () => {
+      harness = await createCheckpointHarness({ scope });
+      const h = harness;
+      const { ready } = await unresolvedDelivery(h);
+      const before = await h.operation(ready.id);
+      expect(
+        await h.fixture.manager.reconcileConversationCheckpoint({
+          address: h.fixture.binding.address,
+          operationId: ready.id,
+          captureExecutionStopped: true,
+          source: "api",
+        }),
+      ).toMatchObject({
+        kind: "refused",
+        refusal: { code: "invalid_handoff" },
+      });
+      expect(await h.operation(ready.id)).toEqual(before);
+    });
+    it.each([false, true])(
+      "retries cancellation without changing candidate provenance (lost continuity %s)",
+      async (lost) => {
+        let failOutcome = true;
+        const gate = gatedGenerator();
+        releaseHeld = gate.release;
+        harness = await createCheckpointHarness({
+          scope,
+          generate: gate.generate,
+          captureHandoff: async () => {
+            const result = capturedHandoffResult(harness?.seededRef ?? null);
+            return lost
+              ? {
+                  ...result,
+                  continuation: {
+                    disposition: "clear",
+                    backendRef: null,
+                    nextRuntime: "unavailable",
+                  },
+                }
+              : result;
+          },
+          repo: (real) => ({
+            ...real,
+            recordOutcome: async (input) => {
+              if (failOutcome) throw new Error("terminal outcome unavailable");
+              return real.recordOutcome(input);
+            },
+          }),
+        });
+        const h = harness;
+        const started = h.admittedOr(
+          await h.fixture.manager.startConversationCheckpoint({
+            address: h.fixture.binding.address,
+            requestId: randomUUID(),
+            handoff: { mode: "tool-disabled" },
+          }),
+        );
+        await gate.started.promise;
+        const captured = (await h.operation(started.operation.id))?.handoff;
+        expect(captured?.stage).toBe("captured");
+        const queued = await h.enqueue(
+          "held until cancellation outcome repair",
+        );
+        await h.fixture.manager.cancelConversationCheckpoint({
+          address: h.fixture.binding.address,
+          operationId: started.operation.id,
+        });
+        await started.completion;
+        expect(await h.operation(started.operation.id)).toMatchObject({
+          phase: "building",
+          handoff: { stage: "captured" },
+        });
+        expect((await h.readRow()).pendingQueue).toMatchObject([
+          { id: queued.id, status: "pending" },
+        ]);
+        expect(h.state.dispatches).toEqual([]);
+        failOutcome = false;
+        const result = await reconcile(started.operation.id);
+        expect(result).toMatchObject({
+          kind: lost ? "blocked" : "repaired",
+          operation: {
+            phase: lost ? "needs_reconciliation" : "cancelled",
+            handoff: {
+              stage: "omitted",
+              omissionReason: "cancelled",
+              candidate: null,
+              contentHash: captured?.contentHash,
+              sourceCoverage: captured?.sourceCoverage,
+              usage: captured?.usage,
+            },
+          },
+        });
+        expect(
+          await h.fixture.checkpoints.getPayload(
+            h.scopeKey,
+            started.operation.id,
+          ),
+        ).toBeNull();
+        if (lost) {
+          expect((await h.readRow()).pendingQueue).toMatchObject([
+            { id: queued.id, status: "pending" },
+          ]);
+          expect((await h.readRow()).backendRef).toBeNull();
+          expect(h.state.dispatches).toEqual([]);
+        } else {
+          await vi.waitFor(() =>
+            expect(h.state.dispatches).toEqual([
+              "held until cancellation outcome repair",
+            ]),
+          );
+          expect(h.latestRuntime().input.persistedRef).toEqual(h.seededRef);
+        }
+      },
+    );
+
+    it("keeps lost continuity held when the terminal outcome write must be retried", async () => {
+      let fail = true;
+      harness = await createCheckpointHarness({
+        scope,
+        captureHandoff: async () => ({
+          ...capturedHandoffResult(harness?.seededRef ?? null),
+          continuation: {
+            disposition: "clear",
+            backendRef: null,
+            nextRuntime: "unavailable",
+          },
+        }),
+        generate: async () => {
+          throw new Error("generation failed");
+        },
+        repo: (real) => ({
+          ...real,
+          recordOutcome: async (input) => {
+            if (fail) throw new Error("outcome unavailable");
+            return real.recordOutcome(input);
+          },
+        }),
+      });
+      const h = harness;
+      const started = h.admittedOr(
+        await h.fixture.manager.startConversationCheckpoint({
+          address: h.fixture.binding.address,
+          requestId: randomUUID(),
+          handoff: { mode: "tool-disabled" },
+        }),
+      );
+      await started.completion;
+      expect(await h.operation(started.operation.id)).toMatchObject({
+        phase: "building",
+        handoff: { stage: "captured", continuationDisposition: "clear" },
+      });
+      const queued = await h.enqueue("must not resume lost source");
+      fail = false;
+      expect(await reconcile(started.operation.id)).toMatchObject({
+        kind: "blocked",
+        refusal: { code: "recovery_required" },
+        operation: { phase: "needs_reconciliation" },
+      });
+      expect((await h.readRow()).pendingQueue).toMatchObject([
+        { id: queued.id, status: "pending" },
+      ]);
+      expect((await h.readRow()).backendRef).toBeNull();
+      expect(h.state.dispatches).toEqual([]);
+    });
+    it("lost-owner acknowledgement records testimony and clears continuity without releasing the queue", async () => {
+      let failRecovery = false;
+      harness = await createCheckpointHarness({
+        scope,
+        generate: async (...args) => {
+          if (failRecovery) throw new Error("baseline generation failed");
+          return generateCheckpoint(...args);
+        },
+        captureHandoff: async () => ({
+          ...capturedHandoffResult(harness?.seededRef ?? null),
+          candidateText: null,
+          executionSettled: false,
+          omissionReason: "cleanup_unverified",
+          cleanupFailure: {
+            code: "cleanup_unverified",
+            message: "child execution unknown",
+          },
+        }),
+      });
+      const h = harness;
+      const started = h.admittedOr(
+        await h.fixture.manager.startConversationCheckpoint({
+          address: h.fixture.binding.address,
+          requestId: randomUUID(),
+          handoff: { mode: "tool-disabled" },
+        }),
+      );
+      expect((await started.completion).phase).toBe("needs_reconciliation");
+      const queued = await h.enqueue("held for explicit recovery");
+      h.fixture.restart();
+      expect((await h.check(started.operation.id)).eligible).toBe(false);
+      expect((await reconcile(started.operation.id)).kind).toBe("blocked");
+      const acknowledged =
+        await h.fixture.manager.reconcileConversationCheckpoint({
+          address: h.fixture.binding.address,
+          operationId: started.operation.id,
+          captureExecutionStopped: true,
+          source: "cli",
+        });
+      expect(acknowledged).toMatchObject({
+        kind: "blocked",
+        refusal: { code: "recovery_required" },
+        operation: {
+          handoff: {
+            executionSettled: true,
+            executionStopAttestation: { source: "cli" },
+            continuationDisposition: "clear",
+          },
+        },
+      });
+      expect((await h.readRow()).backendRef).toBeNull();
+      expect((await h.readRow()).pendingQueue).toMatchObject([
+        { id: queued.id, status: "pending" },
+      ]);
+      expect(h.state.dispatches).toEqual([]);
+      expect(h.state.laneCalls).toEqual([]);
+      const receipt = (await h.operation(started.operation.id))?.handoff;
+      await h.fixture.manager.reconcileConversationCheckpoint({
+        address: h.fixture.binding.address,
+        operationId: started.operation.id,
+        captureExecutionStopped: true,
+        source: "cli",
+      });
+      expect((await h.operation(started.operation.id))?.handoff).toEqual(
+        receipt,
+      );
+      expect(
+        await h.fixture.manager.reconcileConversationCheckpoint({
+          address: {
+            ...h.fixture.binding.address,
+            target: {
+              ...h.fixture.binding.address.target,
+              conversationId: "wrong-scope-target",
+            },
+          },
+          operationId: started.operation.id,
+          captureExecutionStopped: true,
+          source: "cli",
+        }),
+      ).toMatchObject({
+        kind: "refused",
+        refusal: { code: "checkpoint_not_found" },
+      });
+      failRecovery = true;
+      const failed = h.admittedOr(
+        await h.fixture.manager.startConversationCheckpoint({
+          address: h.fixture.binding.address,
+          requestId: randomUUID(),
+          recover: started.operation.id,
+        }),
+      );
+      expect((await failed.completion).phase).toBe("failed");
+      expect(
+        (await h.operation(started.operation.id))?.supersededByOperationId,
+      ).toBeNull();
+      expect(h.hosted().runtime?.maintenance?.operationId).toBe(
+        started.operation.id,
+      );
+      expect(h.state.dispatches).toEqual([]);
+      failRecovery = false;
+      const recovered = h.admittedOr(
+        await h.fixture.manager.startConversationCheckpoint({
+          address: h.fixture.binding.address,
+          requestId: randomUUID(),
+          recover: started.operation.id,
+        }),
+      );
+      expect((await recovered.completion).phase).toBe("ready");
+    });
+  },
+);
 
 function reconcile(operationId: string) {
   if (!harness) throw new Error("harness missing");

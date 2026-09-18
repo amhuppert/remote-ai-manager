@@ -24,7 +24,11 @@ export interface BackendRuntimeIndex {
 export class ManagedConversationRuntime {
   mcpApplicationState?: import("@/lib/mcp/schemas").McpRuntimeApplicationState;
   capabilityApplicationState?: import("@/lib/agent-capabilities/schemas").AgentCapabilityRuntimeApplicationState;
-  private closing?: { completion: Promise<void>; failed: boolean };
+  private closing?: {
+    completion: Promise<void>;
+    failed: boolean;
+    settled: boolean;
+  };
   private handle?: ConversationBackendRuntime;
   private configuration?: DesiredRuntimeConfiguration;
   private incarnation?: symbol;
@@ -35,6 +39,7 @@ export class ManagedConversationRuntime {
   private retiredActivity = 0;
   private trackedRegistrations = 0;
   private unverifiedCleanup?: CleanupFailure;
+  private readonly captureReceiptFailures = new Map<string, Error>();
 
   constructor(private readonly conversationId: string) {}
 
@@ -102,7 +107,7 @@ export class ManagedConversationRuntime {
 
   /**
    * Monotonic count of owned activity: every accepted external event and
-   * every tracked-work registration. Checkpoint maintenance snapshots it after
+   * every ordinary tracked-work registration. Checkpoint maintenance snapshots it after
    * capture and refuses to freeze if it moved, which is how a provider
    * auto-continuation that emitted nothing to the archive still invalidates a
    * build.
@@ -113,6 +118,36 @@ export class ManagedConversationRuntime {
       (this.external?.activity ?? 0) +
       this.trackedRegistrations
     );
+  }
+
+  /** Capture audit extends owned work without counting as unrelated activity. */
+  trackCaptureReceipt(
+    captureId: string,
+    receiptId: string,
+    work: Promise<void>,
+  ): Promise<void> {
+    // Settlement notices may be appended after the provider transport closes.
+    // Its cached close cannot stand in for collection of these newer receipts.
+    if (this.closing?.settled && !this.closing.failed) this.closing = undefined;
+    const key = `${captureId}:${receiptId}`;
+    const tracked = work.then(
+      () => {
+        this.captureReceiptFailures.delete(key);
+      },
+      (error: unknown) => {
+        this.captureReceiptFailures.set(
+          key,
+          new Error(
+            `Required capture receipt ${receiptId} for ${captureId} did not persist`,
+            { cause: error },
+          ),
+        );
+        throw error;
+      },
+    );
+    this.work.add(tracked);
+    void tracked.finally(() => this.work.delete(tracked)).catch(() => {});
+    return tracked;
   }
 
   track(work: Promise<void>): Promise<void> {
@@ -136,17 +171,24 @@ export class ManagedConversationRuntime {
   async settleOwnedWork(): Promise<void> {
     await this.external?.drain();
     while (this.work.size > 0) await Promise.allSettled([...this.work]);
+    for (const failure of this.captureReceiptFailures.values()) throw failure;
   }
 
   close(): Promise<void> {
     if (this.closing) return this.closing.completion;
     const backend = this.handle;
-    const close = { completion: Promise.resolve(), failed: false };
+    const close = {
+      completion: Promise.resolve(),
+      failed: false,
+      settled: false,
+    };
     close.completion = Promise.resolve().then(async () => {
       try {
         await backend?.close();
         await this.external?.stopAndDrain();
         while (this.work.size > 0) await Promise.allSettled([...this.work]);
+        for (const failure of this.captureReceiptFailures.values())
+          throw failure;
         // A server exit cannot prove its ordinary tool children were reaped.
         if (this.unverifiedCleanup)
           throw new Error(this.unverifiedCleanup.message);
@@ -168,6 +210,8 @@ export class ManagedConversationRuntime {
           error: getErrorMessage(error),
         });
         throw error;
+      } finally {
+        close.settled = true;
       }
     });
     this.closing = close;

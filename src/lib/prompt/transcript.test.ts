@@ -3230,3 +3230,94 @@ describe("safeAppendTranscriptEntryOnce", () => {
     ).toBe(true);
   });
 });
+
+describe("capture provenance round trip", () => {
+  it("retains per-part origin and original coordinates through reload and export", async () => {
+    const { groupTranscriptEntries } =
+      await import("@/lib/conversations/transcript-render");
+    const { createHistoryEntryService } =
+      await import("@/lib/conversations/history-entry-service");
+    const origin = {
+      source: "checkpoint_capture",
+      checkpointCapture: {
+        operationId: "op",
+        captureId: "op:capture",
+        part: "output",
+      },
+    } as const;
+    const content = [
+      { type: "text", text: "capture\nline\u2028separator" },
+      { type: "image", mediaType: "image/png", base64Data: "aGk=" },
+    ] as const;
+    for (const [i, capture] of [false, true, false].entries()) {
+      await appendTranscriptEntryOnce(
+        "origin",
+        {
+          id: `origin:${i}`,
+          timestamp: "2026-09-18T00:00:00Z",
+          type: "assistant",
+          role: "assistant",
+          content: capture
+            ? [...content]
+            : [{ type: "text", text: "ordinary" }],
+          ...(capture ? { origin } : {}),
+        },
+        TEST_DIR,
+      );
+    }
+    const toolEntry: TranscriptEntry & { id: string } = {
+      id: "origin:tool",
+      timestamp: "2026-09-18T00:00:00Z",
+      type: "tool_result",
+      origin,
+      raw: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool",
+              content: "result\nline\u2028separator",
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "source",
+        uuid: "tool-result",
+      },
+    };
+    await appendTranscriptEntryOnce("origin", toolEntry, TEST_DIR);
+    await appendTranscriptEntryOnce("origin", toolEntry, TEST_DIR);
+    const transcriptPath = await getTranscriptPath("origin", TEST_DIR);
+    _resetTranscriptEntriesCacheForTesting();
+    const read = await readTranscriptEntriesWithSeq(transcriptPath);
+    expect(read.entries[1]).toMatchObject({ seq: 1, origin, content });
+    expect(read.entries).toHaveLength(4);
+    expect(read.entries[3]).toMatchObject({
+      seq: 3,
+      kind: "tool_result",
+      origin,
+    });
+    const units = groupTranscriptEntries(read.entries);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toMatchObject({
+      messageIndex: 0,
+      parts: [{ seq: 0 }, { seq: 1, origin }, { seq: 2 }, { seq: 3, origin }],
+    });
+    const messages = await readConversationMessagesWithSeq(transcriptPath);
+    expect(messages[0]).toMatchObject({
+      seq: 2,
+      sourceParts: [{ seq: 0 }, { seq: 1, origin }, { seq: 2 }],
+    });
+    const exported = await createHistoryEntryService().getEntry({
+      conversationId: "origin",
+      transcriptPath,
+      seq: 1,
+    });
+    expect(exported).toMatchObject({
+      ok: true,
+      entry: { seq: 1, messageIndex: 0, origin },
+    });
+  });
+});

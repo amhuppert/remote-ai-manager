@@ -14,7 +14,7 @@
  * reason the operation was blocked.
  */
 
-import type { CheckpointPhase } from "./schemas";
+import type { CheckpointHandoffStage, CheckpointPhase } from "./schemas";
 
 export interface CheckpointTransitionRequest {
   from: CheckpointPhase;
@@ -33,7 +33,7 @@ export type CheckpointTransitionVerdict =
 const LEGAL_TRANSITIONS: Readonly<
   Record<CheckpointPhase, readonly CheckpointPhase[]>
 > = {
-  building: ["retiring", "failed", "cancelled"],
+  building: ["retiring", "failed", "cancelled", "needs_reconciliation"],
   retiring: ["ready", "needs_reconciliation"],
   ready: ["delivering", "needs_reconciliation"],
   // `ready` is reachable again from `delivering` only for an admission failure
@@ -111,4 +111,23 @@ export function validateCheckpointOutcomeEdge(
     owner,
     reason: `checkpoint phase ${from} reaches ${to} only through ${owner}, which carries the evidence for it`,
   };
+}
+
+/** Capture is a substage of the existing operation, never a separate owner. */
+export function validateCaptureTransition(
+  from: CheckpointHandoffStage,
+  to: CheckpointHandoffStage,
+): boolean {
+  const edges: Record<
+    CheckpointHandoffStage,
+    readonly CheckpointHandoffStage[]
+  > = {
+    pending: ["running", "settling", "omitted"],
+    running: ["settling", "captured", "omitted"],
+    settling: ["omitted"],
+    captured: ["included", "omitted"],
+    included: [],
+    omitted: [],
+  };
+  return edges[from].includes(to);
 }

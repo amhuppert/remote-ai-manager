@@ -12,6 +12,8 @@ import { z } from "zod";
 
 import {
   groupTranscriptEntries,
+  recordedEvidenceUnits,
+  isRecordedEvidenceReference,
   type TranscriptUnit,
 } from "@/lib/conversations/transcript-render";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
@@ -24,6 +26,7 @@ import {
 } from "./budget";
 import type {
   CheckpointOmission,
+  CheckpointHandoffCandidate,
   CheckpointScope,
   CheckpointSectionBytes,
 } from "./schemas";
@@ -110,6 +113,7 @@ export interface CheckpointSeedSourceInfo {
 }
 
 export interface BuildCheckpointSeedInput {
+  agentHandoff?: CheckpointHandoffCandidate;
   identity: CheckpointSeedIdentity;
   source: CheckpointSeedSourceInfo;
   workingState: CheckpointWorkingState;
@@ -118,6 +122,7 @@ export interface BuildCheckpointSeedInput {
 }
 
 export interface BuiltCheckpointSeed {
+  handoffDecision?: "included" | "seed_budget";
   seedText: string;
   seedSha256: string;
   sectionBytes: CheckpointSectionBytes;
@@ -328,6 +333,14 @@ function validateWorkingState(
           code: "invalid_source_ref",
           detail: `${claim.field}: ${seqSpan(ref.seqStart, ref.seqEnd)} spans messages #${startOwner}\u2013#${endOwner}, not the cited message #${ref.messageIndex}`,
         });
+        continue;
+      }
+      if (!isRecordedEvidenceReference(ref, units)) {
+        issues.push({
+          code: "invalid_source_ref",
+          detail: `${claim.field}: reference contains capture-origin or foreign parts`,
+        });
+        continue;
       }
     }
   }
@@ -769,10 +782,13 @@ export function buildCheckpointSeed(
   const framingResult = renderRecoveryFraming(identity, source, workingState);
   if (!framingResult.ok) return { ok: false, issues: [framingResult.issue] };
   const framing = framingResult.framing;
-  const dialogue = renderRecentDialogue(units, identity.conversationId);
+  const dialogue = renderRecentDialogue(
+    recordedEvidenceUnits(units),
+    identity.conversationId,
+  );
 
-  const seedText = `${framing.text}${workingStateText}${dialogue.text}`;
-  const sectionBytes: CheckpointSectionBytes = {
+  let seedText = `${framing.text}${workingStateText}${dialogue.text}`;
+  let sectionBytes: CheckpointSectionBytes = {
     total: utf8ByteLength(seedText),
     workingState: workingStateBytes,
     recentDialogue: utf8ByteLength(dialogue.text),
@@ -801,15 +817,55 @@ export function buildCheckpointSeed(
     });
   }
 
+  let frozenWorkingState: unknown = workingState;
+  let handoffDecision: BuiltCheckpointSeed["handoffDecision"];
+  if (input.agentHandoff !== undefined) {
+    const handoff = {
+      attribution: `Source agent of conversation ${identity.conversationId}, captured for checkpoint ${identity.checkpointId}`,
+      caveat:
+        "Advisory beliefs and proposals at capture time. References locate original observations; they do not establish current approval, validation or task completion. Missing recorded evidence remains unestablished.",
+      categoryCounts: Object.fromEntries(
+        Object.entries(input.agentHandoff).map(([category, claims]) => [
+          category,
+          claims.length,
+        ]),
+      ),
+      candidate: input.agentHandoff,
+    };
+    // JSON string escaping keeps multiline claims as data; escape markup too.
+    const data = JSON.stringify(handoff, null, 2)
+      .replace(/</g, "\\u003c")
+      .replace(/>/g, "\\u003e")
+      .replace(/&/g, "\\u0026")
+      .replace(/`/g, "\\u0060");
+    const handoffText = `## Agent handoff — advisory account at capture time\n\n\`\`\`json\n${data}\n\`\`\`\n\n`;
+    const addedBytes = utf8ByteLength(handoffText);
+    const combinedBytes = {
+      ...sectionBytes,
+      total: sectionBytes.total + addedBytes,
+      workingState: sectionBytes.workingState + addedBytes,
+    };
+    if (overBudgetIssues(combinedBytes).length > 0) {
+      handoffDecision = "seed_budget";
+      omissions.push({ category: "handoff_omitted", detail: "seed_budget" });
+    } else {
+      handoffDecision = "included";
+      seedText = `${framing.text}${workingStateText}${handoffText}${dialogue.text}`;
+      sectionBytes = combinedBytes;
+      frozenWorkingState = { ...workingState, agentHandoff: handoff };
+    }
+  }
+
   return {
     ok: true,
     seed: {
+      ...(handoffDecision ? { handoffDecision } : {}),
       seedText,
       seedSha256: sha256(seedText),
       sectionBytes,
       omissions,
       sections: {
-        workingState,
+        workingState: frozenWorkingState,
         recentDialogue: {
           units: dialogue.units.map((unit) => ({
             messageIndex: unit.messageIndex,

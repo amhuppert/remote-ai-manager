@@ -117,6 +117,7 @@ function createControllableMockQuery() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const generator: any = {
+    async awaitChildCollection() {},
     close: vi.fn(() => {
       done = true;
       if (resolveNext) {

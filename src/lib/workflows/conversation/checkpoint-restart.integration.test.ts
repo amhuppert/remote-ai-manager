@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { pendingCheckpointCapture } from "./checkpoint-capture";
 /**
  * Restart at every durable checkpoint boundary, through the actual provided
  * manager and machine over real SQLite rows. A "restart" here is a crash: the
@@ -16,6 +18,7 @@ import { setPersistenceDeps, validateRestoredSnapshot } from "./persistence";
 import { toPersistedConversationSnapshot } from "./persisted-snapshot-codec";
 import { rehydrateConversationActors } from "./rehydration";
 import {
+  capturedHandoffResult,
   createCheckpointHarness,
   deferred,
   gatedGenerator,
@@ -153,6 +156,173 @@ function staleResumableSnapshot(
   persisted.context.status = "waiting_for_input";
   return persisted;
 }
+
+describe.each(["session", "project"] as const)(
+  "capture restart (%s)",
+  (scope) => {
+    it.each([false, true])(
+      "finalizes captured generation audit on restart (lost continuity %s)",
+      async (lost) => {
+        const gate = gatedGenerator();
+        releaseHeld = gate.release;
+        harness = await createCheckpointHarness({
+          scope,
+          generate: gate.generate,
+          captureHandoff: async () => {
+            const result = capturedHandoffResult(harness?.seededRef ?? null);
+            return lost
+              ? {
+                  ...result,
+                  continuation: {
+                    disposition: "clear",
+                    backendRef: null,
+                    nextRuntime: "unavailable",
+                  },
+                }
+              : result;
+          },
+        });
+        const h = harness;
+        const started = h.admittedOr(
+          await h.fixture.manager.startConversationCheckpoint({
+            address: h.fixture.binding.address,
+            requestId: randomUUID(),
+            handoff: { mode: "tool-disabled" },
+          }),
+        );
+        await gate.started.promise;
+        const capture = (await h.operation(started.operation.id))?.handoff;
+        expect(capture?.stage).toBe("captured");
+        const queued = await h.enqueue("held after interrupted generation");
+        h.fixture.restart();
+        await expect(
+          h.fixture.hydrateCheckpointAuthority(h.scopeKey),
+        ).resolves.toMatchObject({
+          outcome: { kind: lost ? "held" : "build_interrupted" },
+        });
+        expect(await h.operation(started.operation.id)).toMatchObject({
+          phase: lost ? "needs_reconciliation" : "failed",
+          payloadId: null,
+          handoff: {
+            stage: "omitted",
+            omissionReason: "interrupted",
+            candidate: null,
+            contentHash: capture?.contentHash,
+            sourceCoverage: capture?.sourceCoverage,
+            usage: capture?.usage,
+          },
+        });
+        expect((await h.readRow()).pendingQueue).toMatchObject([
+          { id: queued.id, status: "pending" },
+        ]);
+      },
+    );
+    it.each(
+      (["pending", "running", "settling"] as const).flatMap((stage) =>
+        [null, 1, 99].map((snapshotVersion) => ({ stage, snapshotVersion })),
+      ),
+    )(
+      "reloads $stage with snapshot $snapshotVersion without replay or uncertain queue delivery",
+      async ({ stage, snapshotVersion }) => {
+        harness = await createCheckpointHarness({ scope });
+        const h = harness;
+        await h.runOrdinaryTurn();
+        const ref = h.latestRuntime().ref;
+        const queued = await h.enqueue("held through interrupted capture");
+        const requestId = randomUUID();
+        const sourceBasis = {
+          capturedThroughSeq: 3,
+          sourceHash: "a".repeat(64),
+        };
+        const at = "2026-01-01T00:00:00.000Z";
+        const handoff = pendingCheckpointCapture({
+          requestId,
+          request: { mode: "tool-disabled" },
+          backend: "claude",
+          modelSelection: { modelId: "test", parameters: {} },
+          sourceBasis,
+          at,
+        });
+        expect(
+          (
+            await h.fixture.checkpoints.admitOperation({
+              key: h.scopeKey,
+              requestId,
+              sourceBasis,
+              priorBackendRef: ref.ref,
+              requestedAt: at,
+              handoff,
+            })
+          ).ok,
+        ).toBe(true);
+        if (stage !== "pending")
+          expect(
+            (
+              await h.fixture.checkpoints.beginCapture({
+                key: h.scopeKey,
+                operationId: requestId,
+                captureId: handoff.captureId,
+                expectedSourceBasis: sourceBasis,
+                at,
+              })
+            ).ok,
+          ).toBe(true);
+        if (stage === "settling")
+          expect(
+            (
+              await h.fixture.checkpoints.settleCapture({
+                key: h.scopeKey,
+                operationId: requestId,
+                captureId: handoff.captureId,
+                expectedSourceBasis: sourceBasis,
+                expectedStage: "running",
+                settlement: { kind: "stop", intent: "skip" },
+                at,
+              })
+            ).ok,
+          ).toBe(true);
+        if (snapshotVersion === null)
+          await h.fixture.persistence.store.deleteConversationMachineSnapshot(
+            scope,
+            h.fixture.identity.conversationId,
+          );
+        else
+          await h.fixture.persistence.store.upsertConversationMachineSnapshot(
+            scope,
+            h.fixture.identity.conversationId,
+            staleResumableSnapshot(h, ref, snapshotVersion),
+          );
+        h.fixture.restart();
+        await expect(
+          h.fixture.hydrateCheckpointAuthority(h.scopeKey),
+        ).resolves.toMatchObject({
+          outcome: { kind: stage === "pending" ? "build_interrupted" : "held" },
+        });
+        const operation = await h.operation(requestId);
+        expect(operation).toMatchObject({
+          phase: stage === "pending" ? "failed" : "needs_reconciliation",
+          payloadId: null,
+          handoff: {
+            stage: "omitted",
+            omissionReason: "interrupted",
+            candidate: null,
+          },
+        });
+        expect((await h.readRow()).pendingQueue).toMatchObject([
+          { id: queued.id, status: "pending" },
+        ]);
+        expect(h.state.laneCalls).toEqual([]);
+        if (stage !== "pending") {
+          await h.nudge();
+          expect(h.state.dispatches).toEqual(["first"]);
+          expect(
+            h.hosted().actor?.getSnapshot().context.checkpoint?.phase,
+          ).toBe("needs_reconciliation");
+        }
+      },
+    );
+  },
+);
 
 describe("restart during building", () => {
   it("fails the interrupted build before any drain, keeps the prior reference, and delivers the held queue in order on the resumed continuation", async () => {

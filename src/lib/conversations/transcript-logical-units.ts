@@ -33,7 +33,10 @@
  */
 
 import { parseCommandContent } from "@/lib/commands/parsing";
-import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type {
+  MessageContentBlock,
+  TranscriptMessageOrigin,
+} from "@/lib/conversations/schemas";
 
 export type LogicalUnitRole = "user" | "assistant" | "notice";
 
@@ -82,6 +85,7 @@ export type LogicalUnitEntry =
       kind: "message";
       role: LogicalUnitRole;
       content: MessageContentBlock[];
+      origin?: TranscriptMessageOrigin;
       entryId?: string | null;
       timestamp?: string | null;
       uuid?: string;
@@ -90,6 +94,7 @@ export type LogicalUnitEntry =
       seq: number;
       kind: "tool_result";
       content: MessageContentBlock[];
+      origin?: TranscriptMessageOrigin;
       entryId?: string | null;
       timestamp?: string | null;
     }
@@ -167,6 +172,7 @@ export function* iterateLineClassifications(
 
 /** One entry's contribution to a merged unit, with its raw coordinate. */
 export interface LogicalUnitPart {
+  origin?: TranscriptMessageOrigin;
   seq: number;
   entryId: string | null;
   content: MessageContentBlock[];
@@ -203,6 +209,7 @@ export function groupLogicalUnits(
       open.parts.push({
         seq: entry.seq,
         entryId: entry.entryId ?? null,
+        ...(entry.origin ? { origin: entry.origin } : {}),
         content: entry.content,
       });
       continue;
@@ -220,6 +227,7 @@ export function groupLogicalUnits(
       open.parts.push({
         seq: entry.seq,
         entryId: entry.entryId ?? null,
+        ...(entry.origin ? { origin: entry.origin } : {}),
         content: entry.content,
       });
       continue;
@@ -234,6 +242,7 @@ export function groupLogicalUnits(
         {
           seq: entry.seq,
           entryId: entry.entryId ?? null,
+          ...(entry.origin ? { origin: entry.origin } : {}),
           content: commandBlock ? [commandBlock] : entry.content,
         },
       ],

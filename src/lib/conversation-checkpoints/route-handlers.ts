@@ -51,6 +51,7 @@ import {
   checkConversationCheckpoint,
   reconcileConversationCheckpoint,
   startConversationCheckpoint,
+  skipConversationCheckpointHandoff,
   type ConversationCheckpointCancel,
   type ConversationCheckpointCheck,
   type ConversationCheckpointReconcile,
@@ -66,7 +67,12 @@ import {
   MAX_CHECKPOINT_LIST_LIMIT,
   type ConversationCheckpointsRepo,
 } from "./repo";
-import type { CheckpointOperation, CheckpointScopeKey } from "./schemas";
+import {
+  startCheckpointRequestSchema,
+  reconcileCheckpointRequestSchema,
+  type CheckpointOperation,
+  type CheckpointScopeKey,
+} from "./schemas";
 
 const logger = createLogger("conversation-checkpoints");
 
@@ -86,10 +92,12 @@ export interface CheckpointRouteDeps extends ScopedConversationRouteDeps {
     address: ConversationAddress;
     operationId: string;
   }): Promise<ConversationCheckpointCancel>;
-  reconcileCheckpoint(input: {
-    address: ConversationAddress;
-    operationId: string;
-  }): Promise<ConversationCheckpointReconcile>;
+  reconcileCheckpoint(
+    input: Parameters<typeof reconcileConversationCheckpoint>[0],
+  ): Promise<ConversationCheckpointReconcile>;
+  skipHandoff(
+    input: Parameters<typeof skipConversationCheckpointHandoff>[0],
+  ): ReturnType<typeof skipConversationCheckpointHandoff>;
   auth: AgentAuth;
   log?: Logger;
 }
@@ -108,6 +116,7 @@ function defaultDeps(): CheckpointRouteDeps {
     checkCheckpoint: checkConversationCheckpoint,
     cancelCheckpoint: cancelConversationCheckpoint,
     reconcileCheckpoint: reconcileConversationCheckpoint,
+    skipHandoff: skipConversationCheckpointHandoff,
     auth: createAgentAuth(),
   };
 }
@@ -115,23 +124,6 @@ function defaultDeps(): CheckpointRouteDeps {
 // ---------------------------------------------------------------------------
 // Request contracts
 // ---------------------------------------------------------------------------
-
-/**
- * The start body. `requestId` is a UUID the CALLER generates once per
- * invocation and reuses on retransmit — it is the operation's identity and its
- * idempotency key, so a client that mints a fresh value per retry would open a
- * second operation rather than rejoin its own.
- */
-export const startCheckpointRequestSchema = z
-  .object({
-    requestId: z.uuid(),
-    /** Explicit recovery: the recovery-required operation this build supersedes. */
-    recoversOperationId: z.string().min(1).optional(),
-  })
-  .strict();
-export type StartCheckpointRequest = z.infer<
-  typeof startCheckpointRequestSchema
->;
 
 export const checkpointDetailSchema = z.enum(["receipt", "seed"]);
 
@@ -235,6 +227,7 @@ function refusalResponse(
       error: refusal.reason,
       code: refusal.code,
       refusal,
+      details: { refusal, ...(receipt === null ? {} : { receipt }) },
       ...(receipt === null ? {} : { receipt }),
     },
     { status: checkpointRefusalStatus(refusal.code) },
@@ -366,6 +359,7 @@ export function createCheckpointRouteHandlers(
       address: addressOf(target),
       requestId: parsed.data.requestId,
       recover: parsed.data.recoversOperationId ?? null,
+      ...(parsed.data.handoff ? { handoff: parsed.data.handoff } : {}),
     });
     if (outcome.kind === "refused") {
       log.info("checkpoint.route.start_refused", {
@@ -408,6 +402,7 @@ export function createCheckpointRouteHandlers(
       refusals: check.refusals,
       active: check.active,
       hosted: check.hosted,
+      handoff: check.handoff,
     });
   }
 
@@ -502,12 +497,56 @@ export function createCheckpointRouteHandlers(
     });
   }
 
-  async function reconcile(
+  async function skipHandoff(
     _request: Request,
     target: ScopedConversationTarget,
     operationId: string,
   ): Promise<Response> {
+    const outcome = await deps.skipHandoff({
+      address: addressOf(target),
+      operationId,
+    });
+    if (outcome.kind === "refused") {
+      logRefusal(
+        "checkpoint.route.skip_refused",
+        target,
+        operationId,
+        outcome.refusal,
+      );
+      return refusalResponse(outcome.refusal);
+    }
+    return NextResponse.json({
+      outcome: outcome.kind,
+      receipt: await receiptFor(
+        await deps.repo(),
+        scopeKeyOf(target),
+        outcome.operation,
+      ),
+    });
+  }
+
+  async function reconcile(
+    request: Request,
+    target: ScopedConversationTarget,
+    operationId: string,
+  ): Promise<Response> {
+    const text = await request.text();
+    let raw: unknown = {};
+    try {
+      raw = text === "" ? {} : JSON.parse(text);
+    } catch {
+      return invalidRequest("invalid_checkpoint_reconcile", [
+        { path: "", message: "request body must be JSON" },
+      ]);
+    }
+    const parsed = reconcileCheckpointRequestSchema.safeParse(raw);
+    if (!parsed.success)
+      return invalidRequest(
+        "invalid_checkpoint_reconcile",
+        zodIssues(parsed.error),
+      );
     const outcome = await deps.reconcileCheckpoint({
+      ...parsed.data,
       address: addressOf(target),
       operationId,
     });
@@ -652,6 +691,14 @@ export function createCheckpointRouteHandlers(
   }
 
   return {
+    sessionSkipHandoff: withItemTarget(
+      resolveSessionScopedConversation,
+      skipHandoff,
+    ),
+    projectSkipHandoff: withItemTarget(
+      resolveProjectScopedConversation,
+      skipHandoff,
+    ),
     sessionFork: withForkTarget("session", false),
     sessionForkCheck: withForkTarget("session", true),
     projectFork: withForkTarget("project", false),
@@ -738,4 +785,11 @@ export const cancelProjectConversationCheckpoint = shell(
 );
 export const reconcileProjectConversationCheckpoint = shell(
   (h) => h.projectReconcile,
+);
+
+export const sessionCheckpointSkipHandoffPOST = shell(
+  (h) => h.sessionSkipHandoff,
+);
+export const projectCheckpointSkipHandoffPOST = shell(
+  (h) => h.projectSkipHandoff,
 );

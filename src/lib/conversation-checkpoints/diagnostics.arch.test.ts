@@ -55,6 +55,10 @@ const FORBIDDEN: { pattern: RegExp; why: string }[] = [
  */
 const DECLARED_INDIRECT: { module: string; why: string }[] = [
   {
+    module: "conversation-checkpoints/publication.ts",
+    why: "logCapture emits only scoped IDs, phase and checkpointHandoffLogFields; diagnostics/publication tests pin its allowlisted fields and private-data exclusion",
+  },
+  {
     // `checkpoint.admitOperation` and friends label a write-queue critical
     // section. The queue logs them under `state-store.write_queue.*` with
     // timings only, and never with an error.

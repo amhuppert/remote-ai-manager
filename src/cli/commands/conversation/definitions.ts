@@ -1,5 +1,10 @@
 import { bytes, defineGroup } from "cli-for-agents";
+import { CHECKPOINT_CAPTURE_LIMITS } from "@/lib/conversation-checkpoints/budget";
 import { ccCommands } from "../../framework/family";
+
+const captureLimitsHelp = `Fixed capture limits: ${CHECKPOINT_CAPTURE_LIMITS.maxSubmissions} submission, ${CHECKPOINT_CAPTURE_LIMITS.executionMs} ms execution, ${CHECKPOINT_CAPTURE_LIMITS.inputBytes} added-input bytes, ${CHECKPOINT_CAPTURE_LIMITS.outputBytes} accepted-output bytes. Capture failure or a reached limit omits handoff after settlement and continues recorded-evidence checkpointing; no capture retry. The ${CHECKPOINT_CAPTURE_LIMITS.settlementMs} ms settlement deadline is not proof execution stopped. Native inspection is bounded at ${CHECKPOINT_CAPTURE_LIMITS.nativeInspectionBytes} bytes and ${CHECKPOINT_CAPTURE_LIMITS.nativeInspectionMs} ms. Cost is checked after the request; no hard dollar or inherited-source-context limit. Valid handoff that cannot fit the seed is omitted whole.`;
+const captureModeHelp =
+  "Claude uses tool-disabled capture. Codex uses instruction-only capture: tools remain callable, and the agent is asked not to use them. The scoped preflight mode is bound to the attempt; unavailable or changed capability falls back to recorded evidence without changing mode.";
 
 const conversationArgs = [
   {
@@ -151,8 +156,7 @@ export const compactionListSpec = {
 export const compactContextSpec = {
   path: "conversation compact-context",
   summary: "Start a durable context checkpoint",
-  description:
-    "Build a saved context checkpoint. Admission is not readiness: the receipt reports the actual phase. --wait observes for fifteen minutes; cancellation or timeout never cancels the server operation. --recover explicitly supersedes an operation requiring recovery.",
+  description: `Build a saved context checkpoint in the explicit or ambient scope; another project/session requires --project and, for a session, --session. Without --handoff, send only the baseline start request. --handoff opts into one extra source-agent capture after a read-only scoped capability check, with no extra confirmation. ${captureModeHelp} ${captureLimitsHelp} Admission is not readiness: --wait observes for fifteen minutes and exits 1 for failed, cancelled, reconciliation or observation timeout; stopping observation never cancels execution. --recover explicitly supersedes the named recovery-required operation and does not enable handoff by itself.`,
   requires: "cc",
   effects: "write",
   args: conversationArgs,
@@ -162,6 +166,11 @@ export const compactContextSpec = {
       value: { kind: "boolean" },
     },
     recover: recoverFlag,
+    handoff: {
+      description:
+        "Request one optional source-agent handoff using the disclosed capture mode",
+      value: { kind: "boolean" },
+    },
   },
   related: [
     {
@@ -177,8 +186,7 @@ export const compactContextSpec = {
 export const checkpointCheckSpec = {
   path: "conversation checkpoint check",
   summary: "Check checkpoint admission without starting work",
-  description:
-    "Read blockers for compact-context or an explicit recovery. A blocked check returns a failure with findings named by the transition they block.",
+  description: `Read blockers for compact-context or the named --recover operation without starting work. Exit status describes baseline admission; optional handoff capability and its reason are separate. ${captureModeHelp} ${captureLimitsHelp} A blocked check returns findings named by the transition they block. Bare ids may discover ownership; explicit scope is authoritative.`,
   requires: "cc",
   effects: "read",
   args: conversationArgs,
@@ -223,21 +231,79 @@ export const checkpointCancelSpec = {
   path: "conversation checkpoint cancel",
   summary: "Cancel a cancellable checkpoint operation",
   description:
-    "Request cancellation in the explicit or ambient scope. The returned receipt is authoritative; this command never repeats a mutation in another scope.",
+    "Cancel the whole pre-freeze checkpoint, including capture. Queued input remains held until execution settles. After retirement cancellation cannot restore prior continuity. To omit only capture and continue baseline checkpointing, use skip-handoff. Uses explicit or ambient scope and never repeats a mutation in another scope; inspect the returned receipt.",
   requires: "cc",
   effects: "write",
   args: operationArgs,
   flags: {},
+  related: [
+    {
+      path: "conversation checkpoint get",
+      description: "Observe the durable receipt",
+    },
+    {
+      path: "conversation compact-context",
+      description: "Explicitly build a recovery checkpoint",
+    },
+    {
+      path: "conversation checkpoint skip-handoff",
+      description: "Omit capture and continue baseline checkpointing",
+    },
+  ],
+} as const;
+export const checkpointSkipHandoffSpec = {
+  path: "conversation checkpoint skip-handoff",
+  summary: "Stop optional handoff and continue baseline checkpointing",
+  description:
+    "Stop and settle optional capture, then continue baseline checkpointing from recorded evidence. To stop the whole pre-freeze checkpoint use cancel. Uses explicit or ambient scope and never retries in a neighboring scope. Stopping records intent, not proof execution stopped: read checkpoint get until settlement. Already settled capture returns handoff_already_settled unchanged.",
+  requires: "cc",
+  effects: "write",
+  args: operationArgs,
+  flags: {},
+  related: [
+    {
+      path: "conversation checkpoint get",
+      description: "Observe the durable receipt",
+    },
+    {
+      path: "conversation compact-context",
+      description: "Explicitly build a recovery checkpoint",
+    },
+    {
+      path: "conversation checkpoint cancel",
+      description: "Cancel the whole checkpoint",
+    },
+  ],
 } as const;
 export const checkpointReconcileSpec = {
   path: "conversation checkpoint reconcile",
   summary: "Reconcile checkpoint delivery deterministically",
   description:
-    "Repair recorded delivery state. A receipt still needing reconciliation requires an explicit compact-context --recover action; reconciliation never silently starts another checkpoint.",
+    "Retry deterministic cleanup and persistence in the explicit or ambient scope, without a model request or neighboring-scope retry. For a capture-cleanup hold only, inspect and stop prior backend work before using --capture-execution-stopped: this records caller testimony, not CC-observed process evidence. Attestation alone never releases queued input or resumes uncertain continuity; the recovery_required refusal retains the updated receipt. Then separately run compact-context --recover <operation-id> for baseline recovery. Unknown seed delivery needs queue review and explicit recovery; the flag cannot clear it.",
   requires: "cc",
   effects: "write",
   args: operationArgs,
-  flags: {},
+  flags: {
+    "capture-execution-stopped": {
+      description:
+        "Attest that you inspected and stopped prior capture execution; records caller testimony, then requires separate recovery",
+      value: { kind: "boolean" },
+    },
+  },
+  related: [
+    {
+      path: "conversation checkpoint get",
+      description: "Observe the durable receipt",
+    },
+    {
+      path: "conversation compact-context",
+      description: "Explicitly build a recovery checkpoint",
+    },
+    {
+      path: "conversation checkpoint skip-handoff",
+      description: "Omit capture and continue baseline checkpointing",
+    },
+  ],
 } as const;
 export const checkpointForkSpec = {
   path: "conversation checkpoint fork",
@@ -356,6 +422,10 @@ export const compactContextCommand = ccCommands.defineCommand(
         flags: { wait: true },
         why: "Build a checkpoint and observe readiness",
       },
+      {
+        flags: { handoff: true, wait: true },
+        why: "Request one optional handoff and observe the checkpoint, including fallback",
+      },
     ],
     handler: async () => ({
       default: (await import("./checkpoint.handler")).compactContextHandler,
@@ -414,6 +484,24 @@ export const checkpointCancelCommand = ccCommands.defineCommand(
     }),
   },
 );
+export const checkpointSkipHandoffCommand = ccCommands.defineCommand(
+  checkpointSkipHandoffSpec,
+  {
+    examples: [
+      {
+        args: {
+          "conversation-id": "conversation-one",
+          "operation-id": "operation-one",
+        },
+        why: "Skip handoff and continue with recorded evidence",
+      },
+    ],
+    handler: async () => ({
+      default: (await import("./checkpoint.handler"))
+        .checkpointSkipHandoffHandler,
+    }),
+  },
+);
 export const checkpointReconcileCommand = ccCommands.defineCommand(
   checkpointReconcileSpec,
   {
@@ -424,6 +512,14 @@ export const checkpointReconcileCommand = ccCommands.defineCommand(
           "operation-id": "operation-one",
         },
         why: "Repair recorded checkpoint delivery",
+      },
+      {
+        args: {
+          "conversation-id": "conversation-one",
+          "operation-id": "operation-one",
+        },
+        flags: { "capture-execution-stopped": true },
+        why: "After inspecting and stopping prior execution, attest cleanup before separate recovery",
       },
     ],
     handler: async () => ({
@@ -486,6 +582,7 @@ export const conversationCommands = [
   checkpointListCommand,
   checkpointGetCommand,
   checkpointCancelCommand,
+  checkpointSkipHandoffCommand,
   checkpointReconcileCommand,
   checkpointForkCommand,
   entryGetCommand,
@@ -507,7 +604,7 @@ export const conversationGroups = [
     path: "conversation checkpoint",
     summary: "Manage durable context checkpoints",
     description:
-      "Check admission, page receipts, inspect saved seeds, and explicitly cancel, reconcile, or fork operations.",
+      "Check admission and capture capability, page receipts, inspect frozen seeds, skip optional handoff, or explicitly cancel, reconcile and fork operations.",
   }),
   defineGroup({
     path: "conversation entry",

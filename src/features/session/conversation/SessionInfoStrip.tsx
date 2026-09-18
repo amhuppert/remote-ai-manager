@@ -199,10 +199,15 @@ function SessionInfoStrip({
   const linkedTicket =
     useTicketSessionLinksQuery(projectName).data?.[sessionName];
   const [checkpointPanelOpen, setCheckpointPanelOpen] = useState(false);
-  const openCheckpointPanel = useCallback(
-    () => setCheckpointPanelOpen(true),
-    [],
-  );
+  const [checkpointPreparation, setCheckpointPreparation] = useState(false);
+  const openCheckpointPanel = useCallback(() => {
+    setCheckpointPreparation(false);
+    setCheckpointPanelOpen(true);
+  }, []);
+  const prepareCheckpointHandoff = useCallback(() => {
+    setCheckpointPreparation(true);
+    setCheckpointPanelOpen(true);
+  }, []);
 
   const conversationName = activeConversation?.name ?? null;
   const handleCopyReference = useCallback(() => {
@@ -331,6 +336,7 @@ function SessionInfoStrip({
             checkpointChip={checkpoint.chip}
             checkpointAction={checkpoint.action}
             onCompactContextNow={checkpoint.start}
+            onPrepareHandoff={prepareCheckpointHandoff}
             onViewCheckpoint={openCheckpointPanel}
           />
           <InfoDetailsPopover
@@ -355,6 +361,8 @@ function SessionInfoStrip({
         open={checkpointPanelOpen}
         onOpenChange={setCheckpointPanelOpen}
         surface={checkpoint}
+        preparation={checkpointPreparation}
+        onPreparationComplete={() => setCheckpointPreparation(false)}
         {...(initialForkModel ? { initialForkModel } : {})}
         {...(linkedTicket?.active
           ? { initialForkTicket: linkedTicket.number }

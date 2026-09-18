@@ -47,6 +47,50 @@ function makeConversation(
 }
 
 describe("MessageRow", () => {
+  it.each([
+    ["control", "user"],
+    ["output", "assistant"],
+    ["activity", "assistant"],
+    ["settlement", "notice"],
+  ] as const)(
+    "identifies capture %s as maintenance audit, preserving its content",
+    (part, role) => {
+      renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role,
+            origin: {
+              source: "checkpoint_capture",
+              checkpointCapture: {
+                operationId: "operation-17",
+                captureId: "capture-4",
+                part,
+              },
+            },
+          })}
+          messageIndex={7}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(
+        screen.getByText(`Checkpoint handoff · ${part}`),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Audit record/)).toBeInTheDocument();
+      expect(screen.getByText(/operation-17/)).toHaveTextContent("capture-4");
+      expect(screen.getByText("Hello there")).toBeInTheDocument();
+      expect(screen.queryByText("You")).not.toBeInTheDocument();
+      expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+      if (part === "output") {
+        expect(screen.getByText(/advisory/)).toHaveTextContent(
+          /does not grant approval/,
+        );
+      }
+    },
+  );
+
   it("renders 'You' as the role for user messages", () => {
     renderWithQuery(
       <MessageRow

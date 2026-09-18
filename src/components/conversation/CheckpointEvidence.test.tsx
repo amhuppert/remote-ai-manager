@@ -206,6 +206,50 @@ async function renderEvidence(
 }
 
 describe("CheckpointEvidence", () => {
+  it("opens omitted capture audit at original coordinates using reads only", async () => {
+    const { capturedHandoff } =
+      await import("@/lib/conversation-checkpoints/handoff-fixture");
+    const { checkpointHandoffReceipt } =
+      await import("@/lib/conversation-checkpoints/receipt");
+    stubApi();
+    await renderEvidence({
+      receipt: checkpointReceiptFixture({
+        capturedThroughSeq: 148,
+        handoff: checkpointHandoffReceipt(
+          capturedHandoff({
+            stage: "omitted",
+            omissionReason: "seed_budget",
+            finalizedAt: "2026-09-07T12:05:00.000Z",
+            sourceCoverage: {
+              seqStart: 120,
+              seqEnd: 148,
+              entryIds: ["capture-output"],
+            },
+          }),
+        ),
+      }),
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Agent handoff — advisory" }));
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("button", { name: "Open complete entry at seq 120" }),
+      );
+    await waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(([input]) =>
+          String(input).includes("/history/entries/120"),
+        ),
+      ).toBe(true),
+    );
+    expect(
+      fetchSpy.mock.calls.every(
+        ([, init]) => !init?.method || init.method === "GET",
+      ),
+    ).toBe(true);
+  });
   it("reads original source evidence while disclosing the fork's independent frozen seed", async () => {
     stubApi();
     const origin = checkpointForkOriginFixture({

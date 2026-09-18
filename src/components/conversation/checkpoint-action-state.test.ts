@@ -1,3 +1,5 @@
+import { pendingHandoff } from "@/lib/conversation-checkpoints/handoff-fixture";
+import { checkpointHandoffEligibilityFixture } from "@/lib/conversation-checkpoints/testing/receipt-fixture";
 import { describe, expect, it } from "vitest";
 
 import type { CheckpointRefusal } from "@/lib/conversation-checkpoints/admission";
@@ -32,6 +34,7 @@ function eligibility(
     refusals: [],
     active: null,
     hosted: true,
+    handoff: checkpointHandoffEligibilityFixture(),
     ...overrides,
   };
 }
@@ -237,4 +240,28 @@ describe("deriveCheckpointActionState", () => {
       code: "question_pending",
     });
   });
+});
+
+describe("capture progress", () => {
+  it.each(["pending", "running", "settling"] as const)(
+    "announces %s capture rather than generation",
+    (stage) => {
+      const state = deriveCheckpointChipState({
+        ...checkpointReceiptFixture({ phase: "building" }),
+        handoff: {
+          ...pendingHandoff({
+            stage,
+            startedAt: stage === "pending" ? null : "2026-09-07T12:04:01.000Z",
+            stopIntent: stage === "settling" ? "skip" : null,
+          }),
+          requested: true,
+          categoryCounts: null,
+          policy: null,
+        },
+      });
+      expect(checkpointPhaseHeadline(state)).toBe(
+        stage === "settling" ? "Stopping handoff…" : "Capturing agent handoff…",
+      );
+    },
+  );
 });

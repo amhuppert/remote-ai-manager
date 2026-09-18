@@ -1,3 +1,4 @@
+import { checkpointHandoffEligibilityFixture } from "@/lib/conversation-checkpoints/testing/receipt-fixture";
 // @vitest-environment jsdom
 //
 // The PROJECT host's checkpoint wiring, driven through the real cockpit.
@@ -126,6 +127,7 @@ function stubFetch(phase: CheckpointPhase = "ready"): void {
           refusals: [],
           active: null,
           hosted: true,
+          handoff: checkpointHandoffEligibilityFixture(),
         });
       }
       if (url.startsWith(CHECKPOINTS_BASE)) {
@@ -440,6 +442,7 @@ describe("project cockpit checkpoint wiring", () => {
             ],
             active: null,
             hosted: true,
+            handoff: checkpointHandoffEligibilityFixture(),
           });
         }
         if (url.startsWith(CHECKPOINTS_BASE)) {

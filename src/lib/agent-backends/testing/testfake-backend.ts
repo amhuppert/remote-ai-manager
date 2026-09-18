@@ -150,6 +150,11 @@ export const testfakeConversationCapabilities: BackendConversationCapabilities =
     externalTurns: false,
     checkpoint: false,
     checkpointFork: false,
+    handoffCapture: {
+      available: false,
+      mode: null,
+      reason: "Capture is unavailable",
+    },
     capabilityKinds: [{ kind: "agents", applyTiming: "next_turn" }],
   };
 

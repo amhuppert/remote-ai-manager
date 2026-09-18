@@ -50,7 +50,12 @@ function isStructuredOutputRetryExhaustion(message: string): boolean {
  */
 export function createClaudeFailureClassifier(): AgentFailureClassifier {
   function classify(error: unknown): AgentFailureClassification {
-    const message = failureMessage(error);
+    const stderr =
+      error instanceof Error ? Reflect.get(error, "stderr") : undefined;
+    const message =
+      typeof stderr === "string" && stderr.length > 0
+        ? `${failureMessage(error)}\n${stderr}`
+        : failureMessage(error);
     if (isAbortFailure(error)) {
       return { kind: "aborted", message, retryable: false };
     }

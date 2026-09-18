@@ -65,16 +65,37 @@ export type ConversationStatus =
   | "running"
   | "waiting_for_input";
 
-export const transcriptMessageOriginSchema = z.object({
-  source: z.enum(["user", "workflow"]),
-  workflow: z
-    .object({
-      executionId: z.string(),
-      nodeId: z.string(),
-      iterationIndex: z.number().int().nonnegative(),
-    })
-    .optional(),
-});
+export const transcriptMessageOriginSchema = z
+  .object({
+    source: z.enum(["user", "workflow", "checkpoint_capture"]),
+    workflow: z
+      .object({
+        executionId: z.string(),
+        nodeId: z.string(),
+        iterationIndex: z.number().int().nonnegative(),
+      })
+      .optional(),
+    checkpointCapture: z
+      .object({
+        operationId: z.string().min(1),
+        captureId: z.string().min(1),
+        part: z.enum(["control", "output", "activity", "settlement"]),
+      })
+      .strict()
+      .optional(),
+  })
+  .refine(
+    (origin) =>
+      origin.source === "checkpoint_capture"
+        ? origin.checkpointCapture !== undefined &&
+          origin.workflow === undefined
+        : origin.checkpointCapture === undefined,
+    {
+      message:
+        "checkpoint capture origin requires its operation, capture and part",
+      path: ["checkpointCapture"],
+    },
+  );
 export type TranscriptMessageOrigin = z.infer<
   typeof transcriptMessageOriginSchema
 >;
@@ -95,6 +116,11 @@ export const sourceRefSchema = z.object({
 });
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 
+export const transcriptSourcePartSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  origin: transcriptMessageOriginSchema.optional(),
+});
+
 export const transcriptMessageSchema = z.object({
   id: z.string().optional(),
   role: z.enum(["user", "assistant", "notice"]),
@@ -102,6 +128,7 @@ export const transcriptMessageSchema = z.object({
   timestamp: z.string().nullable(),
   modelSelection: backendModelSelectionSchema.optional(),
   origin: transcriptMessageOriginSchema.optional(),
+  sourceParts: z.array(transcriptSourcePartSchema).optional(),
 });
 
 /** Parsed transcript message */
@@ -118,6 +145,7 @@ export interface TranscriptMessage {
   modelSelection?: BackendModelSelection;
   /** Where this message originated. Absent on legacy transcripts. */
   origin?: TranscriptMessageOrigin;
+  sourceParts?: Array<z.infer<typeof transcriptSourcePartSchema>>;
 }
 
 /**

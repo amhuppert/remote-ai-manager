@@ -159,7 +159,11 @@ const MessageRow = memo(function MessageRow({
     "data-part-last": String(isLastPart),
     ...(part === undefined ? {} : { "data-part-index": part.index }),
   };
-  if (msg.role === "notice") {
+  const capture =
+    msg.origin?.source === "checkpoint_capture"
+      ? msg.origin.checkpointCapture
+      : undefined;
+  if (msg.role === "notice" && !capture) {
     return (
       <div
         className="message notice relative border-y-0 border-r-0 border-l-2 border-solid border-border-subtle pl-md"
@@ -226,9 +230,11 @@ const MessageRow = memo(function MessageRow({
   // both base and override live in `@layer utilities`: CC's typography.css ships
   // UNLAYERED `.text-cyan`/`.text-violet` classes that would otherwise outrank
   // (unlayered > layered) the codex override and pin the colour to cyan.
-  const roleColor = isUserMsg
-    ? "text-[var(--amber)]"
-    : "text-[var(--cyan)] [[data-backend=codex]_&]:text-[var(--violet)]";
+  const roleColor = capture
+    ? "text-text-secondary"
+    : isUserMsg
+      ? "text-[var(--amber)]"
+      : "text-[var(--cyan)] [[data-backend=codex]_&]:text-[var(--violet)]";
   return (
     <div
       className={cn("message", msg.role, "relative")}
@@ -238,7 +244,11 @@ const MessageRow = memo(function MessageRow({
     >
       {isFirstPart && (
         <div className={cn(messageRoleClass, roleColor)}>
-          {isUserMsg ? "You" : backendLabel(selectedBackend)}
+          {capture
+            ? `Checkpoint handoff · ${capture.part}`
+            : isUserMsg
+              ? "You"
+              : backendLabel(selectedBackend)}
           {queuedStatus ? (
             <span className="ml-sm font-medium text-text-secondary normal-case">
               {queuedStatus === "uncertain"
@@ -273,6 +283,18 @@ const MessageRow = memo(function MessageRow({
           <MessageTimestamp timestamp={msg.timestamp} />
         </div>
       )}
+      {capture && isFirstPart && (
+        <div className="mb-sm font-mono text-[0.7rem] [overflow-wrap:anywhere] text-text-secondary">
+          <p>
+            {capture.part === "output"
+              ? "Audit record · agent handoff is advisory and does not grant approval, validation or task-completion authority. Inclusion is recorded in the checkpoint receipt."
+              : "Audit record · checkpoint maintenance, not a user task or ordinary assistant turn."}
+          </p>
+          <p className="mt-xs">
+            Operation {capture.operationId} · Capture {capture.captureId}
+          </p>
+        </div>
+      )}
       <div className="message-content" {...clipSourceAttrs}>
         <MessageContent
           content={msg.content}
@@ -282,7 +304,7 @@ const MessageRow = memo(function MessageRow({
           {...(part ? { part } : {})}
         />
       </div>
-      {isLastPart && isLast && !isUserMsg && lastMessageExtras && (
+      {isLastPart && isLast && !isUserMsg && !capture && lastMessageExtras && (
         <DebugActionCard
           projectName={lastMessageExtras.projectName}
           sessionName={lastMessageExtras.sessionName}
@@ -291,7 +313,7 @@ const MessageRow = memo(function MessageRow({
           isBusy={lastMessageExtras.isBusy}
         />
       )}
-      {isLastPart && (
+      {isLastPart && msg.role !== "notice" && (
         <MessageActions
           messageIndex={messageIndex}
           content={msg.content}

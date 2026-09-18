@@ -1,3 +1,6 @@
+import { checkpointReceiptFixture } from "./testing/receipt-fixture";
+import { capturedHandoff } from "./handoff-fixture";
+import { checkpointHandoffReceipt } from "./receipt";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
@@ -243,3 +246,26 @@ describe("checkpoint eligibility freshness", () => {
     ).toBe(true);
   });
 });
+
+it.each(["session", "project"] as const)(
+  "receives typed capture progress through the SSE listener (%s)",
+  (scope) => {
+    const { client, es } = seeded();
+    const target: CheckpointTarget =
+      scope === "session"
+        ? sessionTarget
+        : { scope, projectName: "proj", conversationId: "conv-1" };
+    const receipt = checkpointReceiptFixture({
+      scope,
+      handoff: checkpointHandoffReceipt(capturedHandoff()),
+    });
+    es.emit("conversation-checkpoint-updated", {
+      type: "conversation-checkpoint-updated",
+      ...target,
+      receipt,
+    });
+    expect(
+      client.getQueryData(checkpointKeys.detail(target, receipt.operationId)),
+    ).toEqual({ receipt });
+  },
+);

@@ -1,3 +1,4 @@
+import { checkpointHandoffEligibilityFixture } from "@/lib/conversation-checkpoints/testing/receipt-fixture";
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -102,6 +103,7 @@ function stubApi(state: StubState) {
           refusals: state.refusals,
           active: state.active,
           hosted: true,
+          handoff: checkpointHandoffEligibilityFixture(),
         }),
       );
     }
@@ -151,6 +153,45 @@ describe("ConversationCheckpointControls", () => {
     vi.unstubAllGlobals();
     cleanup();
   });
+
+  it.each([sessionTarget, projectTarget])(
+    "prepares handoff without submission in $scope scope",
+    async (target) => {
+      stubApi({ receipts: [], eligible: true, refusals: [], active: null });
+      renderControls(target);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", {
+          name: /Compact with agent handoff/,
+        }),
+      );
+      expect(
+        await screen.findByRole("button", {
+          name: "Capture handoff and compact",
+        }),
+      ).toBeDefined();
+      expect(
+        fetchSpy.mock.calls.some(([, init]) => init?.method === "POST"),
+      ).toBe(false);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Capture handoff and compact" }),
+      );
+      await waitFor(() =>
+        expect(
+          fetchSpy.mock.calls.some(([, init]) => init?.method === "POST"),
+        ).toBe(true),
+      );
+      const post = fetchSpy.mock.calls.find(
+        ([, init]) => init?.method === "POST",
+      );
+      expect(String(post?.[0])).toBe(
+        target.scope === "session" ? SESSION_BASE : PROJECT_BASE,
+      );
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        handoff: { mode: "tool-disabled" },
+      });
+    },
+  );
 
   it("reads the newest operation's phase from the server, not from a mutation", async () => {
     stubApi({
@@ -326,7 +367,7 @@ describe("ConversationCheckpointControls", () => {
     const post = fetchSpy.mock.calls.find((call) => call[1]?.method === "POST");
     expect(String(post?.[0])).toBe(PROJECT_BASE);
     const body: unknown = JSON.parse(String(post?.[1]?.body));
-    expect(body).toMatchObject({});
+    expect(body).not.toHaveProperty("handoff");
     const requestId = (body as { requestId?: string }).requestId;
     expect(requestId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
@@ -689,6 +730,7 @@ describe("ConversationCheckpointControls", () => {
             refusals: [],
             active: null,
             hosted: true,
+            handoff: checkpointHandoffEligibilityFixture(),
           }),
         );
       }

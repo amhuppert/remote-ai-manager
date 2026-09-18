@@ -40,7 +40,7 @@ import type {
  * Bumped when the hash basis below changes shape. It is part of the basis, so
  * an old hash can never collide with a new one over the same archive.
  */
-export const CHECKPOINT_SOURCE_HASH_VERSION = "1";
+export const CHECKPOINT_SOURCE_HASH_VERSION = "2";
 
 /**
  * The render the source hash describes. Fixed rather than configurable: the
@@ -75,6 +75,8 @@ export interface CapturedCheckpointSource {
    * hash, not the checkpoint's versioned basis.
    */
   markdownHash: string;
+  /** Private ownership fence over all copied entries, including excluded audit origins. */
+  archiveFingerprint: string;
   totalMessages: number;
   /** First raw sequence in the snapshot; the coverage a full envelope claims. */
   firstSeq: number;
@@ -116,7 +118,7 @@ export async function captureCheckpointSource(
   // Copied, not aliased: the caller's array may be a live cache the reader
   // appends to, and a build that re-read its own source would defeat the
   // whole point of a captured boundary.
-  const entries = [...read.entries];
+  const entries = structuredClone(read.entries);
   const capturedThroughSeq = lastRenderedSeq(entries, read.maxSeq);
 
   const rendered = renderCompactTranscript(
@@ -124,6 +126,7 @@ export async function captureCheckpointSource(
       conversationId: input.conversationId,
       entries,
       maxSeq: read.maxSeq,
+      evidenceOnly: true,
     },
     renderOptionsSchema.parse(CHECKPOINT_SOURCE_RENDER_OPTIONS),
   );
@@ -163,6 +166,9 @@ export async function captureCheckpointSource(
     },
     normalizedMarkdown,
     markdownHash,
+    archiveFingerprint: sha256(
+      JSON.stringify({ entries, maxSeq: read.maxSeq, capturedThroughSeq }),
+    ),
     totalMessages: rendered.totalMessages,
     firstSeq: entries[0]?.seq ?? 0,
   };

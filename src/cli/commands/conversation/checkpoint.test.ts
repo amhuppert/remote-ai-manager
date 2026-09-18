@@ -1,6 +1,16 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import {
+  checkpointHandoffReceipt,
+  type CheckpointReceipt,
+  CHECKPOINT_CAPTURE_POLICY,
+} from "@/lib/conversation-checkpoints/receipt";
 
 import { runCcWithHost, inlineDataOf } from "../../testing/domain-runtime";
+import {
+  capturedHandoff,
+  pendingHandoff,
+} from "@/lib/conversation-checkpoints/handoff-fixture";
 import type { CliEnv, CliHost, FetchInit } from "../../transport";
 
 /**
@@ -85,6 +95,7 @@ const SESSION_BASE =
 const PROJECT_BASE = "/api/projects/cc/conversations/conv-1";
 
 interface ReceiptOverrides {
+  handoff?: CheckpointReceipt["handoff"];
   phase?: string;
   operationId?: string;
   ordinal?: number;
@@ -106,6 +117,7 @@ function makeReceipt(overrides: ReceiptOverrides = {}) {
   return {
     operationId: overrides.operationId ?? "op-1",
     mechanism: "cc_checkpoint",
+    handoff: overrides.handoff ?? null,
     scope: overrides.scope ?? "session",
     conversationId: "conv-1",
     ordinal: overrides.ordinal ?? 3,
@@ -583,6 +595,12 @@ describe("cctl conversation checkpoint check", () => {
         refusals: [],
         active: null,
         hosted: true,
+        handoff: {
+          available: false,
+          mode: null,
+          reason: "unavailable",
+          policy: CHECKPOINT_CAPTURE_POLICY,
+        },
       }),
     );
 
@@ -620,6 +638,12 @@ describe("cctl conversation checkpoint check", () => {
         ],
         active: makeReceipt({ operationId: "op-9", phase: "building" }),
         hosted: true,
+        handoff: {
+          available: false,
+          mode: null,
+          reason: "unavailable",
+          policy: CHECKPOINT_CAPTURE_POLICY,
+        },
       }),
     );
 
@@ -666,6 +690,12 @@ describe("cctl conversation checkpoint check", () => {
         ],
         active: null,
         hosted: false,
+        handoff: {
+          available: false,
+          mode: null,
+          reason: "unavailable",
+          policy: CHECKPOINT_CAPTURE_POLICY,
+        },
       }),
     );
 
@@ -704,6 +734,12 @@ describe("cctl conversation checkpoint check", () => {
             refusals: [],
             active: null,
             hosted: true,
+            handoff: {
+              available: false,
+              mode: null,
+              reason: "unavailable",
+              policy: CHECKPOINT_CAPTURE_POLICY,
+            },
           })
         : refusalResponse(
             "turn_active",
@@ -1196,6 +1232,12 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
         refusals: [],
         active: null,
         hosted: true,
+        handoff: {
+          available: false,
+          mode: null,
+          reason: "unavailable",
+          policy: CHECKPOINT_CAPTURE_POLICY,
+        },
       }),
     );
     const result = await runCcWithHost(
@@ -1217,6 +1259,12 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
         refusals: [],
         active: null,
         hosted: true,
+        handoff: {
+          available: false,
+          mode: null,
+          reason: "unavailable",
+          policy: CHECKPOINT_CAPTURE_POLICY,
+        },
       }),
     );
     const result = await runCcWithHost(
@@ -1236,6 +1284,12 @@ describe("checkpoint suggestions carry the resolved target scope", () => {
       jsonResponse({
         eligible: false,
         hosted: true,
+        handoff: {
+          available: false,
+          mode: null,
+          reason: "unavailable",
+          policy: CHECKPOINT_CAPTURE_POLICY,
+        },
         active: null,
         refusals: [
           {
@@ -1549,5 +1603,677 @@ describe.each([sessionEnv, projectEnv])(
       expect(result.stderr + result.stdout).toContain("modelSelection");
       expect(host.requests).toHaveLength(0);
     });
+  },
+);
+
+describe.each([
+  { env: sessionEnv, base: SESSION_BASE },
+  { env: projectEnv, base: PROJECT_BASE },
+])("handoff controls in $base", ({ env, base }) => {
+  it.each(["tool-disabled", "instruction-only", null])(
+    "binds disclosed mode %s with one scoped preflight and submission",
+    async (mode) => {
+      const host = makeHost((req) =>
+        req.method === "GET"
+          ? jsonResponse({
+              eligible: true,
+              refusals: [],
+              active: null,
+              hosted: true,
+              handoff: {
+                available: mode !== null,
+                mode,
+                reason: mode === null ? "unavailable" : null,
+                policy: CHECKPOINT_CAPTURE_POLICY,
+              },
+            })
+          : jsonResponse(
+              {
+                outcome: "admitted",
+                receipt: makeReceipt(),
+                statusUrl: `${base}/checkpoints/op-1`,
+              },
+              202,
+            ),
+      );
+      const result = await runCcWithHost(
+        [
+          "conversation",
+          "compact-context",
+          "conv-1",
+          "--handoff",
+          "--recover",
+          "old-op",
+          "--json",
+        ],
+        env,
+        host,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(
+        host.requests.map(({ method, path }) => ({ method, path })),
+      ).toEqual([
+        {
+          method: "GET",
+          path: `${base}/checkpoints/eligibility?recoversOperationId=old-op`,
+        },
+        { method: "POST", path: `${base}/checkpoints` },
+      ]);
+      expect(host.requests[1]?.body).toMatchObject({
+        handoff: { mode },
+        recoversOperationId: "old-op",
+      });
+    },
+  );
+
+  it.each(["stopping", "handoff_already_settled"])(
+    "reports skip outcome %s without cancelling",
+    async (outcome) => {
+      const host = makeHost(() =>
+        jsonResponse({ outcome, receipt: makeReceipt() }),
+      );
+      const result = await runCcWithHost(
+        [
+          "conversation",
+          "checkpoint",
+          "skip-handoff",
+          "conv-1",
+          "op-1",
+          "--json",
+        ],
+        env,
+        host,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(inlineDataOf(result).outcome).toBe(outcome);
+      expect(host.requests).toHaveLength(1);
+      expect(host.requests[0]?.path).toBe(
+        `${base}/checkpoints/op-1/skip-handoff`,
+      );
+    },
+  );
+
+  it("sends stopped-execution testimony only on explicit reconcile", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ outcome: "unchanged", receipt: makeReceipt() }),
+    );
+    for (const flags of [[], ["--capture-execution-stopped"]]) {
+      const result = await runCcWithHost(
+        ["conversation", "checkpoint", "reconcile", "conv-1", "op-1", ...flags],
+        env,
+        host,
+      );
+      expect(result.exitCode).toBe(0);
+    }
+    expect(host.requests[0]?.body).toBeUndefined();
+    expect(host.requests[1]?.body).toEqual({
+      captureExecutionStopped: true,
+      source: "cli",
+    });
+  });
+
+  it.each([
+    ["compact-context", "conv-1", "--handoff"],
+    ["checkpoint", "skip-handoff", "conv-1", "op-1"],
+    [
+      "checkpoint",
+      "reconcile",
+      "conv-1",
+      "op-1",
+      "--capture-execution-stopped",
+    ],
+  ])("never posts to a discovered neighboring scope: %s", async (...args) => {
+    const host = makeHost((req) =>
+      req.path === "/api/conversations/conv-1"
+        ? jsonResponse({
+            scope: "session",
+            projectName: "neighbor",
+            sessionName: "neighbor-session",
+          })
+        : jsonResponse(
+            { error: "not found", code: "conversation_not_found" },
+            404,
+          ),
+    );
+    const result = await runCcWithHost(
+      ["conversation", ...args, "--json"],
+      env,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(
+      host.requests.filter(
+        (req) => req.method === "POST" && !req.path.startsWith(base),
+      ),
+    ).toHaveLength(0);
+    expect(host.requests.filter((req) => req.method === "POST")).toHaveLength(
+      args[0] === "compact-context" ? 0 : 1,
+    );
+  });
+});
+
+describe("explicit handoff mutation scope", () => {
+  it.each([
+    ["compact-context", "conv-1", "--handoff"],
+    ["compact-context", "conv-1", "--recover", "op-1"],
+    ["checkpoint", "skip-handoff", "conv-1", "op-1"],
+    ["checkpoint", "cancel", "conv-1", "op-1"],
+    [
+      "checkpoint",
+      "reconcile",
+      "conv-1",
+      "op-1",
+      "--capture-execution-stopped",
+    ],
+  ])("honors explicit foreign project and session: %s", async (...args) => {
+    for (const scope of [
+      ["--project", "other"],
+      ["--project", "other", "--session", "elsewhere"],
+    ]) {
+      const host = makeHost((req) =>
+        req.method === "GET"
+          ? jsonResponse({
+              eligible: true,
+              refusals: [],
+              active: null,
+              hosted: true,
+              handoff: {
+                available: true,
+                mode: "instruction-only",
+                reason: null,
+                policy: CHECKPOINT_CAPTURE_POLICY,
+              },
+            })
+          : jsonResponse({
+              outcome: args[0] === "compact-context" ? "admitted" : "unchanged",
+              receipt: makeReceipt(),
+              statusUrl: "status",
+            }),
+      );
+      const result = await runCcWithHost(
+        ["conversation", ...args, ...scope],
+        sessionEnv,
+        host,
+      );
+      expect(result.exitCode).toBe(0);
+      const expected =
+        scope.length === 2
+          ? "/api/projects/other/conversations/conv-1"
+          : "/api/projects/other/sessions/elsewhere/conversations/conv-1";
+      expect(host.requests.every((req) => req.path.startsWith(expected))).toBe(
+        true,
+      );
+      expect(host.requests.filter((req) => req.method === "POST")).toHaveLength(
+        1,
+      );
+    }
+  });
+});
+
+describe("capture receipt disclosure", () => {
+  const included = checkpointHandoffReceipt(
+    capturedHandoff({ stage: "included", finalizedAt: "now", candidate: null }),
+  );
+  const omitted = checkpointHandoffReceipt(
+    capturedHandoff({
+      stage: "omitted",
+      omissionReason: "seed_budget",
+      finalizedAt: "now",
+      candidate: null,
+    }),
+  );
+  const unavailable = checkpointHandoffReceipt(
+    pendingHandoff({
+      stage: "omitted",
+      requestedMode: null,
+      omissionReason: "unavailable",
+      executionSettled: true,
+      settledAt: "now",
+      finalizedAt: "now",
+    }),
+  );
+  const held = {
+    ...unavailable,
+    omissionReason: "cleanup_unverified" as const,
+    requestedMode: "instruction-only" as const,
+    executionSettled: false,
+  };
+
+  it.each([
+    { handoff: included, label: "Handoff included" },
+    { handoff: omitted, label: "valid handoff omitted — seed_budget" },
+    { handoff: unavailable, label: "Handoff omitted — unavailable" },
+    { handoff: held, label: "Capture cleanup held" },
+  ])(
+    "renders $label in get and list while JSON preserves the receipt",
+    async ({ handoff, label }) => {
+      const receipt = makeReceipt({
+        handoff,
+        phase: handoff === held ? "needs_reconciliation" : "ready",
+      });
+      for (const command of [
+        ["get", "conv-1", "op-1"],
+        ["list", "conv-1"],
+      ]) {
+        const host = makeHost(() =>
+          jsonResponse(
+            command[0] === "get"
+              ? { receipt }
+              : { receipts: [receipt], nextBefore: null },
+          ),
+        );
+        const text = await runCcWithHost(
+          ["conversation", "checkpoint", ...command],
+          sessionEnv,
+          host,
+        );
+        expect(text.exitCode).toBe(0);
+        expect(text.stdout).toContain(label);
+        expect(text.stdout).not.toContain("tool-free");
+        if (handoff.requestedMode === "instruction-only")
+          expect(text.stdout).toContain("tools remain callable");
+        const json = await runCcWithHost(
+          ["conversation", "checkpoint", ...command, "--json"],
+          sessionEnv,
+          host,
+        );
+        const data = inlineDataOf(json);
+        expect(
+          command[0] === "get" ? data.receipt : (data.receipts as unknown[])[0],
+        ).toMatchObject({ handoff });
+      }
+    },
+  );
+
+  it("reports capability and policy separately from baseline eligibility in text and JSON", async () => {
+    const handoff = {
+      available: false,
+      mode: "instruction-only",
+      reason: "no current continuity",
+      policy: CHECKPOINT_CAPTURE_POLICY,
+    };
+    const host = makeHost(() =>
+      jsonResponse({
+        eligible: true,
+        refusals: [],
+        active: null,
+        hosted: false,
+        handoff,
+      }),
+    );
+    const text = await runCcWithHost(
+      ["conversation", "checkpoint", "check", "conv-1"],
+      projectEnv,
+      host,
+    );
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("tools remain callable");
+    expect(text.stdout).toContain("8192");
+    expect(text.stdout).toContain("no current continuity");
+    const json = await runCcWithHost(
+      ["conversation", "checkpoint", "check", "conv-1", "--json"],
+      projectEnv,
+      host,
+    );
+    expect(inlineDataOf(json).handoff).toEqual(handoff);
+    expect(host.requests.every((req) => req.method === "GET")).toBe(true);
+  });
+
+  it("offers attestation only for an unsettled capture cleanup hold, then separate recovery", async () => {
+    for (const env of [sessionEnv, projectEnv]) {
+      for (const executionSettled of [false, true]) {
+        const receipt = {
+          ...makeReceipt({
+            phase: "needs_reconciliation",
+            handoff: { ...held, executionSettled },
+            failure: {
+              code: "capture_cleanup_unverified",
+              message: "Prior capture requires cleanup",
+            },
+          }),
+          lastStablePhase: "building",
+          checkpoint: null,
+        };
+        const host = makeHost(() => jsonResponse({ receipt }));
+        const result = await runCcWithHost(
+          ["conversation", "checkpoint", "get", "conv-1", "op-1", "--json"],
+          env,
+          host,
+        );
+        expect(result.exitCode).toBe(0);
+        const advice = String(result.envelope?.hint);
+        expect(advice).toContain(
+          executionSettled ? "--recover=op-1" : "--capture-execution-stopped",
+        );
+        expect(advice).toContain("--project=cc");
+        if (!executionSettled) expect(advice).toContain("Inspect and stop");
+        if (env === sessionEnv)
+          expect(advice).toContain("--session=my-session");
+      }
+    }
+  });
+
+  it("keeps successful omitted capture waits successful and never cancels a capture on timeout", async () => {
+    for (const phase of ["ready", "building"]) {
+      const host = makeHost(
+        (req) =>
+          jsonResponse(
+            req.method === "POST"
+              ? {
+                  outcome: "admitted",
+                  receipt: makeReceipt({ phase, handoff: omitted }),
+                  statusUrl: "status",
+                }
+              : { receipt: makeReceipt({ phase, handoff: omitted }) },
+          ),
+        { nowStep: 1_000_000 },
+      );
+      const result = await runCcWithHost(
+        ["conversation", "compact-context", "conv-1", "--wait", "--json"],
+        sessionEnv,
+        host,
+      );
+      expect(result.exitCode).toBe(phase === "ready" ? 0 : 1);
+      expect(
+        host.requests
+          .filter((req) => req.method === "POST")
+          .map((req) => req.path),
+      ).toEqual([`${SESSION_BASE}/checkpoints`]);
+      expect(inlineDataOf(result)).toHaveProperty(
+        "receipt.handoff.omissionReason",
+        "seed_budget",
+      );
+    }
+  });
+});
+
+describe("capture refusal follow-ups", () => {
+  it.each([false, true])(
+    "retains the durable receipt after stopped testimony: settled=%s",
+    async (executionSettled) => {
+      const handoff = checkpointHandoffReceipt(
+        pendingHandoff({
+          stage: "omitted",
+          omissionReason: "interrupted",
+          settledAt: "now",
+          finalizedAt: "now",
+          executionSettled,
+        }),
+      );
+      const receipt = {
+        ...makeReceipt({ phase: "needs_reconciliation", handoff }),
+        lastStablePhase: "building",
+        checkpoint: null,
+      };
+      for (const flags of [[], ["--json"]]) {
+        const host = makeHost(() =>
+          jsonResponse(
+            {
+              error: "Capture recovery required",
+              code: "recovery_required",
+              receipt,
+              refusal: {
+                code: "recovery_required",
+                reason: "Capture recovery required",
+                operationId: "op-1",
+                phase: "needs_reconciliation",
+              },
+            },
+            409,
+          ),
+        );
+        const result = await runCcWithHost(
+          [
+            "conversation",
+            "checkpoint",
+            "reconcile",
+            "conv-1",
+            "op-1",
+            "--capture-execution-stopped",
+            ...flags,
+          ],
+          projectEnv,
+          host,
+        );
+        expect(result.exitCode).toBe(1);
+        const rendered = result.stdout + result.stderr;
+        expect(rendered).toContain("needs_reconciliation");
+        expect(rendered).toContain(
+          executionSettled ? "--recover=op-1" : "--capture-execution-stopped",
+        );
+        expect(rendered).toContain("--project=cc");
+        expect(host.requests).toHaveLength(1);
+      }
+    },
+  );
+
+  it("does not suggest execution testimony for an uncertain seed delivery", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ receipt: makeReceipt({ phase: "needs_reconciliation" }) }),
+    );
+    const result = await runCcWithHost(
+      ["conversation", "checkpoint", "get", "conv-1", "op-1", "--json"],
+      sessionEnv,
+      host,
+    );
+    expect(String(result.envelope?.hint)).toContain("checkpoint reconcile");
+    expect(String(result.envelope?.hint)).not.toContain(
+      "--capture-execution-stopped",
+    );
+  });
+});
+
+it("exports the exact frozen seed through the existing JSON artifact wrapper", async () => {
+  const seedText =
+    "<checkpoint>\n" + "é🧭\n\t\t\t\t\t\t\t\t".repeat(2100) + "</checkpoint>";
+  const seedSha256 = createHash("sha256").update(seedText).digest("hex");
+  const host = makeHost(() =>
+    jsonResponse({
+      receipt: makeReceipt({ phase: "ready" }),
+      seed: { seedText, seedSha256, schemaVersion: 1, createdAt: "now" },
+    }),
+  );
+  const result = await runCcWithHost(
+    [
+      "conversation",
+      "checkpoint",
+      "get",
+      "conv-1",
+      "op-1",
+      "--detail",
+      "seed",
+      "--json",
+    ],
+    sessionEnv,
+    host,
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.artifacts).toHaveLength(1);
+  const artifact = result.artifacts[0];
+  if (!artifact) throw new Error("Missing seed artifact");
+  const bytes = result.files[artifact.path];
+  if (!bytes) throw new Error("Missing artifact bytes");
+  const exported = JSON.parse(new TextDecoder().decode(bytes));
+  expect(exported.payload.data.seed).toEqual({
+    seedText,
+    seedSha256,
+    schemaVersion: 1,
+    createdAt: "now",
+  });
+  expect(createHash("sha256").update(bytes).digest("hex")).not.toBe(seedSha256);
+  expect(host.requests).toHaveLength(1);
+});
+
+describe("offline checkpoint help", () => {
+  it.each([
+    ["compact-context"],
+    ["checkpoint", "check"],
+    ["checkpoint", "list"],
+    ["checkpoint", "get"],
+    ["checkpoint", "skip-handoff"],
+    ["checkpoint", "cancel"],
+    ["checkpoint", "reconcile"],
+    ["entry", "get"],
+    ["image", "get"],
+  ])(
+    "publishes positive text and structured leaf help without identity or network: %s",
+    async (...command) => {
+      const host = makeHost(() => {
+        throw new Error("Offline help made a request");
+      });
+      const text = await runCcWithHost(
+        ["conversation", ...command, "--help"],
+        {},
+        host,
+      );
+      expect(text.exitCode).toBe(0);
+      expect(text.stdout).toContain(`cctl conversation ${command.join(" ")}`);
+      const json = await runCcWithHost(
+        ["conversation", ...command, "--help", "--json"],
+        {},
+        host,
+      );
+      expect(json.exitCode).toBe(0);
+      const help = inlineDataOf(json);
+      expect(help.path).toBe(`conversation ${command.join(" ")}`);
+      expect(help.examples).toEqual(
+        expect.arrayContaining([expect.any(Object)]),
+      );
+      if (command[0] === "compact-context" || command[1] === "check") {
+        for (const output of [text.stdout, json.stdout]) {
+          expect(output).toContain("tools remain callable");
+          expect(output).toContain("60000");
+          expect(output).toContain("8192");
+          expect(output).toContain("6144");
+        }
+      }
+      if (command[1] === "reconcile") {
+        expect(help.flags).toContainEqual(
+          expect.objectContaining({ name: "capture-execution-stopped" }),
+        );
+        expect(help.description).toContain("caller testimony");
+        expect(help.description).toContain("--recover");
+      }
+      expect(host.requests).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    "--handoff-mode=tool-disabled",
+    "--capture-timeout=1",
+    "--capture-output-bytes=100",
+  ])("refuses unregistered capture knobs locally: %s", async (flag) => {
+    const host = makeHost(() => {
+      throw new Error("Invalid option made a request");
+    });
+    const result = await runCcWithHost(
+      ["conversation", "compact-context", "conv-1", flag, "--json"],
+      sessionEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+});
+
+it.each(["recovery_required", "reconciliation_failed"] as const)(
+  "reports persisted stopped-execution testimony as applied despite %s",
+  async (code) => {
+    const capture = checkpointHandoffReceipt(
+      pendingHandoff({
+        stage: "omitted",
+        omissionReason: "interrupted",
+        settledAt: "now",
+        finalizedAt: "now",
+        executionSettled: true,
+        executionStopAttestation: { at: "now", source: "cli" },
+      }),
+    );
+    for (const env of [sessionEnv, projectEnv]) {
+      for (const evidence of [
+        "matching",
+        "wrong-operation",
+        "wrong-conversation",
+        "wrong-scope",
+        "missing-testimony",
+        "unsettled",
+        "no-flag",
+      ] as const) {
+        const scope = env === sessionEnv ? "session" : "project";
+        const receipt = {
+          ...makeReceipt({
+            phase: "needs_reconciliation",
+            scope,
+            handoff: {
+              ...capture,
+              executionSettled: evidence !== "unsettled",
+              executionStopAttestation:
+                evidence === "missing-testimony"
+                  ? null
+                  : capture.executionStopAttestation,
+            },
+          }),
+          lastStablePhase: "building",
+          checkpoint: null,
+          operationId: evidence === "wrong-operation" ? "other-op" : "op-1",
+          conversationId:
+            evidence === "wrong-conversation" ? "other-conv" : "conv-1",
+          scope:
+            evidence === "wrong-scope"
+              ? scope === "session"
+                ? "project"
+                : "session"
+              : scope,
+        };
+        const host = makeHost(() =>
+          jsonResponse(
+            {
+              error: "Capture cleanup settled; recovery required",
+              code,
+              receipt,
+              refusal: {
+                code,
+                reason: "Capture cleanup settled; recovery required",
+                operationId: "op-1",
+                phase: "needs_reconciliation",
+              },
+            },
+            409,
+          ),
+        );
+        const result = await runCcWithHost(
+          [
+            "conversation",
+            "checkpoint",
+            "reconcile",
+            "conv-1",
+            "op-1",
+            ...(evidence === "no-flag" ? [] : ["--capture-execution-stopped"]),
+            "--json",
+          ],
+          env,
+          host,
+        );
+        expect(result.exitCode).toBe(1);
+        expect(result.envelope?.effect, evidence).toBe(
+          evidence === "matching" ? "applied" : "not_applied",
+        );
+        if (evidence === "matching") {
+          expect(result.envelope).toHaveProperty(
+            "recovery.references",
+            expect.arrayContaining([{ kind: "checkpoint", id: "op-1" }]),
+          );
+          expect(JSON.stringify(result.envelope?.error)).toContain(
+            '"source":"cli"',
+          );
+          expect(String(result.envelope?.hint)).toContain(
+            code === "recovery_required"
+              ? "--recover=op-1"
+              : "checkpoint reconcile",
+          );
+        }
+        expect(host.requests).toHaveLength(1);
+      }
+    }
   },
 );

@@ -114,3 +114,48 @@ export const SystemNotice: Story = {
     }),
   },
 };
+
+export const HandoffAuditOutput: Story = {
+  name: "Checkpoint handoff — advisory audit output",
+  args: {
+    msg: makeMessage({
+      content: [
+        {
+          type: "text",
+          text: "Plan: finish the pagination fix. Hypothesis: the cursor is stale. Next step: reproduce the final page request.",
+        },
+      ],
+      origin: {
+        source: "checkpoint_capture",
+        checkpointCapture: {
+          operationId: "checkpoint-89e99467-6d5d-4dad-a013-27ab13a50e88",
+          captureId: "capture-8d90b4f0-681f-428c-a37e-b9c589ae02f1",
+          part: "output",
+        },
+      },
+    }),
+  },
+};
+
+export const HandoffAuditControl: Story = {
+  name: "Checkpoint handoff — maintenance control",
+  args: {
+    msg: makeMessage({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "Record current working state only. Do not investigate, implement or call tools.",
+        },
+      ],
+      origin: {
+        source: "checkpoint_capture",
+        checkpointCapture: {
+          operationId: "checkpoint-89e99467-6d5d-4dad-a013-27ab13a50e88",
+          captureId: "capture-8d90b4f0-681f-428c-a37e-b9c589ae02f1",
+          part: "control",
+        },
+      },
+    }),
+  },
+};

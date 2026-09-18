@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { capturedHandoff } from "./handoff-fixture";
+import { CHECKPOINT_CAPTURE_POLICY, checkpointHandoffReceipt } from "./receipt";
+import { reconnectReconcile } from "@/lib/events/sse-reconnect";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
@@ -7,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CHECKPOINT_RECENT_LIMIT,
   useCheckpointList,
+  useCheckpointEligibility,
   useCheckpointOperation,
 } from "./queries";
 import { checkpointKeys, type CheckpointTarget } from "./query-keys";
@@ -124,7 +128,15 @@ describe("checkpoint reads reconciled against newer state", () => {
   // the cache has to win, or a reconnect could never recover a missed phase.
   it("adopts a newer receipt a read recovers after reconnect", async () => {
     fetchSpy.mockResolvedValue(
-      jsonResponse({ receipts: [freshReady()], nextBefore: null }),
+      jsonResponse({
+        receipts: [
+          {
+            ...freshReady(),
+            handoff: checkpointHandoffReceipt(capturedHandoff()),
+          },
+        ],
+        nextBefore: null,
+      }),
     );
     const { result, client } = renderWithClient(() =>
       useCheckpointList(target, { limit: CHECKPOINT_RECENT_LIMIT }),
@@ -135,6 +147,11 @@ describe("checkpoint reads reconciled against newer state", () => {
 
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data?.receipts[0]?.phase).toBe("ready");
+    expect(result.current.data?.receipts[0]?.handoff).toMatchObject({
+      stage: "captured",
+      requestedMode: "instruction-only",
+      usage: { costBasis: "pricing_estimate" },
+    });
     // The ledger moves forward with it, so the next read starts from the truth.
     expect(
       client.getQueryData<{ receipt: { phase: string } }>(
@@ -247,4 +264,121 @@ describe("a list read cannot erase an operation the client already knows", () =>
       "op-1",
     ]);
   });
+});
+
+describe("capture disclosure and query-owned progress", () => {
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+  it.each(["session", "project"] as const)(
+    "retains backend disclosure on eligibility reads (%s)",
+    async (scope) => {
+      const addressed =
+        scope === "session"
+          ? target
+          : { scope, projectName: "p1", conversationId: "c1" };
+      const handoff = {
+        available: true,
+        mode: "instruction-only",
+        reason: null,
+        policy: CHECKPOINT_CAPTURE_POLICY,
+      };
+      fetchSpy.mockResolvedValue(
+        jsonResponse({
+          eligible: true,
+          refusals: [],
+          active: null,
+          hosted: false,
+          handoff,
+        }),
+      );
+      const { result } = renderWithClient(() =>
+        useCheckpointEligibility(addressed),
+      );
+      await waitFor(() => expect(result.current.data).toBeDefined());
+      expect(result.current.data).toHaveProperty("handoff", handoff);
+    },
+  );
+  it("reconstructs missed capture progress on remount from the durable GET", async () => {
+    const handoff = checkpointHandoffReceipt(capturedHandoff());
+    let receipt = checkpointReceiptFixture({
+      phase: "building",
+      frozen: false,
+      handoff,
+      updatedAt: EARLIER,
+    });
+    fetchSpy.mockImplementation(async () => jsonResponse({ receipt }));
+    const first = renderWithClient(() =>
+      useCheckpointOperation(target, "op-1"),
+    );
+    await waitFor(() =>
+      expect(first.result.current.data?.receipt.handoff?.stage).toBe(
+        "captured",
+      ),
+    );
+    first.unmount();
+    receipt = {
+      ...receipt,
+      phase: "ready",
+      handoff: { ...handoff, stage: "included" },
+      updatedAt: LATER,
+    };
+    const second = renderWithClient(() =>
+      useCheckpointOperation(target, "op-1"),
+    );
+    await waitFor(() =>
+      expect(second.result.current.data?.receipt.handoff?.stage).toBe(
+        "included",
+      ),
+    );
+    expect(second.result.current.data?.receipt.phase).toBe("ready");
+  });
+});
+
+describe("capture progress after SSE reconnect", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+  it.each(["session", "project"] as const)(
+    "reloads missed capture settlement (%s)",
+    async (scope) => {
+      const addressed =
+        scope === "session"
+          ? target
+          : { scope, projectName: "p1", conversationId: "c1" };
+      const handoff = checkpointHandoffReceipt(capturedHandoff());
+      let receipt = checkpointReceiptFixture({
+        phase: "building",
+        frozen: false,
+        handoff,
+        updatedAt: EARLIER,
+      });
+      vi.stubGlobal("fetch", async () => jsonResponse({ receipt }));
+      const view = renderWithClient(() =>
+        useCheckpointOperation(addressed, "op-1"),
+      );
+      await waitFor(() =>
+        expect(view.result.current.data?.receipt.phase).toBe("building"),
+      );
+      receipt = {
+        ...receipt,
+        phase: "ready",
+        handoff: { ...handoff, stage: "included" },
+        updatedAt: LATER,
+      };
+      await reconnectReconcile(view.client, async () => {});
+      await waitFor(() =>
+        expect(view.result.current.data?.receipt.handoff?.stage).toBe(
+          "included",
+        ),
+      );
+      expect(view.result.current.data?.receipt.phase).toBe("ready");
+    },
+  );
 });

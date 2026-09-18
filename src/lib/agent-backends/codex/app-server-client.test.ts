@@ -77,6 +77,7 @@ function fixture(
     processGroupId: () => child.pid,
     startTicks: async () => child.ticks,
     isGroupAlive: () => child.alive,
+    observeChildren: async () => async () => true,
     signalGroup: (_pgid, signal) => {
       signals.push(signal);
       if (child.signalExit === signal) child.exit(null, signal);
@@ -105,7 +106,7 @@ function fixture(
       },
     },
   );
-  return { client, child, frames, failures, signals };
+  return { client, child, frames, failures, signals, host };
 }
 
 async function tick() {
@@ -497,3 +498,89 @@ describe("Codex app-server client", () => {
     });
   });
 });
+
+describe("capture-only app-server cleanup", () => {
+  it("does not mistake a completed leader for collected children", async () => {
+    const { client, host } = fixture({ captureCleanup: true });
+    host.observeChildren = async () => async () => false;
+    await expect(client.close()).rejects.toMatchObject({
+      code: "cleanup_unverified",
+    });
+  });
+  it("holds when child ownership cannot be observed", async () => {
+    const { client, host } = fixture({ captureCleanup: true });
+    host.observeChildren = async () => null;
+    await expect(client.close()).rejects.toMatchObject({
+      code: "cleanup_unverified",
+    });
+  });
+  it("collects children independently of completed turns", async () => {
+    const { client, child, host } = fixture({ captureCleanup: true });
+    const collected = deferred<boolean>();
+    host.observeChildren = async () => () => collected.promise;
+    let settled = false;
+    const closed = client.close().then(() => {
+      settled = true;
+    });
+    await tick();
+    expect(settled).toBe(false);
+    collected.resolve(true);
+    await closed;
+    expect(child.alive).toBe(false);
+  });
+  it("fits EOF, TERM and KILL inside three capture seconds", async () => {
+    vi.useFakeTimers();
+    const { client, child, signals } = fixture({ captureCleanup: true });
+    child.autoExit = false;
+    child.signalExit = "SIGKILL";
+    const closed = client.close();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(signals).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signals).toEqual(["SIGTERM"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    await closed;
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+});
+
+it("capture holds cleanup when a required archive write is still pending", async () => {
+  vi.useFakeTimers();
+  const held = deferred<void>();
+  const { client, child } = fixture({
+    captureCleanup: true,
+    onFrame: () => held.promise,
+  });
+  child.frame({ method: "future/additive", params: {} });
+  const closed = client.close();
+  const verdict = closed.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  await vi.advanceTimersByTimeAsync(1001);
+  held.resolve();
+  expect(await verdict).toMatchObject({ code: "cleanup_unverified" });
+});
+
+it.each([true, false])(
+  "preserves rejected capture writes across close (capture=%s)",
+  async (captureCleanup) => {
+    const { client, child, failures } = fixture({
+      captureCleanup,
+      onFrame: async () => {
+        throw new Error("write rejected");
+      },
+    });
+    child.frame({ method: "future/additive", params: {} });
+    await vi.waitFor(() =>
+      expect(failures).toContainEqual(
+        expect.objectContaining({ code: "consumer_failed" }),
+      ),
+    );
+    if (captureCleanup)
+      await expect(client.close()).rejects.toMatchObject({
+        code: "cleanup_unverified",
+      });
+    else await expect(client.close()).resolves.toBeUndefined();
+  },
+);

@@ -20,6 +20,7 @@ export interface CheckpointMenuItemsProps {
   action: CheckpointActionState;
   /** Starts an ordinary checkpoint. */
   onCompactContextNow?: () => void;
+  onPrepareHandoff?: () => void;
   /** Opens the checkpoint panel — the receipt, evidence, and recovery. */
   onViewCheckpoint?: () => void;
 }
@@ -67,6 +68,7 @@ export default function CheckpointMenuItems({
   chip,
   action,
   onCompactContextNow,
+  onPrepareHandoff,
   onViewCheckpoint,
 }: CheckpointMenuItemsProps): React.JSX.Element {
   const startable = action.kind === "available";
@@ -86,6 +88,19 @@ export default function CheckpointMenuItems({
         <span className={BODY_CLASS}>
           <span className={LABEL_CLASS}>Compact context now</span>
           <span className={DESC_CLASS}>{actionDescription(action)}</span>
+        </span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={startable ? onPrepareHandoff : undefined}
+        disabled={!startable || onPrepareHandoff === undefined}
+      >
+        <span className={BODY_CLASS}>
+          <span className={LABEL_CLASS}>Compact with agent handoff…</span>
+          <span className={DESC_CLASS}>
+            {startable
+              ? "Review capture mode and limits before starting"
+              : actionDescription(action)}
+          </span>
         </span>
       </DropdownMenuItem>
       <DropdownMenuItem

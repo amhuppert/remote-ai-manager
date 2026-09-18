@@ -1,11 +1,16 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
+import type { CaptureHandoffResult } from "@/lib/agent-backends/conversation";
+import { createCheckpointRouteHandlers } from "@/lib/conversation-checkpoints/route-handlers";
 import { createCheckpointForkService } from "@/lib/conversation-checkpoints/fork-service";
 import { checkpointForkFraming } from "@/lib/conversation-checkpoints/fork-framing";
 import { assertCheckpointForkBackend } from "@/lib/conversation-checkpoints/fork-submission";
+import preHandoffV1 from "@/lib/conversation-checkpoints/testing/pre-handoff-v1-payload.json";
+import { checkpointPayloadSchema } from "@/lib/conversation-checkpoints/schemas";
 import { NO_OP_SNAPSHOT_FIXTURE } from "@/lib/conversations/testing/profile-snapshot-fixtures";
 import {
   createCheckpointHarness,
+  capturedHandoffResult,
   type CheckpointHarness,
 } from "./testing/checkpoint-harness";
 
@@ -15,9 +20,112 @@ afterEach(async () => {
   harness = undefined;
 });
 
-async function fork(scope: "session" | "project", backend: "claude" | "codex") {
-  const h = (harness = await createCheckpointHarness({ scope }));
-  const ready = await h.checkpointToReady();
+type SeedFixture = "current" | "pre-handoff-v1" | "included" | "omitted";
+
+async function fork(
+  scope: "session" | "project",
+  backend: "claude" | "codex",
+  seedFixture: SeedFixture = "current",
+) {
+  let captureAvailable = true;
+  const h = (harness = await createCheckpointHarness({
+    scope,
+    ...(seedFixture === "omitted"
+      ? { workingStateObjectiveText: "E".repeat(16000) }
+      : {}),
+    captureAvailability: () =>
+      captureAvailable
+        ? { available: true, mode: "tool-disabled" }
+        : { available: false, mode: null, reason: "unsupported" },
+    captureHandoff: async (): Promise<CaptureHandoffResult> => {
+      if (!captureAvailable)
+        throw new Error("Destination capture is unsupported");
+      return {
+        ...capturedHandoffResult(h.seededRef),
+        candidateText: JSON.stringify({
+          plan:
+            seedFixture === "omitted"
+              ? Array.from({ length: 3 }, () => ({
+                  kind: "belief",
+                  text: "H".repeat(1500),
+                  sourceRefs: [],
+                }))
+              : [
+                  {
+                    kind: "belief",
+                    text: "Check the original evidence before acting",
+                    sourceRefs: [],
+                  },
+                ],
+          hypotheses: [],
+          failedApproaches: [],
+          blockers: [],
+          nextStep: [],
+        }),
+      };
+    },
+  }));
+  const ready = await (async () => {
+    if (seedFixture === "pre-handoff-v1") {
+      const payload = checkpointPayloadSchema.parse(preHandoffV1);
+      const repo = h.fixture.checkpoints;
+      const admitted = await repo.admitOperation({
+        key: h.scopeKey,
+        requestId: payload.id,
+        sourceBasis: payload.sourceBasis,
+        priorBackendRef: h.seededRef?.ref ?? null,
+        requestedAt: payload.createdAt,
+      });
+      if (!admitted.ok) throw new Error(admitted.refusal.code);
+      const frozen = await repo.freezePayload({
+        key: h.scopeKey,
+        operationId: payload.id,
+        payload,
+        at: payload.createdAt,
+      });
+      if (!frozen.ok) throw new Error(frozen.refusal.code);
+      const result = await repo.commitReady({
+        key: h.scopeKey,
+        operationId: payload.id,
+        at: payload.createdAt,
+      });
+      if (!result.ok) throw new Error(result.refusal.code);
+      h.fixture.restart();
+      expect(await repo.getPayload(h.scopeKey, payload.id)).toEqual(
+        preHandoffV1,
+      );
+      await h.runOrdinaryTurn("consume historical checkpoint");
+      expect(h.state.dispatches).toEqual([
+        `${payload.seedText}\n\nconsume historical checkpoint`,
+      ]);
+      expect(await h.operation(payload.id)).toMatchObject({
+        phase: "applied",
+        handoff: null,
+        acceptance: { seedHash: payload.seedSha256 },
+      });
+      h.state.dispatches.length = 0;
+      h.state.turnInputs.length = 0;
+      return result.value;
+    }
+    if (seedFixture === "current") return h.checkpointToReady();
+    const admitted = h.admittedOr(
+      await h.fixture.manager.startConversationCheckpoint({
+        address: h.fixture.binding.address,
+        requestId: randomUUID(),
+        handoff: { mode: "tool-disabled" },
+      }),
+    );
+    const result = await admitted.completion;
+    expect(result).toMatchObject({
+      phase: "ready",
+      handoff: {
+        stage: seedFixture,
+        omissionReason: seedFixture === "omitted" ? "seed_budget" : null,
+      },
+    });
+    return result;
+  })();
+  captureAvailable = false;
   const sourceBefore = await h.readRow();
   const service = createCheckpointForkService({
     repo: () => h.fixture.checkpoints,
@@ -77,7 +185,17 @@ async function fork(scope: "session" | "project", backend: "claude" | "codex") {
     });
   const row = () =>
     h.fixture.persistence.recreateStore().checkpointContinuation.find(key)!;
-  return { h, created, sourceBefore, key, payload, submit, row, selection };
+  return {
+    h,
+    ready,
+    created,
+    sourceBefore,
+    key,
+    payload,
+    submit,
+    row,
+    selection,
+  };
 }
 
 describe.each(["session", "project"] as const)(
@@ -154,5 +272,107 @@ describe.each(["session", "project"] as const)(
       expect(f.h.state.dispatches).toHaveLength(1);
       expect(await f.h.readRow()).toEqual(f.sourceBefore);
     });
+  },
+);
+
+// Frozen from the independently authored pre-feature fixture in
+// 42946e4cc:src/lib/conversation-checkpoints/fork-repo.test.ts (2026-09-12).
+// This literal envelope must not be regenerated with the current builder.
+describe.each(["session", "project"] as const)(
+  "%s saved seed compatibility",
+  (scope) => {
+    it.each([
+      ["pre-handoff-v1", "claude"],
+      ["pre-handoff-v1", "codex"],
+      ["included", "claude"],
+      ["included", "codex"],
+      ["omitted", "claude"],
+      ["omitted", "codex"],
+    ] as const)(
+      "delivers and forks %s unchanged to %s without destination capture support",
+      async (variant, backend) => {
+        const f = await fork(scope, backend, variant);
+        const operationBefore = await f.h.operation(f.ready.id);
+        const original = await f.h.fixture.checkpoints.getPayload(
+          f.h.scopeKey,
+          f.ready.id,
+        );
+        if (!original) throw new Error("source payload missing");
+        const unexpectedMutation = async () => {
+          throw new Error("Reading must not mutate or call a provider");
+        };
+        const handlers = createCheckpointRouteHandlers({
+          resolveProjectPath: async () => f.h.scopeKey.projectPath,
+          getSession: f.h.fixture.persistence.store.getSession,
+          getProjectConversation:
+            f.h.fixture.persistence.store.getProjectConversation,
+          repo: async () => f.h.fixture.checkpoints,
+          startCheckpoint: unexpectedMutation,
+          checkCheckpoint: unexpectedMutation,
+          cancelCheckpoint: unexpectedMutation,
+          skipHandoff: unexpectedMutation,
+          reconcileCheckpoint: unexpectedMutation,
+          auth: {
+            requireToken: async () => null,
+            validateOptionalToken: async () => ({ kind: "absent" }),
+          },
+        });
+        const handler =
+          scope === "session" ? handlers.sessionGet : handlers.projectGet;
+        const response = await handler(
+          new Request("http://localhost/checkpoint?detail=seed"),
+          {
+            params: Promise.resolve({
+              name: f.h.fixture.binding.address.target.projectName,
+              session: f.h.fixture.identity.sessionName,
+              conversationId: f.h.scopeKey.conversationId,
+              checkpointId: f.ready.id,
+            }),
+          },
+        );
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ seed: original });
+        expect(f.h.state.dispatches).toEqual([]);
+        expect(
+          createHash("sha256").update(original.seedText).digest("hex"),
+        ).toBe(original.seedSha256);
+        expect(f.payload).toEqual({ ...original, id: f.created.operation.id });
+        const origin = f.row().checkpointFork;
+        if (!origin) throw new Error("fork lineage missing");
+        expect(origin).toMatchObject({
+          sourceOperationId: f.ready.id,
+          seedSha256: original.seedSha256,
+          capturedThroughSeq: original.sourceBasis.capturedThroughSeq,
+          evidenceSource: f.h.fixture.binding.address.target,
+        });
+        const admission = await f.submit("use the saved evidence");
+        if (admission.kind !== "accepted") throw new Error(admission.message);
+        await admission.turn.completed;
+        expect(f.h.state.dispatches).toEqual([
+          `${checkpointForkFraming(f.row().id, origin)}${original.seedText}\n\nuse the saved evidence`,
+        ]);
+        expect(
+          await f.h.fixture.checkpoints.getOperation(
+            f.key,
+            f.created.operation.id,
+          ),
+        ).toMatchObject({
+          phase: "applied",
+          acceptance: { seedHash: original.seedSha256 },
+        });
+        f.h.fixture.restart();
+        expect(
+          await f.h.fixture.checkpoints.getPayload(f.h.scopeKey, f.ready.id),
+        ).toEqual(original);
+        expect(
+          await f.h.fixture.checkpoints.getPayload(
+            f.key,
+            f.created.operation.id,
+          ),
+        ).toEqual(f.payload);
+        expect(await f.h.readRow()).toEqual(f.sourceBefore);
+        expect(await f.h.operation(f.ready.id)).toEqual(operationBefore);
+      },
+    );
   },
 );

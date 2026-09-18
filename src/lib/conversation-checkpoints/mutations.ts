@@ -1,5 +1,5 @@
 /**
- * The three checkpoint mutations a client may issue: start one, cancel an
+ * Checkpoint mutations a client may issue: start, skip handoff, cancel an
  * owned build, and reconcile an owned repair. Every one of them is a request
  * the SERVER owns from the moment it is admitted, so none of them carries the
  * operation's outcome — they seed the receipt caches and the progress query
@@ -32,6 +32,10 @@ import { checkpointRefusalSchema, type CheckpointRefusal } from "./admission";
 import { checkpointKeys, type CheckpointTarget } from "./query-keys";
 import { checkpointsBaseUrl, checkpointUrl } from "./queries";
 import { checkpointReceiptSchema, type CheckpointReceipt } from "./receipt";
+import type {
+  StartCheckpointRequest,
+  ReconcileCheckpointRequest,
+} from "./schemas";
 import { publishCheckpointReceipt } from "./sse-cache";
 
 export const startCheckpointResponseSchema = z.object({
@@ -55,6 +59,7 @@ export const reconcileCheckpointResponseSchema = z.object({
 });
 
 export interface StartCheckpointVariables {
+  handoff?: StartCheckpointRequest["handoff"];
   /**
    * Explicit recovery: the recovery-required operation this build supersedes.
    * Absent for an ordinary checkpoint, which cannot supersede anything.
@@ -119,10 +124,13 @@ export function useStartCheckpointMutation(target: CheckpointTarget) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             requestId: crypto.randomUUID(),
+            ...(variables.handoff === undefined
+              ? {}
+              : { handoff: variables.handoff }),
             ...(variables.recoversOperationId === undefined
               ? {}
               : { recoversOperationId: variables.recoversOperationId }),
-          }),
+          } satisfies StartCheckpointRequest),
         },
         startCheckpointResponseSchema,
       ),
@@ -158,20 +166,84 @@ export function useCancelCheckpointMutation(target: CheckpointTarget) {
   });
 }
 
+export interface ReconcileCheckpointVariables extends CheckpointOperationVariables {
+  captureExecutionStopped?: ReconcileCheckpointRequest["captureExecutionStopped"];
+}
+
 export function useReconcileCheckpointMutation(target: CheckpointTarget) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (variables: CheckpointOperationVariables) =>
+    mutationFn: (variables: ReconcileCheckpointVariables) =>
       mutationFetch(
         `${checkpointUrl(target, variables.operationId)}/reconcile`,
         "reconcile-conversation-checkpoint",
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(variables.captureExecutionStopped === undefined
+              ? {}
+              : { captureExecutionStopped: variables.captureExecutionStopped }),
+            source: "ui",
+          } satisfies ReconcileCheckpointRequest),
+        },
         reconcileCheckpointResponseSchema,
       ),
     onSuccess: (data) => {
       settle(queryClient, target, data.receipt);
     },
-    onSettled: (_data, error) => {
+    onError: (error, variables) => {
+      if (!(error instanceof ApiCallError)) return;
+      const parsed = checkpointReceiptSchema.safeParse(
+        error.details?.["receipt"],
+      );
+      if (
+        parsed.success &&
+        parsed.data.scope === target.scope &&
+        parsed.data.conversationId === target.conversationId &&
+        parsed.data.operationId === variables.operationId
+      ) {
+        settle(queryClient, target, parsed.data);
+      }
+    },
+    onSettled: (_data, error, variables) => {
+      refreshOperation(queryClient, target, variables.operationId);
+      refreshEligibilityUnlessRefused(queryClient, target, error);
+    },
+  });
+}
+
+export const skipCheckpointHandoffResponseSchema = z.object({
+  outcome: z.enum(["stopping", "handoff_already_settled"]),
+  receipt: checkpointReceiptSchema,
+});
+
+function refreshOperation(
+  queryClient: QueryClient,
+  target: CheckpointTarget,
+  operationId: string,
+): void {
+  void queryClient.invalidateQueries({
+    queryKey: checkpointKeys.detail(target, operationId),
+  });
+  void queryClient.invalidateQueries({
+    queryKey: checkpointKeys.lists(target),
+  });
+}
+
+export function useSkipCheckpointHandoffMutation(target: CheckpointTarget) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables: CheckpointOperationVariables) =>
+      mutationFetch(
+        `${checkpointUrl(target, variables.operationId)}/skip-handoff`,
+        "skip-checkpoint-handoff",
+        { method: "POST" },
+        skipCheckpointHandoffResponseSchema,
+      ),
+    onSuccess: (data) => settle(queryClient, target, data.receipt),
+    onSettled: (_data, error, variables) => {
+      refreshOperation(queryClient, target, variables.operationId);
       refreshEligibilityUnlessRefused(queryClient, target, error);
     },
   });

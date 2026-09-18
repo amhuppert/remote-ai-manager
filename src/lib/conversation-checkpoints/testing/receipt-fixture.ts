@@ -6,11 +6,17 @@
  * the receipt fails here before it fails a component.
  */
 
-import { checkpointReceiptSchema, type CheckpointReceipt } from "../receipt";
+import {
+  CHECKPOINT_CAPTURE_POLICY,
+  checkpointReceiptSchema,
+  type CheckpointReceipt,
+  type CheckpointHandoffEligibility,
+} from "../receipt";
 import type { CheckpointPhase } from "../schemas";
 
 export interface CheckpointReceiptOverrides {
   operationId?: string;
+  handoff?: CheckpointReceipt["handoff"];
   scope?: "session" | "project";
   conversationId?: string;
   ordinal?: number;
@@ -63,6 +69,7 @@ export function checkpointReceiptFixture(
       : null);
   return checkpointReceiptSchema.parse({
     operationId,
+    handoff: overrides.handoff ?? null,
     mechanism: "cc_checkpoint",
     scope: overrides.scope ?? "session",
     conversationId: overrides.conversationId ?? "conv-1",
@@ -113,4 +120,16 @@ export function checkpointReceiptFixture(
     requestedAt: "2026-09-01T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-09-01T00:01:00.000Z",
   });
+}
+
+export function checkpointHandoffEligibilityFixture(
+  overrides: Partial<CheckpointHandoffEligibility> = {},
+): CheckpointHandoffEligibility {
+  return {
+    available: true,
+    mode: "tool-disabled",
+    reason: null,
+    policy: CHECKPOINT_CAPTURE_POLICY,
+    ...overrides,
+  };
 }

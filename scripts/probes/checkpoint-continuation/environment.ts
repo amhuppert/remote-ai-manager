@@ -91,19 +91,22 @@ export function prepareProbeEnvironment(options: {
   writeFileSync(imageRefPath, Buffer.from(options.imageBase64, "base64"));
 
   const modelSelection = options.modelSelection ?? null;
-  if (modelSelection !== null) {
-    // Written before any CC module loads, so the loader's own defaults fill
-    // in every field this file omits.
-    writeFileSync(
-      path.join(configDir, "config.json"),
-      `${JSON.stringify(
-        { agentBackends: { [options.backend]: { modelSelection } } },
-        null,
-        2,
-      )}\n`,
-      "utf-8",
-    );
-  }
+  // Naming is unrelated provider work and would consume the finite generation
+  // ledger. Keep it disabled in every isolated probe, including default models.
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    `${JSON.stringify(
+      {
+        conversationNaming: { enabled: false },
+        ...(modelSelection === null
+          ? {}
+          : { agentBackends: { [options.backend]: { modelSelection } } }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf-8",
+  );
 
   process.env["CC_CONFIG_DIR"] = configDir;
   // `cc-dev` would send this run at the shared dev-server state instead.
