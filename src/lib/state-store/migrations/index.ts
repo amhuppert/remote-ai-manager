@@ -1,3 +1,4 @@
+import { optionalCheckpointForkWork } from "./0052-optional-checkpoint-fork-work";
 import { retireStoredShapeReaders } from "./0051-retire-stored-shape-readers";
 import { removeExecutionSeedFiller } from "./0050-remove-execution-seed-filler";
 import { graphWorkflowLaneCoverage } from "./0047-graph-workflow-lane-coverage";
@@ -139,6 +140,7 @@ export const migrations: readonly StateMigration[] = [
   graphWorkflowReviewOrigin,
   removeExecutionSeedFiller,
   retireStoredShapeReaders,
+  optionalCheckpointForkWork,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

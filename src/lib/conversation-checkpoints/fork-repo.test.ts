@@ -1,3 +1,4 @@
+import { checkpointForkRequestSchema } from "./fork-schemas";
 import { createCheckpointRouteHandlers } from "./route-handlers";
 import {
   admitCheckpointForkSubmission,
@@ -175,6 +176,50 @@ async function source(
 describe.each(["session", "project"] as const)(
   "checkpoint fork persistence at %s scope",
   (scope) => {
+    it("persists a fork with no task or related work", async () => {
+      const input = await source(scope);
+      const parsed = checkpointForkRequestSchema.safeParse({
+        requestId: "34614a95-aac2-4314-bc69-cb889cfd207c",
+        name: "Next phase",
+        backend: "codex",
+        modelSelection: { modelId: "gpt-6-astra", parameters: {} },
+      });
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) return;
+      const service = createCheckpointForkService({
+        repo: () => repo,
+        load: async (_path, target) =>
+          fx.store.checkpointContinuation.find({
+            ...input.sourceKey,
+            conversationId: target.conversationId,
+          }),
+        admit: async (_path, _backend, selection) => selection,
+        resolveWork: async () => {
+          throw new Error("No related work should be resolved");
+        },
+        profile: async () => NO_OP_SNAPSHOT_FIXTURE,
+        publish: () => {},
+        now: () => AT,
+      });
+      const request = {
+        projectPath: PROJECT,
+        source: input.origin.source,
+        operationId: input.sourceOperationId,
+        request: parsed.data,
+      };
+      const result = await service.create(request);
+      const reloaded = await fx.store.checkpointContinuation.find({
+        ...input.sourceKey,
+        conversationId: result.conversation.id,
+      });
+      expect(reloaded).toMatchObject({
+        name: "Next phase",
+        pendingPromptText: "",
+        checkpointFork: { relatedWork: null },
+      });
+      expect((await service.create(request)).reused).toBe(true);
+    });
+
     it("creates an admitted cross-backend fork through the service and preserves the editable task and model choice", async () => {
       const input = await source(scope);
       const service = createCheckpointForkService({

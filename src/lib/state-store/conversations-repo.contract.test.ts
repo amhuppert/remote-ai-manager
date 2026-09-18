@@ -1940,3 +1940,14 @@ describe("conversations-repo profile snapshot durability", () => {
     expect(out?.profileLockedAt).toBeNull();
   });
 });
+
+it("round trips a checkpoint fork without related work", () => {
+  const conversation = buildMaximalConversation();
+  conversation.checkpointFork = checkpointForkOriginFixture({
+    relatedWork: null,
+  });
+  repo.upsert(PROJECT_PATH, SESSION_NAME, conversation);
+  expect(
+    repo.findByKey(PROJECT_PATH, SESSION_NAME, conversation.id)?.checkpointFork,
+  ).toEqual(conversation.checkpointFork);
+});

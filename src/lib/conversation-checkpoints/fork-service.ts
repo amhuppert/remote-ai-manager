@@ -155,7 +155,8 @@ export function createCheckpointForkService(deps: CheckpointForkServiceDeps) {
       request.backend,
       request.modelSelection,
     );
-    await deps.resolveWork(projectPath, source, request.relatedWork);
+    if (request.relatedWork)
+      await deps.resolveWork(projectPath, source, request.relatedWork);
     const parentOrigin = sourceConversation.checkpointFork;
     const origin = {
       source,

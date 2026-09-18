@@ -72,6 +72,7 @@ export default function CheckpointForkForm({
   }, [active]);
   const [name, setName] = useState(`${source.name} · Next phase`.slice(0, 200));
   const [task, setTask] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const [relatedWork, setRelatedWork] = useState<CheckpointRelatedWork | null>(
     initialTicket ? { kind: "ticket", ticketNumber: initialTicket } : null,
   );
@@ -108,14 +109,8 @@ export default function CheckpointForkForm({
     null,
   );
   async function submit(nextTask: string) {
-    if (
-      mutation.isPending ||
-      !selection ||
-      !relatedWork ||
-      invalidReason ||
-      !name.trim() ||
-      !nextTask.trim()
-    )
+    setSubmitted(true);
+    if (mutation.isPending || !selection || invalidReason || !name.trim())
       return;
     const body = {
       name: name.trim(),
@@ -187,13 +182,26 @@ export default function CheckpointForkForm({
           <FormInput
             id={`${id}-name`}
             value={name}
+            aria-required
+            aria-invalid={submitted && !name.trim()}
+            aria-describedby={
+              submitted && !name.trim() ? `${id}-name-error` : undefined
+            }
             maxLength={200}
             disabled={mutation.isPending}
             onChange={(event) => setName(event.target.value)}
           />
+          {submitted && !name.trim() && (
+            <FormError id={`${id}-name-error`} role="alert">
+              Enter a conversation name.
+            </FormError>
+          )}
         </FormGroup>
         <FormGroup>
           <FormLabel htmlFor={`${id}-task`}>Next task</FormLabel>
+          <FormHint>
+            Optional. You can add a task after creating the fork.
+          </FormHint>
           <MultilineInput
             ref={taskInput}
             id={`${id}-task`}
@@ -210,6 +218,7 @@ export default function CheckpointForkForm({
             className="w-full resize-y rounded-md border border-solid border-border-default bg-bg-base px-md py-sm font-mono text-[0.82rem] leading-relaxed text-text-primary placeholder:text-text-tertiary focus-visible:outline-2 focus-visible:outline-cyan"
           />
         </FormGroup>
+        <FormHint>Related work is optional.</FormHint>
         <CheckpointRelatedWorkPicker
           projectName={target.projectName}
           value={relatedWork}
@@ -267,12 +276,7 @@ export default function CheckpointForkForm({
           type="submit"
           variant="primary"
           loading={mutation.isPending}
-          disabled={
-            invalidReason !== null ||
-            (!task.trim() && !voiceBusy) ||
-            !name.trim() ||
-            !relatedWork
-          }
+          disabled={invalidReason !== null}
         >
           Create fork
         </Button>

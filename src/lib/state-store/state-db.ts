@@ -151,7 +151,7 @@ const DB_FILE_NAME = "command-center.db";
  * ordinary turn against a conversation mid-retirement and establish a fresh
  * provider reference the pending seed can never be delivered into.
  */
-export const KNOWN_SCHEMA_VERSION = 18;
+export const KNOWN_SCHEMA_VERSION = 19;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (

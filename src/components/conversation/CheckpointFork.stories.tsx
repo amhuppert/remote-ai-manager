@@ -60,6 +60,16 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default = {} satisfies Story;
+export const NameRequired = {
+  args: { initialForkTicket: undefined },
+  play: async (context) => {
+    await meta.play(context);
+    const page = within(context.canvasElement.ownerDocument.body);
+    await userEvent.clear(page.getByLabelText("Conversation name"));
+    await userEvent.click(page.getByRole("button", { name: "Create fork" }));
+    await expect(page.getByText("Enter a conversation name.")).toBeVisible();
+  },
+} satisfies Story;
 export const ProjectConversation = {
   args: { surface: checkpointSurfaceFixture({ target: STORY_PROJECT_TARGET }) },
 } satisfies Story;

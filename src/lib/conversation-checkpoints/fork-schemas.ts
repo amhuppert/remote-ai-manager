@@ -59,7 +59,7 @@ export const checkpointForkOriginSchema = z
     capturedThroughSeq: z.number().int().nonnegative(),
     operationId: z.string().min(1),
     requestHash: z.string().min(1),
-    relatedWork: checkpointRelatedWorkSchema,
+    relatedWork: checkpointRelatedWorkSchema.nullable(),
     initialSelection: z
       .object({
         backend: agentBackendSchema,
@@ -74,8 +74,8 @@ export const checkpointForkRequestSchema = z
   .object({
     requestId: z.uuid(),
     name: z.string().trim().min(1).max(200),
-    task: z.string().trim().min(1).max(32_768),
-    relatedWork: checkpointRelatedWorkSchema,
+    task: z.string().trim().max(32_768).default(""),
+    relatedWork: checkpointRelatedWorkSchema.nullable().default(null),
     backend: agentBackendSchema,
     modelSelection: backendModelSelectionSchema,
   })

@@ -67,6 +67,49 @@ describe("checkpoint fork form", () => {
   });
   afterEach(() => api.restore());
 
+  it("requires only the prefilled conversation name", async () => {
+    let created = false;
+    api.json("POST", forkUrl, {
+      conversation: toPublicConversationState(
+        makeConversationState({ id: "fork" }),
+      ),
+      receipt,
+      reused: false,
+    });
+    renderWithQuery(
+      <CheckpointForkForm
+        target={target}
+        receipt={receipt}
+        source={source}
+        onBack={() => {}}
+        onCreated={() => {
+          created = true;
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("Conversation name")).toHaveValue(
+      "Planning · Next phase",
+    );
+    const button = screen.getByRole("button", { name: "Create fork" });
+    await waitFor(() => expect(button).not.toBeDisabled());
+    fireEvent.change(screen.getByLabelText("Conversation name"), {
+      target: { value: "   " },
+    });
+    fireEvent.click(button);
+    expect(await screen.findByText("Enter a conversation name.")).toBeVisible();
+    expect(api.requestsTo("POST", forkUrl)).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("Conversation name"), {
+      target: { value: "Next phase" },
+    });
+    fireEvent.click(button);
+    await waitFor(() => expect(created).toBe(true));
+    expect(api.requestsTo("POST", forkUrl)[0]?.jsonBody).toMatchObject({
+      name: "Next phase",
+      task: "",
+      relatedWork: null,
+    });
+  });
+
   it("does not replace an unavailable explicitly selected source checkpoint with the latest checkpoint", () => {
     renderWithQuery(
       <CheckpointPanel

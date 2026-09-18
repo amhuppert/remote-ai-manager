@@ -88,9 +88,9 @@ export default function CheckpointForkProvenance({
       : `/projects/${encodeURIComponent(origin.source.projectName)}?focus=${encodeURIComponent(origin.source.conversationId)}`;
   const work = origin.relatedWork;
   const label =
-    work.kind === "ticket"
+    work?.kind === "ticket"
       ? `${origin.source.projectName}#${work.ticketNumber}`
-      : work.kind === "spec_task"
+      : work?.kind === "spec_task"
         ? "Spec task"
         : "Workflow assignment";
   return (
@@ -109,18 +109,19 @@ export default function CheckpointForkProvenance({
         Source checkpoint &amp; evidence
       </Button>
       <span role="status">{deliveryLabel}</span>
-      {work.kind === "ticket" ? (
-        <span>{label}</span>
-      ) : (
-        <details className="min-w-0">
-          <summary>{label}</summary>
-          <p className="break-all">
-            {work.kind === "spec_task"
-              ? `Spec ${work.specId} · task ${work.elementId} · revision ${work.revisionId}`
-              : `Execution ${work.executionId} · ${work.owner.kind === "context" || work.owner.kind === "loop_template" ? work.owner.contextId : "workflow"} · ${work.useSite} · assignment ${work.assignmentId}`}
-          </p>
-        </details>
-      )}
+      {work &&
+        (work.kind === "ticket" ? (
+          <span>{label}</span>
+        ) : (
+          <details className="min-w-0">
+            <summary>{label}</summary>
+            <p className="break-all">
+              {work.kind === "spec_task"
+                ? `Spec ${work.specId} · task ${work.elementId} · revision ${work.revisionId}`
+                : `Execution ${work.executionId} · ${work.owner.kind === "context" || work.owner.kind === "loop_template" ? work.owner.contextId : "workflow"} · ${work.useSite} · assignment ${work.assignmentId}`}
+            </p>
+          </details>
+        ))}
       {!origin.submission && !receipt?.acceptance && (
         <span className="text-amber">
           Draft · Agent editable until first message
