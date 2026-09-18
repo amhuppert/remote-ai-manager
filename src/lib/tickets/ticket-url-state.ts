@@ -9,9 +9,9 @@
  * `status=all` is the explicit no-filter escape hatch, so absent-param and
  * all-statuses stay distinguishable.
  *
- * The column sort is a list-view presentation concern: the server list stays
- * in canonical `updated` order (the cache/SSE contract in `list-filters.ts`),
- * and the list view re-orders rows for display.
+ * Board ordering uses the shared server/cache sort contract in `list-filters.ts`.
+ * List column sorting and title search are presentation concerns; title search
+ * composes with the server filters without changing the cache/SSE contract.
  */
 
 import {
@@ -63,6 +63,7 @@ export interface TicketSelection {
 
 export interface TicketsPageState {
   view: TicketsView;
+  search: string;
   filters: TicketListFilters;
   listSort: TicketListSortState;
   selected: TicketSelection | null;
@@ -117,10 +118,12 @@ export function parseTicketsPageState(
   const project = params.get("project");
   const statuses = parseStatusesParam(params.get("status"));
   return {
+    search: params.get("q") ?? "",
     view: params.get("view") === "list" ? "list" : "board",
     filters: normalizeTicketListFilters({
       projectName: project !== null && project !== "" ? project : undefined,
       statuses: statuses ?? undefined,
+      sort: params.get("boardSort") === "created" ? "created" : "updated",
       workType: parseEnumParam(params.get("type"), ticketWorkTypeSchema),
     }),
     listSort: parseListSort(params.get("sort"), params.get("dir")),
@@ -131,6 +134,9 @@ export function parseTicketsPageState(
 export function ticketsPageHref(state: TicketsPageState): string {
   const params = new URLSearchParams();
   if (state.view !== "board") params.set("view", state.view);
+  if (state.search) params.set("q", state.search);
+  if (state.filters.sort !== "updated")
+    params.set("boardSort", state.filters.sort);
   const { projectName, statuses, workType } = state.filters;
   if (projectName !== null) params.set("project", projectName);
   if (statuses === null) {

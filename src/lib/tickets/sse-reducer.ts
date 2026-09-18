@@ -18,7 +18,7 @@
  * Client-imported: keep this module free of `node:` builtins.
  */
 
-import type { QueryClient } from "@tanstack/react-query";
+import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 
 import {
   matchesTicketListFilters,
@@ -35,7 +35,13 @@ import {
   rememberTicketChangedEvent,
 } from "./event-version";
 import { ticketKeys, ticketListFiltersFromQueryKey } from "./query-keys";
-import type { TicketChangedEvent, TicketListItem } from "./schemas";
+import type {
+  TicketChangedEvent,
+  TicketDetail,
+  TicketListItem,
+  TicketRelationshipPage,
+  TicketRelationshipView,
+} from "./schemas";
 
 /**
  * Reduce one cached list against one event: remove the ticket identity, then
@@ -70,6 +76,43 @@ export function reduceTicketListForEvent(
   return sortTicketListItems(filters.sort, [...without, insert]);
 }
 
+function invalidateTicketRelationshipReaders(
+  queryClient: QueryClient,
+  event: TicketChangedEvent,
+): void {
+  if (
+    event.change !== "updated" &&
+    event.change !== "session" &&
+    event.change !== "deleted"
+  )
+    return;
+
+  const referencesChangedTicket = (relationship: TicketRelationshipView) =>
+    relationship.otherTicket.projectName === event.projectName &&
+    relationship.otherTicket.number === event.ticketNumber;
+
+  // Relationship projections embed the other endpoint's title and status,
+  // including endpoints in other projects and later pagination pages.
+  for (const [queryKey, detail] of queryClient.getQueriesData<TicketDetail>({
+    queryKey: ticketKeys.details(),
+    predicate: (query) => query.queryKey.length === 4,
+  })) {
+    if (detail?.relationships?.some(referencesChangedTicket)) {
+      void queryClient.invalidateQueries({ queryKey, exact: true });
+    }
+  }
+  for (const [queryKey, data] of queryClient.getQueriesData<
+    InfiniteData<TicketRelationshipPage>
+  >({
+    queryKey: ticketKeys.details(),
+    predicate: (query) => query.queryKey[4] === "relationships",
+  })) {
+    if (data?.pages.some((page) => page.items.some(referencesChangedTicket))) {
+      void queryClient.invalidateQueries({ queryKey, exact: true });
+    }
+  }
+}
+
 function applyTicketChangedEventToCaches(
   queryClient: QueryClient,
   event: TicketChangedEvent,
@@ -93,7 +136,17 @@ function applyTicketChangedEventToCaches(
     rememberTicketChangedEvent(queryClient, event);
   }
   const effective = applyOverlayToTicketChangedEvent(event, overlay);
+  invalidateTicketRelationshipReaders(queryClient, event);
 
+  // Parent rollups are computed across all children by the list read. A child
+  // may be absent from a filtered board, so the event carries parent identities.
+  const parentNumbers = new Set(
+    event.change === "updated" ||
+      event.change === "session" ||
+      event.change === "relationships"
+      ? (event.listItem?.parentTicketNumbers ?? [])
+      : [],
+  );
   for (const [queryKey, data] of queryClient.getQueriesData<TicketListItem[]>({
     queryKey: ticketKeys.lists(),
   })) {
@@ -103,6 +156,20 @@ function applyTicketChangedEventToCaches(
     if (next !== data) {
       queryClient.setQueryData(queryKey, next);
     }
+    if (
+      data.some(
+        (item) =>
+          item.projectName === event.projectName &&
+          parentNumbers.has(item.number),
+      )
+    ) {
+      void queryClient.invalidateQueries({ queryKey, exact: true });
+    }
+  }
+  for (const number of parentNumbers) {
+    void queryClient.invalidateQueries({
+      queryKey: ticketKeys.detail(event.projectName, number),
+    });
   }
 
   const detailKey = ticketKeys.detail(event.projectName, event.ticketNumber);

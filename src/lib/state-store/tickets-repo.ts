@@ -7,6 +7,7 @@ import {
   effectiveSnapshotStatus,
   ticketAttachmentPayloadSchema,
   ticketAttachmentSchema,
+  ticketChildStatusCountSchema,
   ticketSchema,
   ticketRelationshipDescriptionSchema,
   ticketRelationshipRoleSchema,
@@ -545,14 +546,33 @@ const LIST_ORDER_BY: Record<TicketListQuery["sort"], string> = {
 
 const LIST_ITEM_COLUMNS = `t.*,
   (SELECT COUNT(*) FROM ticket_attachments a WHERE a.ticket_id = t.id) AS attachment_count,
-  (${ACTIVE_SESSION_SUBQUERY}) AS active_session_name`;
+  (${ACTIVE_SESSION_SUBQUERY}) AS active_session_name,
+  (SELECT json_group_array(json_object('status', status, 'count', child_count))
+   FROM (
+     SELECT child.status, COUNT(*) AS child_count
+     FROM ticket_relationships r JOIN tickets child ON child.id = r.target_ticket_id
+     WHERE r.source_ticket_id = t.id AND r.relation_type = 'parent_child'
+     GROUP BY child.status ORDER BY child.status
+   )) AS child_status_counts,
+  (SELECT json_group_array(parent.ticket_number)
+   FROM ticket_relationships r JOIN tickets parent ON parent.id = r.source_ticket_id
+   WHERE r.target_ticket_id = t.id AND r.relation_type = 'parent_child'
+  ) AS parent_ticket_numbers`;
 
 function rawRowToListItem(rawRow: unknown): TicketListItem {
   const ticket = rowToTicket(rawRow);
   const extras = rawRow as {
     attachment_count: number;
     active_session_name: string | null;
+    child_status_counts: string;
+    parent_ticket_numbers: string;
   };
+  const childStatusCounts = ticketChildStatusCountSchema
+    .array()
+    .parse(JSON.parse(extras.child_status_counts));
+  const parentTicketNumbers = z
+    .array(z.number().int().positive())
+    .parse(JSON.parse(extras.parent_ticket_numbers));
   return {
     id: ticket.id,
     projectPath: ticket.projectPath,
@@ -562,6 +582,8 @@ function rawRowToListItem(rawRow: unknown): TicketListItem {
     workType: ticket.workType,
     status: ticket.status,
     attachmentCount: extras.attachment_count,
+    ...(childStatusCounts.length > 0 ? { childStatusCounts } : {}),
+    ...(parentTicketNumbers.length > 0 ? { parentTicketNumbers } : {}),
     activeSessionName: extras.active_session_name,
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,

@@ -11,3 +11,10 @@ export function ticketDetailHref(
     String(ticketNumber),
   )}`;
 }
+
+export function ticketDependenciesHref(
+  projectName: string,
+  ticketNumber: number | string,
+): string {
+  return `${ticketDetailHref(projectName, ticketNumber)}/dependencies`;
+}

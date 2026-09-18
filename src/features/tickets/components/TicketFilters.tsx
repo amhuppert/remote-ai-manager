@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/Button";
+import { FormInput } from "@/components/ui/FormField";
 import { ChevronDownIcon } from "@/components/icons";
 import {
   DropdownMenu,
@@ -56,6 +58,10 @@ const STATUS_TRIGGER_CLASS = cn(
 
 export interface TicketFiltersProps {
   filters: TicketListFilters;
+  search?: string;
+  onSearchChange?: (next: string) => void;
+  onClearFilters?: () => void;
+  showBoardSort?: boolean;
   /** Every project that can be filtered to (derived from the full list). */
   projectOptions: readonly string[];
   shownCount: number;
@@ -181,12 +187,37 @@ export default function TicketFilters({
   totalCount,
   countsReady,
   onFiltersChange,
+  search = "",
+  onSearchChange,
+  onClearFilters,
+  showBoardSort = false,
 }: TicketFiltersProps): React.JSX.Element {
-  const filtersActive = ticketFiltersActive(filters);
+  const filtersActive =
+    ticketFiltersActive(filters) || search.trim().length > 0;
 
   return (
-    <div className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-xl py-sm max-768:flex-wrap max-768:px-md">
-      <span className={FILTER_CAPTION_CLASS}>Filter</span>
+    <div className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-xl py-sm max-768:flex-wrap max-768:px-md">
+      {onSearchChange && (
+        <div className="flex min-w-[240px] flex-1 items-center gap-sm max-768:basis-full">
+          <FormInput
+            type="search"
+            aria-label="Search ticket titles"
+            placeholder="Search titles…"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+          />
+          {search && (
+            <Button
+              variant="ghost"
+              size="sm"
+              layoutClassName="shrink-0"
+              onClick={() => onSearchChange("")}
+            >
+              Clear search
+            </Button>
+          )}
+        </div>
+      )}
       <Select
         value={
           filters.projectName === null
@@ -244,17 +275,49 @@ export default function TicketFilters({
           })
         }
       />
-      <span className="ml-auto font-mono text-[0.72rem] text-text-tertiary">
+      {showBoardSort && (
+        <div className="flex items-center gap-sm">
+          <span className={FILTER_CAPTION_CLASS}>Sort lanes</span>
+          <Select
+            value={filters.sort}
+            onValueChange={(value) =>
+              onFiltersChange({
+                ...filters,
+                sort: value === "created" ? "created" : "updated",
+              })
+            }
+          >
+            <SelectTrigger
+              aria-label="Sort tickets in lanes"
+              layoutClassName="w-[170px]"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="updated">Updated date · newest</SelectItem>
+              <SelectItem value="created">Created date · newest</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <span
+        role="status"
+        className="ml-auto font-mono text-[0.72rem] text-text-tertiary"
+      >
         {countsReady ? `${shownCount} of ${totalCount} shown` : ""}
       </span>
       {filtersActive && (
-        <button
-          type="button"
-          className="inline-flex h-[26px] cursor-pointer items-center rounded-sm border border-solid border-border-subtle bg-transparent px-[8px] font-mono text-[0.68rem] font-medium text-text-secondary transition-colors duration-150 ease-[ease] hover:border-border-strong hover:text-text-primary max-768:min-h-[44px]"
-          onClick={() => onFiltersChange(defaultTicketFilters(filters))}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            onClearFilters
+              ? onClearFilters()
+              : onFiltersChange(defaultTicketFilters(filters))
+          }
         >
           Clear filters
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -18,6 +18,7 @@ import {
   ticketStatusSchema,
   ticketWorkTypeSchema,
   type TicketDetail,
+  type TicketChildStatusCount,
   type TicketListItem,
   type TicketListSort,
   type TicketStatus,
@@ -165,6 +166,19 @@ export function ticketListSearchParams(
  */
 export function ticketListItemFromDetail(detail: TicketDetail): TicketListItem {
   const activeLink = detail.sessions.find((link) => link.endedAt === null);
+  const childrenByStatus = new Map<TicketStatus, number>();
+  const parentTicketNumbers: number[] = [];
+  for (const relationship of detail.relationships) {
+    if (relationship.role === "parent") {
+      parentTicketNumbers.push(relationship.otherTicket.number);
+    }
+    if (relationship.role !== "child") continue;
+    const status = relationship.otherTicket.status;
+    childrenByStatus.set(status, (childrenByStatus.get(status) ?? 0) + 1);
+  }
+  const childStatusCounts: TicketChildStatusCount[] = [...childrenByStatus]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([status, count]) => ({ status, count }));
   return {
     id: detail.id,
     projectPath: detail.projectPath,
@@ -174,6 +188,8 @@ export function ticketListItemFromDetail(detail: TicketDetail): TicketListItem {
     workType: detail.workType,
     status: detail.status,
     attachmentCount: detail.attachments.length,
+    ...(childStatusCounts.length > 0 ? { childStatusCounts } : {}),
+    ...(parentTicketNumbers.length > 0 ? { parentTicketNumbers } : {}),
     activeSessionName: activeLink?.sessionName ?? null,
     createdAt: detail.createdAt,
     updatedAt: detail.updatedAt,

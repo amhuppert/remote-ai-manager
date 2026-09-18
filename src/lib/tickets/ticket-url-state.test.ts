@@ -12,6 +12,7 @@ describe("parseTicketsPageState", () => {
     const state = parseTicketsPageState(new URLSearchParams());
     expect(state).toEqual({
       view: "board",
+      search: "",
       filters: {
         projectName: null,
         statuses: ["not_started", "in_progress", "blocked"],
@@ -31,6 +32,7 @@ describe("parseTicketsPageState", () => {
     );
     expect(state).toEqual({
       view: "list",
+      search: "",
       filters: {
         projectName: "command-center",
         statuses: ["done", "closed"],
@@ -40,6 +42,23 @@ describe("parseTicketsPageState", () => {
       listSort: { column: "title", direction: "desc" },
       selected: { projectName: "command-center", number: 14 },
     });
+  });
+
+  it("preserves title search and board ordering through links and view changes", () => {
+    const state = parseTicketsPageState(
+      new URLSearchParams("q=Attachment&boardSort=created"),
+    );
+    expect(state.search).toBe("Attachment");
+    expect(state.filters.sort).toBe("created");
+    expect(ticketsPageHref(state)).toBe(
+      "/tickets?q=Attachment&boardSort=created",
+    );
+    const list = { ...state, view: "list" as const };
+    expect(
+      parseTicketsPageState(
+        new URLSearchParams(ticketsPageHref(list).split("?")[1]),
+      ),
+    ).toEqual(list);
   });
 
   it("maps status=all to no status filter", () => {
@@ -103,6 +122,7 @@ describe("ticketsPageHref", () => {
     expect(
       ticketsPageHref({
         view: "list",
+        search: "",
         filters: {
           projectName: "my project",
           statuses: ["in_progress"],
@@ -131,6 +151,7 @@ describe("ticketsPageHref", () => {
       ticketsPageHref({
         ...defaults,
         view: "board",
+        search: "",
         selected: { projectName: "alpha", number: 3 },
       }),
     ).toBe("/tickets");
@@ -139,6 +160,7 @@ describe("ticketsPageHref", () => {
   it("round-trips through parseTicketsPageState", () => {
     const state = {
       view: "list" as const,
+      search: "",
       filters: {
         projectName: "command-center",
         statuses: ["blocked" as const, "closed" as const],

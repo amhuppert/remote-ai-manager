@@ -243,6 +243,14 @@ export type TicketLinkSummary = z.infer<typeof ticketLinkSummarySchema>;
 // List item and detail
 // ============================================================
 
+export const ticketChildStatusCountSchema = z.object({
+  status: ticketStatusSchema,
+  count: z.number().int().positive(),
+});
+export type TicketChildStatusCount = z.infer<
+  typeof ticketChildStatusCountSchema
+>;
+
 export const ticketListItemSchema = z.object({
   id: z.string().min(1),
   projectPath: z.string().min(1),
@@ -252,6 +260,8 @@ export const ticketListItemSchema = z.object({
   workType: ticketWorkTypeSchema,
   status: ticketStatusSchema,
   attachmentCount: z.number().int().nonnegative(),
+  childStatusCounts: z.array(ticketChildStatusCountSchema).optional(),
+  parentTicketNumbers: z.array(z.number().int().positive()).optional(),
   activeSessionName: z.string().min(1).nullable(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),

@@ -1035,3 +1035,56 @@ describe("TicketsPage row actions", () => {
     });
   });
 });
+
+describe("Ticket title search and board sorting", () => {
+  it("filters titles case-insensitively and restores results when cleared", async () => {
+    installFetchStub(TICKETS);
+    renderPage();
+    await screen.findByText("command-center#12");
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search ticket titles" }),
+      "ATTACHMENT",
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("command-center#9")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("command-center#12")).toBeInTheDocument();
+    expect(screen.getByText("1 of 4 shown")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    await screen.findByText("command-center#9");
+  });
+
+  it("loads search from the URL in list view and searches only titles", async () => {
+    installFetchStub(TICKETS);
+    renderPage("?view=list&q=command-center");
+    await screen.findByText("0 of 4 shown");
+    expect(rowTitles()).toEqual([]);
+    expect(screen.getByRole("searchbox")).toHaveValue("command-center");
+  });
+
+  it("offers a clear no-results state on the board", async () => {
+    installFetchStub(TICKETS);
+    renderPage("?q=does-not-exist");
+    await screen.findByText("No matching tickets");
+    expect(
+      screen.getByRole("button", { name: "Clear filters" }),
+    ).toBeInTheDocument();
+  });
+
+  it("sorts tickets in each lane by creation date and exposes the choice", async () => {
+    installFetchStub(TICKETS);
+    renderPage("?boardSort=created");
+    await screen.findByText("command-center#9");
+    const lane = screen.getByRole("group", { name: "Not Started column" });
+    const links = within(lane)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(
+      links.findIndex((text) => text?.includes("Interval builder")),
+    ).toBeLessThan(links.findIndex((text) => text?.includes("SSE reconnect")));
+    expect(
+      screen.getByRole("combobox", { name: "Sort tickets in lanes" }),
+    ).toHaveTextContent("Created date");
+  });
+});

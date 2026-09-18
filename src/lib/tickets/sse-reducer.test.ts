@@ -3,6 +3,7 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 
 import type {
   TicketChangedEvent,
+  TicketRelationshipView,
   TicketListItem,
   TicketListSort,
   TicketStatus,
@@ -341,6 +342,116 @@ describe("applyTicketChangedEvent", () => {
     client.setQueryData(ticketKeys.sessionLinks("beta"), {});
     return { client, t1, t2 };
   }
+
+  it("refreshes cached parent summaries even when the changed child is filtered out", () => {
+    const { client, t1 } = seededClient();
+    const parentKey = ticketKeys.list(
+      normalizeTicketListFilters({
+        projectName: "alpha",
+        statuses: ["in_progress"],
+      }),
+    );
+    const parent: TicketListItem = {
+      ...t1,
+      id: "alpha-10",
+      number: 10,
+      status: "in_progress",
+      childStatusCounts: [{ status: "blocked", count: 1 }],
+    };
+    client.setQueryData(parentKey, [parent]);
+    client.setQueryData(ticketKeys.detail("alpha", 10), { id: parent.id });
+    applyTicketChangedEvent(client, {
+      type: "ticket-changed",
+      change: "updated",
+      projectName: "alpha",
+      ticketNumber: 1,
+      listItem: { ...t1, status: "done", parentTicketNumbers: [10] },
+      attachmentIndexChanged: false,
+    });
+    expect(client.getQueryState(parentKey)?.isInvalidated).toBe(true);
+    expect(
+      client.getQueryState(ticketKeys.detail("alpha", 10))?.isInvalidated,
+    ).toBe(true);
+    expect(client.getQueryState(doneKey)?.isInvalidated).toBe(false);
+    expect(
+      client.getQueryState(ticketKeys.detail("beta", 2))?.isInvalidated,
+    ).toBe(false);
+  });
+
+  it.each(["updated", "session", "deleted"] as const)(
+    "refreshes only cached relationship readers referencing a ticket after %s",
+    (change) => {
+      const { client, t1, t2 } = seededClient();
+      const reference: TicketRelationshipView = {
+        id: "dependency",
+        role: "depends_on",
+        description: "",
+        createdAt: t1.createdAt,
+        updatedAt: t1.updatedAt,
+        otherTicket: {
+          id: t1.id,
+          projectName: t1.projectName,
+          number: t1.number,
+          title: t1.title,
+          status: t1.status,
+        },
+      };
+      const relatedDetailKey = ticketKeys.detail("beta", 2);
+      const relatedPageKey = ticketKeys.relationships("beta", 2, "depends_on");
+      const unrelatedPageKey = ticketKeys.relationships("beta", 2, "blocks");
+      const attachmentKey = ticketKeys.attachmentResolve(
+        "beta",
+        2,
+        "attachment",
+      );
+      client.setQueryData(relatedDetailKey, {
+        ...t2,
+        description: "",
+        attachments: [],
+        sessions: [],
+        relationships: [reference],
+        statusUpdates: { total: 0, recent: [] },
+      });
+      client.setQueryData(relatedPageKey, {
+        pages: [
+          { items: [], total: 1, nextCursor: "next" },
+          { items: [reference], total: 1, nextCursor: null },
+        ],
+        pageParams: [null, "next"],
+      });
+      client.setQueryData(unrelatedPageKey, {
+        pages: [
+          {
+            items: [
+              {
+                ...reference,
+                otherTicket: {
+                  ...reference.otherTicket,
+                  projectName: "unrelated",
+                },
+              },
+            ],
+            total: 1,
+            nextCursor: null,
+          },
+        ],
+        pageParams: [null],
+      });
+      client.setQueryData(attachmentKey, { markdown: "unchanged" });
+      applyTicketChangedEvent(client, {
+        type: "ticket-changed",
+        change,
+        projectName: "alpha",
+        ticketNumber: 1,
+        listItem: change === "deleted" ? null : { ...t1, status: "done" },
+        attachmentIndexChanged: false,
+      });
+      expect(client.getQueryState(relatedDetailKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(relatedPageKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(unrelatedPageKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(attachmentKey)?.isInvalidated).toBe(false);
+    },
+  );
 
   it("reduces every cached list and invalidates exactly the one detail key on a plain update", () => {
     const { client, t1 } = seededClient();

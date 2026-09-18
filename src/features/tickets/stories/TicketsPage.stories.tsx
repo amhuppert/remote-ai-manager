@@ -55,6 +55,12 @@ const TICKETS: TicketListItem[] = [
   makeTicket({
     id: "t-cc-12",
     number: 12,
+    childStatusCounts: [
+      { status: "not_started", count: 2 },
+      { status: "in_progress", count: 1 },
+      { status: "blocked", count: 1 },
+      { status: "done", count: 3 },
+    ],
     title: "Virtualize the attachment index for large dossiers",
     status: "in_progress",
     attachmentCount: 5,
@@ -487,6 +493,27 @@ export const MobileDetailPane = {
         pathname: "/tickets",
         query: { view: "list", t: "command-center#12" },
       },
+    },
+  },
+} satisfies Story;
+
+export const TitleSearch = {
+  parameters: {
+    nextjs: {
+      appDirectory: true,
+      navigation: {
+        pathname: "/tickets",
+        query: { q: "attachment", boardSort: "created" },
+      },
+    },
+  },
+} satisfies Story;
+
+export const BoardSearchNoMatches = {
+  parameters: {
+    nextjs: {
+      appDirectory: true,
+      navigation: { pathname: "/tickets", query: { q: "missing title" } },
     },
   },
 } satisfies Story;

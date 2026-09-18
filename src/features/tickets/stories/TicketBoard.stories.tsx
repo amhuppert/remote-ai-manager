@@ -61,6 +61,13 @@ const FULL_BOARD: TicketListItem[] = [
     status: "in_progress",
     attachmentCount: 5,
     activeSessionName: "csm/ticket-attachments",
+    childStatusCounts: [
+      { status: "not_started", count: 2 },
+      { status: "in_progress", count: 1 },
+      { status: "done", count: 3 },
+      { status: "blocked", count: 1 },
+      { status: "closed", count: 1 },
+    ],
     updatedAt: minutesAgo(4),
   }),
   makeTicket({

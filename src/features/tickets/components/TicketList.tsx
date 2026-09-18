@@ -1,5 +1,6 @@
 "use client";
 
+import { TicketChildSummary } from "./TicketChildSummary";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
@@ -480,6 +481,7 @@ export default function TicketList({
                     {item.title}
                   </Link>
                 )}
+                <TicketChildSummary counts={item.childStatusCounts} />
               </span>
               {kebabCell}
             </>,
@@ -543,6 +545,11 @@ export default function TicketList({
                   </button>
                 </span>
               )}
+              {item.childStatusCounts?.length ? (
+                <span className="mt-xs block">
+                  <TicketChildSummary counts={item.childStatusCounts} />
+                </span>
+              ) : null}
             </span>
             <span role="cell" className="min-w-0 max-768:sr-only">
               <Select

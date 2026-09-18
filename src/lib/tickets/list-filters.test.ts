@@ -311,5 +311,39 @@ describe("ticketListItemFromDetail", () => {
       createdAt: "2026-07-01T00:00:00.000Z",
       updatedAt: "2026-07-02T00:00:00.000Z",
     });
+    detail.relationships = [
+      {
+        id: "r-child",
+        role: "child",
+        otherTicket: {
+          id: "child",
+          projectName: "alpha",
+          number: 8,
+          title: "Child",
+          status: "blocked",
+        },
+        description: "",
+        createdAt: detail.createdAt,
+        updatedAt: detail.updatedAt,
+      },
+      {
+        id: "r-parent",
+        role: "parent",
+        otherTicket: {
+          id: "parent",
+          projectName: "alpha",
+          number: 3,
+          title: "Parent",
+          status: "in_progress",
+        },
+        description: "",
+        createdAt: detail.createdAt,
+        updatedAt: detail.updatedAt,
+      },
+    ];
+    expect(ticketListItemFromDetail(detail)).toMatchObject({
+      childStatusCounts: [{ status: "blocked", count: 1 }],
+      parentTicketNumbers: [3],
+    });
   });
 });

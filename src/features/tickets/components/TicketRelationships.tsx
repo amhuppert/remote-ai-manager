@@ -13,7 +13,7 @@ import {
   SectionLabel,
 } from "@/components/ui/SectionHeader";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
-import { ticketDetailHref } from "@/lib/tickets/hrefs";
+import { ticketDependenciesHref, ticketDetailHref } from "@/lib/tickets/hrefs";
 import { useRemoveTicketRelationshipMutation } from "@/lib/tickets/mutations";
 import { formatTicketIdentifier } from "@/lib/tickets/references";
 import type {
@@ -73,10 +73,16 @@ export default function TicketRelationships(
       aria-label="Relationships"
       className="flex flex-col gap-md"
     >
-      <SectionHeader layoutClassName="mb-0">
+      <SectionHeader layoutClassName="mb-0 flex-wrap">
         <SectionLabel id={headingId}>Relationships</SectionLabel>
         <SectionCount>{props.relationships.length}</SectionCount>
-        <SectionActions>
+        <SectionActions layoutClassName="flex-wrap">
+          <Link
+            href={ticketDependenciesHref(props.projectName, props.number)}
+            className="inline-flex min-h-[32px] items-center px-sm font-mono text-[0.72rem] text-text-secondary! no-underline hover:text-cyan! focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+          >
+            View dependencies
+          </Link>
           <Button
             type="button"
             variant="default"

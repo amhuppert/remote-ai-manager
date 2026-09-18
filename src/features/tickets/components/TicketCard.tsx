@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef } from "react";
+import { TicketChildSummary } from "./TicketChildSummary";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/Badge";
@@ -208,6 +209,7 @@ const TicketCard = forwardRef<HTMLDivElement, TicketCardProps>(
               </span>
             )}
           </div>
+          <TicketChildSummary counts={item.childStatusCounts} />
           {onMoveTo !== undefined && !isOverlay && (
             <div className="mt-[2px] hidden items-center gap-[8px] border-x-0 border-t border-b-0 border-solid border-border-subtle pt-[9px] max-768:flex">
               <span className="font-mono text-[0.64rem] font-medium tracking-[0.06em] text-text-tertiary uppercase">

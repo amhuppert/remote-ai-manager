@@ -827,6 +827,62 @@ describe("list queries", () => {
   });
 });
 
+describe("child status list summaries", () => {
+  it("counts direct children across filters and follows status changes and deletion", async () => {
+    const parent = await repo.create(
+      makeCreateInput({ status: "in_progress" }),
+    );
+    const child = await repo.create(makeCreateInput({ status: "blocked" }));
+    const done = await repo.create(makeCreateInput({ status: "done" }));
+    const grandchild = await repo.create(makeCreateInput({ status: "closed" }));
+    for (const [source, target] of [
+      [parent, child],
+      [parent, done],
+      [child, grandchild],
+    ]) {
+      if (!source || !target) throw new Error("missing relationship endpoint");
+      await repo.addRelationship({
+        id: `child-${target.id}`,
+        anchorTicketId: source.id,
+        relationType: "parent_child",
+        sourceTicketId: source.id,
+        targetTicketId: target.id,
+        description: "",
+        createdAt: "2026-07-10T01:00:00.000Z",
+      });
+    }
+    const [row] = await repo.list({
+      statuses: ["in_progress"],
+      sort: "updated",
+    });
+    expect(row?.childStatusCounts).toEqual([
+      { status: "blocked", count: 1 },
+      { status: "done", count: 1 },
+    ]);
+    expect(
+      (await repo.findListItem(PROJECT_PATH, child.number))
+        ?.parentTicketNumbers,
+    ).toEqual([parent.number]);
+    await repo.update({
+      projectPath: PROJECT_PATH,
+      number: child.number,
+      status: "done",
+      updatedAt: "2026-07-10T02:00:00.000Z",
+    });
+    expect(
+      (await repo.findListItem(PROJECT_PATH, parent.number))?.childStatusCounts,
+    ).toEqual([{ status: "done", count: 2 }]);
+    await repo.delete(PROJECT_PATH, done.number, "2026-07-10T03:00:00.000Z");
+    expect(
+      (await repo.findListItem(PROJECT_PATH, parent.number))?.childStatusCounts,
+    ).toEqual([{ status: "done", count: 1 }]);
+    expect(
+      (await repo.findListItem(PROJECT_PATH, grandchild.number))
+        ?.childStatusCounts,
+    ).toBeUndefined();
+  });
+});
+
 describe("durability contracts", () => {
   it("round-trips every persisted ticket key path through the real repo", async () => {
     await assertRoundTripDurability({

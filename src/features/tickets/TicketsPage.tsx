@@ -1,7 +1,7 @@
 "use client";
 
 import TicketBundleControl from "./components/TicketBundleControl";
-import { Suspense, useCallback, useMemo } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import Topbar from "@/components/Topbar";
@@ -62,15 +62,23 @@ function TicketsPageInner({
 }: TicketsPageProps): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const state = useMemo(
+  const urlState = useMemo(
     () =>
       parseTicketsPageState(
         new URLSearchParams(searchParams?.toString() ?? ""),
       ),
     [searchParams],
   );
+  const [search, setSearch] = useState(urlState.search);
+  const [previousUrlSearch, setPreviousUrlSearch] = useState(urlState.search);
+  if (previousUrlSearch !== urlState.search) {
+    setPreviousUrlSearch(urlState.search);
+    setSearch(urlState.search);
+  }
+  const state = useMemo(() => ({ ...urlState, search }), [urlState, search]);
   const { view, filters, listSort, selected } = state;
-  const filtersAreActive = ticketFiltersActive(filters);
+  const filtersAreActive =
+    ticketFiltersActive(filters) || search.trim().length > 0;
   const openQuickTicket = useQuickTicketStore((store) => store.openQuickTicket);
 
   const listQuery = useTicketListQuery({
@@ -84,7 +92,12 @@ function TicketsPageInner({
   // query's cache entry.
   const totalsQuery = useTicketListQuery({});
 
-  const items = listQuery.data ?? [];
+  const items = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return (listQuery.data ?? []).filter((item) =>
+      item.title.toLocaleLowerCase().includes(query),
+    );
+  }, [listQuery.data, search]);
   const allItems = useMemo(() => totalsQuery.data ?? [], [totalsQuery.data]);
   const inProgressCount = allItems.filter(
     (item) => item.status === "in_progress",
@@ -154,9 +167,21 @@ function TicketsPageInner({
     [state],
   );
 
+  const handleSearchChange = useCallback(
+    (next: string) => {
+      setSearch(next);
+      navigate({ ...state, search: next }, "replace");
+    },
+    [navigate, state],
+  );
+
   const clearFilters = useCallback(() => {
-    handleFiltersChange(defaultTicketFilters(filters));
-  }, [handleFiltersChange, filters]);
+    setSearch("");
+    navigate(
+      { ...state, search: "", filters: defaultTicketFilters(filters) },
+      "replace",
+    );
+  }, [navigate, state, filters]);
 
   const handleNewTicket = useCallback(() => {
     openQuickTicket({
@@ -171,7 +196,7 @@ function TicketsPageInner({
     <div className="app" data-page="tickets">
       <Topbar page="tickets" breadcrumbs={[{ label: "tickets" }]} />
       <main className="main">
-        <div className="flex min-h-[44px] items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-xl py-sm max-768:flex-wrap max-768:px-md">
+        <div className="flex min-h-[44px] items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-xl py-sm max-768:grid max-768:grid-cols-[minmax(0,1fr)_auto] max-768:px-md">
           <div className="flex min-w-0 flex-1 items-center gap-sm">
             <h1
               data-ticket-page-heading
@@ -210,25 +235,37 @@ function TicketsPageInner({
           </div>
           <div
             data-ticket-page-actions
-            className="flex shrink-0 items-center gap-sm max-768:w-full max-768:justify-between"
+            className="flex shrink-0 items-center gap-sm max-768:contents"
           >
-            <TicketBundleControl />
-            <Button variant="primary" size="sm" onClick={handleNewTicket}>
-              <PlusIcon />
-              New ticket
-            </Button>
-            <SegmentedControl
-              aria-label="View"
-              value={view}
-              onValueChange={(value) => handleViewChange(value as TicketsView)}
-            >
-              <SegmentedControlItem value="board">Board</SegmentedControlItem>
-              <SegmentedControlItem value="list">List</SegmentedControlItem>
-            </SegmentedControl>
+            <div className="shrink-0 max-768:col-start-1 max-768:row-start-2">
+              <TicketBundleControl />
+            </div>
+            <div className="shrink-0 max-768:col-start-2 max-768:row-start-1 max-768:justify-self-end">
+              <Button variant="primary" size="sm" onClick={handleNewTicket}>
+                <PlusIcon />
+                New ticket
+              </Button>
+            </div>
+            <div className="shrink-0 max-768:col-start-2 max-768:row-start-2 max-768:justify-self-end">
+              <SegmentedControl
+                aria-label="View"
+                value={view}
+                onValueChange={(value) =>
+                  handleViewChange(value as TicketsView)
+                }
+              >
+                <SegmentedControlItem value="board">Board</SegmentedControlItem>
+                <SegmentedControlItem value="list">List</SegmentedControlItem>
+              </SegmentedControl>
+            </div>
           </div>
         </div>
 
         <TicketFilters
+          search={search}
+          onSearchChange={handleSearchChange}
+          onClearFilters={clearFilters}
+          showBoardSort={view === "board"}
           filters={filters}
           projectOptions={projectOptions}
           shownCount={items.length}
@@ -281,6 +318,13 @@ function TicketsPageInner({
               </Button>
             </EmptyState>
           </div>
+        ) : view === "board" && items.length === 0 && filtersAreActive ? (
+          <EmptyState>
+            <EmptyStateTitle>No matching tickets</EmptyStateTitle>
+            <EmptyStateDesc>
+              Try another title or adjust the filters above.
+            </EmptyStateDesc>
+          </EmptyState>
         ) : view === "board" ? (
           <TicketBoard items={items} statuses={filters.statuses} />
         ) : (
