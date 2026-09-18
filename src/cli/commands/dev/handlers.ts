@@ -145,8 +145,8 @@ export const ensureHandler: Write<typeof devSpecs.ensure> = {
         name = first.serverName;
       }
       const recovery = recoveryFacts([
-        { kind: "session", id: context.session },
-        { kind: "dev-server", id: name },
+        { kind: "session", id: encodePathSegment(context.session) },
+        { kind: "dev-server", id: encodePathSegment(name) },
       ]);
       const started = await cliRequest(app.host, {
         ...context,
@@ -257,8 +257,8 @@ export const stopHandler: Write<typeof devSpecs.stop> = {
       const { context, target } = resolved.value;
       const name = ctx.args["server-name"];
       const recovery = recoveryFacts([
-        { kind: "session", id: context.session },
-        { kind: "dev-server", id: name },
+        { kind: "session", id: encodePathSegment(context.session) },
+        { kind: "dev-server", id: encodePathSegment(name) },
       ]);
       const response = await cliRequest(app.host, {
         ...context,

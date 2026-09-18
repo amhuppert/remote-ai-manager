@@ -215,6 +215,40 @@ describe("cctl dev list", () => {
 });
 
 describe("cctl dev ensure", () => {
+  it.each(["ensure", "stop"])(
+    "%s addresses display names with spaces and recoverable identifiers",
+    async (action) => {
+      const sessionName = "Ticket: Checkpoint cycles (2)";
+      const serverName = "web app";
+      const host = makeHost((req) =>
+        req.init.method === "POST"
+          ? jsonResponse(
+              action === "stop"
+                ? { status: "ok" }
+                : { status: "accepted", server: server({ serverName }) },
+              action === "stop" ? 200 : 202,
+            )
+          : jsonResponse({ servers: [server({ serverName })] }),
+      );
+      const result = await runCcWithHost(
+        ["dev", action, serverName, "--json"],
+        { ...baseEnv, CC_SESSION: sessionName },
+        host,
+      );
+      expect(result.exitCode).toBe(0);
+      const response = JSON.parse(result.stdout);
+      expect(response.effect).toBe("applied");
+      expect(response.recovery.references).toEqual([
+        { kind: "session", id: encodeURIComponent(sessionName) },
+        { kind: "dev-server", id: encodeURIComponent(serverName) },
+      ]);
+      const request = host.requests.find((req) => req.init.method === "POST");
+      expect(new URL(request?.url ?? "").pathname).toBe(
+        `/api/projects/cc/sessions/${encodeURIComponent(sessionName)}/dev-servers/${encodeURIComponent(serverName)}/${action === "ensure" ? "start" : "stop"}`,
+      );
+    },
+  );
+
   it("starts the named server, blocks until running, prints URLs + the drive hint", async () => {
     let getCount = 0;
     const host = makeHost((req) => {
