@@ -4,6 +4,7 @@ import {
   sessionConversationTargetSchema,
 } from "@/lib/conversations/conversation-target";
 import {
+  encodePathSegment,
   readConversationScope,
   readSessionEnv,
   resolveCliPrincipalIdentity,
@@ -73,6 +74,18 @@ export async function resolveCcProject(
     ok: true,
     value: { server, project, token: token.token, tokenSource: token.source },
   };
+}
+
+/**
+ * Session names are display titles that may contain spaces, but kernel recovery
+ * identifiers reject whitespace. Address a session by the path-segment form the
+ * `--session` flag and the API routes already accept.
+ */
+export function sessionReference(session: string): {
+  readonly kind: "session";
+  readonly id: string;
+} {
+  return { kind: "session", id: encodePathSegment(session) };
 }
 
 function contextFailure(message: string): CcContextResult<never> {

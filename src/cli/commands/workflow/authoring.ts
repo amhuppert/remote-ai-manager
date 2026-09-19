@@ -23,6 +23,7 @@ import {
   resolveCcProject,
   resolveCcSession,
   type CcErrorCode,
+  sessionReference,
 } from "../../framework/context";
 import type { ProjectContext, SessionContext } from "../../transport";
 import { specPlanStatusCommand } from "../spec/native-definitions";
@@ -606,7 +607,7 @@ const liveAmendImplementation: Amend = {
           body: { ...payload, reason: ctx.flags.reason },
         },
         amendResponseSchema,
-        recoveryFacts([{ kind: "session", id: prepared.value.session }]),
+        recoveryFacts([sessionReference(prepared.value.session)]),
         true,
       );
     },

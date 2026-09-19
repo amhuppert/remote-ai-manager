@@ -1,4 +1,4 @@
-import { explicitScopeFlags } from "../../framework/context";
+import { explicitScopeFlags, sessionReference } from "../../framework/context";
 import {
   bytes,
   invocation,
@@ -145,7 +145,7 @@ export const ensureHandler: Write<typeof devSpecs.ensure> = {
         name = first.serverName;
       }
       const recovery = recoveryFacts([
-        { kind: "session", id: encodePathSegment(context.session) },
+        sessionReference(context.session),
         { kind: "dev-server", id: encodePathSegment(name) },
       ]);
       const started = await cliRequest(app.host, {
@@ -257,7 +257,7 @@ export const stopHandler: Write<typeof devSpecs.stop> = {
       const { context, target } = resolved.value;
       const name = ctx.args["server-name"];
       const recovery = recoveryFacts([
-        { kind: "session", id: encodePathSegment(context.session) },
+        sessionReference(context.session),
         { kind: "dev-server", id: encodePathSegment(name) },
       ]);
       const response = await cliRequest(app.host, {

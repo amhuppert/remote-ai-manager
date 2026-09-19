@@ -15,6 +15,7 @@ import {
   explicitScopeFlags,
   resolveCcSession,
   type CcErrorCode,
+  sessionReference,
 } from "../../framework/context";
 import { observeJob } from "../../framework/observe-job";
 import { waitDurationMs } from "../../framework/observe-job";
@@ -245,7 +246,7 @@ const runImplementation: Run = {
         path: `${graphPath(context)}/run`,
         body: { plan: payload, ...(inputs !== undefined ? { inputs } : {}) },
       });
-      const target = recoveryFacts([{ kind: "session", id: context.session }]);
+      const target = recoveryFacts([sessionReference(context.session)]);
       if (response.kind !== "ok") return ccWriteFailure(response, target);
       const parsed = z
         .object({ receipt: cliGraphWorkflowLaunchReceiptSchema })
@@ -448,7 +449,7 @@ async function act(
       ...(reason ? { body: { reason } } : {}),
     },
     activeActSchema,
-    recoveryFacts([{ kind: "session", id: resolved.value.session }]),
+    recoveryFacts([sessionReference(resolved.value.session)]),
     true,
   );
   return response.effect === "applied"

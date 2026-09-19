@@ -40,6 +40,7 @@ import {
   resolveCcProject,
   resolveCcSession,
   type CcErrorCode,
+  sessionReference,
 } from "../../framework/context";
 import { ccRequestFailure, ccWriteFailure } from "../../framework/request";
 import { observeJob, waitDurationMs } from "../../framework/observe-job";
@@ -149,7 +150,7 @@ const runImplementation: Run = {
   commit: writeRunner<Parameters<Run["commit"]>[0], RunData, CcErrorCode>({
     async run({ app, ctx, payload, prepared }) {
       const { context, waitMs } = prepared.value;
-      const target = recoveryFacts([{ kind: "session", id: context.session }]);
+      const target = recoveryFacts([sessionReference(context.session)]);
       const response = await cliRequest(app.host, {
         ...context,
         method: "POST",

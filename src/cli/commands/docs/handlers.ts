@@ -12,7 +12,11 @@ import {
   type ReferenceDocument,
 } from "@/lib/reference-documents/schemas";
 import { cliRequest, encodePathSegment } from "../../transport";
-import { resolveCcSession, type CcErrorCode } from "../../framework/context";
+import {
+  resolveCcSession,
+  type CcErrorCode,
+  sessionReference,
+} from "../../framework/context";
 import {
   ccErrors,
   type CcApplication,
@@ -72,15 +76,13 @@ export const registerHandler: Write<typeof docsRegisterSpec> = {
       if (response.kind !== "ok")
         return ccWriteFailure(
           response,
-          recoveryFacts([{ kind: "session", id: resolved.value.session }]),
+          recoveryFacts([sessionReference(resolved.value.session)]),
         );
       const parsed = registrationSchema.safeParse(response.body);
       if (!parsed.success) {
         return {
           effect: "unknown",
-          recovery: recoveryFacts([
-            { kind: "session", id: resolved.value.session },
-          ]),
+          recovery: recoveryFacts([sessionReference(resolved.value.session)]),
           result: {
             ok: false,
             error: ccErrors.error("CC_INVALID_RESPONSE", {

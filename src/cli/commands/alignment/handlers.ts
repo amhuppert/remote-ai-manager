@@ -19,6 +19,7 @@ import {
 import {
   resolveCcConversation,
   type CcErrorCode,
+  sessionReference,
 } from "../../framework/context";
 import {
   ccErrors,
@@ -70,9 +71,7 @@ const decisions: DecisionsHandler = {
   >({
     async run({ app, payload, prepared }) {
       const context = prepared.value;
-      const recovery = recoveryFacts([
-        { kind: "session", id: context.session },
-      ]);
+      const recovery = recoveryFacts([sessionReference(context.session)]);
       const response = await cliRequest(app.host, {
         ...context,
         method: "POST",
@@ -123,9 +122,7 @@ const charter: CharterHandler = {
   >({
     async run({ app, payload, prepared }) {
       const context = prepared.value;
-      const recovery = recoveryFacts([
-        { kind: "session", id: context.session },
-      ]);
+      const recovery = recoveryFacts([sessionReference(context.session)]);
       const response = await cliRequest(app.host, {
         ...context,
         method: "POST",

@@ -10,7 +10,11 @@ import {
   readConversationScope,
   readSessionEnv,
 } from "../transport";
-import { resolveCcProject, type CcErrorCode } from "./context";
+import {
+  resolveCcProject,
+  type CcErrorCode,
+  sessionReference,
+} from "./context";
 import { ccErrors, type CcApplication, type ccGlobalFlags } from "./family";
 import type { notifySpec } from "./notify.definition";
 import { ccWriteFailure } from "./request";
@@ -44,8 +48,7 @@ const handler: WriteHandler<
       if (session) {
         target = {
           path: `/api/projects/${encodePathSegment(project.value.project)}/sessions/${encodePathSegment(session)}/notifications`,
-          kind: "session",
-          id: session,
+          ...sessionReference(session),
         };
       } else if (readConversationScope(app.env) === "project" && conversation) {
         target = {

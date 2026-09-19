@@ -1,3 +1,4 @@
+import { recoveryFacts } from "cli-for-agents";
 import { describe, expect, it } from "vitest";
 import { conversationTargetApiBase } from "@/lib/conversations/conversation-target";
 import type { CcApplication } from "./family";
@@ -10,6 +11,7 @@ import {
   resolveCcProjectConversation,
   resolveCcSession,
   resolveCcServer,
+  sessionReference,
 } from "./context";
 
 function application(overrides: Partial<CcApplication> = {}): CcApplication {
@@ -208,5 +210,16 @@ describe("native CC context resolution", () => {
       ok: true,
       value: { token: "file-token", tokenSource: "file" },
     });
+  });
+});
+
+describe("sessionReference", () => {
+  it("addresses a spaced session title as a recovery fact the kernel accepts", () => {
+    const reference = sessionReference("Ticket: charter submit failed");
+    expect(reference).toEqual({
+      kind: "session",
+      id: "Ticket%3A%20charter%20submit%20failed",
+    });
+    expect(() => recoveryFacts([reference])).not.toThrow();
   });
 });

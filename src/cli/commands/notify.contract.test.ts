@@ -16,6 +16,8 @@ import type { CliEnv, CliHost } from "../transport";
  */
 
 const TOKEN = "contract-token";
+// Real session names carry spaces; notify must still address them as recovery facts.
+const SESSION = "Ticket: charter submit failed";
 let dir: string;
 
 beforeEach(async () => {
@@ -67,7 +69,7 @@ function makeEnv(overrides: CliEnv = {}): CliEnv {
     CC_SERVER_URL: "http://127.0.0.1:4999",
     CC_API_TOKEN: TOKEN,
     CC_PROJECT: "cc",
-    CC_SESSION: "sess",
+    CC_SESSION: SESSION,
     ...overrides,
   };
 }
@@ -81,7 +83,7 @@ function makeHandlers(
       return "/repos/cc";
     },
     async getSession() {
-      return { sessionName: "sess" };
+      return { sessionName: SESSION };
     },
     async getProjectConversation(_projectPath, conversationId) {
       return { id: conversationId };
@@ -104,7 +106,7 @@ describe("cctl notify against the real notification handler", () => {
     expect(result.exitCode).toBe(0);
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        target: { scope: "session", projectName: "cc", sessionName: "sess" },
+        target: { scope: "session", projectName: "cc", sessionName: SESSION },
         title: "Heads up",
         message: "Build done",
       }),

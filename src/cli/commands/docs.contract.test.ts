@@ -19,7 +19,7 @@ import type { CliEnv, CliHost } from "../transport";
  */
 
 const PROJECT_PATH = "/repos/cc";
-const SESSION = "sess";
+const SESSION = "Ticket: charter submit failed";
 const WORKTREE = `${PROJECT_PATH}/.worktrees/${SESSION}`;
 const TOKEN = "contract-token";
 

@@ -42,7 +42,9 @@ import type { CliEnv, CliHost } from "../transport";
 
 const PROJECT_NAME = "cc";
 const PROJECT_PATH = "/repos/cc";
-const SESSION = "sess";
+// Real session names are human titles with spaces; the alignment commands must
+// address them as recovery references without tripping the kernel identifier rule.
+const SESSION = "Remove context limits and conversation rotation";
 const WORKTREE = `${PROJECT_PATH}/.worktrees/${SESSION}`;
 const CONVERSATION_ID = "conv-contract";
 const TOKEN = "contract-token";
@@ -230,6 +232,25 @@ describe("cctl charter write against the real alignment handlers", () => {
     expect(state.active).toBeNull();
   });
 
+  it("reports the spaced session name as an encoded recovery reference", async () => {
+    const service = buildService();
+    const host = makeHost(service, {
+      [CHARTER_FILE]: JSON.stringify({ content: "## Mission\nShip it." }),
+    });
+
+    const result = await runCcWithHost(
+      ["charter", "write", "--file", CHARTER_FILE, "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(result.exitCode, result.stdout).toBe(0);
+    const response = JSON.parse(result.stdout);
+    expect(response.effect).toBe("applied");
+    expect(response.recovery.references).toEqual([
+      { kind: "session", id: encodeURIComponent(SESSION) },
+    ]);
+  });
+
   it("exits 3 through the real token gate when the token is wrong", async () => {
     const service = buildService();
     const host = makeHost(service, {
@@ -262,11 +283,14 @@ describe("cctl decisions propose against the real alignment handlers", () => {
     });
 
     const result = await runCcWithHost(
-      ["decisions", "propose", "--file", DECISIONS_FILE],
+      ["decisions", "propose", "--file", DECISIONS_FILE, "--json"],
       makeEnv(),
       host,
     );
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(result.stdout).recovery.references).toEqual([
+      { kind: "decision-batch", id: "id-1" },
+    ]);
 
     const state = await readAlignmentState(service);
     expect(state.pendingProposals).toHaveLength(1);
