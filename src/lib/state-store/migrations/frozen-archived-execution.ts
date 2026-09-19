@@ -128,14 +128,8 @@ const legacyAgentConfigSchema = z.preprocess(
   ]),
 );
 
-const legacyContinuitySchema = z.object({
-  enabled: z.boolean().default(true),
-  contextLimitTokens: z.number().int().positive().optional(),
-});
-
 const legacyValidatorBaseSchema = z.object({
   enabled: z.boolean().default(true),
-  continuity: legacyContinuitySchema.default({ enabled: true }),
 });
 
 const legacyClaudeValidatorSchema = legacyValidatorBaseSchema.extend({
@@ -238,7 +232,6 @@ function upgradeContextValidator(value: unknown): unknown {
         profile: LEGACY_VALIDATOR_PROFILE,
         profileSnapshot: legacyProfileSnapshot(LEGACY_VALIDATOR_PROFILE),
         ...assignment,
-        continuity: legacy.data.continuity,
       },
     ],
   };

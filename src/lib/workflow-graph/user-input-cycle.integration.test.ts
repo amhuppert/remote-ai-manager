@@ -97,8 +97,7 @@ function claudeLaneState(input: {
     refKind: "conversation",
     workflowConversationId: input.conversationId,
     sessionRef: { backend: "claude", ref: input.conversationId },
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: {},
     lastUsedAt: NOW,
   };
 }
@@ -300,7 +299,6 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
           conversationId: agentInput.conversationId,
           contextTokens: null,
           contextWindowMax: null,
-          compacted: false,
         };
       },
     );
@@ -318,7 +316,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
     const resolveImplementerCall = vi.fn(
       async (callInput: ResolveImplementerCallInput) => ({
         execution: callInput.execution,
-        conversationId: callInput.pinnedConversationId ?? CONV_ASK,
+        conversationId: CONV_ASK,
         sessionAction: "reuse" as const,
         promptMode: "follow_up" as const,
       }),
@@ -427,10 +425,6 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       resumeUserInputs: consumed,
     });
 
-    // Req 5.1: the asking conversation is pinned for the answer-delivery turn.
-    expect(resolveImplementerCall).toHaveBeenLastCalledWith(
-      expect.objectContaining({ pinnedConversationId: CONV_ASK }),
-    );
     expect(resumeResult.conversationId).toBe(CONV_ASK);
     // The resumed prompt carries the standard answers block verbatim.
     const resumePrompt = capturedPrompts.at(-1)!;

@@ -98,7 +98,6 @@ export function createContextIterationFixture(
     runtimeEditService: createGraphWorkflowRuntimeEditService(),
     sharedDocumentRegistry: createGraphWorkflowSharedDocumentRegistryService(),
     publishLiveEditApplied: publisher.publishLiveEditApplied,
-    readLiveOccupancy: () => null,
     now: deps.now,
   });
   return createGraphWorkflowContextIteration({

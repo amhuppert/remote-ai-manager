@@ -63,14 +63,13 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
             parameters: { effort: "medium" },
           },
         },
-        continuity: { enabled: true },
       },
     ],
   },
   scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
-  iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  iterationPolicy: { maxIterations: 20 },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -140,7 +139,6 @@ const VALIDATOR: ValidatorAssignment = {
     backend: "claude",
     modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
   },
-  continuity: { enabled: true },
 };
 
 const TASKS: GraphWorkflowTaskDefinition[] = [

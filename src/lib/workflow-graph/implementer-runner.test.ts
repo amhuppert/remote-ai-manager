@@ -154,7 +154,6 @@ describe("graph workflow implementer runner", () => {
     const executeConversationTurn = vi.fn(async () =>
       settledConversationTurn({
         usage: { contextTokens: 12_345, contextWindowMax: 200_000 },
-        compacted: false,
       }),
     );
     const getConversation = vi.fn(async () =>
@@ -214,7 +213,6 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: 12_345,
       contextWindowMax: 200_000,
-      compacted: false,
       sessionRef: { backend: "claude", ref: "sdk-session-1" },
     });
   });
@@ -278,7 +276,6 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-codex",
       contextTokens: null,
       contextWindowMax: null,
-      compacted: false,
       sessionRef: { backend: "codex", ref: "thread-codex-1" },
     });
   });
@@ -593,7 +590,6 @@ describe("graph workflow implementer runner", () => {
     const executeConversationTurn = vi.fn(async () =>
       settledConversationTurn({
         usage: { contextTokens: 100, contextWindowMax: 200_000 },
-        compacted: false,
         backgroundWait: backgroundWait,
       }),
     );
@@ -627,7 +623,6 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: 100,
       contextWindowMax: 200_000,
-      compacted: false,
       sessionRef: { backend: "claude", ref: "sdk-session-1" },
       backgroundWait,
     });
@@ -666,7 +661,6 @@ describe("graph workflow implementer runner", () => {
     const executeConversationTurn = vi.fn(async () =>
       settledConversationTurn({
         usage: {},
-        compacted: false,
         outcome: {
           kind: "failed",
           error: {
@@ -710,7 +704,6 @@ describe("graph workflow implementer runner", () => {
       settledConversationTurn(
         {
           usage: {},
-          compacted: false,
           outcome: {
             kind: "failed",
             error: {
@@ -759,7 +752,6 @@ describe("graph workflow implementer runner", () => {
       settledConversationTurn(
         {
           usage: {},
-          compacted: false,
           outcome: {
             kind: "failed",
             error: {

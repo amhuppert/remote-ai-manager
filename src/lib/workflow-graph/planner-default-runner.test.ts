@@ -43,7 +43,6 @@ const submittedDefinition: WorkflowSemanticDefinition = {
       circuitBreaker: {},
       iterationPolicy: {
         maxIterations: 2,
-        continuity: { enabled: true },
       },
     },
   ],

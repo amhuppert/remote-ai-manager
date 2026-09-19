@@ -415,9 +415,8 @@ describe("loadAuditInput", () => {
       path.join(executionDir, "decisions.jsonl"),
       JSON.stringify({
         timestamp: "2026-07-04T10:30:00.000Z",
-        event: "rotation.scheduled",
+        event: "context.scheduled",
         contextId: "impl",
-        reason: "context_over_limit",
       }),
     );
     const input = loadAuditInput(

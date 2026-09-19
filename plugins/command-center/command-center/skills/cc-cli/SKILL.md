@@ -93,7 +93,7 @@ end the turn. Prepare working notes before submitting. An autonomous-turn
 refusal means use best judgment within the authorized scope.
 
 Workflow lane commands may also require ending the turn for a halt,
-collaboration, or context rotation. Follow the explicit instruction; consult
+or collaboration. Follow the explicit instruction; consult
 the workflow reference for the command's continuation contract.
 
 ## Exit codes

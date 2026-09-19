@@ -125,7 +125,7 @@ export interface ConsumeAnswersResult {
 /**
  * A consumed answer record threaded from the execution loop into the resumed
  * iteration so the orchestrator can pin the asking conversation and embed the
- * answers block in the follow-up (pinned) or seed (rotated) prompt. Shaped
+ * answers block in the existing conversation's follow-up prompt. Shaped
  * identically to `ConsumeAnswersResult` — the loop passes the consume result
  * straight through.
  */

@@ -8,10 +8,6 @@ import {
 import type { CursorCapabilityDelivery } from "./capability-delivery";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
-import {
-  clearLiveOccupancy,
-  markLiveCompaction,
-} from "@/lib/conversations/live-occupancy";
 import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -448,7 +444,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       forceExpirePersistedRun: boolean;
     },
   ): Promise<{ state: ActiveTurn; outcome: TurnOutcome }> {
-    clearLiveOccupancy(this.conversationId);
     const turn: ActiveTurn = {
       onUserQuestion: input.onUserQuestion,
       questionController: new AbortController(),
@@ -493,7 +488,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     input.signal.removeEventListener("abort", onAbort);
     this.clearTurnTimers(turn);
     this.activeTurn = null;
-    clearLiveOccupancy(this.conversationId);
     return { state: turn, outcome };
   }
 
@@ -1114,7 +1108,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // before any block derived from it reaches a consumer.
     this.emit({ type: "transcript_entry", entry: projection.entry });
     turn.compacted ||= projection.compacted;
-    if (projection.compacted) markLiveCompaction(this.conversationId);
     const tasks = applyCursorTaskEvent(
       this.tasks,
       decoded.value,

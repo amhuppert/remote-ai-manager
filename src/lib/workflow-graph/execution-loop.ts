@@ -639,8 +639,8 @@ function isAbortCausedTurnFailure(error: unknown): boolean {
 /**
  * An implementer turn torn down by the per-turn inactivity watchdog. Provably
  * dead air (not a validation or provider failure), so the loop grants one
- * automatic recovery: the context resets to ready with a rotation scheduled,
- * and the retry runs on a fresh conversation instead of the stalled thread.
+ * automatic recovery: the context resets to ready, retaining its conversation,
+ * and the retry resumes the saved thread.
  */
 function isStallCausedTurnFailure(error: unknown): boolean {
   const unwrapped =

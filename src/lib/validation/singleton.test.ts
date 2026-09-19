@@ -67,8 +67,7 @@ function implementerLaneState(
     backend: "claude",
     refKind: "conversation",
     workflowConversationId: conversationId,
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "supported",
+    metrics: {},
     lastUsedAt: T,
   };
 }

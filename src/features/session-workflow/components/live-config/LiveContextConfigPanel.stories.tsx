@@ -76,7 +76,6 @@ function context(
               parameters: { effort: "medium" },
             },
           },
-          continuity: { enabled: true, contextLimitTokens: 50000 },
         },
       ],
     },
@@ -86,7 +85,7 @@ function context(
     askUserQuestions: { enabled: true },
     mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
-    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 20 },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     collaboration: {
       enabled: { value: true, source: "per-node" },
@@ -330,4 +329,28 @@ export const SavedOfferingResume: Story = {
 /** The resume is in flight. */
 export const Resuming: Story = {
   render: () => <Panel saveSucceeded isResuming />,
+};
+
+/** Started assignments remain fixed on an otherwise editable paused execution. */
+export const StartedImplementer: Story = {
+  render: () => (
+    <Panel
+      execution={execution({
+        laneStates: {
+          [CONTEXT_ID]: {
+            implementer: {
+              lane: "implementer",
+              contextId: CONTEXT_ID,
+              backend: "claude",
+              refKind: "conversation",
+              workflowConversationId: "conv_implementer",
+              metrics: {},
+              lastUsedAt: "2026-09-18T10:00:00.000Z",
+            },
+          },
+        },
+      })}
+      focusScreen={["agents", "implementer"]}
+    />
+  ),
 };

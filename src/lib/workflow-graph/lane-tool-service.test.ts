@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  buildContextLimitStopInstruction,
   createRequestCollaborationHandler,
   requestCollaborationSchema,
   type RequestCollaborationHandlerContext,
@@ -8,86 +7,6 @@ import {
 } from "./lane-tool-service";
 import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type { ExecutionLogger } from "./execution-logger";
-
-describe("buildContextLimitStopInstruction", () => {
-  it("renders the over-limit clause with real occupancy numbers", () => {
-    const instruction = buildContextLimitStopInstruction({
-      contextTokens: 210_000,
-      contextLimitTokens: 150_000,
-      compactedThisTurn: false,
-      alreadyScheduled: false,
-      source: "live",
-    });
-
-    expect(instruction).toBe(
-      "CONTEXT LIMIT REACHED: this conversation is at ~210000 context tokens, over the configured limit of 150000. Do not start another task or begin new work. End your turn now with a handoff note for the next conversation: what you completed, anything left in flight, and any lessons it needs (environment gotchas, workarounds, decisions made and why). Your final message is delivered verbatim into the fresh conversation's first prompt.",
-    );
-  });
-
-  it("asks for lessons and promises verbatim delivery in every clause variant", () => {
-    for (const stop of [
-      {
-        contextTokens: 210_000,
-        contextLimitTokens: 150_000,
-        compactedThisTurn: false,
-        alreadyScheduled: false,
-        source: "live" as const,
-      },
-      {
-        contextTokens: 50_000,
-        contextLimitTokens: 150_000,
-        compactedThisTurn: true,
-        alreadyScheduled: false,
-        source: "live" as const,
-      },
-      {
-        contextTokens: 210_000,
-        contextLimitTokens: 150_000,
-        compactedThisTurn: true,
-        alreadyScheduled: true,
-        source: "live" as const,
-      },
-    ]) {
-      const instruction = buildContextLimitStopInstruction(stop);
-      expect(instruction).toContain("any lessons it needs");
-      expect(instruction).toContain(
-        "delivered verbatim into the fresh conversation's first prompt",
-      );
-    }
-  });
-
-  it("renders the compaction clause when the turn auto-compacted mid-turn", () => {
-    const instruction = buildContextLimitStopInstruction({
-      contextTokens: 50_000,
-      contextLimitTokens: 150_000,
-      compactedThisTurn: true,
-      alreadyScheduled: false,
-      source: "live",
-    });
-
-    expect(instruction).toContain(
-      "CONTEXT LIMIT REACHED: this conversation auto-compacted mid-turn, exceeding the configured context-limit policy (150000 tokens). Do not start another task or begin new work.",
-    );
-  });
-
-  it("prefers the already-scheduled clause over compaction and over-limit", () => {
-    const instruction = buildContextLimitStopInstruction({
-      contextTokens: 210_000,
-      contextLimitTokens: 150_000,
-      compactedThisTurn: true,
-      alreadyScheduled: true,
-      source: "live",
-    });
-
-    expect(instruction).toContain(
-      "CONTEXT LIMIT REACHED: a context rotation is already scheduled for this conversation. Do not start another task or begin new work.",
-    );
-    expect(instruction).not.toContain("auto-compacted");
-    expect(instruction).not.toContain(
-      "context tokens, over the configured limit",
-    );
-  });
-});
 
 describe("requestCollaborationSchema", () => {
   it("accepts a trimmed non-empty brief", () => {

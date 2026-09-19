@@ -80,8 +80,7 @@ function implementerLaneState(
     backend: "claude",
     refKind: "conversation",
     workflowConversationId: conversationId,
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "supported",
+    metrics: {},
     lastUsedAt: T,
   };
 }
@@ -218,7 +217,6 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),

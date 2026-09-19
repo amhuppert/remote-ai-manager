@@ -158,7 +158,7 @@ describe("resolved context schema — planRepair", () => {
       contextValidator: { enabled: false, assignments: [] },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
-      iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 20 },
     });
     expect(parsed.planRepair).toEqual({
       enabled: true,

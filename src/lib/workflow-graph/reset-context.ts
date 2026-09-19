@@ -4,7 +4,6 @@ import {
 } from "@/lib/workflow-graph/context-transitions";
 import { buildInitialTaskState } from "@/lib/workflow-graph/execution-state";
 import type {
-  GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowTaskState,
@@ -83,24 +82,12 @@ export function resetExecutionContext(
     nextTaskStates[taskId] = buildInitialTaskState(taskDefinition);
   }
 
-  // Keyed by lane key (`implementer` | `context_validator:<assignmentId>`), so
-  // dropping a context drops every cohort member's lane with it.
-  const nextLaneStates: Record<
-    string,
-    Record<string, GraphWorkflowAgentSessionState>
-  > = {};
-  for (const [ctxKey, contextLanes] of Object.entries(execution.laneStates)) {
-    if (ctxKey === contextId) continue;
-    nextLaneStates[ctxKey] = contextLanes;
-  }
-
   return {
     ...execution,
     status: "paused",
     activeContextIds: [],
     contextStates: nextContextStates,
     taskStates: nextTaskStates,
-    laneStates: nextLaneStates,
     haltReason: null,
     completedAt: null,
     machineSnapshot: null,

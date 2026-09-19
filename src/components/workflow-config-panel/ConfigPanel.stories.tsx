@@ -161,7 +161,7 @@ const DORMANT_COHORT: ValidatorCohort = {
       profile: ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF,
       strategy: "conversation",
       authority: "blocking",
-      continuity: { enabled: true },
+
       agent: {
         backend: "claude",
         modelSelection: {
@@ -176,7 +176,7 @@ const DORMANT_COHORT: ValidatorCohort = {
       strategy: "task",
       authority: "advisory",
       focus: "auth boundaries and session fixation",
-      continuity: { enabled: false },
+
       agent: {
         backend: "codex",
         modelSelection: {

@@ -2,7 +2,7 @@ import {
   resolveContextReviewOrigin,
   type ReviewOriginResolution,
 } from "./review-origin";
-import { changed } from "./execution-mutation";
+import { changed, unchanged } from "./execution-mutation";
 import type { GraphWorkflowExecutionRepository } from "./execution-repository";
 import { z } from "zod";
 import {
@@ -38,7 +38,6 @@ import {
 } from "@/lib/workflow-graph/schemas";
 import {
   isAcceptanceCriteriaValidatorProfile,
-  selectRunnableCohortAssignments,
   type ValidatorAssignment,
   type ValidatorAuthority,
 } from "@/lib/workflow-graph/config-schemas";
@@ -285,7 +284,7 @@ export interface BuildContextValidationPromptInput {
   // computation is disabled or fails to produce a section.
   diffScopeSection?: string;
   // Answers delivered into a validator resume: the asking validator conversation
-  // is reused (pinned) or, on rotation, a fresh one carries the block. Either
+  // is reused and carries the answer block. Either
   // way the re-run validator reads the answers before rendering its verdict
   // (5.1, 5.3). The block echoes the question text, so it is self-sufficient.
   resumeUserInput?: {
@@ -821,12 +820,6 @@ export function parseValidatorResponse(
 export interface ValidatorExecutionMetadata {
   sessionRef: GraphWorkflowValidationSessionRef | null;
   reviewArtifact: GraphWorkflowValidationReviewArtifact | null;
-  limitEvaluation:
-    | "disabled"
-    | "supported"
-    | "unsupported"
-    | "metrics_unavailable";
-  rotateBeforeNextTurn: boolean;
 }
 
 export interface ValidatorRunResult {
@@ -1107,7 +1100,6 @@ interface RunValidatorTurnInput {
   systemInstructions: string;
   profileSnapshot: AgentProfileSnapshot;
   modelSelection: BackendModelSelection;
-  contextLimitTokens: number | undefined;
   allowedTaskIds: string[];
   /** The context's criterion-record ids, mirroring `allowedTaskIds`. */
   allowedCriterionIds: string[];
@@ -1117,7 +1109,6 @@ interface RunValidatorTurnInput {
   authority: ValidatorAuthority;
   outputSchema: Record<string, unknown>;
   overrideWorktreePath: string | undefined;
-  pinnedConversationId: string | undefined;
 }
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
@@ -1277,37 +1268,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     return {
       sessionRef: null,
       reviewArtifact: null,
-      limitEvaluation: "disabled",
-      rotateBeforeNextTurn: false,
-    };
-  }
-
-  function extractLaneMetadata(
-    updatedExecution: GraphWorkflowExecution,
-    contextId: string,
-    lane: GraphWorkflowLaneKind,
-    assignmentId: string,
-  ): {
-    limitEvaluation:
-      | "disabled"
-      | "supported"
-      | "unsupported"
-      | "metrics_unavailable";
-    rotateBeforeNextTurn: boolean;
-  } {
-    const laneState =
-      updatedExecution.laneStates[contextId]?.[
-        laneStateKey(lane, assignmentId)
-      ];
-    if (!laneState) {
-      return {
-        limitEvaluation: "disabled",
-        rotateBeforeNextTurn: false,
-      };
-    }
-    return {
-      limitEvaluation: laneState.limitEvaluation,
-      rotateBeforeNextTurn: laneState.metrics.rotateBeforeNextTurn,
     };
   }
 
@@ -1328,14 +1288,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       systemInstructions,
       profileSnapshot,
       modelSelection,
-      contextLimitTokens,
       allowedTaskIds,
       allowedCriterionIds,
       requireIssueCriterionId,
       authority,
       outputSchema,
       overrideWorktreePath,
-      pinnedConversationId,
     } = input;
     const execLogger = getExecutionLogger(execution.id);
     // Every artifact this turn writes is scoped to the assignment, so a cohort
@@ -1463,8 +1421,31 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
+    // A cohort keeps its candidate and assignment snapshot across retries,
+    // while each attempt must see the lane and continuation the last one saved.
+    // The fenced read leaves the round's frozen definition untouched.
+    let continuityExecution = execution;
+    if (deps.executionRepository) {
+      const current = await deps.executionRepository.mutateActive(
+        projectPath,
+        sessionName,
+        (latest) => {
+          if (
+            latest.id !== execution.id ||
+            latest.loopEpoch !== execution.loopEpoch
+          ) {
+            throw new Error("Validator execution changed before dispatch");
+          }
+          return unchanged();
+        },
+      );
+      continuityExecution = {
+        ...execution,
+        laneStates: current.execution.laneStates,
+      };
+    }
     const resolved = await deps.continuityService.resolveValidatorCall({
-      execution,
+      execution: continuityExecution,
       projectPath,
       sessionName,
       contextId,
@@ -1474,7 +1455,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       backend,
       strategy,
       profileSnapshot,
-      pinnedConversationId,
       taskContext: {
         conversationId: taskConversationId,
         modelSelection,
@@ -1511,7 +1491,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     // Persist the lane binding BEFORE dispatch. Active cancellation
     // (pause/abort/halt/resume) collects abortable conversations from
     // execution.laneStates; a lane resolved only in local state — every
-    // first or rotated conversation turn, and every task-strategy turn (whose
+    // first conversation turn, and every task-strategy turn (whose
     // synthetic dispatch id is never part of continuity state) — would otherwise be
     // undiscoverable for the whole run, letting the turn burn to completion.
     if (resolvedLaneState) {
@@ -1587,8 +1567,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
                   taskResult.continuationDisposition,
                 ),
           reviewArtifact: null,
-          limitEvaluation: "disabled",
-          rotateBeforeNextTurn: false,
         },
       };
     }
@@ -1634,18 +1612,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           outcome: {
             backend,
             lastTurnUsage: usage,
-            ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
             ...(updatedRef != null ? { ref: updatedRef } : {}),
             continuationDisposition: taskResult.continuationDisposition,
           },
         });
-
-      const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
-        updatedExecution,
-        contextId,
-        lane,
-        assignmentId,
-      );
 
       const sessionRef = buildTaskValidationSessionRef(
         updatedExecution,
@@ -1699,33 +1669,22 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         metadata: {
           sessionRef,
           reviewArtifact,
-          limitEvaluation,
-          rotateBeforeNextTurn,
         },
       };
     }
 
-    const updatedExecution = await deps.continuityService.recordLaneTurnOutcome(
-      {
-        execution: applyResolvedLaneState(execution),
-        projectPath,
-        sessionName,
-        contextId,
-        lane,
-        assignmentId,
-        outcome: {
-          backend,
-          ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
-        },
-      },
-    );
-
-    const { limitEvaluation, rotateBeforeNextTurn } = extractLaneMetadata(
-      updatedExecution,
+    await deps.continuityService.recordLaneTurnOutcome({
+      execution: applyResolvedLaneState(execution),
+      projectPath,
+      sessionName,
       contextId,
       lane,
       assignmentId,
-    );
+      outcome: {
+        backend,
+        continuationDisposition: taskResult.continuationDisposition,
+      },
+    });
 
     const backendSessionId = Object.is(taskResult.backendRef?.backend, backend)
       ? (taskResult.backendRef?.ref ?? null)
@@ -1773,8 +1732,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       metadata: {
         sessionRef: conversationSessionRef,
         reviewArtifact,
-        limitEvaluation,
-        rotateBeforeNextTurn,
       },
     };
   }
@@ -1812,7 +1769,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     contextId: string;
     review: ReviewOriginResolution;
     inspection: InspectionWorktree;
-    contextLimitTokens?: number;
     execLogger: ReturnType<typeof getExecutionLogger>;
   }): Promise<{ section: string; treeHash: string | null }> {
     const { executionId, contextId, review, inspection, execLogger } = params;
@@ -1847,9 +1803,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       }
     }
 
-    const renderedDiffScope = renderDiffScopeSection(diffScope, {
-      contextLimitTokens: params.contextLimitTokens,
-    });
+    const renderedDiffScope = renderDiffScopeSection(diffScope);
     const diffScopeWorktreePath = inspection.worktreePath ?? null;
 
     if (diffScope.kind === "unavailable") {
@@ -1906,28 +1860,15 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
    * Render a round's shared prompt inputs exactly once, before any specialist
    * runs.
    *
-   * The diff budget is the TIGHTEST context limit in the cohort, not each
-   * member's own: one rendering has to fit inside every specialist that will
-   * read it, and a block sized for the roomiest member would overflow the
-   * others. Choosing the minimum keeps the bytes identical — which is the
-   * property being bought — at the cost of showing a roomy specialist a
-   * slightly smaller diff than it could have held.
    */
   async function renderRoundCommonSections(
     input: RenderRoundCommonSectionsInput,
   ): Promise<ValidationRoundCommonSections> {
-    const limits = selectRunnableCohortAssignments(
-      input.context.contextValidator,
-    )
-      .map((assignment) => assignment.continuity.contextLimitTokens)
-      .filter((limit): limit is number => limit !== undefined);
-
     const rendered = await renderScopedDiffSection({
       executionId: input.execution.id,
       contextId: input.context.id,
       review: resolveContextReviewOrigin(input.execution, input.context.id),
       inspection: await resolveInspectionWorktree(input),
-      ...(limits.length > 0 ? { contextLimitTokens: Math.min(...limits) } : {}),
       execLogger: getExecutionLogger(input.execution.id),
     });
 
@@ -1966,7 +1907,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       backend: input.validator.agent.backend,
       modelSelection: input.validator.agent.modelSelection,
     };
-    const contextLimitTokens = input.validator.continuity.contextLimitTokens;
     const allowedTaskIds = getContextTaskIds(index, input.context.id);
     // The criterion twin of the task-id enum: the context's record ids (prose
     // wraps as the single `ac-1` record), bound into the dispatched schema and
@@ -1991,7 +1931,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           contextId: input.context.id,
           review: resolveContextReviewOrigin(input.execution, input.context.id),
           inspection,
-          contextLimitTokens,
           execLogger,
         })
       ).section;
@@ -2122,14 +2061,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         systemInstructions,
         profileSnapshot: input.validator.profileSnapshot,
         modelSelection: validatorPlan.modelSelection,
-        contextLimitTokens,
         allowedTaskIds,
         allowedCriterionIds,
         requireIssueCriterionId: issueCriterionCitation === "required",
         authority: input.validator.authority,
         outputSchema,
         overrideWorktreePath,
-        pinnedConversationId: input.resumeUserInput?.conversationId,
       });
     } catch (error) {
       const errorMessage = getErrorMessage(error);

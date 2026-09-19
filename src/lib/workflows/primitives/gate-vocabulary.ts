@@ -21,8 +21,7 @@
  *
  * Other gate kinds choose the shape that matches their semantics at the call
  * site (for example, a circuit-breaker gate may expose a `post_turn` pause
- * waiting for human inspection, while a context-limit gate may surface a
- * `mid_turn` rotation request).
+ * waiting for human inspection).
  */
 
 import { z } from "zod";
@@ -35,7 +34,6 @@ export const GATE_KINDS = [
   "script_validation",
   "change_set",
   "convergence",
-  "context_limit",
   "circuit_breaker",
 ] as const;
 

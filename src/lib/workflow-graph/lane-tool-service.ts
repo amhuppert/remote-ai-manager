@@ -1,6 +1,5 @@
 /**
- * Lane tool service logic (schemas, context types, collaboration handler,
- * context-limit stop instruction) shared by the graph-workflow lane HTTP
+ * Lane tool service logic (schemas, context types, collaboration handler) shared by the graph-workflow lane HTTP
  * endpoints in `lane-route-handlers.ts`.
  */
 
@@ -15,10 +14,7 @@ import {
   type ExecutionLogger,
   getExecutionLogger as defaultGetExecutionLogger,
 } from "./execution-logger";
-import type {
-  CompleteTaskContextLimitStop,
-  CompleteTaskResult,
-} from "./execution-tool-context";
+import type { CompleteTaskResult } from "./execution-tool-context";
 import { IterationHaltedError } from "@/lib/workflow-graph/context-outcome";
 import {
   buildHaltMessage,
@@ -137,30 +133,6 @@ export interface GraphWorkflowToolServerContext {
    */
   getPendingHaltReason?: GetPendingHaltReasonFn;
   getPendingToolBlock?: GetPendingToolBlockFn;
-}
-
-/**
- * The clause slotted into the "CONTEXT LIMIT REACHED: …" instruction. Precedence
- * matches the sticky-flag semantics: an already-scheduled rotation reports itself
- * first (its occupancy numbers are stale by definition), then a mid-turn
- * compaction (which masks the occupancy reading), then the plain over-limit case.
- */
-function buildContextLimitStopClause(
-  stop: CompleteTaskContextLimitStop,
-): string {
-  if (stop.alreadyScheduled) {
-    return "a context rotation is already scheduled for this conversation";
-  }
-  if (stop.compactedThisTurn) {
-    return `this conversation auto-compacted mid-turn, exceeding the configured context-limit policy (${stop.contextLimitTokens} tokens)`;
-  }
-  return `this conversation is at ~${stop.contextTokens} context tokens, over the configured limit of ${stop.contextLimitTokens}`;
-}
-
-export function buildContextLimitStopInstruction(
-  stop: CompleteTaskContextLimitStop,
-): string {
-  return `CONTEXT LIMIT REACHED: ${buildContextLimitStopClause(stop)}. Do not start another task or begin new work. End your turn now with a handoff note for the next conversation: what you completed, anything left in flight, and any lessons it needs (environment gotchas, workarounds, decisions made and why). Your final message is delivered verbatim into the fresh conversation's first prompt.`;
 }
 
 export interface RequestCollaborationHandlerContext {

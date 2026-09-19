@@ -47,7 +47,6 @@ describe("workflow graph planner", () => {
               circuitBreaker: {},
               iterationPolicy: {
                 maxIterations: 3,
-                continuity: { enabled: true },
               },
             },
             {
@@ -74,7 +73,6 @@ describe("workflow graph planner", () => {
               circuitBreaker: {},
               iterationPolicy: {
                 maxIterations: 4,
-                continuity: { enabled: true },
               },
             },
           ],
@@ -158,7 +156,6 @@ describe("workflow graph planner", () => {
               circuitBreaker: {},
               iterationPolicy: {
                 maxIterations: 1,
-                continuity: { enabled: true },
               },
             },
           ],

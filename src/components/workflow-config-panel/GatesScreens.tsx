@@ -7,6 +7,7 @@ import {
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
+import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
 import { ASSIGNMENT_INSTRUCTIONS_PRESENTATION } from "@/components/workflow-config/assignment-focus";
 import {
   VALIDATOR_AUTHORITY_OPTIONS,
@@ -18,7 +19,6 @@ import {
   seededAssignment,
   toggleCohortEnabled,
 } from "@/components/workflow-config/CohortEditor";
-import { NumericInput } from "@/components/workflow-config/FieldPrimitives";
 import { formatAgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type {
   ValidatorAssignment,
@@ -29,11 +29,7 @@ import { ConfigAgentRuntimeRows } from "./AgentRuntimeRows";
 import { isConfigLocked } from "./affordance";
 import type { ConfigCascadeEditor } from "./cascade-editor";
 import type { ConfigPath } from "./config-cascade";
-import {
-  agentModelChip,
-  blockSummaryParts,
-  tokenCount,
-} from "./config-summaries";
+import { agentModelChip, blockSummaryParts } from "./config-summaries";
 import {
   ConfigDangerButton,
   ConfigItemList,
@@ -96,9 +92,6 @@ const APPROVAL_HINT =
 const QUESTIONS_HINT =
   "Agents may ask questions at consequential decision points. The context parks until answered.";
 
-const CONTEXT_LIMIT_HINT =
-  "Leave empty for auto. Numeric limits require provider context occupancy measurements; otherwise the threshold is not enforced. Observed native compaction can still trigger rotation.";
-
 /** What a verdict from this seat can actually do to the context. */
 const AUTHORITY_HINT: Record<ValidatorAuthority, string> = {
   blocking: "A blocking verdict reopens tasks and can fail the context.",
@@ -107,7 +100,7 @@ const AUTHORITY_HINT: Record<ValidatorAuthority, string> = {
 
 /** How the seat's lane is dispatched across rounds. */
 const STRATEGY_HINT: Record<ValidatorAssignment["strategy"], string> = {
-  conversation: "One durable conversation per lane, rotated on context limit.",
+  conversation: "One durable conversation per validator.",
   task: "A fresh task dispatch per round.",
 };
 
@@ -119,15 +112,12 @@ function isStrategy(value: string): value is ValidatorAssignment["strategy"] {
   return (VALIDATOR_STRATEGY_OPTIONS as readonly string[]).includes(value);
 }
 
-/** `profile · effort · continuity`, the seat's shape at a glance. */
+/** The seat's profile and model parameters at a glance. */
 function seatMeta(assignment: ValidatorAssignment): string {
-  const continuity = assignment.continuity.enabled
-    ? tokenCount(assignment.continuity.contextLimitTokens)
-    : "off";
   const parameters = modelSelectionParametersLabel(
     assignment.agent.modelSelection,
   );
-  return `${assignment.profile.id} · ${parameters || "default parameters"} · continuity ${continuity}`;
+  return `${assignment.profile.id} · ${parameters || "default parameters"}`;
 }
 
 export function QualityGatesScreen({
@@ -321,7 +311,12 @@ export function ValidatorCohortScreen({
     onRemove: () => commit(removeItem(cohort.assignments, index)),
     // An enabled cohort with no seats would pass vacuously, so its last seat
     // cannot go — the schema refuses that document.
-    removeDisabled: cohort.enabled && cohort.assignments.length <= 1,
+    removeDisabled:
+      (editor.startedLaneKeys?.has(
+        laneStateKey("context_validator", assignment.id),
+      ) ??
+        false) ||
+      (cohort.enabled && cohort.assignments.length <= 1),
   }));
 
   return (
@@ -382,7 +377,10 @@ export function ValidatorSeatScreen({
   open?: boolean;
 }): React.JSX.Element {
   const { cascade } = editor;
-  const locked = isConfigLocked(editor.affordance);
+  const started =
+    editor.startedLaneKeys?.has(laneStateKey("context_validator", seatId)) ??
+    false;
+  const locked = isConfigLocked(editor.affordance) || started;
   const cohort = cascade.resolve("contextValidator").value;
   const provenance = cascade.provenance("contextValidator");
   const seat = cohort.assignments.find((entry) => entry.id === seatId);
@@ -418,7 +416,7 @@ export function ValidatorSeatScreen({
   const editInstructions = (text: string) => {
     if (text.trim() === "") {
       // Absence, not an empty string, is what "no use-site steer" is in the
-      // schema — and on a live execution it is also what retires the lane.
+      // schema.
       const cleared = { ...seat };
       delete cleared.focus;
       editSeat(cleared);
@@ -427,21 +425,13 @@ export function ValidatorSeatScreen({
     editSeat({ ...seat, focus: text });
   };
 
-  const editContextLimit = (next: number | undefined) => {
-    if (next === undefined) {
-      const continuity = { enabled: seat.continuity.enabled };
-      editSeat({ ...seat, continuity });
-      return;
-    }
-    if (!Number.isInteger(next) || next < 1) return;
-    editSeat({
-      ...seat,
-      continuity: { ...seat.continuity, contextLimitTokens: next },
-    });
-  };
-
   return (
     <>
+      {started && (
+        <p className="m-0 px-lg py-sm font-mono text-[0.7rem] text-text-tertiary">
+          This assignment is fixed because its conversation has started.
+        </p>
+      )}
       <ConfigRowGroup label="Identity">
         <ConfigControlRow
           rowId="seat-profile"
@@ -545,8 +535,8 @@ export function ValidatorSeatScreen({
         <ConfigRowGroup label="Reset">
           <ConfigControlRow
             rowId="seat-reset"
-            label="Retire this lane"
-            hint="Retires this validator's lane and re-runs it against the current candidate. The other seats keep their verdicts."
+            label="Retry this validator"
+            hint="Re-runs this validator in its existing conversation against the current candidate. The other seats keep their verdicts."
           >
             <ConfigDangerButton
               label={
@@ -558,44 +548,6 @@ export function ValidatorSeatScreen({
           </ConfigControlRow>
         </ConfigRowGroup>
       )}
-
-      <ConfigRowGroup label="Continuity">
-        <ConfigControlRow
-          rowId="seat-continuity"
-          label="Continuity"
-          provenance={provenance}
-          disabled={locked}
-          control={
-            <Switch
-              checked={seat.continuity.enabled}
-              disabled={locked}
-              aria-label={`Continuity for ${seat.id}`}
-              onCheckedChange={(enabled) =>
-                editSeat({
-                  ...seat,
-                  continuity: { ...seat.continuity, enabled },
-                })
-              }
-            />
-          }
-        />
-        <ConfigControlRow
-          rowId="seat-context-limit"
-          label="Context limit tokens"
-          hint={CONTEXT_LIMIT_HINT}
-          provenance={provenance}
-          disabled={locked}
-          control={
-            <NumericInput
-              value={seat.continuity.contextLimitTokens}
-              min={1}
-              ariaLabel="Context limit tokens"
-              disabled={locked}
-              onChange={editContextLimit}
-            />
-          }
-        />
-      </ConfigRowGroup>
     </>
   );
 }

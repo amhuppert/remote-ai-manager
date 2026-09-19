@@ -214,7 +214,6 @@ describe("WorkflowBuilderEditor", () => {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 4,
-            continuity: { enabled: true },
           },
         },
       ],
@@ -330,53 +329,6 @@ describe("WorkflowBuilderEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
     await waitFor(() => expect(onSave).not.toHaveBeenCalled());
-  });
-
-  it("saves the draft while preserving seeded context continuity", async () => {
-    resetStore();
-    const onSave = vi.fn();
-
-    renderWithQuery(
-      <WorkflowBuilderEditor
-        record={createWorkflowDefinitionRecord()}
-        {...defaultHeaderProps}
-        onSave={onSave}
-      />,
-    );
-
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({ dirty: true });
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        definition: expect.any(Object),
-        layout: expect.any(Object),
-      }),
-    );
-
-    const [payload] = onSave.mock.calls[0] as [
-      {
-        definition: {
-          executionContexts: Array<{
-            iterationPolicy?: { continuity?: Record<string, unknown> };
-          }>;
-        };
-      },
-    ];
-
-    for (const ctx of payload.definition.executionContexts) {
-      if (!ctx.iterationPolicy) continue;
-      expect(ctx.iterationPolicy.continuity).toHaveProperty("enabled");
-      expect(ctx.iterationPolicy.continuity).not.toHaveProperty(
-        "contextSoftLimitTokens",
-      );
-      expect(ctx.iterationPolicy.continuity).not.toHaveProperty(
-        "contextHardLimitTokens",
-      );
-    }
   });
 });
 

@@ -18,7 +18,6 @@ function input(overrides: Partial<LaneReminderInput> = {}): LaneReminderInput {
     circuitBreakerThreshold: 3,
     remainingTaskCount: 1,
     halted: null,
-    contextLimitStopped: false,
     allowAgentCollaboration: true,
     ...overrides,
   };
@@ -187,21 +186,6 @@ describe("final-task-self-check rule", () => {
       computeLaneReminders(
         input({
           remainingTaskCount: 1,
-          iterationCount: 0,
-          circuitBreakerThreshold: 5,
-        }),
-      ),
-    ).toEqual([]);
-  });
-
-  it("does not fire when the rotation gate stopped this turn", () => {
-    // A context-limit stop instructs an immediate handoff; starting a
-    // self-check pass would contradict it.
-    expect(
-      computeLaneReminders(
-        input({
-          remainingTaskCount: 0,
-          contextLimitStopped: true,
           iterationCount: 0,
           circuitBreakerThreshold: 5,
         }),

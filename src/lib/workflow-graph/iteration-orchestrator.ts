@@ -43,7 +43,6 @@ import type {
   GraphWorkflowValidationResultEvent,
 } from "@/lib/workflow-graph/event-schemas";
 import {
-  graphWorkflowAgentSessionStateSchema,
   type GraphWorkflowApprovalScope,
   type GraphWorkflowExecution,
   type GraphWorkflowHaltReason,
@@ -163,8 +162,6 @@ export interface GraphWorkflowAgentIterationResult {
   conversationId: string;
   contextTokens: number | null;
   contextWindowMax: number | null;
-  /** True when the SDK auto-compacted the context at least once this turn. */
-  compacted: boolean;
   sessionRef?: AgentSessionRef | null;
   /**
    * Summary of the bounded background-task wait the implementer turn performed
@@ -1143,9 +1140,6 @@ export function createGraphWorkflowIterationOrchestrator(
       | GraphWorkflowExecution["laneStates"][string][string]
       | null = null;
     let promptMode: "iteration_seed" | "follow_up" = "iteration_seed";
-    let previousConversationHandoff:
-      | { conversationId: string; note: string }
-      | undefined;
     if (deps.continuityService) {
       const resolved = await deps.continuityService.resolveImplementerCall({
         execution: initialExecution,
@@ -1153,25 +1147,19 @@ export function createGraphWorkflowIterationOrchestrator(
         sessionName: input.sessionName,
         contextId: input.contextId,
         backend: context.implementer.agent.backend,
-        // An implementer edited under the running execution rotates its lane:
-        // the seeded conversation already replayed the superseded profile
-        // block, so a resumed handle would run bytes nobody chose (R11).
         assignmentFingerprint: assignmentFingerprint({
           profileSnapshot: context.implementer.profileSnapshot,
           agent: context.implementer.agent,
-          continuity: context.iterationPolicy.continuity,
         }),
         // The lane runs the bytes the execution was seeded with, not a fresh
-        // resolution: a lane created (or rotated) after a library edit or
+        // resolution: a lane created after a library edit or
         // deletion must be unaffected by it (R4).
         profileSnapshot: context.implementer.profileSnapshot,
-        pinnedConversationId: implementerResumeEntry(input)?.conversationId,
       });
       conversationId = resolved.conversationId;
       resolvedImplementerLaneState =
         resolved.execution.laneStates[input.contextId]?.["implementer"] ?? null;
       promptMode = resolved.promptMode;
-      previousConversationHandoff = resolved.previousConversationHandoff;
     } else {
       const conversation = await deps.createConversation(
         input.projectPath,
@@ -1414,8 +1402,6 @@ export function createGraphWorkflowIterationOrchestrator(
       ): Promise<void> {
         const continuityService = deps.continuityService;
         if (!continuityService) return;
-        const contextLimitTokens =
-          context.iterationPolicy.continuity.contextLimitTokens;
         const latest = await requireCurrentExecution(
           deps.executionRepository,
           input.projectPath,
@@ -1437,9 +1423,7 @@ export function createGraphWorkflowIterationOrchestrator(
           ...(agentResult.contextWindowMax !== null
             ? { contextWindowMax: agentResult.contextWindowMax }
             : {}),
-          ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
           ...(sessionRef !== undefined ? { ref: sessionRef } : {}),
-          ...(agentResult.compacted ? { compactedThisTurn: true } : {}),
         };
         await continuityService.recordLaneTurnOutcome({
           execution: latest,
@@ -1453,9 +1437,7 @@ export function createGraphWorkflowIterationOrchestrator(
 
       // Initial agent call — seed prompt for fresh sessions, follow-up for resumed sessions
       const initialTasks = getIncompleteTasks(seededExecution, input.contextId);
-      // A resume delivers the answers block in whichever prompt this turn uses:
-      // the follow-up when the asking conversation is reused (pinned), or the
-      // seed when rotation forced a fresh conversation (5.1, 5.3).
+      // Resumed turns deliver answers in the existing conversation.
       const implementerResume = implementerResumeEntry(input);
       const resumeUserInputPrompt = implementerResume
         ? {
@@ -1517,8 +1499,6 @@ export function createGraphWorkflowIterationOrchestrator(
                 : undefined,
               latestContextValidationFailure,
               collaborationContinuations,
-              resumeUserInput: resumeUserInputPrompt,
-              previousConversationHandoff,
               validationSelections,
               // What this context receives (D2 Req 5) — the same resolver the
               // inspector UI and, later, D4 conditional edges read.
@@ -1803,33 +1783,6 @@ export function createGraphWorkflowIterationOrchestrator(
             },
           );
           break;
-        }
-
-        // Stop if the continuity service has scheduled a rotation due to context limit
-        if (deps.continuityService) {
-          const laneState =
-            midExecution.laneStates[input.contextId]?.["implementer"];
-          const rotationScheduled = laneState
-            ? graphWorkflowAgentSessionStateSchema.parse(laneState).metrics
-                .rotateBeforeNextTurn
-            : false;
-          if (rotationScheduled) {
-            execLogger?.iteration(
-              input.contextId,
-              "iteration.follow_up_skipped",
-              {
-                reason: "context_rotation_scheduled",
-                attempt,
-                remainingTaskCount: remaining.length,
-              },
-            );
-            execLogger?.decision("rotation.caused_follow_up_skip", {
-              contextId: input.contextId,
-              lane: "implementer",
-              remainingTaskCount: remaining.length,
-            });
-            break;
-          }
         }
 
         const baseFollowUpPrompt = buildFollowUpPrompt({

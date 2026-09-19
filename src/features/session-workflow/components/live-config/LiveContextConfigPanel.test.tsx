@@ -64,7 +64,7 @@ function context(
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
-    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 20 },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     ...overrides,
   };
@@ -542,33 +542,63 @@ describe("LiveContextConfigPanel — what only the host can wire", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true, contextLimitTokens: 50000 },
           },
         ],
       },
     });
 
-  it("warns that a pending authority edit rotates the seat's lane, before it is applied", () => {
-    // Only the host holds BOTH sides of the comparison (the seeded baseline and
-    // the live draft), so the notice cannot live inside the panel — and a live
-    // seat already holds a lane, so the cost has to be visible while the edit
-    // can still be reconsidered.
-    render(
-      <LiveContextConfigPanel
-        execution={execution({ status: "paused" }, withSeat())}
-        contextId={CONTEXT_ID}
-        onSaveContextConfig={vi.fn()}
-        focusScreen={["seat:general"]}
-      />,
-    );
-
-    expect(screen.queryByTestId("lane-rotation-notice")).toBeNull();
-
-    fireEvent.click(screen.getByRole("radio", { name: "advisory" }));
-    expect(screen.getByTestId("lane-rotation-notice")).toHaveTextContent(
-      "general",
-    );
-  });
+  it.each(["implementer", "context_validator"] as const)(
+    "freezes only the started %s when both assignments have the same id",
+    (startedLane) => {
+      const resolved = withSeat();
+      resolved.implementer.id = "general";
+      const laneKey =
+        startedLane === "implementer"
+          ? "implementer"
+          : "context_validator:general";
+      const current = execution(
+        {
+          laneStates: {
+            [CONTEXT_ID]: {
+              [laneKey]: {
+                lane: startedLane,
+                contextId: CONTEXT_ID,
+                backend: "claude",
+                refKind: "conversation",
+                workflowConversationId: "conv_started",
+                metrics: {},
+                lastUsedAt: "2026-09-18T10:00:00.000Z",
+              },
+            },
+          },
+        },
+        resolved,
+      );
+      const { unmount } = render(
+        <LiveContextConfigPanel
+          execution={current}
+          contextId={CONTEXT_ID}
+          focusScreen={["implementer"]}
+        />,
+      );
+      expect(screen.getByLabelText("Implementer instructions")).toHaveProperty(
+        "disabled",
+        startedLane === "implementer",
+      );
+      unmount();
+      render(
+        <LiveContextConfigPanel
+          execution={current}
+          contextId={CONTEXT_ID}
+          focusScreen={["seat:general"]}
+        />,
+      );
+      expect(screen.getByRole("radio", { name: "advisory" })).toHaveProperty(
+        "disabled",
+        startedLane === "context_validator",
+      );
+    },
+  );
 
   it("offers the per-seat reset on a paused run and withholds it while running", () => {
     // The reducer refuses a per-assignment reset unless the run is paused or

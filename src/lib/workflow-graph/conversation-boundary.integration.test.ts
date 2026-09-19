@@ -45,8 +45,8 @@ const completed: ConversationBackendTurnResult = {
   contextTokens: 42,
   contextWindowMax: 200000,
   contentBlocks: [{ type: "text", text: "boundary-result" }],
-  aborted: false,
   compacted: false,
+  aborted: false,
   failure: null,
   continuationDisposition: "retain",
 };
@@ -111,7 +111,6 @@ async function compose(
   const stops: Promise<unknown>[] = [];
   const manager = createGraphWorkflowManager({
     abortExecutionLoop: () => {},
-    retireLaneConversation: () => {},
     getSession: async () => null,
     stopExecutionLaneDevServers: async () => {},
 
@@ -162,8 +161,7 @@ async function compose(
         refKind: "conversation",
         workflowConversationId: C,
         sessionRef: { backend: "claude", ref: "graph-provider" },
-        metrics: { rotateBeforeNextTurn: false },
-        limitEvaluation: "disabled",
+        metrics: {},
         lastUsedAt: now,
       },
     },
@@ -226,7 +224,7 @@ async function compose(
     continuityService: {
       resolveImplementerCall: async (input) => ({
         execution: input.execution,
-        conversationId: input.pinnedConversationId ?? C,
+        conversationId: C,
         sessionAction: "reuse",
         promptMode: "follow_up",
       }),

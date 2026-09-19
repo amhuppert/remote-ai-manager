@@ -52,7 +52,7 @@ const VALIDATOR: ValidatorAssignment = {
   profile: { tier: "project", id: "house-style" },
   strategy: "conversation",
   authority: "blocking",
-  continuity: { enabled: true },
+
   agent: {
     backend: "claude",
     modelSelection: {
@@ -320,7 +320,7 @@ describe("ContextValidatorEditor", () => {
     return { onChange, ...view };
   }
 
-  it("composes the shared assignment editor with authority, strategy and continuity", () => {
+  it("composes the shared assignment editor with authority and strategy", () => {
     renderValidator();
     expect(screen.getByLabelText("Agent profile")).toBeInTheDocument();
     expect(screen.getByLabelText("Mandate for security")).toBeInTheDocument();
@@ -328,9 +328,6 @@ describe("ContextValidatorEditor", () => {
       screen.getByLabelText("Validator execution strategy"),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Validator authority")).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("Continuity enabled for security"),
-    ).toBeInTheDocument();
   });
 
   it("switches the execution strategy", () => {
@@ -417,7 +414,6 @@ describe("ContextValidatorEditor", () => {
       id: "security",
       strategy: "conversation",
       authority: "blocking",
-      continuity: { enabled: true },
     });
   });
 });

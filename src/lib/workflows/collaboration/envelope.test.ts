@@ -1850,7 +1850,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: "from-prior-turn",
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T09:00:00.000Z",
     });
 

@@ -12,7 +12,6 @@ const laneReminderState = {
   remainingTaskCount: 0,
   halted: null,
   allowAgentCollaboration: true,
-  contextLimitStopped: false,
 };
 const completeTask = [
   "workflow",
@@ -135,29 +134,6 @@ describe("workflow guidance from server state", () => {
         expect.stringContaining("used 2 of 3 iterations"),
         expect.stringContaining("This workflow is halted: circuit breaker"),
       ],
-    });
-  });
-
-  it("suppresses the final-task self-check when completion requires context rotation", async () => {
-    const fixture = createCcRuntimeFixture({
-      env: laneEnv,
-      respond: () =>
-        jsonReply({
-          ok: true,
-          remainingTaskCount: 0,
-          stopInstruction: "End your turn for context rotation.",
-          laneReminderState: {
-            ...laneReminderState,
-            contextLimitStopped: true,
-            allowAgentCollaboration: false,
-          },
-        }),
-    });
-    const result = await fixture.run(completeTask);
-    expect(result.exitCode, result.stdout).toBe(0);
-    expect(result.envelope).toMatchObject({
-      instruction: "End your turn for context rotation.",
-      reminders: [expect.stringContaining("used 2 of 3 iterations")],
     });
   });
 });

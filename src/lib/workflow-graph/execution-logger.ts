@@ -8,7 +8,7 @@
  * - contexts/<id>/tasks.jsonl: task completion, validation failures, agent-added tasks
  * - contexts/<id>/validation.jsonl: validator invocations + results
  * - contexts/<id>/prompts/: full prompt text + validator responses
- * - decisions.jsonl: cross-cutting decision log (rotation, circuit breaker)
+ * - decisions.jsonl: cross-cutting decision log (retry, circuit breaker)
  */
 
 import {
@@ -300,7 +300,7 @@ export function createExecutionLogger(
             "One cohort member's validation prompt (.md) and parsed response (.json).",
           "contexts/<id>/prompts/": "Full implementer prompt text (.md).",
           "decisions.jsonl":
-            "Cross-cutting: rotation and circuit breaker decisions.",
+            "Cross-cutting: retry and circuit breaker decisions.",
         },
       };
 

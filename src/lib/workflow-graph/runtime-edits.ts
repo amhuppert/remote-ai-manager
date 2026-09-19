@@ -80,7 +80,11 @@ import {
   validateExpansionPayloadLoopDeclarations,
   type LoopActivationReader,
 } from "./loop-resolver";
-import { executionLaneIdFor } from "./lane-identity";
+import {
+  assignmentFingerprint,
+  executionLaneIdFor,
+  laneStateKey,
+} from "./lane-identity";
 import {
   laneClosure,
   laneClosureFromPin,
@@ -119,7 +123,10 @@ import {
 } from "@/lib/workflows/charter-schemas";
 import { CHARTER_CONTENT_EDIT_FIELDS } from "@/lib/workflows/edit-schemas";
 import type { LoadedGraphExecutionLiveEditContract } from "./execution-contract-port";
-import type { PlaceableAssignment } from "./live-edit-preparation";
+import {
+  unchangedStartedAssignmentSnapshot,
+  type PlaceableAssignment,
+} from "./live-edit-preparation";
 import { collectResolvedWorkflowModelSelectionSites } from "./model-selection-admission";
 
 export interface AgentAddedTask {
@@ -883,7 +890,9 @@ function runLiveEditOps(
         instruction: contractDecision.instruction,
       };
     }
-    const rejection = applyLiveEditOperation(next, operation, index, opContext);
+    const rejection =
+      applyLiveEditOperation(next, operation, index, opContext) ??
+      checkStartedAssignments(execution, next, index);
     if (rejection) {
       return {
         ok: false,
@@ -911,6 +920,60 @@ function runLiveEditOps(
   );
 
   return { ok: true, next, opContext };
+}
+
+/** A started lane keeps its assignment for the lifetime of this execution. */
+function checkStartedAssignments(
+  original: GraphWorkflowExecution,
+  next: GraphWorkflowExecution,
+  operationIndex: number,
+): LiveEditRejection | null {
+  const nextContexts = new Map(
+    next.workingDefinition.executionContexts.map((context) => [
+      context.id,
+      context,
+    ]),
+  );
+  for (const context of original.workingDefinition.executionContexts) {
+    const lanes = original.laneStates[context.id];
+    if (!lanes) continue;
+    const updated = nextContexts.get(context.id);
+    const assignments = [
+      {
+        key: laneStateKey("implementer"),
+        before: context.implementer,
+        after: updated?.implementer,
+      },
+      ...context.contextValidator.assignments.map((assignment) => ({
+        key: laneStateKey("context_validator", assignment.id),
+        before: assignment,
+        after: updated?.contextValidator.assignments.find(
+          (entry) => entry.id === assignment.id,
+        ),
+      })),
+    ];
+    for (const { key, before, after } of assignments) {
+      if (!lanes[key]) continue;
+      if (
+        after &&
+        before.id === after.id &&
+        before.profile.tier === after.profile.tier &&
+        before.profile.id === after.profile.id &&
+        assignmentFingerprint(before) === assignmentFingerprint(after)
+      )
+        continue;
+      return rejectLiveEdit(
+        "invalid_edit",
+        liveEditIssue(
+          "assignment-started",
+          `Assignment "${before.id}" in context "${context.id}" has started and cannot be changed or removed. Its conversation is preserved for this execution; edit a future execution instead.`,
+          operationIndex,
+          { contextId: context.id },
+        ),
+      );
+    }
+  }
+  return null;
 }
 
 /**
@@ -1073,6 +1136,8 @@ interface PreparedFrontierWitness {
   >;
   /** Lock state of every task the delta's definition footprint covers. */
   readonly taskLocks: Readonly<Record<string, boolean>>;
+  /** Lane creation freezes assignments independently of context lifecycle. */
+  readonly startedLaneKeys: Readonly<Record<string, readonly string[]>>;
   /**
    * Every lane the delta makes a context ARRIVE on, pinned so closure can be
    * re-derived inside the lock (R10, decision D11).
@@ -1367,6 +1432,12 @@ function captureFrontierWitness(
   delta: PreparedInstallDelta,
 ): PreparedFrontierWitness {
   const footprint = collectDeltaFootprint(base, next, delta);
+  const nextContexts = new Map(
+    next.workingDefinition.executionContexts.map((context) => [
+      context.id,
+      context,
+    ]),
+  );
 
   const contextLifecycles: Record<
     string,
@@ -1392,6 +1463,23 @@ function captureFrontierWitness(
     editability: describeEditability(base),
     contextLifecycles,
     taskLocks,
+    startedLaneKeys: Object.fromEntries(
+      base.workingDefinition.executionContexts
+        .filter((context) => {
+          const updated = nextContexts.get(context.id);
+          return (
+            !isDeepStrictEqual(context.implementer, updated?.implementer) ||
+            !isDeepStrictEqual(
+              context.contextValidator,
+              updated?.contextValidator,
+            )
+          );
+        })
+        .map((context) => [
+          context.id,
+          Object.keys(base.laneStates[context.id] ?? {}).sort(),
+        ]),
+    ),
     laneArrivals: collectLaneArrivals(base, next),
   };
 }
@@ -1491,6 +1579,16 @@ function checkDeltaPreconditions(
       pinned.lifecycle
     ) {
       return { kind: "context_lifecycle_changed", contextId };
+    }
+  }
+  for (const [contextId, keys] of Object.entries(witness.startedLaneKeys)) {
+    if (
+      !isDeepStrictEqual(
+        Object.keys(current.laneStates[contextId] ?? {}).sort(),
+        keys,
+      )
+    ) {
+      return { kind: "concurrent_write", field: `laneStates.${contextId}` };
     }
   }
   for (const [taskId, locked] of Object.entries(witness.taskLocks)) {
@@ -1877,41 +1975,69 @@ function freezeAgentValidationSnapshot(
  * An authored assignment plus the bytes it will run under. Applied at the live-
  * edit boundary for the same reason execution start applies it at the seed
  * boundary: past this point the working definition is snapshot-bearing, and
- * nothing downstream of it consults the library.
+ * nothing downstream of it consults the library. Restating an unchanged
+ * started assignment preserves the snapshot its conversation already uses.
  */
 function seedLiveAssignment<T extends PlaceableAssignment>(
   assignment: T,
   deps: LiveEditDeps,
+  preservedSnapshot?: AgentProfileSnapshot,
 ): T & { profileSnapshot: AgentProfileSnapshot } {
-  return { ...assignment, profileSnapshot: deps.snapshotFor(assignment) };
+  return {
+    ...assignment,
+    profileSnapshot: preservedSnapshot ?? deps.snapshotFor(assignment),
+  };
 }
 
 function seedLiveCohort(
   cohort: ValidatorCohort,
   deps: LiveEditDeps,
+  preservedSnapshotFor?: (
+    assignment: PlaceableAssignment,
+  ) => AgentProfileSnapshot | undefined,
 ): SeededValidatorCohort {
   return {
     ...cohort,
     // Dormant assignments included: a disabled cohort's members are enabled by
     // a later edit that does no resolution, so their bytes must land now.
     assignments: cohort.assignments.map((assignment) =>
-      seedLiveAssignment(assignment, deps),
+      seedLiveAssignment(assignment, deps, preservedSnapshotFor?.(assignment)),
     ),
   };
 }
 
 function applyLiveConfigBlocks(
+  execution: GraphWorkflowExecution,
   context: GraphWorkflowResolvedContext,
   op: LiveContextConfigOp,
   deps: LiveEditDeps,
 ): void {
   if (op.implementer !== undefined) {
-    context.implementer = seedLiveAssignment(op.implementer, deps);
+    context.implementer = seedLiveAssignment(
+      op.implementer,
+      deps,
+      unchangedStartedAssignmentSnapshot(
+        execution,
+        context.id,
+        "implementer",
+        op.implementer,
+      ),
+    );
   }
   // Whole-cohort replacement, matching the cascade: a live edit swaps the set
   // rather than merging into it, and `enabled: false` is how it turns off.
   if (op.contextValidator !== undefined) {
-    context.contextValidator = seedLiveCohort(op.contextValidator, deps);
+    context.contextValidator = seedLiveCohort(
+      op.contextValidator,
+      deps,
+      (assignment) =>
+        unchangedStartedAssignmentSnapshot(
+          execution,
+          context.id,
+          "context_validator",
+          assignment,
+        ),
+    );
   }
   if (op.scriptValidator !== undefined) {
     context.scriptValidator = op.scriptValidator;
@@ -2171,7 +2297,7 @@ function applyUpdateContext(
     ctx.placementTouched = true;
   }
   const priorAgentValidation = context.agentValidation;
-  applyLiveConfigBlocks(context, op, ctx.deps);
+  applyLiveConfigBlocks(next, context, op, ctx.deps);
   if (
     op.implementer !== undefined ||
     op.contextValidator !== undefined ||

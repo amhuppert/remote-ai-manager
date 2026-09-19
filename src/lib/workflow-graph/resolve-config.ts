@@ -67,7 +67,6 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
             parameters: { effort: "medium" },
           },
         },
-        continuity: { enabled: true },
       },
     ],
   },
@@ -76,7 +75,6 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   askUserQuestions: { enabled: false },
   iterationPolicy: {
     maxIterations: 20,
-    continuity: { enabled: true },
   },
   circuitBreaker: {
     consecutiveFailureThreshold: 3,

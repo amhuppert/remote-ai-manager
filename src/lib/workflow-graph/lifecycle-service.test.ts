@@ -339,7 +339,6 @@ describe("lifecycle contract: production slot auto-release", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
 
       executionContract: createTestGraphExecutionContract(),

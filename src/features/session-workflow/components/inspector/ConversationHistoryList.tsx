@@ -12,7 +12,7 @@ import type {
  * History tab → conversation rows (design E3, README §10).
  *
  * The durable row is the conversation; iteration boundaries, task completions,
- * verdicts and rotations are events inside it. Each row opens its own
+ * and verdicts are events inside it. Each row opens its own
  * implementer transcript, and a verdict opens the transcript of the seat that
  * gave it — the two are independently reachable, which is the whole point of
  * keeping the validator link on the event rather than on the row.
@@ -31,26 +31,6 @@ export type OpenTranscript = (
 const eventLine = "font-mono text-[0.7rem] leading-[1.5]";
 const eventTime = "text-text-tertiary";
 
-/**
- * Both directions of a transition are stated as the link itself. Nothing here
- * says WHY a conversation was replaced: the execution records no rotation
- * provenance, so any cause would be a guess dressed as a fact.
- */
-function endedCopy(row: ConversationHistoryRow): string {
-  const reason = row.endReason;
-  if (reason === null || reason.kind === "closed") return "ended";
-  return `ended — superseded by ${reason.successorId}`;
-}
-
-function startedCopy(
-  event: Extract<ConversationHistoryEvent, { kind: "started" }>,
-): string {
-  if (event.rotatedFrom === null) {
-    return `started — iteration ${event.iteration}`;
-  }
-  return `started — took over from ${event.rotatedFrom}, iteration ${event.iteration}`;
-}
-
 function reopenedCopy(taskIds: readonly string[]): string {
   if (taskIds.length === 0) return "";
   return ` — ${taskIds.join(", ")} reopened`;
@@ -63,7 +43,10 @@ function eventCopy(event: ConversationHistoryEvent): {
 } {
   switch (event.kind) {
     case "started":
-      return { text: startedCopy(event), tone: "text-text-secondary" };
+      return {
+        text: `started — iteration ${event.iteration}`,
+        tone: "text-text-secondary",
+      };
     case "task_completed":
       return {
         text: `task completed — ${event.taskTitle}`,
@@ -98,17 +81,15 @@ function transcriptOf(
 }
 
 function ConversationEventRow({
-  row,
   event,
   onOpenTranscript,
 }: {
-  row: ConversationHistoryRow;
   event: ConversationHistoryEvent;
   onOpenTranscript?: OpenTranscript;
 }): React.JSX.Element {
   const copy =
     event.kind === "ended"
-      ? { text: endedCopy(row), tone: "text-text-tertiary" }
+      ? { text: "ended", tone: "text-text-tertiary" }
       : eventCopy(event);
   const transcript = transcriptOf(event);
 
@@ -148,9 +129,7 @@ function ConversationEventRow({
 /**
  * The iterations the row's own events belong to — every one of them, because a
  * conversation and an iteration are not the same span. A returning validation
- * reopens work inside the conversation already live, and a rotation carries one
- * iteration into the next conversation, so naming a single iteration on the row
- * would be a claim the events do not support.
+ * reopens work inside the same conversation.
  */
 function iterationsCopy(iterations: readonly number[]): string {
   return `${iterations.length === 1 ? "iteration" : "iterations"} ${iterations.join(", ")}`;
@@ -233,7 +212,6 @@ export default function ConversationHistoryList({
               {row.events.map((event, index) => (
                 <ConversationEventRow
                   key={`${event.kind}-${event.at}-${index}`}
-                  row={row}
                   event={event}
                   {...(onOpenTranscript === undefined
                     ? {}

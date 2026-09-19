@@ -275,8 +275,6 @@ export function metadata(): ValidatorRunResult["metadata"] {
   return {
     sessionRef: null,
     reviewArtifact: null,
-    limitEvaluation: "disabled",
-    rotateBeforeNextTurn: false,
   };
 }
 
@@ -484,7 +482,6 @@ export function createHarness(params: {
   const manager = createGraphWorkflowManager({
     abortConversation: () => {},
     abortExecutionLoop: () => {},
-    retireLaneConversation: () => {},
     getSession: async () => null,
     stopExecutionLaneDevServers: async () => {},
 

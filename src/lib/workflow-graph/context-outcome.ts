@@ -40,8 +40,8 @@ export interface GraphWorkflowIterationInput {
   /**
    * Set when the loop resumes a context after its parked questions were
    * answered. Each entry names the lane that asked: the asking conversation is
-   * pinned (rotation still outranks) and the answers block is embedded in that
-   * lane's resumed prompt — the follow-up (pinned) or seed (rotated)
+   * reused and the answers block is embedded in that
+   * lane's resumed prompt
    * implementer prompt, or the asking validator's prompt (5.1, 5.3, 5.5).
    *
    * A list because a cohort's validators park independently and may be answered

@@ -16,7 +16,6 @@
 
 import { describe, expect, it } from "vitest";
 import { runCircuitBreakerGate } from "./circuit-breaker-gate";
-import { runContextLimitGate } from "./context-limit-gate";
 import { gateResultSchema, type GateResult } from "./gate-vocabulary";
 import {
   approveHumanApprovalGate,
@@ -107,39 +106,6 @@ describe("shared gate behavior", () => {
       failureCount: 3,
       threshold: 3,
     });
-  });
-
-  it("flags context-limit rotation as a fail (workflow action) rather than a pause (waiting state)", () => {
-    const gate = runContextLimitGate({
-      metrics: {
-        backend: "claude",
-        contextTokens: 95_000,
-        rotateBeforeNextTurn: false,
-      },
-      policy: { contextLimitTokens: 90_000 },
-    });
-    expectSharedShape(gate);
-    expect(gate.status).toBe("fail");
-    if (gate.status !== "fail") return;
-    expect(gate.kind).toBe("context_limit");
-    expect(gate.details).toMatchObject({
-      evaluation: "rotation_required",
-      contextTokens: 95_000,
-      limit: 90_000,
-    });
-  });
-
-  it("treats Codex as unsupported for context-limit evaluation rather than emulating the metric", () => {
-    const gate = runContextLimitGate({
-      metrics: {
-        backend: "codex",
-        rotateBeforeNextTurn: false,
-      },
-      policy: { contextLimitTokens: 90_000 },
-    });
-    expectSharedShape(gate);
-    expect(gate.status).toBe("pass");
-    expect(gate.details).toMatchObject({ evaluation: "unsupported" });
   });
 });
 

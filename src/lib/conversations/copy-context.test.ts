@@ -137,7 +137,7 @@ function makeGraphWorkflowExecution(
           askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 10 },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
         {
@@ -163,7 +163,7 @@ function makeGraphWorkflowExecution(
           askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 5 },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
       ],

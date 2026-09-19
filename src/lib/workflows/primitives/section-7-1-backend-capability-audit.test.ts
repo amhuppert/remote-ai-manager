@@ -25,11 +25,7 @@
  *     `applyPortableMcpConfig` produce a `capability_unavailable` failure
  *     instead of silently dropping tooling; the failure message carries the
  *     boundary so the caller can branch on it.
- *  5. Context metrics availability  — the context-limit gate returns
- *     `evaluation: "unsupported"` for backends with
- *     `contextMetricsAvailable: false`; the lane-metrics schema rejects
- *     context-window fields on those backends.
- *  6. Native mid-turn ask-user      — task dispatch has no mid-turn ask-user
+ *  5. Native mid-turn ask-user      — task dispatch has no mid-turn ask-user
  *     channel, so Codex task results are completed or failed, never
  *     `mid_turn` paused.
  */
@@ -54,7 +50,6 @@ import {
   executeAgentCall,
   type AgentCallFacadeDeps,
 } from "./agent-call-facade";
-import { runContextLimitGate } from "./context-limit-gate";
 import { laneStateSchema } from "./lane-vocabulary";
 import { runStructuredOutputGate } from "./structured-output-gate";
 
@@ -135,7 +130,7 @@ describe("section 7.1 — lane continuity handles are opaque and backend-owned",
         ref: "handle-1",
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
-        metrics: { rotateBeforeNextTurn: false },
+        metrics: {},
         lastUsedAt: "2026-04-28T10:00:00.000Z",
       });
       expect(withRef.success).toBe(true);
@@ -147,7 +142,7 @@ describe("section 7.1 — lane continuity handles are opaque and backend-owned",
         ref: null,
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
-        metrics: { rotateBeforeNextTurn: false },
+        metrics: {},
         lastUsedAt: "2026-04-28T10:00:00.000Z",
       });
       expect(withoutRef.success).toBe(true);
@@ -162,7 +157,7 @@ describe("section 7.1 — lane continuity handles are opaque and backend-owned",
       ref: "",
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
     expect(result.success).toBe(false);
@@ -485,62 +480,6 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     expect(result.outcome.kind).toBe("completed");
     expect(captured).not.toBeNull();
     expect(captured!.tooling?.portableMcp).toEqual({ servers: [] });
-  });
-});
-
-describe("section 7.1 — context metrics availability gates rotation safely on Codex", () => {
-  it('Codex with a configured contextLimitTokens policy returns evaluation: "unsupported" instead of pretending to evaluate', () => {
-    const gate = runContextLimitGate({
-      metrics: { backend: "codex", rotateBeforeNextTurn: false },
-      policy: { contextLimitTokens: 100_000 },
-    });
-    expect(gate.status).toBe("pass");
-    if (gate.status === "pass") {
-      expect(gate.details).toMatchObject({ evaluation: "unsupported" });
-    }
-  });
-
-  it("a metrics-less backend stays unsupported even when a bogus contextTokens value is present (capability wins over data)", () => {
-    const gate = runContextLimitGate({
-      metrics: {
-        backend: "codex",
-        contextTokens: 5_000_000,
-        rotateBeforeNextTurn: false,
-      },
-      policy: { contextLimitTokens: 100_000 },
-    });
-    expect(gate.status).toBe("pass");
-    if (gate.status === "pass") {
-      expect(gate.details).toMatchObject({ evaluation: "unsupported" });
-    }
-  });
-
-  it("Claude metrics may carry context-window numbers but the limit gate evaluates them", () => {
-    const gate = runContextLimitGate({
-      metrics: {
-        backend: "claude",
-        contextTokens: 200_000,
-        rotateBeforeNextTurn: false,
-      },
-      policy: { contextLimitTokens: 150_000 },
-    });
-    expect(gate.status).toBe("fail");
-    if (gate.status === "fail") {
-      expect(gate.details).toMatchObject({ evaluation: "rotation_required" });
-    }
-  });
-
-  it("rotation flag persists across turns regardless of backend so a previously-flagged Codex lane is still blocked", () => {
-    const codexGate = runContextLimitGate({
-      metrics: { backend: "codex", rotateBeforeNextTurn: true },
-      policy: { contextLimitTokens: 100_000 },
-    });
-    expect(codexGate.status).toBe("fail");
-    if (codexGate.status === "fail") {
-      expect(codexGate.details).toMatchObject({
-        evaluation: "rotation_required",
-      });
-    }
   });
 });
 

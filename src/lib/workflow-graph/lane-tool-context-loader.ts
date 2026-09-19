@@ -4,7 +4,6 @@ import { createWorkflowStorageService } from "./storage";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readConfig } from "@/lib/config/loader";
-import { readLiveOccupancy } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
 import { getSession, getActiveGraphWorkflowExecution } from "@/lib/state-store";
 
@@ -92,7 +91,6 @@ function createLaneToolServices() {
     runtimeEditService,
     sharedDocumentRegistry,
     publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
-    readLiveOccupancy: (conversationId) => readLiveOccupancy(conversationId),
     executionContract: getProductionWorkflowComposition().executionContract,
   });
 

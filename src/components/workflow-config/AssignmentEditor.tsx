@@ -196,8 +196,8 @@ export interface AssignmentEditorProps<T extends AgentAssignment> {
  * not contain.
  *
  * Generic over the assignment so it edits the shared facet of whatever use site
- * holds it — a plain implementer assignment, a validator carrying strategy,
- * authority and continuity — and hands that same assignment back intact. A
+ * holds it — a plain implementer assignment, a validator carrying strategy and
+ * authority — and hands that same assignment back intact. A
  * non-generic editor would force every wrapper to re-widen the result by
  * merging it over the previous value, which is a deletion-losing operation.
  */
@@ -219,10 +219,7 @@ export function AssignmentEditor<T extends AgentAssignment>({
 
   const handleFocus = (text: string) => {
     if (text.trim() === "") {
-      // Clearing REMOVES the key rather than storing "". Absence is what "no
-      // use-site instructions" is in the schema, and on a live execution it is
-      // also the edit that moves the seat's fingerprint and retires its lane —
-      // an empty string would be a different document that saves as a no-op.
+      // Absence is what "no use-site instructions" means in the schema.
       const cleared = { ...value };
       delete cleared.focus;
       onChange(cleared);

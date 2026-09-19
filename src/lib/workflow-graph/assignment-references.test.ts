@@ -76,7 +76,6 @@ function validator(id: string, profile: AgentProfileRef): ValidatorAssignment {
     strategy: "conversation",
     authority: "advisory",
     agent: CLAUDE_AGENT,
-    continuity: { enabled: true },
   };
 }
 

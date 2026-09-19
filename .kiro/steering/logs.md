@@ -438,7 +438,7 @@ Per-execution structured logs for graph workflow forensics. Separate from `logs/
 workflow-logs/<executionId>/
 ├── _manifest.json                       # Entry point: metadata, definition, context summaries
 ├── lifecycle.jsonl                       # Execution events (start/pause/resume/halt/complete)
-├── decisions.jsonl                       # Cross-cutting decisions (rotation, retry, circuit breaker)
+├── decisions.jsonl                       # Cross-cutting decisions (retry, circuit breaker)
 └── contexts/<contextId>/
     ├── iterations.jsonl                  # Iteration lifecycle
     ├── tasks.jsonl                       # Task events (completion, reopening, agent-added, validation)
@@ -451,7 +451,7 @@ workflow-logs/<executionId>/
 
 1. `_manifest.json` — status, halt reason, summaries, full definition
 2. `lifecycle.jsonl` — when started/paused/resumed/halted
-3. `decisions.jsonl` — rotation, scheduling, retry, circuit-breaker triggers
+3. `decisions.jsonl` — scheduling, retry, circuit-breaker triggers
 4. `contexts/<id>/` — drill-down into iterations / tasks / validation / prompts
 
 ### Key events by file
@@ -459,7 +459,7 @@ workflow-logs/<executionId>/
 | File | Events |
 |---|---|
 | `lifecycle.jsonl` | `execution.started`/`resumed`/`paused`/`aborted`/`completed`/`halted`; `shared_document.created`/`updated` |
-| `decisions.jsonl` | `context.scheduled`, `implementer.rotation`, `rotation.scheduled` (token utilization), `max_iterations.reached` |
+| `decisions.jsonl` | `context.scheduled`, `iteration.retryable_error_recovery`, `max_iterations.reached` |
 | `iterations.jsonl` | `iteration.started`/`prompt_sent`/`agent_turn_completed`/`follow_up_sent`/`follow_up_skipped`/`completed` |
 | `tasks.jsonl` | `task.completion_attempted`/`validation_passed`/`validation_failed`/`added_by_agent`/`reopened` |
 | `validation.jsonl` | `task_validator.started`, `context_validator.started`, `validator.invoked`/`result_parsed`/`remediation_applied` |
@@ -474,7 +474,7 @@ jq 'select(.event == "validator.result_parsed" and .pass == false)' 'workflow-lo
 jq 'select(.itemType == "reasoning") | .raw' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/validation-transcript.jsonl'
 jq 'select(.event | test("circuit_breaker|retry"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
 jq 'select(.event == "task.reopened")' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/tasks.jsonl'
-jq 'select(.event | test("rotation|implementer"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
+jq 'select(.event | test("retry|implementer"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
 ```
 
 ### Design

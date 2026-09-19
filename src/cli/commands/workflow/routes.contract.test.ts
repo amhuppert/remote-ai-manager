@@ -1405,7 +1405,6 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
           parameters: { effort: "medium" },
         },
       },
-      continuity: { enabled: true },
       ...overrides,
     };
   }
@@ -1775,7 +1774,6 @@ describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
           parameters: { effort: "medium" },
         },
       },
-      continuity: { enabled: true },
     };
   }
 

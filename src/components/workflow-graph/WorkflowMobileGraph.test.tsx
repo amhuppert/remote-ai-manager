@@ -39,7 +39,7 @@ function nodeData(
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
-      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 3 },
     },
     tasks: [],
     mode: "builder",

@@ -459,7 +459,6 @@ describe("ConfigPage — Workflow Defaults", () => {
       ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
       iterationPolicy: {
         maxIterations: 99,
-        continuity: { enabled: true },
       },
     };
     api.json("GET", "/api/config", {

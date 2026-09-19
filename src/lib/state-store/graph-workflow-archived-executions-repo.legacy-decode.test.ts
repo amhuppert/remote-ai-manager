@@ -75,7 +75,6 @@ function legacyArchivedBlob(): Record<string, unknown> {
     contextValidator: {
       type: "claude",
       enabled: true,
-      continuity: { enabled: true, contextLimitTokens: 120000 },
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     },
   };
@@ -90,7 +89,6 @@ function legacyArchivedBlob(): Record<string, unknown> {
     contextValidator: {
       type: "codex",
       enabled: true,
-      continuity: { enabled: false },
       codex: {},
     },
   };
@@ -227,7 +225,6 @@ describe("archived execution one-time assignment migration", () => {
               parameters: { effort: "medium" },
             },
           },
-          continuity: { enabled: true, contextLimitTokens: 120000 },
         },
       ],
     });
@@ -248,7 +245,6 @@ describe("archived execution one-time assignment migration", () => {
               parameters: { reasoning: "high", fast: "false" },
             },
           },
-          continuity: { enabled: false },
         },
       ],
     });
@@ -263,7 +259,6 @@ describe("archived execution one-time assignment migration", () => {
       contextValidator: {
         type: "codex",
         enabled: true,
-        continuity: { enabled: true },
         codex: { model: "gpt-5.6-sol", reasoningEffort: "xhigh" },
       },
     };
@@ -313,7 +308,6 @@ describe("archived execution one-time assignment migration", () => {
       contextValidator: {
         type: "claude",
         enabled: false,
-        continuity: { enabled: true },
         agent: {
           backend: "claude",
           model: "sonnet",
@@ -384,7 +378,6 @@ describe("archived execution one-time assignment migration", () => {
       withValidator("wf-bogus-type", {
         type: "bogus",
         enabled: true,
-        continuity: { enabled: true },
         agent: {
           backend: "claude",
           model: "sonnet",
@@ -399,7 +392,6 @@ describe("archived execution one-time assignment migration", () => {
       withValidator("wf-bad-codex-model", {
         type: "codex",
         enabled: true,
-        continuity: { enabled: true },
         codex: { model: "gpt-imaginary" },
       });
 
@@ -410,7 +402,6 @@ describe("archived execution one-time assignment migration", () => {
       withValidator("wf-bad-codex-block", {
         type: "codex",
         enabled: true,
-        continuity: { enabled: true },
         codex: "gpt-5.4",
       });
 
@@ -421,7 +412,6 @@ describe("archived execution one-time assignment migration", () => {
       withValidator("wf-bad-enabled", {
         type: "claude",
         enabled: "yes",
-        continuity: { enabled: true },
         agent: {
           backend: "claude",
           model: "sonnet",
@@ -432,26 +422,10 @@ describe("archived execution one-time assignment migration", () => {
       expectRefused("wf-bad-enabled");
     });
 
-    it("refuses a validator with a malformed continuity policy", () => {
-      withValidator("wf-bad-continuity", {
-        type: "claude",
-        enabled: true,
-        continuity: { enabled: "sometimes" },
-        agent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
-      });
-
-      expectRefused("wf-bad-continuity");
-    });
-
     it("refuses a Claude validator whose runtime pairing was never legal", () => {
       withValidator("wf-bad-pairing", {
         type: "claude",
         enabled: true,
-        continuity: { enabled: true },
         agent: { backend: "claude", model: "gpt-5.4", reasoningEffort: "high" },
       });
 
@@ -498,7 +472,6 @@ describe("archived execution one-time assignment migration", () => {
               parameters: { effort: "medium" },
             },
           },
-          continuity: { enabled: true },
         },
       ],
     };

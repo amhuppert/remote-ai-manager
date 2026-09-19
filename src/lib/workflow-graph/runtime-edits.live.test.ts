@@ -58,7 +58,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
-  iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  iterationPolicy: { maxIterations: 20 },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: { value: true, source: "global" },
@@ -297,7 +297,6 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
         contextId: "context-implement",
         iterationPolicy: {
           maxIterations: 9,
-          continuity: { enabled: true },
         },
       },
     ]);
@@ -658,7 +657,6 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
                             parameters: { effort: "medium" },
                           },
                         },
-                        continuity: { enabled: true },
                       },
                     ],
                   },
@@ -1112,7 +1110,7 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
         title: "Review",
         acceptanceCriteria: "Reviewed.",
         configFromContextId: "context-plan",
-        iterationPolicy: { maxIterations: 7, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 7 },
       },
     ]);
 
@@ -1409,7 +1407,6 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
                 backend: "codex",
                 modelSelection: nonCanonicalCodexSelection(),
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -1513,7 +1510,6 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
                   parameters: { reasoning: "minimal", fast: "false" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -1552,7 +1548,6 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
                   parameters: { reasoning: "minimal", fast: "false" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },

@@ -187,7 +187,7 @@ describe("collaboration structured-output repair contract", () => {
         writeCapability: "artifact_only",
         policy: { continuityEnabled: true },
         ref: null,
-        metrics: { rotateBeforeNextTurn: false },
+        metrics: {},
         lastUsedAt: "2026-07-23T12:00:00.000Z",
       });
     }

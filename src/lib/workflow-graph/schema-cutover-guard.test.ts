@@ -50,7 +50,6 @@ function makeValidDefinitionRecord() {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 5,
-            continuity: { enabled: true },
           },
         },
       ],
@@ -107,7 +106,6 @@ function makeValidExecution() {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 5,
-            continuity: { enabled: true },
           },
         },
       ],
@@ -190,7 +188,6 @@ describe("assertDefinitionRecordSupported", () => {
       enabled: true,
       acceptanceCriteria: "legacy",
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-      continuity: { enabled: true },
     };
 
     expect(() => assertDefinitionRecordSupported(record)).toThrow(
@@ -218,7 +215,6 @@ describe("assertDefinitionRecordSupported", () => {
         model: "sonnet",
         reasoningEffort: "medium",
       },
-      continuity: { enabled: true },
     };
 
     expect(() => assertDefinitionRecordSupported(record)).toThrow(
@@ -246,7 +242,6 @@ describe("assertDefinitionRecordSupported", () => {
           model: "sonnet",
           reasoningEffort: "medium",
         },
-        continuity: { enabled: true },
       },
     };
 
@@ -399,7 +394,7 @@ describe("assertExecutionSupported", () => {
     ).toEqual({ valid: true });
   });
 
-  it("accepts an execution whose Claude lane carries limitEvaluation metrics_unavailable", () => {
+  it("accepts an execution whose Claude lane has no occupancy metrics", () => {
     const execution = makeValidExecution();
     (execution as Record<string, unknown>).laneStates = {
       "ctx-1": {
@@ -414,8 +409,6 @@ describe("assertExecutionSupported", () => {
           },
           lastContextTokens: null,
           lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "metrics_unavailable",
           lastUsedAt: timestamp,
         },
       },
@@ -425,7 +418,6 @@ describe("assertExecutionSupported", () => {
     const lane = result.laneStates["ctx-1"]?.["context_validator"];
     expect(lane?.backend).toBe("claude");
     if (lane?.backend === "claude") {
-      expect(lane.limitEvaluation).toBe("metrics_unavailable");
     }
   });
 
@@ -475,7 +467,6 @@ describe("assertExecutionSupported", () => {
       enabled: true,
       acceptanceCriteria: "legacy",
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-      continuity: { enabled: true },
     };
 
     expect(() => assertExecutionSupported(execution)).toThrow(
@@ -518,8 +509,6 @@ describe("assertExecutionSupported", () => {
           threadId: "thread-1",
         },
         lastTurnUsage: null,
-        rotateBeforeNextTurn: false,
-        limitEvaluation: "disabled",
         lastUsedAt: timestamp,
       },
     };
@@ -617,7 +606,6 @@ describe("post-cutover refusal of legacy singleton agent shapes", () => {
     ).contextValidator = {
       type: "codex",
       enabled: true,
-      continuity: { enabled: true },
       codex: {},
     };
 
@@ -661,7 +649,6 @@ describe("post-cutover refusal of legacy singleton agent shapes", () => {
               parameters: { effort: "medium" },
             },
           },
-          continuity: { enabled: true },
         },
       ],
     };

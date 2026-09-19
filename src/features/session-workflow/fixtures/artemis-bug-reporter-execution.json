@@ -1261,9 +1261,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -1295,11 +1292,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -1457,9 +1450,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -1491,11 +1481,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -1645,9 +1631,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -1679,11 +1662,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -1829,9 +1808,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -1863,11 +1839,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -2025,9 +1997,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -2059,11 +2028,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -2221,9 +2186,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -2255,11 +2217,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -2413,9 +2371,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -2447,11 +2402,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -2625,9 +2576,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -2659,11 +2607,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -2817,9 +2761,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -2851,11 +2792,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -3013,9 +2950,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -3047,11 +2981,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -3209,9 +3139,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -3243,11 +3170,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -3405,9 +3328,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -3439,11 +3359,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -3601,9 +3517,6 @@
               },
               "strategy": "task",
               "authority": "blocking",
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -3635,11 +3548,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 20,
-          "continuity": {
-            "enabled": true,
-            "contextLimitTokens": 250000
-          }
+          "maxIterations": 20
         },
         "planRepair": {
           "enabled": true,
@@ -5106,11 +5015,6 @@
           "backend": "codex",
           "ref": "a3177625-8e8a-4f2c-b285-092108ae54d6"
         },
-        "metrics": {
-          "lastTurnUsage": null,
-          "rotateBeforeNextTurn": false
-        },
-        "limitEvaluation": "disabled",
         "lastUsedAt": "2026-08-23T04:19:05.749Z"
       }
     },
@@ -5127,11 +5031,6 @@
           "backend": "codex",
           "ref": "01a02c5a-64d8-7dc0-9d06-ea624e315ce1"
         },
-        "metrics": {
-          "lastTurnUsage": null,
-          "rotateBeforeNextTurn": false
-        },
-        "limitEvaluation": "disabled",
         "lastUsedAt": "2026-08-23T02:02:04.116Z"
       },
       "implementer": {
@@ -5145,10 +5044,6 @@
           "backend": "codex",
           "ref": "79c6056c-5cc9-4772-9236-62afd5827c7f"
         },
-        "metrics": {
-          "rotateBeforeNextTurn": true
-        },
-        "limitEvaluation": "disabled",
         "lastUsedAt": "2026-08-23T02:01:53.782Z"
       }
     }

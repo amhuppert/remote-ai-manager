@@ -149,7 +149,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -186,7 +185,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -235,7 +233,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -278,7 +275,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -371,7 +367,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -476,7 +471,6 @@ describe("graph workflow manager", () => {
       return createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -679,7 +673,6 @@ describe("graph workflow manager", () => {
       return createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -904,7 +897,6 @@ describe("graph workflow manager", () => {
       return createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -1736,7 +1728,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -1877,7 +1868,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -2149,7 +2139,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -2886,7 +2875,6 @@ describe("graph workflow manager", () => {
       return createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -3170,7 +3158,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3211,7 +3198,6 @@ describe("graph workflow manager", () => {
     const abortConversation = vi.fn();
     const manager = createGraphWorkflowManager({
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3239,7 +3225,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3268,7 +3253,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3303,7 +3287,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3332,7 +3315,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3361,7 +3343,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3388,7 +3369,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3563,7 +3543,6 @@ describe("graph workflow manager", () => {
       const abortExecutionLoop = vi.fn();
 
       const manager = createGraphWorkflowManager({
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -3639,8 +3618,7 @@ describe("graph workflow manager", () => {
               refKind: "conversation",
               workflowConversationId: "conv-impl",
               sessionRef: { backend: "claude", ref: "conv-impl" },
-              metrics: { rotateBeforeNextTurn: false },
-              limitEvaluation: "supported",
+              metrics: {},
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
             // A cohort of two: lane state is keyed per assignment, so an abort
@@ -3660,9 +3638,7 @@ describe("graph workflow manager", () => {
                 "__validator__:execution-1:context-plan:context_validator:reviewer-a:codex",
               metrics: {
                 lastTurnUsage: null,
-                rotateBeforeNextTurn: false,
               },
-              limitEvaluation: "unsupported",
               lastUsedAt: "2026-03-27T15:01:00.000Z",
             },
             "context_validator:reviewer-b": {
@@ -3675,9 +3651,7 @@ describe("graph workflow manager", () => {
                 "__validator__:execution-1:context-plan:context_validator:reviewer-b:codex",
               metrics: {
                 lastTurnUsage: null,
-                rotateBeforeNextTurn: false,
               },
-              limitEvaluation: "unsupported",
               lastUsedAt: "2026-03-27T15:01:00.000Z",
             },
           },
@@ -3688,7 +3662,6 @@ describe("graph workflow manager", () => {
     const abortConversation = vi.fn();
     const manager = createGraphWorkflowManager({
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3739,8 +3712,7 @@ describe("graph workflow manager", () => {
               refKind: "conversation",
               workflowConversationId: "conv-impl",
               sessionRef: { backend: "claude", ref: "conv-impl" },
-              metrics: { rotateBeforeNextTurn: false },
-              limitEvaluation: "supported",
+              metrics: {},
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
           },
@@ -3750,7 +3722,6 @@ describe("graph workflow manager", () => {
     const abortConversation = vi.fn();
     const manager = createGraphWorkflowManager({
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3793,7 +3764,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3844,7 +3814,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -3901,8 +3870,7 @@ describe("graph workflow manager", () => {
               refKind: "conversation",
               workflowConversationId: "conv-parked",
               sessionRef: { backend: "claude", ref: "conv-parked" },
-              metrics: { rotateBeforeNextTurn: false },
-              limitEvaluation: "supported",
+              metrics: {},
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
           },
@@ -3914,8 +3882,7 @@ describe("graph workflow manager", () => {
               refKind: "conversation",
               workflowConversationId: "conv-live",
               sessionRef: { backend: "claude", ref: "conv-live" },
-              metrics: { rotateBeforeNextTurn: false },
-              limitEvaluation: "supported",
+              metrics: {},
               lastUsedAt: "2026-03-27T15:01:00.000Z",
             },
           },
@@ -3954,7 +3921,6 @@ describe("graph workflow manager", () => {
       const abortConversation = vi.fn();
       const manager = createGraphWorkflowManager({
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -4009,7 +3975,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -4049,8 +4014,7 @@ describe("graph workflow manager", () => {
             refKind: "conversation",
             workflowConversationId: "conv-parked",
             sessionRef: { backend: "claude", ref: "conv-parked" },
-            metrics: { rotateBeforeNextTurn: false },
-            limitEvaluation: "supported",
+            metrics: {},
             lastUsedAt: "2026-03-27T15:00:00.000Z",
           },
         },
@@ -4075,7 +4039,6 @@ describe("graph workflow manager", () => {
     const abortConversation = vi.fn();
     const manager = createGraphWorkflowManager({
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -4119,7 +4082,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
 
         executionContract: createTestGraphExecutionContract(),
@@ -4191,7 +4153,6 @@ describe("graph workflow manager", () => {
     const abortConversation = vi.fn();
     const manager = createGraphWorkflowManager({
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -4336,7 +4297,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -4428,7 +4388,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -4456,7 +4415,7 @@ describe("graph workflow manager", () => {
     });
   });
 
-  it("schedules implementer rotation when recovering a retryable iteration error", async () => {
+  it("preserves the implementer conversation when recovering a retryable iteration error", async () => {
     const repository = createRepository(
       createWorkflowExecution({
         status: "running",
@@ -4541,9 +4500,7 @@ describe("graph workflow manager", () => {
               metrics: {
                 contextTokens: 10_000,
                 contextWindowMax: 200_000,
-                rotateBeforeNextTurn: false,
               },
-              limitEvaluation: "disabled",
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
           },
@@ -4561,7 +4518,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -4589,8 +4545,7 @@ describe("graph workflow manager", () => {
     expect(execution.contextStates["context-plan"]?.status).toBe("ready");
     expect(execution.laneStates["context-plan"]?.["implementer"]).toMatchObject(
       {
-        metrics: { rotateBeforeNextTurn: true },
-        lastUsedAt: "2026-03-27T15:07:00.000Z",
+        workflowConversationId: "conv-1",
       },
     );
     expect(execution.machineSnapshot).toEqual({
@@ -4726,7 +4681,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -4784,7 +4738,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -4864,7 +4817,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -4946,7 +4898,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5038,7 +4989,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5141,7 +5091,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -5183,7 +5132,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -5277,7 +5225,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5386,7 +5333,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5467,7 +5413,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5542,7 +5487,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5638,7 +5582,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5714,7 +5657,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5795,7 +5737,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -5847,7 +5788,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5890,7 +5830,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -5944,7 +5883,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6071,7 +6009,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6132,7 +6069,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6216,7 +6152,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6295,7 +6230,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6375,7 +6309,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6454,7 +6387,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6509,7 +6441,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6570,7 +6501,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6655,7 +6585,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6733,7 +6662,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6806,7 +6734,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6897,7 +6824,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -6930,7 +6856,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7002,7 +6927,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -7037,7 +6961,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -7093,7 +7016,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -7178,7 +7100,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -7206,7 +7127,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -7230,7 +7150,6 @@ describe("graph workflow manager", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -7375,9 +7294,7 @@ describe("graph workflow manager", () => {
               metrics: {
                 contextTokens: 10,
                 contextWindowMax: 100,
-                rotateBeforeNextTurn: false,
               },
-              limitEvaluation: "disabled",
               lastUsedAt: "2026-03-27T15:10:00.000Z",
             },
           },
@@ -7389,8 +7306,7 @@ describe("graph workflow manager", () => {
               contextId: "context-plan",
               workflowConversationId: "conv-val",
               sessionRef: { backend: "claude", ref: "conv-val" },
-              metrics: { rotateBeforeNextTurn: false },
-              limitEvaluation: "disabled",
+              metrics: {},
               lastUsedAt: "2026-03-27T15:11:00.000Z",
             },
           },
@@ -7412,7 +7328,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
 
         executionContract: createTestGraphExecutionContract(),
@@ -7439,7 +7354,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7467,7 +7381,10 @@ describe("graph workflow manager", () => {
         summary: null,
         failureMessage: null,
       });
-      expect(execution.laneStates["context-implement"]).toBeUndefined();
+      expect(
+        execution.laneStates["context-implement"]?.implementer
+          ?.workflowConversationId,
+      ).toBe("conv-impl");
       expect(repository.read()).toEqual(execution);
     });
 
@@ -7492,7 +7409,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7533,7 +7449,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7567,7 +7482,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7590,7 +7504,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7613,7 +7526,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7656,8 +7568,7 @@ describe("graph workflow manager", () => {
         assignmentId,
         workflowConversationId: conversationId,
         sessionRef: { backend: "claude" as const, ref: conversationId },
-        metrics: { rotateBeforeNextTurn: false },
-        limitEvaluation: "disabled" as const,
+        metrics: {},
         lastUsedAt: "2026-03-27T15:11:00.000Z",
       });
       execution.laneStates = {
@@ -7669,9 +7580,8 @@ describe("graph workflow manager", () => {
       return execution;
     }
 
-    it("retires only the reset assignment's lane conversation and leaves siblings alone", async () => {
+    it("preserves the reset assignment's conversation and its siblings", async () => {
       const repository = createRepository(createHaltedExecutionWithCohort());
-      const retireLaneConversation = vi.fn();
 
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
@@ -7685,7 +7595,6 @@ describe("graph workflow manager", () => {
         async loadDefinition() {
           return null;
         },
-        retireLaneConversation,
       });
 
       const execution = await manager.resetContextAssignment(
@@ -7695,14 +7604,10 @@ describe("graph workflow manager", () => {
         "alpha",
       );
 
-      expect(retireLaneConversation).toHaveBeenCalledTimes(1);
-      expect(retireLaneConversation).toHaveBeenCalledWith({
-        projectPath: "/repo",
-        sessionName: "session-1",
-        conversationId: "conv-alpha",
-      });
       const lanes = execution.laneStates["context-implement"]!;
-      expect(lanes["context_validator:alpha"]).toBeUndefined();
+      expect(lanes["context_validator:alpha"]?.workflowConversationId).toBe(
+        "conv-alpha",
+      );
       expect(lanes["context_validator:beta"]?.workflowConversationId).toBe(
         "conv-beta",
       );
@@ -7718,7 +7623,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7752,7 +7656,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7792,7 +7695,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7848,7 +7750,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           getSession: async () => null,
           stopExecutionLaneDevServers: async () => {},
 
@@ -7884,7 +7785,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -7946,7 +7846,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -8015,7 +7914,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -8073,7 +7971,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -8112,7 +8009,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -8144,7 +8040,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -8174,7 +8069,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         getSession: async () => null,
         stopExecutionLaneDevServers: async () => {},
 
@@ -8208,7 +8102,6 @@ describe("graph workflow manager", () => {
         const manager = createProductionGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -8308,7 +8201,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8336,7 +8228,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8370,7 +8261,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8405,7 +8295,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8482,7 +8371,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -8541,7 +8429,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -8578,7 +8465,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8619,7 +8505,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8648,7 +8533,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8693,7 +8577,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8729,7 +8612,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8759,7 +8641,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8785,7 +8666,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8822,7 +8702,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8860,7 +8739,6 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
 
         executionContract: createTestGraphExecutionContract(),
@@ -8974,7 +8852,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -9179,7 +9056,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -9288,7 +9164,6 @@ describe("graph workflow manager", () => {
                 circuitBreaker: {},
                 iterationPolicy: {
                   maxIterations: 2,
-                  continuity: { enabled: true },
                 },
               },
               {
@@ -9322,7 +9197,6 @@ describe("graph workflow manager", () => {
                           parameters: { reasoning: "medium", fast: "false" },
                         },
                       },
-                      continuity: { enabled: true },
                     },
                   ],
                 },
@@ -9333,7 +9207,6 @@ describe("graph workflow manager", () => {
                 circuitBreaker: {},
                 iterationPolicy: {
                   maxIterations: 2,
-                  continuity: { enabled: true },
                 },
               },
             ],
@@ -9370,7 +9243,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -9418,7 +9290,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -9463,7 +9334,6 @@ describe("graph workflow manager", () => {
         const manager = createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -9532,7 +9402,6 @@ describe("graph workflow manager", () => {
         return createGraphWorkflowManager({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
 
           executionContract: createTestGraphExecutionContract(),
@@ -9698,7 +9567,6 @@ describe("halt/resume lifecycle attribution", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -9779,7 +9647,6 @@ describe("halt/resume lifecycle attribution", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -9894,7 +9761,6 @@ describe("abandon — the explicit, audited end of a resumable halt's tenure", (
     return createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 

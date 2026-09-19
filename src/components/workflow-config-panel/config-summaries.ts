@@ -113,12 +113,6 @@ function selectorSummary(
     : "none";
 }
 
-/** `1200` reads as `1k`; an unset limit reads as the runtime's own `auto`. */
-export function tokenCount(value: number | undefined): string {
-  if (value === undefined) return "auto";
-  return value >= 1000 ? `${Math.round(value / 1000)}k` : String(value);
-}
-
 export function blockSummaryParts(
   cascade: ConfigCascade,
   block: ConfigSummaryBlock,
@@ -204,15 +198,7 @@ export function blockSummaryParts(
         : [textPart("off", "dim")];
     case "iterationPolicy": {
       const value = cascade.resolve("iterationPolicy").value;
-      return [
-        textPart("max", "dim"),
-        valuePart(String(value.maxIterations)),
-        value.continuity.enabled
-          ? chipPart(
-              `continuity ${tokenCount(value.continuity.contextLimitTokens)}`,
-            )
-          : textPart("no continuity", "dim"),
-      ];
+      return [textPart("max", "dim"), valuePart(String(value.maxIterations))];
     }
     case "circuitBreaker":
       return [

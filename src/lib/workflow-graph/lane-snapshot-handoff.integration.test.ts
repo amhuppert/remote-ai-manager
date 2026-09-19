@@ -85,8 +85,8 @@ const TURN_RESULT: ConversationBackendTurnResult = {
   contextTokens: 1,
   contextWindowMax: 200_000,
   contentBlocks: [{ type: "text", text: "ok" }],
-  aborted: false,
   compacted: false,
+  aborted: false,
   failure: null,
   continuationDisposition: "retain",
 };
@@ -146,7 +146,6 @@ function validatorAssignment(
     ...assignment(id, focus),
     strategy: "conversation" as const,
     authority,
-    continuity: { enabled: true },
   };
 }
 
@@ -176,7 +175,7 @@ function cascade(
           allowAgentContextAdd: false,
         },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         charter: makeTestCharter(),
       },

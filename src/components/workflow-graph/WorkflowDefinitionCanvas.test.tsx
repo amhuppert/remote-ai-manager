@@ -179,7 +179,6 @@ describe("WorkflowDefinitionCanvas — effective crew and overrides", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },

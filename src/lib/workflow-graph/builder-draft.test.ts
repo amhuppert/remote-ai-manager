@@ -252,7 +252,7 @@ describe("workflow builder draft helpers", () => {
       createWorkflowDefinition(),
       "context-plan",
       "iterationPolicy",
-      { maxIterations: 9, continuity: { enabled: false } },
+      { maxIterations: 9 },
     );
 
     const cleared = clearContextBlockOverride(
@@ -334,7 +334,7 @@ describe("workflow builder draft helpers", () => {
     const overridden = setWorkflowConfigOverride(
       createWorkflowDefinition(),
       "iterationPolicy",
-      { maxIterations: 7, continuity: { enabled: false } },
+      { maxIterations: 7 },
     );
 
     const cleared = clearWorkflowConfigOverride(overridden, "iterationPolicy");

@@ -71,7 +71,7 @@ function context(
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
-    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 20 },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     ...overrides,
   };
@@ -227,7 +227,7 @@ describe("live draft — revision-conflict recovery", () => {
       {
         type: "update-context",
         contextId: CONTEXT_ID,
-        iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 12 },
       },
     ]);
   });
@@ -289,7 +289,7 @@ describe("live draft — selection changes", () => {
 
     const other = context({
       id: "context-other",
-      iterationPolicy: { maxIterations: 15, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 15 },
     });
     rerender(
       panel({

@@ -28,7 +28,6 @@ describe("nodeAgentPatch", () => {
       id: "general",
       strategy: "task" as const,
       authority: "blocking" as const,
-      continuity: { enabled: true },
     };
     context.contextValidator.enabled = true;
     const second = {

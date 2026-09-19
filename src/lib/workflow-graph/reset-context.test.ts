@@ -35,8 +35,7 @@ function makeLaneState(
     contextId,
     workflowConversationId: `conv-${lane}-${contextId}`,
     sessionRef: { backend: "claude", ref: `conv-${lane}-${contextId}` },
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: {},
     lastUsedAt: now,
   };
 }
@@ -231,7 +230,7 @@ describe("resetExecutionContext", () => {
     );
   });
 
-  it("clears lane continuity only for the target context", () => {
+  it("preserves the target and sibling conversations", () => {
     const execution = buildExecution({
       laneStates: {
         "context-implement": {
@@ -245,7 +244,9 @@ describe("resetExecutionContext", () => {
 
     const next = resetExecutionContext(execution, "context-implement");
 
-    expect(next.laneStates["context-implement"]).toBeUndefined();
+    expect(next.laneStates["context-implement"]).toEqual(
+      execution.laneStates["context-implement"],
+    );
     expect(next.laneStates["context-plan"]?.["context_validator"]).toEqual(
       execution.laneStates["context-plan"]?.["context_validator"],
     );

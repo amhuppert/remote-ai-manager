@@ -289,7 +289,6 @@ function seededValidator(
               parameters: { reasoning: "medium", fast: "false" },
             },
     },
-    continuity: { enabled: true },
   } as SeededValidatorAssignment;
 }
 

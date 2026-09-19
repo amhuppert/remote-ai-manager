@@ -285,14 +285,12 @@ export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
                     parameters: { effort: "medium" },
                   },
                 },
-                continuity: { enabled: false, contextLimitTokens: 110_000 },
               },
             ],
           },
           scriptValidator: { commands: ["typecheck", "test"] },
           iterationPolicy: {
             maxIterations: 9,
-            continuity: { enabled: false, contextLimitTokens: 80_000 },
           },
           circuitBreaker: { consecutiveFailureThreshold: 4 },
           mutability: {
@@ -420,10 +418,6 @@ export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
                       parameters: { reasoning: "high", fast: "false" },
                     },
                   },
-                  continuity: {
-                    enabled: false,
-                    contextLimitTokens: 60_000,
-                  },
                 },
               ],
             },
@@ -435,7 +429,6 @@ export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
             circuitBreaker: { consecutiveFailureThreshold: 5 },
             iterationPolicy: {
               maxIterations: 7,
-              continuity: { enabled: false, contextLimitTokens: 90_000 },
             },
             planRepair: {
               enabled: false,

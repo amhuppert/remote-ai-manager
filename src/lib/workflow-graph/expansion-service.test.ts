@@ -71,7 +71,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
-  iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  iterationPolicy: { maxIterations: 20 },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: { value: false, source: "global" },
@@ -1335,7 +1335,6 @@ describe("graph expansion — generated child config (R7.2)", () => {
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "conversation" as const,
         authority: "blocking" as const,
-        continuity: { enabled: true },
         agent: {
           backend: "claude",
           modelSelection: {
@@ -1504,7 +1503,6 @@ describe("graph expansion — generated child config (R7.2)", () => {
     });
     expect(child?.iterationPolicy).toEqual({
       maxIterations: 3,
-      continuity: { enabled: true },
     });
     // Overridden by the payload with an additive command set.
     expect(child?.circuitBreaker).toEqual({ consecutiveFailureThreshold: 1 });
@@ -1582,7 +1580,6 @@ describe("graph expansion — generated child config (R7.2)", () => {
                   profile: { tier: "project", id: "retired-reviewer" },
                   strategy: "conversation",
                   authority: "advisory",
-                  continuity: { enabled: true },
                   agent: {
                     backend: "claude",
                     modelSelection: {
@@ -1870,7 +1867,6 @@ describe("graph expansion — generated child config (R7.2)", () => {
     });
     expect(child?.iterationPolicy).toEqual({
       maxIterations: 4,
-      continuity: { enabled: true },
     });
     expect(child?.contextValidator).toEqual(ENABLED_VALIDATOR);
   });

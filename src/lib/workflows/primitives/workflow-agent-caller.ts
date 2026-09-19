@@ -13,7 +13,7 @@
  *     artifact-only calls overlap. Missing `writeCapability` defaults to
  *     `write_capable` via the shared vocabulary constant.
  *  4. Record post-turn outcomes on the lane (continuity handle, normalized
- *     usage metrics, rotation decisions) without inventing unsupported
+ *     usage metrics) without inventing unsupported
  *     metrics on any backend.
  *  5. Recover from stale continuity handles without losing the
  *     workflow-owned lane identity by starting a fresh backend session,
@@ -109,13 +109,6 @@ export interface WorkflowAgentCallerRequest {
    * turn is skipped and the work result is returned.
    */
   formatFollowUp?: AgentCallRequest;
-  /**
-   * Optional context-limit threshold forwarded into the lane outcome so the
-   * lane service can flip `rotateBeforeNextTurn` when the turn's
-   * `contextTokens` exceeds it. Lanes on backends without context-window
-   * metrics record an honest `unsupported` evaluation instead.
-   */
-  contextLimitTokens?: number;
 }
 
 export interface WorkflowAgentCallerDeps {
@@ -268,7 +261,6 @@ async function runOneTurn(
 
   await applyPostTurnOutcome({
     lane: activeLane,
-    request,
     result,
     deps,
     now,
@@ -289,16 +281,7 @@ async function resolveContinuity(
   deps: WorkflowAgentCallerDeps,
   log: Logger,
 ): Promise<ContinuityResolution> {
-  if (lane.metrics.rotateBeforeNextTurn) {
-    log.debug("workflow_agent_caller.rotation.scheduled", {
-      workflowId: lane.workflowId,
-      laneId: lane.laneId,
-      backend: lane.backend,
-    });
-    return startFreshBackend(lane, adapter, deps, log);
-  }
-
-  if (!lane.policy.continuityEnabled) {
+  if (!lane.policy.continuityEnabled || lane.staleSession) {
     log.debug("workflow_agent_caller.continuity.disabled", {
       workflowId: lane.workflowId,
       laneId: lane.laneId,
@@ -369,7 +352,7 @@ async function persistFreshLane(
     ref,
     writeCapability: lane.writeCapability,
     policy: lane.policy,
-    metrics: { rotateBeforeNextTurn: false },
+    metrics: {},
     lastUsedAt: lane.lastUsedAt,
   };
   return deps.laneService.initialize(fresh);
@@ -401,7 +384,6 @@ async function startFreshBackend(
 
 interface ApplyPostTurnOutcomeInput {
   lane: LaneState;
-  request: WorkflowAgentCallerRequest;
   result: AgentCallResult;
   deps: WorkflowAgentCallerDeps;
   now: () => string;
@@ -411,9 +393,9 @@ interface ApplyPostTurnOutcomeInput {
 async function applyPostTurnOutcome(
   input: ApplyPostTurnOutcomeInput,
 ): Promise<void> {
-  const { lane, request, result, deps, log } = input;
+  const { lane, result, deps, log } = input;
   const ref = { workflowId: lane.workflowId, laneId: lane.laneId };
-  const outcome = buildLaneOutcome(lane, request, result);
+  const outcome = buildLaneOutcome(lane, result);
   try {
     await deps.laneService.recordOutcome(ref, outcome);
   } catch (err) {
@@ -429,7 +411,6 @@ async function applyPostTurnOutcome(
 
 function buildLaneOutcome(
   lane: LaneState,
-  request: WorkflowAgentCallerRequest,
   result: AgentCallResult,
 ): LaneOutcome {
   const usage = result.usage;
@@ -454,13 +435,9 @@ function buildLaneOutcome(
     ...(usage.contextWindowMax !== undefined
       ? { contextWindowMax: usage.contextWindowMax }
       : {}),
-    ...(request.contextLimitTokens !== undefined
-      ? { contextLimitTokens: request.contextLimitTokens }
-      : {}),
     ...(lastTurnUsage !== undefined ? { lastTurnUsage } : {}),
     ...(result.continuationDisposition !== undefined
       ? { continuationDisposition: result.continuationDisposition }
       : {}),
-    ...(result.compacted === true ? { compactedThisTurn: true } : {}),
   };
 }

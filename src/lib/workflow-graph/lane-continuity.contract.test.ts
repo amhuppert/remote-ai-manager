@@ -69,8 +69,7 @@ function seedImplementerLane(): GraphWorkflowAgentSessionState {
     contextId: CONTEXT_ID,
     workflowConversationId: "conv-implementer-1",
     sessionRef: { backend: "claude", ref: "conv-implementer-1" },
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: {},
     lastUsedAt: NOW,
   };
 }
@@ -150,7 +149,11 @@ function buildComposition(database: Db): Composition {
     laneService,
     executionRepository: { mutateActive: mutateActiveExecution },
     createConversation: async () => ({ id: "conv-unused" }),
-    getConversation: async () => ({ id: "conv-unused" }),
+    getConversation: async () => ({
+      id: "conv-unused",
+      promptCount: 0,
+      backendRef: null,
+    }),
     now: () => NOW,
   });
 
@@ -164,61 +167,40 @@ function buildComposition(database: Db): Composition {
 }
 
 describe("graph lane outcome recording — full-composition contract (finding 2)", () => {
-  it.each(["cursor", "codex"] as const)(
-    "preserves %s compaction rotation through restart and a later turn without inventing occupancy",
-    async (backend) => {
-      const repo = createGraphWorkflowExecutionsRepo(db);
-      const lane: GraphWorkflowAgentSessionState = {
-        ...seedImplementerLane(),
-        backend,
-        sessionRef: { backend, ref: "conv-compacted" },
-        workflowConversationId: "conv-compacted",
-      };
-      const execution = createWorkflowExecution({
-        id: EXECUTION_ID,
-        status: "running",
-        laneStates: { [CONTEXT_ID]: { implementer: lane } },
-      });
-      repo.setActive(PROJECT_PATH, SESSION_NAME, execution, NOW);
-
-      await buildComposition(db).continuity.recordLaneTurnOutcome({
-        execution,
+  it("persists an unusable continuation and refuses replacement after restart", async () => {
+    const execution = seedActiveExecution(
+      createGraphWorkflowExecutionsRepo(db),
+    );
+    await buildComposition(db).continuity.recordLaneTurnOutcome({
+      execution,
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: CONTEXT_ID,
+      lane: "implementer",
+      outcome: { backend: "claude", continuationDisposition: "clear" },
+    });
+    const restored = readActiveFresh(db);
+    if (!restored) throw new Error("missing execution");
+    expect(restored.laneStates[CONTEXT_ID]?.implementer?.staleSession).toBe(
+      true,
+    );
+    expect(
+      restored.laneStates[CONTEXT_ID]?.implementer?.workflowConversationId,
+    ).toBe("conv-implementer-1");
+    await expect(
+      buildComposition(db).continuity.resolveImplementerCall({
+        execution: restored,
         projectPath: PROJECT_PATH,
         sessionName: SESSION_NAME,
         contextId: CONTEXT_ID,
-        lane: "implementer",
-        outcome: {
-          backend,
-          compactedThisTurn: true,
-          contextLimitTokens: 1_000,
-        },
-      });
-
-      const restartedExecution = readActiveFresh(db);
-      if (!restartedExecution) throw new Error("missing persisted execution");
-      const restartedLane =
-        restartedExecution.laneStates[CONTEXT_ID]?.implementer;
-      expect(restartedLane?.metrics.rotateBeforeNextTurn).toBe(true);
-      expect(restartedLane?.metrics.contextTokens).toBeUndefined();
-      expect(restartedLane?.metrics.contextWindowMax).toBeUndefined();
-
-      await buildComposition(db).continuity.recordLaneTurnOutcome({
-        execution: restartedExecution,
-        projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        contextId: CONTEXT_ID,
-        lane: "implementer",
-        outcome: { backend, compactedThisTurn: false },
-      });
-
-      const persisted =
-        readActiveFresh(db)?.laneStates[CONTEXT_ID]?.implementer;
-      expect(persisted?.metrics.rotateBeforeNextTurn).toBe(true);
-      expect(persisted?.metrics.contextTokens).toBeUndefined();
-      expect(persisted?.metrics.contextWindowMax).toBeUndefined();
-      expect(persisted?.sessionRef).toEqual({ backend, ref: "conv-compacted" });
-    },
-  );
+        backend: "claude",
+      }),
+    ).rejects.toThrow(/cannot continue/i);
+    expect(
+      readActiveFresh(db)?.laneStates[CONTEXT_ID]?.implementer
+        ?.workflowConversationId,
+    ).toBe("conv-implementer-1");
+  });
 
   it("retains Cursor conversation continuity and unknown occupancy through SQLite reload", async () => {
     const repo = createGraphWorkflowExecutionsRepo(db);
@@ -243,7 +225,6 @@ describe("graph lane outcome recording — full-composition contract (finding 2)
       outcome: {
         backend: "cursor",
         ref: "opaque-provider-ref",
-        contextLimitTokens: 1_000,
       },
     });
     const persisted = readActiveFresh(db)?.laneStates[CONTEXT_ID]?.implementer;
@@ -252,10 +233,8 @@ describe("graph lane outcome recording — full-composition contract (finding 2)
       backend: "cursor",
       ref: "conv-cursor-1",
     });
-    expect(persisted?.limitEvaluation).toBe("unsupported");
     expect(persisted?.metrics.contextTokens).toBeUndefined();
     expect(persisted?.metrics.contextWindowMax).toBeUndefined();
-    expect(persisted?.metrics.rotateBeforeNextTurn).toBe(false);
   });
 
   it("records one outcome with exactly one durable execution mutation", async () => {
@@ -290,7 +269,7 @@ describe("graph lane outcome recording — full-composition contract (finding 2)
     const execution = seedActiveExecution(repo);
     const comp = buildComposition(db);
 
-    // A competing writer advances the same lane's rotation flag the instant the
+    // A competing writer advances the same lane's observed occupancy the instant the
     // outcome's durable write lands. If the recording path issues a second
     // write that mirrors an earlier snapshot back, it clobbers this value.
     comp.onceAfterNextWrite(() => {
@@ -311,7 +290,7 @@ describe("graph lane outcome recording — full-composition contract (finding 2)
               ...latest.laneStates[CONTEXT_ID],
               implementer: {
                 ...lane,
-                metrics: { ...lane.metrics, rotateBeforeNextTurn: true },
+                metrics: { ...lane.metrics, contextTokens: 99_000 },
               },
             },
           },
@@ -334,6 +313,6 @@ describe("graph lane outcome recording — full-composition contract (finding 2)
     });
 
     const persisted = readActiveFresh(db)?.laneStates[CONTEXT_ID]?.implementer;
-    expect(persisted?.metrics.rotateBeforeNextTurn).toBe(true);
+    expect(persisted?.metrics.contextTokens).toBe(99_000);
   });
 });

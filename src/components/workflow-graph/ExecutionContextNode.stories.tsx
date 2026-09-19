@@ -37,7 +37,7 @@ function makeContext(
     },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: {},
-    iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 3 },
     ...overrides,
   };
 }
@@ -677,7 +677,6 @@ export const ValidatorsClaudeAgent: Story = {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -709,7 +708,6 @@ export const ValidatorsCodexAgent: Story = {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -742,7 +740,6 @@ export const ValidatorsScriptPlusClaude: Story = {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -792,7 +789,6 @@ export const ValidatorsInheritedClaude: Story = {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -801,7 +797,7 @@ export const ValidatorsInheritedClaude: Story = {
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
-        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 3 },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       },
       tasks: makeTasks(3),
@@ -849,7 +845,6 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -858,7 +853,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
-        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 3 },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       },
       tasks: makeTasks(3),
@@ -935,7 +930,6 @@ export const ApprovalGateWithValidators: Story = {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -944,7 +938,7 @@ export const ApprovalGateWithValidators: Story = {
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
-        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 3 },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       },
       tasks: makeTasks(3),
@@ -1163,7 +1157,6 @@ export const ValidatorCohort: Story = {
                   parameters: { effort: "high" },
                 },
               },
-              continuity: { enabled: true },
             },
             {
               id: "product",
@@ -1177,7 +1170,6 @@ export const ValidatorCohort: Story = {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: false },
             },
           ],
         },
@@ -1456,7 +1448,6 @@ function InlineConfigurationStory({
             profile: { tier: "builtin", id: "general-reviewer" },
             strategy: "task",
             authority: "blocking",
-            continuity: { enabled: true },
             agent: {
               backend: "codex",
               modelSelection: {
@@ -1475,7 +1466,6 @@ function InlineConfigurationStory({
                   },
                   strategy: "task" as const,
                   authority: "blocking" as const,
-                  continuity: { enabled: true },
                   agent: {
                     backend: "codex" as const,
                     modelSelection: {
@@ -1489,7 +1479,6 @@ function InlineConfigurationStory({
                   profile: { tier: "builtin" as const, id: "general-reviewer" },
                   strategy: "conversation" as const,
                   authority: "advisory" as const,
-                  continuity: { enabled: false },
                   agent: {
                     backend: "claude" as const,
                     modelSelection: {

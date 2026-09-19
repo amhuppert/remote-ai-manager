@@ -44,11 +44,6 @@ import {
   extractContextTokens,
   extractContextWindow,
 } from "@/lib/conversations/context-fill";
-import {
-  recordLiveOccupancy,
-  markLiveCompaction,
-  clearLiveOccupancy,
-} from "@/lib/conversations/live-occupancy";
 import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
 import { mapAssistantContentBlocks } from "./map-content-blocks";
 import {
@@ -1112,8 +1107,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       pendingTurn = null;
       currentTurnOptions = null;
       awaitingSubsequentPromptDelivery = false;
-      if (!options.checkpointCapture)
-        clearLiveOccupancy(options.conversationId);
       turn.reject(new Error("QuerySession closed while turn was in progress"));
     }
 
@@ -1357,8 +1350,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         if (message.subtype === "compact_boundary") {
           const { compact_metadata } = message as SDKCompactBoundaryMessage;
           turn.compacted = true;
-          if (!options.checkpointCapture)
-            markLiveCompaction(options.conversationId);
           logger.info("query-session.compact_boundary", {
             conversationId: options.conversationId,
             trigger: compact_metadata.trigger,
@@ -1392,12 +1383,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const contextTokens = extractContextTokens(asstMsg.message.usage);
         if (contextTokens > 0) {
           turn.contextTokens = contextTokens;
-          // Publish the same reading to the live-occupancy registry so the
-          // mid-turn complete_task gate sees identical semantics to the
-          // recorded last-wins value, but observable while the turn is in
-          // flight (before a compaction can mask it).
-          if (!options.checkpointCapture)
-            recordLiveOccupancy(options.conversationId, contextTokens);
         }
         break;
       }
@@ -1476,8 +1461,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const resolve = turn.resolve;
         pendingTurn = null;
         currentTurnOptions = null;
-        if (!options.checkpointCapture)
-          clearLiveOccupancy(options.conversationId);
 
         logger.debug("query-session.turn_complete", {
           conversationId: options.conversationId,
@@ -1504,7 +1487,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     pendingTurn = null;
     currentTurnOptions = null;
     awaitingSubsequentPromptDelivery = false;
-    if (!options.checkpointCapture) clearLiveOccupancy(options.conversationId);
     turn.reject(error);
   }
 

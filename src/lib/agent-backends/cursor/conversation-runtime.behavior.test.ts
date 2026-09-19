@@ -1,10 +1,6 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  readLiveOccupancy,
-  type LiveOccupancySnapshot,
-} from "@/lib/conversations/live-occupancy";
 import { elementAt } from "@/lib/shared/testing/element-at";
 import { z } from "zod";
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -1167,12 +1163,10 @@ describe("native context summary observation", () => {
   it.each(["completed", "aborted", "failed"] as const)(
     "preserves compaction evidence when the turn ends %s, with unknown occupancy",
     async (outcome) => {
-      const live: (LiveOccupancySnapshot | null)[] = [];
       const harness = createPersistingHarness({
         worker: {
           onTurn: (turn, worker) => {
             worker.sendNativeEvent(turn.runId, 0, summary);
-            live.push(readLiveOccupancy(CONVERSATION_ID));
             worker.sendNativeEvent(turn.runId, 0, summary);
             worker.sendNativeEvent(turn.runId, 1, ASSISTANT("answer"));
             worker.sendUsage(turn.runId, {
@@ -1188,8 +1182,6 @@ describe("native context summary observation", () => {
       });
       const result = await harness.send();
       expect(result.compacted).toBe(true);
-      expect(live).toEqual([{ contextTokens: null, compactedThisTurn: true }]);
-      expect(readLiveOccupancy(CONVERSATION_ID)).toBeNull();
       expect(result.contextTokens).toBeNull();
       expect(result.contextWindowMax).toBeNull();
       expect(result.contentBlocks).toEqual([{ type: "text", text: "answer" }]);

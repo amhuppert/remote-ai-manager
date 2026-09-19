@@ -10,7 +10,7 @@
  *  - `laneStateKey` — the `execution.laneStates[contextId]` inner key;
  *  - `graphLaneId` / `parseGraphLaneId` — the primitive-layer lane id the
  *    shared `LaneStore`/`LaneService` stack addresses lanes by;
- *  - `assignmentFingerprint` — what a lane must be rebuilt for.
+ *  - `assignmentFingerprint` — the immutable assignment a started lane holds.
  *
  * The implementer stays keyed by kind alone: one implementer per context is a
  * standing constraint, so an assignment segment there would encode nothing.
@@ -356,20 +356,8 @@ export function parseGraphLaneId(
 }
 
 /**
- * Everything about an assignment that a live lane has already baked in.
- *
- * The delivered profile bytes (`resolvedInstructionHash`) are in it because a
- * lane replays its instructions once, at creation; strategy, continuity, and
- * the atomic runtime selection is in it because it decides which handle the lane
- * holds. Authority is in it because it selects the output schema the lane's
- * turn is bound to, so a lane that already ran under the other one has to be
- * rebuilt rather than resumed. `focus` is in it because a BLOCKING seat's
- * instructions are delivered as its mandate above the profile fence (D4) and
- * are therefore outside the block the hash covers; without it, an edited
- * mandate would resume a lane that had already baked in the previous one. The
- * use-site `id` is deliberately NOT: two assignments of one profile differ by
- * lane key, not by fingerprint, and folding the id in would force a rotation on
- * every rename while proving nothing about the delivered bytes.
+ * Assignment fields captured by the lane at creation. Live edits compare these
+ * to freeze started assignments, and continuation verifies the stored identity.
  */
 export interface FingerprintableAssignment {
   profileSnapshot: { resolvedInstructionHash: string };
@@ -377,7 +365,6 @@ export interface FingerprintableAssignment {
   strategy?: string;
   authority?: string;
   focus?: string;
-  continuity?: { enabled: boolean; contextLimitTokens?: number };
 }
 
 export function assignmentFingerprint(
@@ -388,10 +375,6 @@ export function assignmentFingerprint(
     assignment.strategy ?? "",
     assignment.authority ?? "",
     assignment.focus ?? "",
-    assignment.continuity === undefined
-      ? ""
-      : String(assignment.continuity.enabled),
-    assignment.continuity?.contextLimitTokens ?? "",
     assignment.agent.backend,
     modelSelectionKey(assignment.agent.modelSelection),
   ].join("|");

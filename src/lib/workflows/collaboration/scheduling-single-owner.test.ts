@@ -410,7 +410,7 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       ref: null,
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T00:00:00.000Z",
     });
 

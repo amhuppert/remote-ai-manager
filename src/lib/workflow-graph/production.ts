@@ -59,10 +59,7 @@ import {
   createConversation,
   getConversation,
 } from "@/lib/conversations/service";
-import {
-  requestConversationStop,
-  stopConversationActor,
-} from "@/lib/workflows/conversation/manager";
+import { requestConversationStop } from "@/lib/workflows/conversation/manager";
 
 import {
   getActiveGraphWorkflowExecution,
@@ -91,7 +88,6 @@ import {
 import { createPlanRepairAgentRunner } from "./plan-repair/agent-runner";
 
 import { toPlanRepairValidationVerdict } from "./plan-repair/prompt";
-import { loadRotationHandoffNote } from "./rotation-handoff";
 import { readConversationTelemetry } from "./conversation-telemetry";
 
 import { createValidatorRunner } from "./validator-runner";
@@ -263,15 +259,6 @@ function createProductionGraphWorkflowRuntime(
       listActiveExecutions: async () => listActiveGraphWorkflowExecutions(),
       createConversation,
       getConversation,
-      loadRotationHandoff: (conversationId) =>
-        loadRotationHandoffNote(conversationId),
-      retireLaneConversation: ({ projectPath, sessionName, conversationId }) =>
-        stopConversationActor(
-          projectPath,
-          sessionName,
-          conversationId,
-          "workflow_lane_rotated",
-        ),
     },
     storage: {
       publication: {
@@ -290,13 +277,6 @@ function createProductionGraphWorkflowRuntime(
     },
     lifecycle: {
       stopExecutionLaneDevServers: defaultStopExecutionLaneDevServers,
-      retireLaneConversation: ({ projectPath, sessionName, conversationId }) =>
-        stopConversationActor(
-          projectPath,
-          sessionName,
-          conversationId,
-          "workflow_assignment_reset",
-        ),
       loadDefinition: (projectPath, definitionId, tier) =>
         workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
       readSessionWorktreeDirtyPaths: (worktreePath) =>

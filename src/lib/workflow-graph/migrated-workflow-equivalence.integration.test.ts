@@ -35,9 +35,7 @@ import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/e
  *  3. Continuity carried across rounds. Proven in the second describe below,
  *     against a real SQLite executions repository and the real lane-continuity
  *     door rather than against the assignment record: round two must dispatch
- *     into the conversation round one opened, and open no other. Reading the
- *     same `continuity` object twice out of one immutable definition would
- *     prove nothing, so nothing here does that.
+ *     into the conversation round one opened, and open no other.
  *
  * The pre-cutover engine itself is gone (hard cutover, no inbound compatibility
  * parser), so claim 2's per-round deltas cannot be produced by running it. They
@@ -92,10 +90,7 @@ import {
   workflowDefinitionRecordSchema,
   type ResolvedWorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import {
-  assignmentFingerprint,
-  laneStateKey,
-} from "@/lib/workflow-graph/lane-identity";
+import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
 import {
   buildInitialContextStates,
   buildInitialTaskStates,
@@ -140,12 +135,6 @@ const CURRENT_VALIDATOR_AGENT = {
     modelId: "sonnet",
     parameters: { effort: "high" },
   },
-} as const;
-
-/** Likewise non-default, so an invented continuity policy is visible. */
-const LEGACY_VALIDATOR_CONTINUITY = {
-  enabled: true,
-  contextLimitTokens: 90_000,
 } as const;
 
 /**
@@ -198,7 +187,6 @@ function legacyConfigJson(): Record<string, unknown> {
       contextValidator: {
         type: "claude",
         enabled: true,
-        continuity: { enabled: true },
         agent: {
           backend: "claude",
           model: "sonnet",
@@ -208,7 +196,7 @@ function legacyConfigJson(): Record<string, unknown> {
       scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
-      iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 12 },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       mutability: { allowAgentTaskAdd: false },
     },
@@ -245,7 +233,6 @@ function legacyDefinitionRecord(): Record<string, unknown> {
         value: {
           type: "claude",
           enabled: true,
-          continuity: { ...LEGACY_VALIDATOR_CONTINUITY },
           agent: { ...LEGACY_VALIDATOR_AGENT },
         },
       },
@@ -449,7 +436,7 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
     expect(context?.contextValidator.enabled).toBe(true);
 
     // Structural equivalence, not merely "a cohort of one": the migrated seat
-    // must carry the operator's runtime and continuity verbatim onto the
+    // must carry the operator's agent selection verbatim onto the
     // built-in reviewer profile.
     const authoredToday: ValidatorAssignment = makeValidatorAssignment({
       strategy: "conversation",
@@ -458,7 +445,6 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
       // must land on it rather than on the advisory default.
       authority: "blocking",
       agent: { ...CURRENT_VALIDATOR_AGENT },
-      continuity: { ...LEGACY_VALIDATOR_CONTINUITY },
     });
     const migrated = migratedCohort(definition);
     expect(migrated).toHaveLength(1);
@@ -595,10 +581,8 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
  *
  * The accounting proofs above fake the whole validator dispatch, which is the
  * right boundary for counting invocations but stops short of the machinery that
- * decides whether round two RESUMES round one. Continuity is not a property of
- * the assignment record — reading the same `continuity` object out of the same
- * immutable definition twice proves nothing. It is a property of the lane the
- * continuity door opens and the executions repository persists.
+ * resumes round two in round one’s conversation. This stack checks the lane
+ * identity against the execution repository after each round.
  *
  * So this stack is real end to end: a real SQLite executions repository, the
  * real `GraphLaneStore`, the real lane service, the real lane-continuity door,
@@ -607,9 +591,7 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
  * creation — and both are observed, so the assertions read what production
  * persisted rather than what the fixture handed in.
  *
- * `continuity.enabled` from the migrated bytes is what drives this:
- * `getLaneContinuityEnabled` reads it off the working definition's assignment,
- * and a `false` there makes every round create a fresh conversation.
+ * Each validator assignment resumes its own persisted conversation.
  */
 describe("a migrated reviewer resumes its own session across rounds (R3.3)", () => {
   const NOW = "2026-08-04T12:00:00.000Z";
@@ -670,16 +652,18 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
     return {
       kind: "text",
       text: JSON.stringify({ summary: "All good", issues: [], advisories: [] }),
-      error: null,
       backendRef: null,
-      continuationDisposition: "keep",
+      continuationDisposition: "retain",
       usage: {
         inputTokens: 10,
         outputTokens: 5,
         cachedInputTokens: 0,
         costUsd: null,
+        contextTokens: null,
+        contextWindowMax: null,
+        durationMs: 1,
       },
-    } as unknown as TaskRunResult;
+    };
   }
 
   async function buildLiveStack(
@@ -713,7 +697,9 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
         return { id };
       },
       async getConversation(_projectPath, _sessionName, id) {
-        return createdConversationIds.includes(id) ? { id } : null;
+        return createdConversationIds.includes(id)
+          ? { id, promptCount: 0, backendRef: null }
+          : null;
       },
       now: () => NOW,
     });
@@ -805,22 +791,5 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
     const afterRound2 = readExecution().laneStates[CONTEXT_ID] ?? {};
     expect(Object.keys(afterRound2)).toEqual([LANE_KEY]);
     expect(afterRound2[LANE_KEY]?.workflowConversationId).toBe(conversationId);
-  });
-
-  it("stamps the lane with the migrated assignment's own continuity policy", async () => {
-    const definition = await migrateAndResolve(seedLegacyDisk());
-    const stack = await buildLiveStack(definition);
-
-    await stack.runRound();
-
-    // The fingerprint folds in `continuity.contextLimitTokens` and the runtime
-    // triple, so a lane read back OUT of SQLite carrying the migrated
-    // assignment's fingerprint is durable evidence that the lane baked in the
-    // legacy document's continuity policy — not two derivations of one object.
-    const [migrated] = migratedCohort(definition);
-    expect(migrated?.continuity).toEqual(LEGACY_VALIDATOR_CONTINUITY);
-    const lane = readExecution().laneStates[CONTEXT_ID]?.[LANE_KEY];
-    expect(lane?.assignmentId).toBe("general");
-    expect(lane?.assignmentFingerprint).toBe(assignmentFingerprint(migrated!));
   });
 });

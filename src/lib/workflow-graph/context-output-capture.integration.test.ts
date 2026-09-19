@@ -220,7 +220,6 @@ function completePlanTask(repository: Repository) {
       conversationId: "conversation-lane",
       contextTokens: null,
       contextWindowMax: null,
-      compacted: false,
     };
   });
 }

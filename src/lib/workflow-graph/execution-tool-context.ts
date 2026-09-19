@@ -3,17 +3,11 @@ import { unchanged } from "@/lib/workflow-graph/execution-mutation";
 import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
 
 import { changed } from "@/lib/workflow-graph/execution-mutation";
-import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
 import { StaleLoopFenceError } from "./loop-fence";
-import {
-  evaluateContextLimit,
-  type ContextLimitMetrics,
-} from "@/lib/workflows/primitives/context-limit-gate";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { buildLifecycleSnapshot } from "@/lib/workflow-graph/context-transitions";
 import { getExecutionLogger } from "./execution-logger";
-import { graphLaneContextMetrics } from "./graph-lane-store";
 import type {
   GraphWorkflowEventDelivery,
   PublishLiveEditAppliedInput,
@@ -84,29 +78,12 @@ export interface GraphWorkflowExecutionToolContextDeps {
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
   ): GraphWorkflowEventDelivery;
-  readLiveOccupancy(conversationId: string): LiveOccupancySnapshot | null;
   executionContract: GraphExecutionContract;
   now?(): string;
 }
 
-/**
- * The mid-turn context-limit decision surfaced by `completeTask`. Non-null only
- * when the implementer lane was scheduled to rotate; `lane-tool-service` composes the
- * cooperative stop instruction from it. `contextTokens` is the occupancy the
- * decision used (live reading, else the lane's persisted fallback), and
- * `source` records which of those it came from.
- */
-export interface CompleteTaskContextLimitStop {
-  contextTokens: number | null;
-  contextLimitTokens: number | null;
-  compactedThisTurn: boolean;
-  alreadyScheduled: boolean;
-  source: "live" | "lane" | "none";
-}
-
 export interface CompleteTaskResult {
   execution: GraphWorkflowExecution;
-  contextLimitStop: CompleteTaskContextLimitStop | null;
 }
 
 interface CreateGraphWorkflowExecutionToolContextInput {
@@ -212,88 +189,6 @@ export function createGraphWorkflowExecutionToolContext(
       return input.conversationId;
     }
 
-    /**
-     * Mid-turn context-limit gate. Runs inside the completion mutation so the
-     * lane flag rides the same serialized write as the task record. Reads live
-     * occupancy for the resolved conversation (falling back to the lane's
-     * persisted normalized occupancy), defers the rotation decision to
-     * `evaluateContextLimit` (never an inline numeric comparison), and on
-     * `rotation_required` sets the sticky `rotateBeforeNextTurn` flag and
-     * returns the stop descriptor. Skipped when the lane is missing, the
-     * policy is disabled. Native compaction can trigger rotation independently
-     * of occupancy measurement support.
-     */
-    function evaluateMidTurnContextLimit(
-      execution: GraphWorkflowExecution,
-      conversationId: string,
-    ): CompleteTaskContextLimitStop | null {
-      const lane = execution.laneStates[input.contextId]?.["implementer"];
-      if (!lane) {
-        return null;
-      }
-
-      const executionContext =
-        execution.workingDefinition.executionContexts.find(
-          (context) => context.id === input.contextId,
-        );
-      const contextLimitTokens =
-        executionContext?.iterationPolicy.continuity.contextLimitTokens;
-      if (contextLimitTokens === undefined) {
-        return null;
-      }
-      const live = deps.readLiveOccupancy(conversationId);
-      const persisted = graphLaneContextMetrics(lane);
-
-      let contextTokens: number | undefined;
-      let source: CompleteTaskContextLimitStop["source"];
-      if (live?.contextTokens != null) {
-        contextTokens = live.contextTokens;
-        source = "live";
-      } else if (persisted.contextTokens != null) {
-        contextTokens = persisted.contextTokens;
-        source = "lane";
-      } else {
-        contextTokens = undefined;
-        source = "none";
-      }
-
-      const compactedThisTurn = live?.compactedThisTurn ?? false;
-
-      const metrics: ContextLimitMetrics = {
-        backend: lane.backend,
-        rotateBeforeNextTurn: lane.metrics.rotateBeforeNextTurn,
-        ...(contextTokens !== undefined ? { contextTokens } : {}),
-      };
-
-      const evaluation = evaluateContextLimit({
-        metrics,
-        policy: { contextLimitTokens },
-        compactedThisTurn,
-      });
-
-      if (evaluation !== "rotation_required") {
-        return null;
-      }
-
-      const alreadyScheduled = lane.metrics.rotateBeforeNextTurn;
-      lane.metrics = { ...lane.metrics, rotateBeforeNextTurn: true };
-      lane.lastUsedAt = now();
-
-      const stop: CompleteTaskContextLimitStop = {
-        contextTokens: contextTokens ?? null,
-        contextLimitTokens: contextLimitTokens ?? null,
-        compactedThisTurn,
-        alreadyScheduled,
-        source,
-      };
-
-      // Purely computational inside the write-queue critical section: the
-      // rotation decision is recorded on the draft, but its observability log
-      // (a file write) is emitted by `completeTask` AFTER the mutation commits
-      // (`no-slow-work-in-critical-section`).
-      return stop;
-    }
-
     async function completeTask(
       taskId: string,
       summary: string,
@@ -302,84 +197,64 @@ export function createGraphWorkflowExecutionToolContext(
       // mutation commits, so the write-queue critical section performs no
       // logging I/O (`no-slow-work-in-critical-section`).
 
-      const {
-        execution: execution,
-        resolvedConversationId,
-        idempotentFirstCompletedAt,
-        contextLimitStop,
-      } = await deps.executionRepository
-        .mutateActive(input.projectPath, input.sessionName, (draft) => {
-          let contextLimitStop: CompleteTaskContextLimitStop | null = null;
-          let resolvedConversationId = input.conversationId;
-          let idempotentFirstCompletedAt: string | null = null;
+      const { execution: execution, idempotentFirstCompletedAt } =
+        await deps.executionRepository
+          .mutateActive(input.projectPath, input.sessionName, (draft) => {
+            let idempotentFirstCompletedAt: string | null = null;
 
-          ensureBoundContextActive(draft);
+            ensureBoundContextActive(draft);
 
-          const taskState = draft.taskStates[taskId];
-          if (!taskState) {
-            throw new Error(`Task "${taskId}" does not exist in runtime state`);
-          }
-          if (taskState.contextId !== input.contextId) {
-            throw new Error(
-              `Task "${taskId}" does not belong to context "${input.contextId}"`,
-            );
-          }
+            const taskState = draft.taskStates[taskId];
+            if (!taskState) {
+              throw new Error(
+                `Task "${taskId}" does not exist in runtime state`,
+              );
+            }
+            if (taskState.contextId !== input.contextId) {
+              throw new Error(
+                `Task "${taskId}" does not belong to context "${input.contextId}"`,
+              );
+            }
 
-          const conversationId = resolveConversationId(draft, taskId);
-          resolvedConversationId = conversationId;
+            const conversationId = resolveConversationId(draft, taskId);
 
-          if (taskState.status === "completed") {
-            idempotentFirstCompletedAt = taskState.completedAt;
-            contextLimitStop = evaluateMidTurnContextLimit(
-              draft,
-              conversationId,
-            );
-            if (contextLimitStop === null || contextLimitStop.alreadyScheduled)
+            if (taskState.status === "completed") {
+              idempotentFirstCompletedAt = taskState.completedAt;
               return unchanged({
-                resolvedConversationId,
                 idempotentFirstCompletedAt,
-                contextLimitStop,
               });
-            return changed(draft, {
-              resolvedConversationId,
-              idempotentFirstCompletedAt,
-              contextLimitStop,
-            });
-          }
+            }
 
-          assertGraphExecutionContractAccepted(
-            executionContract.validateTaskCompletion(draft, taskId),
-          );
-
-          const completedAt = now();
-          taskState.status = "completed";
-          taskState.summary = summary;
-          taskState.completedAt = completedAt;
-          taskState.lastConversationId = conversationId;
-          taskState.failureMessage = null;
-
-          const contextState = draft.contextStates[input.contextId];
-          if (contextState) {
-            contextState.completedTaskCount = countCompletedTasks(
-              draft,
-              input.contextId,
+            assertGraphExecutionContractAccepted(
+              executionContract.validateTaskCompletion(draft, taskId),
             );
-          }
 
-          draft.machineSnapshot = buildLifecycleSnapshot(draft, {
-            hasLiveIteration: true,
-          });
-          contextLimitStop = evaluateMidTurnContextLimit(draft, conversationId);
-          return changed(draft, {
-            resolvedConversationId,
-            idempotentFirstCompletedAt,
-            contextLimitStop,
-          });
-        })
-        .then((mutation) => ({
-          execution: mutation.execution,
-          ...mutationValue(mutation),
-        }));
+            const completedAt = now();
+            taskState.status = "completed";
+            taskState.summary = summary;
+            taskState.completedAt = completedAt;
+            taskState.lastConversationId = conversationId;
+            taskState.failureMessage = null;
+
+            const contextState = draft.contextStates[input.contextId];
+            if (contextState) {
+              contextState.completedTaskCount = countCompletedTasks(
+                draft,
+                input.contextId,
+              );
+            }
+
+            draft.machineSnapshot = buildLifecycleSnapshot(draft, {
+              hasLiveIteration: true,
+            });
+            return changed(draft, {
+              idempotentFirstCompletedAt,
+            });
+          })
+          .then((mutation) => ({
+            execution: mutation.execution,
+            ...mutationValue(mutation),
+          }));
 
       // Post-commit diagnostics (file writes) — outside the critical section.
       if (idempotentFirstCompletedAt !== null) {
@@ -390,27 +265,7 @@ export function createGraphWorkflowExecutionToolContext(
           firstCompletedAt: idempotentFirstCompletedAt,
         });
       }
-      if (contextLimitStop !== null) {
-        const stop: CompleteTaskContextLimitStop = contextLimitStop;
-        const logPayload = {
-          executionId: execution.id,
-          contextId: input.contextId,
-          taskId,
-          conversationId: resolvedConversationId,
-          contextTokens: stop.contextTokens,
-          contextLimitTokens: stop.contextLimitTokens,
-          compactedThisTurn: stop.compactedThisTurn,
-          source: stop.source,
-          alreadyScheduled: stop.alreadyScheduled,
-        };
-        logger.info("graph-workflow.context_limit.mid_turn_stop", logPayload);
-        getExecutionLogger(execution.id)?.decision(
-          "rotation.scheduled_mid_turn",
-          logPayload,
-        );
-      }
-
-      return { execution, contextLimitStop };
+      return { execution };
     }
 
     async function addTask(

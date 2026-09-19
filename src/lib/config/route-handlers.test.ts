@@ -331,7 +331,6 @@ describe("PUT /api/config", () => {
                       parameters: { effort: "medium" },
                     },
                   },
-                  continuity: { enabled: true },
                 },
               ],
             },

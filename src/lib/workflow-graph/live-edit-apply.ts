@@ -99,15 +99,18 @@ async function buildAssignmentSnapshotLookup(
 
 /**
  * Production preparation step (D10): resolve, compose, and hash every
- * assignment this batch introduces, before the write queue opens.
+ * assignment this batch introduces, before the write queue opens. Unchanged
+ * started assignments retain their execution snapshots without library reads.
  */
 export function buildDefaultAssignmentSnapshotPreparation(
   projectPath: string,
   operations: readonly WorkflowLiveEditOperation[],
+  execution?: GraphWorkflowExecution,
 ): Promise<PrepareAssignmentSnapshotsResult> {
   const library = createAgentProfileLibraryService();
   return prepareLiveEditAssignmentSnapshots({
     operations,
+    ...(execution === undefined ? {} : { execution }),
     composeSnapshot: async (assignment) =>
       buildAgentProfileSnapshot(
         await library.resolve(projectPath, assignment.profile),
@@ -248,6 +251,7 @@ export interface LiveEditApplyServiceDeps {
   prepareAssignmentSnapshots(
     projectPath: string,
     operations: readonly WorkflowLiveEditOperation[],
+    execution?: GraphWorkflowExecution,
   ): Promise<PrepareAssignmentSnapshotsResult>;
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
@@ -389,8 +393,13 @@ export async function applyLiveEditsToActiveExecution(
 ): Promise<LiveEditApplyOutcome> {
   const { projectPath, sessionName, request } = input;
   const executionContract = deps.executionContract;
+  const execution = await deps.getActiveExecution(projectPath, sessionName);
+  if (!execution) {
+    return { ok: false, kind: "no_active_execution" };
+  }
 
-  // Preparation first (D10). A dangling reference fails here, where the op that
+  // Preparation first (D10). Unchanged started assignments keep their frozen
+  // snapshots. A new dangling reference fails here, where the op that
   // carried it is still known, rather than as a throw out of a reducer that has
   // no way to name it. Everything past this point is snapshot-bearing: the
   // library is never consulted again, so a concurrent profile edit or deletion
@@ -398,6 +407,7 @@ export async function applyLiveEditsToActiveExecution(
   const preparation = await deps.prepareAssignmentSnapshots(
     projectPath,
     request.operations,
+    execution,
   );
   if (!preparation.ok) {
     return rejected({
@@ -419,10 +429,6 @@ export async function applyLiveEditsToActiveExecution(
   // same gates, and reports the would-be result with no persist, no bump, and
   // no events. The verdict is advisory; the apply path re-runs the gates.
   if (request.dryRun === true) {
-    const execution = await deps.getActiveExecution(projectPath, sessionName);
-    if (!execution) {
-      return { ok: false, kind: "no_active_execution" };
-    }
     const gate = evaluateLiveEditRequest(
       execution,
       request,

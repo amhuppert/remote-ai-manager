@@ -38,8 +38,7 @@
       "mutability": { "allowAgentTaskAdd": false },
       "circuitBreaker": { "consecutiveFailureThreshold": 3 },
       "iterationPolicy": {
-        "maxIterations": 4,
-        "continuity": { "enabled": true }
+        "maxIterations": 4
       }
     },
     {
@@ -62,8 +61,7 @@
       "mutability": { "allowAgentTaskAdd": false },
       "circuitBreaker": { "consecutiveFailureThreshold": 3 },
       "iterationPolicy": {
-        "maxIterations": 4,
-        "continuity": { "enabled": true }
+        "maxIterations": 4
       }
     },
     {
@@ -86,8 +84,7 @@
       "mutability": { "allowAgentTaskAdd": false },
       "circuitBreaker": { "consecutiveFailureThreshold": 3 },
       "iterationPolicy": {
-        "maxIterations": 4,
-        "continuity": { "enabled": true }
+        "maxIterations": 4
       }
     }
   ],

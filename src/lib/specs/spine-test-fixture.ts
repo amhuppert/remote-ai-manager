@@ -424,7 +424,7 @@ function spineLiveEditDeps(
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd, allowAgentContextAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
-      iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 20 },
       planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       collaboration: {
         enabled: { value: false, source: "global" },
@@ -1403,7 +1403,6 @@ export function createSpecSpineWorld(
   const workflowManager = createGraphWorkflowManager({
     abortConversation: () => {},
     abortExecutionLoop: () => {},
-    retireLaneConversation: () => {},
     getSession: async () => null,
     stopExecutionLaneDevServers: async () => {},
 

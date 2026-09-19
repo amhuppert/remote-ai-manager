@@ -3871,7 +3871,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 3 },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       },
     ],
@@ -5363,7 +5363,6 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -6012,7 +6011,6 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -7808,7 +7806,6 @@ describe("graph workflow mutation turnover — end to end", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 

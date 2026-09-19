@@ -96,7 +96,7 @@ function makeContext(
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
     circuitBreaker: {},
-    iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 4 },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     ...overrides,
   };
@@ -331,30 +331,6 @@ describe("buildIterationPrompt", () => {
     expect(prompt).not.toContain("complete_task");
   });
 
-  it("renders the previous conversation's handoff verbatim when rotation carried one", () => {
-    const prompt = buildIterationPrompt({
-      context: makeContext(),
-      tasks: [makeTask()],
-      taskStates: {},
-      sharedDocuments: [],
-      allowAgentTaskAdd: false,
-      previousConversationHandoff: {
-        conversationId: "conv-prev-1",
-        note: "Completed task-plan-1. Left in flight: nothing. Lesson: the dev server on :3071 needs an explicit CC_SERVER_URL.",
-      },
-    });
-
-    expect(prompt).toContain("## Handoff from the previous conversation");
-    expect(prompt).toContain("reached its context limit and was rotated out");
-    expect(prompt).toContain(
-      "Lesson: the dev server on :3071 needs an explicit CC_SERVER_URL.",
-    );
-    // The handoff must precede the task list so orientation happens before work.
-    expect(
-      prompt.indexOf("## Handoff from the previous conversation"),
-    ).toBeLessThan(prompt.indexOf("## Tasks (work through them in order)"));
-  });
-
   it("omits the handoff section when no previous-conversation handoff exists", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
@@ -365,34 +341,6 @@ describe("buildIterationPrompt", () => {
     });
 
     expect(prompt).not.toContain("## Handoff from the previous conversation");
-  });
-
-  it("primes the Required Protocol to end the turn on a CONTEXT LIMIT REACHED stop instruction", () => {
-    const prompt = buildIterationPrompt({
-      context: makeContext(),
-      tasks: [makeTask()],
-      taskStates: {},
-      sharedDocuments: [],
-      allowAgentTaskAdd: false,
-    });
-
-    const protocol = prompt.slice(prompt.indexOf("## Required Protocol"));
-    expect(protocol).toContain(
-      "If `cctl workflow task complete` prints a stop instruction (CONTEXT LIMIT REACHED …), end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
-    );
-  });
-
-  it("notes on the complete-task command that a printed stop instruction is mandatory", () => {
-    const prompt = buildIterationPrompt({
-      context: makeContext(),
-      tasks: [makeTask()],
-      taskStates: {},
-      sharedDocuments: [],
-      allowAgentTaskAdd: false,
-    });
-
-    const commandRef = prompt.slice(prompt.indexOf("### Complete a task"));
-    expect(commandRef).toContain("that is mandatory: stop and end your turn");
   });
 
   it("documents the `cctl workflow shared-doc upsert` command", () => {
@@ -1575,26 +1523,6 @@ describe("answer resume delivery", () => {
       taskStates: {},
       attemptNumber: 1,
       maxAttempts: 3,
-      resumeUserInput: { questionBatchId, answers },
-    });
-
-    const split = splitQuestionAnswersBlock(prompt);
-    expect(split).not.toBeNull();
-    expect(split?.block.questionBatchId).toBe(questionBatchId);
-    expect(split?.block.answers).toEqual(answers);
-    expect(prompt).toContain(
-      formatQuestionAnswersBlock(questionBatchId, answers),
-    );
-    expect(prompt).toContain("## Your Question Was Answered");
-  });
-
-  it("buildIterationPrompt embeds the framed answers block (rotated seed variant)", () => {
-    const prompt = buildIterationPrompt({
-      context: makeContext(),
-      tasks: [makeTask()],
-      taskStates: {},
-      sharedDocuments: [],
-      allowAgentTaskAdd: false,
       resumeUserInput: { questionBatchId, answers },
     });
 

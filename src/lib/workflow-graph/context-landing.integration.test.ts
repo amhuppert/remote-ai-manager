@@ -225,7 +225,6 @@ it.each([
         loadDefinition: async () => null,
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         stopExecutionLaneDevServers: async () => {},
       });
       const mergeMutex = createPerSessionMergeMutex();

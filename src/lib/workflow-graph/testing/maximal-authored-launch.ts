@@ -109,7 +109,6 @@ export function createMaximalAuthoredWorkflowLaunchFixture(): WorkflowDefinition
       },
       iterationPolicy: {
         maxIterations: 7,
-        continuity: { enabled: true, contextLimitTokens: 4_096 },
       },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
@@ -236,7 +235,6 @@ export function createMaximalAuthoredWorkflowLaunchFixture(): WorkflowDefinition
         circuitBreaker: { consecutiveFailureThreshold: 4 },
         iterationPolicy: {
           maxIterations: 6,
-          continuity: { enabled: true, contextLimitTokens: 2_048 },
         },
         planRepair: {
           enabled: false,

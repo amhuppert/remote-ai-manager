@@ -158,8 +158,13 @@ const DB_FILE_NAME = "command-center.db";
  * Version 20 adds checkpoint capture ownership and settlement metadata.
  * Older writers cannot honor those obligations while an operation is building,
  * so migration `0053-add-checkpoint-handoff` fences version-19 binaries too.
+ *
+ * Version 21 removes required graph lane fields for continuous conversations.
+ * Older builds eagerly decode every active execution and cannot read the new
+ * lane shape; migration `0054-graph-workflow-continuous-conversations` fences
+ * those readers without rewriting saved workflows or executions.
  */
-export const KNOWN_SCHEMA_VERSION = 20;
+export const KNOWN_SCHEMA_VERSION = 21;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (

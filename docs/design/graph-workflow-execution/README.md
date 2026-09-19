@@ -4,7 +4,7 @@
 
 The visualization separates four concepts that are easy to conflate:
 
-- An **execution context** is an authored unit of ordered tasks, acceptance criteria, and execution policy. Its implementer and validator conversations are separate and may rotate.
+- An **execution context** is an authored unit of ordered tasks, acceptance criteria, and execution policy. Its implementer and validator conversations are separate, and each one persists for the whole execution.
 - A **lane** is a reusable Git history that can carry multiple contexts over time. A lane runs at most one context at a time; separate worktree lanes may execute in parallel.
 - A worktree lane owns one branch and one isolated checkout. At fan-out, one child reuses the parent lane while competing children fork from its committed head.
 - After a context's tasks, enabled validators run, then optional human approval, then Command Center commits the changes, adopts the agent-moved HEAD, or records a clean no-change completion.

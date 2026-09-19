@@ -28,7 +28,6 @@ function reviewer(overrides: Record<string, unknown> = {}) {
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
     agent: CLAUDE_AGENT,
-    continuity: { enabled: true },
     ...overrides,
   };
 }
@@ -171,7 +170,7 @@ describe("agentAssignmentSchema", () => {
 });
 
 describe("validatorAssignmentSchema", () => {
-  it("carries strategy and continuity independently of the backend", () => {
+  it("carries strategy independently of the backend", () => {
     const codexUnderConversation = validatorAssignmentSchema.parse(
       reviewer({ agent: CODEX_AGENT, strategy: "conversation" }),
     );
@@ -179,21 +178,10 @@ describe("validatorAssignmentSchema", () => {
     expect(codexUnderConversation.agent.backend).toBe("codex");
 
     const claudeUnderTask = validatorAssignmentSchema.parse(
-      reviewer({ strategy: "task", continuity: { enabled: false } }),
+      reviewer({ strategy: "task" }),
     );
     expect(claudeUnderTask.strategy).toBe("task");
     expect(claudeUnderTask.agent.backend).toBe("claude");
-    expect(claudeUnderTask.continuity).toEqual({ enabled: false });
-  });
-
-  it("defaults continuity to enabled when the author omits it", () => {
-    const parsed = validatorAssignmentSchema.parse({
-      id: "general",
-      profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "conversation",
-      agent: CLAUDE_AGENT,
-    });
-    expect(parsed.continuity).toEqual({ enabled: true });
   });
 
   it("refuses a strategy outside the two execution strategies", () => {
@@ -390,7 +378,6 @@ describe("validatorCohortSchema", () => {
     const legacyDisabled = validatorCohortSchema.safeParse({
       type: "codex",
       enabled: false,
-      continuity: { enabled: true },
       codex: { model: "gpt-5.4" },
     });
 

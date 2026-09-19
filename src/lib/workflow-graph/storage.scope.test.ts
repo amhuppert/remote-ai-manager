@@ -308,7 +308,6 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
                     parameters: { effort: "medium" },
                   },
                 },
-                continuity: { enabled: true },
               },
               {
                 id: "repo",
@@ -322,7 +321,6 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
                     parameters: { effort: "medium" },
                   },
                 },
-                continuity: { enabled: true },
               },
             ],
           },

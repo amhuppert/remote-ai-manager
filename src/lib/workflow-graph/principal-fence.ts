@@ -7,7 +7,7 @@
  * almost always, and a different one exactly when it matters: if E1 settles and
  * successor E2 takes the lease in the gap, the authorization that named E1's
  * origin (or E1's lane) is spent on E2, and an agent with no business on E2
- * mutates it. Lane rotation and origin deletion ride the same gap.
+ * mutates it. Lane removal and origin deletion ride the same gap.
  *
  * The fence closes it the way the loop fence closes its own: it rides an
  * AsyncLocalStorage, so it propagates from the route into everything the act

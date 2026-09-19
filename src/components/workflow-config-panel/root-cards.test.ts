@@ -127,7 +127,6 @@ describe("blockSummaryParts", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
           {
             id: "style",
@@ -141,7 +140,6 @@ describe("blockSummaryParts", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -356,10 +354,7 @@ describe("buildContextRootCards", () => {
     expect(
       (policy?.lines ?? []).map((line) => [line.key, textOf(line.parts)]),
     ).toEqual([
-      [
-        "iterations",
-        ["max", String(seededPolicy.maxIterations), "continuity auto"],
-      ],
+      ["iterations", ["max", String(seededPolicy.maxIterations)]],
       [
         "breaker",
         [
@@ -373,29 +368,6 @@ describe("buildContextRootCards", () => {
       ["plan repair", ["on", `${seededRepair.maxAttemptsPerContext}/ctx`]],
       ["mutability", ["task add", "blocked"]],
     ]);
-  });
-
-  it("reads a token-limited continuity and a switched-off plan repair", () => {
-    const cards = buildContextRootCards({
-      cascade: cascadeFor({
-        iterationPolicy: {
-          maxIterations: 8,
-          continuity: { enabled: true, contextLimitTokens: 150_000 },
-        },
-        planRepair: { enabled: false, maxAttemptsPerContext: 2 },
-        mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
-      }),
-      context: contextDefinition(),
-      ...CONTEXT_FACTS,
-    });
-
-    const policy = cards.find((card) => card.screenId === "policy");
-    const lines = Object.fromEntries(
-      (policy?.lines ?? []).map((line) => [line.key, textOf(line.parts)]),
-    );
-    expect(lines.iterations).toEqual(["max", "8", "continuity 150k"]);
-    expect(lines["plan repair"]).toEqual(["off"]);
-    expect(lines.mutability).toEqual(["task add", "allowed"]);
   });
 
   it("badges a card with the override count of exactly its own paths", () => {

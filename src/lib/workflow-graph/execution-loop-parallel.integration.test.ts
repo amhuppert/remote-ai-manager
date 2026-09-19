@@ -306,7 +306,7 @@ function createParallelDefinition(
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
-      iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 5 },
     })),
     tasks: contextIds.map((id) => ({
       id: `task-${id}`,
@@ -483,7 +483,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -632,7 +631,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -757,7 +755,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -851,7 +848,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -984,7 +980,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -1118,7 +1113,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -1250,7 +1244,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -1395,7 +1388,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -1506,7 +1498,6 @@ describe("execution loop — parallel integration", () => {
         }
         return settledConversationTurn({
           usage: {},
-          compacted: false,
         }) as never;
       },
       getConversation: (async () => null) as never,
@@ -1517,7 +1508,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -1703,7 +1693,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -1828,7 +1817,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -1988,7 +1976,7 @@ describe("execution loop — parallel integration", () => {
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
       })),
       tasks: contextIds.map((id) => ({
         id: `task-${id}`,
@@ -2014,7 +2002,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -2183,7 +2170,7 @@ describe("execution loop — parallel integration", () => {
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
       })),
       tasks: contextIds.map((id) => ({
         id: `task-${id}`,
@@ -2209,7 +2196,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -2364,7 +2350,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -2538,7 +2523,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -2725,7 +2709,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -2865,7 +2848,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -2996,7 +2978,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -3135,7 +3116,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),
@@ -3349,7 +3329,6 @@ describe("execution loop — parallel integration", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       stopExecutionLaneDevServers: async () => {},
 
       executionContract: createTestGraphExecutionContract(),

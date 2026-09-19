@@ -103,7 +103,6 @@ const validatorConfig: ValidatorAssignment = {
     backend: "claude",
     modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
   },
-  continuity: { enabled: true },
 };
 
 // A real directory: composing the lane write envelope canonicalizes the

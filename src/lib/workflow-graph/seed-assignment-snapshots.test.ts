@@ -72,7 +72,6 @@ function validator(
     strategy: "conversation" as const,
     authority,
     agent: CLAUDE_AGENT,
-    continuity: { enabled: true },
   };
 }
 
@@ -109,7 +108,7 @@ function cascade(
           allowAgentContextAdd: false,
         },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         charter: makeTestCharter(),
       },

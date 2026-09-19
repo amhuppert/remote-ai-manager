@@ -147,7 +147,6 @@ export const workflowBoundaryResponseSchema = z.object({
 export const completeResponseSchema = z.object({
   ok: z.literal(true),
   remainingTaskCount: z.number(),
-  stopInstruction: z.string().optional(),
   reminders: z.array(z.string()).optional(),
 });
 export const collabResponseSchema = z.object({

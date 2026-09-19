@@ -170,7 +170,6 @@ const validatorConfig: ValidatorAssignment = {
     backend: "claude",
     modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
   },
-  continuity: { enabled: true },
 };
 
 // The runner takes ONE assignment, so these fixtures pull it out of the
@@ -220,7 +219,7 @@ const context: GraphWorkflowResolvedContext = {
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
   circuitBreaker: {},
-  iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+  iterationPolicy: { maxIterations: 5 },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
 };
 
@@ -1446,7 +1445,6 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
       backend: "claude",
       modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
     },
-    continuity: { enabled: true },
   };
   const codexValidator: ValidatorAssignment = {
     id: "general",
@@ -1460,7 +1458,6 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
         parameters: { reasoning: "medium", fast: "false" },
       },
     },
-    continuity: { enabled: true },
   };
 
   it("is true only for a claude validator when the toggle is enabled", () => {
@@ -2075,7 +2072,6 @@ describe("createValidatorRunner", () => {
           parameters: { reasoning: "high", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
 
     await runner.runContextValidator({
@@ -2187,7 +2183,6 @@ describe("createValidatorRunner", () => {
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "conversation",
         authority: "blocking",
-        continuity: { enabled: true },
         // The per-backend union only knows the registered production backends,
         // so a test-only backend needs the cast; the rest of the assignment is
         // typed normally.
@@ -2929,7 +2924,6 @@ describe("createValidatorRunner", () => {
           parameters: { reasoning: "medium", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -2977,7 +2971,6 @@ describe("createValidatorRunner", () => {
           parameters: { reasoning: "medium", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -3039,7 +3032,6 @@ describe("createValidatorRunner", () => {
           parameters: { reasoning: "high", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -3154,7 +3146,11 @@ describe("context validator continuity runtime integration", () => {
       id: `conv-val-${++convCounter}`,
     }));
     const getConversation = vi.fn(
-      async (_p: string, _s: string, id: string) => ({ id }),
+      async (_p: string, _s: string, id: string) => ({
+        id,
+        promptCount: 0,
+        backendRef: null,
+      }),
     );
 
     const continuityService = makeLaneContinuityService(repo, {
@@ -3247,7 +3243,7 @@ describe("context validator continuity runtime integration", () => {
     // Active cancellation (pause/abort/halt/resume) collects abortable
     // conversations from execution.laneStates. A lane resolved only in local
     // state until after the turn is invisible for the whole first (and every
-    // rotated) validator run.
+    // resumed) validator run.
     const execution = buildExecutionWithContextValidation();
     const contextDef = execution.workingDefinition.executionContexts.find(
       (c) => c.id === "context-plan",
@@ -3259,6 +3255,8 @@ describe("context validator continuity runtime integration", () => {
       createConversation,
       getConversation: vi.fn(async (_p: string, _s: string, id: string) => ({
         id,
+        promptCount: 0,
+        backendRef: null,
       })),
     });
 
@@ -3318,7 +3316,6 @@ describe("context validator continuity runtime integration", () => {
           parameters: { reasoning: "medium", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -3370,73 +3367,6 @@ describe("context validator continuity runtime integration", () => {
     });
   });
 
-  it("records limitEvaluation=metrics_unavailable for a Claude validator turn when a limit is configured", async () => {
-    const limitedClaudeValidator: ValidatorAssignment = {
-      id: "general",
-      profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "conversation",
-      authority: "blocking",
-      agent: {
-        backend: "claude",
-        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
-      },
-      continuity: { enabled: true, contextLimitTokens: 100_000 },
-    };
-    const execution = buildExecutionWithContextValidation(
-      limitedClaudeValidator,
-    );
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    )!;
-    const repo = createInMemoryRepo(execution);
-
-    let convCounter = 0;
-    const createConversation = vi.fn(async () => ({
-      id: `conv-val-${++convCounter}`,
-    }));
-    const getConversation = vi.fn(
-      async (_p: string, _s: string, id: string) => ({ id }),
-    );
-
-    const continuityService = makeLaneContinuityService(repo, {
-      createConversation,
-      getConversation,
-    });
-
-    const executeWorkflowTaskRun = vi.fn(async () =>
-      textTaskRun(passResponseJson, {
-        backendRef: { backend: "claude", ref: "sdk-session-1" },
-      }),
-    );
-
-    const runner = createValidatorRunner({
-      executionContract: createTestGraphExecutionContract(),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      continuityService,
-      executionRepository: repo,
-      executeWorkflowTaskRun,
-      getProjectDisplayName: stubProjectDisplayName,
-    });
-
-    const result = await runner.runContextValidator({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      execution,
-      context: contextDef,
-      validator: seedAssignment(limitedClaudeValidator),
-    });
-
-    // The Claude validator turn is recorded with contextTokens: null, so with a
-    // configured limit the honest label is metrics_unavailable (never a
-    // fabricated "supported").
-    expect(result.metadata.limitEvaluation).toBe("metrics_unavailable");
-    expect(
-      repo.read().laneStates["context-plan"]?.[VALIDATOR_LANE_KEY]
-        ?.limitEvaluation,
-    ).toBe("metrics_unavailable");
-  });
-
   it("resumes the Codex context-validator thread after a schema round-trip", async () => {
     const codexValidator: ValidatorAssignment = {
       id: "general",
@@ -3450,7 +3380,6 @@ describe("context validator continuity runtime integration", () => {
           parameters: { reasoning: "medium", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -3513,7 +3442,7 @@ describe("context validator continuity runtime integration", () => {
       validator: seedAssignment(codexValidator),
     });
 
-    expect(threadAdapter.resumeOrRecover).toHaveBeenCalledWith(
+    expect(threadAdapter.adapter.validate).toHaveBeenCalledWith(
       { backend: "codex", ref: "thread-real-1" },
       expect.objectContaining({
         projectPath: "/repo",
@@ -3542,7 +3471,6 @@ describe("context validator continuity runtime integration", () => {
           parameters: { reasoning: "medium", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -3623,7 +3551,6 @@ describe("context validator continuity runtime integration", () => {
           parameters: { reasoning: "medium", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -3723,72 +3650,6 @@ describe("context validator continuity runtime integration", () => {
     }
   });
 
-  it("marks the Codex lane for rotation when the adapter clears continuation after a failed turn", async () => {
-    const codexValidator: ValidatorAssignment = {
-      id: "general",
-      profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "task",
-      authority: "blocking",
-      agent: {
-        backend: "codex",
-        modelSelection: {
-          modelId: "gpt-5.4",
-          parameters: { reasoning: "medium", fast: "false" },
-        },
-      },
-      continuity: { enabled: true },
-    };
-    const execution = buildExecutionWithContextValidation(codexValidator);
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    )!;
-    const repo = createInMemoryRepo(execution);
-
-    const continuityService = makeLaneContinuityService(repo, {
-      continuityAdapter: () =>
-        makeThreadAdapter({
-          start: vi.fn(async () => ({
-            backend: "codex" as const,
-            ref: "thread-placeholder",
-          })),
-        }).adapter,
-    });
-
-    const executeWorkflowTaskRun = vi.fn(async () =>
-      errorTaskRun("Codex Exec exited with code 1: schema invalid", {
-        continuationDisposition: "clear",
-      }),
-    );
-
-    const runner = createValidatorRunner({
-      executionContract: createTestGraphExecutionContract(),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      continuityService,
-      executionRepository: repo,
-      executeWorkflowTaskRun,
-      getProjectDisplayName: stubProjectDisplayName,
-    });
-
-    const result = await runner.runContextValidator({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      execution,
-      context: contextDef,
-      validator: seedAssignment(codexValidator),
-    });
-
-    expect(result.result.kind).toBe("infra_error");
-    if (result.result.kind === "infra_error") {
-      expect(result.result.reason).toBe("exception");
-      expect(result.result.engine).toBe("codex");
-    }
-    expect(
-      repo.read().laneStates["context-plan"]?.[VALIDATOR_LANE_KEY]?.metrics
-        .rotateBeforeNextTurn,
-    ).toBe(true);
-  });
-
   it("retains a viable Codex validator thread when a failed turn carries the adapter retain verdict", async () => {
     const codexValidator: ValidatorAssignment = {
       id: "general",
@@ -3802,7 +3663,6 @@ describe("context validator continuity runtime integration", () => {
           parameters: { reasoning: "medium", fast: "false" },
         },
       },
-      continuity: { enabled: true },
     };
     const execution = buildExecutionWithContextValidation(codexValidator);
     const contextDef = execution.workingDefinition.executionContexts.find(
@@ -3848,7 +3708,7 @@ describe("context validator continuity runtime integration", () => {
     ).toMatchObject({
       backend: "codex",
       sessionRef: { backend: "codex", ref: "thread-still-viable" },
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
     });
   });
 });

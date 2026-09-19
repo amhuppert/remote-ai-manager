@@ -53,7 +53,7 @@ function laneRow(workflowId: string, laneId: string, backend: string) {
     ref: `${backend}-ref-${workflowId}`,
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
-    metrics: { rotateBeforeNextTurn: false },
+    metrics: {},
     lastUsedAt: "2026-08-01T00:00:00.000Z",
   };
 }

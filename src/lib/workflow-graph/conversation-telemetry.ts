@@ -9,9 +9,7 @@ const logger = createLogger("workflow-conversation-telemetry");
 
 /**
  * Occupancy-vs-outcome telemetry for one lane conversation, derived from its
- * transcript. Emitted per iteration so dose-response evidence for the
- * context-limit feature (does high occupancy degrade quality / raise cost?)
- * accumulates across executions without an A/B setup.
+ * transcript and emitted per iteration to report usage, cost, and outcomes.
  */
 export interface ConversationTelemetrySummary {
   /**

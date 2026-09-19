@@ -82,7 +82,6 @@ export function graphWorkflowLaunchExample(): WorkflowDefinitionMutation {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 3,
-            continuity: { enabled: true },
           },
         },
       ],

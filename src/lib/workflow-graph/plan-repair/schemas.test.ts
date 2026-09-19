@@ -144,7 +144,7 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
           type: "update-context",
           contextId: "ctx-1",
           acceptanceCriteria: "Achievable criteria",
-          iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 12 },
           circuitBreaker: { consecutiveFailureThreshold: 4 },
         },
         {
@@ -279,7 +279,6 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
                     parameters: { effort: "medium" },
                   },
                 },
-                continuity: { enabled: true },
               },
             ],
           },

@@ -65,7 +65,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     allowAgentContextAdd: false,
   },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
-  iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  iterationPolicy: { maxIterations: 20 },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: { value: false, source: "global" },
@@ -113,7 +113,7 @@ const LIVE_EDIT_DEPS: LiveEditDeps = {
  * Mirrors the real composer's one property this file depends on: the delivered
  * block covers the profile AND the assignment focus, so refocusing a seat moves
  * `resolvedInstructionHash`. A fixture that ignored focus would hide the very
- * rotation these tests are about.
+ * instruction changes these tests exercise.
  */
 const composedHashes = new Map<string, string>();
 function composedHash(assignment: {
@@ -274,102 +274,6 @@ describe("assignment edits on a live execution (R11)", () => {
     ).toEqual(["alpha", "gamma"]);
   });
 
-  it("moves the edited assignment's fingerprint, which is what rotates its lane", async () => {
-    const execution = createCohortExecution({ assignmentIds: ["alpha"] });
-    execution.status = "paused";
-    const harness = createHarness({
-      execution,
-      runContextValidator: async () => {
-        throw new Error("no validator should run in this test");
-      },
-    });
-    const before = harness.repository
-      .read()
-      .workingDefinition.executionContexts.find(
-        (entry) => entry.id === "context-plan",
-      )!.contextValidator.assignments[0]!;
-
-    const refocus = await applyEdit(harness, harness.repository.read(), [
-      {
-        type: "update-context",
-        contextId: "context-plan",
-        contextValidator: {
-          enabled: true,
-          assignments: [
-            makeValidatorAssignment({
-              id: "alpha",
-              focus: "Concurrency and data races",
-            }),
-          ],
-        },
-      },
-    ]);
-    expect(refocus.ok).toBe(true);
-
-    const after = harness.repository
-      .read()
-      .workingDefinition.executionContexts.find(
-        (entry) => entry.id === "context-plan",
-      )!.contextValidator.assignments[0]!;
-
-    // Same seat id, different delivered bytes: `assignment_changed` rotation.
-    expect(after.id).toBe("alpha");
-    expect(assignmentFingerprint(after)).not.toBe(
-      assignmentFingerprint(before),
-    );
-  });
-
-  it("moves the fingerprint when the edit only flips the seat's authority", async () => {
-    // Stated by the fixture rather than inherited: the promotion under test is
-    // advisory -> blocking, so the starting authority is part of the case.
-    const execution = createCohortExecution({
-      assignments: [
-        makeSeededValidatorAssignment({ id: "alpha", authority: "advisory" }),
-      ],
-    });
-    execution.status = "paused";
-    const harness = createHarness({
-      execution,
-      runContextValidator: async () => {
-        throw new Error("no validator should run in this test");
-      },
-    });
-    const before = harness.repository
-      .read()
-      .workingDefinition.executionContexts.find(
-        (entry) => entry.id === "context-plan",
-      )!.contextValidator.assignments[0]!;
-    expect(before.authority).toBe("advisory");
-
-    const promoted = await applyEdit(harness, harness.repository.read(), [
-      {
-        type: "update-context",
-        contextId: "context-plan",
-        contextValidator: {
-          enabled: true,
-          assignments: [
-            makeValidatorAssignment({ id: "alpha", authority: "blocking" }),
-          ],
-        },
-      },
-    ]);
-    expect(promoted.ok).toBe(true);
-
-    const after = harness.repository
-      .read()
-      .workingDefinition.executionContexts.find(
-        (entry) => entry.id === "context-plan",
-      )!.contextValidator.assignments[0]!;
-
-    // The seat now decides whether the context can pass, and it does so under a
-    // different output schema: the lane that ran as an advisor cannot be resumed
-    // into that, so the fingerprint has to move.
-    expect(after.authority).toBe("blocking");
-    expect(assignmentFingerprint(after)).not.toBe(
-      assignmentFingerprint(before),
-    );
-  });
-
   it("refuses to re-enable a migrated empty cohort unless the same edit adds an assignment", async () => {
     const execution = createCohortExecution({ assignmentIds: ["alpha"] });
     execution.status = "paused";
@@ -493,8 +397,7 @@ describe("a plan-repair narrowing reaches the cohort (R10.1)", () => {
       authority: "advisory",
       focus: "Report threat-model concerns as advisories.",
     });
-    // The demoted seat's delivered bytes were recomposed, so its lane rotates
-    // rather than resuming as the blocking reviewer it no longer is.
+    // Before its first turn, the seat can receive a different review mandate.
     expect(assignmentFingerprint(after.assignments[0]!)).not.toBe(
       assignmentFingerprint(before[0]!),
     );

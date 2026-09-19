@@ -22,7 +22,6 @@ import type {
   ContextRuntimeFacts,
   ContextStructuralEditor,
 } from "@/components/workflow-config-panel/structural-editor";
-import { LaneRotationNotice } from "@/components/workflow-config/LaneRotationNotice";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import { resolveUpstreamInputs } from "@/lib/workflow-graph/context-outputs";
@@ -447,6 +446,9 @@ export default function LiveContextConfigPanel({
 
   const cascadeEditor: ConfigCascadeEditor = {
     host: "execution",
+    startedLaneKeys: new Set(
+      Object.keys(execution.laneStates[contextId] ?? {}),
+    ),
     affordance: verdict.affordance,
     cascade: createLiveConfigCascade({
       context: draft.context,
@@ -487,19 +489,6 @@ export default function LiveContextConfigPanel({
         data-scope="config"
         data-affordance={verdict.affordance}
       >
-        {/* A live seat already holds a lane, so the rotation an authority or
-            instructions edit forces has to be visible while the edit can still
-            be reconsidered — not discovered afterwards in the event log (R12.4).
-            It sits above the panel because it is a consequence of the pending
-            DRAFT, which only this host holds both sides of. */}
-        {draft.context.contextValidator && seedBase.context.contextValidator ? (
-          <div className="flex-shrink-0 px-lg pt-md">
-            <LaneRotationNotice
-              base={seedBase.context.contextValidator}
-              draft={draft.context.contextValidator}
-            />
-          </div>
-        ) : null}
         <ConfigPanel
           key={focusSeq}
           host="execution"

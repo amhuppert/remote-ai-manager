@@ -23,7 +23,7 @@ This core file covers the ordinary planning path end to end: decompose the objec
 - A graph workflow is a DAG of execution contexts.
 - Each execution context runs as an independent agent session.
 - Tasks inside one context run sequentially, in array order, inside that same agent session.
-- Each task should be achievable in roughly 10-30 minutes of focused work. The engine honors token-limit rotation at task boundaries, so task grain is the context-budget control: a multi-hour task can run past the limit until it completes.
+- Each task should be achievable in roughly 10-30 minutes of focused work.
 - Dependency edges make one context wait for another context to complete. Ordinary edges deliver each direct predecessor's validated captured output under **Inputs from upstream** as verbatim JSON with schema fields; predecessors without captured output are omitted, and skipped predecessors are named **Skipped — branch not taken**, with no payload. Prompt injection has no 64 KiB substitution; the `cctl workflow result` envelope separately replaces each top-level value above 64 KiB UTF-8 with an addressed retrieval command. Keep captured output bounded at authoring time.
 - Every context declares where it runs and what it may write: a lane, a grade, and — for an owning context — its owned paths. Several contexts can share one lane. See [Placement Essentials](#placement-essentials).
 - Context IDs and task IDs should be stable, kebab-case, and content-specific, such as `runtime-apply-contracts` or `wire-route-handlers`.

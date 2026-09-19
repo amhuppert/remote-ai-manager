@@ -75,16 +75,11 @@ function maximalExecution(): GraphWorkflowExecution {
   const base = graphWorkflowExecutionSchema.parse(
     buildMaximalGraphWorkflowExecution(),
   );
-  // Alongside the "supported" implementer lane, carry TWO validator lanes for
-  // one context — a cohort of two assignments of the same profile. They pin the
-  // widened `laneStates` inner key (`context_validator:<assignmentId>`) and the
-  // per-lane assignment identity through the real SQLite/Zod round-trip; the
-  // first also carries "metrics_unavailable", the honest label for a turn with
-  // no occupancy metrics under a configured limit.
+  // Two assignments of one profile retain distinct lane identities through
+  // the real SQLite/Zod round-trip.
   const validatorLane = (
     assignmentId: string,
     conversationId: string,
-    limitEvaluation: GraphWorkflowAgentSessionState["limitEvaluation"],
   ): GraphWorkflowAgentSessionState => ({
     backend: "claude",
     refKind: "conversation",
@@ -94,8 +89,7 @@ function maximalExecution(): GraphWorkflowExecution {
     assignmentFingerprint: `sha256:${"b".repeat(64)}|conversation|true||claude|sonnet|medium`,
     workflowConversationId: conversationId,
     sessionRef: { backend: "claude", ref: conversationId },
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation,
+    metrics: {},
     lastUsedAt: "2026-01-02T02:30:00Z",
   });
   // The first specialist of the round additionally carries a plan defect: the
@@ -158,12 +152,10 @@ function maximalExecution(): GraphWorkflowExecution {
         [laneStateKey("context_validator", "general")]: validatorLane(
           "general",
           "conv-lane-2",
-          "metrics_unavailable",
         ),
         [laneStateKey("context_validator", "security-reviewer")]: validatorLane(
           "security-reviewer",
           "conv-lane-3",
-          "supported",
         ),
       },
     },

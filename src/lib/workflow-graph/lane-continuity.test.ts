@@ -9,11 +9,6 @@ import type { BackendContinuityAdapter } from "@/lib/agent-backends/continuity";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import type { LaneOutcome } from "@/lib/workflows/primitives/lane-service";
-import {
-  registerExecutionLogger,
-  unregisterExecutionLogger,
-  type ExecutionLogger,
-} from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
@@ -24,11 +19,8 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { graphLaneId } from "./graph-lane-store";
-import { assignmentFingerprint, laneStateKey } from "./lane-identity";
-import {
-  makeProfileSnapshot,
-  makeSeededValidatorAssignment,
-} from "./test-fixtures";
+import { laneStateKey } from "./lane-identity";
+import { makeProfileSnapshot } from "./test-fixtures";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -65,7 +57,7 @@ function makeDefinition(
         contextValidator: { enabled: false, assignments: [] },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
       } as never,
     ],
     tasks: [
@@ -216,7 +208,6 @@ function makeClaudeSessionState(
     contextId?: string;
     conversationId?: string;
     metrics?: Partial<GraphWorkflowAgentSessionState["metrics"]>;
-    limitEvaluation?: GraphWorkflowAgentSessionState["limitEvaluation"];
   } = {},
 ): GraphWorkflowAgentSessionState {
   const lane = options.lane ?? "implementer";
@@ -230,8 +221,7 @@ function makeClaudeSessionState(
     ...assignmentIdFor(lane),
     workflowConversationId: conversationId,
     sessionRef: { backend: "claude", ref: conversationId },
-    metrics: { rotateBeforeNextTurn: false, ...options.metrics },
-    limitEvaluation: options.limitEvaluation ?? "disabled",
+    metrics: { ...options.metrics },
     lastUsedAt: NOW,
   };
 }
@@ -242,11 +232,10 @@ function makeCodexSessionState(options: {
   workflowConversationId?: string;
   threadId?: string;
   metrics?: Partial<GraphWorkflowAgentSessionState["metrics"]>;
-  limitEvaluation?: GraphWorkflowAgentSessionState["limitEvaluation"];
 }): GraphWorkflowAgentSessionState {
   return {
     backend: "codex",
-    refKind: "backend",
+    refKind: options.lane === "implementer" ? "conversation" : "backend",
     lane: options.lane,
     contextId: options.contextId ?? "ctx-1",
     ...assignmentIdFor(options.lane),
@@ -258,10 +247,8 @@ function makeCodexSessionState(options: {
       : { sessionRef: { backend: "codex" as const, ref: options.threadId } }),
     metrics: {
       lastTurnUsage: null,
-      rotateBeforeNextTurn: false,
       ...options.metrics,
     },
-    limitEvaluation: options.limitEvaluation ?? "disabled",
     lastUsedAt: NOW,
   };
 }
@@ -395,480 +382,6 @@ describe("resolveImplementerCall", () => {
       result.execution.laneStates["ctx-1"]?.["implementer"]?.contextId,
     ).toBe("ctx-1");
   });
-
-  it("reuses existing lane when continuity enabled and same context, no rotation", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const existingLane = makeClaudeSessionState();
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(harness.deps.createConversation).not.toHaveBeenCalled();
-    expect(result.sessionAction).toBe("reuse");
-    expect(result.promptMode).toBe("follow_up");
-    expect(result.conversationId).toBe("conv-existing");
-  });
-
-  it("rebuilds the implementer lane when its assignment changed, and reuses it when the fingerprint holds", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-    const seededFingerprint = `sha256:${"a".repeat(64)}||true||claude|sonnet|medium`;
-    const execution = makeExecution({
-      laneStates: laneStatesByContext({
-        ...makeClaudeSessionState(),
-        assignmentFingerprint: seededFingerprint,
-      }),
-    });
-
-    const unchanged = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      assignmentFingerprint: seededFingerprint,
-    });
-    expect(unchanged.sessionAction).toBe("reuse");
-
-    // The implementer assignment was swapped (or refocused) under the running
-    // execution: the seeded conversation replayed the superseded profile block
-    // at creation, so resuming it would run bytes nobody chose.
-    const edited = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      assignmentFingerprint: `sha256:${"c".repeat(64)}||true||claude|sonnet|medium`,
-    });
-    expect(edited.sessionAction).toBe("create");
-    expect(edited.conversationId).not.toBe("conv-existing");
-    expect(
-      edited.execution.laneStates["ctx-1"]?.["implementer"]
-        ?.assignmentFingerprint,
-    ).toBe(`sha256:${"c".repeat(64)}||true||claude|sonnet|medium`);
-  });
-
-  it("creates fresh session when context changes", async () => {
-    const harness = makeHarness({
-      createConversation: vi.fn().mockResolvedValue({ id: "conv-ctx2" }),
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const existingLane = makeClaudeSessionState({
-      conversationId: "conv-old",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-2",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    expect(result.promptMode).toBe("iteration_seed");
-    expect(
-      result.execution.laneStates["ctx-2"]?.["implementer"]?.contextId,
-    ).toBe("ctx-2");
-  });
-
-  it("creates fresh session when continuity disabled", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition = makeDefinition();
-    definition.executionContexts[0]!.iterationPolicy = {
-      maxIterations: 5,
-      continuity: { enabled: false },
-    };
-
-    const existingLane = makeClaudeSessionState();
-
-    const execution = makeExecution({
-      workingDefinition:
-        definition as unknown as ResolvedWorkflowSemanticDefinition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    expect(result.promptMode).toBe("iteration_seed");
-  });
-
-  it("creates fresh session when rotateBeforeNextTurn is true", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const existingLane = makeClaudeSessionState({
-      conversationId: "conv-old",
-      metrics: {
-        contextTokens: 180000,
-        contextWindowMax: 200000,
-        rotateBeforeNextTurn: true,
-      },
-      limitEvaluation: "supported",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    expect(result.promptMode).toBe("iteration_seed");
-    const newLane = result.execution.laneStates["ctx-1"]?.["implementer"];
-    expect(newLane?.backend).toBe("claude");
-    expect(newLane?.metrics.rotateBeforeNextTurn).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// resolveImplementerCall — rotation handoff capture
-// ---------------------------------------------------------------------------
-
-describe("resolveImplementerCall rotation handoff", () => {
-  function makeRotatedLane(): GraphWorkflowAgentSessionState {
-    return makeClaudeSessionState({
-      conversationId: "conv-old",
-      metrics: {
-        contextTokens: 180000,
-        contextWindowMax: 200000,
-        rotateBeforeNextTurn: true,
-      },
-      limitEvaluation: "supported",
-    });
-  }
-
-  it("carries the retiring conversation's handoff note into the resolved call", async () => {
-    const loadRotationHandoff = vi
-      .fn()
-      .mockResolvedValue("Done task-1. Lesson: use explicit CC_SERVER_URL.");
-    const harness = makeHarness({ loadRotationHandoff });
-    const svc = createGraphLaneContinuity(harness.deps);
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeRotatedLane()),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(loadRotationHandoff).toHaveBeenCalledWith("conv-old");
-    expect(result.previousConversationHandoff).toEqual({
-      conversationId: "conv-old",
-      note: "Done task-1. Lesson: use explicit CC_SERVER_URL.",
-    });
-  });
-
-  it("resolves without a handoff when the loader dep is absent", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeRotatedLane()),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(result.previousConversationHandoff).toBeUndefined();
-    expect(result.sessionAction).toBe("create");
-  });
-
-  it("resolves without a handoff when the loader returns null or throws", async () => {
-    for (const loadRotationHandoff of [
-      vi.fn().mockResolvedValue(null),
-      vi.fn().mockRejectedValue(new Error("transcript unreadable")),
-    ]) {
-      const harness = makeHarness({ loadRotationHandoff });
-      const svc = createGraphLaneContinuity(harness.deps);
-      const execution = makeExecution({
-        laneStates: laneStatesByContext(makeRotatedLane()),
-      });
-
-      const result = await svc.resolveImplementerCall({
-        execution,
-        projectPath: "/proj",
-        sessionName: "sess",
-        contextId: "ctx-1",
-      });
-
-      expect(result.previousConversationHandoff).toBeUndefined();
-      expect(result.sessionAction).toBe("create");
-    }
-  });
-
-  it("does not load a handoff for a first lane or a lane inherited from another context", async () => {
-    const loadRotationHandoff = vi.fn().mockResolvedValue("stale note");
-
-    // No prior lane at all.
-    let svc = createGraphLaneContinuity(
-      makeHarness({ loadRotationHandoff }).deps,
-    );
-    let result = await svc.resolveImplementerCall({
-      execution: makeExecution(),
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-    expect(result.previousConversationHandoff).toBeUndefined();
-
-    // Lane belonged to a different context — its handoff is not ours.
-    svc = createGraphLaneContinuity(makeHarness({ loadRotationHandoff }).deps);
-    result = await svc.resolveImplementerCall({
-      execution: makeExecution({
-        laneStates: laneStatesByContext({
-          ...makeRotatedLane(),
-          contextId: "ctx-other",
-          metrics: {
-            ...makeRotatedLane().metrics,
-            rotateBeforeNextTurn: false,
-          },
-        }),
-      }),
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-    expect(result.previousConversationHandoff).toBeUndefined();
-
-    expect(loadRotationHandoff).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Lane retirement on rotation
-// ---------------------------------------------------------------------------
-
-describe("lane retirement on rotation", () => {
-  function makeRotatedClaudeLane(): GraphWorkflowAgentSessionState {
-    return makeClaudeSessionState({
-      conversationId: "conv-old",
-      metrics: {
-        contextTokens: 180000,
-        contextWindowMax: 200000,
-        rotateBeforeNextTurn: true,
-      },
-      limitEvaluation: "supported",
-    });
-  }
-
-  it("retires the replaced claude implementer conversation on a same-context rotation", async () => {
-    const retireLaneConversation = vi.fn();
-    const createConversation = vi.fn().mockResolvedValue({ id: "conv-new" });
-    const harness = makeHarness({ retireLaneConversation, createConversation });
-    const svc = createGraphLaneContinuity(harness.deps);
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeRotatedClaudeLane()),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(result.sessionAction).toBe("create");
-    expect(retireLaneConversation).toHaveBeenCalledExactlyOnceWith({
-      projectPath: "/proj",
-      sessionName: "sess",
-      conversationId: "conv-old",
-    });
-    // The retiring conversation is stopped only after its replacement exists,
-    // so a failed lane creation never strands the context without any lane.
-    const retireOrder =
-      retireLaneConversation.mock.invocationCallOrder[0] ?? Infinity;
-    const createOrder = createConversation.mock.invocationCallOrder[0] ?? 0;
-    expect(retireOrder).toBeGreaterThan(createOrder);
-  });
-
-  it("retires after the rotation handoff has been read from the retiring transcript", async () => {
-    const calls: string[] = [];
-    const harness = makeHarness({
-      loadRotationHandoff: vi.fn().mockImplementation(async () => {
-        calls.push("handoff");
-        return "note";
-      }),
-      retireLaneConversation: vi.fn().mockImplementation(() => {
-        calls.push("retire");
-      }),
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeRotatedClaudeLane()),
-    });
-
-    await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(calls).toEqual(["handoff", "retire"]);
-  });
-
-  it("retires the replaced conversation on a same-context continuity-disabled rotation", async () => {
-    const retireLaneConversation = vi.fn();
-    const harness = makeHarness({ retireLaneConversation });
-    const svc = createGraphLaneContinuity(harness.deps);
-    const definition = makeDefinition();
-    (
-      definition.executionContexts[0] as unknown as {
-        iterationPolicy: { continuity: { enabled: boolean } };
-      }
-    ).iterationPolicy.continuity.enabled = false;
-    const execution = makeExecution({
-      workingDefinition:
-        definition as unknown as ResolvedWorkflowSemanticDefinition,
-      laneStates: laneStatesByContext({
-        ...makeRotatedClaudeLane(),
-        metrics: {
-          ...makeRotatedClaudeLane().metrics,
-          rotateBeforeNextTurn: false,
-        },
-      }),
-    });
-
-    await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(retireLaneConversation).toHaveBeenCalledExactlyOnceWith({
-      projectPath: "/proj",
-      sessionName: "sess",
-      conversationId: "conv-old",
-    });
-  });
-
-  it("does not retire when there is no prior lane or the retiring lane is codex", async () => {
-    const retireLaneConversation = vi.fn();
-
-    // No prior lane.
-    let svc = createGraphLaneContinuity(
-      makeHarness({ retireLaneConversation }).deps,
-    );
-    await svc.resolveImplementerCall({
-      execution: makeExecution(),
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    // Codex retiring lane — no live conversation actor to stop.
-    svc = createGraphLaneContinuity(
-      makeHarness({ retireLaneConversation }).deps,
-    );
-    await svc.resolveImplementerCall({
-      execution: makeExecution({
-        laneStates: laneStatesByContext(
-          makeCodexSessionState({
-            lane: "implementer",
-            workflowConversationId: "conv-codex-old",
-            metrics: { rotateBeforeNextTurn: true },
-          }),
-        ),
-      }),
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      backend: "codex",
-    });
-
-    expect(retireLaneConversation).not.toHaveBeenCalled();
-  });
-
-  it("still resolves the rotation when the retire dep throws", async () => {
-    const harness = makeHarness({
-      retireLaneConversation: vi.fn().mockImplementation(() => {
-        throw new Error("actor registry unavailable");
-      }),
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeRotatedClaudeLane()),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(result.sessionAction).toBe("create");
-    expect(result.conversationId).toBe("conv-new");
-  });
-
-  it("retires the replaced claude validator conversation on a same-context rotation", async () => {
-    const retireLaneConversation = vi.fn();
-    const harness = makeHarness({ retireLaneConversation });
-    const svc = createGraphLaneContinuity(harness.deps);
-    const execution = makeExecution({
-      laneStates: laneStatesByContext({
-        ...makeRotatedClaudeLane(),
-        lane: "context_validator",
-        assignmentId: DEFAULT_ASSIGNMENT_ID,
-        workflowConversationId: "conv-validator-old",
-        sessionRef: { backend: "claude", ref: "conv-validator-old" },
-      }),
-    });
-
-    await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "claude",
-      strategy: "conversation",
-    });
-
-    expect(retireLaneConversation).toHaveBeenCalledExactlyOnceWith({
-      projectPath: "/proj",
-      sessionName: "sess",
-      conversationId: "conv-validator-old",
-    });
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -910,7 +423,7 @@ describe("resolveImplementerCall (codex)", () => {
     expect(lane?.workflowConversationId).toBe("conv-cc-new");
   });
 
-  it("reuses the CC conversation without touching the thread adapter when continuity enabled", async () => {
+  it("reuses the CC conversation without touching the thread adapter", async () => {
     const harness = makeHarness({
       getConversation: vi.fn().mockResolvedValue({ id: "conv-cc-existing" }),
     });
@@ -943,35 +456,6 @@ describe("resolveImplementerCall (codex)", () => {
     expect(result.sessionAction).toBe("reuse");
     expect(result.promptMode).toBe("follow_up");
     expect(result.conversationId).toBe("conv-cc-existing");
-  });
-
-  it("rotates when engine changes from claude to codex", async () => {
-    const harness = makeHarness({
-      createConversation: vi.fn().mockResolvedValue({ id: "conv-cc-codex" }),
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const claudeLane = makeClaudeSessionState({
-      conversationId: "conv-claude-old",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(claudeLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      backend: "codex",
-    });
-
-    expect(result.sessionAction).toBe("create");
-    expect(result.promptMode).toBe("iteration_seed");
-    expect(result.execution.laneStates["ctx-1"]?.["implementer"]?.backend).toBe(
-      "codex",
-    );
   });
 
   it("resumes codex implementer after execution state is deserialized through the schema (restart recovery)", async () => {
@@ -1011,36 +495,6 @@ describe("resolveImplementerCall (codex)", () => {
     expect(result.promptMode).toBe("follow_up");
     expect(result.conversationId).toBe("conv-cc-persisted");
   });
-
-  it("falls back to fresh when CC conversation is gone but thread still exists", async () => {
-    const harness = makeHarness({
-      getConversation: vi.fn().mockResolvedValue(null),
-      createConversation: vi.fn().mockResolvedValue({ id: "conv-cc-recovery" }),
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const codexLane = makeCodexSessionState({
-      lane: "implementer",
-      workflowConversationId: "conv-cc-gone",
-      threadId: "thread-still-alive",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(codexLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      backend: "codex",
-    });
-
-    expect(result.sessionAction).toBe("create");
-    expect(result.promptMode).toBe("iteration_seed");
-    expect(result.conversationId).toBe("conv-cc-recovery");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1079,85 +533,7 @@ describe("resolveValidatorCall", () => {
     ).toBe("context_validator");
   });
 
-  it("rebuilds the lane when the assignment behind it changed, and reuses it when the fingerprint holds", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-    const seededFingerprint =
-      "sha256:aaa|conversation|true||claude|sonnet|high";
-    const existingLane = {
-      ...makeClaudeSessionState({
-        lane: "context_validator",
-        conversationId: "conv-val",
-      }),
-      assignmentFingerprint: seededFingerprint,
-    };
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    // Same assignment: the live conversation is resumed.
-    const unchanged = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: DEFAULT_ASSIGNMENT_ID,
-      assignmentFingerprint: seededFingerprint,
-      backend: "claude",
-      strategy: "conversation",
-    });
-    expect(unchanged.sessionAction).toBe("reuse");
-
-    // The assignment was edited under the running execution: replaying the
-    // superseded instructions on a resumed handle would be wrong, so the lane
-    // is rebuilt.
-    const edited = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: DEFAULT_ASSIGNMENT_ID,
-      assignmentFingerprint: "sha256:bbb|conversation|true||claude|sonnet|high",
-      backend: "claude",
-      strategy: "conversation",
-    });
-    expect(edited.sessionAction).toBe("create");
-    expect(
-      edited.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]
-        ?.assignmentFingerprint,
-    ).toBe("sha256:bbb|conversation|true||claude|sonnet|high");
-  });
-
-  it("leaves a lane written before fingerprints existed alone rather than rotating on an unknown", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(
-        makeClaudeSessionState({
-          lane: "context_validator",
-          conversationId: "conv-val",
-        }),
-      ),
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: DEFAULT_ASSIGNMENT_ID,
-      assignmentFingerprint: "sha256:ccc|conversation|true||claude|sonnet|high",
-      backend: "claude",
-      strategy: "conversation",
-    });
-
-    expect(result.sessionAction).toBe("reuse");
-  });
-
-  it("reuses claude validator session when continuity enabled and same context", async () => {
+  it("reuses claude validator session within the same context", async () => {
     const harness = makeHarness();
     const svc = createGraphLaneContinuity(harness.deps);
 
@@ -1216,7 +592,7 @@ describe("resolveValidatorCall", () => {
     }
   });
 
-  it("resumes codex thread through the continuity adapter when continuity enabled and same context", async () => {
+  it("resumes codex thread through the continuity adapter within the same context", async () => {
     const harness = makeHarness();
     const svc = createGraphLaneContinuity(harness.deps);
 
@@ -1240,7 +616,7 @@ describe("resolveValidatorCall", () => {
       strategy: "task",
     });
 
-    expect(harness.threadAdapter.resumeOrRecover).toHaveBeenCalledWith(
+    expect(harness.threadAdapter.adapter.validate).toHaveBeenCalledWith(
       { backend: "codex", ref: "thread-existing" },
       { projectPath: "/proj", sessionName: "sess" },
     );
@@ -1249,58 +625,6 @@ describe("resolveValidatorCall", () => {
     if (result.strategy === "task") {
       expect(result.backendRef.ref).toBe("thread-existing");
     }
-  });
-
-  it("creates fresh session when context_validator continuity is disabled", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition =
-      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
-    definition.executionContexts[0]!.contextValidator = {
-      enabled: true,
-      assignments: [
-        {
-          id: "general",
-          profile: { tier: "builtin", id: "general-reviewer" },
-          profileSnapshot: makeProfileSnapshot(),
-          strategy: "conversation",
-          authority: "blocking",
-          agent: {
-            backend: "claude",
-            modelSelection: {
-              modelId: "sonnet",
-              parameters: { effort: "medium" },
-            },
-          },
-          continuity: { enabled: false },
-        },
-      ],
-    };
-
-    const existingLane = makeClaudeSessionState({
-      lane: "context_validator",
-      conversationId: "conv-existing-val",
-    });
-
-    const execution = makeExecution({
-      workingDefinition: definition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "claude",
-      strategy: "conversation",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
   });
 
   it("keeps implementer and validator lanes independent", async () => {
@@ -1345,272 +669,6 @@ describe("resolveValidatorCall", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Resume conversation pin
-// ---------------------------------------------------------------------------
-
-describe("resolveImplementerCall — resume conversation pin", () => {
-  it("reuses the pinned lane conversation even when continuity is disabled", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition = makeDefinition();
-    definition.executionContexts[0]!.iterationPolicy = {
-      maxIterations: 5,
-      continuity: { enabled: false },
-    };
-
-    const existingLane = makeClaudeSessionState({
-      conversationId: "conv-pinned",
-    });
-
-    const execution = makeExecution({
-      workingDefinition:
-        definition as unknown as ResolvedWorkflowSemanticDefinition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      pinnedConversationId: "conv-pinned",
-    });
-
-    expect(harness.deps.createConversation).not.toHaveBeenCalled();
-    expect(result.sessionAction).toBe("reuse");
-    expect(result.promptMode).toBe("follow_up");
-    expect(result.conversationId).toBe("conv-pinned");
-  });
-
-  it("lets rotateBeforeNextTurn outrank the pin and rotates to a fresh conversation", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition = makeDefinition();
-    definition.executionContexts[0]!.iterationPolicy = {
-      maxIterations: 5,
-      continuity: { enabled: false },
-    };
-
-    const existingLane = makeClaudeSessionState({
-      conversationId: "conv-pinned",
-      metrics: {
-        contextTokens: 180000,
-        contextWindowMax: 200000,
-        rotateBeforeNextTurn: true,
-      },
-      limitEvaluation: "supported",
-    });
-
-    const execution = makeExecution({
-      workingDefinition:
-        definition as unknown as ResolvedWorkflowSemanticDefinition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      pinnedConversationId: "conv-pinned",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    expect(result.promptMode).toBe("iteration_seed");
-    expect(result.conversationId).toBe("conv-new");
-  });
-
-  it("ignores a pin that does not match the lane conversation when continuity is disabled", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition = makeDefinition();
-    definition.executionContexts[0]!.iterationPolicy = {
-      maxIterations: 5,
-      continuity: { enabled: false },
-    };
-
-    const existingLane = makeClaudeSessionState({
-      conversationId: "conv-other",
-    });
-
-    const execution = makeExecution({
-      workingDefinition:
-        definition as unknown as ResolvedWorkflowSemanticDefinition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      pinnedConversationId: "conv-pinned",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-  });
-
-  it("pins a Codex implementer lane by its workflow conversation id", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition = makeDefinition();
-    definition.executionContexts[0]!.iterationPolicy = {
-      maxIterations: 5,
-      continuity: { enabled: false },
-    };
-
-    const existingLane = makeCodexSessionState({
-      lane: "implementer",
-      workflowConversationId: "conv-pinned",
-      threadId: "thread-existing",
-    });
-
-    const execution = makeExecution({
-      workingDefinition:
-        definition as unknown as ResolvedWorkflowSemanticDefinition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      backend: "codex",
-      pinnedConversationId: "conv-pinned",
-    });
-
-    expect(harness.deps.createConversation).not.toHaveBeenCalled();
-    expect(result.sessionAction).toBe("reuse");
-    expect(result.conversationId).toBe("conv-pinned");
-  });
-});
-
-describe("resolveValidatorCall — resume conversation pin", () => {
-  it("reuses the pinned claude validator conversation when continuity is disabled", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition =
-      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
-    definition.executionContexts[0]!.contextValidator = {
-      enabled: true,
-      assignments: [
-        {
-          id: "general",
-          profile: { tier: "builtin", id: "general-reviewer" },
-          profileSnapshot: makeProfileSnapshot(),
-          strategy: "conversation",
-          authority: "blocking",
-          agent: {
-            backend: "claude",
-            modelSelection: {
-              modelId: "sonnet",
-              parameters: { effort: "medium" },
-            },
-          },
-          continuity: { enabled: false },
-        },
-      ],
-    };
-
-    const existingLane = makeClaudeSessionState({
-      lane: "context_validator",
-      conversationId: "conv-pinned-val",
-    });
-
-    const execution = makeExecution({
-      workingDefinition: definition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "claude",
-      strategy: "conversation",
-      pinnedConversationId: "conv-pinned-val",
-    });
-
-    expect(harness.deps.createConversation).not.toHaveBeenCalled();
-    expect(result.sessionAction).toBe("reuse");
-    expect(result.backend).toBe("claude");
-    if (result.strategy === "conversation") {
-      expect(result.conversationId).toBe("conv-pinned-val");
-    }
-  });
-
-  it("lets rotateBeforeNextTurn outrank the pin for the claude validator", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const definition =
-      makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
-    definition.executionContexts[0]!.contextValidator = {
-      enabled: true,
-      assignments: [
-        {
-          id: "general",
-          profile: { tier: "builtin", id: "general-reviewer" },
-          profileSnapshot: makeProfileSnapshot(),
-          strategy: "conversation",
-          authority: "blocking",
-          agent: {
-            backend: "claude",
-            modelSelection: {
-              modelId: "sonnet",
-              parameters: { effort: "medium" },
-            },
-          },
-          continuity: { enabled: false },
-        },
-      ],
-    };
-
-    const existingLane = makeClaudeSessionState({
-      lane: "context_validator",
-      conversationId: "conv-pinned-val",
-      metrics: {
-        contextTokens: 180000,
-        contextWindowMax: 200000,
-        rotateBeforeNextTurn: true,
-      },
-      limitEvaluation: "supported",
-    });
-
-    const execution = makeExecution({
-      workingDefinition: definition,
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "claude",
-      strategy: "conversation",
-      pinnedConversationId: "conv-pinned-val",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-  });
-});
-
-// ---------------------------------------------------------------------------
 // recordLaneTurnOutcome — occupancy-metric (claude) lanes
 // ---------------------------------------------------------------------------
 
@@ -1648,155 +706,6 @@ describe("recordLaneTurnOutcome (occupancy metrics)", () => {
     expect(updated?.backend).toBe("claude");
     expect(updated?.metrics.contextTokens).toBe(50000);
     expect(updated?.metrics.contextWindowMax).toBe(200000);
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
-    expect(updated?.limitEvaluation).toBe("disabled");
-  });
-
-  it("sets rotateBeforeNextTurn when tokens exceed configured limit", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeClaudeLane()),
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "claude",
-      contextTokens: 150000,
-      contextWindowMax: 200000,
-      contextLimitTokens: 100000,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
-    expect(updated?.limitEvaluation).toBe("supported");
-  });
-
-  it("does not flag rotation and records supported when tokens are under the limit (no prior flag)", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(
-        makeClaudeLane({
-          metrics: {
-            contextTokens: 40000,
-            contextWindowMax: 200000,
-            rotateBeforeNextTurn: false,
-          },
-        }),
-      ),
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "claude",
-      contextTokens: 40000,
-      contextWindowMax: 200000,
-      contextLimitTokens: 100000,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
-    expect(updated?.limitEvaluation).toBe("supported");
-  });
-
-  it("keeps rotation sticky once flagged even when a later turn is under the limit", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(
-        makeClaudeLane({
-          metrics: {
-            contextTokens: 150000,
-            contextWindowMax: 200000,
-            rotateBeforeNextTurn: true,
-          },
-          limitEvaluation: "supported",
-        }),
-      ),
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "claude",
-      contextTokens: 40000,
-      contextWindowMax: 200000,
-      contextLimitTokens: 100000,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
-    expect(updated?.limitEvaluation).toBe("supported");
-  });
-
-  it("records metrics_unavailable for a validator turn with no contextTokens under a configured limit", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(
-        makeClaudeLane({
-          lane: "context_validator",
-          workflowConversationId: "conv-val",
-          sessionRef: { backend: "claude", ref: "conv-val" },
-        }),
-      ),
-    });
-
-    const result = await record(harness, execution, "context_validator", {
-      backend: "claude",
-      contextLimitTokens: 100000,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
-    expect(updated?.limitEvaluation).toBe("metrics_unavailable");
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
-  });
-
-  it("does not set rotateBeforeNextTurn when no limit is configured", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeClaudeLane()),
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "claude",
-      contextTokens: 199000,
-      contextWindowMax: 200000,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
-    expect(updated?.limitEvaluation).toBe("disabled");
-  });
-
-  it("flags rotation when the turn auto-compacted under a configured limit even with tokens below the limit", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeClaudeLane()),
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "claude",
-      contextTokens: 40000,
-      contextWindowMax: 200000,
-      contextLimitTokens: 100000,
-      compactedThisTurn: true,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
-    expect(updated?.limitEvaluation).toBe("supported");
-  });
-
-  it("does not flag rotation on compaction when no limit is configured", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeClaudeLane()),
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "claude",
-      contextTokens: 40000,
-      contextWindowMax: 200000,
-      compactedThisTurn: true,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
-    expect(updated?.limitEvaluation).toBe("disabled");
   });
 
   it("ignores a post-turn ref for a conversation-anchored lane (the CC conversation id never advances)", async () => {
@@ -1814,102 +723,6 @@ describe("recordLaneTurnOutcome (occupancy metrics)", () => {
     const updated = result.laneStates["ctx-1"]?.["implementer"];
     expect(updated?.sessionRef).toEqual({ backend: "claude", ref: "conv-1" });
   });
-
-  it("emits a rotation.scheduled decision whose reason distinguishes context_over_limit from compaction_detected", async () => {
-    const decisions: Array<{ event: string; data?: Record<string, unknown> }> =
-      [];
-    const capturingLogger: ExecutionLogger = {
-      executionId: "exec-1",
-      logDir: "",
-      writeManifest() {},
-      lifecycle() {},
-      iteration() {},
-      task() {},
-      validation() {},
-      writePrompt() {},
-      writeValidatorResponse() {},
-      writeValidatorTranscript() {},
-      decision(event, data) {
-        decisions.push({ event, data });
-      },
-    };
-    registerExecutionLogger(capturingLogger);
-
-    try {
-      // Over the limit, not compacted → context_over_limit.
-      await record(
-        makeHarness(),
-        makeExecution({ laneStates: laneStatesByContext(makeClaudeLane()) }),
-        "implementer",
-        {
-          backend: "claude",
-          contextTokens: 150000,
-          contextWindowMax: 200000,
-          contextLimitTokens: 100000,
-        },
-      );
-
-      // Below the limit but compacted → compaction_detected.
-      await record(
-        makeHarness(),
-        makeExecution({ laneStates: laneStatesByContext(makeClaudeLane()) }),
-        "implementer",
-        {
-          backend: "claude",
-          contextTokens: 40000,
-          contextWindowMax: 200000,
-          contextLimitTokens: 100000,
-          compactedThisTurn: true,
-        },
-      );
-
-      const reasons = decisions
-        .filter((d) => d.event === "rotation.scheduled")
-        .map((d) => d.data?.reason);
-      expect(reasons).toEqual(["context_over_limit", "compaction_detected"]);
-    } finally {
-      unregisterExecutionLogger("exec-1");
-    }
-  });
-
-  it("isolates lane updates between contexts (rotation flag write to one context does not mutate another)", async () => {
-    const harness = makeHarness();
-    const ctx1Lane = makeClaudeLane({
-      metrics: {
-        contextTokens: 10000,
-        contextWindowMax: 200000,
-        rotateBeforeNextTurn: false,
-      },
-    });
-    const ctx2Lane = makeClaudeLane({
-      contextId: "ctx-2",
-      workflowConversationId: "conv-2",
-      sessionRef: { backend: "claude", ref: "conv-2" },
-      metrics: {
-        contextTokens: 20000,
-        contextWindowMax: 200000,
-        rotateBeforeNextTurn: false,
-      },
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(ctx1Lane, ctx2Lane),
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "claude",
-      contextTokens: 150000,
-      contextWindowMax: 200000,
-      contextLimitTokens: 100000,
-    });
-
-    const ctx1Updated = result.laneStates["ctx-1"]?.["implementer"];
-    const ctx2Untouched = result.laneStates["ctx-2"]?.["implementer"];
-
-    expect(ctx1Updated?.metrics.rotateBeforeNextTurn).toBe(true);
-    expect(ctx1Updated?.metrics.contextTokens).toBe(150000);
-    expect(ctx2Untouched).toEqual(ctx2Lane);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1922,45 +735,6 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
   ): GraphWorkflowAgentSessionState {
     return makeCodexSessionState({ lane: "context_validator", threadId });
   }
-
-  it("updates turn usage and always keeps rotateBeforeNextTurn false", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeCodexValidatorLane()),
-    });
-
-    const result = await record(harness, execution, "context_validator", {
-      backend: "codex",
-      lastTurnUsage: {
-        inputTokens: 1000,
-        cachedInputTokens: 200,
-        outputTokens: 300,
-      },
-      contextLimitTokens: 50000,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
-    expect(updated?.metrics.lastTurnUsage?.inputTokens).toBe(1000);
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
-    // Even with a limit configured, a backend without occupancy metrics
-    // records an honest unsupported.
-    expect(updated?.limitEvaluation).toBe("unsupported");
-  });
-
-  it("records disabled limitEvaluation when no limit is configured", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeCodexValidatorLane()),
-    });
-
-    const result = await record(harness, execution, "context_validator", {
-      backend: "codex",
-      lastTurnUsage: null,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
-    expect(updated?.limitEvaluation).toBe("disabled");
-  });
 
   it("updates sessionRef.threadId when a post-turn ref is provided", async () => {
     const harness = makeHarness();
@@ -1996,9 +770,7 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
             workflowConversationId: "conv-cc-new",
             metrics: {
               lastTurnUsage: null,
-              rotateBeforeNextTurn: false,
             },
-            limitEvaluation: "disabled",
             lastUsedAt: NOW,
           },
         },
@@ -2035,22 +807,6 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
     expect(updated?.sessionRef?.ref).toBe("thread-keep");
   });
 
-  it("sets rotateBeforeNextTurn=true when continuation must be cleared", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeCodexValidatorLane("thread-phantom")),
-    });
-
-    const result = await record(harness, execution, "context_validator", {
-      backend: "codex",
-      lastTurnUsage: null,
-      continuationDisposition: "clear",
-    });
-
-    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
-  });
-
   it("returns the execution unchanged when the lane backend does not match the outcome backend", async () => {
     const harness = makeHarness();
     const execution = makeExecution({
@@ -2078,203 +834,25 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
 // ---------------------------------------------------------------------------
 
 describe("recovery behaviors", () => {
-  it("creates a fresh session when lane contextId does not match (stale reference)", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const staleLane = makeClaudeSessionState({
-      conversationId: "conv-stale",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(staleLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-2",
-    });
-
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    expect(result.conversationId).not.toBe("conv-stale");
-    expect(
-      result.execution.laneStates["ctx-2"]?.["implementer"]?.contextId,
-    ).toBe("ctx-2");
-  });
-
-  it("falls back to fresh claude session when implementer conversation is not found", async () => {
+  it("refuses to replace an unrecoverable implementer conversation", async () => {
     const harness = makeHarness({
       getConversation: vi.fn().mockResolvedValue(null),
-      createConversation: vi.fn().mockResolvedValue({ id: "conv-recovery" }),
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const existingLane = makeClaudeSessionState({
-      conversationId: "conv-gone",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveImplementerCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-    });
-
-    expect(harness.deps.getConversation).toHaveBeenCalledWith(
-      "/proj",
-      "sess",
-      "conv-gone",
-    );
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    expect(result.conversationId).toBe("conv-recovery");
-    expect(result.promptMode).toBe("iteration_seed");
-  });
-
-  it("falls back to fresh claude session when validator conversation is not found", async () => {
-    const harness = makeHarness({
-      getConversation: vi.fn().mockResolvedValue(null),
-      createConversation: vi
-        .fn()
-        .mockResolvedValue({ id: "conv-val-recovery" }),
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const existingLane = makeClaudeSessionState({
-      lane: "context_validator",
-      conversationId: "conv-val-gone",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "claude",
-      strategy: "conversation",
-    });
-
-    expect(harness.deps.getConversation).toHaveBeenCalledWith(
-      "/proj",
-      "sess",
-      "conv-val-gone",
-    );
-    expect(harness.deps.createConversation).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    if (result.strategy === "conversation") {
-      expect(result.conversationId).toBe("conv-val-recovery");
-    }
-  });
-
-  it("falls back to a fresh thread when the adapter resume throws", async () => {
-    const threadAdapter = makeThreadAdapter({
-      resumeOrRecover: vi.fn().mockRejectedValue(new Error("Thread not found")),
-      start: vi.fn(async () => ({
-        backend: "codex" as const,
-        ref: "thread-fallback",
-      })),
-    });
-    const harness = makeHarness({
-      continuityAdapter: () => threadAdapter.adapter,
-    });
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const existingLane = makeCodexSessionState({
-      lane: "context_validator",
-      threadId: "thread-gone",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "codex",
-      strategy: "task",
-    });
-
-    expect(threadAdapter.resumeOrRecover).toHaveBeenCalledWith(
-      { backend: "codex", ref: "thread-gone" },
-      { projectPath: "/proj", sessionName: "sess" },
-    );
-    expect(threadAdapter.start).toHaveBeenCalledOnce();
-    expect(result.sessionAction).toBe("create");
-    expect(result.backend).toBe("codex");
-    if (result.strategy === "task") {
-      expect(result.backendRef.ref).toBe("thread-fallback");
-    }
-  });
-
-  it("persists an adapter-recovered thread without starting a second one", async () => {
-    const threadAdapter = makeThreadAdapter({
-      resumeOrRecover: vi.fn(async () => ({
-        ref: { backend: "codex" as const, ref: "thread-recovered" },
-        recovered: true,
-      })),
-      start: vi.fn(async () => ({
-        backend: "codex" as const,
-        ref: "thread-duplicate",
-      })),
-    });
-    const harness = makeHarness({
-      continuityAdapter: () => threadAdapter.adapter,
     });
     const svc = createGraphLaneContinuity(harness.deps);
     const execution = makeExecution({
       laneStates: laneStatesByContext(
-        makeCodexSessionState({
-          lane: "context_validator",
-          threadId: "thread-stale",
-        }),
+        makeClaudeSessionState({ conversationId: "conv-gone" }),
       ),
     });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "codex",
-      strategy: "task",
-    });
-
-    expect(threadAdapter.start).not.toHaveBeenCalled();
-    expect(result.sessionAction).toBe("create");
-    if (result.strategy === "task") {
-      expect(result.backendRef).toEqual({
-        backend: "codex",
-        ref: "thread-recovered",
-      });
-    }
-    expect(
-      result.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]?.sessionRef,
-    ).toEqual({ backend: "codex", ref: "thread-recovered" });
-    const persisted = await harness.deps.laneService.resolve({
-      workflowId: execution.id,
-      laneId: graphLaneId("context_validator", "ctx-1", DEFAULT_ASSIGNMENT_ID),
-    });
-    expect(persisted?.ref).toBe("thread-recovered");
+    await expect(
+      svc.resolveImplementerCall({
+        execution,
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+      }),
+    ).rejects.toThrow(/cannot continue/i);
+    expect(harness.deps.createConversation).not.toHaveBeenCalled();
   });
 
   it("resumes the codex thread after execution state is deserialized through the schema (restart recovery)", async () => {
@@ -2284,7 +862,6 @@ describe("recovery behaviors", () => {
     const codexLane = makeCodexSessionState({
       lane: "context_validator",
       threadId: "thread-codex-abc",
-      limitEvaluation: "unsupported",
     });
 
     const execution = makeExecution({
@@ -2306,7 +883,7 @@ describe("recovery behaviors", () => {
       strategy: "task",
     });
 
-    expect(harness.threadAdapter.resumeOrRecover).toHaveBeenCalledWith(
+    expect(harness.threadAdapter.adapter.validate).toHaveBeenCalledWith(
       { backend: "codex", ref: "thread-codex-abc" },
       { projectPath: "/proj", sessionName: "sess" },
     );
@@ -2377,43 +954,12 @@ describe("primitive lane-service integration", () => {
       backend: "claude",
       contextTokens: 150_000,
       contextWindowMax: 200_000,
-      contextLimitTokens: 100_000,
     });
 
     const updated = result.laneStates["ctx-1"]?.["implementer"];
     expect(updated?.backend).toBe("claude");
     expect(updated?.metrics.contextTokens).toBe(150_000);
     expect(updated?.metrics.contextWindowMax).toBe(200_000);
-    // Over the configured limit: the service flags rotation and the graph
-    // label collapses the occupancy verdict to "supported".
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
-    expect(updated?.limitEvaluation).toBe("supported");
-  });
-
-  it("records a cleared task-lane continuation as a rotation on graph state", async () => {
-    const store = createInMemoryLaneStore();
-    const laneService = createLaneService({ store, now: () => NOW });
-
-    const harness = makeHarness({ laneService });
-
-    const existingLane = makeCodexSessionState({
-      lane: "context_validator",
-      threadId: "thread-1",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await record(harness, execution, "context_validator", {
-      backend: "codex",
-      lastTurnUsage: null,
-      continuationDisposition: "clear",
-    });
-
-    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
-    expect(updated?.backend).toBe("codex");
-    expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
   });
 
   it("preserves graph state unchanged when LaneService throws during initialize", async () => {
@@ -2474,98 +1020,41 @@ describe("primitive lane-service integration", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Rotation decision reconciliation (scheduled vs applied telemetry)
-// ---------------------------------------------------------------------------
-
-describe("rotation decision reconciliation", () => {
-  function captureDecisions(): {
-    decisions: Array<{ event: string; data?: Record<string, unknown> }>;
-    unregister: () => void;
-  } {
-    const decisions: Array<{ event: string; data?: Record<string, unknown> }> =
-      [];
-    const capturingLogger: ExecutionLogger = {
-      executionId: "exec-1",
-      logDir: "",
-      writeManifest() {},
-      lifecycle() {},
-      iteration() {},
-      task() {},
-      validation() {},
-      writePrompt() {},
-      writeValidatorResponse() {},
-      writeValidatorTranscript() {},
-      decision(event, data) {
-        decisions.push({ event, data });
-      },
-    };
-    registerExecutionLogger(capturingLogger);
-    return { decisions, unregister: () => unregisterExecutionLogger("exec-1") };
-  }
-
-  it("does not emit occupancy rotation for cumulative Codex token usage", async () => {
-    const { decisions, unregister } = captureDecisions();
-    try {
-      const result = await record(
-        makeHarness(),
-        makeExecution({
-          laneStates: laneStatesByContext(
-            makeCodexSessionState({
-              lane: "implementer",
-              threadId: "thread-1",
-            }),
-          ),
-        }),
-        "implementer",
-        { backend: "codex", contextTokens: 750000, contextLimitTokens: 250000 },
-      );
-      expect(result.laneStates["ctx-1"]?.implementer).toBeDefined();
-      expect(
-        result.laneStates["ctx-1"]?.implementer?.metrics.rotateBeforeNextTurn,
-      ).not.toBe(true);
-      expect(
-        decisions.filter((entry) => entry.event === "rotation.scheduled"),
-      ).toHaveLength(0);
-    } finally {
-      unregister();
-    }
+describe("continuous lane failures", () => {
+  it("refuses to restart a used conversation whose backend continuation was lost", async () => {
+    const harness = makeHarness({
+      getConversation: vi.fn().mockResolvedValue({
+        id: "conv-existing",
+        promptCount: 1,
+        backendRef: null,
+      }),
+    });
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(makeClaudeSessionState()),
+    });
+    await expect(
+      createGraphLaneContinuity(harness.deps).resolveImplementerCall({
+        execution,
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+      }),
+    ).rejects.toThrow("backend continuation was lost");
+    expect(harness.deps.createConversation).not.toHaveBeenCalled();
   });
 
-  it("suppresses duplicate rotation.scheduled while a rotation is already pending", async () => {
-    const { decisions, unregister } = captureDecisions();
-    try {
-      const lane = makeClaudeSessionState({ conversationId: "conv-1" });
-      const flaggedLane = {
-        ...lane,
-        metrics: { ...lane.metrics, rotateBeforeNextTurn: true },
-      };
-      await record(
-        makeHarness(),
-        makeExecution({ laneStates: laneStatesByContext(flaggedLane) }),
-        "implementer",
-        {
-          backend: "claude",
-          contextTokens: 150000,
-          contextWindowMax: 200000,
-          contextLimitTokens: 100000,
-        },
-      );
-      expect(
-        decisions.filter((d) => d.event === "rotation.scheduled"),
-      ).toHaveLength(0);
-    } finally {
-      unregister();
-    }
-  });
-
-  it("emits a validator.rotation decision when a validator lane rotates", async () => {
-    const { decisions, unregister } = captureDecisions();
-    try {
-      const harness = makeHarness();
-      const svc = createGraphLaneContinuity(harness.deps);
-      await svc.resolveValidatorCall({
-        execution: makeExecution(),
+  it("refuses a missing validator conversation without replacing it", async () => {
+    const harness = makeHarness({
+      getConversation: vi.fn().mockResolvedValue(null),
+    });
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(
+        makeClaudeSessionState({ lane: "context_validator" }),
+      ),
+    });
+    await expect(
+      createGraphLaneContinuity(harness.deps).resolveValidatorCall({
+        execution,
         projectPath: "/proj",
         sessionName: "sess",
         contextId: "ctx-1",
@@ -2573,99 +1062,73 @@ describe("rotation decision reconciliation", () => {
         assignmentId: "general",
         backend: "claude",
         strategy: "conversation",
-      });
-      const rotations = decisions.filter(
-        (d) => d.event === "validator.rotation",
-      );
-      expect(rotations).toHaveLength(1);
-      expect(rotations[0]?.data).toMatchObject({
-        contextId: "ctx-1",
-        lane: "context_validator",
-        engine: "claude",
-        reason: "no_prior_lane",
-      });
-    } finally {
-      unregister();
-    }
+      }),
+    ).rejects.toThrow(/cannot continue/i);
+    expect(harness.deps.createConversation).not.toHaveBeenCalled();
   });
 
-  it("rotates a validator lane with reason assignment_changed when the seat's authority is edited", async () => {
-    const { decisions, unregister } = captureDecisions();
-    try {
-      // Both fingerprints come from the real assignments, so the test proves the
-      // whole path an authority edit travels: authority → fingerprint → the
-      // rotation the lane takes because of it.
-      const blocking = makeSeededValidatorAssignment({
-        id: DEFAULT_ASSIGNMENT_ID,
-        authority: "blocking",
-      });
-      const advisory = makeSeededValidatorAssignment({
-        id: DEFAULT_ASSIGNMENT_ID,
-        authority: "advisory",
-      });
-      const harness = makeHarness();
-      const svc = createGraphLaneContinuity(harness.deps);
-      const existingLane = {
-        ...makeClaudeSessionState({
+  it("refuses a stale validator handle without invoking backend recovery", async () => {
+    const harness = makeHarness();
+    harness.threadAdapter.adapter.validate = vi.fn(async () => ({
+      status: "stale" as const,
+      reason: "Thread missing",
+    }));
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(
+        makeCodexSessionState({
           lane: "context_validator",
-          conversationId: "conv-val",
+          threadId: "thread-original",
         }),
-        assignmentFingerprint: assignmentFingerprint(blocking),
-      };
-
-      const result = await svc.resolveValidatorCall({
-        execution: makeExecution({
-          laneStates: laneStatesByContext(existingLane),
-        }),
-        projectPath: "/proj",
-        sessionName: "sess",
-        contextId: "ctx-1",
-        lane: "context_validator",
-        assignmentId: DEFAULT_ASSIGNMENT_ID,
-        assignmentFingerprint: assignmentFingerprint(advisory),
-        backend: "claude",
-        strategy: "conversation",
-      });
-
-      expect(result.sessionAction).toBe("create");
-      expect(
-        decisions.filter((d) => d.event === "validator.rotation")[0]?.data,
-      ).toMatchObject({
-        contextId: "ctx-1",
-        lane: "context_validator",
-        reason: "assignment_changed",
-      });
-    } finally {
-      unregister();
-    }
-  });
-
-  it("emits no validator.rotation decision on the reuse path", async () => {
-    const { decisions, unregister } = captureDecisions();
-    try {
-      const harness = makeHarness();
-      const svc = createGraphLaneContinuity(harness.deps);
-      const existingLane = makeClaudeSessionState({
-        lane: "context_validator",
-        conversationId: "conv-val",
-      });
-      await svc.resolveValidatorCall({
-        execution: makeExecution({
-          laneStates: laneStatesByContext(existingLane),
-        }),
+      ),
+    });
+    await expect(
+      createGraphLaneContinuity(harness.deps).resolveValidatorCall({
+        execution,
         projectPath: "/proj",
         sessionName: "sess",
         contextId: "ctx-1",
         lane: "context_validator",
         assignmentId: "general",
-        backend: "claude",
-        strategy: "conversation",
-      });
-      expect(
-        decisions.filter((d) => d.event === "validator.rotation"),
-      ).toHaveLength(0);
-    } finally {
-      unregister();
-    }
+        backend: "codex",
+        strategy: "task",
+      }),
+    ).rejects.toThrow("Thread missing");
+    expect(harness.threadAdapter.start).not.toHaveBeenCalled();
+    expect(harness.threadAdapter.resumeOrRecover).not.toHaveBeenCalled();
+  });
+
+  it("preserves a cleared backend handle as unusable across restart", async () => {
+    const harness = makeHarness();
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(
+        makeCodexSessionState({
+          lane: "context_validator",
+          threadId: "thread-original",
+        }),
+      ),
+    });
+    const recorded = await record(harness, execution, "context_validator", {
+      backend: "codex",
+      continuationDisposition: "clear",
+    });
+    const restored = graphWorkflowExecutionSchema.parse(
+      JSON.parse(JSON.stringify(recorded)),
+    );
+    expect(
+      restored.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]?.staleSession,
+    ).toBe(true);
+    await expect(
+      createGraphLaneContinuity(harness.deps).resolveValidatorCall({
+        execution: restored,
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+        lane: "context_validator",
+        assignmentId: "general",
+        backend: "codex",
+        strategy: "task",
+      }),
+    ).rejects.toThrow(/cannot continue/i);
+    expect(harness.threadAdapter.start).not.toHaveBeenCalled();
   });
 });

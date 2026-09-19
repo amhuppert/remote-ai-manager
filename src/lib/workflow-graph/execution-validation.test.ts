@@ -107,8 +107,6 @@ function emptyMetadata(): ValidatorRunResult["metadata"] {
   return {
     sessionRef: null,
     reviewArtifact: null,
-    limitEvaluation: "disabled",
-    rotateBeforeNextTurn: false,
   };
 }
 
@@ -356,7 +354,6 @@ describe("graph workflow execution validation service", () => {
                 parameters: { reasoning: "high", fast: "false" },
               },
             },
-            continuity: { enabled: false },
           }),
           makeValidatorAssignment({ id: "docs", authority: "blocking" }),
         ],
@@ -415,7 +412,6 @@ describe("graph workflow execution validation service", () => {
               parameters: { reasoning: "high", fast: "false" },
             },
           },
-          continuity: { enabled: false },
         }),
         expect.objectContaining({ id: "docs" }),
       ]);

@@ -82,7 +82,6 @@ function maximalResolvedContext(): Record<string, unknown> {
               parameters: { effort: "medium" },
             },
           },
-          continuity: { enabled: false, contextLimitTokens: 120_000 },
           profileSnapshot: {
             tier: "project",
             id: "security-reviewer",
@@ -108,7 +107,6 @@ function maximalResolvedContext(): Record<string, unknown> {
     circuitBreaker: { consecutiveFailureThreshold: 5 },
     iterationPolicy: {
       maxIterations: 7,
-      continuity: { enabled: false, contextLimitTokens: 90_000 },
     },
     planRepair: {
       enabled: false,
@@ -309,7 +307,6 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
             parameters: { effort: "medium" },
           },
         },
-        continuity: { enabled: false, contextLimitTokens: 120_000 },
       },
     ],
   };
@@ -320,7 +317,6 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
     },
     iterationPolicy: {
       maxIterations: 7,
-      continuity: { enabled: false, contextLimitTokens: 90_000 },
     },
     circuitBreaker: { consecutiveFailureThreshold: 5 },
     mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
@@ -760,7 +756,6 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
                     parameters: { effort: "medium" },
                   },
                 },
-                continuity: { enabled: false, contextLimitTokens: 120_000 },
                 // A dormant assignment carries its seeded snapshot too: it is
                 // enabled by a config edit that does no resolution.
                 profileSnapshot: {
@@ -788,7 +783,6 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           circuitBreaker: { consecutiveFailureThreshold: 5 },
           iterationPolicy: {
             maxIterations: 7,
-            continuity: { enabled: false, contextLimitTokens: 90_000 },
           },
           planRepair: {
             enabled: false,
@@ -1522,17 +1516,12 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         "lane-key-1": {
           lane: "implementer",
           contextId: "ctx-1",
-          engine: "claude",
+          backend: "claude",
+          refKind: "conversation",
+          staleSession: true,
           workflowConversationId: "wf-conv-1",
-          sessionRef: {
-            engine: "claude",
-            lane: "implementer",
-            conversationId: "conv-lane-1",
-          },
-          lastContextTokens: 12_000,
-          lastContextWindowMax: 200_000,
-          rotateBeforeNextTurn: true,
-          limitEvaluation: "supported",
+          sessionRef: { backend: "claude", ref: "conv-lane-1" },
+          metrics: { contextTokens: 12_000, contextWindowMax: 200_000 },
           lastUsedAt: "2026-01-02T02:00:00Z",
         },
       },

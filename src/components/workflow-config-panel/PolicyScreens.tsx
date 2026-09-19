@@ -28,12 +28,6 @@ import { chipPart, textPart } from "./value-parts";
 
 export const PLAN_REPAIR_SCREEN_ID = "planrepair";
 
-const CONTINUITY_HINT =
-  "Keep one conversation across iterations, rotating it when the context limit is reached.";
-
-const CONTEXT_LIMIT_HINT =
-  "Leave empty for auto. Numeric limits require provider context occupancy measurements; otherwise the threshold is not enforced. Observed native compaction can still trigger rotation.";
-
 const FAILURE_THRESHOLD_HINT =
   "Consecutive failures before the context is halted.";
 
@@ -99,67 +93,6 @@ export function ExecutionPolicyScreen({
                   cascade.set("iterationPolicy", {
                     ...iteration,
                     maxIterations: next,
-                  }),
-                );
-              }}
-            />
-          }
-        />
-        <ConfigControlRow
-          rowId="policy-continuity"
-          label="Continuity"
-          hint={CONTINUITY_HINT}
-          provenance={iterationProvenance}
-          disabled={locked}
-          control={
-            <Switch
-              checked={iteration.continuity.enabled}
-              disabled={locked}
-              aria-label="Iteration continuity"
-              onCheckedChange={(enabled) =>
-                editor.onEdit(
-                  cascade.set("iterationPolicy", {
-                    ...iteration,
-                    continuity: { ...iteration.continuity, enabled },
-                  }),
-                )
-              }
-            />
-          }
-        />
-        <ConfigControlRow
-          rowId="policy-context-limit"
-          label="Context limit tokens"
-          hint={CONTEXT_LIMIT_HINT}
-          provenance={iterationProvenance}
-          disabled={locked}
-          control={
-            <NumericInput
-              value={iteration.continuity.contextLimitTokens}
-              min={1}
-              ariaLabel="Iteration context limit tokens"
-              disabled={locked}
-              onChange={(next) => {
-                if (next === undefined) {
-                  // Absence is what `auto` IS in the schema; a stored 0 would
-                  // be a limit the runtime could never satisfy.
-                  const continuity = { enabled: iteration.continuity.enabled };
-                  editor.onEdit(
-                    cascade.set("iterationPolicy", {
-                      ...iteration,
-                      continuity,
-                    }),
-                  );
-                  return;
-                }
-                if (!Number.isInteger(next) || next < 1) return;
-                editor.onEdit(
-                  cascade.set("iterationPolicy", {
-                    ...iteration,
-                    continuity: {
-                      ...iteration.continuity,
-                      contextLimitTokens: next,
-                    },
                   }),
                 );
               }}

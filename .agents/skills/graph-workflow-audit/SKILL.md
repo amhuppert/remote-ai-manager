@@ -69,7 +69,7 @@ It merges `command-center.db` (execution state, event log, conversation
 costs) with `<config-dir>/workflow-logs/<executionId>/` (per-iteration
 timing, prompt sizes, context-token telemetry, validator parse paths, plus
 `lifecycle.jsonl` for halt/resume/join-retry history and `decisions.jsonl`
-for rotation scheduling) and a single-pass scan of every reachable
+for scheduling decisions) and a single-pass scan of every reachable
 transcript (lineage-corrected cost, tool tallies, error counts,
 background-task kills, re-read churn), and reports: overview (including the
 final-publish diffstat), per-context iteration tables, validation verdicts,
@@ -94,7 +94,6 @@ wait. Gap classifications: `halt_wait` (execution halted), `hung_turn`
 | `validation_no_go` | Validator rejected work → extra iteration. Read the verdict AND the iteration that followed: was the finding real, or did the validator enforce a wrong/ambiguous AC? |
 | `circuit_breaker` / `task_failure` | Repeated failure; read `contexts/<id>/tasks.jsonl` failure messages for the root cause. |
 | `context_window_pressure` | Peak measurable occupancy ≥ 70% of the model window — a pressure signal. Inspect compaction and task continuity before attributing quality loss or recommending a split. |
-| `rotation_overrun` | An iteration peaked ≥ 1.5× the configured `contextLimitTokens`. Rotation is scheduled mid-turn but only takes effect at the iteration boundary, so one long turn outruns it — the endgame risks a hard "context limit" stop. Planning fix: put turn-heavy work (live verification) at the START of a fresh iteration/context. |
 | `cost_mismatch` | A conversation's DB `total_cost_usd` diverges from the transcript's lineage total. Rows written before the accrual fix are inflated (SDK cumulative was consumed as a per-turn delta). Use the transcript-corrected total for all cost conclusions. |
 | `background_task_kills` | Background tasks were reported killed. Inspect whether this was intended cleanup or interrupted work; attribute wasted time only when the transcript supports it. |
 | `compaction_events` | The conversation was silently summarized mid-flight; verify nothing load-bearing was dropped around the boundary. |
@@ -107,7 +106,6 @@ wait. Gap classifications: `halt_wait` (execution halted), `hung_turn`
 | `recovered_halt` | The run halted mid-flight and was resumed. The execution state clears the halt reason on resume, so without this the run reads as never having halted; the wait shown is operator recovery time. |
 | `hung_turn` | A turn produced no recorded activity for over an hour — likely a dead/silent SDK turn. Its time is EXCLUDED from agent-work totals; treat as a reliability incident, not labor. |
 | `join_retry` | A join needed retry attempts before its final state (final join status hides attempt history) — read lifecycle.jsonl for the sequence. |
-| `rotation_not_applied` | More rotations were scheduled than applied for the context — the lane kept its conversation past the engine's rotate decision. |
 | `cost_gap` | A conversation with real recorded activity has a zero/absent cost row — its spend is missing and the cost total is a floor. |
 
 **Two different "turns" columns.** The iteration table's `prompt cycles` is
@@ -172,9 +170,8 @@ of this shape:
    cohort's verdict pipeline, with `assignmentId` on each entry). For every NO-GO ask
    the AeroTrainer question: *was the AC itself wrong?* A validator
    faithfully enforcing a bad spec is a planning defect, not an agent one.
-4. **Rotation and scheduling telemetry** — `workflow-logs/<exec>/decisions.jsonl`
-   (rotation scheduling incl. mid-turn overruns with `contextLimitTokens`,
-   lane rotations, continuity decisions) and `lifecycle.jsonl` (lane
+4. **Scheduling telemetry** — `workflow-logs/<exec>/decisions.jsonl`
+   (context scheduling and iteration limits) and `lifecycle.jsonl` (lane
    create/reuse, batch scheduling, joins). Often the richest source for
    "why did the engine do that" questions — read them before blaming an
    agent for a structural behavior.
@@ -267,9 +264,8 @@ docs/reports/graph-workflow-improvement-report.md rather than re-inventing.>
   the report if validators ran.
 - **Codex occupancy is unmeasurable.** Codex lanes report a CUMULATIVE
   processed-token counter with `contextWindowMax: null` (turn records carry
-  `occupancyMeasurable: false`). Never divide that counter by a window or
-  rotation limit; the extractor suppresses occupancy findings for such
-  contexts and lists them under "Telemetry confidence" as inconclusive.
+  `occupancyMeasurable: false`). Never divide that counter by a window
+  capacity; the extractor suppresses occupancy findings for such contexts and lists them under "Telemetry confidence" as inconclusive.
 - **Long `agent_work` gaps can be legitimate**, but classification alone
   does not prove useful work. Inspect activity when the interval is an outlier;
   likewise, an `unexplained` gap needs corroboration before blaming orchestration.

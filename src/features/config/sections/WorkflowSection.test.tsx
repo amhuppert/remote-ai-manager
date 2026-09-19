@@ -138,7 +138,6 @@ describe("WorkflowSection", () => {
       ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
       iterationPolicy: {
         maxIterations: 99,
-        continuity: { enabled: true },
       },
     };
     const { controller } = makeController({ workflowDefaults: customDefaults });
@@ -368,7 +367,6 @@ describe("WorkflowSection", () => {
       profile: { tier: "global", id: "security-reviewer" },
       strategy: "task",
       authority: "blocking",
-      continuity: { enabled: true },
       agent: {
         backend: "codex",
         modelSelection: {
@@ -383,7 +381,6 @@ describe("WorkflowSection", () => {
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
       authority: "blocking",
-      continuity: { enabled: true },
       agent: {
         backend: "claude",
         modelSelection: {

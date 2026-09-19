@@ -35,7 +35,6 @@ describe("execution context implementer config with backend support", () => {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 3,
-            continuity: { enabled: true },
           },
         },
       ],

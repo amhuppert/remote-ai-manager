@@ -67,10 +67,7 @@ const finalTaskSelfCheck: LaneReminderRule = {
   verbs: ["task-complete"],
   evidence:
     "Native SDD execution audit (docs/reports/workflow-audits/2026-07-19-native-sdd-execution-audit.md): 2/20 contexts passed first validation; green unit tests masked unreachable runtime capabilities and recurring invariant violations because turns ended without a final check against the acceptance criteria.",
-  when: (input) =>
-    input.remainingTaskCount === 0 &&
-    input.halted === null &&
-    !input.contextLimitStopped,
+  when: (input) => input.remainingTaskCount === 0 && input.halted === null,
   text: () =>
     "That was the last remaining task — the context validator reviews this context next. Before ending your turn, re-verify each acceptance criterion (and each applicable charter invariant, if the charter declares any) against your actual changes, not your tests' assumptions: confirm every capability you introduced is reachable through a production call path, not only exported and unit-tested. Fix any gap now, then end your turn.",
 };

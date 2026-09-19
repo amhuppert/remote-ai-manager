@@ -91,13 +91,12 @@ function legacyConfigJson(): Record<string, unknown> {
       contextValidator: {
         type: "codex",
         enabled: true,
-        continuity: { enabled: true, contextLimitTokens: 90_000 },
         codex: {},
       },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
-      iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 12 },
       circuitBreaker: { consecutiveFailureThreshold: 4 },
       mutability: { allowAgentTaskAdd: true },
       planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -137,7 +136,6 @@ function legacyDefinitionRecord(
         contextValidator: {
           type: "claude",
           enabled: false,
-          continuity: { enabled: false },
           agent: {
             backend: "claude",
             model: "sonnet",
@@ -160,7 +158,6 @@ function legacyDefinitionRecord(
             value: {
               type: "codex",
               enabled: true,
-              continuity: { enabled: true },
               codex: { model: "gpt-5.6-sol", reasoningEffort: "ultra" },
             },
           },
@@ -219,7 +216,6 @@ function legacyExecutionBlob(
     contextValidator: {
       type: "claude",
       enabled: true,
-      continuity: { enabled: true },
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     },
   }));
@@ -477,7 +473,6 @@ describe("0011-workflow-agent-assignments", () => {
                 parameters: { reasoning: "high", fast: "false" },
               },
             },
-            continuity: { enabled: true, contextLimitTokens: 90_000 },
           },
         ],
       },
@@ -749,7 +744,6 @@ describe("0011-workflow-agent-assignments", () => {
     defaults.contextValidator = {
       type: "codex",
       enabled: true,
-      continuity: { enabled: true, contextLimitTokens: 90_000 },
       codex: { model: "gpt-5.5", reasoningEffort: "low" },
     };
     const world = seedLegacyWorld(config);
@@ -806,7 +800,6 @@ describe("0011-workflow-agent-assignments", () => {
     defaults.contextValidator = {
       type: "codex",
       enabled: true,
-      continuity: { enabled: true, contextLimitTokens: 90_000 },
       codex: { model: "gpt-5.5", reasoningEffort: "low" },
     };
     const world = seedLegacyWorld(config);
@@ -839,7 +832,6 @@ describe("0011-workflow-agent-assignments", () => {
     defaults.contextValidator = {
       type: "codex",
       enabled: true,
-      continuity: { enabled: true },
       codex: { model: "gpt-5.5", reasoningEffort: "low" },
     };
     const world = seedLegacyWorld(config);
@@ -855,7 +847,6 @@ describe("0011-workflow-agent-assignments", () => {
         value: {
           type: "codex",
           enabled: true,
-          continuity: { enabled: true },
           codex: {},
         },
       },
@@ -890,7 +881,7 @@ describe("0011-workflow-agent-assignments", () => {
     expect(after.agentBackends).toEqual(before.agentBackends);
     expect(
       (after.workflowDefaults as Record<string, unknown>).iterationPolicy,
-    ).toEqual({ maxIterations: 12, continuity: { enabled: true } });
+    ).toEqual({ maxIterations: 12 });
   });
 
   it("migrates definition documents in BOTH scope tiers, including disabled cohorts", async () => {
@@ -935,7 +926,6 @@ describe("0011-workflow-agent-assignments", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: false },
           },
         ],
       });
@@ -969,7 +959,6 @@ describe("0011-workflow-agent-assignments", () => {
                 parameters: { reasoning: "ultra", fast: "false" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       });

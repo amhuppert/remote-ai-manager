@@ -57,7 +57,6 @@ const validatorConfig: ValidatorAssignment = {
     backend: "claude",
     modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
   },
-  continuity: { enabled: false },
 };
 
 /**

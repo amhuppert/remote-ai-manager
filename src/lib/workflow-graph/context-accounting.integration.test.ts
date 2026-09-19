@@ -82,7 +82,6 @@ describe("durable context accounting", () => {
           getSession: fixture.store.getSession,
           abortConversation: () => {},
           abortExecutionLoop: () => {},
-          retireLaneConversation: () => {},
           stopExecutionLaneDevServers: async () => {},
           now: () => NOW,
         });

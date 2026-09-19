@@ -190,7 +190,7 @@ async function buildTestHarness(
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-05-01T00:00:00.000Z",
     },
     {
@@ -200,7 +200,7 @@ async function buildTestHarness(
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-05-01T00:00:00.000Z",
     },
   ];

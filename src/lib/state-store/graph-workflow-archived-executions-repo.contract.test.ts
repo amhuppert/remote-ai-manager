@@ -521,7 +521,6 @@ function maximalResolvedContext(): Record<string, unknown> {
               parameters: { effort: "medium" },
             },
           },
-          continuity: { enabled: false, contextLimitTokens: 120_000 },
           profileSnapshot: {
             tier: "project",
             id: "security-reviewer",
@@ -547,7 +546,6 @@ function maximalResolvedContext(): Record<string, unknown> {
     circuitBreaker: { consecutiveFailureThreshold: 5 },
     iterationPolicy: {
       maxIterations: 7,
-      continuity: { enabled: false, contextLimitTokens: 90_000 },
     },
     planRepair: {
       enabled: false,
@@ -834,7 +832,6 @@ function buildMaximalExecution(): unknown {
                     parameters: { effort: "medium" },
                   },
                 },
-                continuity: { enabled: false, contextLimitTokens: 120_000 },
                 profileSnapshot: {
                   tier: "project",
                   id: "security-reviewer",
@@ -860,7 +857,6 @@ function buildMaximalExecution(): unknown {
           circuitBreaker: { consecutiveFailureThreshold: 5 },
           iterationPolicy: {
             maxIterations: 7,
-            continuity: { enabled: false, contextLimitTokens: 90_000 },
           },
           planRepair: {
             enabled: false,
@@ -1498,8 +1494,6 @@ function buildMaximalExecution(): unknown {
           },
           lastContextTokens: 12_000,
           lastContextWindowMax: 200_000,
-          rotateBeforeNextTurn: true,
-          limitEvaluation: "supported",
           lastUsedAt: "2026-01-02T02:00:00Z",
         },
         "context_validator:general": {
@@ -1517,9 +1511,7 @@ function buildMaximalExecution(): unknown {
           metrics: {
             contextTokens: 42_000,
             contextWindowMax: 200_000,
-            rotateBeforeNextTurn: false,
           },
-          limitEvaluation: "supported",
           lastUsedAt: "2026-01-02T02:30:00Z",
         },
         "context_validator:security-reviewer": {
@@ -1540,9 +1532,7 @@ function buildMaximalExecution(): unknown {
               cachedInputTokens: 400,
               outputTokens: 300,
             },
-            rotateBeforeNextTurn: false,
           },
-          limitEvaluation: "supported",
           lastUsedAt: "2026-01-02T02:45:00Z",
         },
       },

@@ -3,7 +3,6 @@ import type {
   ExecutionMutationOutcome as FixtureOutcome,
 } from "@/lib/workflow-graph/execution-mutation";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
-import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 /**
  * R8.1: two assignments of the SAME profile reviewing one context are two
@@ -141,16 +140,18 @@ function passTurn(): TaskRunResult {
   return {
     kind: "text",
     text: JSON.stringify({ summary: "All good", issues: [], advisories: [] }),
-    error: null,
     backendRef: null,
-    continuationDisposition: "keep",
+    continuationDisposition: "retain",
     usage: {
       inputTokens: 10,
       outputTokens: 5,
       cachedInputTokens: 0,
       costUsd: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      durationMs: 1,
     },
-  } as unknown as TaskRunResult;
+  };
 }
 
 interface Harness {
@@ -183,7 +184,9 @@ function buildHarness(): Harness {
       return { id };
     },
     async getConversation(_projectPath, _sessionName, id) {
-      return createdConversationIds.includes(id) ? { id } : null;
+      return createdConversationIds.includes(id)
+        ? { id, promptCount: 0, backendRef: null }
+        : null;
     },
     now: () => NOW,
   });
@@ -378,43 +381,5 @@ describe("two assignments of one profile in one context (R8.1)", () => {
       ]),
     );
     expect(new Set(boundDuringSecondDispatch).size).toBe(2);
-  });
-
-  it("cancelling one assignment's lane leaves its sibling's lane and continuity untouched", async () => {
-    const harness = buildHarness();
-    await harness.runRound();
-
-    const before = readExecution().laneStates[CONTEXT_ID] ?? {};
-    expect(Object.keys(before).sort()).toEqual([LANE_A, LANE_B]);
-    const survivingLane = before[LANE_B];
-    expect(survivingLane).toBeDefined();
-
-    // Retire exactly one assignment's lane, as a per-assignment cancel does.
-    await executionRepository
-      .mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => {
-        const contextLanes = { ...execution.laneStates[CONTEXT_ID] };
-        delete contextLanes[LANE_A];
-        return changed({
-          ...execution,
-          laneStates: { ...execution.laneStates, [CONTEXT_ID]: contextLanes },
-        });
-      })
-      .then((mutation) => mutation.execution);
-
-    const after = readExecution().laneStates[CONTEXT_ID] ?? {};
-    expect(after[LANE_A]).toBeUndefined();
-    expect(after[LANE_B]).toEqual(survivingLane);
-
-    // The sibling still resumes its own conversation on the next round, while
-    // the retired assignment starts a fresh one.
-    await harness.runRound();
-    const resumed = readExecution().laneStates[CONTEXT_ID] ?? {};
-    expect(resumed[LANE_B]?.workflowConversationId).toBe(
-      survivingLane?.workflowConversationId,
-    );
-    expect(resumed[LANE_A]?.workflowConversationId).not.toBe(
-      before[LANE_A]?.workflowConversationId,
-    );
-    expect(harness.createdConversationIds).toHaveLength(3);
   });
 });

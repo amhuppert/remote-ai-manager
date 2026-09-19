@@ -182,7 +182,7 @@ collaborator, scribe, or conversation participant.
 - Store lane identity, backend, and continuity policy.
 - Track backend references such as Claude conversation IDs or Codex session
   refs.
-- Track context metrics and rotation decisions.
+- Track context and usage metrics.
 - Preserve stale-session recovery metadata.
 - Provide continuity context to the AgentCall facade.
 - Record outcomes after agent execution.
@@ -210,7 +210,6 @@ for checks that appear across many features.
 | Script Validation | Run configured validation and branch on success/failure |
 | Change Set | Check whether an agent or script changed the worktree |
 | Convergence | Decide whether multiple lanes have reached agreement |
-| Context Limit | Decide whether a lane should rotate before the next turn |
 | Circuit Breaker | Stop or pause after repeated failures |
 
 **Responsibilities**
@@ -323,7 +322,7 @@ effects. These are not renamed into a separate Activity abstraction.
 | --- | --- | --- |
 | Feature Workflow | Domain phases, prompts, schemas, UI semantics, policy | Backend quirks, generic status transport, artifact registration |
 | AgentCall Facade | Normalized execution, MCP application, error normalization | Feature phase transitions |
-| Lane | Continuity state and rotation metadata | Agent execution or prompts |
+| Lane | Continuity state and usage metrics | Agent execution or prompts |
 | Gate | Reusable pass/fail/pause checkpoints | Whole workflow orchestration |
 | StatusBus | Scoped live event delivery | Workflow persistence |
 | ArtifactRegistry | Artifact paths and metadata registration | Artifact content semantics |
@@ -442,7 +441,7 @@ execution primitives.
 
 - AgentCall facade
 - Lane continuity
-- Structured Output, Script Validation, Context Limit, and Circuit Breaker gates
+- Structured Output, Script Validation, and Circuit Breaker gates
 - ArtifactRegistry
 - StatusBus
 

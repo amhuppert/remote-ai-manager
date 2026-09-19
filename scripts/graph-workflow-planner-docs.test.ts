@@ -790,9 +790,6 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       `${SKILL_DIRS[0]}/references/validation-and-staffing.md`,
     );
     for (const phrase of [
-      "rotation at task boundaries",
-      "context-budget control",
-      "multi-hour task",
       "every `full`-grade context",
       "cheap deterministic gates",
       "pre-existing failures",

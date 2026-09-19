@@ -185,30 +185,11 @@ function renderInstructions(candidateScope: CandidateScope): string {
 /** Hard ceilings so an oversized context can never blow the validator window. */
 const HARD_MAX_PATCH_BYTES = 24_000;
 const HARD_MAX_PATCH_LINES = 600;
-/** Inline-patch share of the context window, in bytes-per-token terms. */
-const PATCH_TOKEN_FRACTION = 0.25;
-const BYTES_PER_TOKEN = 4;
-
-export interface DiffScopeBudget {
-  /** Validator `continuity.contextLimitTokens`, when configured. */
-  contextLimitTokens?: number;
-}
-
 export interface RenderedDiffScopeSection {
   section: string;
   truncated: boolean;
   includedFileCount: number;
   omittedFileCount: number;
-}
-
-function resolveByteBudget(budget: DiffScopeBudget): number {
-  if (budget.contextLimitTokens && budget.contextLimitTokens > 0) {
-    const derived = Math.floor(
-      budget.contextLimitTokens * BYTES_PER_TOKEN * PATCH_TOKEN_FRACTION,
-    );
-    return Math.max(0, Math.min(HARD_MAX_PATCH_BYTES, derived));
-  }
-  return HARD_MAX_PATCH_BYTES;
 }
 
 function renderDiffstat(diff: SessionDiff): string {
@@ -246,7 +227,6 @@ function renderFilePatch(file: FileDiff): string {
  */
 export function renderDiffScopeSection(
   scope: ValidationDiffScope,
-  budget: DiffScopeBudget = {},
 ): RenderedDiffScopeSection {
   if (scope.kind === "unavailable") {
     return {
@@ -276,7 +256,7 @@ export function renderDiffScopeSection(
     };
   }
 
-  const byteBudget = resolveByteBudget(budget);
+  const byteBudget = HARD_MAX_PATCH_BYTES;
   const parts: string[] = [
     HEADER,
     "",

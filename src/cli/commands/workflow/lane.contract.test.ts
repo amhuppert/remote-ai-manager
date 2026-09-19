@@ -5,7 +5,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import { createAgentAuth } from "@/lib/agent-gateway/token";
 import {
   createLaneRouteHandlers,
@@ -37,7 +36,7 @@ import type { CliEnv, CliHost } from "../../transport";
  * the CLI's request shape — env-derived `executionId` in the body, the
  * `contexts/[contextId]/tasks/[taskId]` params, the shared-document catch-all —
  * is parsed by production code, and the response facts (`remainingTaskCount`,
- * `stopInstruction`, the 409 halt reason) round-trip back into the CLI's
+ * the 409 halt reason) round-trip back into the CLI's
  * hint-vs-stop rendering. The store's `mutateActive`, document capture, and
  * halt/block signals are controlled per test.
  */
@@ -60,8 +59,7 @@ function makeClaudeLane(): GraphWorkflowAgentSessionState {
       backend: "claude",
       ref: "conv-bound",
     },
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: {},
     lastUsedAt: "2026-03-27T11:00:00.000Z",
   };
 }
@@ -95,33 +93,12 @@ function buildRunningExecution(
     },
   };
 
-  if (options.limit !== undefined) {
-    running.workingDefinition = {
-      ...running.workingDefinition,
-      executionContexts: running.workingDefinition.executionContexts.map(
-        (ctx) =>
-          ctx.id === "context-plan"
-            ? {
-                ...ctx,
-                iterationPolicy: {
-                  ...ctx.iterationPolicy,
-                  continuity: {
-                    ...ctx.iterationPolicy.continuity,
-                    contextLimitTokens: options.limit,
-                  },
-                },
-              }
-            : ctx,
-      ),
-    };
-  }
   return running;
 }
 
 interface RealContextOptions {
   documentContents?: string;
   execution?: GraphWorkflowExecution;
-  readLiveOccupancy?: (conversationId: string) => LiveOccupancySnapshot | null;
   allowAgentTaskAdd?: boolean;
   allowAgentCollaboration?: boolean;
   collaboration?: GraphWorkflowCollaborationContextBlock;
@@ -173,7 +150,6 @@ function buildRealContext(
       },
     }),
     publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
-    readLiveOccupancy: options.readLiveOccupancy ?? (() => null),
     now: () => "2026-03-27T12:00:00.000Z",
   });
   const bound = factory.create({
@@ -315,25 +291,6 @@ describe("cctl workflow lane verbs against the real lane route handlers", () => 
     expect(result.stdout).toContain("Completed task-plan-1");
     // The fixture context has one task; completing it leaves zero remaining.
     expect(result.stdout).toContain("0 tasks remain");
-  });
-
-  it("task complete surfaces the real rotation-gate stop instruction", async () => {
-    const result = await runCcWithHost(
-      ["workflow", "task", "complete", "task-plan-1", "--summary", "done"],
-      laneEnv,
-      laneRouteHost(
-        buildRealContext({
-          execution: buildRunningExecution({ limit: 100 }),
-          readLiveOccupancy: () => ({
-            contextTokens: 200,
-            compactedThisTurn: false,
-          }),
-        }),
-      ),
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("CONTEXT LIMIT REACHED");
   });
 
   it("task complete prints the real 409 halt reason verbatim and exits 1", async () => {

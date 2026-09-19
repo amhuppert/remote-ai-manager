@@ -14,7 +14,7 @@ import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
  *     lanes start without a persisted ref; later turns resume the backend
  *     session returned by the SDK and recorded on lane state.
  *  3. The composition runs through `WorkflowAgentCaller` so the lane
- *     service tracks backend continuity, rotation flags, and post-turn
+ *     service tracks backend continuity and post-turn
  *     usage on the lane (`LaneOutcome`). The `WorkflowAgentCaller` is also
  *     the ONE place the `LaneScheduler` is acquired (D16): write-capable
  *     lanes sharing a session serialize here, and nothing above this seam

@@ -131,7 +131,6 @@ function createContextValidatorExecution(
                       parameters: { effort: "medium" },
                     },
                   },
-                  continuity: { enabled: true },
                 },
               ],
             },
@@ -284,7 +283,6 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
-          compacted: false,
         };
       },
       validationService: { validateContextCompletion },
@@ -364,7 +362,6 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
-          compacted: false,
         };
       },
       validationService: { validateContextCompletion },
@@ -426,7 +423,6 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
-          compacted: false,
         };
       },
       signalHalt,
@@ -518,7 +514,6 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
-          compacted: false,
         };
       },
       signalHalt,
@@ -620,7 +615,6 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
-          compacted: false,
         };
       },
       validationService: { validateContextCompletion },

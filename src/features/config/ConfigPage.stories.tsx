@@ -127,7 +127,6 @@ const fullyConfiguredRaw: RawGlobalConfig = {
               parameters: { reasoning: "medium", fast: "false" },
             },
           },
-          continuity: { enabled: true },
         },
       ],
     },
@@ -198,7 +197,6 @@ const fullyConfiguredConfig: GlobalConfig = {
               parameters: { reasoning: "medium", fast: "false" },
             },
           },
-          continuity: { enabled: true },
         },
       ],
     },
@@ -207,7 +205,6 @@ const fullyConfiguredConfig: GlobalConfig = {
     askUserQuestions: { enabled: false },
     iterationPolicy: {
       maxIterations: 20,
-      continuity: { enabled: true },
     },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },

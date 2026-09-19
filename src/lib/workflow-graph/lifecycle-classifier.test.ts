@@ -68,7 +68,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
-      iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 5 },
     },
   ],
   tasks: [

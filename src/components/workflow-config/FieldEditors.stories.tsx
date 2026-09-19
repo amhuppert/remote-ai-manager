@@ -74,12 +74,10 @@ const VALIDATOR: ValidatorAssignment = {
       parameters: { effort: "medium" },
     },
   },
-  continuity: { enabled: true },
 };
 
 const ITERATION: GraphWorkflowIterationPolicy = {
   maxIterations: 20,
-  continuity: { enabled: true },
 };
 
 const CIRCUIT_BREAKER: GraphWorkflowCircuitBreakerPolicy = {

@@ -6,8 +6,8 @@ import type { AgentAssignment } from "./config-schemas";
  * The panel reads a WORKING definition, whose assignments carry the bytes the
  * run was seeded with, but it writes an `update-context` op, whose schema is
  * reference-bearing and strict. Echoing the snapshot back would be refused at
- * accept time — and would also be wrong: an edit names a profile, and the
- * live-edit boundary resolves it.
+ * accept time — an edit names a profile, and the live-edit boundary supplies
+ * its snapshot, preserving the frozen bytes of unchanged started assignments.
  */
 export function toAuthoredAssignment<T extends AgentAssignment>(
   assignment: T,

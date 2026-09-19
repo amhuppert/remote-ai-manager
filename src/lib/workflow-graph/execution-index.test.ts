@@ -34,7 +34,7 @@ function createContext(id: string, title = id): GraphWorkflowResolvedContext {
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: {},
-    iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 3 },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   };
 }

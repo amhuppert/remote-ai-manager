@@ -6,8 +6,10 @@ import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
   makeProfileSnapshot,
+  makeSeededValidatorAssignment,
   makeValidatorAssignment,
 } from "./test-fixtures";
+import { toAuthoredAssignment } from "./authored-assignment";
 import {
   applyLiveEditsToActiveExecution,
   type LiveEditApplyRequest,
@@ -39,7 +41,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
-  iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  iterationPolicy: { maxIterations: 20 },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: { value: false, source: "global" },
@@ -143,10 +145,11 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
           }),
         );
       },
-      prepareAssignmentSnapshots: (_projectPath, operations) => {
+      prepareAssignmentSnapshots: (_projectPath, operations, execution) => {
         harness.prepareCalls += 1;
         return prepareLiveEditAssignmentSnapshots({
           operations,
+          ...(execution === undefined ? {} : { execution }),
           composeSnapshot: async (assignment) => {
             const hash = harness.library.get(assignment.profile.id);
             if (hash === undefined) {
@@ -377,6 +380,93 @@ describe("applyLiveEditsToActiveExecution", () => {
       cohort?.assignments[0]?.profileSnapshot.resolvedInstructionHash,
     ).toBe(SECURITY_V1);
   });
+
+  it.each(["updated", "deleted", "shared-profile"] as const)(
+    "edits unstarted siblings without refreshing started snapshots (%s)",
+    async (libraryChange) => {
+      const execution = createWorkflowExecution({ status: "paused" });
+      const context = execution.workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-implement",
+      );
+      if (!context) throw new Error("Missing context");
+      const started = makeSeededValidatorAssignment({
+        id: "security",
+        profile: { tier: "project", id: "security-reviewer" },
+      });
+      started.profileSnapshot = makeProfileSnapshot({
+        tier: "project",
+        id: "security-reviewer",
+        resolvedInstructionHash: SECURITY_V1,
+      });
+      const unstarted = makeSeededValidatorAssignment({
+        id: "general",
+        ...(libraryChange === "shared-profile"
+          ? { profile: started.profile }
+          : {}),
+      });
+      context.contextValidator = {
+        enabled: true,
+        assignments: [started, unstarted],
+      };
+      execution.laneStates[context.id] = {
+        "context_validator:security": {
+          lane: "context_validator",
+          contextId: context.id,
+          assignmentId: started.id,
+          backend: "claude",
+          refKind: "conversation",
+          workflowConversationId: "security-conversation",
+          metrics: {},
+          lastUsedAt: "2026-07-29T00:00:00.000Z",
+        },
+      };
+      const harness = makeHarness(execution);
+      if (libraryChange !== "deleted") {
+        harness.library.set("security-reviewer", SECURITY_V2);
+      } else {
+        harness.library.delete("security-reviewer");
+      }
+      const outcome = await applyLiveEditsToActiveExecution(
+        {
+          projectPath: "/p",
+          sessionName: "s",
+          request: makeRequest({
+            operations: [
+              {
+                type: "update-context",
+                contextId: context.id,
+                contextValidator: {
+                  enabled: true,
+                  assignments: [
+                    toAuthoredAssignment(started),
+                    {
+                      ...toAuthoredAssignment(unstarted),
+                      focus: "Review concurrency",
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        },
+        harness.deps,
+      );
+      expect(outcome.ok).toBe(true);
+      const assignments = harness
+        .current()
+        .workingDefinition.executionContexts.find(
+          (entry) => entry.id === context.id,
+        )?.contextValidator.assignments;
+      expect(assignments?.[0]).toEqual(started);
+      expect(assignments?.[1]).toMatchObject({
+        focus: "Review concurrency",
+        profileSnapshot: {
+          resolvedInstructionHash:
+            libraryChange === "shared-profile" ? SECURITY_V2 : hash("2"),
+        },
+      });
+    },
+  );
 
   it("rejects a dangling profile reference at preparation, before the mutation opens", async () => {
     const harness = makeHarness(createWorkflowExecution({ status: "paused" }));

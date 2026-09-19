@@ -49,7 +49,6 @@ function context(
           },
           strategy: "conversation",
           authority: "blocking",
-          continuity: { enabled: true },
         },
         {
           id: "style",
@@ -63,13 +62,12 @@ function context(
           },
           strategy: "task",
           authority: "advisory",
-          continuity: { enabled: true },
         },
       ],
     },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: {},
-    iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 3 },
     ...overrides,
   } as ExecutionContextNodeData["context"];
 }

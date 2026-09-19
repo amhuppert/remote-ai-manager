@@ -563,7 +563,7 @@ export const taskCompleteSpec = {
   path: "workflow task complete",
   summary: "Complete the current lane task",
   description:
-    "Report changes and verification after each task. Server stop instructions require ending the turn immediately; remainingTaskCount is authoritative.",
+    "Report changes and verification after each task. A halted run exits non-zero with the reason; end the turn immediately. remainingTaskCount is authoritative.",
   requires: "cc",
   effects: "write",
   args: [taskId],

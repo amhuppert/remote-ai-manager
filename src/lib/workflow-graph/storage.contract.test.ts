@@ -157,7 +157,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: false, contextLimitTokens: 110_000 },
           },
         ],
       },
@@ -167,7 +166,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
       },
       iterationPolicy: {
         maxIterations: 9,
-        continuity: { enabled: false, contextLimitTokens: 80_000 },
       },
       circuitBreaker: { consecutiveFailureThreshold: 4 },
       mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
@@ -338,7 +336,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: false, contextLimitTokens: 120_000 },
             },
             {
               id: "performance",
@@ -353,7 +350,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
                   parameters: { reasoning: "high", fast: "false" },
                 },
               },
-              continuity: { enabled: true, contextLimitTokens: 60_000 },
             },
           ],
         },
@@ -362,7 +358,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         circuitBreaker: { consecutiveFailureThreshold: 5 },
         iterationPolicy: {
           maxIterations: 7,
-          continuity: { enabled: false, contextLimitTokens: 90_000 },
         },
         planRepair: {
           enabled: false,

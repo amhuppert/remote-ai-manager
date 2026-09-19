@@ -178,15 +178,8 @@ export const PLAN_REPAIR_DEFAULT_AGENT: GraphWorkflowAgentConfig = {
  */
 export const PLAN_REPAIR_TURN_TIMEOUT_MS = 15 * 60_000;
 
-export const graphWorkflowLaneContinuityPolicySchema = z.object({
-  enabled: z.boolean().default(true),
-  contextLimitTokens: z.number().int().positive().optional(),
-});
 export const graphWorkflowIterationPolicySchema = z.object({
   maxIterations: z.number().int().min(1),
-  continuity: graphWorkflowLaneContinuityPolicySchema.default({
-    enabled: true,
-  }),
 });
 export type GraphWorkflowIterationPolicy = z.infer<
   typeof graphWorkflowIterationPolicySchema
@@ -325,9 +318,6 @@ const validatorAssignmentObjectSchema = agentAssignmentSchema
   .extend({
     strategy: z.enum(["conversation", "task"]),
     authority: validatorAuthoritySchema,
-    continuity: graphWorkflowLaneContinuityPolicySchema.default({
-      enabled: true,
-    }),
   })
   .strict();
 export const validatorAssignmentSchema = z.preprocess(

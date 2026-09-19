@@ -60,9 +60,6 @@
                   "parameters": { "effort": "medium" }
                 }
               },
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -93,10 +90,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 4,
-          "continuity": {
-            "enabled": true
-          }
+          "maxIterations": 4
         },
         "planRepair": {
           "enabled": true,
@@ -208,9 +202,6 @@
                   "parameters": { "effort": "medium" }
                 }
               },
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -241,10 +232,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 4,
-          "continuity": {
-            "enabled": true
-          }
+          "maxIterations": 4
         },
         "planRepair": {
           "enabled": true,
@@ -356,9 +344,6 @@
                   "parameters": { "effort": "medium" }
                 }
               },
-              "continuity": {
-                "enabled": true
-              },
               "profileSnapshot": {
                 "tier": "builtin",
                 "id": "general-reviewer",
@@ -389,10 +374,7 @@
           "consecutiveFailureThreshold": 3
         },
         "iterationPolicy": {
-          "maxIterations": 4,
-          "continuity": {
-            "enabled": true
-          }
+          "maxIterations": 4
         },
         "planRepair": {
           "enabled": true,

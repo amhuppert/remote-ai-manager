@@ -51,7 +51,7 @@ function context(
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
-    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 20 },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   };
 }

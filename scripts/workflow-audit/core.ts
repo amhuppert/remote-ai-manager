@@ -184,15 +184,6 @@ const auditJoinStateSchema = z.object({
 const auditDefinitionContextSchema = z.object({
   id: z.string(),
   title: z.string().default(""),
-  iterationPolicy: z
-    .object({
-      continuity: z
-        .object({ contextLimitTokens: z.number().nullish().default(null) })
-        .nullish()
-        .default(null),
-    })
-    .nullish()
-    .default(null),
 });
 
 const auditExecutionProjectionSchema = z.object({
@@ -382,10 +373,6 @@ export interface ContextReport {
    */
   hungTurnMs: number;
   scriptValidationRuns: { started: number; passed: number; failed: number };
-  /** rotation.scheduled decisions for this context (decisions.jsonl). */
-  rotationScheduledCount: number;
-  /** implementer.rotation applications, excluding plain context switches. */
-  rotationAppliedCount: number;
   iterations: IterationReport[];
   validations: ValidationReport[];
   approvalWaits: WaitReport[];
@@ -393,8 +380,6 @@ export interface ContextReport {
   peakContextTokens: number | null;
   contextWindowMax: number | null;
   peakOccupancyPct: number | null;
-  /** Configured continuity rotation limit from the working definition. */
-  rotationLimitTokens: number | null;
   taskFailures: TaskFailureReport[];
   parseFallbacks: Array<{ file: string; parsePath: string | null }>;
   conversations: ConversationReport[];
@@ -849,7 +834,6 @@ const PROMPT_GROWTH_MIN_DELTA = 4000;
 const MAX_GAPS_REPORTED = 10;
 const COST_MISMATCH_MIN_ABS_USD = 0.5;
 const COST_MISMATCH_MIN_REL = 0.1;
-const ROTATION_OVERRUN_FACTOR = 1.5;
 const BACKGROUND_KILL_THRESHOLD = 3;
 const SCRATCH_FILES_RENDER_CAP = 3;
 const COST_MISMATCH_RENDER_CAP = 3;
@@ -1122,7 +1106,6 @@ const EMPTY_LOGS: ContextLogs = {
 export function buildAuditReport(input: AuditInput): AuditReport {
   const { execution, events, conversations, contextLogs } = input;
   const lifecycle = input.lifecycle ?? [];
-  const decisions = input.decisions ?? [];
 
   // Latest timestamp across everything we can see — bounds trailing turn
   // intervals and unresolved halt windows for an execution still in flight.
@@ -1155,26 +1138,6 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     joinRetryCounts.set(target, (joinRetryCounts.get(target) ?? 0) + 1);
   }
 
-  // ---- rotation decisions (scheduled vs applied) -----------------------
-  const rotationScheduled = new Map<string, number>();
-  const rotationApplied = new Map<string, number>();
-  for (const record of decisions) {
-    const contextId = fieldStr(record.fields, "contextId");
-    if (contextId === null) continue;
-    if (record.event === "rotation.scheduled") {
-      rotationScheduled.set(
-        contextId,
-        (rotationScheduled.get(contextId) ?? 0) + 1,
-      );
-    } else if (
-      (record.event === "implementer.rotation" ||
-        record.event === "validator.rotation") &&
-      fieldStr(record.fields, "reason") === "rotation_scheduled"
-    ) {
-      rotationApplied.set(contextId, (rotationApplied.get(contextId) ?? 0) + 1);
-    }
-  }
-
   // ---- conversation attribution --------------------------------------
   const laneByConversation = new Map<
     string,
@@ -1193,9 +1156,8 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       }
     }
   }
-  // laneStates only retain the most recent conversation per lane, so rotated
-  // implementer conversations are recovered from iteration.conversation_resolved
-  // records and validator conversations from validation-result sessionRefs.
+  // Historical conversations absent from laneStates remain attributable through
+  // iteration.conversation_resolved and validation-result sessionRefs.
   for (const [contextId, logs] of Object.entries(contextLogs)) {
     for (const record of logs.iterations) {
       if (record.event !== "iteration.conversation_resolved") continue;
@@ -1249,14 +1211,9 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   // ---- per-context reports --------------------------------------------
   const definitionOrder = new Map<string, number>();
   const titles = new Map<string, string>();
-  const rotationLimits = new Map<string, number>();
   execution.workingDefinition.executionContexts.forEach((context, index) => {
     definitionOrder.set(context.id, index);
     titles.set(context.id, context.title);
-    const limit = context.iterationPolicy?.continuity?.contextLimitTokens;
-    if (typeof limit === "number" && limit > 0) {
-      rotationLimits.set(context.id, limit);
-    }
   });
   const contextIds = new Set<string>([
     ...Object.keys(execution.contextStates),
@@ -1433,8 +1390,6 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       agentTurnMs,
       hungTurnMs,
       scriptValidationRuns,
-      rotationScheduledCount: rotationScheduled.get(contextId) ?? 0,
-      rotationAppliedCount: rotationApplied.get(contextId) ?? 0,
       iterations,
       validations: buildValidations(events, contextId),
       approvalWaits,
@@ -1442,7 +1397,6 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       peakContextTokens,
       contextWindowMax,
       peakOccupancyPct,
-      rotationLimitTokens: rotationLimits.get(contextId) ?? null,
       taskFailures,
       parseFallbacks: logs.validatorResponses.filter(
         (r) => r.parsePath !== "structured_output",
@@ -1905,43 +1859,6 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         summary: `merge status "${context.mergeStatus}"`,
       });
     }
-    // Occupancy arithmetic is only valid when the backend reported a real
-    // context window: codex lanes carry a CUMULATIVE processed-token counter
-    // with no window max, and dividing a cumulative counter by the rotation
-    // limit produces arithmetically invalid "overruns".
-    if (
-      context.rotationLimitTokens !== null &&
-      context.peakOccupancyPct !== null
-    ) {
-      let worst: IterationReport | null = null;
-      for (const iteration of context.iterations) {
-        if (iteration.maxContextTokens === null) continue;
-        if (
-          iteration.maxContextTokens >=
-            context.rotationLimitTokens * ROTATION_OVERRUN_FACTOR &&
-          iteration.maxContextTokens > (worst?.maxContextTokens ?? 0)
-        ) {
-          worst = iteration;
-        }
-      }
-      if (worst !== null && worst.maxContextTokens !== null) {
-        const ratio = worst.maxContextTokens / context.rotationLimitTokens;
-        friction.push({
-          kind: "rotation_overrun",
-          severity: "high",
-          contextId: context.contextId,
-          summary: `iteration ${worst.iterationNumber} peaked at ${worst.maxContextTokens} tokens — ${ratio.toFixed(1)}× the configured rotation limit (${context.rotationLimitTokens}); rotation only takes effect at the iteration boundary, so a long turn outruns it and risks a hard mid-task stop`,
-        });
-      }
-    }
-    if (context.rotationScheduledCount > context.rotationAppliedCount) {
-      friction.push({
-        kind: "rotation_not_applied",
-        severity: "medium",
-        contextId: context.contextId,
-        summary: `${context.rotationScheduledCount} rotation(s) scheduled but only ${context.rotationAppliedCount} applied — the lane kept its conversation past the point the engine decided to rotate it`,
-      });
-    }
     let contextKills = 0;
     let contextCompactions = 0;
     let scannedConversations = 0;
@@ -2206,7 +2123,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         .map((c) => c.contextId)
         .join(
           ", ",
-        )}: token counters lack a comparable occupancy measurement (Codex reports cumulative processed tokens, even when a window capacity is known) — treat occupancy and rotation-overrun conclusions for these contexts as inconclusive`,
+        )}: token counters lack a comparable occupancy measurement (Codex reports cumulative processed tokens, even when a window capacity is known) — treat occupancy conclusions for these contexts as inconclusive`,
     });
   }
   const validatorUnpriced = validators?.unpricedEventCount ?? 0;
@@ -2471,7 +2388,7 @@ export function renderMarkdown(report: AuditReport): string {
     );
     if (context.peakContextTokens !== null) {
       lines.push(
-        `- Peak token counter: ${context.peakContextTokens} tokens${context.peakOccupancyPct !== null ? ` (${context.peakOccupancyPct}% of window)` : " (occupancy unknown)"}${context.rotationLimitTokens !== null ? ` · configured occupancy limit ${context.rotationLimitTokens}` : ""}`,
+        `- Peak token counter: ${context.peakContextTokens} tokens${context.peakOccupancyPct !== null ? ` (${context.peakOccupancyPct}% of window)` : " (occupancy unknown)"}`,
       );
     }
     if (context.iterations.length > 0) {

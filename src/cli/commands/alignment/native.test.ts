@@ -115,7 +115,9 @@ describe("CC alignment commands", () => {
     expect(result.exitCode).toBe(3);
     expect(JSON.parse(result.stdout)).toMatchObject({
       effect: "unknown",
-      recovery: { references: [{ kind: "session", id: "session-one" }] },
+      recovery: {
+        references: [{ kind: "session", id: "session-one" }],
+      },
     });
     expect(fixture.requests).toHaveLength(1);
   });

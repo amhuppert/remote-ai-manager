@@ -11,7 +11,7 @@ import { changed } from "@/lib/workflow-graph/execution-mutation";
  * execution repository: lane continuity state lives in
  * `execution.laneStates[contextId][laneKey]` and every read/write goes
  * through the persisted execution row in place. This is what makes lane
- * state (backend continuity handles, rotation flags, usage metrics) survive
+ * state (backend continuity handles and usage metrics) survive
  * a process restart — the design fix for the restart-losing in-memory
  * projections (bug §1.9.4).
  *
@@ -26,7 +26,7 @@ import { changed } from "@/lib/workflow-graph/execution-mutation";
  *  - lane policy and write capability are derived from the working
  *    definition (they are configuration, not runtime state);
  *  - graph-only fields the primitive layer does not model
- *    (`workflowConversationId`, `limitEvaluation`) are preserved in place on
+ *    (`workflowConversationId`) are preserved in place on
  *    update rather than round-tripped through the primitive state.
  */
 
@@ -41,7 +41,6 @@ import {
 import type { LaneStore } from "@/lib/workflows/primitives/lane-store";
 import {
   laneStateSchema,
-  type LanePolicy,
   type LaneRef,
   type LaneState,
   type LaneWriteCapability,
@@ -91,34 +90,6 @@ interface LocatedExecution {
   execution: GraphWorkflowExecution;
 }
 
-/**
- * Each lane answers to its OWN assignment's continuity policy. Before cohorts
- * every validator lane in a context shared the first assignment's policy,
- * because there was only one lane to apply it to; now a cohort can pair a
- * long-lived reviewer with a fresh-eyes one in the same context.
- */
-function resolveLanePolicy(
-  execution: GraphWorkflowExecution,
-  identity: LaneIdentity,
-  contextId: string,
-): LanePolicy {
-  const ctx = execution.workingDefinition.executionContexts.find(
-    (candidate) => candidate.id === contextId,
-  );
-  const continuity =
-    identity.lane === "implementer"
-      ? ctx?.iterationPolicy.continuity
-      : ctx?.contextValidator.assignments.find(
-          (assignment) => assignment.id === identity.assignmentId,
-        )?.continuity;
-  return {
-    continuityEnabled: continuity?.enabled ?? true,
-    ...(continuity?.contextLimitTokens !== undefined
-      ? { contextLimitTokens: continuity.contextLimitTokens }
-      : {}),
-  };
-}
-
 function laneWriteCapability(lane: GraphWorkflowLaneKind): LaneWriteCapability {
   return lane === "implementer" ? "write_capable" : "read_only";
 }
@@ -141,8 +112,9 @@ export function toNeutralLaneState(
       ? { conversationId: normalized.workflowConversationId }
       : {}),
     writeCapability: laneWriteCapability(lane),
-    policy: resolveLanePolicy(execution, identity, contextId),
+    policy: { continuityEnabled: true },
     metrics: normalized.metrics,
+    staleSession: normalized.staleSession,
     lastUsedAt: normalized.lastUsedAt,
   });
 }
@@ -160,9 +132,7 @@ export function graphLaneContextMetrics(
 /**
  * Projects a neutral lane state onto the persisted graph shape, updating the
  * neutral-mappable fields in place and preserving graph-only fields from the
- * existing record. When a conversation anchor follows the continuity handle,
- * advancing that handle advances the anchor too rather than leaving it
- * pointing at a retired conversation.
+ * existing record. The CC conversation anchor stays fixed across turns.
  */
 export function toGraphLaneState(
   state: LaneState,
@@ -174,20 +144,8 @@ export function toGraphLaneState(
   const normalizedExisting = existing
     ? graphWorkflowAgentSessionStateSchema.parse(existing)
     : undefined;
-  const existingMatchesBackend = Object.is(
-    normalizedExisting?.backend,
-    state.backend,
-  );
-  const sameContinuityRef =
-    existingMatchesBackend && normalizedExisting?.sessionRef?.ref === state.ref;
-  const priorConversationFollowedRef =
-    existingMatchesBackend &&
-    state.conversationId === normalizedExisting?.sessionRef?.ref;
-  const conversationId = sameContinuityRef
-    ? (normalizedExisting?.workflowConversationId ?? state.conversationId)
-    : priorConversationFollowedRef
-      ? (state.ref ?? undefined)
-      : state.conversationId;
+  const conversationId =
+    normalizedExisting?.workflowConversationId ?? state.conversationId;
   const assignmentId =
     identity.assignmentId ?? normalizedExisting?.assignmentId;
   return graphWorkflowAgentSessionStateSchema.parse({
@@ -196,7 +154,7 @@ export function toGraphLaneState(
     lane,
     contextId,
     ...(assignmentId !== undefined ? { assignmentId } : {}),
-    // The fingerprint is rotation's business, not the neutral lane state's:
+    // The fingerprint belongs to the graph assignment, not the neutral lane state:
     // preserve whatever the continuity layer stamped rather than dropping it on
     // every post-turn mirror-back.
     ...(normalizedExisting?.assignmentFingerprint !== undefined
@@ -209,9 +167,7 @@ export function toGraphLaneState(
       ? { sessionRef: { backend: state.backend, ref: state.ref } }
       : {}),
     metrics: state.metrics,
-    limitEvaluation: existingMatchesBackend
-      ? normalizedExisting!.limitEvaluation
-      : "disabled",
+    staleSession: state.staleSession,
     lastUsedAt: state.lastUsedAt,
   });
 }

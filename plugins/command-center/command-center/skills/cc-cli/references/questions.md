@@ -68,9 +68,7 @@ ordinary conversations:
   genuinely ambiguous forks; batch related questions; end your turn after
   asking.
 - The answer does **not** arrive through the message queue. The workflow
-  resumes the asking conversation (even when continuity is off; a scheduled
-  context-window rotation instead delivers the answers in the replacement
-  conversation's first prompt) with the standard `<cc-question-answers>`
+  resumes the asking conversation with the standard `<cc-question-answers>`
   block embedded in the resumed turn's prompt. `skipped: true` still means
   proceed with best judgment.
 - When the toggle is disabled — and always for the planner session and

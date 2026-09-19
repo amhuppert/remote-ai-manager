@@ -90,17 +90,12 @@ describe("Execution policy screen", () => {
 
     for (const rowId of [
       "policy-max-iterations",
-      "policy-continuity",
-      "policy-context-limit",
       "policy-failure-threshold",
       "planrepair",
       "mutability-task-add",
     ]) {
       expect(screen.getByTestId(`config-row-${rowId}`)).toBeInTheDocument();
     }
-    expect(
-      screen.getByTestId("config-row-policy-context-limit").textContent,
-    ).toContain("Leave empty for auto.");
     expect(
       screen.getByTestId("config-row-policy-failure-threshold").textContent,
     ).toContain("Consecutive failures before the context is halted.");
@@ -120,7 +115,6 @@ describe("Execution policy screen", () => {
       path: "iterationPolicy",
       value: {
         maxIterations: 8,
-        continuity: SEEDED_WORKFLOW_DEFAULTS.iterationPolicy.continuity,
       },
       granularity: "block",
     });

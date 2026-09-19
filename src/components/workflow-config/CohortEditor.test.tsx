@@ -55,7 +55,7 @@ function assignment(
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
     authority: "blocking",
-    continuity: { enabled: true },
+
     agent: {
       backend: "claude",
       modelSelection: {

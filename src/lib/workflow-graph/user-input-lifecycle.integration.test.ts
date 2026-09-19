@@ -751,7 +751,6 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     const manager = createGraphWorkflowManager({
       abortConversation: () => {},
       abortExecutionLoop: () => {},
-      retireLaneConversation: () => {},
       getSession: async () => null,
       stopExecutionLaneDevServers: async () => {},
 
@@ -889,8 +888,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
           refKind: "conversation",
           workflowConversationId: "conv-fast",
           sessionRef: { backend: "claude", ref: "conv-fast" },
-          metrics: { rotateBeforeNextTurn: false },
-          limitEvaluation: "disabled",
+          metrics: {},
           lastUsedAt: NOW,
         },
       },

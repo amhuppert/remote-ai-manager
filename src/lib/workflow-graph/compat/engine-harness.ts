@@ -631,7 +631,7 @@ export async function runEngineScenario<T>(
         createConversation,
         async getConversation(_projectPath, _sessionName, conversationId) {
           return knownConversationIds.has(conversationId)
-            ? { id: conversationId }
+            ? { id: conversationId, promptCount: 0, backendRef: null }
             : null;
         },
         now,
@@ -714,7 +714,6 @@ export async function runEngineScenario<T>(
       lifecycle: {
         abortConversation: () => {},
         abortExecutionLoop: () => {},
-        retireLaneConversation: () => {},
         loadDefinition: async () => null,
         now,
         createExecutionId: () => EXECUTION_ID,
@@ -859,7 +858,6 @@ export async function runEngineScenario<T>(
                 conversationId: input.conversationId,
                 contextTokens: null,
                 contextWindowMax: null,
-                compacted: false,
                 sessionRef: null,
               };
             },
@@ -948,8 +946,6 @@ export async function runEngineScenario<T>(
                 const metadata = {
                   sessionRef: null,
                   reviewArtifact: null,
-                  limitEvaluation: "disabled",
-                  rotateBeforeNextTurn: false,
                 } as const;
                 const advisories = (scripted.advisories ?? []).map(
                   (advisory) => ({
@@ -1010,7 +1006,6 @@ export async function runEngineScenario<T>(
       sharedDocumentRegistry:
         createGraphWorkflowSharedDocumentRegistryService(),
       publishLiveEditApplied: publisher.publishLiveEditApplied,
-      readLiveOccupancy: () => null,
       executionContract,
       now,
     });

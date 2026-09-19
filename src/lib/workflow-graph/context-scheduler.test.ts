@@ -99,7 +99,7 @@ it("schedules the first runnable context and keeps other eligible contexts ready
     hasLiveIteration: false,
   });
 });
-it("clears lane states when scheduling a new execution context", async () => {
+it("preserves an existing conversation when rescheduling its execution context", async () => {
   const baseExecution = createWorkflowExecution({
     status: "running",
     activeContextIds: [],
@@ -115,9 +115,7 @@ it("clears lane states when scheduling a new execution context", async () => {
           metrics: {
             contextTokens: 50_000,
             contextWindowMax: 200_000,
-            rotateBeforeNextTurn: false,
           },
-          limitEvaluation: "disabled",
           lastUsedAt: "2026-03-27T15:00:00.000Z",
         },
       },
@@ -197,7 +195,7 @@ it("clears lane states when scheduling a new execution context", async () => {
 
   const execution = await scheduleNextContext(scheduler, "/repo", "session-1");
 
-  expect(execution.laneStates).toEqual({});
+  expect(execution.laneStates).toEqual(baseExecution.laneStates);
 });
 it("refuses to dispatch a worktree context without an assigned lane", async () => {
   const base = createWorkflowExecution();
@@ -1499,7 +1497,6 @@ describe("scheduleEligibleContexts", () => {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 4,
-            continuity: { enabled: true },
           },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
@@ -1531,7 +1528,6 @@ describe("scheduleEligibleContexts", () => {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 4,
-            continuity: { enabled: true },
           },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
@@ -1563,7 +1559,6 @@ describe("scheduleEligibleContexts", () => {
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 4,
-            continuity: { enabled: true },
           },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
@@ -3192,7 +3187,7 @@ describe("scheduleEligibleContexts", () => {
       unregisterExecutionLogger("exec-obs-lane-reused");
     });
 
-    it("emits a lane.cleanup lifecycle event listing cleared lane-state context ids after a successful schedule pass", async () => {
+    it("preserves existing lane conversations after provisioning a scheduled context", async () => {
       _resetRegistryForTesting();
       const baseExecution = createWorkflowExecution();
       const repository = createRepository(
@@ -3212,16 +3207,14 @@ describe("scheduleEligibleContexts", () => {
                 metrics: {
                   contextTokens: 10_000,
                   contextWindowMax: 200_000,
-                  rotateBeforeNextTurn: false,
                 },
-                limitEvaluation: "disabled",
                 lastUsedAt: "2026-03-27T15:00:00.000Z",
               },
             },
           },
         }),
       );
-      const { logger, calls } = createCapturingLogger("exec-obs-lane-cleanup");
+      const { logger } = createCapturingLogger("exec-obs-lane-cleanup");
       registerExecutionLogger(logger);
 
       const parallelWorktrees = createParallelWorktreesStub();
@@ -3238,13 +3231,10 @@ describe("scheduleEligibleContexts", () => {
         sessionName: "session-1",
       });
 
-      const cleanup = calls.find(
-        (c) => c.kind === "lifecycle" && c.event === "lane.cleanup",
-      );
-      expect(cleanup).toBeDefined();
-      expect(cleanup?.data?.clearedLaneStateContextIds).toEqual([
-        "context-plan",
-      ]);
+      expect(
+        repository.read()?.laneStates["context-plan"]?.implementer
+          ?.workflowConversationId,
+      ).toBe("conv-prev");
       unregisterExecutionLogger("exec-obs-lane-cleanup");
     });
   });

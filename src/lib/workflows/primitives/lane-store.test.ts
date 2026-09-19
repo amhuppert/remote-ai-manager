@@ -16,7 +16,7 @@ function claudeLane(overrides: Partial<LaneState> = {}): LaneState {
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
     ref: "conv-1",
-    metrics: { rotateBeforeNextTurn: false },
+    metrics: {},
     lastUsedAt: NOW,
     ...overrides,
   };
@@ -64,7 +64,6 @@ describe("createInMemoryLaneStore", () => {
       ref: "thr-9",
       metrics: {
         lastTurnUsage: null,
-        rotateBeforeNextTurn: false,
       },
     };
     await store.write(primary);
@@ -91,7 +90,6 @@ describe("createInMemoryLaneStore", () => {
       metrics: {
         contextTokens: 50_000,
         contextWindowMax: 200_000,
-        rotateBeforeNextTurn: false,
       },
     });
     await store.write(updated);

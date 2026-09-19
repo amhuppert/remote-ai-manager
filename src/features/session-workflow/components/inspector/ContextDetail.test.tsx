@@ -446,7 +446,7 @@ describe("ContextDetail — continued session badge", () => {
     expect(screen.getByText("continued")).toBeInTheDocument();
   });
 
-  it("uses workflow conversation ownership when a legacy native ref rotates", () => {
+  it("uses workflow conversation ownership when a provider native ref changes", () => {
     const legacyConversationRef = (
       ref: string,
     ): GraphWorkflowValidationSessionRef => ({
@@ -1246,7 +1246,7 @@ describe("ContextDetail — Config tab editing wiring", () => {
       {
         type: "update-context",
         contextId: "context-plan",
-        iterationPolicy: { maxIterations: 7, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 7 },
       },
     ]);
   });

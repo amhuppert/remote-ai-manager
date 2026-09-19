@@ -125,7 +125,7 @@ function implementerLane(overrides: Partial<LaneState> = {}): LaneState {
     conversationId: "conv-implementer-1",
     writeCapability: "write_capable",
     policy: { continuityEnabled: true },
-    metrics: { rotateBeforeNextTurn: false },
+    metrics: {},
     lastUsedAt: NOW,
     ...overrides,
   };
@@ -141,7 +141,6 @@ describe("graph lane store durability contract (§1.9.4)", () => {
       metrics: {
         contextTokens: 42_000,
         contextWindowMax: 200_000,
-        rotateBeforeNextTurn: false,
       },
     });
     await storeBeforeRestart.write(written);
@@ -158,7 +157,6 @@ describe("graph lane store durability contract (§1.9.4)", () => {
     expect(read?.ref).toBe("conv-implementer-1");
     expect(read?.metrics.contextTokens).toBe(42_000);
     expect(read?.metrics.contextWindowMax).toBe(200_000);
-    expect(read?.metrics.rotateBeforeNextTurn).toBe(false);
   });
 
   it("a validator lane's backend ref survives restart (the backendRefCache failure mode)", async () => {
@@ -173,7 +171,7 @@ describe("graph lane store durability contract (§1.9.4)", () => {
         refKind: "backend",
         ref: "thread-validator-7",
         writeCapability: "read_only",
-        metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
+        metrics: { lastTurnUsage: null },
       }),
     );
 
@@ -229,7 +227,7 @@ describe("graph lane store durability contract (§1.9.4)", () => {
       backend: "claude",
       refKind: "conversation",
       sessionRef: { backend: "claude", ref: "conv-implementer-1" },
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
     });
     expect(graphLane).not.toHaveProperty("engine");
     expect(graphLane).not.toHaveProperty("lastContextTokens");
@@ -247,8 +245,7 @@ describe("graph lane store durability contract (§1.9.4)", () => {
             contextId: "context-implement",
             workflowConversationId: "cc-conv-distinct",
             sessionRef: { backend: "claude", ref: "conv-old" },
-            metrics: { rotateBeforeNextTurn: false },
-            limitEvaluation: "disabled",
+            metrics: {},
             lastUsedAt: NOW,
           },
         },
@@ -261,23 +258,6 @@ describe("graph lane store durability contract (§1.9.4)", () => {
     const preserved =
       readActiveFresh(db)?.laneStates["context-implement"]?.implementer;
     expect(preserved?.workflowConversationId).toBe("cc-conv-distinct");
-
-    // Replaced handle (rotation/recovery): the stale workflowConversationId
-    // must not survive pointing at the retired conversation — for a Claude
-    // lane the fresh handle IS the owning CC conversation.
-    await store.write(
-      implementerLane({
-        ref: "conv-advanced",
-        conversationId: "conv-advanced",
-      }),
-    );
-    const execution = readActiveFresh(db);
-    const graphLane = execution?.laneStates["context-implement"]?.implementer;
-    expect(graphLane?.workflowConversationId).toBe("conv-advanced");
-    expect(graphLane?.sessionRef).toEqual({
-      backend: "claude",
-      ref: "conv-advanced",
-    });
   });
 
   it("normalizes legacy provider-specific lane rows into the canonical neutral envelope", () => {
@@ -293,8 +273,6 @@ describe("graph lane store durability contract (§1.9.4)", () => {
       },
       lastContextTokens: 12_000,
       lastContextWindowMax: 200_000,
-      rotateBeforeNextTurn: true,
-      limitEvaluation: "supported",
       lastUsedAt: NOW,
     });
     const legacyCodex = graphWorkflowAgentSessionStateSchema.parse({
@@ -311,8 +289,6 @@ describe("graph lane store durability contract (§1.9.4)", () => {
         cachedInputTokens: 2,
         outputTokens: 3,
       },
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "unsupported",
       lastUsedAt: NOW,
     });
 
@@ -326,9 +302,7 @@ describe("graph lane store durability contract (§1.9.4)", () => {
       metrics: {
         contextTokens: 12_000,
         contextWindowMax: 200_000,
-        rotateBeforeNextTurn: true,
       },
-      limitEvaluation: "supported",
       lastUsedAt: NOW,
     });
     expect(legacyCodex).toEqual({
@@ -343,9 +317,7 @@ describe("graph lane store durability contract (§1.9.4)", () => {
           cachedInputTokens: 2,
           outputTokens: 3,
         },
-        rotateBeforeNextTurn: false,
       },
-      limitEvaluation: "unsupported",
       lastUsedAt: NOW,
     });
   });
@@ -400,7 +372,7 @@ describe("graph lane store durability contract (§1.9.4)", () => {
         refKind: "backend",
         ref: "thr-1",
         writeCapability: "read_only",
-        metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
+        metrics: { lastTurnUsage: null },
       }),
     );
 
@@ -433,7 +405,7 @@ describe("per-assignment validator lanes", () => {
       ref,
       conversationId: `conv-${assignmentId}`,
       writeCapability: "read_only",
-      metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
+      metrics: { lastTurnUsage: null },
     });
   }
 
@@ -534,7 +506,7 @@ describe("per-assignment validator lanes", () => {
     ).toBe("thread-b");
   });
 
-  it("lists every assignment lane, resolving each one's own continuity policy", async () => {
+  it("lists every assignment lane with continuous conversations", async () => {
     const repo = createGraphWorkflowExecutionsRepo(db);
     const execution = createWorkflowExecution({
       id: EXECUTION_ID,
@@ -549,11 +521,9 @@ describe("per-assignment validator lanes", () => {
       assignments: [
         {
           ...makeSeededValidatorAssignment({ id: "reviewer-a" }),
-          continuity: { enabled: true, contextLimitTokens: 90_000 },
         },
         {
           ...makeSeededValidatorAssignment({ id: "reviewer-b" }),
-          continuity: { enabled: false },
         },
       ],
     };
@@ -571,11 +541,11 @@ describe("per-assignment validator lanes", () => {
       byAssignment.get(
         graphLaneId("context_validator", "context-implement", "reviewer-a"),
       ),
-    ).toEqual({ continuityEnabled: true, contextLimitTokens: 90_000 });
+    ).toEqual({ continuityEnabled: true });
     expect(
       byAssignment.get(
         graphLaneId("context_validator", "context-implement", "reviewer-b"),
       ),
-    ).toEqual({ continuityEnabled: false });
+    ).toEqual({ continuityEnabled: true });
   });
 });

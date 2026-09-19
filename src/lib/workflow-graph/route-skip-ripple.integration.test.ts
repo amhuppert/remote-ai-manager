@@ -48,7 +48,7 @@ function classifyAndActDefinition(): WorkflowSemanticDefinition {
     implementer: makeImplementerAssignment(AGENT),
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
-    iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 4 },
     ...extra,
   });
 

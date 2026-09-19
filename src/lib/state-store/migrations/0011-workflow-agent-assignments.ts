@@ -130,14 +130,8 @@ const frozenAgentConfigSchema = z.preprocess(
   ]),
 );
 
-const frozenContinuitySchema = z.object({
-  enabled: z.boolean().default(true),
-  contextLimitTokens: z.number().int().positive().optional(),
-});
-
 const frozenValidatorBaseSchema = z.object({
   enabled: z.boolean().default(true),
-  continuity: frozenContinuitySchema.default({ enabled: true }),
 });
 
 const frozenSingletonValidatorSchema = z.discriminatedUnion("type", [
@@ -451,7 +445,6 @@ function migrateSingletonValidator(
         // the schema default is advisory: without this a migrated workflow
         // would silently stop being able to fail a context.
         authority: "blocking",
-        continuity: legacy.data.continuity,
       },
     ],
   };

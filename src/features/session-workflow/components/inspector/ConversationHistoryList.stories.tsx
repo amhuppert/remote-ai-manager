@@ -3,71 +3,22 @@ import { fn } from "storybook/test";
 import ConversationHistoryList from "./ConversationHistoryList";
 import type { ConversationHistoryRow } from "./conversation-history";
 
-/**
- * The canonical fixture's three-conversation history (README §3.3): iteration 1
- * split across two conversations by a rotation, a returning validation that
- * opened iteration 2 inside the conversation already live for it, and a later
- * conversation carrying iteration 2 to the seat now judging it.
- *
- * The fixture narrates the first rotation as a context-limit one. The execution
- * records no rotation provenance, so the rows link the transition in both
- * directions and claim no cause — which is what these stories show.
- *
- * Rows are authored here rather than derived from an execution: the story is
- * about how the shapes READ, and `conversation-history.test.ts` is what proves
- * an execution produces them.
- */
 const CANONICAL_ROWS: ConversationHistoryRow[] = [
   {
-    conversationId: "conv_b41f",
+    conversationId: "conv_implementer",
     status: "live",
-    startedAt: "2026-03-27T10:52:00.000Z",
+    startedAt: "2026-03-27T09:40:00.000Z",
     endedAt: null,
     endReason: null,
-    iterations: [2],
-    events: [
-      {
-        kind: "started",
-        at: "2026-03-27T10:52:00.000Z",
-        iteration: 2,
-        rotatedFrom: "conv_a9c2",
-      },
-      {
-        kind: "task_completed",
-        at: "2026-03-27T11:04:00.000Z",
-        iteration: 2,
-        taskId: "task-implement-1",
-        taskTitle: "Write the timeout-path audit record",
-      },
-      {
-        kind: "validating",
-        at: "2026-03-27T11:09:00.000Z",
-        seat: "security",
-        iteration: 2,
-        transcriptConversationId: "conv_val_security_2",
-      },
-    ],
-  },
-  {
-    conversationId: "conv_a9c2",
-    status: "ended",
-    startedAt: "2026-03-27T10:14:00.000Z",
-    endedAt: "2026-03-27T10:52:00.000Z",
-    endReason: { kind: "superseded", successorId: "conv_b41f" },
     iterations: [1, 2],
     events: [
-      {
-        kind: "started",
-        at: "2026-03-27T10:14:00.000Z",
-        iteration: 1,
-        rotatedFrom: "conv_88d0",
-      },
+      { kind: "started", at: "2026-03-27T09:40:00.000Z", iteration: 1 },
       {
         kind: "task_completed",
-        at: "2026-03-27T10:38:00.000Z",
+        at: "2026-03-27T10:10:00.000Z",
         iteration: 1,
-        taskId: "task-implement-1",
-        taskTitle: "Write the timeout-path audit record",
+        taskId: "task-implement-0",
+        taskTitle: "Read the existing audit writer",
       },
       {
         kind: "verdict",
@@ -77,7 +28,7 @@ const CANONICAL_ROWS: ConversationHistoryRow[] = [
         summary: "risk rules bypass the audit log on the timeout path",
         iteration: 1,
         roundSeq: 1,
-        transcriptConversationId: "conv_val_security_1",
+        transcriptConversationId: "conv_val_security",
       },
       {
         kind: "iteration_began",
@@ -86,37 +37,11 @@ const CANONICAL_ROWS: ConversationHistoryRow[] = [
         reopenedTaskIds: ["task-implement-1"],
       },
       {
-        kind: "ended",
-        at: "2026-03-27T10:52:00.000Z",
-        reason: { kind: "superseded", successorId: "conv_b41f" },
-      },
-    ],
-  },
-  {
-    conversationId: "conv_88d0",
-    status: "ended",
-    startedAt: "2026-03-27T09:40:00.000Z",
-    endedAt: "2026-03-27T10:14:00.000Z",
-    endReason: { kind: "superseded", successorId: "conv_a9c2" },
-    iterations: [1],
-    events: [
-      {
-        kind: "started",
-        at: "2026-03-27T09:40:00.000Z",
-        iteration: 1,
-        rotatedFrom: null,
-      },
-      {
-        kind: "task_completed",
-        at: "2026-03-27T10:10:00.000Z",
-        iteration: 1,
-        taskId: "task-implement-0",
-        taskTitle: "Read the existing audit writer",
-      },
-      {
-        kind: "ended",
-        at: "2026-03-27T10:14:00.000Z",
-        reason: { kind: "superseded", successorId: "conv_a9c2" },
+        kind: "validating",
+        at: "2026-03-27T11:09:00.000Z",
+        seat: "security",
+        iteration: 2,
+        transcriptConversationId: "conv_val_security",
       },
     ],
   },
@@ -141,9 +66,37 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** All three conversations, each transcript independently reachable. */
-export const CanonicalThreeConversations: Story = {
+/** Iterations and validator verdicts stay in the same conversation. */
+export const ContinuousConversation: Story = {
   args: { rows: CANONICAL_ROWS, onOpenTranscript: fn() },
+};
+
+/** Resetting a validator preserves both judgements in its continuous transcript. */
+export const RepeatedVerdictAfterReset: Story = {
+  args: {
+    rows: CANONICAL_ROWS.map(
+      (row): ConversationHistoryRow => ({
+        ...row,
+        iterations: [1],
+        events: [
+          { kind: "started", at: "2026-03-27T09:40:00.000Z", iteration: 1 },
+          ...["2026-03-27T10:41:00.000Z", "2026-03-27T10:52:00.000Z"].map(
+            (at) => ({
+              kind: "verdict" as const,
+              at,
+              seat: "security",
+              pass: false,
+              summary: "risk rules bypass the audit log on the timeout path",
+              iteration: 1,
+              roundSeq: 1,
+              transcriptConversationId: "conv_val_security",
+            }),
+          ),
+        ],
+      }),
+    ),
+    onOpenTranscript: fn(),
+  },
 };
 
 /** The same history for a reader with no Log surface: no transcript controls. */

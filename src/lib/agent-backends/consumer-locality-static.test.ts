@@ -148,11 +148,6 @@ export const CONSUMER_LOCALITY_MAP: readonly ConsumerLocalityEntry[] = [
     category: "E3",
     status: "enforced",
   },
-  {
-    file: "workflows/primitives/context-limit-gate.ts",
-    category: "E3",
-    status: "enforced",
-  },
   // E4 — Transcript consumers
   {
     file: "workflow-graph/execution-logger.ts",

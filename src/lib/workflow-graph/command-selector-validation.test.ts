@@ -50,7 +50,7 @@ function resolvedContext(
       allowAgentContextAdd: false,
     },
     circuitBreaker: {},
-    iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 5 },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     ...overrides,
   };

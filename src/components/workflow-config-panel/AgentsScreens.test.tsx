@@ -370,3 +370,17 @@ describe("Collaboration screen", () => {
     });
   });
 });
+
+it("locks a started implementer even while the rest of the execution is editable", () => {
+  const { editor, onEdit } = editorFor();
+  editor.startedLaneKeys = new Set(["implementer"]);
+  renderScreen(<ImplementerScreen editor={editor} />);
+  expect(screen.getByLabelText("Implementer instructions")).toBeDisabled();
+  expect(screen.getByLabelText("Agent profile")).toBeDisabled();
+  expect(
+    screen.getByText(
+      "This assignment is fixed because its conversation has started.",
+    ),
+  ).toBeInTheDocument();
+  expect(onEdit).not.toHaveBeenCalled();
+});

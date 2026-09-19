@@ -94,15 +94,12 @@ Written live by `src/lib/workflow-graph/execution-logger.ts`. Every record:
   records carry `actor` (`system`/`operator`); `execution.resumed` echoes
   `resolvedHaltType`/`resolvedHaltContextId` so halt→resume pairs (operator
   recovery wait) are verifiable.
-- `decisions.jsonl` — context.scheduled, `rotation.scheduled` (emitted once
-  per pending rotation, on the flag's false→true transition),
-  `implementer.rotation` / `validator.rotation` (applications; reason
-  `context_changed` is a lane switch, not a real rotation),
-  max_iterations.reached: the scheduler's choices.
+- `decisions.jsonl` — context.scheduled and max_iterations.reached: the
+  scheduler's choices.
 - `contexts/<contextId>/`
   - `iterations.jsonl` — `iteration.started` (`iterationNumber`, `modelId`,
     `parameterIds`, `incompleteTaskIds`), `iteration.conversation_resolved`
-    (`conversationId` — recovers rotated conversations),
+    (`conversationId` — attributes historical conversations),
     `iteration.prompt_sent` (`promptLength`, `promptMode`),
     `iteration.agent_turn_completed` (`contextTokens`, `contextWindowMax`,
     `occupancyMeasurable`, `cumulativeCostUsd`, `costUsdDelta` — per-turn

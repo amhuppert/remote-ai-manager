@@ -144,18 +144,12 @@ describe("computeValidationDiffScope", () => {
 
 describe("renderDiffScopeSection", () => {
   it.each([
-    { name: "byte ceiling", lines: ["x".repeat(24_001)], budget: {} },
+    { name: "byte ceiling", lines: ["x".repeat(24_001)] },
     {
       name: "line ceiling",
       lines: Array.from({ length: 601 }, (_, index) => `line ${index}`),
-      budget: {},
     },
-    {
-      name: "context window budget",
-      lines: ["const result = computeResult();"],
-      budget: { contextLimitTokens: 10 },
-    },
-  ])("omits an oversized first patch at the $name", ({ lines, budget }) => {
+  ])("omits an oversized first patch at the $name", ({ lines }) => {
     const scope: ValidationDiffScope = {
       kind: "available",
       candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
@@ -166,7 +160,7 @@ describe("renderDiffScopeSection", () => {
       totalDeletions: 0,
     };
 
-    const rendered = renderDiffScopeSection(scope, budget);
+    const rendered = renderDiffScopeSection(scope);
 
     expect(rendered.truncated).toBe(true);
     expect(rendered.includedFileCount).toBe(0);
@@ -207,8 +201,8 @@ describe("renderDiffScopeSection", () => {
 
   it("always lists every file in the diffstat but truncates patch bodies past the budget", () => {
     const big = Array.from(
-      { length: 50 },
-      (_, i) => `line ${i} ${"x".repeat(40)}`,
+      { length: 200 },
+      (_, i) => `line ${i} ${"x".repeat(70)}`,
     );
     const scope: ValidationDiffScope = {
       kind: "available",
@@ -220,14 +214,12 @@ describe("renderDiffScopeSection", () => {
         fileDiff("src/third.ts", big),
       ]),
       fileCount: 3,
-      totalAdditions: 150,
+      totalAdditions: 600,
       totalDeletions: 0,
     };
 
-    // The 3,000-byte budget holds one patch and omits the remaining two.
-    const rendered = renderDiffScopeSection(scope, {
-      contextLimitTokens: 3_000,
-    });
+    // The fixed byte budget holds one patch and omits the remaining two.
+    const rendered = renderDiffScopeSection(scope);
 
     expect(rendered.truncated).toBe(true);
     expect(rendered.includedFileCount).toBe(1);

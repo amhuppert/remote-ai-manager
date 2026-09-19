@@ -507,7 +507,6 @@ describe("validateWorkflowPlan", () => {
           parameters: { effort: "medium" },
         },
       },
-      continuity: { enabled: true },
     };
 
     it("locates an enabled cohort with no assignments on the empty set", () => {
@@ -871,7 +870,6 @@ describe("validateWorkflowPlan post-cutover refusal", () => {
       value: {
         type: "claude",
         enabled: true,
-        continuity: { enabled: true },
         agent: {
           backend: "claude",
           model: "sonnet",

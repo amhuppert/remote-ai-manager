@@ -17,17 +17,6 @@ import {
   type ConversationHistoryRow,
 } from "./conversation-history";
 
-/**
- * The canonical fixture's three-conversation history (README §3.3): a rotation
- * inside iteration 1, a returning validation that opens iteration 2 inside the
- * conversation that was already live, and a later conversation carrying
- * iteration 2 that is still running.
- *
- * The fixture narrates the first rotation as a context-limit one; the execution
- * records no such provenance, so the model links the transition and says
- * nothing about its cause.
- */
-
 const CONTEXT_ID = "context-implement";
 
 function contextStatus(
@@ -166,8 +155,7 @@ function implementerLane(
         backend: "claude",
         refKind: "conversation",
         workflowConversationId: conversationId,
-        metrics: { rotateBeforeNextTurn: false },
-        limitEvaluation: "supported",
+        metrics: {},
         lastUsedAt,
       },
     },
@@ -232,83 +220,6 @@ describe("deriveConversationHistory", () => {
         contextId: CONTEXT_ID,
       }).rows,
     ).toEqual([]);
-  });
-
-  it("reads the canonical fixture as three conversations, newest first", () => {
-    const events = [
-      ...canonicalEvents(),
-      // The rotation that split iteration 1: the same iteration continues in a
-      // second conversation, so the first is only visible through its own work.
-      taskCompleted("2026-03-27T10:10:00.000Z", "conv_88d0"),
-    ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
-
-    const { rows } = deriveConversationHistory({
-      execution: runningExecution({
-        laneStates: implementerLane("conv_b41f", "2026-03-27T11:09:00.000Z"),
-      }),
-      events,
-      contextId: CONTEXT_ID,
-    });
-
-    expect(rows.map((row) => row.conversationId)).toEqual([
-      "conv_b41f",
-      "conv_a9c2",
-      "conv_88d0",
-    ]);
-    expect(rows.map((row) => row.status)).toEqual(["live", "ended", "ended"]);
-  });
-
-  it("links a rotation inside one iteration in both directions, without a cause", () => {
-    const events = [
-      contextStatus("2026-03-27T09:40:00.000Z", 1),
-      taskCompleted("2026-03-27T10:10:00.000Z", "conv_88d0"),
-      taskCompleted("2026-03-27T10:38:00.000Z", "conv_a9c2"),
-    ];
-
-    const { rows } = deriveConversationHistory({
-      execution: runningExecution({
-        laneStates: implementerLane("conv_a9c2", "2026-03-27T10:38:00.000Z"),
-      }),
-      events,
-      contextId: CONTEXT_ID,
-    });
-
-    const rotated = rowOf(rows, "conv_a9c2");
-    expect(eventOf(rotated, "started")).toEqual({
-      kind: "started",
-      at: "2026-03-27T10:38:00.000Z",
-      rotatedFrom: "conv_88d0",
-      iteration: 1,
-    });
-
-    const superseded = rowOf(rows, "conv_88d0");
-    expect(superseded.endReason).toEqual({
-      kind: "superseded",
-      successorId: "conv_a9c2",
-    });
-    expect(eventOf(superseded, "ended").reason).toEqual(superseded.endReason);
-    expect(superseded.endedAt).toBe("2026-03-27T10:38:00.000Z");
-  });
-
-  it("marks a conversation opened for a later iteration as superseding its predecessor", () => {
-    const { rows } = deriveConversationHistory({
-      execution: runningExecution({
-        laneStates: implementerLane("conv_b41f", "2026-03-27T11:09:00.000Z"),
-      }),
-      events: canonicalEvents(),
-      contextId: CONTEXT_ID,
-    });
-
-    expect(eventOf(rowOf(rows, "conv_b41f"), "started")).toEqual({
-      kind: "started",
-      at: "2026-03-27T11:04:00.000Z",
-      rotatedFrom: "conv_a9c2",
-      iteration: 2,
-    });
-    expect(rowOf(rows, "conv_a9c2").endReason).toEqual({
-      kind: "superseded",
-      successorId: "conv_b41f",
-    });
   });
 
   it("keeps a returning validation inside the conversation that was live for it", () => {
@@ -394,10 +305,8 @@ describe("deriveConversationHistory", () => {
     expect(verdicts[0]).toMatchObject({ at: "2026-03-27T10:41:00.000Z" });
   });
 
-  // A per-assignment reset retires the seat's conversation and re-runs it
-  // inside the SAME round, so the seat reports twice under one seq. The two
-  // are different judgements written in different transcripts, and the second
-  // one's transcript is only reachable from its own verdict event.
+  // A per-assignment reset re-runs the seat in the same conversation and round.
+  // Each standalone result records a separate judgement.
   it("keeps both verdicts when a reset re-ran the same seat in the same round", () => {
     const { rows } = deriveConversationHistory({
       execution: runningExecution({
@@ -413,10 +322,10 @@ describe("deriveConversationHistory", () => {
             summary: "re-reviewed after reset: the audit path is covered",
             sessionRef: {
               backend: "claude",
-              ref: "conv_val_sec_2",
+              ref: "conv_val_sec",
               lane: "context_validator",
               refKind: "conversation",
-              workflowConversationId: "conv_val_sec_2",
+              workflowConversationId: "conv_val_sec",
             },
           },
         }),
@@ -430,7 +339,35 @@ describe("deriveConversationHistory", () => {
     expect(verdicts).toHaveLength(2);
     expect(verdicts.map((entry) => entry.transcriptConversationId)).toEqual([
       "conv_val_sec",
-      "conv_val_sec_2",
+      "conv_val_sec",
+    ]);
+  });
+
+  it("keeps repeated identical seat results after reset while omitting the aggregate echo", () => {
+    const { rows } = deriveConversationHistory({
+      execution: runningExecution({
+        laneStates: implementerLane("conv_a9c2", "2026-03-27T10:38:00.000Z"),
+      }),
+      events: [
+        contextStatus("2026-03-27T09:40:00.000Z", 1),
+        taskCompleted("2026-03-27T10:38:00.000Z", "conv_a9c2"),
+        seatReported("2026-03-27T10:41:00.000Z"),
+        seatReported("2026-03-27T10:52:00.000Z"),
+        validationResult("2026-03-27T10:53:00.000Z"),
+      ],
+      contextId: CONTEXT_ID,
+    });
+
+    const verdicts = rowOf(rows, "conv_a9c2").events.filter(
+      (entry) => entry.kind === "verdict",
+    );
+    expect(verdicts.map((entry) => entry.at)).toEqual([
+      "2026-03-27T10:41:00.000Z",
+      "2026-03-27T10:52:00.000Z",
+    ]);
+    expect(verdicts.map((entry) => entry.transcriptConversationId)).toEqual([
+      "conv_val_sec",
+      "conv_val_sec",
     ]);
   });
 
@@ -711,8 +648,7 @@ describe("isWorkflowConversationLive", () => {
           backend: "claude",
           refKind: "conversation",
           workflowConversationId: conversationId,
-          metrics: { rotateBeforeNextTurn: false },
-          limitEvaluation: "supported",
+          metrics: {},
           lastUsedAt: "2026-03-27T11:10:00.000Z",
         },
       },
@@ -729,18 +665,6 @@ describe("isWorkflowConversationLive", () => {
         "conv_b41f",
       ),
     ).toBe(true);
-  });
-
-  it("calls a rotated-out conversation ended", () => {
-    expect(
-      isWorkflowConversationLive(
-        runningExecution({
-          laneStates: implementerLane("conv_b41f", "2026-03-27T11:09:00.000Z"),
-        }),
-        CONTEXT_ID,
-        "conv_a9c2",
-      ),
-    ).toBe(false);
   });
 
   it("calls a validator seat's own conversation live while the seat holds it", () => {

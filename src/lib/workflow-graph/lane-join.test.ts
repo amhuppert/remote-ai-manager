@@ -1956,8 +1956,7 @@ describe("resolveLaneConversationId", () => {
       refKind: "conversation",
       workflowConversationId,
       sessionRef: { backend: "claude", ref: workflowConversationId },
-      metrics: { rotateBeforeNextTurn: false },
-      limitEvaluation: "supported",
+      metrics: {},
       lastUsedAt: t0,
     };
   }
@@ -2066,8 +2065,7 @@ describe("resolveLaneConversationId", () => {
       refKind: "conversation",
       workflowConversationId: "conv-validator",
       sessionRef: { backend: "claude", ref: "conv-validator" },
-      metrics: { rotateBeforeNextTurn: false },
-      limitEvaluation: "supported",
+      metrics: {},
       lastUsedAt: t0,
     };
     const execution = executionWithLane(
@@ -2109,8 +2107,7 @@ describe("resolveContextConversationId", () => {
           refKind: "conversation",
           workflowConversationId: "conv-implementer",
           sessionRef: { backend: "claude", ref: "conv-implementer" },
-          metrics: { rotateBeforeNextTurn: false },
-          limitEvaluation: "supported",
+          metrics: {},
           lastUsedAt: t0,
         },
       },

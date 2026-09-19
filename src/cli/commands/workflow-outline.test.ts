@@ -382,7 +382,6 @@ describe("workflow outline", () => {
                       parameters: { reasoning: "high", fast: "false" },
                     },
                   },
-                  continuity: { enabled: true },
                 },
                 {
                   id: "general",
@@ -395,7 +394,6 @@ describe("workflow outline", () => {
                       parameters: { effort: "medium" },
                     },
                   },
-                  continuity: { enabled: true },
                 },
               ],
             },

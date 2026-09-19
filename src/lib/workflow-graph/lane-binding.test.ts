@@ -19,8 +19,7 @@ function laneState(
     backend: "claude",
     refKind: "conversation",
     workflowConversationId,
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: {},
     lastUsedAt: "2026-09-01T10:00:00.000Z",
   };
 }

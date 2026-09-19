@@ -59,14 +59,6 @@ export const taskCompleteHandler: Write<typeof specs.taskCompleteSpec> = {
         result: {
           ok: true,
           data,
-          ...(data.stopInstruction
-            ? {
-                instruction: instruction(
-                  "cc-workflow-task-stop",
-                  data.stopInstruction,
-                ),
-              }
-            : {}),
         },
       };
     },

@@ -107,7 +107,6 @@ function invokerConfig(
           profile: { tier: "builtin", id: "general-reviewer" },
           strategy: "conversation" as const,
           authority: "blocking",
-          continuity: { enabled: true },
           agent: {
             backend: "claude",
             modelSelection: {
@@ -124,7 +123,7 @@ function invokerConfig(
     askUserQuestions: { enabled: true },
     mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
     circuitBreaker: { consecutiveFailureThreshold: 5 },
-    iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 12 },
     planRepair: { enabled: true, maxAttemptsPerContext: 4 },
     agentValidation: {
       implementer: {
@@ -164,7 +163,6 @@ function weakSeedConfig(
           profile: { tier: "project", id: "dormant-reviewer" },
           strategy: "task" as const,
           authority: "advisory",
-          continuity: { enabled: false },
           agent: {
             backend: "claude",
             modelSelection: {
@@ -181,7 +179,7 @@ function weakSeedConfig(
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: true },
     circuitBreaker: { consecutiveFailureThreshold: 1 },
-    iterationPolicy: { maxIterations: 99, continuity: { enabled: false } },
+    iterationPolicy: { maxIterations: 99 },
     planRepair: { enabled: false, maxAttemptsPerContext: 1 },
     agentValidation: {
       implementer: {

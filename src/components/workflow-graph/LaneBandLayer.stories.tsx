@@ -85,7 +85,7 @@ function makeNode(
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 3 },
       },
       tasks: Array.from({ length: spec.taskCount }, (_, index) => ({
         id: `${spec.id}-t${index + 1}`,

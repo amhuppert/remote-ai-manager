@@ -47,7 +47,6 @@ import {
 } from "./lane-reminders";
 import {
   addTaskSchema,
-  buildContextLimitStopInstruction,
   createRequestCollaborationHandler,
   type GraphWorkflowToolServerContext,
 } from "./lane-tool-service";
@@ -241,7 +240,6 @@ async function prepareContext(
       iterationCount: result.reminderState.iterationCount,
       circuitBreakerThreshold: result.reminderState.circuitBreakerThreshold,
       remainingTaskCount: result.reminderState.remainingTaskCount,
-      contextLimitStopped: false,
       allowAgentCollaboration: context.allowAgentCollaboration,
     };
     const { reminders, ruleIds } = evaluateLaneReminders(laneReminderState);
@@ -292,8 +290,10 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
     if (!prepared.ok) return prepared.response;
 
     try {
-      const { execution, contextLimitStop } =
-        await prepared.context.completeTask(taskId ?? "", parsed.data.summary);
+      const { execution } = await prepared.context.completeTask(
+        taskId ?? "",
+        parsed.data.summary,
+      );
       const cid = contextId ?? "";
       const state = execution.contextStates[cid];
       const remainingTaskCount = state
@@ -315,7 +315,6 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
           contextDef?.circuitBreaker.consecutiveFailureThreshold ??
           DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
         remainingTaskCount,
-        contextLimitStopped: contextLimitStop !== null,
         allowAgentCollaboration: prepared.context.allowAgentCollaboration,
       };
       const { reminders, ruleIds } = evaluateLaneReminders(laneReminderState);
@@ -331,18 +330,11 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         contextId,
         taskId,
         remainingTaskCount,
-        stopped: contextLimitStop !== null,
       });
       return NextResponse.json({
         ok: true,
         remainingTaskCount,
         laneReminderState,
-        ...(contextLimitStop
-          ? {
-              stopInstruction:
-                buildContextLimitStopInstruction(contextLimitStop),
-            }
-          : {}),
       });
     } catch (error) {
       if (error instanceof GraphExecutionContractViolationError) {

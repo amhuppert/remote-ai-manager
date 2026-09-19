@@ -90,7 +90,7 @@ export function buildCollaborationLaneSeeds(
     ref: input.seedRefFor(agent),
     writeCapability: input.writeCapability,
     policy: input.policy,
-    metrics: { rotateBeforeNextTurn: false },
+    metrics: {},
     lastUsedAt: input.lastUsedAt,
   }));
 }

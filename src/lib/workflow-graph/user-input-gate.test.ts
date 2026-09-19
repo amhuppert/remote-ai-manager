@@ -84,8 +84,7 @@ function claudeLaneState(input: {
       backend: "claude",
       ref: input.conversationId ?? "conv-fallback",
     },
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: {},
     lastUsedAt: NOW,
   };
 }
@@ -103,8 +102,7 @@ function codexLaneState(input: {
     ...(input.conversationId !== undefined
       ? { workflowConversationId: input.conversationId }
       : {}),
-    metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: { lastTurnUsage: null },
     lastUsedAt: NOW,
   };
 }

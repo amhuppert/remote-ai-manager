@@ -93,7 +93,6 @@ export function makeValidatorAssignment(
       backend: "claude",
       modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
     },
-    continuity: { enabled: true },
     ...overrides,
   };
 }
@@ -292,7 +291,6 @@ export function createWorkflowDefinition(
         circuitBreaker: {},
         iterationPolicy: {
           maxIterations: 4,
-          continuity: { enabled: true },
         },
       },
       {
@@ -324,7 +322,6 @@ export function createWorkflowDefinition(
         circuitBreaker: {},
         iterationPolicy: {
           maxIterations: 3,
-          continuity: { enabled: true },
         },
       },
       {
@@ -347,7 +344,6 @@ export function createWorkflowDefinition(
         circuitBreaker: {},
         iterationPolicy: {
           maxIterations: 2,
-          continuity: { enabled: true },
         },
       },
     ],
@@ -563,7 +559,6 @@ export function createResolvedWorkflowDefinition(
       circuitBreaker: ctx.circuitBreaker ?? {},
       iterationPolicy: ctx.iterationPolicy ?? {
         maxIterations: 10,
-        continuity: { enabled: true },
       },
       planRepair: ctx.planRepair ?? {
         enabled: true,

@@ -422,15 +422,15 @@ describe("writeValidatorTranscript", () => {
 describe("decision", () => {
   it("writes to decisions.jsonl", () => {
     const logger = createTestLogger();
-    logger.decision("rotation.evaluated", {
+    logger.decision("retry.evaluated", {
       lane: "implementer",
-      outcome: "rotated",
+      outcome: "retry",
     });
 
     const entries = readJsonl(path.join(logger.logDir, "decisions.jsonl"));
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      event: "rotation.evaluated",
+      event: "retry.evaluated",
       lane: "implementer",
     });
   });

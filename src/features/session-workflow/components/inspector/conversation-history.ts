@@ -6,49 +6,14 @@ import type {
 } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
-/**
- * The context's history as conversations, with everything that happened inside
- * them (README §10 "Conversation-first history", design E3).
- *
- * The durable row is the CONVERSATION, not the iteration: a rotation can split
- * one iteration across two conversations, and a returning validation continues
- * one iteration inside the conversation that was already live. The two are
- * many-to-many, so a row carries the iterations its events belong to rather
- * than claiming one.
- *
- * A verdict enters the row when the SEAT reported it, not when the round
- * concluded: production publishes each cohort member's result on its own while
- * the round is still running, and republishes it inside the aggregate at the
- * end. Reading only the aggregate would leave a finished seat invisible — and
- * its transcript unreachable — for as long as its slowest colleague takes.
- *
- * Everything here is derived from what the execution already records — the
- * event stream and the runtime blob. One fact is inferred rather than read,
- * because nothing durable records it: **when a conversation ended.** A
- * conversation is retired by the one that replaces it, so a row ends where its
- * successor starts. The last row ends at its own last recorded activity, or
- * stays open when it is the lane's live conversation.
- *
- * WHY a conversation was replaced is not derived at all. The execution carries
- * no rotation provenance, and iteration adjacency cannot stand in for it: a
- * fresh implementer conversation is opened by an iteration seed that increments
- * the count in the same mutation, so a context-limit rotation and an
- * iteration-boundary rotation are indistinguishable here. A transition is
- * stated as the link it is — this row took over from that one, that one was
- * superseded by this — in both directions, and no further.
- */
-
-export type ConversationEndReason =
-  | { kind: "superseded"; successorId: string }
-  | { kind: "closed"; successorId: null };
+/** The implementer conversation and its tasks, iterations, and validator verdicts. */
+export type ConversationEndReason = { kind: "closed"; successorId: null };
 
 export type ConversationHistoryEvent =
   | {
       kind: "started";
       at: string;
       iteration: number;
-      /** The conversation this one took over from; null for the first. */
-      rotatedFrom: string | null;
     }
   | {
       kind: "task_completed";
@@ -139,8 +104,7 @@ function contextIsSettled(
  * its own conversation, and the Log surface titles a validator transcript with
  * the same live/ended pill the History row gives the implementer. Liveness is
  * "some lane still holds it" rather than "the last event is recent" because
- * only the lane record distinguishes a conversation that has been rotated out
- * from one that is merely between turns.
+ * the lane record keeps ownership stable between turns.
  *
  * The question is asked of the CONVERSATION, never of the task that opened it.
  * One lane conversation carries several tasks, so a completed task says nothing
@@ -407,15 +371,11 @@ export function deriveConversationHistory({
   // states it once, at the moment the seat actually spoke — which is also the
   // only moment a reader watching a running round has it.
   //
-  // Keyed on what the verdict SAYS, not on which seat said it. A per-assignment
-  // reset re-runs one seat inside the same round, so a seat can report twice
-  // under one seq: two different judgements, written in two different
-  // transcripts, and the second transcript is reachable only from its own
-  // verdict event. Keying on (seq, seat) would drop it as a duplicate of the
-  // verdict it replaced. Two publications agreeing on all four fields are the
-  // same verdict restated, which is exactly the aggregate's republication.
+  // Every standalone result is a separate judgement: a reset can re-run the
+  // same seat in the same round and conversation with an identical verdict.
+  // Only the aggregate's echo is suppressed by these recorded signatures.
   const statedSeatVerdicts = new Set<string>();
-  const seatVerdictStated = (
+  const recordSeatVerdict = (
     roundSeq: number | null,
     seat: GraphWorkflowValidationSpecialistEntry,
   ): boolean => {
@@ -438,7 +398,7 @@ export function deriveConversationHistory({
     if (event.type === "graph-workflow-validation-specialist-result") {
       if (event.contextId !== contextId) return;
       const seat = event.specialist;
-      if (seatVerdictStated(event.roundSeq, seat)) return;
+      recordSeatVerdict(event.roundSeq, seat);
       push(spanAt(logIndex), logIndex, {
         kind: "verdict",
         at: entry.occurredAt,
@@ -491,7 +451,7 @@ export function deriveConversationHistory({
         return;
       }
       for (const seat of specialists) {
-        if (seatVerdictStated(roundSeq, seat)) continue;
+        if (recordSeatVerdict(roundSeq, seat)) continue;
         push(hosting, logIndex, {
           kind: "verdict",
           at: entry.occurredAt,
@@ -537,19 +497,14 @@ export function deriveConversationHistory({
     }
   }
 
-  const rows = spans.map((span, index): ConversationHistoryRow => {
-    const successor = spans[index + 1];
+  const rows = spans.map((span): ConversationHistoryRow => {
     const own = collected.get(span.conversationId) ?? [];
-    // The same owner the Log surface asks, so the row's pill and the transcript
-    // header opened from it can never contradict each other — a lane record the
-    // context has not written yet is exactly the moment they would.
-    // A row with a successor is out either way: the conversation that replaced
-    // it retired it, whatever a stale binding still names.
-    const isLive =
-      successor === undefined &&
-      isWorkflowConversationLive(execution, contextId, span.conversationId);
+    const isLive = isWorkflowConversationLive(
+      execution,
+      contextId,
+      span.conversationId,
+    );
 
-    const previous = index === 0 ? null : spans[index - 1]!;
     const started: ConversationHistoryEvent = {
       kind: "started",
       at: span.startedAt,
@@ -557,7 +512,6 @@ export function deriveConversationHistory({
       // answers with the iteration standing now — which is the iteration a
       // conversation nothing has logged yet was opened for.
       iteration: iterationAt.atLogIndex(span.startIndex),
-      rotatedFrom: previous?.conversationId ?? null,
     };
 
     const lastOwnActivity = own.reduce<string | null>(
@@ -565,14 +519,10 @@ export function deriveConversationHistory({
         latest === null || event.at > latest ? event.at : latest,
       null,
     );
-    const endedAt = isLive
-      ? null
-      : (successor?.startedAt ?? lastOwnActivity ?? span.startedAt);
+    const endedAt = isLive ? null : (lastOwnActivity ?? span.startedAt);
     const endReason: ConversationEndReason | null = isLive
       ? null
-      : successor === undefined
-        ? { kind: "closed", successorId: null }
-        : { kind: "superseded", successorId: successor.conversationId };
+      : { kind: "closed", successorId: null };
 
     const middle = [...own]
       .sort((left, right) => left.logIndex - right.logIndex)

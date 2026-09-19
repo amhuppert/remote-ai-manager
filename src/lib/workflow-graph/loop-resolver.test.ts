@@ -667,7 +667,7 @@ function resolvedContext(
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: {},
-    iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 3 },
     planRepair: DEFAULT_PLAN_REPAIR_POLICY,
     ...overrides,
   };

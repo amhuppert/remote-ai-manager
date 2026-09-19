@@ -55,14 +55,12 @@ const GLOBAL_VALIDATOR: ValidatorCohort = {
         backend: "claude",
         modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
       },
-      continuity: { enabled: true },
     },
   ],
 };
 
 const GLOBAL_ITERATION: GraphWorkflowIterationPolicy = {
   maxIterations: 20,
-  continuity: { enabled: true },
 };
 
 const GLOBAL_CB: GraphWorkflowCircuitBreakerPolicy = {
@@ -206,7 +204,7 @@ describe("resolveContext", () => {
           },
         },
       },
-      iterationPolicy: { maxIterations: 5, continuity: { enabled: false } },
+      iterationPolicy: { maxIterations: 5 },
     };
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
@@ -270,7 +268,6 @@ describe("resolveContext", () => {
               parameters: { reasoning: "high", fast: "false" },
             },
           },
-          continuity: { enabled: true },
         },
       ],
     };
@@ -299,7 +296,6 @@ describe("resolveContext", () => {
               parameters: { effort: "low" },
             },
           },
-          continuity: { enabled: true },
         },
       ],
     };
@@ -1635,7 +1631,6 @@ describe("computeUsedBackends", () => {
       backend: "claude",
       modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
     },
-    continuity: { enabled: true },
   };
   const CODEX_VALIDATOR: ValidatorAssignment = {
     id: "general",
@@ -1649,7 +1644,6 @@ describe("computeUsedBackends", () => {
         parameters: { reasoning: "medium", fast: "false" },
       },
     },
-    continuity: { enabled: true },
   };
 
   it("returns the distinct implementer + enabled-validator backends across contexts (R5.2a)", () => {
@@ -1818,7 +1812,6 @@ describe("agent assignment cascade", () => {
         parameters: { reasoning: "high", fast: "false" },
       },
     },
-    continuity: { enabled: false, contextLimitTokens: 40_000 },
   };
 
   const CLAUDE_UNDER_TASK: ValidatorAssignment = {
@@ -1830,7 +1823,6 @@ describe("agent assignment cascade", () => {
       backend: "claude",
       modelSelection: { modelId: "opus", parameters: { effort: "high" } },
     },
-    continuity: { enabled: true },
   };
 
   it("replaces the implementer as a whole unit, mixing no field across tiers", () => {
@@ -1875,23 +1867,6 @@ describe("agent assignment cascade", () => {
     ).toEqual([
       ["conversation", "codex"],
       ["task", "claude"],
-    ]);
-  });
-
-  it("preserves per-assignment continuity, which differs within one cohort", () => {
-    const resolved = resolveContext(
-      GLOBAL_DEFAULTS,
-      {},
-      makeContext({
-        contextValidator: cohort([CODEX_UNDER_CONVERSATION, CLAUDE_UNDER_TASK]),
-      }),
-    );
-
-    expect(
-      resolved.contextValidator.assignments.map((a) => a.continuity),
-    ).toEqual([
-      { enabled: false, contextLimitTokens: 40_000 },
-      { enabled: true },
     ]);
   });
 
@@ -1948,7 +1923,6 @@ describe("agent assignment cascade", () => {
             parameters: { effort: "medium" },
           },
         },
-        continuity: { enabled: true },
       },
     ]);
     expect(resolved.implementer.profile).toEqual({

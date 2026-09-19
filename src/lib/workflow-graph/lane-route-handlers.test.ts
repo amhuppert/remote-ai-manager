@@ -9,7 +9,6 @@ import { describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 import { withTracing } from "@/lib/logging";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
-import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
@@ -40,7 +39,7 @@ import { GraphExecutionContractViolationError } from "./execution-contract-port"
  * Route-handler unit tests for the lane tool endpoints. The tool context is the
  * REAL `createGraphWorkflowExecutionToolContext` over a serialized fake
  * `mutateActive` (mirroring the store's write queue) so completeTask, the
- * mid-turn rotation gate, and the idempotent double-complete guard all exercise
+ * idempotent double-complete guard all exercise
  * production logic — only the HTTP transport, the halt/block signals, and the
  * capability flags are controlled per test.
  */
@@ -92,30 +91,8 @@ function createFakeMutateActive(
   };
 }
 
-function makeClaudeLane(
-  overrides: Partial<GraphWorkflowAgentSessionState> = {},
-): GraphWorkflowAgentSessionState {
-  const metrics = {
-    rotateBeforeNextTurn: false,
-    ...overrides.metrics,
-  };
-  return {
-    backend: "claude",
-    refKind: "conversation",
-    lane: "implementer",
-    contextId: "context-plan",
-    workflowConversationId: "conv-bound",
-    sessionRef: { backend: "claude", ref: "conv-bound" },
-    limitEvaluation: "disabled",
-    lastUsedAt: "2026-03-27T11:00:00.000Z",
-    ...overrides,
-    metrics,
-  };
-}
-
 function buildRunningExecution(
   options: {
-    limit?: number;
     lane?: GraphWorkflowAgentSessionState;
     iterationCount?: number;
     /**
@@ -179,27 +156,6 @@ function buildRunningExecution(
     };
   }
 
-  if (options.limit !== undefined) {
-    running.workingDefinition = {
-      ...running.workingDefinition,
-      executionContexts: running.workingDefinition.executionContexts.map(
-        (ctx) =>
-          ctx.id === "context-plan"
-            ? {
-                ...ctx,
-                iterationPolicy: {
-                  ...ctx.iterationPolicy,
-                  continuity: {
-                    ...ctx.iterationPolicy.continuity,
-                    contextLimitTokens: options.limit,
-                  },
-                },
-              }
-            : ctx,
-      ),
-    };
-  }
-
   if (options.lane) {
     running.laneStates = {
       ...running.laneStates,
@@ -212,7 +168,6 @@ function buildRunningExecution(
 
 interface BuildContextOptions {
   execution?: GraphWorkflowExecution;
-  readLiveOccupancy?: (conversationId: string) => LiveOccupancySnapshot | null;
   allowAgentTaskAdd?: boolean;
   allowAgentCollaboration?: boolean;
   collaboration?: GraphWorkflowCollaborationContextBlock;
@@ -245,7 +200,6 @@ function buildContext(options: BuildContextOptions = {}): {
       createDocumentId: () => "doc-1",
     }),
     publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
-    readLiveOccupancy: options.readLiveOccupancy ?? (() => null),
     now: () => "2026-03-27T12:00:00.000Z",
   });
   const bound = factory.create({
@@ -356,7 +310,6 @@ describe("lane route handlers — complete task", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.ok).toBe(true);
-    expect(body.stopInstruction).toBeUndefined();
     const state = store.current.contextStates["context-plan"];
     expect(body.remainingTaskCount).toBe(
       (state?.totalTaskCount ?? 0) - (state?.completedTaskCount ?? 0),
@@ -528,7 +481,6 @@ describe("lane route handlers — complete task", () => {
       remainingTaskCount: 0,
       halted: null,
       allowAgentCollaboration: true,
-      contextLimitStopped: false,
     });
   });
 
@@ -548,7 +500,6 @@ describe("lane route handlers — complete task", () => {
     expect(body.laneReminderState).toMatchObject({
       remainingTaskCount: 0,
       halted: null,
-      contextLimitStopped: false,
     });
   });
 
@@ -576,33 +527,6 @@ describe("lane route handlers — complete task", () => {
       remainingTaskCount: 1,
       halted: null,
       allowAgentCollaboration: false,
-      contextLimitStopped: false,
-    });
-  });
-
-  it("reports the rotation stop in reminder state for the completed task", async () => {
-    // Over-limit occupancy issues the stopInstruction on the final completion;
-    // the self-check must not compete with the immediate-handoff order.
-    const { context } = buildContext({
-      execution: buildRunningExecution({ limit: 100, lane: makeClaudeLane() }),
-      readLiveOccupancy: () => ({
-        contextTokens: 200,
-        compactedThisTurn: false,
-      }),
-    });
-    const handlers = createLaneRouteHandlers(makeDeps(context));
-
-    const response = await handlers.completeTask(
-      req({ executionId: "execution-1", summary: "done" }),
-      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
-    );
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.stopInstruction).toContain("CONTEXT LIMIT REACHED");
-    expect(body.laneReminderState).toMatchObject({
-      remainingTaskCount: 0,
-      contextLimitStopped: true,
     });
   });
 
@@ -638,31 +562,8 @@ describe("lane route handlers — complete task", () => {
       remainingTaskCount: 3,
       halted: "iteration halted: circuit_breaker",
       allowAgentCollaboration: true,
-      contextLimitStopped: false,
     });
     expect(store.mutateCount).toBe(0);
-  });
-
-  it("attaches the rotation-gate stopInstruction verbatim and omits it otherwise", async () => {
-    const { context } = buildContext({
-      execution: buildRunningExecution({ limit: 100, lane: makeClaudeLane() }),
-      readLiveOccupancy: () => ({
-        contextTokens: 200,
-        compactedThisTurn: false,
-      }),
-    });
-    const handlers = createLaneRouteHandlers(makeDeps(context));
-
-    const response = await handlers.completeTask(
-      req({ executionId: "execution-1", summary: "done" }),
-      params({ ...BASE_PARAMS, taskId: "task-plan-1" }),
-    );
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.ok).toBe(true);
-    expect(body.stopInstruction).toContain("CONTEXT LIMIT REACHED");
-    expect(body.stopInstruction).toContain("End your turn now");
   });
 
   it("runs the halt-check FIRST — a pending halt yields 409 { halt, reason } and no mutation", async () => {

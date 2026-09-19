@@ -26,7 +26,7 @@ function executionWithSchema(
           ...context,
           outputSchema,
           circuitBreaker: { consecutiveFailureThreshold: 3 },
-          iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 4 },
         }
       : context,
   );

@@ -47,7 +47,6 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
       circuitBreaker: {},
       iterationPolicy: {
         maxIterations: 2,
-        continuity: { enabled: true },
       },
     },
     {
@@ -72,7 +71,6 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
       circuitBreaker: {},
       iterationPolicy: {
         maxIterations: 4,
-        continuity: { enabled: true },
       },
     },
   ],
@@ -234,9 +232,6 @@ describe("planner workflow generation — fixture snapshot", () => {
                 },
               },
               "iterationPolicy": {
-                "continuity": {
-                  "enabled": true,
-                },
                 "maxIterations": 2,
               },
               "mutability": {
@@ -271,9 +266,6 @@ describe("planner workflow generation — fixture snapshot", () => {
                 },
               },
               "iterationPolicy": {
-                "continuity": {
-                  "enabled": true,
-                },
                 "maxIterations": 4,
               },
               "mutability": {

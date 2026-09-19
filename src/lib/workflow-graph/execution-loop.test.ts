@@ -90,7 +90,7 @@ function createSingleContextDefinition(
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations },
       },
     ],
     tasks: [
@@ -507,7 +507,7 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
       },
       {
         id: "ctx-2",
@@ -528,7 +528,7 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
       },
     ],
     tasks: [
@@ -1745,8 +1745,7 @@ describe("execution loop", () => {
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
             sessionRef: { backend: "claude", ref: "conv-1" },
-            metrics: { rotateBeforeNextTurn: false },
-            limitEvaluation: "disabled",
+            metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
         },
@@ -1764,9 +1763,7 @@ describe("execution loop", () => {
         const next = structuredClone(harness.getCurrent());
         next.contextStates["ctx-1"]!.status = "ready";
         const lane = next.laneStates["ctx-1"]?.["implementer"];
-        if (lane?.backend === "claude") {
-          lane.metrics.rotateBeforeNextTurn = true;
-        }
+        expect(lane?.workflowConversationId).toBe("conv-1");
         harness.setCurrent(next);
         return next;
       },
@@ -1818,7 +1815,7 @@ describe("execution loop", () => {
     expect(result.status).toBe("completed");
   });
 
-  it("recovers once, on a fresh rotated conversation, when the implementer turn stalls", async () => {
+  it("recovers once in the existing conversation when the implementer turn stalls", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {
       activeContextIds: ["ctx-1"],
@@ -1855,8 +1852,7 @@ describe("execution loop", () => {
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
             sessionRef: { backend: "codex", ref: "thread-1" },
-            metrics: { rotateBeforeNextTurn: false },
-            limitEvaluation: "disabled",
+            metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
         },
@@ -1875,9 +1871,7 @@ describe("execution loop", () => {
         const next = structuredClone(harness.getCurrent());
         next.contextStates["ctx-1"]!.status = "ready";
         const lane = next.laneStates["ctx-1"]?.["implementer"];
-        if (lane?.backend === "codex") {
-          lane.metrics.rotateBeforeNextTurn = true;
-        }
+        expect(lane?.workflowConversationId).toBe("conv-1");
         harness.setCurrent(next);
         return next;
       },
@@ -2059,8 +2053,7 @@ describe("execution loop", () => {
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
             sessionRef: { backend: "claude", ref: "session-a" },
-            metrics: { rotateBeforeNextTurn: false },
-            limitEvaluation: "disabled",
+            metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
         },
@@ -2078,9 +2071,7 @@ describe("execution loop", () => {
         const next = structuredClone(harness.getCurrent());
         next.contextStates["ctx-1"]!.status = "ready";
         const lane = next.laneStates["ctx-1"]?.["implementer"];
-        if (lane?.backend === "claude") {
-          lane.metrics.rotateBeforeNextTurn = true;
-        }
+        expect(lane?.workflowConversationId).toBe("conv-1");
         harness.setCurrent(next);
         return next;
       },
@@ -2125,7 +2116,7 @@ describe("execution loop", () => {
     expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
     expect(
       harness.getCurrent().laneStates["ctx-1"]?.["implementer"],
-    ).toMatchObject({ metrics: { rotateBeforeNextTurn: true } });
+    ).toMatchObject({ workflowConversationId: "conv-1" });
     expect(result.status).toBe("completed");
   });
 
@@ -2307,8 +2298,7 @@ describe("execution loop", () => {
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
             sessionRef: { backend: "claude", ref: "conv-1" },
-            metrics: { rotateBeforeNextTurn: false },
-            limitEvaluation: "disabled",
+            metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
         },
@@ -2325,9 +2315,7 @@ describe("execution loop", () => {
         const next = structuredClone(harness.getCurrent());
         next.contextStates["ctx-1"]!.status = "ready";
         const lane = next.laneStates["ctx-1"]?.["implementer"];
-        if (lane?.backend === "claude") {
-          lane.metrics.rotateBeforeNextTurn = true;
-        }
+        expect(lane?.workflowConversationId).toBe("conv-1");
         harness.setCurrent(next);
         return next;
       },
@@ -2416,8 +2404,7 @@ describe("execution loop", () => {
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
             sessionRef: { backend: "claude", ref: "conv-1" },
-            metrics: { rotateBeforeNextTurn: false },
-            limitEvaluation: "disabled",
+            metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
         },
@@ -2431,9 +2418,7 @@ describe("execution loop", () => {
         const next = structuredClone(harness.getCurrent());
         next.contextStates["ctx-1"]!.status = "ready";
         const lane = next.laneStates["ctx-1"]?.["implementer"];
-        if (lane?.backend === "claude") {
-          lane.metrics.rotateBeforeNextTurn = true;
-        }
+        expect(lane?.workflowConversationId).toBe("conv-1");
         harness.setCurrent(next);
         return next;
       },
@@ -2547,8 +2532,7 @@ describe("execution loop", () => {
               contextId: "ctx-1",
               workflowConversationId: "conv-1",
               sessionRef: { backend: "claude", ref: "conv-1" },
-              metrics: { rotateBeforeNextTurn: false },
-              limitEvaluation: "disabled",
+              metrics: {},
               lastUsedAt: "2026-03-27T12:00:00.000Z",
             },
           },
@@ -2565,9 +2549,7 @@ describe("execution loop", () => {
           const next = structuredClone(harness.getCurrent());
           next.contextStates["ctx-1"]!.status = "ready";
           const lane = next.laneStates["ctx-1"]?.["implementer"];
-          if (lane?.backend === "claude") {
-            lane.metrics.rotateBeforeNextTurn = true;
-          }
+          expect(lane?.workflowConversationId).toBe("conv-1");
           harness.setCurrent(next);
           return next;
         },

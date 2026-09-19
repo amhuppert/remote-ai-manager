@@ -161,7 +161,7 @@ const EXPECTED_IMPLEMENTER_FORM =
 
 const EXPECTED_VALIDATOR_FORM =
   "a context validator is now a cohort: " +
-  "{ enabled, assignments: [{ id, profile, strategy, agent, continuity }] }";
+  "{ enabled, assignments: [{ id, profile, strategy, agent }] }";
 
 export interface LegacyAgentShapeIssue {
   /** JSON path of the offending field, relative to the value that was checked. */

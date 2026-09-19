@@ -1117,7 +1117,7 @@ describe("E3: lane modules", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: NOW,
     });
     const caller = createWorkflowAgentCaller({
@@ -1168,7 +1168,7 @@ describe("E3: lane modules", () => {
     expect(recorded).toMatchObject({
       backend: TESTFAKE_BACKEND_ID,
       ref: TESTFAKE_CONVERSATION_REF,
-      metrics: { contextTokens: 41, rotateBeforeNextTurn: false },
+      metrics: { contextTokens: 41 },
     });
   });
 });

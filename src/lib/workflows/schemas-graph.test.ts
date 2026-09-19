@@ -26,8 +26,6 @@ import {
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   graphWorkflowHumanApprovalGateConfigSchema,
-  graphWorkflowIterationPolicySchema,
-  graphWorkflowLaneContinuityPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import {
@@ -85,7 +83,6 @@ function createSemanticDefinition() {
         },
         iterationPolicy: {
           maxIterations: 5,
-          continuity: { enabled: true, contextLimitTokens: 120000 },
         },
         contextValidator: {
           enabled: true,
@@ -101,7 +98,6 @@ function createSemanticDefinition() {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -195,7 +191,6 @@ function createResolvedDefinition() {
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: {
           maxIterations: 5,
-          continuity: { enabled: true, contextLimitTokens: 120000 },
         },
         contextValidator: {
           enabled: true,
@@ -212,7 +207,6 @@ function createResolvedDefinition() {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },
@@ -822,7 +816,7 @@ describe("workflowLiveEditOperationSchema", () => {
         scriptValidator: { commands: ["pre-merge"] },
         humanApprovalGate: { enabled: true },
         askUserQuestions: { enabled: false },
-        iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 12 },
         circuitBreaker: { consecutiveFailureThreshold: 2 },
         mutability: { allowAgentTaskAdd: true },
         collaboration: resolvedCollaboration,
@@ -1073,7 +1067,6 @@ function createWorkflowDefaults() {
               parameters: { effort: "medium" },
             },
           },
-          continuity: { enabled: true },
         },
       ],
     },
@@ -1082,7 +1075,6 @@ function createWorkflowDefaults() {
     askUserQuestions: { enabled: false },
     iterationPolicy: {
       maxIterations: 20,
-      continuity: { enabled: true },
     },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     mutability: { allowAgentTaskAdd: false },
@@ -1191,7 +1183,7 @@ describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
     contextValidator: { enabled: false, assignments: [] },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
-    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    iterationPolicy: { maxIterations: 20 },
   };
 
   it("defaults scriptValidator to an empty command selection when missing", () => {
@@ -1303,51 +1295,6 @@ describe("getCodexReasoningLevelsForModel", () => {
   });
 });
 
-describe("graphWorkflowLaneContinuityPolicySchema", () => {
-  it("defaults enabled to true when omitted", () => {
-    const result = graphWorkflowLaneContinuityPolicySchema.parse({});
-    expect(result.enabled).toBe(true);
-  });
-
-  it("accepts explicit enabled: false", () => {
-    const result = graphWorkflowLaneContinuityPolicySchema.parse({
-      enabled: false,
-    });
-    expect(result.enabled).toBe(false);
-  });
-
-  it("rejects contextLimitTokens of zero", () => {
-    const result = graphWorkflowLaneContinuityPolicySchema.safeParse({
-      contextLimitTokens: 0,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects negative contextLimitTokens", () => {
-    const result = graphWorkflowLaneContinuityPolicySchema.safeParse({
-      contextLimitTokens: -1,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects float contextLimitTokens", () => {
-    const result = graphWorkflowLaneContinuityPolicySchema.safeParse({
-      contextLimitTokens: 1.5,
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("graphWorkflowIterationPolicySchema with continuity", () => {
-  it("defaults continuity to enabled with no limit when omitted", () => {
-    const result = graphWorkflowIterationPolicySchema.parse({
-      maxIterations: 10,
-    });
-    expect(result.continuity.enabled).toBe(true);
-    expect(result.continuity.contextLimitTokens).toBeUndefined();
-  });
-});
-
 describe("globalConfigSchema workflowDefaults", () => {
   it("accepts config without workflowDefaults (backward compat)", () => {
     const result = globalConfigSchema.safeParse({
@@ -1431,7 +1378,7 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
     threadId: "thread-abc",
   };
 
-  it("parses a claude lane state with supported limit evaluation", () => {
+  it("parses a claude lane state with context metrics", () => {
     const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "claude",
       lane: "implementer",
@@ -1439,15 +1386,12 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       sessionRef: claudeSessionRef,
       lastContextTokens: 50000,
       lastContextWindowMax: 200000,
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "supported",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
     if (result.success && result.data.backend === "claude") {
       expect(result.data.metrics.contextTokens).toBe(50000);
       expect(result.data.metrics.contextWindowMax).toBe(200000);
-      expect(result.data.limitEvaluation).toBe("supported");
     }
   });
 
@@ -1459,8 +1403,6 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       sessionRef: claudeSessionRef,
       lastContextTokens: null,
       lastContextWindowMax: null,
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "disabled",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
@@ -1472,14 +1414,12 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lane: "implementer",
       contextId: "ctx-1",
       sessionRef: claudeSessionRef,
-      limitEvaluation: "disabled",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
     if (result.success && result.data.backend === "claude") {
       expect(result.data.metrics.contextTokens).toBeUndefined();
       expect(result.data.metrics.contextWindowMax).toBeUndefined();
-      expect(result.data.metrics.rotateBeforeNextTurn).toBe(false);
     }
   });
 
@@ -1494,14 +1434,11 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
         cachedInputTokens: 500,
         outputTokens: 200,
       },
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "unsupported",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
     if (result.success && result.data.backend === "codex") {
       expect(result.data.metrics.lastTurnUsage?.inputTokens).toBe(1000);
-      expect(result.data.limitEvaluation).toBe("unsupported");
     }
   });
 
@@ -1511,13 +1448,11 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: codexSessionRef,
-      limitEvaluation: "disabled",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
     if (result.success && result.data.backend === "codex") {
       expect(result.data.metrics.lastTurnUsage).toBeUndefined();
-      expect(result.data.metrics.rotateBeforeNextTurn).toBe(false);
     }
   });
 
@@ -1527,7 +1462,6 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lane: "implementer",
       contextId: "ctx-1",
       sessionRef: claudeSessionRef,
-      limitEvaluation: "unsupported",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
@@ -1539,7 +1473,6 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: codexSessionRef,
-      limitEvaluation: "supported",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
@@ -1557,8 +1490,6 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
         threadId: "thread-impl",
       },
       lastTurnUsage: null,
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "disabled",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
@@ -1579,8 +1510,6 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       contextId: "ctx-1",
       workflowConversationId: "conv-cc-123",
       lastTurnUsage: null,
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "disabled",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
@@ -1599,8 +1528,6 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       sessionRef: claudeSessionRef,
       lastContextTokens: null,
       lastContextWindowMax: null,
-      rotateBeforeNextTurn: false,
-      limitEvaluation: "disabled",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
@@ -1615,7 +1542,6 @@ describe("graphWorkflowAgentSessionStateSchema", () => {
       lane: "context_validator",
       contextId: "ctx-1",
       sessionRef: codexSessionRef,
-      limitEvaluation: "disabled",
       lastUsedAt: timestamp,
     });
     expect(result.success).toBe(true);
@@ -1686,8 +1612,6 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
             },
             lastContextTokens: 80000,
             lastContextWindowMax: 200000,
-            rotateBeforeNextTurn: true,
-            limitEvaluation: "supported",
             lastUsedAt: timestamp,
           },
           context_validator: {
@@ -1700,8 +1624,6 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
               threadId: "thread-xyz",
             },
             lastTurnUsage: null,
-            rotateBeforeNextTurn: false,
-            limitEvaluation: "unsupported",
             lastUsedAt: timestamp,
           },
         },
@@ -1717,8 +1639,6 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
             },
             lastContextTokens: 0,
             lastContextWindowMax: 200000,
-            rotateBeforeNextTurn: false,
-            limitEvaluation: "supported",
             lastUsedAt: timestamp,
           },
         },
@@ -1768,8 +1688,6 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
           },
           lastContextTokens: null,
           lastContextWindowMax: null,
-          rotateBeforeNextTurn: false,
-          limitEvaluation: "disabled",
           lastUsedAt: timestamp,
         },
       },

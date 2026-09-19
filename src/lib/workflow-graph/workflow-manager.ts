@@ -717,16 +717,6 @@ export interface GraphWorkflowManagerDeps {
    */
   userInputGateService?: UserInputGateService;
   /**
-   * Stop a lane conversation's actor (and with it the backend subprocess) when
-   * a per-assignment reset retires it. Best-effort: a throw is logged, never a
-   * reset failure — the durable state is already committed.
-   */
-  retireLaneConversation(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  }): void;
-  /**
    * Read the replayable landing evidence off a context's branch (D4 decision
    * D8) so restart reconciliation settles commit-mode intents from what the
    * committer actually left behind. Defaults to the real git-backed prober.
@@ -2718,67 +2708,48 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     input: GraphWorkflowRetryableIterationErrorInput,
   ): Promise<GraphWorkflowExecution> {
-    const now = getNow(deps);
+    const { execution: nextExecution } = await deps.executionRepository
+      .mutateActive(projectPath, sessionName, (execution) => {
+        const running = requireRunningExecution(execution);
+        const contextState = running.contextStates[input.contextId];
+        if (!contextState) {
+          throw new Error(
+            `Execution context "${input.contextId}" does not exist in runtime state`,
+          );
+        }
 
-    const { execution: nextExecution, rotationScheduled } =
-      await deps.executionRepository
-        .mutateActive(projectPath, sessionName, (execution) => {
-          let rotationScheduled = false;
+        transitionContextStatus(running, input.contextId, "ready", {
+          reason: "manager.recover_retryable_iteration_error",
+        });
+        if (!running.activeContextIds.includes(input.contextId)) {
+          running.activeContextIds = [
+            ...running.activeContextIds,
+            input.contextId,
+          ];
+        }
+        running.completedAt = null;
+        running.haltReason = null;
+        running.machineSnapshot = buildLifecycleSnapshot(running, {
+          lifecycleStatus: "running",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        });
 
-          const running = requireRunningExecution(execution);
-          const contextState = running.contextStates[input.contextId];
-          if (!contextState) {
-            throw new Error(
-              `Execution context "${input.contextId}" does not exist in runtime state`,
-            );
-          }
-
-          transitionContextStatus(running, input.contextId, "ready", {
-            reason: "manager.recover_retryable_iteration_error",
-          });
-          if (!running.activeContextIds.includes(input.contextId)) {
-            running.activeContextIds = [
-              ...running.activeContextIds,
-              input.contextId,
-            ];
-          }
-          running.completedAt = null;
-          running.haltReason = null;
-          running.machineSnapshot = buildLifecycleSnapshot(running, {
-            lifecycleStatus: "running",
-            recoveryMode: "none",
-            hasLiveIteration: false,
-          });
-
-          const implementerLane =
-            running.laneStates[input.contextId]?.["implementer"];
-          rotationScheduled =
-            implementerLane?.refKind === "conversation" &&
-            implementerLane.contextId === input.contextId;
-
-          if (rotationScheduled && implementerLane) {
-            implementerLane.metrics.rotateBeforeNextTurn = true;
-            implementerLane.lastUsedAt = now;
-          }
-
-          return changed(running, { rotationScheduled });
-        })
-        .then((mutation) => ({
-          execution: mutation.execution,
-          ...mutationValue(mutation),
-        }));
+        return changed(running);
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+      }));
 
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.decision("iteration.retryable_error_recovery", {
       contextId: input.contextId,
       error: input.errorMessage,
-      rotationScheduled,
     });
     logger.warn("graph-workflow.iteration.retryable_error_recovery", {
       executionId: nextExecution.id,
       contextId: input.contextId,
       error: input.errorMessage,
-      rotationScheduled,
     });
 
     return nextExecution;
@@ -3056,9 +3027,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
    *
    * Narrower than {@link resetContext} by design: the sibling verdicts that
    * judged the same candidate, the implementer's lane, and the context's task
-   * state all survive. The reducer is pure, so the two effects it implies —
-   * stopping the retired conversation and publishing the withdrawal of a
-   * question nobody can answer any more — happen here, post-commit.
+   * state all survive, along with the validator's conversation. The reducer is
+   * pure, so withdrawing its pending question and publishing that withdrawal
+   * happen here, post-commit.
    */
   async function resetContextAssignment(
     projectPath: string,
@@ -3077,7 +3048,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           });
           return changed(result.execution, {
             previousStatus: execution.status,
-            retiredConversationId: result.retiredConversationId,
             withdrawnQuestion: result.withdrawnQuestion,
           });
         } catch (error) {
@@ -3098,25 +3068,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
     const {
       execution: nextExecution,
-      value: { previousStatus, retiredConversationId, withdrawnQuestion },
+      value: { previousStatus, withdrawnQuestion },
     } = mutation;
-
-    if (retiredConversationId !== null) {
-      try {
-        deps.retireLaneConversation({
-          projectPath,
-          sessionName,
-          conversationId: retiredConversationId,
-        });
-      } catch (error) {
-        logger.warn("graph-workflow.assignment.retire_lane_failed", {
-          executionId: nextExecution.id,
-          contextId,
-          assignmentId,
-          error: getErrorMessage(error),
-        });
-      }
-    }
 
     if (withdrawnQuestion !== null) {
       const question: { conversationId: string; questionBatchId: string } =
@@ -3152,7 +3105,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       executionId: nextExecution.id,
       contextId,
       assignmentId,
-      retiredConversation: retiredConversationId !== null,
       withdrewQuestion: withdrawnQuestion !== null,
     });
 

@@ -80,7 +80,7 @@ describe("resolve", () => {
       scope: "workflow",
       globalDefaults: SEEDED_WORKFLOW_DEFAULTS,
       workflowConfig: {
-        iterationPolicy: { maxIterations: 8, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 8 },
       },
     });
 
@@ -391,7 +391,7 @@ describe("reset all", () => {
 
   it("clears the workflow tier's own overrides, lane-merge validation included", () => {
     const workflowConfig: WorkflowConfigOverride = {
-      iterationPolicy: { maxIterations: 8, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 8 },
       laneMergeValidation: { strategy: "every-merge" },
     };
     const cascade = createConfigCascade({

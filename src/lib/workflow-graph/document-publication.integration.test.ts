@@ -228,7 +228,6 @@ describe("shared document publication", () => {
         runtimeEditService: createGraphWorkflowRuntimeEditService(),
         publishLiveEditApplied:
           createGraphWorkflowExecutionEventPublisher().publishLiveEditApplied,
-        readLiveOccupancy: () => null,
       }).create({
         projectPath: "/repo",
         sessionName: "session-1",

@@ -61,9 +61,7 @@ function buildCharterSection(
 }
 
 /**
- * The recorded answers delivered into a resumed turn. Carried into both the
- * pinned follow-up prompt and the rotated seed prompt; the answers block echoes
- * the original question text, so a fresh conversation is self-sufficient (5.3).
+ * Recorded answers delivered in the existing conversation’s follow-up prompt.
  */
 export interface ResumeUserInputPromptInput {
   questionBatchId: string;
@@ -73,7 +71,7 @@ export interface ResumeUserInputPromptInput {
 /**
  * The framed answers section: one line of context ahead of the standard
  * `<cc-question-answers>` block so the agent reads the answers before the task
- * list. Rendered identically in the pinned and rotated variants.
+ * list. Rendered in the resumed conversation.
  */
 function buildResumeUserInputSection(
   resumeUserInput: ResumeUserInputPromptInput,
@@ -159,26 +157,10 @@ export interface BuildIterationPromptInput {
    */
   charterContextId?: string;
   /**
-   * Answers delivered into a rotated resume: the asking conversation reached its
-   * context-window limit, so this fresh (seed) conversation carries the block in
-   * its first prompt (5.3).
-   */
-  resumeUserInput?: ResumeUserInputPromptInput;
-  /**
    * Effective ask-user-questions availability (resolved toggle AND lane-can-ask).
    * When true a short ask-protocol reminder section is added; otherwise none.
    */
   askUserQuestionsEnabled?: boolean;
-  /**
-   * Final handoff message of the conversation this seed replaces after a
-   * context-window rotation. Injected verbatim so environment gotchas,
-   * workarounds, and in-flight state survive the rotation boundary instead of
-   * depending on the agent re-deriving them from the worktree.
-   */
-  previousConversationHandoff?: {
-    conversationId: string;
-    note: string;
-  };
   /**
    * This context's effective command selections (validation-concurrency §8):
    * rendered as the `## Validation Commands` section, including explicit
@@ -392,23 +374,6 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     ].join("\n"),
   );
 
-  // Answers first: a rotated resume seeds a fresh conversation, so the block
-  // opens the prompt (after the header) before the task list (5.3).
-  if (input.resumeUserInput) {
-    sections.push(buildResumeUserInputSection(input.resumeUserInput));
-  }
-
-  if (input.previousConversationHandoff) {
-    sections.push(
-      [
-        "## Handoff from the previous conversation",
-        "This context's previous conversation reached its context limit and was rotated out. Its final handoff (verbatim):",
-        "",
-        input.previousConversationHandoff.note,
-      ].join("\n"),
-    );
-  }
-
   const latestContextValidationFailureSection =
     buildLatestContextValidationFailureSection(
       input.latestContextValidationFailure,
@@ -476,7 +441,6 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       "1. Work through the tasks in order, completing each one before moving to the next.",
       SELF_DISCOVERED_GAP_RULE,
       `2. Run \`${COMPLETE_TASK_COMMAND}\` after finishing each task, using the task's id from the list above.`,
-      "3. If `cctl workflow task complete` prints a stop instruction (CONTEXT LIMIT REACHED …), end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
       "",
       "IMPORTANT: If you do not run `cctl workflow task complete`, the task remains open and blocks all workflow progress. The workflow will stall and require manual intervention.",
     ].join("\n"),
@@ -511,7 +475,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     COMPLETE_TASK_COMMAND,
     "```",
     "Run this after finishing each task — it is the only way to advance the workflow. `<taskId>` is the task's id from the list above (e.g. `task-plan-1`); the summary should cover files modified, tests added or run, and notable decisions.",
-    'On success it reports how many tasks remain in this context. If it instead prints a stop instruction ("CONTEXT LIMIT REACHED … End your turn now …"), that is mandatory: stop and end your turn with the handoff note it requests — your final message is delivered verbatim to the fresh conversation that resumes the remaining tasks automatically. If the run has been halted the command exits non-zero and prints the reason; stop and end your turn.',
+    "On success it reports how many tasks remain in this context. If the run has been halted the command exits non-zero and prints the reason; stop and end your turn.",
     "",
     "### Register a shared document",
     "```",
@@ -598,8 +562,8 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
     `You still have ${input.remainingTasks.length} incomplete task(s):`,
   ];
 
-  // Compact charter reminder on every continuation turn (4.4). The full digest
-  // is re-presented when a fresh session is re-seeded via buildIterationPrompt.
+  // Keep the charter discoverable on continuation turns (4.4), especially when
+  // amendments require the agent to re-read it.
   if (input.charter) {
     const amendmentCount = input.charterAmendments?.length ?? 0;
     const amendedNote =

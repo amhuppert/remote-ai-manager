@@ -31,8 +31,7 @@ function makeLane(
     refKind: "conversation",
     workflowConversationId: conversationId,
     sessionRef: { backend: "claude", ref: conversationId },
-    metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "disabled",
+    metrics: {},
     lastUsedAt: "2026-04-01T10:00:00.000Z",
   };
 }
@@ -164,22 +163,27 @@ describe("resetExecutionContextAssignment", () => {
     ).toThrow(ResetAssignmentError);
   });
 
-  it("retires the lane conversation, drops only that lane's state, and forces its next rotation", () => {
-    const result = resetExecutionContextAssignment(makeExecution(), {
+  it("preserves the assignment's conversation and every sibling lane", () => {
+    const execution = makeExecution();
+    const result = resetExecutionContextAssignment(execution, {
       contextId: CONTEXT_ID,
       assignmentId: "alpha",
     });
 
-    expect(result.retiredConversationId).toBe("conv-alpha");
-    const lanes = result.execution.laneStates[CONTEXT_ID]!;
-    expect(lanes[ALPHA]).toBeUndefined();
-    // No lane state is exactly what makes the next round rebuild the lane;
-    // siblings keep their continuity untouched.
-    expect(lanes[BETA]?.workflowConversationId).toBe("conv-beta");
-    expect(lanes[BETA]?.assignmentFingerprint).toBe("fingerprint-beta");
-    expect(lanes["implementer"]?.workflowConversationId).toBe(
-      "conv-implementer",
-    );
+    expect(result.execution.laneStates).toEqual(execution.laneStates);
+  });
+
+  it("does not make an unusable conversation replaceable through reset", () => {
+    const execution = makeExecution();
+    const lane = execution.laneStates[CONTEXT_ID]?.[ALPHA];
+    if (!lane) throw new Error("Missing assignment lane");
+    lane.staleSession = true;
+    const result = resetExecutionContextAssignment(execution, {
+      contextId: CONTEXT_ID,
+      assignmentId: "alpha",
+    });
+
+    expect(result.execution.laneStates[CONTEXT_ID]?.[ALPHA]).toEqual(lane);
   });
 
   it("returns the roster entry of an open round to pending rather than removing it", () => {
@@ -211,7 +215,7 @@ describe("resetExecutionContextAssignment", () => {
     expect(round?.seq).toBe(3);
   });
 
-  it("leaves a concluded round alone — between rounds it only drops lane state", () => {
+  it("leaves a concluded round and its conversation alone", () => {
     const execution = makeExecution({ roundPhase: "concluded" });
     const result = resetExecutionContextAssignment(execution, {
       contextId: CONTEXT_ID,
@@ -220,7 +224,9 @@ describe("resetExecutionContextAssignment", () => {
 
     const round = result.execution.contextStates[CONTEXT_ID]?.validationRound;
     expect(round?.specialists["alpha"]?.state).toBe("verdict_fail");
-    expect(result.execution.laneStates[CONTEXT_ID]?.[ALPHA]).toBeUndefined();
+    expect(result.execution.laneStates[CONTEXT_ID]?.[ALPHA]).toEqual(
+      execution.laneStates[CONTEXT_ID]?.[ALPHA],
+    );
   });
 
   it("clears the reset assignment's parked question and leaves a sibling's parked", () => {

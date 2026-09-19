@@ -163,8 +163,7 @@ function implementerLane(
         backend: "claude",
         refKind: "conversation",
         workflowConversationId: conversationId,
-        metrics: { rotateBeforeNextTurn: false },
-        limitEvaluation: "supported",
+        metrics: {},
         lastUsedAt: "2026-03-27T11:09:00.000Z",
       },
     },
@@ -262,75 +261,6 @@ describe("History tab — transcript reachability", () => {
       CONTEXT_ID,
       "Validator · security",
     );
-  });
-
-  it("renders the verdict and the rotation copy as events inside the row, not as rows of their own", () => {
-    const { execution, events } = rejectedHistory();
-
-    render(
-      <ContextDetail
-        execution={execution}
-        events={events}
-        contextId={CONTEXT_ID}
-        onViewConversation={vi.fn()}
-        {...baseHandlers}
-      />,
-    );
-    openHistory();
-
-    const row = screen.getByTestId("conversation-row");
-    const kinds = within(row)
-      .getAllByTestId("conversation-event")
-      .map((event) => event.getAttribute("data-event-kind"));
-
-    expect(kinds).toContain("started");
-    expect(kinds).toContain("task_completed");
-    expect(kinds).toContain("verdict");
-    expect(within(row).getByText(/security rejected/)).toBeInTheDocument();
-  });
-
-  // The execution records no rotation provenance, and every fresh implementer
-  // conversation coincides with an iteration increment — so adjacency proves the
-  // transition and nothing about its cause.
-  it("names the transition in both directions without claiming why a conversation was replaced", () => {
-    const events = [
-      contextStatus("2026-03-27T09:40:00.000Z", 1),
-      taskCompleted("2026-03-27T10:38:00.000Z", "conv_a9c2"),
-      rejection("2026-03-27T10:42:00.000Z", 1),
-      contextStatus("2026-03-27T10:42:30.000Z", 2),
-      taskCompleted("2026-03-27T11:04:00.000Z", "conv_b41f"),
-    ];
-
-    render(
-      <ContextDetail
-        execution={runningExecution({
-          laneStates: implementerLane("conv_b41f"),
-        })}
-        events={events}
-        contextId={CONTEXT_ID}
-        {...baseHandlers}
-      />,
-    );
-    openHistory();
-
-    const rows = screen.getAllByTestId("conversation-row");
-    const [successor, predecessor] = rows;
-    expect(successor).toHaveAttribute("data-conversation-id", "conv_b41f");
-    expect(predecessor).toHaveAttribute("data-conversation-id", "conv_a9c2");
-
-    // Both directions of the chain are walkable.
-    expect(
-      within(successor as HTMLElement).getByText(/took over from conv_a9c2/),
-    ).toBeInTheDocument();
-    expect(
-      within(predecessor as HTMLElement).getByText(/superseded by conv_b41f/),
-    ).toBeInTheDocument();
-
-    for (const row of rows) {
-      expect(row.textContent ?? "").not.toMatch(
-        /context limit|continues|fresh conversation/i,
-      );
-    }
   });
 
   // The row is the conversation, and a conversation is not an iteration: a

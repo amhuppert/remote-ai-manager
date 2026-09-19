@@ -311,7 +311,7 @@ function createSingleLaneDefinition(): WorkflowSemanticDefinition {
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
-        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+        iterationPolicy: { maxIterations: 5 },
       },
     ],
     tasks: [
@@ -566,7 +566,6 @@ function createRouteManager(
 ): Generation["manager"] {
   return modules.createGraphWorkflowManager({
     abortConversation: () => {},
-    retireLaneConversation: () => {},
     stopExecutionLaneDevServers: async () => {},
 
     executionContract: createTestGraphExecutionContract(),

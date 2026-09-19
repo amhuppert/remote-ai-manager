@@ -86,7 +86,6 @@ describe("lifecycle ownership across asynchronous work", () => {
       lintCommittedSourceLocators: async () => [],
       abortConversation() {},
       abortExecutionLoop() {},
-      retireLaneConversation() {},
       async stopExecutionLaneDevServers(input) {
         stops.push(input.execution);
       },

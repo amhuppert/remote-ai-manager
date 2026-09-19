@@ -6,14 +6,13 @@ const lane = {
   CC_AGENT_BACKEND: "codex",
 };
 describe("native workflow lane commands", () => {
-  it("completes the addressed task with independent issuing principal and preserves the stop instruction", async () => {
+  it("completes the addressed task with independent issuing principal", async () => {
     const fixture = createCcRuntimeFixture({
       env: lane,
       respond: () =>
         jsonReply({
           ok: true,
           remainingTaskCount: 2,
-          stopInstruction: "End this turn now to rotate context.",
         }),
     });
     const result = await fixture.run([
@@ -29,7 +28,6 @@ describe("native workflow lane commands", () => {
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       effect: "applied",
-      instruction: "End this turn now to rotate context.",
       payload: { data: { remainingTaskCount: 2, taskId: "task-one" } },
     });
     expect(fixture.requests[0]?.url).toContain(

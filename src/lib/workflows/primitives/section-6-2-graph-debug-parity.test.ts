@@ -1069,7 +1069,6 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
                             parameters: { effort: "medium" },
                           },
                         },
-                        continuity: { enabled: true },
                       },
                     ],
                   },

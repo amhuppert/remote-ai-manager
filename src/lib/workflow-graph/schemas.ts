@@ -1645,9 +1645,7 @@ function normalizeLegacyGraphLane(value: unknown): unknown {
       ...(contextTokens !== undefined ? { contextTokens } : {}),
       ...(contextWindowMax !== undefined ? { contextWindowMax } : {}),
       ...(lastTurnUsage !== undefined ? { lastTurnUsage } : {}),
-      rotateBeforeNextTurn: record.rotateBeforeNextTurn ?? false,
     },
-    limitEvaluation: record.limitEvaluation,
     lastUsedAt: record.lastUsedAt,
   };
 }
@@ -1663,23 +1661,15 @@ export const graphWorkflowAgentSessionStateSchema = z.preprocess(
     // set it, and it agrees with the `laneStates` key by construction — the key
     // is the addressing form, this is the record's own account of itself.
     assignmentId: z.string().trim().min(1).optional(),
-    // Everything about the owning assignment a live lane has already baked in
-    // (see `assignmentFingerprint`). Rotation compares it: an assignment edited
-    // under a running execution must not keep replaying the superseded
-    // instructions on a resumed handle. Absent means "unknown, do not rotate",
-    // so legacy lanes are left alone until their next natural rotation.
+    // Pins the assignment used to create this lane; a started lane cannot
+    // adopt a different backend, model, or instruction contract.
     assignmentFingerprint: z.string().min(1).optional(),
     backend: agentBackendSchema,
     refKind: z.enum(["conversation", "backend"]),
     workflowConversationId: z.string().trim().min(1).optional(),
+    staleSession: z.boolean().optional(),
     sessionRef: graphWorkflowExecutionSessionRefSchema.optional(),
     metrics: laneMetricsSchema,
-    limitEvaluation: z.enum([
-      "disabled",
-      "supported",
-      "unsupported",
-      "metrics_unavailable",
-    ]),
     lastUsedAt: z.string(),
   }),
 );

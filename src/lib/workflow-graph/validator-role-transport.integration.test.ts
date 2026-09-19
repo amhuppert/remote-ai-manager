@@ -216,7 +216,6 @@ function seededValidator(
     strategy,
     authority: "blocking",
     agent,
-    continuity: { enabled: true },
   };
 }
 

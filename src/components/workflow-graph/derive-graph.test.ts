@@ -112,7 +112,7 @@ describe("deriveNodes", () => {
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 3 },
         },
       ],
     });
@@ -151,7 +151,7 @@ describe("deriveNodes", () => {
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 3 },
         },
         {
           id: "ctx-2",
@@ -171,7 +171,7 @@ describe("deriveNodes", () => {
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 3 },
         },
       ],
     });
@@ -209,7 +209,7 @@ describe("deriveNodes", () => {
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 3 },
         },
       ],
       tasks: [
@@ -274,7 +274,7 @@ describe("deriveNodes", () => {
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 3 },
         },
       ],
       tasks: [
@@ -358,7 +358,7 @@ describe("deriveNodes wait state attachment", () => {
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
-      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 3 },
     };
   }
 
@@ -677,7 +677,7 @@ describe("getDisplayValidators", () => {
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
-      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 3 },
       planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       ...overrides,
     };
@@ -704,7 +704,7 @@ describe("getDisplayValidators", () => {
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
-      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 3 },
       ...overrides,
     };
   }
@@ -751,7 +751,6 @@ describe("getDisplayValidators", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -780,7 +779,6 @@ describe("getDisplayValidators", () => {
                 parameters: { effort: "high" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -809,7 +807,6 @@ describe("getDisplayValidators", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -839,7 +836,6 @@ describe("getDisplayValidators", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -867,7 +863,6 @@ describe("getDisplayValidators", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -895,7 +890,6 @@ describe("getDisplayValidators", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -923,7 +917,6 @@ describe("getDisplayValidators", () => {
                 parameters: { effort: "medium" },
               },
             },
-            continuity: { enabled: true },
           },
         ],
       },
@@ -972,7 +965,7 @@ describe("getDisplayApprovalGate", () => {
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
-      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 3 },
       planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       ...overrides,
     };
@@ -1006,7 +999,7 @@ describe("getDisplayApprovalGate", () => {
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
-      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 3 },
     };
     expect(getDisplayApprovalGate(ctx)).toBe(false);
   });
@@ -1613,7 +1606,7 @@ describe("deriveNodes — context-tier config overrides", () => {
               },
             },
           },
-          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 3 },
         },
       ],
     });
@@ -1683,7 +1676,6 @@ describe("deriveNodes — context-tier config overrides", () => {
                   parameters: { effort: "medium" },
                 },
               },
-              continuity: { enabled: true },
             },
           ],
         },

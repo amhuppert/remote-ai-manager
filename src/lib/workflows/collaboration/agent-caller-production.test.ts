@@ -150,7 +150,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -243,7 +243,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -340,7 +340,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -434,7 +434,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -521,7 +521,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -608,7 +608,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: false },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -678,7 +678,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -802,7 +802,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -881,7 +881,7 @@ describe("createCollaborationProductionCallAgent", () => {
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
         ref: null,
-        metrics: { rotateBeforeNextTurn: false },
+        metrics: {},
         lastUsedAt: "2026-04-28T10:00:00.000Z",
       });
 
@@ -962,7 +962,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -1020,7 +1020,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -1104,7 +1104,7 @@ describe("createCollaborationProductionCallAgent", () => {
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
         ref: null,
-        metrics: { rotateBeforeNextTurn: false },
+        metrics: {},
         lastUsedAt: "2026-04-28T10:00:00.000Z",
       });
 
@@ -1198,7 +1198,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -1255,7 +1255,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -1316,7 +1316,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -1413,7 +1413,7 @@ describe("createCollaborationProductionCallAgent", () => {
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref: null,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
 
@@ -1622,7 +1622,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       writeCapability: "write_capable",
       policy: { continuityEnabled: true },
       ref,
-      metrics: { rotateBeforeNextTurn: false },
+      metrics: {},
       lastUsedAt: "2026-04-28T10:00:00.000Z",
     });
     return laneService;
@@ -1923,7 +1923,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
         writeCapability: "write_capable",
         policy: { continuityEnabled: true },
         ref: null,
-        metrics: { rotateBeforeNextTurn: false },
+        metrics: {},
         lastUsedAt: "2026-04-28T10:00:00.000Z",
       });
       return laneService;

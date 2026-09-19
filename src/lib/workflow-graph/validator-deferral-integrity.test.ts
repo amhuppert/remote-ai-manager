@@ -130,7 +130,6 @@ async function validatorPrompt(input: {
         ...context.implementer,
         strategy: "task" as const,
         authority: "blocking" as const,
-        continuity: { enabled: true },
       }
     : neverContext();
   const basePrompt = buildContextValidationPrompt({

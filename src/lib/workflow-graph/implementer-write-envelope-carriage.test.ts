@@ -122,7 +122,6 @@ describe("hop 2 — the machine's turn claim and the executePrompt actor input",
               contentBlocks: [],
               structuredOutput: undefined,
               aborted: false,
-              compacted: false,
               numTurns: 0,
               error: null,
             } as unknown as PromptActorResult;

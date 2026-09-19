@@ -434,6 +434,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0051-retire-stored-shape-readers",
       "0052-optional-checkpoint-fork-work",
       "0053-add-checkpoint-handoff",
+      "0054-graph-workflow-continuous-conversations",
     ]);
   });
 

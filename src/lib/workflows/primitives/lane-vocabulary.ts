@@ -30,7 +30,6 @@ export type { LaneRef, LaneWriteCapability };
 
 export const lanePolicySchema = z.object({
   continuityEnabled: z.boolean(),
-  contextLimitTokens: z.number().int().positive().optional(),
 });
 export type LanePolicy = z.infer<typeof lanePolicySchema>;
 
@@ -42,8 +41,7 @@ export const laneTurnUsageSchema = z.object({
 export type LaneTurnUsage = z.infer<typeof laneTurnUsageSchema>;
 
 /**
- * Normalized per-lane metrics. Every field except `rotateBeforeNextTurn` is
- * optional: a backend that does not report a metric leaves it absent
+ * Normalized per-lane metrics. Every field is optional: a backend that does not report a metric leaves it absent
  * (`lastTurnUsage: null` records "the turn reported no usage" for backends
  * that do report usage in general).
  */
@@ -52,7 +50,6 @@ export const laneMetricsSchema = z
     contextTokens: z.number().int().nonnegative().optional(),
     contextWindowMax: z.number().int().positive().optional(),
     lastTurnUsage: laneTurnUsageSchema.nullable().optional(),
-    rotateBeforeNextTurn: z.boolean(),
   })
   .strict();
 export type LaneMetrics = z.infer<typeof laneMetricsSchema>;

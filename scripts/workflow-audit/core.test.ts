@@ -237,14 +237,14 @@ function baseInput(): AuditInput {
         transcriptPath: null,
       },
       {
-        id: "conv-rot",
+        id: "conv-history",
         role: null,
         totalCostUsd: 2,
         totalDurationMs: 900000,
         totalTurns: 5,
         contextTokens: 100000,
         contextWindowMax: 1000000,
-        transcriptPath: "/t/conv-rot.jsonl",
+        transcriptPath: "/t/conv-history.jsonl",
       },
     ],
     contextLogs: {
@@ -277,7 +277,7 @@ function baseInput(): AuditInput {
             model: "opus",
           }),
           rec(T("10:45:00"), "iteration.conversation_resolved", {
-            conversationId: "conv-rot",
+            conversationId: "conv-history",
           }),
           rec(T("10:45:01"), "iteration.prompt_sent", { promptLength: 25000 }),
           rec(T("11:05:00"), "iteration.agent_turn_completed", {
@@ -524,9 +524,8 @@ describe("buildAuditReport", () => {
   it("rolls up cost by lane and by context, counting missing costs", () => {
     const report = buildAuditReport(baseInput());
     expect(report.cost.totalUsd).toBeCloseTo(6.75);
-    // conv-rot is a rotated implementer conversation: it no longer appears in
-    // laneStates (replaced by conv-impl) and must be recovered from the
-    // iteration.conversation_resolved log records.
+    // conv-history is absent from the saved laneStates and must be attributed
+    // through iteration.conversation_resolved log records.
     expect(report.cost.byLane.implementer).toBeCloseTo(5.5);
     expect(report.cost.byLane.context_validator).toBeCloseTo(1.25);
     expect(report.cost.byContext.impl).toBeCloseTo(5.5);
@@ -1113,7 +1112,7 @@ describe("transcript-derived findings", () => {
   it("flags a recorded-vs-transcript cost mismatch and reports the corrected total", () => {
     const input = withScan(baseInput(), "conv-impl", { costUsd: 2.0 });
     const report = buildAuditReport(input);
-    // conv-impl corrected 3.5 → 2.0; conv-val 1.25 + conv-rot 2 unchanged.
+    // conv-impl corrected 3.5 → 2.0; conv-val 1.25 + conv-history 2 unchanged.
     expect(report.cost.correctedTotalUsd).toBeCloseTo(5.25);
     const mismatch = report.friction.filter((f) => f.kind === "cost_mismatch");
     expect(mismatch).toHaveLength(1);
@@ -1165,47 +1164,6 @@ describe("transcript-derived findings", () => {
     );
     expect(compaction).toHaveLength(1);
     expect(compaction[0]?.contextId).toBe("validate");
-  });
-});
-
-describe("rotation overrun", () => {
-  it("flags an iteration that peaked far above the configured rotation limit", () => {
-    const raw = baseExecutionRaw();
-    (
-      raw.workingDefinition as { executionContexts: unknown[] }
-    ).executionContexts = [
-      {
-        id: "impl",
-        title: "Implement",
-        iterationPolicy: { continuity: { contextLimitTokens: 250000 } },
-      },
-      { id: "validate", title: "Validate" },
-    ];
-    const input: AuditInput = {
-      ...baseInput(),
-      execution: mustParseExecution(raw),
-    };
-    // impl iteration 2 peaks at 750k = 3x the 250k rotation limit.
-    const report = buildAuditReport(input);
-    const impl = report.contexts.find((c) => c.contextId === "impl");
-    expect(impl?.rotationLimitTokens).toBe(250000);
-    const overrun = report.friction.filter(
-      (f) => f.kind === "rotation_overrun",
-    );
-    expect(overrun).toHaveLength(1);
-    expect(overrun[0]?.contextId).toBe("impl");
-    expect(overrun[0]?.summary).toContain("750000");
-    expect(overrun[0]?.summary).toContain("3.0×");
-  });
-
-  it("stays silent when no rotation limit is configured", () => {
-    const report = buildAuditReport(baseInput());
-    expect(report.friction.some((f) => f.kind === "rotation_overrun")).toBe(
-      false,
-    );
-    expect(
-      report.contexts.find((c) => c.contextId === "impl")?.rotationLimitTokens,
-    ).toBeNull();
   });
 });
 
@@ -1593,7 +1551,6 @@ describe("occupancy confidence", () => {
         {
           id: "impl",
           title: "Implement",
-          iterationPolicy: { continuity: { contextLimitTokens: 250000 } },
         },
         { id: "validate", title: "Validate" },
       ];
@@ -1625,9 +1582,6 @@ describe("occupancy confidence", () => {
       const report = buildAuditReport(input);
       const impl = report.contexts.find((c) => c.contextId === "impl");
       expect(impl?.peakOccupancyPct).toBeNull();
-      expect(report.friction.some((f) => f.kind === "rotation_overrun")).toBe(
-        false,
-      );
       const note = report.confidence.find(
         (c) => c.kind === "occupancy_unmeasurable",
       );
@@ -1635,28 +1589,6 @@ describe("occupancy confidence", () => {
       expect(note?.summary).toContain("impl");
     },
   );
-
-  it("still flags rotation_overrun when the window max is known", () => {
-    const raw = baseExecutionRaw();
-    (
-      raw.workingDefinition as { executionContexts: unknown[] }
-    ).executionContexts = [
-      {
-        id: "impl",
-        title: "Implement",
-        iterationPolicy: { continuity: { contextLimitTokens: 250000 } },
-      },
-      { id: "validate", title: "Validate" },
-    ];
-    const input: AuditInput = {
-      ...baseInput(),
-      execution: mustParseExecution(raw),
-    };
-    const report = buildAuditReport(input);
-    expect(report.friction.some((f) => f.kind === "rotation_overrun")).toBe(
-      true,
-    );
-  });
 });
 
 describe("cost gaps", () => {
@@ -1695,93 +1627,6 @@ describe("cost gaps", () => {
     // conv-extra in the base fixture has a null cost and no activity signals.
     const report = buildAuditReport(baseInput());
     expect(report.friction.some((f) => f.kind === "cost_gap")).toBe(false);
-  });
-});
-
-describe("rotation reconciliation", () => {
-  it("does not count initial lane creation as an applied rotation", () => {
-    const input = baseInput();
-    input.decisions = [
-      rec(T("10:00:00"), "validator.rotation", {
-        contextId: "impl",
-        reason: "no_prior_lane",
-      }),
-    ];
-    expect(
-      buildAuditReport(input).contexts.find((c) => c.contextId === "impl")
-        ?.rotationAppliedCount,
-    ).toBe(0);
-  });
-
-  it("flags scheduled rotations that were never applied", () => {
-    const input = baseInput();
-    input.decisions = [
-      rec(T("10:30:00"), "rotation.scheduled", {
-        contextId: "impl",
-        lane: "implementer",
-        reason: "context_over_limit",
-      }),
-      rec(T("10:50:00"), "rotation.scheduled", {
-        contextId: "impl",
-        reason: "context_over_limit",
-      }),
-      rec(T("11:00:00"), "rotation.scheduled", {
-        contextId: "impl",
-        reason: "compaction_detected",
-      }),
-      rec(T("10:45:00"), "implementer.rotation", {
-        contextId: "impl",
-        reason: "rotation_scheduled",
-      }),
-      // Lane switching to a different context is not a rotation application.
-      rec(T("11:40:00"), "implementer.rotation", {
-        contextId: "impl",
-        reason: "context_changed",
-      }),
-    ];
-    const report = buildAuditReport(input);
-    const impl = report.contexts.find((c) => c.contextId === "impl");
-    expect(impl?.rotationScheduledCount).toBe(3);
-    expect(impl?.rotationAppliedCount).toBe(1);
-    const finding = report.friction.find(
-      (f) => f.kind === "rotation_not_applied",
-    );
-    expect(finding).toBeDefined();
-    expect(finding?.contextId).toBe("impl");
-    expect(finding?.summary).toContain("3");
-    expect(finding?.summary).toContain("1");
-  });
-
-  it("stays silent when every scheduled rotation was applied, counting validator rotations", () => {
-    const input = baseInput();
-    input.decisions = [
-      rec(T("10:30:00"), "rotation.scheduled", {
-        contextId: "impl",
-        reason: "context_over_limit",
-      }),
-      rec(T("10:45:00"), "implementer.rotation", {
-        contextId: "impl",
-        reason: "rotation_scheduled",
-      }),
-      rec(T("11:00:00"), "rotation.scheduled", {
-        contextId: "validate",
-        lane: "context_validator",
-        reason: "context_over_limit",
-      }),
-      rec(T("11:05:00"), "validator.rotation", {
-        contextId: "validate",
-        lane: "context_validator",
-        reason: "rotation_scheduled",
-      }),
-    ];
-    const report = buildAuditReport(input);
-    expect(report.friction.some((f) => f.kind === "rotation_not_applied")).toBe(
-      false,
-    );
-    expect(
-      report.contexts.find((c) => c.contextId === "validate")
-        ?.rotationAppliedCount,
-    ).toBe(1);
   });
 });
 

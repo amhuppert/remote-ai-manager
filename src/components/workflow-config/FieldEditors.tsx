@@ -54,7 +54,7 @@ interface AssignmentEditorSurfaceProps {
 
 /**
  * The implementer use site: one assignment, no strategy (there is one way to
- * dispatch an implementer) and no continuity policy of its own.
+ * dispatch an implementer).
  */
 export function ImplementerEditor({
   value,
@@ -99,8 +99,6 @@ export function ContextValidatorEditor({
   open,
 }: EditorBaseProps<ValidatorAssignment> &
   AssignmentEditorSurfaceProps): React.JSX.Element {
-  const continuityEnabled = value.continuity.enabled;
-  const continuityLimit = value.continuity.contextLimitTokens;
   const handleAssignmentChange = (next: ValidatorAssignment) => {
     if (
       next.profile.tier === value.profile.tier &&
@@ -133,43 +131,6 @@ export function ContextValidatorEditor({
         readOnly={readOnly}
         {...(open === undefined ? {} : { open })}
       />
-
-      <FieldRow label="Continuity">
-        <ToggleControl
-          value={continuityEnabled}
-          onChange={(next) =>
-            onChange({
-              ...value,
-              continuity: {
-                enabled: next,
-                ...(continuityLimit !== undefined
-                  ? { contextLimitTokens: continuityLimit }
-                  : {}),
-              },
-            })
-          }
-          disabled={readOnly}
-          ariaLabel={`Continuity enabled for ${value.id}`}
-        />
-      </FieldRow>
-
-      <FieldRow label="Context limit tokens" hint="Leave empty for auto">
-        <NumericInput
-          value={continuityLimit}
-          min={1}
-          onChange={(next) =>
-            onChange({
-              ...value,
-              continuity: {
-                enabled: continuityEnabled,
-                ...(next !== undefined ? { contextLimitTokens: next } : {}),
-              },
-            })
-          }
-          disabled={readOnly}
-          ariaLabel={`Context limit tokens for ${value.id}`}
-        />
-      </FieldRow>
     </div>
   );
 }
@@ -179,8 +140,6 @@ export function IterationPolicyEditor({
   onChange,
   readOnly,
 }: EditorBaseProps<GraphWorkflowIterationPolicy>): React.JSX.Element {
-  const continuityEnabled = value.continuity?.enabled ?? true;
-  const continuityLimit = value.continuity?.contextLimitTokens;
   return (
     <div className="flex flex-col gap-sm">
       <FieldRow label="Max iterations">
@@ -193,41 +152,6 @@ export function IterationPolicyEditor({
           }}
           disabled={readOnly}
           ariaLabel="Max iterations"
-        />
-      </FieldRow>
-      <FieldRow label="Continuity">
-        <ToggleControl
-          value={continuityEnabled}
-          onChange={(next) =>
-            onChange({
-              ...value,
-              continuity: {
-                enabled: next,
-                ...(continuityLimit !== undefined
-                  ? { contextLimitTokens: continuityLimit }
-                  : {}),
-              },
-            })
-          }
-          disabled={readOnly}
-          ariaLabel="Iteration continuity enabled"
-        />
-      </FieldRow>
-      <FieldRow label="Context limit tokens" hint="Leave empty for auto">
-        <NumericInput
-          value={continuityLimit}
-          min={1}
-          onChange={(next) =>
-            onChange({
-              ...value,
-              continuity: {
-                enabled: continuityEnabled,
-                ...(next !== undefined ? { contextLimitTokens: next } : {}),
-              },
-            })
-          }
-          disabled={readOnly}
-          ariaLabel="Iteration context limit tokens"
         />
       </FieldRow>
     </div>

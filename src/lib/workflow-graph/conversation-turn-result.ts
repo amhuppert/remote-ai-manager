@@ -141,7 +141,6 @@ export function adaptGraphConversationTurn(
   return {
     contextTokens: result?.usage.contextTokens ?? null,
     contextWindowMax: result?.usage.contextWindowMax ?? null,
-    compacted: result?.compacted ?? false,
     ...(result?.backgroundWait
       ? { backgroundWait: result.backgroundWait }
       : {}),

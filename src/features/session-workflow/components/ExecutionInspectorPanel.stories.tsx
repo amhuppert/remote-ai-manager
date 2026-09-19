@@ -263,7 +263,6 @@ function makeExecution(
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 5,
-            continuity: { enabled: true },
           },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           contextValidator: {
@@ -282,7 +281,6 @@ function makeExecution(
                     parameters: { effort: "medium" },
                   },
                 },
-                continuity: { enabled: true },
               },
             ],
           },
@@ -314,7 +312,7 @@ function makeExecution(
           askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 3 },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
         {
@@ -340,7 +338,7 @@ function makeExecution(
           askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },
+          iterationPolicy: { maxIterations: 2 },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
       ],
@@ -977,7 +975,6 @@ function makeCohortExecution({
               strategy: seat.strategy,
               authority: "blocking" as const,
               agent: agentForCohortStrategy(seat.strategy),
-              continuity: { enabled: true },
             })),
           },
         },

@@ -209,11 +209,7 @@ cctl workflow collab request --brief "<question with context>"
   it is the only way the workflow advances. `<taskId>` is the task's id/slug from
   the task list; `--summary` records what you changed and how you verified it.
   On success it prints `completed <taskId>` and how many tasks remain in
-  this context. If the server returns a **stop instruction** (a mid-turn context
-  rotation — "CONTEXT LIMIT REACHED … End your turn now …"), that text is printed
-  **instead of** the remaining-count line: obey it and end your
-  turn with a brief handoff note; the workflow resumes the rest in a fresh
-  conversation. Exit `0` either way.
+  this context. Exit `0` on success.
 - `task add` — append a newly-discovered task to this context. Only allowed when
   the context enables agent-added tasks; if it does not, it exits `1` with the
   reason. No hint.

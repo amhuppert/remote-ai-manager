@@ -6,6 +6,7 @@ import {
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
+import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
 import { NumericInput } from "@/components/workflow-config/FieldPrimitives";
 import { formatAgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflow-graph/collaboration-schemas";
@@ -140,8 +141,10 @@ export function ImplementerScreen({
   open?: boolean;
 }): React.JSX.Element {
   const { cascade } = editor;
-  const locked = isConfigLocked(editor.affordance);
   const implementer = cascade.resolve("implementer").value;
+  const started =
+    editor.startedLaneKeys?.has(laneStateKey("implementer")) ?? false;
+  const locked = isConfigLocked(editor.affordance) || started;
   const provenance = cascade.provenance("implementer");
 
   // One writer for the whole block: promoting the implementer to this tier
@@ -166,6 +169,11 @@ export function ImplementerScreen({
 
   return (
     <>
+      {started && (
+        <p className="m-0 px-lg py-sm font-mono text-[0.7rem] text-text-tertiary">
+          This assignment is fixed because its conversation has started.
+        </p>
+      )}
       <ConfigRowGroup label="Identity">
         <ConfigControlRow
           rowId="implementer-profile"

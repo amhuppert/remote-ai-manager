@@ -52,8 +52,7 @@ export interface GraphWorkflowContextValidatorInput {
   executionTarget?: ExecutionTarget;
   /**
    * When set, this validator run is a resume after the asking validator's
-   * question was answered. The runner pins the asking conversation (rotation
-   * still outranks) and embeds the answers block in the validation prompt so
+   * question was answered. The runner resumes the asking conversation and embeds the answers block in the validation prompt so
    * the re-run validator sees the answers before rendering its verdict (5.1,
    * 5.3, 5.5).
    */

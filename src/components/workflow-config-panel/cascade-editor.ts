@@ -22,6 +22,8 @@ export interface ConfigCascadeEditor {
    * it through `isConfigLocked`; the builder always passes `editable`.
    */
   affordance: ConfigAffordance;
+  /** Started assignment lanes, keyed by the canonical laneStateKey encoding. */
+  startedLaneKeys?: ReadonlySet<string>;
   cascade: ConfigCascade;
   onEdit: (intent: ConfigEditIntent) => void;
   /**
@@ -37,7 +39,7 @@ export interface ConfigCascadeEditor {
    */
   libraryProjectName?: string | null;
   /**
-   * Retire ONE cohort member's lane and re-run it against the current candidate
+   * Re-run ONE cohort member against the current candidate in its conversation
    * (README §11), without discarding the sibling verdicts a whole-context reset
    * would take with it. Execution host only, and absent unless the run is in a
    * state the reducer will accept a reset in — offering it otherwise would

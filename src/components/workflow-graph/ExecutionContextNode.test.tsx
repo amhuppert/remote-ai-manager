@@ -35,7 +35,7 @@ function makeData(
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
-      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      iterationPolicy: { maxIterations: 3 },
     },
     tasks: [],
     mode: "execution",
@@ -84,7 +84,6 @@ describe("ExecutionContextNode — output schema glyph (R7.7)", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           strategy: "task",
           authority: "blocking",
-          continuity: { enabled: true },
           agent: {
             backend: "codex",
             modelSelection: {
@@ -349,7 +348,6 @@ describe("ExecutionContextNode — card anatomy", () => {
             },
             strategy: "conversation" as const,
             authority: "blocking" as const,
-            continuity: { enabled: true },
           },
           {
             id: "style",
@@ -363,7 +361,6 @@ describe("ExecutionContextNode — card anatomy", () => {
             },
             strategy: "task" as const,
             authority: "advisory" as const,
-            continuity: { enabled: true },
           },
         ],
       },
@@ -637,7 +634,6 @@ it("changes an existing validator's fast mode while keeping its model and level"
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "task",
         authority: "blocking",
-        continuity: { enabled: true },
         agent: {
           backend: "codex",
           modelSelection: {

@@ -138,20 +138,6 @@ function laneProvisioningKey(projectPath: string, sessionName: string): string {
   return `${projectPath}::${sessionName}`;
 }
 
-function clearLaneStatesFor(
-  execution: GraphWorkflowExecution,
-  contextIds: readonly string[],
-): string[] {
-  const cleared: string[] = [];
-  for (const contextId of contextIds) {
-    if (execution.laneStates[contextId]) {
-      cleared.push(contextId);
-      delete execution.laneStates[contextId];
-    }
-  }
-  return cleared;
-}
-
 /**
  * The envelope assumed for a context whose ownership was never frozen — a run
  * whose deps cannot resolve a session, and therefore cannot provision lanes
@@ -251,12 +237,10 @@ export async function scheduleNextContext(
     execution: nextExecution,
     scheduledContextId,
     scheduledEligibleContextIds,
-    scheduledClearedLanes,
   } = await deps.executionRepository
     .mutateActive(projectPath, sessionName, (execution) => {
       let scheduledContextId: string | null = null;
       let scheduledEligibleContextIds: string[] = [];
-      let scheduledClearedLanes: string[] = [];
 
       const running = requireRunningExecution(execution);
       const eligibleContextIds = getEligibleContextIds(
@@ -281,12 +265,9 @@ export async function scheduleNextContext(
           reason: "manager.schedule_next_context.activate",
         });
         recordDispatchLandingIntent(running, nextContextId, getNow(deps));
-        const clearedLanes = Object.keys(running.laneStates);
-        running.laneStates = {};
 
         scheduledContextId = nextContextId;
         scheduledEligibleContextIds = eligibleContextIds;
-        scheduledClearedLanes = clearedLanes;
       }
 
       running.machineSnapshot = buildLifecycleSnapshot(running, {
@@ -297,7 +278,6 @@ export async function scheduleNextContext(
       return changed(running, {
         scheduledContextId,
         scheduledEligibleContextIds,
-        scheduledClearedLanes,
       });
     })
     .then((mutation) => ({
@@ -310,13 +290,11 @@ export async function scheduleNextContext(
       executionId: nextExecution.id,
       nextContextId: scheduledContextId,
       eligibleContextIds: scheduledEligibleContextIds,
-      clearedLanes: scheduledClearedLanes,
     });
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.lifecycle("context.scheduled", {
       contextId: scheduledContextId,
       eligibleContextIds: scheduledEligibleContextIds,
-      clearedLanes: scheduledClearedLanes,
     });
   }
 
@@ -541,7 +519,6 @@ export function createContextScheduler(
           value: { kind: "none" },
         };
         let readySetEligibleContextIds: string[] = [];
-        let scheduledClearedLanes: string[] = [];
         const provisionPlan: { value: ProvisionPlan | null } = { value: null };
 
         const running = requireRunningExecution(execution);
@@ -564,7 +541,6 @@ export function createContextScheduler(
             observations,
             outcome,
             readySetEligibleContextIds,
-            scheduledClearedLanes,
             provisionPlan,
           });
         }
@@ -586,7 +562,6 @@ export function createContextScheduler(
             observations,
             outcome,
             readySetEligibleContextIds,
-            scheduledClearedLanes,
             provisionPlan,
           });
         }
@@ -816,7 +791,6 @@ export function createContextScheduler(
             observations,
             outcome,
             readySetEligibleContextIds,
-            scheduledClearedLanes,
             provisionPlan,
           });
         }
@@ -860,9 +834,6 @@ export function createContextScheduler(
           activeIdSet.add(soloContextId);
           running.activeContextIds = [...activeIdSet];
 
-          const clearedLanes = clearLaneStatesFor(running, [soloContextId]);
-          scheduledClearedLanes = clearedLanes;
-
           running.machineSnapshot = buildLifecycleSnapshot(running, {
             lifecycleStatus: "running",
             recoveryMode: "none",
@@ -873,7 +844,6 @@ export function createContextScheduler(
             observations,
             outcome,
             readySetEligibleContextIds,
-            scheduledClearedLanes,
             provisionPlan,
           });
         }
@@ -936,7 +906,6 @@ export function createContextScheduler(
           observations,
           outcome,
           readySetEligibleContextIds,
-          scheduledClearedLanes,
           provisionPlan,
         });
       })
@@ -949,11 +918,7 @@ export function createContextScheduler(
 
     // Terminal outcomes (none / solo-session) are fully applied by reserve; only
     // a routing plan warrants the out-of-lock provisioning + fenced finalize.
-    let {
-      execution: nextExecution,
-      outcome,
-      scheduledClearedLanes,
-    } = reservedSchedule;
+    let { execution: nextExecution, outcome } = reservedSchedule;
     const { readySetEligibleContextIds, provisionPlan } = reservedSchedule;
     const plan = provisionPlan.value;
     if (plan !== null) {
@@ -1201,7 +1166,6 @@ export function createContextScheduler(
               const laneForkedDecisions: LaneForkedDecision[] = [];
               const laneCreatedDecisions: LaneCreatedDecision[] = [];
               const laneReusedDecisions: LaneReusedDecision[] = [];
-              let scheduledClearedLanes: string[] = [];
 
               const running = requireRunningExecution(execution);
 
@@ -1237,7 +1201,6 @@ export function createContextScheduler(
                   laneForkedDecisions,
                   laneCreatedDecisions,
                   laneReusedDecisions,
-                  scheduledClearedLanes,
                 });
               }
 
@@ -1391,7 +1354,6 @@ export function createContextScheduler(
                   laneForkedDecisions,
                   laneCreatedDecisions,
                   laneReusedDecisions,
-                  scheduledClearedLanes,
                 });
               }
 
@@ -1554,12 +1516,6 @@ export function createContextScheduler(
                 activeIdSet.add(entry.contextId);
               }
               running.activeContextIds = [...activeIdSet];
-              const clearedLanes = clearLaneStatesFor(
-                running,
-                admittedEntries.map((e) => e.contextId),
-              );
-              scheduledClearedLanes = clearedLanes;
-
               running.machineSnapshot = buildLifecycleSnapshot(running, {
                 lifecycleStatus: "running",
                 recoveryMode: "none",
@@ -1578,7 +1534,6 @@ export function createContextScheduler(
                 laneForkedDecisions,
                 laneCreatedDecisions,
                 laneReusedDecisions,
-                scheduledClearedLanes,
               });
             })
             .then((mutation) => {
@@ -1602,7 +1557,6 @@ export function createContextScheduler(
             });
           nextExecution = finalizedSchedule.execution;
           outcome = finalizedSchedule.outcome;
-          scheduledClearedLanes = finalizedSchedule.scheduledClearedLanes;
           laneForkedDecisions.push(...finalizedSchedule.laneForkedDecisions);
           laneCreatedDecisions.push(...finalizedSchedule.laneCreatedDecisions);
           laneReusedDecisions.push(...finalizedSchedule.laneReusedDecisions);
@@ -1660,39 +1614,25 @@ export function createContextScheduler(
       });
     }
 
-    if (scheduledClearedLanes.length > 0) {
-      execLogger?.lifecycle("lane.cleanup", {
-        clearedLaneStateContextIds: scheduledClearedLanes,
-      });
-      logger.info("graph-workflow.lane.cleanup", {
-        executionId: nextExecution.id,
-        clearedLaneStateContextIds: scheduledClearedLanes,
-      });
-    }
-
     if (scheduled.kind === "solo") {
       logger.info("graph-workflow.context.scheduled", {
         executionId: nextExecution.id,
         nextContextId: scheduled.contextId,
         eligibleContextIds: [scheduled.contextId],
-        clearedLanes: scheduledClearedLanes,
       });
       execLogger?.lifecycle("context.scheduled", {
         contextId: scheduled.contextId,
         eligibleContextIds: [scheduled.contextId],
-        clearedLanes: scheduledClearedLanes,
       });
     } else if (scheduled.kind === "parallel") {
       logger.info("graph-workflow.parallel.batch_scheduled", {
         executionId: nextExecution.id,
         batchId: scheduled.batchId,
         contextIds: scheduled.contextIds,
-        clearedLanes: scheduledClearedLanes,
       });
       execLogger?.lifecycle("parallel.batch_scheduled", {
         batchId: scheduled.batchId,
         contextIds: scheduled.contextIds,
-        clearedLanes: scheduledClearedLanes,
       });
     }
 

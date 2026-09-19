@@ -1,3 +1,4 @@
+import { graphWorkflowContinuousConversations } from "./0054-graph-workflow-continuous-conversations";
 import { addCheckpointHandoff } from "./0053-add-checkpoint-handoff";
 import { optionalCheckpointForkWork } from "./0052-optional-checkpoint-fork-work";
 import { retireStoredShapeReaders } from "./0051-retire-stored-shape-readers";
@@ -143,6 +144,7 @@ export const migrations: readonly StateMigration[] = [
   retireStoredShapeReaders,
   optionalCheckpointForkWork,
   addCheckpointHandoff,
+  graphWorkflowContinuousConversations,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

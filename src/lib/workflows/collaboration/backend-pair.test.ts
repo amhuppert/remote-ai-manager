@@ -77,7 +77,7 @@ describe("buildCollaborationLaneSeeds", () => {
       expect(seed.writeCapability).toBe("write_capable");
       expect(seed.policy).toEqual({ continuityEnabled: true });
       expect(seed.lastUsedAt).toBe("2026-07-13T00:00:00.000Z");
-      expect(seed.metrics).toEqual({ rotateBeforeNextTurn: false });
+      expect(seed.metrics).toEqual({});
     }
   });
 
