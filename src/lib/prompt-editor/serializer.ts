@@ -1,6 +1,7 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { ImagePayload, ImageMediaType } from "@/lib/images/schemas";
+import { renderSkillReference } from "@/lib/commands/skill-reference";
 import { buildNotepadImageToken } from "./notepad-image-token";
 import { getReferenceByNodeName } from "./reference-registry";
 export interface SerializePromptDocArgs {
@@ -21,7 +22,8 @@ export interface SerializedPromptDoc {
  * paragraph, plain text and `hardBreak` nodes contribute their text/newline,
  * `imageMarker` atomic inline nodes are rendered as the literal string
  * `[Image #N]`, `slashCommandMarker` chips emit their full name (e.g.
- * `/spec-init` or `$skill`), and `fileMention` chips emit `@<path>`.
+ * `/spec-init` or `$skill`), with an explicit file link for a selected Codex
+ * skill, and `fileMention` chips emit `@<path>`.
  * Inline text carrying the `code` mark is wrapped in single backticks.
  * Top-level `codeBlock` nodes are rendered as triple-backtick fenced blocks
  * (with the `language` attribute included on the opening fence when set).
@@ -100,7 +102,13 @@ function serializeInline(
     }
     if (child.type.name === "slashCommandMarker") {
       const name = child.attrs["name"];
-      if (typeof name === "string" && name.length > 0) out += name;
+      const skillPath = child.attrs["skillPath"];
+      if (typeof name === "string" && name.length > 0) {
+        out +=
+          name.startsWith("$") && typeof skillPath === "string" && skillPath
+            ? renderSkillReference(name, skillPath)
+            : name;
+      }
       return;
     }
     if (child.type.name === "fileMention") {

@@ -8,7 +8,24 @@ export const commandKeys = {
     projectName: string,
     sessionName: string | undefined,
     backend: AgentBackendId = "claude",
-  ) => [...commandKeys.lists(), projectName, sessionName, backend] as const,
-  projectList: (projectName: string, backend: AgentBackendId = "claude") =>
-    [...commandKeys.projectLists(), projectName, backend] as const,
+    conversationId?: string,
+  ) =>
+    [
+      ...commandKeys.lists(),
+      projectName,
+      sessionName,
+      backend,
+      conversationId,
+    ] as const,
+  projectList: (
+    projectName: string,
+    backend: AgentBackendId = "claude",
+    conversationId?: string,
+  ) =>
+    [
+      ...commandKeys.projectLists(),
+      projectName,
+      backend,
+      conversationId,
+    ] as const,
 };

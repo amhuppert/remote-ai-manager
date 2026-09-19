@@ -34,6 +34,7 @@ import { createClaudeFailureClassifier } from "./claude/failure-classifier";
 import { createCodexFailureClassifier } from "./codex/failure-classifier";
 import { createCursorFailureClassifier } from "./cursor/failure-classifier";
 import { prepareCodexManagedSkillsCheckout } from "./codex/managed-skills-bridge";
+import { codexSkillCatalog } from "./codex/skill-discovery";
 
 /**
  * Idempotent production registration of the supported backends. Called on
@@ -60,6 +61,7 @@ export function bootstrapBackends(): void {
         conversationFactory: codexConversationBackendFactory,
         continuity: createCodexContinuityAdapter(),
         runtimeConfig: createCodexRuntimeConfigAdapter(),
+        skillCatalog: codexSkillCatalog,
         taskRunner: codexTaskRunner,
         prepareManagedSkillsCheckout: prepareCodexManagedSkillsCheckout,
         mcp: codexMcpCapabilities,

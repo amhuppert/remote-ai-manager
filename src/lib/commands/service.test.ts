@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, symlink, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { parseFrontmatter, discoverCommands } from "./service";
+import {
+  parseFrontmatter,
+  discoverCommands,
+  createCommandDiscovery,
+} from "./service";
+import type { CommandItem } from "./schemas";
+import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
 
 describe("parseFrontmatter", () => {
   it("parses valid frontmatter block", () => {
@@ -107,226 +113,6 @@ Body.`,
     expect(items).toEqual([]);
   });
 
-  it("discovers Codex-visible skills from project, user, and system roots", async () => {
-    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
-    const worktreePath = await mkdtemp(
-      path.join(tmpdir(), "commands-worktree-"),
-    );
-    cleanupPaths.push(homeDir, worktreePath);
-    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
-
-    await mkdir(path.join(worktreePath, ".agents", "skills", "project-skill"), {
-      recursive: true,
-    });
-    await writeFile(
-      path.join(worktreePath, ".agents", "skills", "project-skill", "SKILL.md"),
-      `---
-name: project-skill
-description: Project codex skill
----
-Project skill body.`,
-    );
-
-    await mkdir(path.join(homeDir, ".agents", "skills", "user-skill"), {
-      recursive: true,
-    });
-    await writeFile(
-      path.join(homeDir, ".agents", "skills", "user-skill", "SKILL.md"),
-      `---
-name: user-skill
-description: User codex skill
----
-User skill body.`,
-    );
-
-    await mkdir(
-      path.join(homeDir, ".codex", "skills", ".system", "system-skill"),
-      {
-        recursive: true,
-      },
-    );
-    await writeFile(
-      path.join(
-        homeDir,
-        ".codex",
-        "skills",
-        ".system",
-        "system-skill",
-        "SKILL.md",
-      ),
-      `---
-name: system-skill
-description: System codex skill
----
-System skill body.`,
-    );
-
-    await mkdir(path.join(worktreePath, ".claude", "skills", "claude-only"), {
-      recursive: true,
-    });
-    await writeFile(
-      path.join(worktreePath, ".claude", "skills", "claude-only", "SKILL.md"),
-      `---
-description: Should not appear for codex
----
-Claude skill body.`,
-    );
-
-    const items = await (
-      discoverCommands as unknown as (
-        worktreePath: string,
-        backend: string,
-      ) => Promise<Array<{ name: string; source: string }>>
-    )(worktreePath, "codex");
-
-    expect(items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "$project-skill", source: "project" }),
-        expect.objectContaining({ name: "$user-skill", source: "user" }),
-        expect.objectContaining({ name: "$system-skill", source: "system" }),
-      ]),
-    );
-    expect(items).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "/claude-only" }),
-      ]),
-    );
-  });
-
-  it("discovers skills contributed by an enabled Codex plugin", async () => {
-    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
-    const worktreePath = await mkdtemp(
-      path.join(tmpdir(), "commands-worktree-"),
-    );
-    cleanupPaths.push(homeDir, worktreePath);
-    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
-
-    const codexConfigDir = path.join(homeDir, ".codex");
-    await mkdir(codexConfigDir, { recursive: true });
-    await writeFile(
-      path.join(codexConfigDir, "config.toml"),
-      `[plugins."agentic-engineering-principles@my-ai-resources"]
-enabled = true
-`,
-    );
-
-    const pluginDir = path.join(
-      codexConfigDir,
-      "plugins",
-      "cache",
-      "my-ai-resources",
-      "agentic-engineering-principles",
-      "1.3.0",
-    );
-    await mkdir(path.join(pluginDir, ".codex-plugin"), { recursive: true });
-    await writeFile(
-      path.join(pluginDir, ".codex-plugin", "plugin.json"),
-      JSON.stringify({
-        name: "agentic-engineering-principles",
-        version: "1.3.0",
-        skills: "./skills/",
-      }),
-    );
-    const skillDir = path.join(pluginDir, "skills", "agent-offloading");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(
-      path.join(skillDir, "SKILL.md"),
-      `---
-name: agent-offloading
-description: Offload deterministic workflow mechanics to code
----
-Agent offloading guidance.
-`,
-    );
-
-    const items = await discoverCommands(worktreePath, "codex");
-
-    expect(items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "$agentic-engineering-principles:agent-offloading",
-          description: "Offload deterministic workflow mechanics to code",
-          source: "agentic-engineering-principles",
-          type: "skill",
-        }),
-      ]),
-    );
-  });
-
-  it("preserves the managed bundle namespace for nested Codex skills", async () => {
-    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
-    const worktreePath = await mkdtemp(
-      path.join(tmpdir(), "commands-worktree-"),
-    );
-    const bundlePath = await mkdtemp(path.join(tmpdir(), "commands-bundle-"));
-    cleanupPaths.push(homeDir, worktreePath, bundlePath);
-    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
-
-    for (const skillName of ["agent-context", "cc-cli"]) {
-      const skillPath = path.join(bundlePath, "skills", skillName);
-      await mkdir(skillPath, { recursive: true });
-      await writeFile(
-        path.join(skillPath, "SKILL.md"),
-        `---\ndescription: ${skillName} managed skill\n---\nBody.`,
-      );
-    }
-    const projectSkillsPath = path.join(worktreePath, ".agents", "skills");
-    await mkdir(projectSkillsPath, { recursive: true });
-    await symlink(
-      path.join(bundlePath, "skills"),
-      path.join(projectSkillsPath, "command-center"),
-      "dir",
-    );
-    const flatCcCliPath = path.join(projectSkillsPath, "cc-cli");
-    await mkdir(flatCcCliPath, { recursive: true });
-    await writeFile(
-      path.join(flatCcCliPath, "SKILL.md"),
-      "---\ndescription: Project-local cc-cli\n---\nBody.",
-    );
-    const nestedSkillPath = path.join(
-      projectSkillsPath,
-      "ordinary-container",
-      "nested-skill",
-    );
-    await mkdir(nestedSkillPath, { recursive: true });
-    await writeFile(
-      path.join(nestedSkillPath, "SKILL.md"),
-      "---\ndescription: Ordinary nested skill\n---\nBody.",
-    );
-    const flatSkillPath = path.join(bundlePath, "flat-target");
-    await mkdir(flatSkillPath, { recursive: true });
-    await writeFile(
-      path.join(flatSkillPath, "SKILL.md"),
-      "---\ndescription: Flat linked skill\n---\nBody.",
-    );
-    await symlink(
-      flatSkillPath,
-      path.join(projectSkillsPath, "flat-link"),
-      "dir",
-    );
-
-    const items = await discoverCommands(worktreePath, "codex");
-
-    expect(items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "$command-center:agent-context",
-          source: "project",
-        }),
-        expect.objectContaining({
-          name: "$command-center:cc-cli",
-          source: "project",
-        }),
-        expect.objectContaining({ name: "$flat-link", source: "project" }),
-        expect.objectContaining({ name: "$cc-cli", source: "project" }),
-        expect.objectContaining({ name: "$nested-skill", source: "project" }),
-      ]),
-    );
-    expect(items.map((item) => item.name)).not.toContain(
-      "$ordinary-container:nested-skill",
-    );
-  });
-
   it("uses directory basename for skill id, ignoring frontmatter name with spaces", async () => {
     const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
     const worktreePath = await mkdtemp(
@@ -403,6 +189,302 @@ Body.`,
       expect.arrayContaining([
         expect.objectContaining({ name: "/find-skills", source: "user" }),
       ]),
+    );
+  });
+
+  it("offers only user-invocable Claude skills while retaining explicit-only skills", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+    const worktreePath = await mkdtemp(
+      path.join(tmpdir(), "commands-worktree-"),
+    );
+    cleanupPaths.push(homeDir, worktreePath);
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    const pluginPath = path.join(homeDir, ".claude", "plugins", "demo");
+    await mkdir(pluginPath, { recursive: true });
+    await writeFile(
+      path.join(homeDir, ".claude", "settings.json"),
+      JSON.stringify({ enabledPlugins: { "demo@local": true } }),
+    );
+    await writeFile(
+      path.join(homeDir, ".claude", "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        plugins: { "demo@local": [{ installPath: pluginPath }] },
+      }),
+    );
+
+    const expectedNames: string[] = [];
+    for (const [source, skillsRoot, prefix] of [
+      ["project", path.join(worktreePath, ".claude", "skills"), "/"],
+      ["user", path.join(homeDir, ".claude", "skills"), "/"],
+      ["plugin", path.join(pluginPath, "skills"), "/demo:"],
+    ] as const) {
+      for (const [suffix, metadata] of [
+        ["hidden", "user-invocable: false"],
+        ["explicit", "disable-model-invocation: true"],
+        ["ordinary", ""],
+      ] as const) {
+        const skillId = `${source}-${suffix}`;
+        const skillDir = path.join(skillsRoot, skillId);
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(
+          path.join(skillDir, "SKILL.md"),
+          `---\nname: ${skillId}\ndescription: ${skillId}\n${metadata}\n---\nBody.`,
+        );
+        if (suffix !== "hidden") expectedNames.push(`${prefix}${skillId}`);
+      }
+    }
+
+    const items = await discoverCommands(worktreePath, "claude");
+
+    expect(items.map((item) => item.name).sort()).toEqual(expectedNames.sort());
+  });
+
+  it.each([false, true])(
+    "uses the personal Claude skill's invocation policy when it shadows a project skill (hidden: %s)",
+    async (hidden) => {
+      const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+      const worktreePath = await mkdtemp(
+        path.join(tmpdir(), "commands-worktree-"),
+      );
+      cleanupPaths.push(homeDir, worktreePath);
+      vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+      for (const [root, description, metadata] of [
+        [worktreePath, "Project definition", ""],
+        [homeDir, "Personal definition", `user-invocable: ${!hidden}`],
+      ] as const) {
+        const skillDir = path.join(root, ".claude", "skills", "shared");
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(
+          path.join(skillDir, "SKILL.md"),
+          `---\nname: shared\ndescription: ${description}\n${metadata}\n---\nBody.`,
+        );
+      }
+
+      const items = await discoverCommands(worktreePath, "claude");
+
+      expect(items).toEqual(
+        hidden
+          ? []
+          : [
+              {
+                name: "/shared",
+                description: "Personal definition",
+                type: "skill",
+                source: "user",
+              },
+            ],
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "keeps a Claude skill authoritative over same-name legacy commands (hidden: %s)",
+    async (hidden) => {
+      const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+      const worktreePath = await mkdtemp(
+        path.join(tmpdir(), "commands-worktree-"),
+      );
+      cleanupPaths.push(homeDir, worktreePath);
+      vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+      const skillDir = path.join(worktreePath, ".claude", "skills", "shared");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        path.join(skillDir, "SKILL.md"),
+        `---\ndescription: Skill definition\nuser-invocable: ${!hidden}\n---\nBody.`,
+      );
+      for (const [root, description] of [
+        [worktreePath, "Project legacy"],
+        [homeDir, "Personal legacy"],
+      ] as const) {
+        const commandDir = path.join(root, ".claude", "commands");
+        await mkdir(commandDir, { recursive: true });
+        for (const name of ["shared", "legacy-only"]) {
+          await writeFile(
+            path.join(commandDir, `${name}.md`),
+            `---\ndescription: ${description}\n---\nBody.`,
+          );
+        }
+      }
+
+      const items = await discoverCommands(worktreePath, "claude");
+
+      expect(items.filter((item) => item.name === "/shared")).toEqual(
+        hidden
+          ? []
+          : [
+              {
+                name: "/shared",
+                description: "Skill definition",
+                type: "skill",
+                source: "project",
+              },
+            ],
+      );
+      expect(items.find((item) => item.name === "/legacy-only")).toMatchObject({
+        description: "Project legacy",
+        source: "project",
+      });
+    },
+  );
+});
+
+describe("native Codex command discovery", () => {
+  const first: CommandItem = {
+    name: "$plugin-name:native-name",
+    description: "Native description",
+    type: "skill",
+    source: "user",
+    skillPath: "/skills/first/SKILL.md",
+  };
+  const second: CommandItem = {
+    ...first,
+    skillPath: "/skills/second/SKILL.md",
+  };
+  const capabilities: ResolvedCapabilityCascade = {
+    backend: "codex",
+    kinds: [
+      {
+        kind: "skills",
+        items: [
+          { itemId: "private-skill", enabled: false, originLayer: "session" },
+        ],
+      },
+    ],
+  };
+
+  it("preserves native names and same-name skills with distinct paths", async () => {
+    const discover = createCommandDiscovery({
+      getSkillCatalog: () => ({
+        getCommands: async () => [first, second, first],
+      }),
+    });
+    expect(await discover("/worktree", "codex")).toEqual([first, second]);
+  });
+
+  it("uses scoped lazy configuration before requesting the native catalog", async () => {
+    const discover = createCommandDiscovery({
+      getSkillCatalog: () => ({
+        getCommands: async (input) => {
+          expect(input).toEqual({
+            worktreePath: "/scoped/worktree",
+            capabilities,
+          });
+          return [first];
+        },
+      }),
+    });
+    expect(
+      await discover("/scoped/worktree", "codex", {
+        capabilities: { backend: "codex", kinds: [] },
+        resolveCapabilities: async () => capabilities,
+      }),
+    ).toEqual([first]);
+  });
+
+  it("uses supplied capability configuration when there is no lazy resolver", async () => {
+    const discover = createCommandDiscovery({
+      getSkillCatalog: () => ({
+        getCommands: async (input) => {
+          expect(input.capabilities).toEqual(capabilities);
+          return [first];
+        },
+      }),
+    });
+    expect(await discover("/worktree", "codex", { capabilities })).toEqual([
+      first,
+    ]);
+  });
+
+  it("validates conversation scope before consulting a registered runtime", async () => {
+    const getRuntime = vi.fn(() => undefined);
+    const discover = createCommandDiscovery({
+      getRuntime,
+      getSkillCatalog: () => ({ getCommands: async () => [] }),
+    });
+    await expect(
+      discover("/worktree", "codex", {
+        conversationId: "foreign-conversation",
+        resolveCapabilities: async () => {
+          throw new Error("Conversation outside requested scope");
+        },
+      }),
+    ).rejects.toThrow("Conversation outside requested scope");
+    expect(getRuntime).not.toHaveBeenCalled();
+  });
+
+  it("returns the live runtime's applied catalog after scope validation", async () => {
+    let scopeValidated = false;
+    const discover = createCommandDiscovery({
+      getRuntime(conversationId) {
+        expect(scopeValidated).toBe(true);
+        expect(conversationId).toBe("current-conversation");
+        return {
+          backend: "codex",
+          status: "alive",
+          getSkillCommands: async (resolved?: ResolvedCapabilityCascade) => {
+            expect(resolved).toEqual(capabilities);
+            return [second];
+          },
+        };
+      },
+      getSkillCatalog: () => ({
+        getCommands: async () => {
+          throw new Error("live catalog must win");
+        },
+      }),
+    });
+    expect(
+      await discover("/worktree", "codex", {
+        conversationId: "current-conversation",
+        resolveCapabilities: async () => {
+          scopeValidated = true;
+          return capabilities;
+        },
+      }),
+    ).toEqual([second]);
+  });
+
+  it.each([
+    undefined,
+    {
+      backend: "claude",
+      status: "alive",
+      getSkillCommands: async () => [second],
+    },
+    {
+      backend: "codex",
+      status: "dead",
+      getSkillCommands: async () => [second],
+    },
+    { backend: "codex", status: "alive" },
+  ] as const)(
+    "uses native discovery when a usable runtime is absent: %s",
+    async (runtime) => {
+      const discover = createCommandDiscovery({
+        getRuntime: () => runtime,
+        getSkillCatalog: () => ({ getCommands: async () => [first] }),
+      });
+      expect(
+        await discover("/worktree", "codex", {
+          conversationId: "conversation",
+        }),
+      ).toEqual([first]);
+    },
+  );
+
+  it("surfaces catalog failure instead of offering filesystem guesses", async () => {
+    const discover = createCommandDiscovery({
+      getSkillCatalog: () => ({
+        getCommands: async () => {
+          throw new Error("Native catalog unavailable");
+        },
+      }),
+    });
+    await expect(discover("/worktree", "codex")).rejects.toThrow(
+      "Native catalog unavailable",
     );
   });
 });

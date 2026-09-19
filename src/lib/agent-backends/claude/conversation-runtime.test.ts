@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
 import type {
+  Options,
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -624,6 +625,71 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     } as unknown as SDKMessage);
     await turnPromise;
     runtime.close();
+  });
+
+  it("keeps explicit skill arguments separate from memory, fork seed, and output instructions", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const schema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+    };
+    const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation",
+      conversationId: "conv-user-skill",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+      outputFormat: { type: "json_schema", schema },
+    });
+    const call: { prompt: AsyncGenerator<SDKUserMessage>; options: Options } =
+      queryMock.mock.calls[0]?.[0];
+    const turn = runtime.sendTurn({
+      promptText: "/wait-what shorter",
+      promptContext: "<memory-index>remember</memory-index>",
+      syntheticForkSeed: "<fork-seed>history</fork-seed>",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    try {
+      const delivered = await call.prompt.next();
+      expect(delivered.value?.message.content).toEqual([
+        { type: "text", text: "/wait-what shorter" },
+      ]);
+      const hook = call.options.hooks?.UserPromptSubmit?.[0]?.hooks[0];
+      expect(
+        await hook?.(
+          {
+            hook_event_name: "UserPromptSubmit",
+            session_id: "session",
+            transcript_path: "/transcript",
+            cwd: "/project",
+            prompt: "/wait-what shorter",
+          },
+          undefined,
+          { signal: new AbortController().signal },
+        ),
+      ).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: [
+            "<fork-seed>history</fork-seed>",
+            "<memory-index>remember</memory-index>",
+            renderStructuredOutputInstruction(schema),
+          ].join("\n\n"),
+        },
+      });
+    } finally {
+      await runtime.close();
+      await turn;
+    }
   });
 
   it("keeps the rendered schema contract after strip-only image blocks", async () => {

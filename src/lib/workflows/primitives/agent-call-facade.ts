@@ -94,6 +94,8 @@ export interface ConversationRuntimeResolution {
   autonomous?: boolean;
   waitForBackgroundTasks?: boolean;
   sessionInstructions?: string[];
+  userPromptText?: string;
+  promptContext?: string;
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
   artifacts?: readonly ArtifactRef[];
@@ -506,6 +508,12 @@ async function executeConversationTurn(
     ...(resolution.sessionInstructions !== undefined
       ? { sessionInstructions: [...resolution.sessionInstructions] }
       : {}),
+    ...(resolution.promptContext !== undefined
+      ? { promptContext: resolution.promptContext }
+      : {}),
+    ...(resolution.userPromptText !== undefined
+      ? { userPromptText: resolution.userPromptText }
+      : {}),
     ...(effectiveRequest.imageRefs !== undefined
       ? { imageRefs: effectiveRequest.imageRefs }
       : resolution.imageRefs !== undefined
@@ -540,6 +548,9 @@ async function executeConversationTurn(
         ...dispatchDeps,
         waitForBackgroundTasks: false,
         sessionInstructions: [],
+        promptContext: undefined,
+        // A synthetic formatting turn has no user-selected skill invocations.
+        userPromptText: "",
         imageRefs: [],
         syntheticForkSeed: null,
       });

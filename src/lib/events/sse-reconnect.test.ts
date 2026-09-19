@@ -1,3 +1,4 @@
+import { commandKeys } from "../commands/query-keys";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { reconnectReconcile } from "./sse-reconnect";
@@ -46,6 +47,17 @@ function jsonResponse(body: unknown, ok = true): Response {
 }
 
 describe("reconnectReconcile", () => {
+  it("invalidates command catalogs when skill change notifications were missed", async () => {
+    const client = makeClient();
+    const key = commandKeys.list("proj", "session", "codex", "conversation");
+    client.setQueryData(key, { items: [] });
+    await reconnectReconcile(
+      client,
+      () => {},
+      async () => jsonResponse({ jobs: [] }),
+    );
+    expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  });
   it("appends new entries returned by the since endpoint to each cached messages query", async () => {
     const client = makeClient();
     const keyA = conversationKeys.messages("proj", "sess", "conv-a");

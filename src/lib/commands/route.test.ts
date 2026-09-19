@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import type { CommandItem } from "@/lib/commands/schemas";
+import { CapabilityRouteNotFoundError } from "@/lib/agent-capabilities/route-handlers";
 import { DEFAULT_AGENT_BACKEND_ID } from "@/lib/shared/schemas";
 import {
   createCommandsRouteHandlers,
@@ -151,7 +152,42 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     expect(deps.discoverCommands).toHaveBeenCalledWith(
       testSession.worktreePath,
       "codex",
+      expect.objectContaining({
+        level: "session",
+        projectPath: "/projects/my-project",
+        sessionName: "test-session",
+      }),
     );
+  });
+
+  it("scopes discovery to the requested session conversation", async () => {
+    const request = makeSessionRequest("codex");
+    request.nextUrl.searchParams.set("conversationId", "conv-session");
+    await handlers.GET(new NextRequest(request.nextUrl), makeParams());
+
+    expect(deps.discoverCommands).toHaveBeenCalledWith(
+      testSession.worktreePath,
+      "codex",
+      {
+        level: "conversation",
+        projectName: "my-project",
+        projectPath: "/projects/my-project",
+        conversationScope: "session",
+        sessionName: "test-session",
+        conversationId: "conv-session",
+      },
+    );
+  });
+
+  it("returns 404 for a conversation outside the requested session", async () => {
+    vi.mocked(deps.discoverCommands).mockRejectedValue(
+      new CapabilityRouteNotFoundError("Conversation not found"),
+    );
+    const response = await handlers.GET(
+      makeSessionRequest("codex"),
+      makeParams(),
+    );
+    expect(response.status).toBe(404);
   });
 
   it("returns empty items for project with no commands", async () => {
@@ -171,6 +207,11 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     expect(deps.discoverCommands).toHaveBeenCalledWith(
       testSession.worktreePath,
       DEFAULT_AGENT_BACKEND_ID,
+      expect.objectContaining({
+        level: "session",
+        projectPath: "/projects/my-project",
+        sessionName: "test-session",
+      }),
     );
   });
 
@@ -180,6 +221,11 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     expect(deps.discoverCommands).toHaveBeenCalledWith(
       testSession.worktreePath,
       "claude",
+      expect.objectContaining({
+        level: "session",
+        projectPath: "/projects/my-project",
+        sessionName: "test-session",
+      }),
     );
   });
 
@@ -200,6 +246,11 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     expect(deps.discoverCommands).toHaveBeenCalledWith(
       testSession.worktreePath,
       "cursor",
+      expect.objectContaining({
+        level: "session",
+        projectPath: "/projects/my-project",
+        sessionName: "test-session",
+      }),
     );
     const body = (await response.json()) as { items: CommandItem[] };
     expect(body.items).toEqual([]);
@@ -266,7 +317,46 @@ describe("GET /api/projects/[name]/commands", () => {
     expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
       "/projects/my-project",
       "claude",
+      expect.objectContaining({
+        level: "project",
+        projectPath: "/projects/my-project",
+      }),
     );
+  });
+
+  it("scopes discovery to the requested project conversation", async () => {
+    const projectDeps = createProjectTestDeps();
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+    const response = await projectHandlers.GET(
+      makeProjectRequest(
+        "http://localhost/api/projects/my-project/commands?backend=codex&conversationId=conv-project",
+      ),
+      { params: Promise.resolve({ name: "my-project" }) },
+    );
+    expect(response.status).toBe(200);
+    expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "codex",
+      {
+        level: "conversation",
+        projectName: "my-project",
+        projectPath: "/projects/my-project",
+        conversationScope: "project",
+        conversationId: "conv-project",
+      },
+    );
+  });
+
+  it("returns 404 for a conversation outside the requested project", async () => {
+    const projectDeps = createProjectTestDeps();
+    vi.mocked(projectDeps.discoverCommands).mockRejectedValue(
+      new CapabilityRouteNotFoundError("Project conversation not found"),
+    );
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+    const response = await projectHandlers.GET(makeProjectRequest(), {
+      params: Promise.resolve({ name: "my-project" }),
+    });
+    expect(response.status).toBe(404);
   });
 
   it("passes the requested backend to command discovery", async () => {
@@ -283,6 +373,10 @@ describe("GET /api/projects/[name]/commands", () => {
     expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
       "/projects/my-project",
       "codex",
+      expect.objectContaining({
+        level: "project",
+        projectPath: "/projects/my-project",
+      }),
     );
   });
 
@@ -298,6 +392,10 @@ describe("GET /api/projects/[name]/commands", () => {
     expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
       "/projects/my-project",
       DEFAULT_AGENT_BACKEND_ID,
+      expect.objectContaining({
+        level: "project",
+        projectPath: "/projects/my-project",
+      }),
     );
   });
 
@@ -315,6 +413,10 @@ describe("GET /api/projects/[name]/commands", () => {
     expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
       "/projects/my-project",
       "claude",
+      expect.objectContaining({
+        level: "project",
+        projectPath: "/projects/my-project",
+      }),
     );
   });
 
@@ -334,6 +436,10 @@ describe("GET /api/projects/[name]/commands", () => {
     expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
       "/projects/my-project",
       "cursor",
+      expect.objectContaining({
+        level: "project",
+        projectPath: "/projects/my-project",
+      }),
     );
     const body = (await response.json()) as { items: CommandItem[] };
     expect(body.items).toEqual([]);

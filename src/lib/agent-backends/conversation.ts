@@ -6,6 +6,7 @@ import type {
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { CommandItem } from "@/lib/commands/schemas";
 import type {
   BackendModelSelection,
   ConversationTokenUsage,
@@ -108,6 +109,10 @@ export interface ConversationBackendTurnInput {
     signal: AbortSignal,
   ): Promise<InTurnQuestionReply>;
   promptText: string;
+  /** Original user text, before host context and reference expansion. */
+  userPromptText?: string;
+  /** Host-provided turn context kept separate from native command arguments. */
+  promptContext?: string;
   imageRefs: readonly ConversationImageRef[];
   sessionInstructions: string[];
   modelSelection: BackendModelSelection;
@@ -196,6 +201,10 @@ export interface ConversationBackendTurnResult {
 
 export interface ConversationQueuedUserInput {
   content: MessageContentBlock[];
+  /** Original user text for resolving explicit skill selections. */
+  userPromptText?: string;
+  /** Host-provided context accompanying this input, outside its command text. */
+  promptContext?: string;
   /**
    * Invoke exactly once after provider acceptance, before releasing subsequent
    * output. Rejection means archival failed: stop the turn without retrying the
@@ -220,6 +229,10 @@ export type ReadyResult =
   | { status: "recreate-runtime"; reason: string };
 
 export interface ConversationBackendRuntime {
+  /** Native commands available under this runtime's applied configuration. */
+  getSkillCommands?(
+    capabilities?: ResolvedCapabilityCascade,
+  ): Promise<CommandItem[]>;
   /** The selection actually attached when a backend restores a persisted snapshot. */
   readonly capabilitiesAtCreation?: ResolvedCapabilityCascade;
   readonly backend: AgentBackendId;

@@ -55,6 +55,8 @@ export interface DispatchConversationTurnDeps {
    */
   waitForBackgroundTasks?: boolean;
   sessionInstructions?: string[];
+  userPromptText?: string;
+  promptContext?: string;
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
   /** Pre-known artifact references the caller wants attached to the result. */
@@ -121,6 +123,12 @@ export async function dispatchConversationTurn(
   const turnInput: ConversationBackendTurnInput = {
     onUserQuestion: deps.onUserQuestion,
     promptText: request.prompt,
+    ...(deps.userPromptText !== undefined
+      ? { userPromptText: deps.userPromptText }
+      : {}),
+    ...(deps.promptContext !== undefined
+      ? { promptContext: deps.promptContext }
+      : {}),
     imageRefs: deps.imageRefs ?? [],
     sessionInstructions: [...(deps.sessionInstructions ?? [])],
     modelSelection: deps.modelSelection,

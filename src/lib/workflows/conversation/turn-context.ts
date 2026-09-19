@@ -222,8 +222,7 @@ export async function prepareConversationTurnContext(
     const summarizedText = await appendLiveReferenceSummaries(notepad.text, {
       read: (target) => deps.context.readLiveReference(target),
     });
-    const promptText = assembleTurnPrompt({
-      userText: summarizedText,
+    const contextBlocks = {
       checkpointSeedBlock: checkpoint?.block ?? null,
       activeTicketBlock,
       workflowResultsBlock: workflow.block,
@@ -237,7 +236,20 @@ export async function prepareConversationTurnContext(
           target.conversationId,
         ),
       }),
+    };
+    const promptText = assembleTurnPrompt({
+      ...contextBlocks,
+      userText: summarizedText,
     });
+    // Native commands must reach the adapter without host text becoming part
+    // of their name or arguments. Keep the assembled input for checkpoints.
+    const isNativeCommand = /^\/[\w:-]+(?:\s|$)/.test(notepad.text);
+    const promptContext = isNativeCommand
+      ? assembleTurnPrompt({
+          ...contextBlocks,
+          userText: summarizedText.slice(notepad.text.length).trimStart(),
+        })
+      : undefined;
     // Everything the accepted input releases, in the order the durable
     // handoffs require: context receipts first, the queue last, because a
     // released row is the one write nothing later could take back.
@@ -255,6 +267,9 @@ export async function prepareConversationTurnContext(
     };
     return {
       promptText,
+      userPromptText: input.execution.turn.promptText,
+      dispatchPromptText: isNativeCommand ? notepad.text : promptText,
+      ...(promptContext ? { promptContext } : {}),
       syntheticForkSeed,
       async onInputAccepted(backendRef: AgentSessionRef | null) {
         if (!checkpoint) {

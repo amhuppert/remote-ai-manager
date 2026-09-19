@@ -294,10 +294,12 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
         "Cursor steering accepts text only; attachments require the next turn",
       );
     }
-    const text = input.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n\n");
+    const text = [
+      ...(input.promptContext ? [input.promptContext] : []),
+      ...input.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text),
+    ].join("\n\n");
     if (!text.trim()) throw new Error("Cursor steering requires text");
     const previous = this.liveInputBarrier;
     const barrier = Promise.withResolvers<void>();
@@ -1439,6 +1441,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     if (input.syntheticForkSeed) {
       parts.push(input.syntheticForkSeed);
     }
+    if (input.promptContext) parts.push(input.promptContext);
     parts.push(input.promptText);
     const prompt = parts.join("\n\n");
 

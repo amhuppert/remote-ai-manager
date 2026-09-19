@@ -72,8 +72,9 @@ function fixture(
   const frames: AppServerFrame[] = [];
   const failures: Error[] = [];
   const signals: NodeJS.Signals[] = [];
+  const spawn = vi.fn<AppServerProcessHost["spawn"]>(() => child);
   const host: AppServerProcessHost = {
-    spawn: () => child,
+    spawn,
     processGroupId: () => child.pid,
     startTicks: async () => child.ticks,
     isGroupAlive: () => child.alive,
@@ -106,7 +107,7 @@ function fixture(
       },
     },
   );
-  return { client, child, frames, failures, signals, host };
+  return { client, child, frames, failures, signals, host, spawn };
 }
 
 async function tick() {
@@ -119,6 +120,15 @@ afterEach(() => {
 });
 
 describe("Codex app-server client", () => {
+  it("applies effective configuration to the process that serves catalog requests", async () => {
+    const config = {
+      skills: { config: [{ name: "wait-what", enabled: true }] },
+    };
+    const { client, spawn } = fixture({ config });
+    expect(spawn).toHaveBeenCalledWith({ cwd: "/worktree", env: {}, config });
+    await client.close();
+  });
+
   it("settles responses while archival is stalled and preserves wire order", async () => {
     const hold = deferred<void>();
     const archived: string[] = [];

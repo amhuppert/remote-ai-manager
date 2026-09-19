@@ -13,7 +13,7 @@ import Suggestion, {
  *
  * On select, the extension inserts a `slashCommandMarker` chip node carrying
  * these attributes so the editor can render a styled badge while
- * `serializePromptDoc` round-trips the original name verbatim on the wire.
+ * `serializePromptDoc` retains the selected name and explicit skill identity.
  */
 export interface SlashCommandItem {
   /** Stable id used as React key */
@@ -30,6 +30,8 @@ export interface SlashCommandItem {
   description?: string;
   /** Optional argument hint shown as ghost text after the chip. */
   argumentHint?: string;
+  /** Exact native skill file selected from the backend catalog. */
+  skillPath?: string;
 }
 
 interface SlashCommandTriggerHandlers {
@@ -100,6 +102,7 @@ export const SlashCommand = Extension.create<SlashCommandExtensionOptions>({
                   source: props.source,
                   description: props.description ?? null,
                   argumentHint: props.argumentHint ?? null,
+                  skillPath: props.skillPath ?? null,
                 },
               },
               { type: "text", text: " " },

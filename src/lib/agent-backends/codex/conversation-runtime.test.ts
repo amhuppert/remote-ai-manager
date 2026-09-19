@@ -603,6 +603,7 @@ describe("CodexConversationRuntime", () => {
       ensureManagedSkillsBridge: vi
         .fn()
         .mockResolvedValue({ status: "skipped", reason: "no_bundle" }),
+      skillsChanged: vi.fn(),
       now: vi.fn().mockReturnValue(1000),
     };
   });

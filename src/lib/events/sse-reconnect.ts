@@ -1,3 +1,4 @@
+import { commandKeys } from "@/lib/commands/query-keys";
 import type { QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -93,6 +94,7 @@ export async function reconnectReconcile(
   void queryClient.invalidateQueries({ queryKey: mcpConfigKeys.all });
   void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });
   void queryClient.invalidateQueries({ queryKey: agentCapabilityKeys.all });
+  void queryClient.invalidateQueries({ queryKey: commandKeys.all });
   // A checkpoint's durable phase can move entirely inside the interruption —
   // ready, applied, cancelled, failed, or a reconciliation gate — and the
   // receipt frame that announced it is gone. Both scopes live under this one

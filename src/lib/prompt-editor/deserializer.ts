@@ -1,4 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
+import { findSkillReferences } from "@/lib/commands/skill-reference";
 import {
   segmentTextByRefs,
   type RefSegment,
@@ -37,7 +38,15 @@ export function deserializePromptDoc(
     ),
   );
   const blocks: JSONContent[] = [];
-  const lines = document.prompt.replace(/\r\n?/g, "\n").split("\n");
+  const prompt = document.prompt.replace(/\r\n?/g, "\n");
+  const lines = prompt.split("\n");
+  const skillReferences = findSkillReferences(prompt);
+  let lineOffset = 0;
+  const lineOffsets = lines.map((line) => {
+    const offset = lineOffset;
+    lineOffset += line.length + 1;
+    return offset;
+  });
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const language = parseFenceLanguage(lines[lineIndex]!);
@@ -99,7 +108,7 @@ export function deserializePromptDoc(
       }
       pushText(text.slice(cursor));
     };
-    const pushInline = (text: string) => {
+    const pushTextAndImageTokens = (text: string) => {
       if (!options.notepadImages) {
         pushTextAndImages(text);
         return;
@@ -115,6 +124,30 @@ export function deserializePromptDoc(
       }
       pushTextAndImages(text.slice(cursor));
     };
+    const pushInline = (text: string, offset: number) => {
+      let cursor = 0;
+      for (const reference of skillReferences) {
+        if (reference.start < offset || reference.end > offset + text.length) {
+          continue;
+        }
+        const start = reference.start - offset;
+        pushTextAndImageTokens(text.slice(cursor, start));
+        content.push({
+          type: "slashCommandMarker",
+          attrs: {
+            name: `$${reference.name}`,
+            trigger: "$",
+            kind: "skill",
+            source: "",
+            description: null,
+            argumentHint: null,
+            skillPath: reference.path,
+          },
+        });
+        cursor = reference.end - offset;
+      }
+      pushTextAndImageTokens(text.slice(cursor));
+    };
 
     const tokens = tokenizeInlineContent(lines[lineIndex]!);
     const delimiterCount = tokens.filter(
@@ -123,8 +156,16 @@ export function deserializePromptDoc(
     const pairedDelimiterCount = delimiterCount - (delimiterCount % 2);
     let delimiterIndex = 0;
     let code = false;
+    let tokenOffset = lineOffsets[lineIndex] ?? 0;
 
     for (const token of tokens) {
+      const offset = tokenOffset;
+      tokenOffset +=
+        token.type === "delimiter"
+          ? 1
+          : token.type === "text"
+            ? token.text.length
+            : token.raw.length;
       if (token.type === "delimiter") {
         if (delimiterIndex < pairedDelimiterCount) {
           code = !code;
@@ -139,7 +180,7 @@ export function deserializePromptDoc(
         if (code) {
           pushText(token.text, true);
         } else {
-          pushInline(token.text);
+          pushInline(token.text, offset);
         }
         continue;
       }

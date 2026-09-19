@@ -10,14 +10,36 @@ import os from "node:os";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { skillTriggerPrefixForBackend } from "@/lib/agent-backends/catalog";
-import { discoverCodexPlugins } from "@/lib/agent-capabilities/codex-discovery";
-import type { SkillTriggerPrefix } from "@/lib/agent-backends/descriptor";
+import { getRuntime } from "@/lib/agent-backends/runtime-registry";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
+import type { BackendSkillCatalogFacet } from "@/lib/agent-backends/descriptor";
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
+import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import { parseFrontmatter } from "./frontmatter";
 export { parseFrontmatter, type FrontmatterResult } from "./frontmatter";
 const logger = createLogger("commands");
+
+export interface CommandDiscoveryOptions {
+  capabilities?: ResolvedCapabilityCascade;
+  resolveCapabilities?(): Promise<ResolvedCapabilityCascade>;
+  conversationId?: string;
+}
+
+export interface CommandDiscoveryDependencies {
+  getRuntime(
+    conversationId: string,
+  ):
+    | Pick<
+        ConversationBackendRuntime,
+        "backend" | "status" | "getSkillCommands"
+      >
+    | undefined;
+  getSkillCatalog(
+    backend: AgentBackendId,
+  ): BackendSkillCatalogFacet | undefined;
+}
 
 // ============================================================
 // Command Discovery
@@ -88,36 +110,29 @@ async function scanCommandDir(
   return items;
 }
 
+type CommandCandidate = CommandItem & { hidden?: boolean };
+
 interface ScanSkillsOptions {
-  itemPrefix: SkillTriggerPrefix;
+  userInvocableOnly?: boolean;
   pluginName?: string;
-  namespace?: string;
-  ignoreDirNames?: Set<string>;
 }
 
 async function scanSkillsDir(
   dirPath: string,
   source: string,
   options: ScanSkillsOptions,
-): Promise<CommandItem[]> {
+): Promise<CommandCandidate[]> {
   if (!existsSync(dirPath)) return [];
 
-  const items: CommandItem[] = [];
+  const items: CommandCandidate[] = [];
 
-  const walk = async (
-    currentDir: string,
-    activeNamespace?: string,
-    symlinkNamespaceCandidate?: string,
-  ): Promise<void> => {
+  const walk = async (currentDir: string): Promise<void> => {
     const skillFile = path.join(currentDir, "SKILL.md");
     if (existsSync(skillFile)) {
       try {
         const content = await readFile(skillFile, "utf-8");
         const { fields, body } = parseFrontmatter(content);
         const skillId = path.basename(currentDir);
-        const qualifiedSkillId = activeNamespace
-          ? `${activeNamespace}:${skillId}`
-          : skillId;
         const description =
           fields["description"] ??
           body
@@ -125,12 +140,9 @@ async function scanSkillsDir(
             .find((line) => line.trim().length > 0)
             ?.trim() ??
           "";
-        const name =
-          options.itemPrefix === "$"
-            ? `$${qualifiedSkillId}`
-            : options.pluginName
-              ? `/${options.pluginName}:${skillId}`
-              : `/${skillId}`;
+        const name = options.pluginName
+          ? `/${options.pluginName}:${skillId}`
+          : `/${skillId}`;
 
         items.push({
           name,
@@ -138,6 +150,8 @@ async function scanSkillsDir(
           argumentHint: fields["argument-hint"],
           type: "skill",
           source,
+          hidden:
+            options.userInvocableOnly && fields["user-invocable"] === "false",
         });
       } catch (err) {
         logger.warn("commands.skill_parse_error", {
@@ -149,20 +163,11 @@ async function scanSkillsDir(
     }
 
     try {
-      // A symlink can be either one skill or a namespaced container of skills.
-      // Promote its alias only after proving the symlink root has no SKILL.md;
-      // this preserves flat linked skill names while matching Codex's
-      // `container:skill` naming for roots such as `command-center`.
-      const descendantNamespace =
-        options.itemPrefix === "$"
-          ? (symlinkNamespaceCandidate ?? activeNamespace)
-          : undefined;
       const entries = await readdir(currentDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (options.ignoreDirNames?.has(entry.name)) continue;
         const entryPath = path.join(currentDir, entry.name);
         if (entry.isDirectory()) {
-          await walk(entryPath, descendantNamespace);
+          await walk(entryPath);
           continue;
         }
         // Skills are commonly installed as symlinks (e.g. ~/.claude/skills/foo
@@ -173,7 +178,7 @@ async function scanSkillsDir(
           try {
             const stats = await stat(entryPath);
             if (stats.isDirectory()) {
-              await walk(entryPath, descendantNamespace, entry.name);
+              await walk(entryPath);
             }
           } catch (err) {
             logger.warn("commands.skills_symlink_error", {
@@ -191,7 +196,7 @@ async function scanSkillsDir(
     }
   };
 
-  await walk(dirPath, options.namespace);
+  await walk(dirPath);
   return items;
 }
 
@@ -283,179 +288,135 @@ export async function resolvePluginPaths(): Promise<
 
 async function discoverClaudeItems(
   worktreePath: string,
-  itemPrefix: SkillTriggerPrefix,
-): Promise<CommandItem[]> {
+): Promise<CommandCandidate[]> {
   const homeDir = os.homedir();
-  const allItems: CommandItem[] = [];
+  const skills: CommandCandidate[] = [];
+  const commands: CommandItem[] = [];
 
   const projectCmdDir = path.join(worktreePath, ".claude", "commands");
-  allItems.push(...(await scanCommandDir(projectCmdDir, "project")));
+  commands.push(...(await scanCommandDir(projectCmdDir, "project")));
 
-  const projectSkillsDir = path.join(worktreePath, ".claude", "skills");
-  allItems.push(
-    ...(await scanSkillsDir(projectSkillsDir, "project", { itemPrefix })),
+  // Claude resolves personal skills before project skills, and skills before
+  // legacy commands. Hidden winners still reserve their names during dedup.
+  const userSkillsDir = path.join(homeDir, ".claude", "skills");
+  skills.push(
+    ...(await scanSkillsDir(userSkillsDir, "user", {
+      userInvocableOnly: true,
+    })),
   );
 
   const userCmdDir = path.join(homeDir, ".claude", "commands");
-  allItems.push(...(await scanCommandDir(userCmdDir, "user")));
+  commands.push(...(await scanCommandDir(userCmdDir, "user")));
 
-  const userSkillsDir = path.join(homeDir, ".claude", "skills");
-  allItems.push(
-    ...(await scanSkillsDir(userSkillsDir, "user", { itemPrefix })),
+  const projectSkillsDir = path.join(worktreePath, ".claude", "skills");
+  skills.push(
+    ...(await scanSkillsDir(projectSkillsDir, "project", {
+      userInvocableOnly: true,
+    })),
   );
 
   const pluginPaths = await resolvePluginPaths();
   for (const plugin of pluginPaths) {
     const pluginCmdDir = path.join(plugin.path, "commands");
-    allItems.push(
+    commands.push(
       ...(await scanCommandDir(pluginCmdDir, plugin.name, plugin.name)),
     );
 
     const pluginSkillsDir = path.join(plugin.path, "skills");
-    allItems.push(
+    skills.push(
       ...(await scanSkillsDir(pluginSkillsDir, plugin.name, {
-        itemPrefix,
+        userInvocableOnly: true,
         pluginName: plugin.name,
       })),
     );
   }
 
-  return allItems;
-}
-
-async function discoverCodexItems(
-  worktreePath: string,
-  itemPrefix: SkillTriggerPrefix,
-): Promise<CommandItem[]> {
-  const homeDir = os.homedir();
-  const allItems: CommandItem[] = [];
-
-  allItems.push(
-    ...(await scanSkillsDir(
-      path.join(worktreePath, ".agents", "skills"),
-      "project",
-      {
-        itemPrefix,
-      },
-    )),
-  );
-  allItems.push(
-    ...(await scanSkillsDir(
-      path.join(worktreePath, ".codex", "skills"),
-      "project",
-      {
-        itemPrefix,
-      },
-    )),
-  );
-  allItems.push(
-    ...(await scanSkillsDir(path.join(homeDir, ".agents", "skills"), "user", {
-      itemPrefix,
-    })),
-  );
-  allItems.push(
-    ...(await scanSkillsDir(path.join(homeDir, ".codex", "skills"), "user", {
-      itemPrefix,
-      ignoreDirNames: new Set([".system"]),
-    })),
-  );
-  allItems.push(
-    ...(await scanSkillsDir(
-      path.join(homeDir, ".codex", "skills", ".system"),
-      "system",
-      { itemPrefix },
-    )),
-  );
-
-  const pluginResult = await discoverCodexPlugins({
-    worktreePath,
-    home: homeDir,
-  });
-  for (const plugin of pluginResult.items) {
-    if (!plugin.enabled || !plugin.pluginPath) continue;
-    const pluginName = codexPluginName(plugin.itemId);
-    allItems.push(
-      ...(await scanSkillsDir(
-        path.join(plugin.pluginPath, "skills"),
-        pluginName,
-        {
-          itemPrefix,
-          pluginName,
-          namespace: pluginName,
-        },
-      )),
-    );
-  }
-
-  return allItems;
-}
-
-function codexPluginName(pluginId: string): string {
-  const marketplaceSeparator = pluginId.lastIndexOf("@");
-  return marketplaceSeparator > 0
-    ? pluginId.slice(0, marketplaceSeparator)
-    : pluginId;
+  return [...skills, ...commands];
 }
 
 /**
- * The discovery mechanism per backend — a TOTAL map, so registering a backend
- * forces a deliberate decision about where (or whether) its command surface is
- * scanned. It replaced a `codex ? … : claude` fallback whose else-branch quietly
- * pointed every other backend at Claude's `.claude/` directories (spec D14).
- *
+ * Discover the prompt autocomplete surface for the active backend. Each provider
+ * owns its catalog source; a native catalog failure never falls back to a scan.
  */
-const DISCOVERERS: Record<
-  AgentBackendId,
-  (
-    worktreePath: string,
-    itemPrefix: SkillTriggerPrefix,
-  ) => Promise<CommandItem[]>
-> = {
-  claude: discoverClaudeItems,
-  codex: discoverCodexItems,
-  cursor: async (worktreePath) => {
-    const catalog = await discoverCursorCatalog({
-      worktreePath,
-      home: os.homedir(),
-      bundle: getPublishedManagedSkillBundle(),
-    });
-    return cursorSkillCommands(catalog.items);
-  },
-};
-
-/**
- * Discover the prompt autocomplete surface for the active backend.
- * Returns a deduplicated list with priority based on scan order.
- */
-export async function discoverCommands(
-  worktreePath: string,
-  backend: AgentBackendId = "claude",
-): Promise<CommandItem[]> {
-  return timed(
-    logger,
-    "commands.discover",
-    { backend, worktreePath },
-    async () => {
-      const itemPrefix = skillTriggerPrefixForBackend(backend);
-      const allItems = await DISCOVERERS[backend](worktreePath, itemPrefix);
-
-      const seen = new Set<string>();
-      const deduplicated: CommandItem[] = [];
-      for (const item of allItems) {
-        if (!seen.has(item.name)) {
-          seen.add(item.name);
-          deduplicated.push(item);
-        }
-      }
-
-      logger.info("commands.discovered", {
-        backend,
+export function createCommandDiscovery(
+  dependencies: Partial<CommandDiscoveryDependencies> = {},
+) {
+  const deps: CommandDiscoveryDependencies = {
+    getRuntime,
+    getSkillCatalog: (backend) => getBackendDescriptor(backend).skillCatalog,
+    ...dependencies,
+  };
+  const legacyDiscoverers: Partial<
+    Record<
+      AgentBackendId,
+      (worktreePath: string) => Promise<CommandCandidate[]>
+    >
+  > = {
+    claude: discoverClaudeItems,
+    cursor: async (worktreePath) => {
+      const catalog = await discoverCursorCatalog({
         worktreePath,
-        itemCount: deduplicated.length,
+        home: os.homedir(),
+        bundle: getPublishedManagedSkillBundle(),
       });
-
-      return deduplicated;
+      return cursorSkillCommands(catalog.items);
     },
-    (result) => ({ itemCount: result.length }),
-  );
+  };
+
+  return async function discoverCommands(
+    worktreePath: string,
+    backend: AgentBackendId = "claude",
+    options: CommandDiscoveryOptions = {},
+  ): Promise<CommandItem[]> {
+    return timed(
+      logger,
+      "commands.discover",
+      { backend, worktreePath },
+      async () => {
+        const catalog = deps.getSkillCatalog(backend);
+        let allItems: CommandCandidate[];
+        if (catalog) {
+          const capabilities = options.resolveCapabilities
+            ? await options.resolveCapabilities()
+            : options.capabilities;
+          const runtime = options.conversationId
+            ? deps.getRuntime(options.conversationId)
+            : undefined;
+          allItems =
+            runtime?.backend === backend &&
+            runtime.status === "alive" &&
+            runtime.getSkillCommands
+              ? await runtime.getSkillCommands(capabilities)
+              : await catalog.getCommands({ worktreePath, capabilities });
+        } else {
+          const discoverLegacy = legacyDiscoverers[backend];
+          if (!discoverLegacy) {
+            throw new Error(`Backend "${backend}" has no skill catalog`);
+          }
+          allItems = await discoverLegacy(worktreePath);
+        }
+
+        const seen = new Set<string>();
+        const deduplicated: CommandItem[] = [];
+        for (const { hidden, ...item } of allItems) {
+          const identity = JSON.stringify([item.name, item.skillPath]);
+          if (!seen.has(identity)) {
+            seen.add(identity);
+            if (!hidden) deduplicated.push(item);
+          }
+        }
+
+        logger.info("commands.discovered", {
+          backend,
+          worktreePath,
+          itemCount: deduplicated.length,
+        });
+
+        return deduplicated;
+      },
+      (result) => ({ itemCount: result.length }),
+    );
+  };
 }
+
+export const discoverCommands = createCommandDiscovery();

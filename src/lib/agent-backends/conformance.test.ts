@@ -239,6 +239,7 @@ const codexDescriptor = createCodexBackendDescriptor({
     buildSyntheticForkSeed: async () => "conformance seed",
   }),
   runtimeConfig: createCodexRuntimeConfigAdapter(),
+  skillCatalog: { getCommands: async () => [] },
   taskRunner: new CodexTaskRunner(codexTaskPort.deps),
   prepareManagedSkillsCheckout: async () => undefined,
   mcp: codexMcpCapabilities,

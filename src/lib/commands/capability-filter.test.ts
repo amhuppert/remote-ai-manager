@@ -112,6 +112,17 @@ function viewFor(
 }
 
 describe("filterDisabledCommandItems", () => {
+  it("trusts native applied commands over a pending filesystem capability view", () => {
+    const item = skillItem({
+      name: "$review",
+      source: "user",
+      skillPath: "/skills/review/SKILL.md",
+    });
+    const view = viewFor("codex-skills", [
+      skillRow({ itemId: "review", enabled: false }),
+    ]);
+    expect(filterDisabledCommandItems([item], undefined, view)).toEqual([item]);
+  });
   it("uses the delivered skill catalog across managed bundle changes", () => {
     const current = skillItem({
       name: "/command-center:current",

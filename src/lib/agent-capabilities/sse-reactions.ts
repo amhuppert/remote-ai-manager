@@ -6,12 +6,13 @@ import type { AgentCapabilityCascadeKind } from "./schemas";
  */
 
 import type { QueryClient } from "@tanstack/react-query";
-import { addSseListener } from "@/lib/api/sse";
+import { addSseListener, type SseEventTarget } from "@/lib/api/sse";
 import {
   agentCapabilitiesDiscoveryUpdatedEventSchema,
   agentCapabilitiesUpdatedEventSchema,
 } from "@/lib/agent-capabilities/schemas";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
+import { commandKeys } from "@/lib/commands/query-keys";
 
 export interface AgentCapabilitySseReactionDeps {
   queryClient: QueryClient;
@@ -49,10 +50,11 @@ function invalidateAgentCapabilityViews(
   for (const matcher of invalidations) {
     void queryClient.invalidateQueries({ queryKey: matcher.queryKey });
   }
+  void queryClient.invalidateQueries({ queryKey: commandKeys.all });
 }
 
 export function registerAgentCapabilitySseReactions(
-  es: EventSource,
+  es: SseEventTarget,
   deps: AgentCapabilitySseReactionDeps,
 ): void {
   addSseListener(

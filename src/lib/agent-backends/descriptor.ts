@@ -6,7 +6,11 @@ import type {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationBackendFactory } from "./conversation";
 import type { BackendContinuityAdapter } from "./continuity";
-import type { BackendRuntimeConfigAdapter } from "./runtime-config";
+import type {
+  BackendRuntimeConfigAdapter,
+  ResolvedCapabilityCascade,
+} from "./runtime-config";
+import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentTaskRunner } from "./task";
 import type { AgentFailureClassifier } from "./errors";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
@@ -185,6 +189,14 @@ export interface BackendModelCatalogFacet {
   }): Promise<BackendModelCatalog>;
 }
 
+/** Supplies commands from the provider's authoritative skill catalog. */
+export interface BackendSkillCatalogFacet {
+  getCommands(input: {
+    worktreePath: string;
+    capabilities?: ResolvedCapabilityCascade;
+  }): Promise<CommandItem[]>;
+}
+
 export const skillTriggerPrefixSchema = z.enum(["/", "$"]);
 export type SkillTriggerPrefix = z.infer<typeof skillTriggerPrefixSchema>;
 
@@ -252,6 +264,7 @@ export interface AgentBackendDescriptor {
   id: AgentBackendId;
   metadata: AgentBackendMetadata;
   modelCatalog: BackendModelCatalogFacet;
+  skillCatalog?: BackendSkillCatalogFacet;
   conversation?: AgentBackendConversationFacet;
   tasks?: AgentBackendTaskFacet;
   managedSkills: AgentBackendManagedSkills;

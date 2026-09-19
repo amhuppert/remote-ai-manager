@@ -3,6 +3,12 @@
  * retaining only the opaque thread reference between turns.
  */
 
+import type { ResolvedCapabilityCascade } from "../runtime-config";
+import { CodexSkillCatalog, type CodexSkillInput } from "./skill-catalog";
+import {
+  discoverCodexSkillCommands,
+  publishCodexSkillsChanged,
+} from "./skill-discovery";
 import {
   captureCodexNativeCursor,
   inspectCodexNativeWindow,
@@ -114,7 +120,8 @@ const codexFailureClassifier = createCodexFailureClassifier();
 
 type CodexUserInput =
   | { type: "text"; text: string }
-  | { type: "localImage"; path: string };
+  | { type: "localImage"; path: string }
+  | CodexSkillInput;
 const notificationScopeSchema = z.object({
   threadId: z.string(),
   turnId: z.string().optional(),
@@ -168,6 +175,7 @@ interface CodexCaptureAttempt {
 }
 interface CodexTurnState {
   client: AppServerClient | null;
+  skills?: CodexSkillCatalog;
   threadId: string | null;
   turnId: string | null;
   terminal: boolean;
@@ -250,12 +258,14 @@ export interface CodexConversationRuntimeDeps {
   ensureManagedSkillsBridge(
     checkoutPath: string,
   ): Promise<CodexManagedSkillsBridgeResult>;
+  skillsChanged?(): void;
   now(): number;
 }
 
 const defaultDeps: CodexConversationRuntimeDeps = {
   inTurnDeliveryEnabled: CODEX_IN_TURN_DELIVERY_ENABLED,
   createAppServer: createCodexAppServerClient,
+  skillsChanged: publishCodexSkillsChanged,
   createInstructionStore: createCodexInstructionStore,
   buildChildEnv,
   toStringEnv,
@@ -794,16 +804,15 @@ export class CodexConversationRuntime
           "Codex model selection changed without recreating the conversation runtime.",
         );
       }
-      const bridge = await this.deps.ensureManagedSkillsBridge(
-        this.worktreePath,
-      );
+      const threadOptions = this.buildThreadOptions();
+      const cwd = threadOptions.workingDirectory ?? this.worktreePath;
+      const bridge = await this.deps.ensureManagedSkillsBridge(cwd);
       if (bridge.status === "conflict")
         logger.warn("codex-runtime.managed_skills_degraded", {
           conversationId: this.conversationId,
           detail: bridge.detail,
         });
       const options = await this.buildCodexOptions();
-      const threadOptions = this.buildThreadOptions();
       const governing = composeCodexGoverningInstructions(
         this.sessionInstructions,
       );
@@ -813,6 +822,7 @@ export class CodexConversationRuntime
         ...(this.captureAttempt ? { captureCleanup: true } : {}),
         cwd: threadOptions.workingDirectory ?? this.worktreePath,
         env: options.env ?? {},
+        config: options.config,
         onFailure: fail,
         onServerRequest: async (message) => {
           if (this.captureAttempt) {
@@ -856,6 +866,11 @@ export class CodexConversationRuntime
           }
         },
         onNotification: (message) => {
+          if (message.method === "skills/changed") {
+            state.skills?.invalidate();
+            this.deps.skillsChanged?.();
+            return;
+          }
           if (!state.startRequested) return;
           const lifecycle = turnNotificationSchema.safeParse(message.params);
           if (!lifecycle.success || lifecycle.data.threadId !== state.threadId)
@@ -983,6 +998,8 @@ export class CodexConversationRuntime
         capabilities: { experimentalApi: false },
       });
       client.notify("initialized");
+      if (!this.captureAttempt)
+        state.skills = new CodexSkillCatalog(client, cwd);
       const request = {
         model: this.resolvedModelSelection.modelId,
         cwd: threadOptions.workingDirectory,
@@ -1038,6 +1055,14 @@ export class CodexConversationRuntime
       await client.flush();
       if (state.aborted || this.isClosed())
         throw new DOMException("Turn cancelled before dispatch", "AbortError");
+      const skillInputs = state.skills
+        ? await state.skills.invocations(
+            input.userPromptText ?? input.promptText,
+          )
+        : [];
+      const promptInput = this.buildPromptInput(input, skillInputs);
+      if (state.aborted || this.isClosed())
+        throw new DOMException("Turn cancelled before dispatch", "AbortError");
       if (this.captureAttempt && thread.thread.path != null) {
         try {
           nativeCursor = await captureCodexNativeCursor(thread.thread.path);
@@ -1055,7 +1080,7 @@ export class CodexConversationRuntime
       const started = turnResponseSchema.parse(
         await client.request("turn/start", {
           threadId: thread.thread.id,
-          input: this.buildPromptInput(input),
+          input: promptInput,
           model: this.resolvedModelSelection.modelId,
           effort: this.resolvedModelSelection.reasoningEffort,
           summary: "detailed",
@@ -1147,6 +1172,7 @@ export class CodexConversationRuntime
         });
       this.inputDirectories.clear();
       this.active = null;
+      if (state.skills) this.deps.skillsChanged?.();
       state.released.resolve();
     }
     const cleanupFailure =
@@ -1247,6 +1273,16 @@ export class CodexConversationRuntime
       )
         throw new Error("Codex turn ended before steering");
       const content = await this.prepareLiveInput(input);
+      if (!state.skills) throw new Error("Codex skill catalog is not ready");
+      content.push(
+        ...(await state.skills.invocations(
+          input.userPromptText ??
+            input.content
+              .filter((block) => block.type === "text")
+              .map((block) => block.text)
+              .join("\n"),
+        )),
+      );
       if (state.terminal || state.aborted || input.signal?.aborted)
         throw new Error("Codex turn ended before steering");
       const barrier = client.barrier();
@@ -1300,6 +1336,8 @@ export class CodexConversationRuntime
     input: ConversationQueuedUserInput,
   ): Promise<CodexUserInput[]> {
     const content: CodexUserInput[] = [];
+    if (input.promptContext)
+      content.push({ type: "text", text: input.promptContext });
     let directory: string | undefined;
     for (const block of input.content) {
       if (block.type === "text")
@@ -1534,10 +1572,27 @@ export class CodexConversationRuntime
     if (this.cleanupError !== null) throw this.cleanupError;
   }
 
+  async getSkillCommands(capabilities?: ResolvedCapabilityCascade) {
+    if (this.active?.skills && !this.active.terminal)
+      return this.active.skills.commands();
+    const options = await this.buildCodexOptions(capabilities);
+    const cwd = this.buildThreadOptions().workingDirectory ?? this.worktreePath;
+    return discoverCodexSkillCommands(cwd, options.config ?? {}, {
+      createAppServer: this.deps.createAppServer,
+      ensureManagedSkillsBridge: this.deps.ensureManagedSkillsBridge,
+      buildEnv: () => options.env ?? {},
+    });
+  }
+
   private buildPromptInput(
     input: ConversationBackendTurnInput,
+    skills: readonly CodexSkillInput[] = [],
   ): CodexUserInput[] {
-    const text = [input.syntheticForkSeed, input.promptText]
+    const text = [
+      input.syntheticForkSeed,
+      input.promptContext,
+      input.promptText,
+    ]
       .filter(Boolean)
       .join("\n\n");
     const schema =
@@ -1547,6 +1602,7 @@ export class CodexConversationRuntime
       : text;
     return [
       { type: "text", text: prompt },
+      ...skills,
       ...input.imageRefs.map((ref) => ({
         type: "localImage" as const,
         path: ref.path,
@@ -1574,7 +1630,9 @@ export class CodexConversationRuntime
     return result.envelope;
   }
 
-  private async buildCodexOptions(): Promise<CodexOptions> {
+  private async buildCodexOptions(
+    capabilities?: ResolvedCapabilityCascade,
+  ): Promise<CodexOptions> {
     // Thread the same cctl env contract every spawned session gets (doc 01 §2):
     // identity + server coordinates + PATH prepend, plus the graph-workflow lane
     // identity when this is an implementer lane, so `cctl workflow …` resolves
@@ -1632,9 +1690,10 @@ export class CodexConversationRuntime
       });
     }
 
-    if (this.stagedCapabilityConfig !== null) {
-      Object.assign(configMerged, this.stagedCapabilityConfig.config);
-    }
+    const capabilityConfig = capabilities
+      ? translateCodexRuntimeCapabilities(capabilities)
+      : this.stagedCapabilityConfig;
+    if (capabilityConfig) Object.assign(configMerged, capabilityConfig.config);
 
     // Merged last so nothing above — a staged capability config, a portable-MCP
     // translation — can widen the sandbox it pins.

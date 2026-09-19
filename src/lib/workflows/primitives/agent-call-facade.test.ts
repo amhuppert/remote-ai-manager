@@ -1584,6 +1584,8 @@ describe("executeAgentCall — structured-output repair", () => {
       timedOut: false,
       durationMs: 20,
     };
+    const userPromptText =
+      "[$selected](</skills/selected/SKILL.md>) produce a manifest";
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
@@ -1625,6 +1627,7 @@ describe("executeAgentCall — structured-output repair", () => {
       capabilityView: CLAUDE_VIEW,
       signal: new AbortController().signal,
       modelSelection: CLAUDE_SELECTION,
+      userPromptText,
       imageRefs: [
         {
           index: 1,
@@ -1653,6 +1656,8 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(resolveConversationRuntime).toHaveBeenCalledTimes(1);
     expect(applyMcp).toHaveBeenCalledTimes(1);
     expect(turnInputs).toHaveLength(2);
+    expect(turnInputs[0]?.userPromptText).toBe(userPromptText);
+    expect(turnInputs[1]?.userPromptText).toBe("");
     expect(turnInputs[0]?.modelSelection).toEqual(CLAUDE_SELECTION);
     expect(turnInputs[1]?.modelSelection).toEqual(CLAUDE_SELECTION);
     expect(turnInputs[1]?.imageRefs).toEqual([]);

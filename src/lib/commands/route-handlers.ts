@@ -13,7 +13,11 @@ import {
 import { withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getSession as defaultGetSession } from "@/lib/state-store";
-import { discoverCommands as defaultDiscoverCommands } from "@/lib/commands/service";
+import { discoverScopedCommands } from "./scoped-discovery";
+import {
+  CapabilityRouteNotFoundError,
+  type CapabilityRouteScope,
+} from "@/lib/agent-capabilities/route-handlers";
 import type { ApiError } from "@/lib/api/errors";
 import type { CommandItem, CommandsResponse } from "@/lib/commands/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -27,21 +31,22 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface CommandsRouteDeps {
-  resolveProjectPath: (name: string) => Promise<string | null>;
-  getSession: (
+  resolveProjectPath(name: string): Promise<string | null>;
+  getSession(
     projectPath: string,
     sessionName: string,
-  ) => Promise<SessionState | null>;
-  discoverCommands: (
+  ): Promise<SessionState | null>;
+  discoverCommands(
     worktreePath: string,
-    backend?: AgentBackendId,
-  ) => Promise<CommandItem[]>;
+    backend: AgentBackendId,
+    scope: CapabilityRouteScope,
+  ): Promise<CommandItem[]>;
 }
 
 const defaultDeps: CommandsRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
-  discoverCommands: defaultDiscoverCommands,
+  discoverCommands: discoverScopedCommands,
 };
 
 // ---------------------------------------------------------------------------
@@ -109,17 +114,35 @@ export function createCommandsRouteHandlers(
 
     const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
     if (!resolved.ok) return resolved.response;
-    const { session } = resolved.value;
+    const { session, projectPath } = resolved.value;
+    const conversationId = new URL(request.url).searchParams.get(
+      "conversationId",
+    );
+    const scope: CapabilityRouteScope =
+      conversationId !== null
+        ? {
+            level: "conversation",
+            projectName: name,
+            projectPath,
+            conversationScope: "session",
+            sessionName,
+            conversationId,
+          }
+        : { level: "session", projectName: name, projectPath, sessionName };
 
     try {
-      const items = await deps.discoverCommands(session.worktreePath, backend);
+      const items = await deps.discoverCommands(
+        session.worktreePath,
+        backend,
+        scope,
+      );
       const response: CommandsResponse = { items };
       return NextResponse.json(response);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to discover commands";
       return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
+        status: err instanceof CapabilityRouteNotFoundError ? 404 : 500,
       });
     }
   }
@@ -132,16 +155,17 @@ export function createCommandsRouteHandlers(
 // ---------------------------------------------------------------------------
 
 export interface ProjectCommandsRouteDeps {
-  resolveProjectPath: (name: string) => Promise<string | null>;
-  discoverCommands: (
+  resolveProjectPath(name: string): Promise<string | null>;
+  discoverCommands(
     worktreePath: string,
-    backend?: AgentBackendId,
-  ) => Promise<CommandItem[]>;
+    backend: AgentBackendId,
+    scope: CapabilityRouteScope,
+  ): Promise<CommandItem[]>;
 }
 
 const defaultProjectDeps: ProjectCommandsRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
-  discoverCommands: defaultDiscoverCommands,
+  discoverCommands: discoverScopedCommands,
 };
 
 export function createProjectCommandsRouteHandlers(
@@ -159,16 +183,29 @@ export function createProjectCommandsRouteHandlers(
     const project = await resolveProjectOr404(deps, name);
     if (!project.ok) return project.response;
     const projectPath = project.value;
+    const conversationId = new URL(request.url).searchParams.get(
+      "conversationId",
+    );
+    const scope: CapabilityRouteScope =
+      conversationId !== null
+        ? {
+            level: "conversation",
+            projectName: name,
+            projectPath,
+            conversationScope: "project",
+            conversationId,
+          }
+        : { level: "project", projectName: name, projectPath };
 
     try {
-      const items = await deps.discoverCommands(projectPath, backend);
+      const items = await deps.discoverCommands(projectPath, backend, scope);
       const response: CommandsResponse = { items };
       return NextResponse.json(response);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to discover commands";
       return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
+        status: err instanceof CapabilityRouteNotFoundError ? 404 : 500,
       });
     }
   }

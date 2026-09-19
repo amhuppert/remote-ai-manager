@@ -56,6 +56,7 @@ export interface SlashCommandSelection {
   source: string;
   description?: string;
   argumentHint?: string;
+  skillPath?: string;
 }
 
 export interface SlashCommandPopupProps {
@@ -128,10 +129,11 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     projectName,
     sessionName,
     backend,
-    { enabled: !projectScoped },
+    { enabled: !projectScoped, conversationId },
   );
   const projectCommandsQuery = useProjectCommandsQuery(projectName, backend, {
     enabled: projectScoped,
+    conversationId,
   });
   const commandsQuery = projectScoped
     ? projectCommandsQuery
@@ -247,7 +249,9 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   const listItems = useMemo<CommandAutocompleteListItem[]>(
     () =>
       scored.map((s) => ({
-        id: s.item.name,
+        id: s.item.skillPath
+          ? JSON.stringify([s.item.name, s.item.skillPath])
+          : s.item.name,
         name: s.item.name,
         description: s.item.description,
         badge: s.item.type,
@@ -291,6 +295,9 @@ export const PromptEditorSlashCommandPopup = forwardRef<
       }
       if (typeof target.item.argumentHint === "string") {
         selection.argumentHint = target.item.argumentHint;
+      }
+      if (typeof target.item.skillPath === "string") {
+        selection.skillPath = target.item.skillPath;
       }
       onSelect(selection);
       if (target.item.argumentHint) {
