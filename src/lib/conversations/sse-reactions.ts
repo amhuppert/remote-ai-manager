@@ -45,7 +45,9 @@ import { markdownDocumentKeys } from "@/lib/documents/query-keys";
 import type { BrowserNotificationInput } from "@/lib/notifications/browser-notification";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { projectConversationFocusHref } from "@/lib/project-conversations-client/routes";
+import { withCreatedConversation } from "@/lib/sessions/cache-updates";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import type { PublicSessionState } from "@/lib/sessions/schemas";
 import type {
   InputNeededItem,
   PromptErrorItem,
@@ -377,6 +379,13 @@ export function registerConversationSseReactions(
         conversationKeys.list(d.projectName, d.sessionName),
         (prev: unknown) =>
           Array.isArray(prev) ? [...prev, d.conversation] : [d.conversation],
+      );
+      // The workspace resolves its active conversation from the session
+      // detail, which stays fresh for 30s and never refetches on focus, so
+      // the created row lands there directly rather than after a refetch.
+      queryClient.setQueryData<PublicSessionState>(
+        sessionKeys.detail(d.projectName, d.sessionName),
+        (prev) => withCreatedConversation(prev, d.conversation),
       );
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),

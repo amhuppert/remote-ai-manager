@@ -21,7 +21,8 @@ import {
 } from "./schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
-import type { SessionState } from "@/lib/sessions/schemas";
+import type { PublicSessionState, SessionState } from "@/lib/sessions/schemas";
+import { withCreatedConversation } from "@/lib/sessions/cache-updates";
 import { mutationFetch } from "@/lib/api/fetcher";
 import {
   cacheUpdate,
@@ -226,9 +227,21 @@ export function useCreateConversationMutation(
         },
         publicConversationStateSchema,
       ),
-    onSuccess: () => {
+    onSuccess: (conversation) => {
+      // The success handler that opens the new conversation runs after this
+      // one, and the workspace it lands in resolves its active conversation
+      // from the session detail — fresh for 30s and never refetched on focus.
+      // The created row therefore lands in that cache before navigation; the
+      // invalidation then reconciles the rest of the detail in the background.
+      queryClient.setQueryData<PublicSessionState>(
+        sessionKeys.detail(projectName, sessionName),
+        (prev) => withCreatedConversation(prev, conversation),
+      );
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.list(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
       });
     },
   });

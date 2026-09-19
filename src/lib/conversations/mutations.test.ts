@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import {
   useRenameConversationMutation,
+  useCreateConversationMutation,
   useArchiveConversationMutation,
   useAnswerQuestionMutation,
   useMarkConversationReadMutation,
@@ -23,6 +24,11 @@ import type {
   ConversationState,
 } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import { toPublicConversationState } from "@/lib/conversations/schemas";
+import {
+  publicSessionStateSchema,
+  type PublicSessionState,
+} from "@/lib/sessions/schemas";
 import type {
   ActiveConversation,
   ProjectActiveConversation,
@@ -1588,5 +1594,75 @@ describe("useForkConversationMutation", () => {
     expect(JSON.parse(fetchSpy.mock.calls[0]![1]?.body as string)).toEqual({
       messageIndex: 4,
     });
+  });
+});
+
+describe("useCreateConversationMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function sessionDetail(conversationIds: string[]): PublicSessionState {
+    return publicSessionStateSchema.parse({
+      sessionName: "s",
+      worktreePath: "/p/.worktrees/s",
+      branchName: "cc/s",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      lastActivityAt: "2025-01-01T00:00:00.000Z",
+      conversations: conversationIds.map((id) =>
+        toPublicConversationState(conversation({ id })),
+      ),
+    });
+  }
+
+  // The workspace resolves its active conversation from the session detail,
+  // which stays fresh for 30s and never refetches on focus: a conversation
+  // created and opened inside that window must already be in that cache.
+  it("adds the created conversation to the cached session detail and refetches session views", async () => {
+    const client = makeClient();
+    const detailKey = sessionKeys.detail("p", "s");
+    client.setQueryData(detailKey, sessionDetail(["c1"]));
+    fetchSpy.mockResolvedValue(
+      jsonResponse(toPublicConversationState(conversation({ id: "c2" })), 201),
+    );
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    const { result } = renderHook(
+      () => useCreateConversationMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+    await result.current.mutateAsync(undefined);
+
+    expect(
+      client
+        .getQueryData<PublicSessionState>(detailKey)
+        ?.conversations.map((c) => c.id),
+    ).toEqual(["c1", "c2"]);
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: detailKey });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.list("p", "s"),
+    });
+  });
+
+  it("leaves an unfetched session detail alone", async () => {
+    const client = makeClient();
+    fetchSpy.mockResolvedValue(
+      jsonResponse(toPublicConversationState(conversation({ id: "c2" })), 201),
+    );
+
+    const { result } = renderHook(
+      () => useCreateConversationMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+    await result.current.mutateAsync(undefined);
+
+    expect(client.getQueryData(sessionKeys.detail("p", "s"))).toBeUndefined();
   });
 });
