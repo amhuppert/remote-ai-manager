@@ -1,0 +1,4 @@
+interface:
+  display_name: "SDD Delivery"
+  short_description: "Plan owned production paths and delivery evidence"
+  default_prompt: "Use $sdd-delivery to turn this approved native SDD design into a concrete delivery handoff."

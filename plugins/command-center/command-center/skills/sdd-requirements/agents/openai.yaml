@@ -1,0 +1,4 @@
+interface:
+  display_name: "SDD Requirements"
+  short_description: "Expand a spec brief into observable requirements"
+  default_prompt: "Use $sdd-requirements to expand this spec brief into requirements and acceptance criteria."

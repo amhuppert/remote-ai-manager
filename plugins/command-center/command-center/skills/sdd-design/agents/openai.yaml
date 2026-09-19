@@ -1,0 +1,4 @@
+interface:
+  display_name: "SDD Design"
+  short_description: "Design grounded contracts and complete user journeys"
+  default_prompt: "Use $sdd-design to prepare or review an implementation-ready native SDD design."

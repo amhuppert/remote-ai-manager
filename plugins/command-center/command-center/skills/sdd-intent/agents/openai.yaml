@@ -1,0 +1,4 @@
+interface:
+  display_name: "SDD Intent"
+  short_description: "Save intent, scope, and appetite before requirements"
+  default_prompt: "Use $sdd-intent to create a native spec brief for this problem."

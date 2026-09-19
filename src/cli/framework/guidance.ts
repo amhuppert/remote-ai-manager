@@ -16,6 +16,7 @@ import type { CcContexts } from "./family";
 import { CLIENT_ADVISORIES, ccTempPayloadAdvisory } from "./payload-location";
 
 const logger = createLogger("cli.guidance");
+const GUIDANCE_AUTHORITY = "cc-cli";
 const laneCommands = {
   "task-complete": taskCompleteCommand,
   "task-add": taskAddCommand,
@@ -68,6 +69,7 @@ const guidance: GuidanceProvider<CcContexts> = async (input) => {
   );
   return evaluateGuidance({
     command: input.command,
+    authority: GUIDANCE_AUTHORITY,
     state: laneState,
     rules: [localRule, ...laneRules],
     eventSink: (event) =>
