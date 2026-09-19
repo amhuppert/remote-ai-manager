@@ -163,8 +163,13 @@ const DB_FILE_NAME = "command-center.db";
  * Older builds eagerly decode every active execution and cannot read the new
  * lane shape; migration `0054-graph-workflow-continuous-conversations` fences
  * those readers without rewriting saved workflows or executions.
+ *
+ * Version 22 removes the validator `strategy` and the backend session ref from
+ * graph lanes: every validator runs on one durable conversation. Older builds
+ * require both fields, so migration
+ * `0055-graph-workflow-validator-conversations` fences them the same way.
  */
-export const KNOWN_SCHEMA_VERSION = 21;
+export const KNOWN_SCHEMA_VERSION = 22;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (

@@ -73,8 +73,7 @@ function maximalResolvedContext(): Record<string, unknown> {
           id: "security",
           profile: { tier: "project", id: "security-reviewer" },
           focus: "auth boundaries",
-          strategy: "conversation",
-          authority: "blocking",
+            authority: "blocking",
           agent: {
             backend: "claude",
             modelSelection: {
@@ -298,7 +297,6 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
         id: "security-reviewer",
         profile: { tier: "project", id: "security-reviewer" },
         focus: "auth boundaries",
-        strategy: "conversation",
         authority: "blocking",
         agent: {
           backend: "claude",
@@ -744,8 +742,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
                 id: "security",
                 profile: { tier: "project", id: "security-reviewer" },
                 focus: "auth boundaries",
-                strategy: "conversation",
-                // Non-default authority: an authored blocking specialist has to
+                  // Non-default authority: an authored blocking specialist has to
                 // survive persistence as blocking, not decay to the advisory
                 // default on reload.
                 authority: "blocking",
@@ -1108,14 +1105,12 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               profileRef: { tier: "builtin", id: "general-reviewer" },
               revision: 3,
               resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
-              strategy: "conversation",
             },
             {
               assignmentId: "security-reviewer",
               profileRef: { tier: "project", id: "security-reviewer" },
               revision: 7,
               resolvedInstructionHash: `sha256:${"e".repeat(64)}`,
-              strategy: "task",
             },
           ],
           specialists: {
@@ -1160,7 +1155,6 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
                 ref: "conversation-general-validator",
                 lane: "context_validator",
                 assignmentId: "general",
-                refKind: "conversation",
                 workflowConversationId: "conversation-general-validator",
               },
               reviewArtifact: {
@@ -1199,22 +1193,16 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               questionToken: "qb-security-1",
               sessionRef: {
                 backend: "codex",
-                ref: "thread-security-validator",
+                ref: "conversation-security-validator",
                 lane: "context_validator",
                 assignmentId: "security-reviewer",
-                refKind: "backend",
+                workflowConversationId: "conversation-security-validator",
               },
               reviewArtifact: {
                 backend: "codex",
-                kind: "response",
-                ref: "thread-security-validator",
-                response: '{"verdict":"fail"}',
-                usage: {
-                  inputTokens: 1200,
-                  cachedInputTokens: 400,
-                  outputTokens: 300,
-                  costUsd: 0.11,
-                },
+                kind: "conversation",
+                ref: "conversation-security-validator",
+                usage: { costUsd: 0.11, apiTurns: 2 },
               },
               lastInfraFailure: null,
             },
@@ -1513,15 +1501,33 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
     ],
     laneStates: {
       "ctx-1": {
-        "lane-key-1": {
+        // A validator lane first: the durability walk descends the first
+        // entry, and only a validator lane carries every persisted lane key.
+        "context_validator:general": {
+          lane: "context_validator",
+          contextId: "ctx-1",
+          assignmentId: "general",
+          assignmentFingerprint: `sha256:${"d".repeat(64)}|true||claude|sonnet|medium`,
+          backend: "claude",
+          staleSession: true,
+          workflowConversationId: "wf-conv-validator-1",
+          metrics: {
+            contextTokens: 12_000,
+            contextWindowMax: 200_000,
+            lastTurnUsage: {
+              inputTokens: 1200,
+              cachedInputTokens: 400,
+              outputTokens: 300,
+            },
+          },
+          lastUsedAt: "2026-01-02T02:00:00Z",
+        },
+        implementer: {
           lane: "implementer",
           contextId: "ctx-1",
           backend: "claude",
-          refKind: "conversation",
-          staleSession: true,
           workflowConversationId: "wf-conv-1",
-          sessionRef: { backend: "claude", ref: "conv-lane-1" },
-          metrics: { contextTokens: 12_000, contextWindowMax: 200_000 },
+          metrics: {},
           lastUsedAt: "2026-01-02T02:00:00Z",
         },
       },

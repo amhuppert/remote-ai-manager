@@ -1,3 +1,4 @@
+import { graphWorkflowValidatorConversations } from "./0055-graph-workflow-validator-conversations";
 import { graphWorkflowContinuousConversations } from "./0054-graph-workflow-continuous-conversations";
 import { addCheckpointHandoff } from "./0053-add-checkpoint-handoff";
 import { optionalCheckpointForkWork } from "./0052-optional-checkpoint-fork-work";
@@ -145,6 +146,7 @@ export const migrations: readonly StateMigration[] = [
   optionalCheckpointForkWork,
   addCheckpointHandoff,
   graphWorkflowContinuousConversations,
+  graphWorkflowValidatorConversations,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

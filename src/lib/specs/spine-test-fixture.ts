@@ -2505,7 +2505,6 @@ export async function runSpineWorkflowToEvidence(
             backend: "claude",
             ref: `validator-${index + 1}`,
             lane: "context_validator",
-            refKind: "backend",
           },
         },
       }),

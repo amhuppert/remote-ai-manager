@@ -56,7 +56,6 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
       {
         id: "general",
         profile: ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF,
-        strategy: "conversation",
         // Its mandate is the context's acceptance criteria, so this is the seat
         // an unconfigured workflow relies on to reopen tasks.
         authority: "blocking",

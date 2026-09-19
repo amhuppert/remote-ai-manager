@@ -30,11 +30,9 @@ function makeLaneState(
 ): GraphWorkflowAgentSessionState {
   return {
     backend: "claude",
-    refKind: "conversation",
     lane,
     contextId,
     workflowConversationId: `conv-${lane}-${contextId}`,
-    sessionRef: { backend: "claude", ref: `conv-${lane}-${contextId}` },
     metrics: {},
     lastUsedAt: now,
   };

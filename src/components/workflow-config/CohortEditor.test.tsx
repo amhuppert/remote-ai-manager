@@ -53,7 +53,6 @@ function assignment(
   return {
     id,
     profile: { tier: "builtin", id: "general-reviewer" },
-    strategy: "conversation",
     authority: "blocking",
 
     agent: {

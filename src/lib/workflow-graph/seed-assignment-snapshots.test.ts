@@ -69,7 +69,6 @@ function validator(
     id,
     profile,
     ...(focus === undefined ? {} : { focus }),
-    strategy: "conversation" as const,
     authority,
     agent: CLAUDE_AGENT,
   };

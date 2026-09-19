@@ -1,4 +1,9 @@
 import type {
+  RecordLaneTurnOutcomeInput,
+  ResolveValidatorCallInput,
+  ResolvedValidatorCall,
+} from "./lane-continuity";
+import type {
   ValidationCandidateTree,
   ValidationCandidateTreeResolution,
 } from "@/lib/workflow-graph/validation-round";
@@ -79,13 +84,42 @@ export function makeImplementerAssignment(
   };
 }
 
+/**
+ * A continuity service that anchors every validator turn to one fixed CC
+ * conversation and records nothing. For tests whose subject is the turn's
+ * prompt, transport, or parsing rather than lane continuity.
+ */
+export function makeStubValidatorContinuityService(
+  conversationId = "validator-conversation",
+): {
+  resolveValidatorCall(
+    input: ResolveValidatorCallInput,
+  ): Promise<ResolvedValidatorCall>;
+  recordLaneTurnOutcome(
+    input: RecordLaneTurnOutcomeInput,
+  ): Promise<GraphWorkflowExecution>;
+} {
+  return {
+    async resolveValidatorCall(input) {
+      return {
+        execution: input.execution,
+        sessionAction: "create",
+        backend: input.backend,
+        conversationId,
+      };
+    },
+    async recordLaneTurnOutcome(input) {
+      return input.execution;
+    },
+  };
+}
+
 export function makeValidatorAssignment(
   overrides: Partial<ValidatorAssignment> = {},
 ): ValidatorAssignment {
   return {
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
-    strategy: "conversation",
     // The schema default, so a fixture whose subject is not authority behaves
     // like an ordinary authored specialist rather than like the seeded verifier.
     authority: "advisory",

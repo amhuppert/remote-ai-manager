@@ -59,7 +59,6 @@ function roundWith(
       profileRef: { tier: "builtin" as const, id: "general" },
       revision: 1,
       resolvedInstructionHash: "hash",
-      strategy: "conversation" as const,
     })),
     specialists: Object.fromEntries(
       Object.entries(specialists).map(([assignmentId, advisories]) => [

@@ -28,9 +28,7 @@ function makeLane(
     assignmentId,
     assignmentFingerprint: `fingerprint-${assignmentId}`,
     backend: "claude",
-    refKind: "conversation",
     workflowConversationId: conversationId,
-    sessionRef: { backend: "claude", ref: conversationId },
     metrics: {},
     lastUsedAt: "2026-04-01T10:00:00.000Z",
   };
@@ -104,14 +102,12 @@ function makeExecution(
         profileRef: { tier: "builtin", id: "general-reviewer" },
         revision: 1,
         resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
-        strategy: "conversation",
       },
       {
         assignmentId: "beta",
         profileRef: { tier: "builtin", id: "general-reviewer" },
         revision: 1,
         resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
-        strategy: "conversation",
       },
     ],
     specialists: {
@@ -122,7 +118,6 @@ function makeExecution(
         sessionRef: {
           lane: "context_validator",
           backend: "claude",
-          refKind: "conversation",
           ref: "conv-alpha",
         },
       }),

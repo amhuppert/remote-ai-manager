@@ -2340,11 +2340,9 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
     // Simulate validator-runner persisting updated lane states mid-validation
     const validatorLaneState: GraphWorkflowAgentSessionState = {
       backend: "claude",
-      refKind: "conversation",
       lane: "context_validator",
       contextId: "context-plan",
       workflowConversationId: "validator-conv",
-      sessionRef: { backend: "claude", ref: "validator-conv" },
       metrics: {
         contextTokens: 10_000,
         contextWindowMax: 200_000,
@@ -2373,7 +2371,6 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
           backend: "claude" as const,
           ref: "validator-conv",
           lane: "context_validator" as const,
-          refKind: "conversation" as const,
           workflowConversationId: "validator-conv",
         },
         reviewArtifact: null,
@@ -2425,12 +2422,9 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       final.laneStates["context-plan"]?.["context_validator"],
     ).toBeDefined();
     expect(
-      (
-        final.laneStates["context-plan"]?.[
-          "context_validator"
-        ] as typeof validatorLaneState
-      ).sessionRef,
-    ).toEqual({ backend: "claude", ref: "validator-conv" });
+      final.laneStates["context-plan"]?.["context_validator"]
+        ?.workflowConversationId,
+    ).toBe("validator-conv");
   });
 });
 
@@ -2449,11 +2443,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         "context-plan": {
           implementer: {
             backend: "claude",
-            refKind: "conversation",
             lane: "implementer",
             contextId: "context-plan",
             workflowConversationId: "conv-existing",
-            sessionRef: { backend: "claude", ref: "conv-existing" },
             metrics: {
               contextTokens: 50_000,
               contextWindowMax: 200_000,
@@ -2737,7 +2729,6 @@ describe("task validation event publishing (fix-30388517)", () => {
       backend: "claude" as const,
       ref: "validator-conv",
       lane: "context_validator" as const,
-      refKind: "conversation" as const,
       workflowConversationId: "validator-conv",
     };
 
@@ -3173,7 +3164,6 @@ describe("task validation failure handling (circuit breaker)", () => {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
-          strategy: "conversation",
           authority: "blocking",
           agent: {
             backend: "claude",
@@ -3240,7 +3230,6 @@ describe("task validation failure handling (circuit breaker)", () => {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
-          strategy: "conversation",
           authority: "blocking",
           agent: {
             backend: "claude",
@@ -3533,13 +3522,6 @@ describe("codex implementer continuity", () => {
     const continuityService = makeLaneContinuityService(repository, {
       createConversation,
       getConversation,
-      continuityAdapter: () => ({
-        backend: "codex",
-        start: adapterStart,
-        resumeOrRecover: adapterResume,
-        validate: vi.fn(async () => ({ status: "valid" as const })),
-        fork: vi.fn(),
-      }),
       now: () => NOW,
     });
 
@@ -8861,11 +8843,9 @@ describe("context output capture (D2)", () => {
   ): GraphWorkflowAgentSessionState {
     return {
       backend: "claude",
-      refKind: "conversation",
       lane: "implementer",
       contextId: "context-plan",
       workflowConversationId: conversationId,
-      sessionRef: { backend: "claude", ref: conversationId },
       metrics: {},
       lastUsedAt: NOW,
     };

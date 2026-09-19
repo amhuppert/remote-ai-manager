@@ -118,7 +118,6 @@ describe("blockSummaryParts", () => {
           {
             id: "security",
             profile: { tier: "builtin", id: "general-implementer" },
-            strategy: "conversation",
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -131,7 +130,6 @@ describe("blockSummaryParts", () => {
           {
             id: "style",
             profile: { tier: "builtin", id: "general-implementer" },
-            strategy: "conversation",
             authority: "advisory",
             agent: {
               backend: "claude",

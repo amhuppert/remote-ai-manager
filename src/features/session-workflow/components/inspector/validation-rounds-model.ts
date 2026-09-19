@@ -42,9 +42,6 @@ export type ValidationRoundStatus =
   | "infrastructure";
 
 export interface ValidationRoundUsage {
-  inputTokens: number | null;
-  cachedInputTokens: number | null;
-  outputTokens: number | null;
   costUsd: number | null;
   apiTurns: number | null;
 }
@@ -100,19 +97,10 @@ function addUsage(
 ): ValidationRoundUsage | null {
   const usage = deriveGraphWorkflowValidationSpecialistUsage(artifact ?? null);
   if (usage === null) return total;
-  const base = total ?? {
-    inputTokens: null,
-    cachedInputTokens: null,
-    outputTokens: null,
-    costUsd: null,
-    apiTurns: null,
-  };
+  const base = total ?? { costUsd: null, apiTurns: null };
   const sum = (left: number | null, right: number | null): number | null =>
     left === null && right === null ? null : (left ?? 0) + (right ?? 0);
   return {
-    inputTokens: sum(base.inputTokens, usage.inputTokens),
-    cachedInputTokens: sum(base.cachedInputTokens, usage.cachedInputTokens),
-    outputTokens: sum(base.outputTokens, usage.outputTokens),
     costUsd: sum(base.costUsd, usage.costUsd),
     apiTurns: sum(base.apiTurns, usage.apiTurns),
   };

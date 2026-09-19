@@ -67,7 +67,6 @@ function context(
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
-          strategy: "conversation",
           authority: "blocking",
           agent: {
             backend: "claude",
@@ -342,7 +341,6 @@ export const StartedImplementer: Story = {
               lane: "implementer",
               contextId: CONTEXT_ID,
               backend: "claude",
-              refKind: "conversation",
               workflowConversationId: "conv_implementer",
               metrics: {},
               lastUsedAt: "2026-09-18T10:00:00.000Z",

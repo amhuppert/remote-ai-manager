@@ -185,7 +185,7 @@ function outlineText(data: JsonData<GetData>): string {
       ),
       ...outline.staffing.map(
         (row) =>
-          `Staffing ${row.scope}/${row.role}/${row.assignmentId}: ${row.profile}; ${row.runtime}${row.strategy ? `; ${row.strategy}` : ""}${row.dormant ? "; dormant" : ""}${row.focus ? `; ${row.focus}` : ""}`,
+          `Staffing ${row.scope}/${row.role}/${row.assignmentId}: ${row.profile}; ${row.runtime}${row.dormant ? "; dormant" : ""}${row.focus ? `; ${row.focus}` : ""}`,
       ),
       `Workflow config overrides: ${outline.configOverrides.workflow.join(", ") || "none"}`,
       ...outline.configOverrides.contexts.map(

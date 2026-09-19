@@ -82,14 +82,17 @@ function maximalExecution(): GraphWorkflowExecution {
     conversationId: string,
   ): GraphWorkflowAgentSessionState => ({
     backend: "claude",
-    refKind: "conversation",
     lane: "context_validator",
     contextId: "ctx-1",
     assignmentId,
-    assignmentFingerprint: `sha256:${"b".repeat(64)}|conversation|true||claude|sonnet|medium`,
+    assignmentFingerprint: `sha256:${"b".repeat(64)}|true||claude|sonnet|medium`,
     workflowConversationId: conversationId,
-    sessionRef: { backend: "claude", ref: conversationId },
-    metrics: {},
+    staleSession: false,
+    metrics: {
+      contextTokens: 42_000,
+      contextWindowMax: 200_000,
+      lastTurnUsage: { inputTokens: 1200, cachedInputTokens: 400, outputTokens: 300 },
+    },
     lastUsedAt: "2026-01-02T02:30:00Z",
   });
   // The first specialist of the round additionally carries a plan defect: the

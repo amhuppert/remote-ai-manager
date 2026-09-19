@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CollapsibleText from "@/components/CollapsibleText";
 import { StatusChip } from "@/components/ui/StatusChip";
@@ -13,7 +12,6 @@ import type {
 import type {
   GraphWorkflowExecution,
   GraphWorkflowLaneKind,
-  GraphWorkflowValidationReviewArtifact,
 } from "@/lib/workflow-graph/schemas";
 import type { ValidatorAuthority } from "@/lib/workflow-graph/config-schemas";
 import { AuthorityChip } from "../CohortRoundCard";
@@ -83,118 +81,11 @@ export function computeReusedSessions(
   return reusedIndices;
 }
 
-// ---- Validator response parsing ----
-
-interface ParsedValidatorResponse {
-  summary: string;
-  issues: Array<{ title: string; description: string }>;
-}
-
-function parseValidatorResponseArtifact(
-  response: string,
-): ParsedValidatorResponse | null {
-  try {
-    const parsed: unknown = JSON.parse(response);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "summary" in parsed &&
-      typeof (parsed as Record<string, unknown>).summary === "string"
-    ) {
-      const obj = parsed as Record<string, unknown>;
-      const issues = Array.isArray(obj.issues)
-        ? (obj.issues as unknown[]).filter(
-            (item): item is { title: string; description: string } =>
-              typeof item === "object" &&
-              item !== null &&
-              "title" in item &&
-              typeof (item as Record<string, unknown>).title === "string" &&
-              "description" in item &&
-              typeof (item as Record<string, unknown>).description === "string",
-          )
-        : [];
-      return { summary: obj.summary as string, issues };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 // ---- Structured Validation Result Card ----
 
 function getLaneBadgeLabel(lane: GraphWorkflowLaneKind | undefined): string {
   if (lane === "context_validator") return "Context";
   return "";
-}
-
-function formatBackendName(backend: string): string {
-  return `${backend.slice(0, 1).toUpperCase()}${backend.slice(1)}`;
-}
-
-function ResponseArtifactSection({
-  reviewArtifact,
-}: {
-  reviewArtifact: Extract<
-    GraphWorkflowValidationReviewArtifact,
-    { kind: "response" }
-  >;
-}) {
-  const parsed = useMemo(
-    () => parseValidatorResponseArtifact(reviewArtifact.response),
-    [reviewArtifact.response],
-  );
-
-  return (
-    <div className="mt-2 pl-[14px]">
-      <div className={wbValidationSectionLabel}>
-        {formatBackendName(reviewArtifact.backend)} Review
-      </div>
-      <div className="mb-1 text-[0.7rem] text-text-tertiary">
-        Reference:{" "}
-        <code className="font-mono text-[0.7rem] text-text-secondary">
-          {reviewArtifact.ref}
-        </code>
-      </div>
-      {reviewArtifact.response && (
-        <CollapsibleText maxCollapsedHeight={120}>
-          {parsed ? (
-            <>
-              <CompactMarkdown content={parsed.summary} />
-              {parsed.issues.length > 0 && (
-                <div className={wbValidationBody}>
-                  <div className={wbValidationSectionLabel}>
-                    Issues ({parsed.issues.length})
-                  </div>
-                  <ul className={wbValidationIssuesList}>
-                    {parsed.issues.map((issue, idx) => (
-                      <li key={idx} className={wbValidationIssue}>
-                        <div className={wbValidationIssueTitle}>
-                          {issue.title}
-                        </div>
-                        <div className={wbValidationIssueDesc}>
-                          <CompactMarkdown content={issue.description} />
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          ) : (
-            <CompactMarkdown content={reviewArtifact.response} />
-          )}
-        </CollapsibleText>
-      )}
-      {reviewArtifact.usage && (
-        <div className="mt-1 text-[0.7rem] text-text-tertiary">
-          {reviewArtifact.usage.inputTokens}↑{" "}
-          {reviewArtifact.usage.cachedInputTokens}⊙{" "}
-          {reviewArtifact.usage.outputTokens}↓ tokens
-        </div>
-      )}
-    </div>
-  );
 }
 
 /** The header a cohort member's transcript opens under. */
@@ -225,7 +116,6 @@ function SpecialistCard({
 }): React.JSX.Element {
   const sessionRef = specialist.sessionRef;
   const conversationId = sessionRef?.workflowConversationId;
-  const reviewArtifact = specialist.reviewArtifact;
 
   return (
     <div
@@ -274,9 +164,6 @@ function SpecialistCard({
       <div className="mt-[4px] min-w-0 text-[0.72rem]">
         <CompactMarkdown content={specialist.summary} />
       </div>
-      {reviewArtifact?.kind === "response" && (
-        <ResponseArtifactSection reviewArtifact={reviewArtifact} />
-      )}
       {specialist.issues.length > 0 && (
         <div className={wbValidationBody}>
           <div className={wbValidationSectionLabel}>
@@ -377,7 +264,6 @@ export default function ValidationCard({
         );
   const hasIssues = aggregateIssues.length > 0;
   const sessionRef = event.sessionRef;
-  const reviewArtifact = event.reviewArtifact;
   // An output-schema rejection is the engine's own verdict on a format turn,
   // not a lane agent's review: it has no validator lane to badge and no
   // validator transcript to open, so both affordances are withheld rather than
@@ -463,9 +349,6 @@ export default function ValidationCard({
             </button>
           )}
         </div>
-      )}
-      {reviewArtifact?.kind === "response" && (
-        <ResponseArtifactSection reviewArtifact={reviewArtifact} />
       )}
       {hasIssues && (
         <div

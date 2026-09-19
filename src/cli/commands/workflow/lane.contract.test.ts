@@ -53,12 +53,7 @@ function makeClaudeLane(): GraphWorkflowAgentSessionState {
     backend: "claude",
     lane: "implementer",
     contextId: "context-plan",
-    refKind: "conversation",
     workflowConversationId: "conv-bound",
-    sessionRef: {
-      backend: "claude",
-      ref: "conv-bound",
-    },
     metrics: {},
     lastUsedAt: "2026-03-27T11:00:00.000Z",
   };

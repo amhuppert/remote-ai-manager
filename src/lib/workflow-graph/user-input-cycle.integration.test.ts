@@ -94,9 +94,7 @@ function claudeLaneState(input: {
     lane: input.lane,
     contextId: CONTEXT_ID,
     backend: "claude",
-    refKind: "conversation",
     workflowConversationId: input.conversationId,
-    sessionRef: { backend: "claude", ref: input.conversationId },
     metrics: {},
     lastUsedAt: NOW,
   };

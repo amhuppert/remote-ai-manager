@@ -65,7 +65,6 @@ const IMPLEMENTER: AgentAssignment = {
 const VALIDATOR: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin", id: "general-reviewer" },
-  strategy: "conversation",
   authority: "blocking",
   agent: {
     backend: "claude",

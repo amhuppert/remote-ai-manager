@@ -48,19 +48,12 @@ const STATUS_TONE: Record<ValidationRoundStatus, StatusChipTone> = {
 };
 
 /**
- * The round's spend, in the compact form the specialist cards already use
- * (`ValidationRounds`): `↑` in, `⊙` cached, `↓` out. Kept identical so one
- * round does not read two ways, and paired with a spoken form below — the
- * arrows are dense on purpose, which makes them opaque to a screen reader.
+ * The round's spend in compact form, paired with a spoken form below for
+ * screen readers.
  */
 function usageText(usage: ValidationRoundUsage | null): string | null {
   if (usage === null) return null;
   const parts: string[] = [];
-  if (usage.inputTokens !== null) parts.push(`${usage.inputTokens}↑`);
-  if (usage.cachedInputTokens !== null)
-    parts.push(`${usage.cachedInputTokens}⊙`);
-  if (usage.outputTokens !== null) parts.push(`${usage.outputTokens}↓`);
-  if (parts.length > 0) parts.push("tokens");
   if (usage.apiTurns !== null) {
     parts.push(`${usage.apiTurns} ${usage.apiTurns === 1 ? "turn" : "turns"}`);
   }
@@ -70,12 +63,6 @@ function usageText(usage: ValidationRoundUsage | null): string | null {
 
 function usageLabel(usage: ValidationRoundUsage): string {
   const parts: string[] = [];
-  if (usage.inputTokens !== null)
-    parts.push(`${usage.inputTokens} input tokens`);
-  if (usage.cachedInputTokens !== null)
-    parts.push(`${usage.cachedInputTokens} cached input tokens`);
-  if (usage.outputTokens !== null)
-    parts.push(`${usage.outputTokens} output tokens`);
   if (usage.apiTurns !== null) {
     parts.push(`${usage.apiTurns} ${usage.apiTurns === 1 ? "turn" : "turns"}`);
   }

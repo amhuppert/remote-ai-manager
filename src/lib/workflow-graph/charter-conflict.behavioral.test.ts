@@ -9,6 +9,7 @@ import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
   seedAssignment,
+  makeStubValidatorContinuityService,
 } from "./test-fixtures";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
@@ -97,7 +98,6 @@ const floorRoundCharter: WorkflowCharter = workflowCharterSchema.parse({
 const validatorConfig: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin" as const, id: "general-reviewer" },
-  strategy: "conversation" as const,
   authority: "blocking",
   agent: {
     backend: "claude",
@@ -230,6 +230,7 @@ describe("charter floor/round conflict behavioral fixture", () => {
     );
 
     const runner = createValidatorRunner({
+      continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
@@ -292,6 +293,7 @@ describe("charter floor/round conflict behavioral fixture", () => {
     );
 
     const runner = createValidatorRunner({
+      continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,

@@ -50,7 +50,6 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
               tier: "builtin",
               id: "general-reviewer",
             }),
-            strategy: "conversation",
             agent: {
               backend: "claude",
               modelSelection: {
@@ -95,7 +94,6 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
               tier: "builtin",
               id: "general-reviewer",
             }),
-            strategy: "conversation",
             agent: {
               backend: "claude",
               modelSelection: {
@@ -147,7 +145,6 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
               id: "general-reviewer",
               revision: 4,
             }),
-            strategy: "task",
             agent: {
               backend: "codex",
               modelSelection: {
@@ -483,7 +480,6 @@ describe("projectLiveOutline — config summaries", () => {
         {
           assignmentId: "general",
           profile: "builtin:general-reviewer",
-          strategy: "conversation",
           backend: "claude",
           modelSelection: {
             modelId: "sonnet",
@@ -512,7 +508,7 @@ describe("projectLiveOutline — config summaries", () => {
         },
       },
       validatorCohortEnabled: false,
-      validators: [{ assignmentId: "dormant-security", strategy: "task" }],
+      validators: [{ assignmentId: "dormant-security" }],
     });
   });
 
@@ -715,7 +711,7 @@ describe("projectLiveOutline — section selectors", () => {
     });
     expect(result.context.config.contextValidator).toMatchObject({
       enabled: true,
-      assignments: [{ id: "general", strategy: "conversation" }],
+      assignments: [{ id: "general" }],
     });
     const apiTask = result.context.tasks.find((t) => t.id === "impl-api");
     expect(apiTask?.instructions).toHaveLength(812);

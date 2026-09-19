@@ -276,7 +276,6 @@ export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
                 id: "fixture-reviewer",
                 profile: { tier: "builtin", id: "general-reviewer" },
                 focus: "Review fixture launch configuration",
-                strategy: "conversation",
                 authority: "blocking",
                 agent: {
                   backend: "claude",
@@ -409,7 +408,6 @@ export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
                   id: "fixture-context-reviewer",
                   profile: { tier: "project", id: "fixture-reviewer" },
                   focus: "Review context configuration",
-                  strategy: "task",
                   authority: "blocking",
                   agent: {
                     backend: "codex",

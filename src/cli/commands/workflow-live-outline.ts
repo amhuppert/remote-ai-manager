@@ -223,7 +223,7 @@ function validatorSummary(config: LiveOutlineContextConfig): string {
   return config.validators
     .map(
       (validator) =>
-        `validator ${validator.assignmentId} ${validator.strategy} ${formatAgentModelSelection(validator.backend, validator.modelSelection)}`,
+        `validator ${validator.assignmentId} ${formatAgentModelSelection(validator.backend, validator.modelSelection)}`,
     )
     .join(", ");
 }
@@ -335,7 +335,7 @@ function staffingBlock(config: LiveOutlineData["config"]): string {
       hash: hashOf(validator),
       detail: `${detailOf(
         validator,
-        `${validator.strategy} ${formatAgentModelSelection(validator.backend, validator.modelSelection)}`,
+        formatAgentModelSelection(validator.backend, validator.modelSelection),
       )}${context.validatorCohortEnabled ? "" : "  (cohort disabled)"}`,
     })),
   ]);

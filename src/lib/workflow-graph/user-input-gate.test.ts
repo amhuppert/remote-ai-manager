@@ -70,20 +70,13 @@ function makeAnswers(): Record<string, AskQuestionAnswer> {
 function claudeLaneState(input: {
   lane: "implementer" | "context_validator";
   contextId: string;
-  conversationId?: string;
+  conversationId: string;
 }): GraphWorkflowAgentSessionState {
   return {
     lane: input.lane,
     contextId: input.contextId,
     backend: "claude",
-    refKind: "conversation",
-    ...(input.conversationId !== undefined
-      ? { workflowConversationId: input.conversationId }
-      : {}),
-    sessionRef: {
-      backend: "claude",
-      ref: input.conversationId ?? "conv-fallback",
-    },
+    workflowConversationId: input.conversationId,
     metrics: {},
     lastUsedAt: NOW,
   };
@@ -92,16 +85,13 @@ function claudeLaneState(input: {
 function codexLaneState(input: {
   lane: "implementer" | "context_validator";
   contextId: string;
-  conversationId?: string;
+  conversationId: string;
 }): GraphWorkflowAgentSessionState {
   return {
     lane: input.lane,
     contextId: input.contextId,
     backend: "codex",
-    refKind: "backend",
-    ...(input.conversationId !== undefined
-      ? { workflowConversationId: input.conversationId }
-      : {}),
+    workflowConversationId: input.conversationId,
     metrics: { lastTurnUsage: null },
     lastUsedAt: NOW,
   };
@@ -239,7 +229,7 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
     expect(permission.laneKey).toBe(SECURITY_KEY);
   });
 
-  it("allows a Codex implementer lane (workflowConversationId set) when enabled", async () => {
+  it("allows a Codex implementer lane when enabled", async () => {
     const service = buildService(
       buildExecution({
         askEnabled: true,
@@ -268,31 +258,6 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
       lane: "implementer",
       laneKey: "implementer",
     });
-  });
-
-  it("denies a Codex validator lane (workflowConversationId unset)", async () => {
-    const service = buildService(
-      buildExecution({
-        askEnabled: true,
-        lanes: {
-          [IMPL_CONTEXT_ID]: {
-            [SECURITY_KEY]: codexLaneState({
-              lane: "context_validator",
-              contextId: IMPL_CONTEXT_ID,
-              // no conversationId -> workflowConversationId unset
-            }),
-          },
-        },
-      }),
-    );
-
-    const permission = await service.resolveLaneAskPermission(
-      PROJECT_PATH,
-      SESSION_NAME,
-      CONVERSATION_ID,
-    );
-
-    expect(permission).toEqual({ allowed: false });
   });
 
   it("denies when the toggle is disabled even for a resolvable lane", async () => {

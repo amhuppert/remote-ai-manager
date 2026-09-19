@@ -1,7 +1,7 @@
 import { unchanged } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import type { GraphWorkflowExecutionRepository } from "./execution-repository";
-/** Durable conversations and backend handles for graph workflow lanes. */
+/** Durable CC conversations for graph workflow lanes. */
 
 import { createLogger } from "@/lib/logging";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
@@ -9,10 +9,6 @@ import {
   laneStateKey,
   type LaneIdentity,
 } from "@/lib/workflow-graph/lane-identity";
-import type {
-  BackendContinuityAdapter,
-  ContinuityContext,
-} from "@/lib/agent-backends/continuity";
 import {
   DEFAULT_AGENT_BACKEND_ID,
   type AgentBackendId,
@@ -22,7 +18,6 @@ import {
   toGraphLaneState,
   toNeutralLaneState,
 } from "@/lib/workflow-graph/graph-lane-store";
-import { descriptorContinuityAdapter } from "@/lib/workflows/primitives/workflow-agent-caller";
 import {
   deriveLaneOutcome,
   type LaneOutcome,
@@ -84,12 +79,6 @@ export interface GraphLaneContinuityDeps {
     promptCount: number;
     backendRef: AgentSessionRef | null;
   } | null>;
-  /**
-   * Resolves the continuity adapter owning a backend's native handles.
-   * Defaults to the registered descriptor's `conversation.continuity` — the
-   * same resolution `WorkflowAgentCaller` uses.
-   */
-  continuityAdapter?(backend: AgentBackendId): BackendContinuityAdapter;
   now?(): string;
 }
 
@@ -104,23 +93,12 @@ export interface ResolvedImplementerCall {
   promptMode: "iteration_seed" | "follow_up";
 }
 
-export type ValidatorExecutionStrategy = "conversation" | "task";
-
-export type ResolvedValidatorCall =
-  | {
-      execution: GraphWorkflowExecution;
-      sessionAction: "reuse" | "create";
-      strategy: "conversation";
-      backend: AgentBackendId;
-      conversationId: string;
-    }
-  | {
-      execution: GraphWorkflowExecution;
-      sessionAction: "reuse" | "create";
-      strategy: "task";
-      backend: AgentBackendId;
-      backendRef: AgentSessionRef;
-    };
+export interface ResolvedValidatorCall {
+  execution: GraphWorkflowExecution;
+  sessionAction: "reuse" | "create";
+  backend: AgentBackendId;
+  conversationId: string;
+}
 
 // ============================================================
 // Input types
@@ -143,10 +121,6 @@ export interface ResolveImplementerCallInput {
 }
 
 export interface ResolveValidatorCallInput {
-  taskContext?: Pick<
-    ContinuityContext,
-    "taskScope" | "conversationId" | "modelSelection" | "workingDirectory"
-  >;
   execution: GraphWorkflowExecution;
   projectPath: string;
   sessionName: string;
@@ -161,12 +135,11 @@ export interface ResolveValidatorCallInput {
   /** Frozen assignment identity, checked before reusing the lane. */
   assignmentFingerprint?: string;
   backend: AgentBackendId;
-  strategy: ValidatorExecutionStrategy;
   /**
-   * The calling assignment's execution-seeded snapshot. A conversation-strategy
-   * validator lane persists it so the lane's record names the profile the
-   * assignment actually runs under; the block itself reaches a validator turn
-   * through the per-turn instruction channel, not this record (D9).
+   * The calling assignment's execution-seeded snapshot. The validator lane
+   * persists it so the lane's record names the profile the assignment actually
+   * runs under; the block itself reaches a validator turn through the per-turn
+   * instruction channel, not this record (D9).
    */
   profileSnapshot?: AgentProfileSnapshot;
 }
@@ -180,10 +153,10 @@ export interface RecordLaneTurnOutcomeInput {
   /** Required for assignment-scoped lanes; absent for the implementer. */
   assignmentId?: string;
   /**
-   * Neutral post-turn outcome, recorded through the shared lane service.
-   * `ref` is honored only for lanes whose continuity handle is backend-native;
-   * a conversation-anchored lane's handle is its CC conversation id, which a
-   * turn never advances.
+   * Neutral post-turn outcome, recorded through the shared lane service. A
+   * lane's continuity handle is its CC conversation id, which a turn never
+   * advances, so `ref` is ignored here: the backend-native continuation lives
+   * on the conversation row, owned by the conversation actor.
    */
   outcome: LaneOutcome;
 }
@@ -230,13 +203,11 @@ function requireReusableLane(
   state: GraphWorkflowAgentSessionState,
   contextId: string,
   backend: AgentBackendId,
-  refKind: "conversation" | "backend",
   fingerprint?: string,
 ): void {
   if (
     state.contextId !== contextId ||
     state.backend !== backend ||
-    state.refKind !== refKind ||
     state.staleSession ||
     (fingerprint !== undefined &&
       state.assignmentFingerprint !== undefined &&
@@ -286,14 +257,15 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         existing,
         contextId,
         backend,
-        "conversation",
         input.assignmentFingerprint,
       );
       const conversationId = existing.workflowConversationId;
-      const conversation = conversationId
-        ? await deps.getConversation(projectPath, sessionName, conversationId)
-        : null;
-      if (!conversationId || !conversation) {
+      const conversation = await deps.getConversation(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+      if (!conversation) {
         throw new Error(
           `Cannot continue ${identity.lane} conversation in context "${contextId}": saved conversation is missing.`,
         );
@@ -332,7 +304,6 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     );
     const state = graphWorkflowAgentSessionStateSchema.parse({
       backend,
-      refKind: "conversation",
       lane: identity.lane,
       contextId,
       ...(identity.assignmentId !== null
@@ -342,7 +313,6 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         ? { assignmentFingerprint: input.assignmentFingerprint }
         : {}),
       workflowConversationId: conversation.id,
-      sessionRef: { backend, ref: conversation.id },
       metrics: {},
       lastUsedAt: getNow(),
     });
@@ -371,84 +341,11 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
   async function resolveValidatorCall(
     input: ResolveValidatorCallInput,
   ): Promise<ResolvedValidatorCall> {
-    const {
-      execution,
-      projectPath,
-      sessionName,
-      contextId,
-      lane,
-      backend,
-      strategy,
-    } = input;
+    const { lane, backend } = input;
     const identity: LaneIdentity = { lane, assignmentId: input.assignmentId };
-    if (strategy === "conversation") {
-      return {
-        ...(await resolveConversation(input, identity, backend)),
-        strategy,
-        backend,
-      };
-    }
-    const adapter =
-      deps.continuityAdapter?.(backend) ?? descriptorContinuityAdapter(backend);
-    const continuityContext = {
-      ...input.taskContext,
-      projectPath,
-      sessionName,
-    };
-    const existing = getCurrentLane(execution, contextId, identity);
-    if (existing) {
-      requireReusableLane(
-        existing,
-        contextId,
-        backend,
-        "backend",
-        input.assignmentFingerprint,
-      );
-      const backendRef = existing.sessionRef;
-      if (!backendRef) {
-        throw new Error(
-          `Cannot continue validator conversation in context "${contextId}": saved backend handle is missing.`,
-        );
-      }
-      // Validate without calling resumeOrRecover: recovery is allowed to mint
-      // another handle, which graph assignments must never adopt.
-      const validation = await adapter.validate(backendRef, continuityContext);
-      if (validation.status !== "valid") {
-        throw new Error(
-          `Cannot continue validator conversation in context "${contextId}": ${validation.reason}`,
-        );
-      }
-      return {
-        execution: withLaneState(execution, contextId, identity, {
-          ...existing,
-          lastUsedAt: getNow(),
-        }),
-        sessionAction: "reuse",
-        strategy,
-        backend,
-        backendRef,
-      };
-    }
-    const backendRef = await adapter.start(continuityContext);
-    const state = graphWorkflowAgentSessionStateSchema.parse({
-      backend,
-      refKind: "backend",
-      lane,
-      contextId,
-      assignmentId: input.assignmentId,
-      ...(input.assignmentFingerprint !== undefined
-        ? { assignmentFingerprint: input.assignmentFingerprint }
-        : {}),
-      sessionRef: backendRef,
-      metrics: { lastTurnUsage: null },
-      lastUsedAt: getNow(),
-    });
     return {
-      execution: await initialize(execution, state, identity, contextId),
-      sessionAction: "create",
-      strategy,
+      ...(await resolveConversation(input, identity, backend)),
       backend,
-      backendRef,
     };
   }
 
@@ -464,13 +361,9 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     const laneState = getCurrentLane(execution, contextId, identity);
     if (!laneState || laneState.backend !== input.outcome.backend)
       return execution;
-    // Conversation handles belong to the CC actor; only task handles advance
-    // from the backend's post-turn continuation result.
-    const { ref: outcomeRef, ...refless } = input.outcome;
-    const outcome: LaneOutcome =
-      laneState.refKind === "conversation" || outcomeRef === undefined
-        ? refless
-        : { ...refless, ref: outcomeRef };
+    // The CC conversation id is the handle, and the conversation actor owns
+    // the backend-native continuation; a post-turn ref never moves the lane.
+    const { ref: _ignoredRef, ...outcome } = input.outcome;
     const mutation = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,

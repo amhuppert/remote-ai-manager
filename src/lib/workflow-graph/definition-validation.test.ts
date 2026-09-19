@@ -65,7 +65,6 @@ describe("workflow-graph validation", () => {
               id: "cursor-reviewer",
               profile: { tier: "builtin", id: "general-reviewer" },
               agent,
-              strategy: "conversation" as const,
               authority: "blocking" as const,
             }),
           ],
@@ -729,7 +728,6 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
                   {
                     id: "unsandboxed-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
-                    strategy: "task",
                     authority: "blocking",
                     agent: {
                       backend: "codex",
@@ -776,7 +774,6 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
             {
               id: "unsandboxed-reviewer",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "cursor",
@@ -815,7 +812,6 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
             {
               id: "unsandboxed-reviewer",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",
@@ -857,7 +853,6 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
             {
               id: "general-reviewer",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "claude",
@@ -1196,7 +1191,6 @@ describe("validateResolvedWorkflow", () => {
                     id: "general",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     profileSnapshot: makeProfileSnapshot(),
-                    strategy: "task",
                     authority: "blocking",
                     agent: {
                       backend: "codex",
@@ -1238,7 +1232,6 @@ describe("validateResolvedWorkflow", () => {
                     id: "general",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     profileSnapshot: makeProfileSnapshot(),
-                    strategy: "conversation",
                     authority: "blocking",
                     agent: {
                       backend: "codex",
@@ -1271,7 +1264,6 @@ describe("validateResolvedWorkflow", () => {
     const reviewer = (id: string, reasoning: "medium" | "minimal") => ({
       id,
       profile: { tier: "builtin" as const, id: "general-reviewer" },
-      strategy: "task" as const,
       authority: "blocking" as const,
       agent: {
         backend: "codex" as const,
@@ -1335,7 +1327,6 @@ describe("validateResolvedWorkflow", () => {
                   seedAssignment({
                     id: "ok-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
-                    strategy: "task",
                     authority: "blocking",
                     agent: {
                       backend: "claude",
@@ -1348,7 +1339,6 @@ describe("validateResolvedWorkflow", () => {
                   seedAssignment({
                     id: "unsandboxed-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
-                    strategy: "conversation",
                     authority: "blocking",
                     agent: {
                       backend: "codex",
@@ -1424,7 +1414,6 @@ describe("validateResolvedWorkflow", () => {
                   seedAssignment({
                     id: "codex-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
-                    strategy: "task",
                     authority: "blocking",
                     agent: {
                       backend: "codex",
@@ -1463,7 +1452,6 @@ describe("validateResolvedWorkflow", () => {
                   seedAssignment({
                     id: "dormant-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
-                    strategy: "task",
                     authority: "blocking",
                     agent: {
                       backend: "codex",
@@ -1525,7 +1513,6 @@ describe("validateResolvedWorkflow", () => {
                     id: "general",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     profileSnapshot: makeProfileSnapshot(),
-                    strategy: "conversation",
                     authority: "blocking",
                     agent: {
                       backend: "claude",

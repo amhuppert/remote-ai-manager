@@ -328,7 +328,7 @@ describe("workflow outline", () => {
   /**
    * R13.1: a saved definition is REFERENCE-bearing — it names profiles the
    * library still owns and resolves nothing. Its staffing view therefore
-   * carries the qualified `tier:id`, the strategy, and the runtime, and must
+   * carries the qualified `tier:id` and the runtime, and must
    * NOT carry a revision or a resolved hash: those exist only once execution
    * start seeds a snapshot, and printing them here would claim a determinism a
    * saved document does not have.
@@ -374,7 +374,6 @@ describe("workflow outline", () => {
                 {
                   id: "security",
                   profile: { tier: "global", id: "security-reviewer" },
-                  strategy: "task",
                   agent: {
                     backend: "codex",
                     modelSelection: {
@@ -386,7 +385,6 @@ describe("workflow outline", () => {
                 {
                   id: "general",
                   profile: { tier: "builtin", id: "general-reviewer" },
-                  strategy: "conversation",
                   agent: {
                     backend: "claude",
                     modelSelection: {
@@ -412,7 +410,6 @@ describe("workflow outline", () => {
           assignmentId: "implementer",
           profile: "builtin:general-implementer",
           focus: null,
-          strategy: null,
           runtime: "claude opus effort=high",
         },
         {
@@ -421,7 +418,6 @@ describe("workflow outline", () => {
           assignmentId: "implementer",
           profile: "project:house-implementer",
           focus: "state-store",
-          strategy: null,
           runtime: "codex gpt-5.6 fast=false reasoning=high",
         },
         {
@@ -430,7 +426,6 @@ describe("workflow outline", () => {
           assignmentId: "security",
           profile: "global:security-reviewer",
           focus: null,
-          strategy: "task",
           runtime: "codex gpt-5.6 fast=false reasoning=high",
         },
         {
@@ -439,7 +434,6 @@ describe("workflow outline", () => {
           assignmentId: "general",
           profile: "builtin:general-reviewer",
           focus: null,
-          strategy: "conversation",
           runtime: "claude sonnet effort=medium",
         },
       ]);
@@ -453,7 +447,7 @@ describe("workflow outline", () => {
         "workflow  implementer  implementer  builtin:general-implementer",
       );
       expect(text).toContain("global:security-reviewer");
-      expect(text).toContain("task codex gpt-5.6 fast=false reasoning=high");
+      expect(text).toContain("codex gpt-5.6 fast=false reasoning=high");
       expect(text).toContain('focus "state-store"');
       // A reference has no seeded revision and no resolved hash. Both spellings
       // belong to `live get` alone — that IS the two-shape distinction.
@@ -499,7 +493,7 @@ describe("workflow outline", () => {
         "general",
       ]);
       expect(renderOutline(parseOutlineRecord(withDormant)!)).toMatch(
-        /impl\s+validator\s+security\s+global:security-reviewer\s+task codex gpt-5\.6 fast=false reasoning=high\s+\(cohort disabled\)/,
+        /impl\s+validator\s+security\s+global:security-reviewer\s+codex gpt-5\.6 fast=false reasoning=high\s+\(cohort disabled\)/,
       );
     });
   });

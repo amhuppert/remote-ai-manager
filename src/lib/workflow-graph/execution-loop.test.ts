@@ -1740,11 +1740,9 @@ describe("execution loop", () => {
         "ctx-1": {
           implementer: {
             backend: "claude",
-            refKind: "conversation",
             lane: "implementer",
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
-            sessionRef: { backend: "claude", ref: "conv-1" },
             metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
@@ -1847,11 +1845,9 @@ describe("execution loop", () => {
         "ctx-1": {
           implementer: {
             backend: "codex",
-            refKind: "conversation",
             lane: "implementer",
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
-            sessionRef: { backend: "codex", ref: "thread-1" },
             metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
@@ -2048,11 +2044,9 @@ describe("execution loop", () => {
         "ctx-1": {
           implementer: {
             backend: "claude",
-            refKind: "conversation",
             lane: "implementer",
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
-            sessionRef: { backend: "claude", ref: "session-a" },
             metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
@@ -2293,11 +2287,9 @@ describe("execution loop", () => {
         "ctx-1": {
           implementer: {
             backend: "claude",
-            refKind: "conversation",
             lane: "implementer",
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
-            sessionRef: { backend: "claude", ref: "conv-1" },
             metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
@@ -2399,11 +2391,9 @@ describe("execution loop", () => {
         "ctx-1": {
           implementer: {
             backend: "claude",
-            refKind: "conversation",
             lane: "implementer",
             contextId: "ctx-1",
             workflowConversationId: "conv-1",
-            sessionRef: { backend: "claude", ref: "conv-1" },
             metrics: {},
             lastUsedAt: "2026-03-27T12:00:00.000Z",
           },
@@ -2527,11 +2517,9 @@ describe("execution loop", () => {
           "ctx-1": {
             implementer: {
               backend: "claude",
-              refKind: "conversation",
               lane: "implementer",
               contextId: "ctx-1",
               workflowConversationId: "conv-1",
-              sessionRef: { backend: "claude", ref: "conv-1" },
               metrics: {},
               lastUsedAt: "2026-03-27T12:00:00.000Z",
             },

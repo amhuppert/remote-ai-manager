@@ -48,7 +48,6 @@ describe("implementerChipLabel / validatorChipLabel", () => {
       validatorAssignmentSchema.parse({
         id,
         profile: { tier: "builtin", id: "general-reviewer" },
-        strategy: "conversation",
         agent,
       });
 

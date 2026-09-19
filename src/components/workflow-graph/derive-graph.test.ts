@@ -742,7 +742,6 @@ describe("getDisplayValidators", () => {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
-            strategy: "conversation" as const,
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -770,7 +769,6 @@ describe("getDisplayValidators", () => {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
-            strategy: "task" as const,
             authority: "blocking",
             agent: {
               backend: "codex",
@@ -798,7 +796,6 @@ describe("getDisplayValidators", () => {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
-            strategy: "conversation" as const,
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -827,7 +824,6 @@ describe("getDisplayValidators", () => {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
-            strategy: "conversation" as const,
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -854,7 +850,6 @@ describe("getDisplayValidators", () => {
           {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
-            strategy: "conversation" as const,
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -881,7 +876,6 @@ describe("getDisplayValidators", () => {
           {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
-            strategy: "task" as const,
             authority: "blocking",
             agent: {
               backend: "codex",
@@ -908,7 +902,6 @@ describe("getDisplayValidators", () => {
           {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
-            strategy: "conversation" as const,
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -1667,7 +1660,6 @@ describe("deriveNodes — context-tier config overrides", () => {
             {
               id: "security",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "conversation",
               authority: "blocking",
               agent: {
                 backend: "claude",

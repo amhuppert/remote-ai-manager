@@ -310,13 +310,12 @@ function applyDefaultValidatorAuthority(value: unknown): unknown {
 }
 
 /**
- * A validator use site. Strategy is independent of backend exactly as the
- * pre-cutover `type` field was in practice: all four backend-x-strategy
- * combinations are expressible, and dispatch reads `strategy` directly.
+ * A validator use site. Every validator runs on one durable CC conversation
+ * per assignment, so the only axis beyond the shared assignment is the
+ * authority its verdict carries.
  */
 const validatorAssignmentObjectSchema = agentAssignmentSchema
   .extend({
-    strategy: z.enum(["conversation", "task"]),
     authority: validatorAuthoritySchema,
   })
   .strict();

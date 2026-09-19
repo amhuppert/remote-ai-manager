@@ -73,7 +73,10 @@ import {
   createValidatorRunner,
   type ValidatorRunResult,
 } from "./validator-runner";
-import { createWorkflowExecution } from "./test-fixtures";
+import {
+  createWorkflowExecution,
+  makeStubValidatorContinuityService,
+} from "./test-fixtures";
 import type { GraphWorkflowExecution } from "./schemas";
 import type {
   SeededValidatorAssignment,
@@ -277,7 +280,6 @@ function seededValidator(
       profileFor(text.instructions),
       assignmentProfileBlockOptions({ ...focus, authority }),
     ),
-    strategy: "task",
     authority,
     agent: {
       backend,
@@ -365,6 +367,7 @@ async function runValidator(options: RunOptions): Promise<ValidatorRunResult> {
   const context = contextFor(validator, execution);
 
   const runner = createValidatorRunner({
+    continuityService: makeStubValidatorContinuityService(),
     executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => WORKTREE_PATH,
     resolveTimeoutMs: async () => 30_000,

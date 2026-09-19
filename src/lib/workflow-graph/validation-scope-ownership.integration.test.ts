@@ -37,6 +37,7 @@ import {
   createWorkflowExecution,
   makeValidatorAssignment,
   seedAssignment,
+  makeStubValidatorContinuityService,
 } from "./test-fixtures";
 import { computeCandidateTreeHash } from "@/lib/git/diff";
 import { defaultGitClient } from "@/lib/git/client";
@@ -148,6 +149,7 @@ describe("scoped candidate identity and rendering over a shared lane worktree", 
     contextId: string,
   ): Promise<{ diffScopeSection: string; candidateTreeHash: string | null }> {
     const runner = createValidatorRunner({
+      continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: async () => worktreePath,
       resolveTimeoutMs: async () => 30_000,

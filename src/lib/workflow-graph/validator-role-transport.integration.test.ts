@@ -14,9 +14,9 @@ import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversati
  * that stopped at `executeWorkflowTaskRun` would pass even if an adapter
  * demoted the role contract to user-prompt text.
  *
- * All four backend x strategy combinations run the same way. Strategy changes
- * which continuity anchor the lane holds, never the channel, so the matrix
- * exists to prove exactly that: none of the four can lose the payload.
+ * Both backends run the same way: the lane's CC conversation is the anchor,
+ * never the channel, so the matrix exists to prove that neither backend can
+ * lose the payload.
  */
 import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
@@ -83,7 +83,6 @@ import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import { WORKFLOW_ROLE_CONTRACT_HEADING } from "./role-instructions";
 import { createValidatorRunner } from "./validator-runner";
-import type { ValidatorExecutionStrategy } from "./lane-continuity";
 import { createWorkflowExecution } from "./test-fixtures";
 import type { GraphWorkflowExecution } from "./schemas";
 import type {
@@ -186,7 +185,6 @@ function productionTaskRun(
 
 function seededValidator(
   backend: AgentBackendId,
-  strategy: ValidatorExecutionStrategy,
 ): SeededValidatorAssignment {
   if (backend === "cursor") {
     throw new Error("Cursor has no task facet for validator lanes");
@@ -213,7 +211,6 @@ function seededValidator(
       sourceContentHash: computeContentHash(PROFILE_INSTRUCTIONS),
       instructions: PROFILE_INSTRUCTIONS,
     }),
-    strategy,
     authority: "blocking",
     agent,
   };
@@ -230,11 +227,8 @@ function contextFor(
   };
 }
 
-async function runValidator(
-  backend: AgentBackendId,
-  strategy: ValidatorExecutionStrategy,
-): Promise<void> {
-  const validator = seededValidator(backend, strategy);
+async function runValidator(backend: AgentBackendId): Promise<void> {
+  const validator = seededValidator(backend);
   const execution = createWorkflowExecution();
   const context = contextFor(validator, execution);
 
@@ -250,22 +244,12 @@ async function runValidator(
     }),
     readLaneConversation: async () => null,
     continuityService: {
-      resolveValidatorCall: async () =>
-        strategy === "conversation"
-          ? {
-              execution,
-              sessionAction: "create",
-              strategy: "conversation",
-              backend,
-              conversationId: "lane-conversation-1",
-            }
-          : {
-              execution,
-              sessionAction: "create",
-              strategy: "task",
-              backend,
-              backendRef: { backend, ref: "ref-1" },
-            },
+      resolveValidatorCall: async () => ({
+        execution,
+        sessionAction: "create",
+        backend,
+        conversationId: "lane-conversation-1",
+      }),
       recordLaneTurnOutcome: async () => execution,
     },
   });
@@ -314,28 +298,18 @@ function expectRoleContractFirst(payload: string): void {
 }
 
 describe("validator role-contract transport (R10.1)", () => {
-  it("reaches Claude's system prompt on a task-strategy validator", async () => {
-    await runValidator("claude", "task");
+  it("reaches Claude's system prompt on a validator", async () => {
+    await runValidator("claude");
     expectRoleContractFirst(claudeAppend());
   });
 
-  it("reaches Claude's system prompt on a conversation-strategy validator", async () => {
-    await runValidator("claude", "conversation");
-    expectRoleContractFirst(claudeAppend());
-  });
-
-  it("reaches Codex developer instructions on a task-strategy validator", async () => {
-    await runValidator("codex", "task");
-    expectRoleContractFirst(codexDeveloperInstructions());
-  });
-
-  it("reaches Codex developer instructions on a conversation-strategy validator", async () => {
-    await runValidator("codex", "conversation");
+  it("reaches Codex developer instructions on a validator", async () => {
+    await runValidator("codex");
     expectRoleContractFirst(codexDeveloperInstructions());
   });
 
   it("never delivers the payload as Codex user-prompt text", async () => {
-    await runValidator("codex", "task");
+    await runValidator("codex");
 
     const prompt = JSON.stringify(codexClientState.promptCalls[0]);
     expect(prompt).not.toContain(WORKFLOW_ROLE_CONTRACT_HEADING);
@@ -346,7 +320,7 @@ describe("validator role-contract transport (R10.1)", () => {
   });
 
   it("never delivers the payload as Claude user-prompt text", async () => {
-    await runValidator("claude", "task");
+    await runValidator("claude");
 
     const prompt = String(claudeQueryMock.mock.calls[0]?.[0]?.prompt ?? "");
     expect(prompt).not.toContain(WORKFLOW_ROLE_CONTRACT_HEADING);

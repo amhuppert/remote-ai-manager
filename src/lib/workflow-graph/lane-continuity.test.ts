@@ -5,7 +5,6 @@ import {
   type GraphLaneContinuityDeps,
 } from "./lane-continuity";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
-import type { BackendContinuityAdapter } from "@/lib/agent-backends/continuity";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import type { LaneOutcome } from "@/lib/workflows/primitives/lane-service";
@@ -215,12 +214,10 @@ function makeClaudeSessionState(
   const conversationId = options.conversationId ?? "conv-existing";
   return {
     backend: "claude",
-    refKind: "conversation",
     lane,
     contextId,
     ...assignmentIdFor(lane),
     workflowConversationId: conversationId,
-    sessionRef: { backend: "claude", ref: conversationId },
     metrics: { ...options.metrics },
     lastUsedAt: NOW,
   };
@@ -230,21 +227,14 @@ function makeCodexSessionState(options: {
   lane: GraphWorkflowAgentSessionState["lane"];
   contextId?: string;
   workflowConversationId?: string;
-  threadId?: string;
   metrics?: Partial<GraphWorkflowAgentSessionState["metrics"]>;
 }): GraphWorkflowAgentSessionState {
   return {
     backend: "codex",
-    refKind: options.lane === "implementer" ? "conversation" : "backend",
     lane: options.lane,
     contextId: options.contextId ?? "ctx-1",
     ...assignmentIdFor(options.lane),
-    ...(options.workflowConversationId === undefined
-      ? {}
-      : { workflowConversationId: options.workflowConversationId }),
-    ...(options.threadId === undefined
-      ? {}
-      : { sessionRef: { backend: "codex" as const, ref: options.threadId } }),
+    workflowConversationId: options.workflowConversationId ?? "conv-codex",
     metrics: {
       lastTurnUsage: null,
       ...options.metrics,
@@ -253,44 +243,14 @@ function makeCodexSessionState(options: {
   };
 }
 
-interface FakeThreadAdapter {
-  adapter: BackendContinuityAdapter;
-  start: ReturnType<typeof vi.fn>;
-  resumeOrRecover: ReturnType<typeof vi.fn>;
-}
-
-function makeThreadAdapter(
-  overrides: Partial<Pick<FakeThreadAdapter, "start" | "resumeOrRecover">> = {},
-): FakeThreadAdapter {
-  const start =
-    overrides.start ??
-    vi.fn(async () => ({ backend: "codex" as const, ref: "thread-new" }));
-  const resumeOrRecover =
-    overrides.resumeOrRecover ??
-    vi.fn(async (ref: { backend: "codex"; ref: string }) => ({
-      ref,
-      recovered: false,
-    }));
-  const adapter: BackendContinuityAdapter = {
-    backend: "codex",
-    start,
-    resumeOrRecover,
-    validate: vi.fn(async () => ({ status: "valid" as const })),
-    fork: vi.fn(),
-  };
-  return { adapter, start, resumeOrRecover };
-}
-
 interface Harness {
   deps: GraphLaneContinuityDeps;
-  threadAdapter: FakeThreadAdapter;
   setExecution(execution: GraphWorkflowExecution): void;
   readExecution(): GraphWorkflowExecution;
 }
 
 function makeHarness(partial: Partial<GraphLaneContinuityDeps> = {}): Harness {
   let current: GraphWorkflowExecution | null = null;
-  const threadAdapter = makeThreadAdapter();
   const deps: GraphLaneContinuityDeps = {
     laneService: createLaneService({
       store: createInMemoryLaneStore(),
@@ -308,13 +268,11 @@ function makeHarness(partial: Partial<GraphLaneContinuityDeps> = {}): Harness {
     },
     createConversation: vi.fn().mockResolvedValue({ id: "conv-new" }),
     getConversation: vi.fn().mockResolvedValue({ id: "conv-existing" }),
-    continuityAdapter: () => threadAdapter.adapter,
     now: () => NOW,
     ...partial,
   };
   return {
     deps,
-    threadAdapter,
     setExecution(execution) {
       current = execution;
     },
@@ -389,7 +347,7 @@ describe("resolveImplementerCall", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveImplementerCall (codex)", () => {
-  it("creates a fresh CC conversation without fabricating a codex thread when no lane state exists", async () => {
+  it("creates a fresh CC conversation when no lane state exists", async () => {
     const harness = makeHarness({
       createConversation: vi.fn().mockResolvedValue({ id: "conv-cc-new" }),
     });
@@ -409,21 +367,15 @@ describe("resolveImplementerCall (codex)", () => {
       "sess",
       { role: "iteration", agentBackend: "codex" },
     );
-    expect(harness.threadAdapter.start).not.toHaveBeenCalled();
     expect(result.sessionAction).toBe("create");
     expect(result.promptMode).toBe("iteration_seed");
     expect(result.conversationId).toBe("conv-cc-new");
     const lane = result.execution.laneStates["ctx-1"]?.["implementer"];
     expect(lane?.backend).toBe("codex");
-    expect(lane?.refKind).toBe("conversation");
-    expect(lane?.sessionRef).toEqual({
-      backend: "codex",
-      ref: "conv-cc-new",
-    });
     expect(lane?.workflowConversationId).toBe("conv-cc-new");
   });
 
-  it("reuses the CC conversation without touching the thread adapter", async () => {
+  it("reuses the CC conversation", async () => {
     const harness = makeHarness({
       getConversation: vi.fn().mockResolvedValue({ id: "conv-cc-existing" }),
     });
@@ -432,7 +384,6 @@ describe("resolveImplementerCall (codex)", () => {
     const existingLane = makeCodexSessionState({
       lane: "implementer",
       workflowConversationId: "conv-cc-existing",
-      threadId: "thread-impl-existing",
     });
 
     const execution = makeExecution({
@@ -452,7 +403,6 @@ describe("resolveImplementerCall (codex)", () => {
       "sess",
       "conv-cc-existing",
     );
-    expect(harness.threadAdapter.resumeOrRecover).not.toHaveBeenCalled();
     expect(result.sessionAction).toBe("reuse");
     expect(result.promptMode).toBe("follow_up");
     expect(result.conversationId).toBe("conv-cc-existing");
@@ -468,7 +418,6 @@ describe("resolveImplementerCall (codex)", () => {
     const codexLane = makeCodexSessionState({
       lane: "implementer",
       workflowConversationId: "conv-cc-persisted",
-      threadId: "thread-impl-abc",
     });
 
     const execution = makeExecution({
@@ -488,8 +437,6 @@ describe("resolveImplementerCall (codex)", () => {
       backend: "codex",
     });
 
-    expect(harness.threadAdapter.resumeOrRecover).not.toHaveBeenCalled();
-    expect(harness.threadAdapter.start).not.toHaveBeenCalled();
     expect(harness.deps.createConversation).not.toHaveBeenCalled();
     expect(result.sessionAction).toBe("reuse");
     expect(result.promptMode).toBe("follow_up");
@@ -515,7 +462,6 @@ describe("resolveValidatorCall", () => {
       lane: "context_validator",
       assignmentId: "general",
       backend: "claude",
-      strategy: "conversation",
     });
 
     expect(harness.deps.createConversation).toHaveBeenCalledWith(
@@ -525,9 +471,7 @@ describe("resolveValidatorCall", () => {
     );
     expect(result.sessionAction).toBe("create");
     expect(result.backend).toBe("claude");
-    if (result.strategy === "conversation") {
-      expect(result.conversationId).toBe("conv-new");
-    }
+    expect(result.conversationId).toBe("conv-new");
     expect(
       result.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]?.lane,
     ).toBe("context_validator");
@@ -554,19 +498,18 @@ describe("resolveValidatorCall", () => {
       lane: "context_validator",
       assignmentId: "general",
       backend: "claude",
-      strategy: "conversation",
     });
 
     expect(harness.deps.createConversation).not.toHaveBeenCalled();
     expect(result.sessionAction).toBe("reuse");
     expect(result.backend).toBe("claude");
-    if (result.strategy === "conversation") {
-      expect(result.conversationId).toBe("conv-val");
-    }
+    expect(result.conversationId).toBe("conv-val");
   });
 
-  it("creates fresh codex thread through the continuity adapter when none exists", async () => {
-    const harness = makeHarness();
+  it("creates a durable CC conversation for a codex validator, never a bare thread", async () => {
+    const harness = makeHarness({
+      createConversation: vi.fn().mockResolvedValue({ id: "conv-codex-val" }),
+    });
     const svc = createGraphLaneContinuity(harness.deps);
     const execution = makeExecution();
 
@@ -578,53 +521,19 @@ describe("resolveValidatorCall", () => {
       lane: "context_validator",
       assignmentId: "general",
       backend: "codex",
-      strategy: "task",
     });
 
-    expect(harness.threadAdapter.start).toHaveBeenCalledExactlyOnceWith({
-      projectPath: "/proj",
-      sessionName: "sess",
-    });
+    expect(harness.deps.createConversation).toHaveBeenCalledWith(
+      "/proj",
+      "sess",
+      { role: "validator", agentBackend: "codex" },
+    );
     expect(result.sessionAction).toBe("create");
     expect(result.backend).toBe("codex");
-    if (result.strategy === "task") {
-      expect(result.backendRef.ref).toBe("thread-new");
-    }
-  });
-
-  it("resumes codex thread through the continuity adapter within the same context", async () => {
-    const harness = makeHarness();
-    const svc = createGraphLaneContinuity(harness.deps);
-
-    const existingLane = makeCodexSessionState({
-      lane: "context_validator",
-      threadId: "thread-existing",
-    });
-
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(existingLane),
-    });
-
-    const result = await svc.resolveValidatorCall({
-      execution,
-      projectPath: "/proj",
-      sessionName: "sess",
-      contextId: "ctx-1",
-      lane: "context_validator",
-      assignmentId: "general",
-      backend: "codex",
-      strategy: "task",
-    });
-
-    expect(harness.threadAdapter.adapter.validate).toHaveBeenCalledWith(
-      { backend: "codex", ref: "thread-existing" },
-      { projectPath: "/proj", sessionName: "sess" },
-    );
-    expect(result.sessionAction).toBe("reuse");
-    expect(result.backend).toBe("codex");
-    if (result.strategy === "task") {
-      expect(result.backendRef.ref).toBe("thread-existing");
-    }
+    expect(result.conversationId).toBe("conv-codex-val");
+    const lane = result.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
+    expect(lane?.workflowConversationId).toBe("conv-codex-val");
+    expect(lane).not.toHaveProperty("sessionRef");
   });
 
   it("keeps implementer and validator lanes independent", async () => {
@@ -652,13 +561,10 @@ describe("resolveValidatorCall", () => {
       lane: "context_validator",
       assignmentId: "general",
       backend: "claude",
-      strategy: "conversation",
     });
 
     expect(implResult.conversationId).toBe("conv-impl");
-    if (valResult.strategy === "conversation") {
-      expect(valResult.conversationId).toBe("conv-val");
-    }
+    expect(valResult.conversationId).toBe("conv-val");
     expect(
       valResult.execution.laneStates["ctx-1"]?.["implementer"]?.backend,
     ).toBe("claude");
@@ -721,27 +627,27 @@ describe("recordLaneTurnOutcome (occupancy metrics)", () => {
     });
 
     const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.sessionRef).toEqual({ backend: "claude", ref: "conv-1" });
+    expect(updated?.workflowConversationId).toBe("conv-1");
+    expect(updated).not.toHaveProperty("sessionRef");
   });
 });
 
 // ---------------------------------------------------------------------------
-// recordLaneTurnOutcome — thread-anchored (codex) lanes
+// recordLaneTurnOutcome — codex lanes
 // ---------------------------------------------------------------------------
 
-describe("recordLaneTurnOutcome (thread lanes)", () => {
-  function makeCodexValidatorLane(
-    threadId = "thread-1",
-  ): GraphWorkflowAgentSessionState {
-    return makeCodexSessionState({ lane: "context_validator", threadId });
+describe("recordLaneTurnOutcome (codex lanes)", () => {
+  function makeCodexValidatorLane(): GraphWorkflowAgentSessionState {
+    return makeCodexSessionState({
+      lane: "context_validator",
+      workflowConversationId: "conv-codex-val",
+    });
   }
 
-  it("updates sessionRef.threadId when a post-turn ref is provided", async () => {
+  it("never adopts a post-turn backend ref as the lane handle", async () => {
     const harness = makeHarness();
     const execution = makeExecution({
-      laneStates: laneStatesByContext(
-        makeCodexValidatorLane("thread-placeholder"),
-      ),
+      laneStates: laneStatesByContext(makeCodexValidatorLane()),
     });
 
     const result = await record(harness, execution, "context_validator", {
@@ -751,60 +657,9 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
     });
 
     const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
-    expect(updated?.sessionRef).toEqual({
-      backend: "codex",
-      ref: "real-thread-abc",
-    });
-  });
-
-  it("creates a codex sessionRef when the implementer lane starts without one", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: {
-        "ctx-1": {
-          implementer: {
-            backend: "codex",
-            refKind: "backend",
-            lane: "implementer",
-            contextId: "ctx-1",
-            workflowConversationId: "conv-cc-new",
-            metrics: {
-              lastTurnUsage: null,
-            },
-            lastUsedAt: NOW,
-          },
-        },
-      },
-    });
-
-    const result = await record(harness, execution, "implementer", {
-      backend: "codex",
-      lastTurnUsage: null,
-      ref: "real-thread-123",
-    });
-
-    const updated = result.laneStates["ctx-1"]?.["implementer"];
-    expect(updated?.backend).toBe("codex");
-    expect(updated?.sessionRef).toEqual({
-      backend: "codex",
-      ref: "real-thread-123",
-    });
-    expect(updated?.workflowConversationId).toBe("conv-cc-new");
-  });
-
-  it("preserves existing threadId when no post-turn ref is provided", async () => {
-    const harness = makeHarness();
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(makeCodexValidatorLane("thread-keep")),
-    });
-
-    const result = await record(harness, execution, "context_validator", {
-      backend: "codex",
-      lastTurnUsage: null,
-    });
-
-    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
-    expect(updated?.sessionRef?.ref).toBe("thread-keep");
+    expect(updated?.workflowConversationId).toBe("conv-codex-val");
+    expect(updated).not.toHaveProperty("sessionRef");
+    expect(updated?.lastUsedAt).toBe(NOW);
   });
 
   it("returns the execution unchanged when the lane backend does not match the outcome backend", async () => {
@@ -855,13 +710,19 @@ describe("recovery behaviors", () => {
     expect(harness.deps.createConversation).not.toHaveBeenCalled();
   });
 
-  it("resumes the codex thread after execution state is deserialized through the schema (restart recovery)", async () => {
-    const harness = makeHarness();
+  it("reuses the codex validator conversation after execution state is deserialized through the schema (restart recovery)", async () => {
+    const harness = makeHarness({
+      getConversation: vi.fn().mockResolvedValue({
+        id: "conv-codex-abc",
+        promptCount: 1,
+        backendRef: { backend: "codex", ref: "thread-codex-abc" },
+      }),
+    });
     const svc = createGraphLaneContinuity(harness.deps);
 
     const codexLane = makeCodexSessionState({
       lane: "context_validator",
-      threadId: "thread-codex-abc",
+      workflowConversationId: "conv-codex-abc",
     });
 
     const execution = makeExecution({
@@ -880,19 +741,17 @@ describe("recovery behaviors", () => {
       lane: "context_validator",
       assignmentId: "general",
       backend: "codex",
-      strategy: "task",
     });
 
-    expect(harness.threadAdapter.adapter.validate).toHaveBeenCalledWith(
-      { backend: "codex", ref: "thread-codex-abc" },
-      { projectPath: "/proj", sessionName: "sess" },
+    expect(harness.deps.getConversation).toHaveBeenCalledWith(
+      "/proj",
+      "sess",
+      "conv-codex-abc",
     );
-    expect(harness.threadAdapter.start).not.toHaveBeenCalled();
+    expect(harness.deps.createConversation).not.toHaveBeenCalled();
     expect(result.sessionAction).toBe("reuse");
     expect(result.backend).toBe("codex");
-    if (result.strategy === "task") {
-      expect(result.backendRef.ref).toBe("thread-codex-abc");
-    }
+    expect(result.conversationId).toBe("conv-codex-abc");
   });
 });
 
@@ -1061,50 +920,16 @@ describe("continuous lane failures", () => {
         lane: "context_validator",
         assignmentId: "general",
         backend: "claude",
-        strategy: "conversation",
       }),
     ).rejects.toThrow(/cannot continue/i);
     expect(harness.deps.createConversation).not.toHaveBeenCalled();
-  });
-
-  it("refuses a stale validator handle without invoking backend recovery", async () => {
-    const harness = makeHarness();
-    harness.threadAdapter.adapter.validate = vi.fn(async () => ({
-      status: "stale" as const,
-      reason: "Thread missing",
-    }));
-    const execution = makeExecution({
-      laneStates: laneStatesByContext(
-        makeCodexSessionState({
-          lane: "context_validator",
-          threadId: "thread-original",
-        }),
-      ),
-    });
-    await expect(
-      createGraphLaneContinuity(harness.deps).resolveValidatorCall({
-        execution,
-        projectPath: "/proj",
-        sessionName: "sess",
-        contextId: "ctx-1",
-        lane: "context_validator",
-        assignmentId: "general",
-        backend: "codex",
-        strategy: "task",
-      }),
-    ).rejects.toThrow("Thread missing");
-    expect(harness.threadAdapter.start).not.toHaveBeenCalled();
-    expect(harness.threadAdapter.resumeOrRecover).not.toHaveBeenCalled();
   });
 
   it("preserves a cleared backend handle as unusable across restart", async () => {
     const harness = makeHarness();
     const execution = makeExecution({
       laneStates: laneStatesByContext(
-        makeCodexSessionState({
-          lane: "context_validator",
-          threadId: "thread-original",
-        }),
+        makeCodexSessionState({ lane: "context_validator" }),
       ),
     });
     const recorded = await record(harness, execution, "context_validator", {
@@ -1126,9 +951,8 @@ describe("continuous lane failures", () => {
         lane: "context_validator",
         assignmentId: "general",
         backend: "codex",
-        strategy: "task",
       }),
     ).rejects.toThrow(/cannot continue/i);
-    expect(harness.threadAdapter.start).not.toHaveBeenCalled();
+    expect(harness.deps.createConversation).not.toHaveBeenCalled();
   });
 });

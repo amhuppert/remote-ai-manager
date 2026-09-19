@@ -61,7 +61,6 @@ export interface CohortMemberView {
   assignmentId: string;
   /** `tier:id@revision`, read off the round's FROZEN roster seat. */
   profileLabel: string;
-  strategy: "conversation" | "task";
   state: GraphWorkflowValidationSpecialistState;
   stateLabel: string;
   outcomeKind: CohortOutcomeKind;
@@ -312,7 +311,6 @@ function memberView(
   return {
     assignmentId: seat.assignmentId,
     profileLabel: `${formatAgentProfileRef(seat.profileRef)}@${seat.revision}`,
-    strategy: seat.strategy,
     state: specialist.state,
     stateLabel: presentation.label,
     outcomeKind: presentation.kind,

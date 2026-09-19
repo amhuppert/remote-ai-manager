@@ -499,7 +499,6 @@ describe("validateWorkflowPlan", () => {
     const REVIEWER = {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "conversation",
       agent: {
         backend: "claude",
         modelSelection: {
@@ -890,6 +889,44 @@ describe("validateWorkflowPlan post-cutover refusal", () => {
     expect(issue).toBeDefined();
     expect(issue?.message).toContain("assignments");
     expect(issue?.recordId).toBe("context-plan");
+  });
+
+  it("refuses a validator assignment carrying the retired strategy field with a located error", () => {
+    const definition = createWorkflowDefinition();
+    (
+      definition.executionContexts[0] as Record<string, unknown>
+    ).contextValidator = {
+      enabled: true,
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "task",
+          agent: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const issue = result.issues.find(
+      (candidate) =>
+        candidate.path ===
+        "definition.executionContexts.0 (context-plan).contextValidator.assignments.0 (general).strategy",
+    );
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain("one durable conversation");
+    // The locator names the assignment as the record, exactly as it does for
+    // every other assignment-level refusal.
+    expect(issue?.recordId).toBe("general");
   });
 
   it("never normalizes a legacy shape into an assignment", () => {

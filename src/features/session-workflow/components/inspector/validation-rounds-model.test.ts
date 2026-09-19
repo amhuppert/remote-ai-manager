@@ -37,14 +37,12 @@ function liveRound(
         profileRef: { tier: "project", id: "security-reviewer" },
         revision: 1,
         resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
-        strategy: "conversation",
       },
       {
         assignmentId: "style",
         profileRef: { tier: "project", id: "style-reviewer" },
         revision: 1,
         resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
-        strategy: "task",
       },
     ],
     specialists: {
@@ -215,9 +213,6 @@ describe("deriveValidationRoundRows", () => {
       references: ["conv_val_sec"],
     });
     expect(row?.usage).toEqual({
-      inputTokens: null,
-      cachedInputTokens: null,
-      outputTokens: null,
       costUsd: 0.4,
       apiTurns: 6,
     });
@@ -233,14 +228,11 @@ describe("deriveValidationRoundRows", () => {
             pass: true,
             reviewArtifact: {
               backend: "codex",
-              kind: "response",
+              kind: "conversation",
               ref: "task-run-9",
-              response: "{}",
               usage: {
-                inputTokens: 100,
-                cachedInputTokens: 20,
-                outputTokens: 30,
                 costUsd: 0.1,
+                apiTurns: 2,
               },
             },
           }),
@@ -250,11 +242,8 @@ describe("deriveValidationRoundRows", () => {
 
     expect(row?.references).toEqual(["conv_val_sec", "task-run-9"]);
     expect(row?.usage).toEqual({
-      inputTokens: 100,
-      cachedInputTokens: 20,
-      outputTokens: 30,
       costUsd: 0.5,
-      apiTurns: 6,
+      apiTurns: 8,
     });
   });
 

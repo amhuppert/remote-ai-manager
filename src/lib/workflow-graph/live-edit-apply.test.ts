@@ -414,7 +414,6 @@ describe("applyLiveEditsToActiveExecution", () => {
           contextId: context.id,
           assignmentId: started.id,
           backend: "claude",
-          refKind: "conversation",
           workflowConversationId: "security-conversation",
           metrics: {},
           lastUsedAt: "2026-07-29T00:00:00.000Z",

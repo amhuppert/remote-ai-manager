@@ -20,14 +20,14 @@ import { changed } from "@/lib/workflow-graph/execution-mutation";
  *  - the primitive `laneId` encodes `(laneKind, contextId, assignment)` via
  *    `graphLaneId()`, because parallel contexts must never collide and each
  *    validator assignment reviewing one context holds its own durable lane;
- *  - the continuity handle maps to the graph's backend-neutral `sessionRef`,
- *    while `workflowConversationId` independently carries the optional CC
- *    dispatch anchor;
+ *  - the continuity handle IS the lane's CC conversation id
+ *    (`workflowConversationId`): every graph lane is conversation-anchored,
+ *    and the backend-native continuation lives on the conversation row;
  *  - lane policy and write capability are derived from the working
  *    definition (they are configuration, not runtime state);
- *  - graph-only fields the primitive layer does not model
- *    (`workflowConversationId`) are preserved in place on
- *    update rather than round-tripped through the primitive state.
+ *  - graph-only fields the primitive layer does not model (the assignment
+ *    fingerprint) are preserved in place on update rather than round-tripped
+ *    through the primitive state.
  */
 
 import { createLogger } from "@/lib/logging";
@@ -106,11 +106,9 @@ export function toNeutralLaneState(
     workflowId: execution.id,
     laneId: graphLaneId(lane, contextId, identity.assignmentId ?? undefined),
     backend: normalized.backend,
-    refKind: normalized.refKind,
-    ref: normalized.sessionRef?.ref ?? null,
-    ...(normalized.workflowConversationId !== undefined
-      ? { conversationId: normalized.workflowConversationId }
-      : {}),
+    refKind: "conversation",
+    ref: normalized.workflowConversationId,
+    conversationId: normalized.workflowConversationId,
     writeCapability: laneWriteCapability(lane),
     policy: { continuityEnabled: true },
     metrics: normalized.metrics,
@@ -144,13 +142,16 @@ export function toGraphLaneState(
   const normalizedExisting = existing
     ? graphWorkflowAgentSessionStateSchema.parse(existing)
     : undefined;
+  // A graph lane's continuity handle IS its CC conversation id, so the neutral
+  // `ref` names the anchor; an existing lane's anchor never moves.
   const conversationId =
-    normalizedExisting?.workflowConversationId ?? state.conversationId;
+    normalizedExisting?.workflowConversationId ??
+    state.ref ??
+    state.conversationId;
   const assignmentId =
     identity.assignmentId ?? normalizedExisting?.assignmentId;
   return graphWorkflowAgentSessionStateSchema.parse({
     backend: state.backend,
-    refKind: state.refKind ?? normalizedExisting?.refKind ?? "backend",
     lane,
     contextId,
     ...(assignmentId !== undefined ? { assignmentId } : {}),
@@ -160,12 +161,7 @@ export function toGraphLaneState(
     ...(normalizedExisting?.assignmentFingerprint !== undefined
       ? { assignmentFingerprint: normalizedExisting.assignmentFingerprint }
       : {}),
-    ...(conversationId !== undefined
-      ? { workflowConversationId: conversationId }
-      : {}),
-    ...(state.ref !== null
-      ? { sessionRef: { backend: state.backend, ref: state.ref } }
-      : {}),
+    workflowConversationId: conversationId,
     metrics: state.metrics,
     staleSession: state.staleSession,
     lastUsedAt: state.lastUsedAt,

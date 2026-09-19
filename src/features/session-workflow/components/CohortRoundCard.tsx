@@ -240,9 +240,6 @@ function CohortMemberRow({
         >
           {member.profileLabel}
         </span>
-        <span className="font-mono text-[0.7rem] text-text-tertiary">
-          {member.strategy}
-        </span>
         <AuthorityChip authority={member.authority} />
         <StatusChip tone={stateTone(member)} data-testid="cohort-member-state">
           {member.stateLabel}

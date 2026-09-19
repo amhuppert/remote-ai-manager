@@ -59,7 +59,6 @@ function assignment(
   return {
     id,
     profile: { tier: "builtin", id: "general-reviewer" },
-    strategy: "conversation",
     authority: "blocking",
 
     agent: {
@@ -93,7 +92,6 @@ const COHORT: ValidatorCohort = {
     }),
     assignment("house-style", {
       profile: { tier: "project", id: "house-style" },
-      strategy: "task",
       authority: "advisory",
     }),
   ],

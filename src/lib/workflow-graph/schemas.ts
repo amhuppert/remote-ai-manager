@@ -13,8 +13,6 @@ import {
 import {
   agentBackendIdShapeSchema,
   agentBackendSchema,
-  agentSessionRefSchema,
-  type AgentBackendId,
 } from "@/lib/shared/schemas";
 import {
   laneMetricsSchema,
@@ -816,79 +814,36 @@ export const graphWorkflowLaneKindSchema = z.enum([
 ]);
 export type GraphWorkflowLaneKind = z.infer<typeof graphWorkflowLaneKindSchema>;
 
-function normalizeLegacyValidationSessionRef(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  if (record.backend !== undefined) {
-    if (record.lane !== undefined && record.refKind !== undefined) return value;
-    return {
-      ...record,
-      lane: record.lane ?? "context_validator",
-      refKind: record.refKind ?? "backend",
-    };
-  }
-
-  if (record.engine === "claude") {
-    return {
-      backend: record.engine,
-      ref: record.conversationId,
-      lane: record.lane,
-      refKind: "conversation",
-      workflowConversationId: record.conversationId,
-    };
-  }
-  if (record.engine === "codex") {
-    return {
-      backend: record.engine,
-      ref: record.threadId,
-      lane: record.lane,
-      refKind: "backend",
-    };
-  }
-  return value;
-}
-
 /**
- * Where a validator's review actually happened.
+ * Where a validator's review actually happened: the lane's durable CC
+ * conversation, named by `ref` and `workflowConversationId` alike.
  *
  * Persisted on the round record AND carried on the events the round publishes:
- * a verdict a resume carries forward has to keep pointing at the session that
- * rendered it, or a cohort's retained lanes become unauditable the moment the
- * process running them restarts.
+ * a verdict a resume carries forward has to keep pointing at the conversation
+ * that rendered it, or a cohort's retained lanes become unauditable the moment
+ * the process running them restarts.
  */
-export const graphWorkflowValidationSessionRefSchema = z.preprocess(
-  normalizeLegacyValidationSessionRef,
-  z.object({
-    backend: agentBackendIdShapeSchema,
-    ref: z.string().trim().min(1),
-    lane: graphWorkflowLaneKindSchema,
-    // Which cohort member rendered this verdict. Additive and optional: rows
-    // written before cohorts existed name a lane but no assignment, and the
-    // implementer lane never renders one.
-    assignmentId: z.string().trim().min(1).optional(),
-    refKind: z.enum(["conversation", "backend"]),
-    workflowConversationId: z.string().trim().min(1).optional(),
-  }),
-);
+export const graphWorkflowValidationSessionRefSchema = z.object({
+  backend: agentBackendIdShapeSchema,
+  ref: z.string().trim().min(1),
+  lane: graphWorkflowLaneKindSchema,
+  // Which cohort member rendered this verdict. Additive and optional: rows
+  // written before cohorts existed name a lane but no assignment, and the
+  // implementer lane never renders one.
+  assignmentId: z.string().trim().min(1).optional(),
+  workflowConversationId: z.string().trim().min(1).optional(),
+});
 export type GraphWorkflowValidationSessionRef = z.infer<
   typeof graphWorkflowValidationSessionRefSchema
 >;
 
-const graphWorkflowValidationReviewUsageSchema = z.object({
-  inputTokens: z.number().int().min(0),
-  cachedInputTokens: z.number().int().min(0),
-  outputTokens: z.number().int().min(0),
-  /** Estimated from token usage because providers do not report USD. */
-  costUsd: z.number().nullable().default(null),
-});
-
 /**
- * Usage for conversation-strategy validators, derived from the conversation
- * transcript after the turn. Token counts are not projected from transcripts,
- * so this carries the billable figures the transcript does report — without
- * it every conversation-validator decision is unpriced in cost audits.
+ * A validator's spend, derived from its conversation transcript after the
+ * turn. Token counts are not projected from transcripts, so this carries the
+ * billable figures the transcript does report — without it every validator
+ * decision is unpriced in cost audits.
  */
-const graphWorkflowValidationConversationUsageSchema = z.object({
+export const graphWorkflowValidationConversationUsageSchema = z.object({
   costUsd: z.number().nullable().default(null),
   apiTurns: z.number().int().min(0).nullable().default(null),
 });
@@ -896,86 +851,20 @@ export type GraphWorkflowValidationConversationUsage = z.infer<
   typeof graphWorkflowValidationConversationUsageSchema
 >;
 
-function normalizeLegacyValidationReviewArtifact(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  if (record.backend !== undefined) return value;
-
-  if (record.engine === "claude") {
-    return {
-      backend: record.engine,
-      kind: "conversation",
-      ref: record.conversationId,
-    };
-  }
-  if (record.engine === "codex") {
-    return {
-      backend: record.engine,
-      kind: "response",
-      ref: record.threadId,
-      response: record.response,
-      usage: record.usage,
-    };
-  }
-  return value;
-}
-
-/** What a validator produced, and what it cost to produce. */
-export const graphWorkflowValidationReviewArtifactSchema = z.preprocess(
-  normalizeLegacyValidationReviewArtifact,
-  z.discriminatedUnion("kind", [
-    z.object({
-      backend: agentBackendIdShapeSchema,
-      kind: z.literal("conversation"),
-      ref: z.string().trim().min(1),
-      usage: graphWorkflowValidationConversationUsageSchema
-        .nullable()
-        .default(null),
-    }),
-    z.object({
-      backend: agentBackendIdShapeSchema,
-      kind: z.literal("response"),
-      ref: z.string().trim(),
-      response: z.string(),
-      usage: graphWorkflowValidationReviewUsageSchema.nullable().default(null),
-    }),
-  ]),
-);
+/**
+ * What a validator produced, and what it cost to produce: the review lives in
+ * the lane's CC conversation, so the artifact points at it rather than
+ * carrying a response body of its own.
+ */
+export const graphWorkflowValidationReviewArtifactSchema = z.object({
+  backend: agentBackendIdShapeSchema,
+  kind: z.literal("conversation"),
+  ref: z.string().trim().min(1),
+  usage: graphWorkflowValidationConversationUsageSchema.nullable().default(null),
+});
 export type GraphWorkflowValidationReviewArtifact = z.infer<
   typeof graphWorkflowValidationReviewArtifactSchema
 >;
-
-export function buildGraphWorkflowValidationReviewArtifact(input: {
-  backend: AgentBackendId;
-  strategy: "conversation" | "task";
-  ref: string | null;
-  response: string;
-  usage: {
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-    costUsd: number | null;
-  } | null;
-  /** Transcript-derived usage for conversation-strategy validators. */
-  conversationUsage?: GraphWorkflowValidationConversationUsage | null;
-}): GraphWorkflowValidationReviewArtifact | null {
-  if (input.ref === null) return null;
-  if (input.strategy === "conversation") {
-    return {
-      backend: input.backend,
-      kind: "conversation",
-      ref: input.ref,
-      usage: input.conversationUsage ?? null,
-    };
-  }
-  return {
-    backend: input.backend,
-    kind: "response",
-    ref: input.ref,
-    response: input.response,
-    usage: input.usage,
-  };
-}
 
 /**
  * The exact thing a validation round reviews.
@@ -1037,7 +926,6 @@ export const graphWorkflowValidationRosterEntrySchema = z
     profileRef: agentProfileRefSchema,
     revision: z.number().int().positive(),
     resolvedInstructionHash: z.string().trim().min(1),
-    strategy: z.enum(["conversation", "task"]),
   })
   .strict();
 export type GraphWorkflowValidationRosterEntry = z.infer<
@@ -1573,86 +1461,11 @@ export type GraphWorkflowTaskState = z.infer<
 // Graph Workflow Session Refs + Agent Session State
 // ============================================================
 
-function normalizeLegacyGraphSessionRef(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  if (record.backend !== undefined) return value;
-  if (record.engine === "claude") {
-    return { backend: record.engine, ref: record.conversationId };
-  }
-  if (record.engine === "codex") {
-    return { backend: record.engine, ref: record.threadId };
-  }
-  return value;
-}
-
-export const graphWorkflowExecutionSessionRefSchema = z.preprocess(
-  normalizeLegacyGraphSessionRef,
-  agentSessionRefSchema,
-);
-export type GraphWorkflowExecutionSessionRef = z.infer<
-  typeof graphWorkflowExecutionSessionRefSchema
->;
-
 export type GraphWorkflowAgentSessionTurnUsage = z.infer<
   typeof laneTurnUsageSchema
 >;
 
-function optionalMetric(
-  record: Record<string, unknown>,
-  legacyKey: string,
-): Record<string, unknown> {
-  const value = record[legacyKey];
-  return value === null || value === undefined ? {} : { value };
-}
-
-function normalizeLegacyGraphLane(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  if (record.backend !== undefined) return value;
-  if (record.engine !== "claude" && record.engine !== "codex") return value;
-
-  const contextTokens = optionalMetric(record, "lastContextTokens").value;
-  const contextWindowMax = optionalMetric(record, "lastContextWindowMax").value;
-  const lastTurnUsage = optionalMetric(record, "lastTurnUsage").value;
-  const normalizedSessionRef =
-    record.sessionRef !== undefined
-      ? normalizeLegacyGraphSessionRef(record.sessionRef)
-      : undefined;
-  const legacyConversationId =
-    record.engine === "claude" &&
-    typeof normalizedSessionRef === "object" &&
-    normalizedSessionRef !== null
-      ? (normalizedSessionRef as Record<string, unknown>).ref
-      : undefined;
-
-  return {
-    backend: record.engine,
-    refKind: record.engine === "claude" ? "conversation" : "backend",
-    lane: record.lane,
-    contextId: record.contextId,
-    ...(record.workflowConversationId !== undefined ||
-    legacyConversationId !== undefined
-      ? {
-          workflowConversationId:
-            record.workflowConversationId ?? legacyConversationId,
-        }
-      : {}),
-    ...(normalizedSessionRef !== undefined
-      ? { sessionRef: normalizedSessionRef }
-      : {}),
-    metrics: {
-      ...(contextTokens !== undefined ? { contextTokens } : {}),
-      ...(contextWindowMax !== undefined ? { contextWindowMax } : {}),
-      ...(lastTurnUsage !== undefined ? { lastTurnUsage } : {}),
-    },
-    lastUsedAt: record.lastUsedAt,
-  };
-}
-
-export const graphWorkflowAgentSessionStateSchema = z.preprocess(
-  normalizeLegacyGraphLane,
-  z.object({
+export const graphWorkflowAgentSessionStateSchema = z.object({
     lane: graphWorkflowLaneKindSchema,
     contextId: z.string().trim().min(1),
     // Which use-site assignment owns this lane. Additive and optional: the
@@ -1665,14 +1478,13 @@ export const graphWorkflowAgentSessionStateSchema = z.preprocess(
     // adopt a different backend, model, or instruction contract.
     assignmentFingerprint: z.string().min(1).optional(),
     backend: agentBackendSchema,
-    refKind: z.enum(["conversation", "backend"]),
-    workflowConversationId: z.string().trim().min(1).optional(),
+    // The lane's continuity handle: every lane is anchored to one durable CC
+    // conversation, whose own row holds the backend-native continuation.
+    workflowConversationId: z.string().trim().min(1),
     staleSession: z.boolean().optional(),
-    sessionRef: graphWorkflowExecutionSessionRefSchema.optional(),
     metrics: laneMetricsSchema,
     lastUsedAt: z.string(),
-  }),
-);
+});
 export type GraphWorkflowAgentSessionState = z.infer<
   typeof graphWorkflowAgentSessionStateSchema
 >;

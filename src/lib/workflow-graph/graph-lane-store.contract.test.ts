@@ -33,7 +33,6 @@ import {
 import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
 import type { LaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { graphWorkflowAgentSessionStateSchema } from "@/lib/workflow-graph/schemas";
 
 const PROJECT_PATH = "/projects/demo";
 const SESSION_NAME = "session-1";
@@ -120,7 +119,6 @@ function implementerLane(overrides: Partial<LaneState> = {}): LaneState {
     workflowId: EXECUTION_ID,
     laneId: graphLaneId("implementer", "context-implement"),
     backend: "claude",
-    refKind: "conversation",
     ref: "conv-implementer-1",
     conversationId: "conv-implementer-1",
     writeCapability: "write_capable",
@@ -159,7 +157,7 @@ describe("graph lane store durability contract (§1.9.4)", () => {
     expect(read?.metrics.contextWindowMax).toBe(200_000);
   });
 
-  it("a validator lane's backend ref survives restart (the backendRefCache failure mode)", async () => {
+  it("a validator lane's conversation anchor survives restart (the backendRefCache failure mode)", async () => {
     const repo = createGraphWorkflowExecutionsRepo(db);
     seedActiveExecution(repo);
 
@@ -168,8 +166,8 @@ describe("graph lane store durability contract (§1.9.4)", () => {
       implementerLane({
         laneId: graphLaneId("context_validator", "context-implement"),
         backend: "codex",
-        refKind: "backend",
-        ref: "thread-validator-7",
+        ref: "conv-validator-7",
+        conversationId: "conv-validator-7",
         writeCapability: "read_only",
         metrics: { lastTurnUsage: null },
       }),
@@ -181,7 +179,9 @@ describe("graph lane store durability contract (§1.9.4)", () => {
       laneId: graphLaneId("context_validator", "context-implement"),
     });
     expect(read?.backend).toBe("codex");
-    expect(read?.ref).toBe("thread-validator-7");
+    expect(read?.refKind).toBe("conversation");
+    expect(read?.ref).toBe("conv-validator-7");
+    expect(read?.conversationId).toBe("conv-validator-7");
   });
 
   it("scopes lanes per execution context so parallel contexts' implementer lanes do not collide", async () => {
@@ -225,10 +225,10 @@ describe("graph lane store durability contract (§1.9.4)", () => {
     const graphLane = execution?.laneStates["context-implement"]?.implementer;
     expect(graphLane).toMatchObject({
       backend: "claude",
-      refKind: "conversation",
-      sessionRef: { backend: "claude", ref: "conv-implementer-1" },
+      workflowConversationId: "conv-implementer-1",
       metrics: {},
     });
+    expect(graphLane).not.toHaveProperty("sessionRef");
     expect(graphLane).not.toHaveProperty("engine");
     expect(graphLane).not.toHaveProperty("lastContextTokens");
   });
@@ -240,11 +240,9 @@ describe("graph lane store durability contract (§1.9.4)", () => {
         "context-implement": {
           implementer: {
             backend: "claude",
-            refKind: "conversation",
             lane: "implementer",
             contextId: "context-implement",
             workflowConversationId: "cc-conv-distinct",
-            sessionRef: { backend: "claude", ref: "conv-old" },
             metrics: {},
             lastUsedAt: NOW,
           },
@@ -258,68 +256,6 @@ describe("graph lane store durability contract (§1.9.4)", () => {
     const preserved =
       readActiveFresh(db)?.laneStates["context-implement"]?.implementer;
     expect(preserved?.workflowConversationId).toBe("cc-conv-distinct");
-  });
-
-  it("normalizes legacy provider-specific lane rows into the canonical neutral envelope", () => {
-    const legacyClaude = graphWorkflowAgentSessionStateSchema.parse({
-      engine: "claude",
-      lane: "implementer",
-      contextId: "context-implement",
-      workflowConversationId: "conv-1",
-      sessionRef: {
-        engine: "claude",
-        lane: "implementer",
-        conversationId: "conv-1",
-      },
-      lastContextTokens: 12_000,
-      lastContextWindowMax: 200_000,
-      lastUsedAt: NOW,
-    });
-    const legacyCodex = graphWorkflowAgentSessionStateSchema.parse({
-      engine: "codex",
-      lane: "context_validator",
-      contextId: "context-implement",
-      sessionRef: {
-        engine: "codex",
-        lane: "context_validator",
-        threadId: "thread-1",
-      },
-      lastTurnUsage: {
-        inputTokens: 10,
-        cachedInputTokens: 2,
-        outputTokens: 3,
-      },
-      lastUsedAt: NOW,
-    });
-
-    expect(legacyClaude).toEqual({
-      backend: "claude",
-      refKind: "conversation",
-      lane: "implementer",
-      contextId: "context-implement",
-      workflowConversationId: "conv-1",
-      sessionRef: { backend: "claude", ref: "conv-1" },
-      metrics: {
-        contextTokens: 12_000,
-        contextWindowMax: 200_000,
-      },
-      lastUsedAt: NOW,
-    });
-    expect(legacyCodex).toEqual({
-      backend: "codex",
-      refKind: "backend",
-      lane: "context_validator",
-      contextId: "context-implement",
-      sessionRef: { backend: "codex", ref: "thread-1" },
-      metrics: {
-        lastTurnUsage: {
-          inputTokens: 10,
-          cachedInputTokens: 2,
-          outputTokens: 3,
-        },
-      },
-      lastUsedAt: NOW,
-    });
   });
 
   it("returns null for a lane that was never written and after delete", async () => {
@@ -369,7 +305,6 @@ describe("graph lane store durability contract (§1.9.4)", () => {
       implementerLane({
         laneId: graphLaneId("context_validator", "context-plan"),
         backend: "codex",
-        refKind: "backend",
         ref: "thr-1",
         writeCapability: "read_only",
         metrics: { lastTurnUsage: null },
@@ -401,7 +336,6 @@ describe("per-assignment validator lanes", () => {
         assignmentId,
       ),
       backend: "codex",
-      refKind: "backend",
       ref,
       conversationId: `conv-${assignmentId}`,
       writeCapability: "read_only",
@@ -414,8 +348,8 @@ describe("per-assignment validator lanes", () => {
     seedActiveExecution(repo);
 
     const store = buildStore(db);
-    await store.write(validatorLane("reviewer-a", "thread-a"));
-    await store.write(validatorLane("reviewer-b", "thread-b"));
+    await store.write(validatorLane("reviewer-a", "conv-reviewer-a"));
+    await store.write(validatorLane("reviewer-b", "conv-reviewer-b"));
 
     const afterRestart = buildStore(db);
     expect(
@@ -429,7 +363,7 @@ describe("per-assignment validator lanes", () => {
           ),
         })
       )?.ref,
-    ).toBe("thread-a");
+    ).toBe("conv-reviewer-a");
     expect(
       (
         await afterRestart.read({
@@ -441,7 +375,7 @@ describe("per-assignment validator lanes", () => {
           ),
         })
       )?.ref,
-    ).toBe("thread-b");
+    ).toBe("conv-reviewer-b");
   });
 
   it("persists each assignment under its own laneStates key, carrying its assignment identity", async () => {
@@ -449,8 +383,8 @@ describe("per-assignment validator lanes", () => {
     seedActiveExecution(repo);
     const store = buildStore(db);
 
-    await store.write(validatorLane("reviewer-a", "thread-a"));
-    await store.write(validatorLane("reviewer-b", "thread-b"));
+    await store.write(validatorLane("reviewer-a", "conv-reviewer-a"));
+    await store.write(validatorLane("reviewer-b", "conv-reviewer-b"));
 
     const lanes = readActiveFresh(db)?.laneStates["context-implement"];
     expect(Object.keys(lanes ?? {}).sort()).toEqual([
@@ -470,8 +404,8 @@ describe("per-assignment validator lanes", () => {
     seedActiveExecution(repo);
     const store = buildStore(db);
 
-    await store.write(validatorLane("reviewer-a", "thread-a"));
-    await store.write(validatorLane("reviewer-b", "thread-b"));
+    await store.write(validatorLane("reviewer-a", "conv-reviewer-a"));
+    await store.write(validatorLane("reviewer-b", "conv-reviewer-b"));
 
     await store.delete({
       workflowId: EXECUTION_ID,
@@ -503,7 +437,7 @@ describe("per-assignment validator lanes", () => {
           ),
         })
       )?.ref,
-    ).toBe("thread-b");
+    ).toBe("conv-reviewer-b");
   });
 
   it("lists every assignment lane with continuous conversations", async () => {
@@ -530,8 +464,8 @@ describe("per-assignment validator lanes", () => {
     repo.setActive(PROJECT_PATH, SESSION_NAME, execution, NOW);
 
     const store = buildStore(db);
-    await store.write(validatorLane("reviewer-a", "thread-a"));
-    await store.write(validatorLane("reviewer-b", "thread-b"));
+    await store.write(validatorLane("reviewer-a", "conv-reviewer-a"));
+    await store.write(validatorLane("reviewer-b", "conv-reviewer-b"));
 
     const lanes = await store.listByWorkflow(EXECUTION_ID);
     const byAssignment = new Map(

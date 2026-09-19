@@ -64,11 +64,9 @@ afterEach(() => {
 function seedImplementerLane(): GraphWorkflowAgentSessionState {
   return {
     backend: "claude",
-    refKind: "conversation",
     lane: "implementer",
     contextId: CONTEXT_ID,
     workflowConversationId: "conv-implementer-1",
-    sessionRef: { backend: "claude", ref: "conv-implementer-1" },
     metrics: {},
     lastUsedAt: NOW,
   };
@@ -207,7 +205,6 @@ describe("graph lane outcome recording — full-composition contract (finding 2)
     const lane: GraphWorkflowAgentSessionState = {
       ...seedImplementerLane(),
       backend: "cursor",
-      sessionRef: { backend: "cursor", ref: "conv-cursor-1" },
       workflowConversationId: "conv-cursor-1",
     };
     const execution = createWorkflowExecution({
@@ -229,10 +226,7 @@ describe("graph lane outcome recording — full-composition contract (finding 2)
     });
     const persisted = readActiveFresh(db)?.laneStates[CONTEXT_ID]?.implementer;
     expect(persisted?.backend).toBe("cursor");
-    expect(persisted?.sessionRef).toEqual({
-      backend: "cursor",
-      ref: "conv-cursor-1",
-    });
+    expect(persisted?.workflowConversationId).toBe("conv-cursor-1");
     expect(persisted?.metrics.contextTokens).toBeUndefined();
     expect(persisted?.metrics.contextWindowMax).toBeUndefined();
   });

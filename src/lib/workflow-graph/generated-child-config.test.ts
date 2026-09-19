@@ -105,7 +105,6 @@ function invokerConfig(
         seedAssignment({
           id: "invoker-reviewer",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "conversation" as const,
           authority: "blocking",
           agent: {
             backend: "claude",
@@ -161,7 +160,6 @@ function weakSeedConfig(
         seedAssignment({
           id: "dormant-reviewer",
           profile: { tier: "project", id: "dormant-reviewer" },
-          strategy: "task" as const,
           authority: "advisory",
           agent: {
             backend: "claude",

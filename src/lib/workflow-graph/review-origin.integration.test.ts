@@ -17,6 +17,7 @@ import {
   createWorkflowExecution,
   makeValidatorAssignment,
   seedAssignment,
+  makeStubValidatorContinuityService,
 } from "./test-fixtures";
 import { createValidatorRunner } from "./validator-runner";
 import { resolveApprovalSnapshot } from "./approval-snapshot";
@@ -119,6 +120,7 @@ describe("retained-work review origin", () => {
       );
 
       const runner = createValidatorRunner({
+        continuityService: makeStubValidatorContinuityService(),
         executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: async () => repo,
         resolveTimeoutMs: async () => 30_000,

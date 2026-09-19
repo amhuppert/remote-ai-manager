@@ -107,11 +107,9 @@ it("preserves an existing conversation when rescheduling its execution context",
       "context-implement": {
         implementer: {
           backend: "claude",
-          refKind: "conversation",
           lane: "implementer",
           contextId: "context-implement",
           workflowConversationId: "conv-old",
-          sessionRef: { backend: "claude", ref: "conv-old" },
           metrics: {
             contextTokens: 50_000,
             contextWindowMax: 200_000,
@@ -3199,11 +3197,9 @@ describe("scheduleEligibleContexts", () => {
             "context-plan": {
               implementer: {
                 backend: "claude",
-                refKind: "conversation",
                 lane: "implementer",
                 contextId: "context-plan",
                 workflowConversationId: "conv-prev",
-                sessionRef: { backend: "claude", ref: "conv-prev" },
                 metrics: {
                   contextTokens: 10_000,
                   contextWindowMax: 200_000,

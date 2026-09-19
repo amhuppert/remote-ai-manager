@@ -80,14 +80,10 @@ const outlineAssignmentSchema = z
   })
   .loose();
 
-const outlineValidatorAssignmentSchema = outlineAssignmentSchema.extend({
-  strategy: z.string(),
-});
-
 const outlineValidatorCohortSchema = z
   .object({
     enabled: z.boolean(),
-    assignments: z.array(outlineValidatorAssignmentSchema),
+    assignments: z.array(outlineAssignmentSchema),
   })
   .loose();
 
@@ -319,8 +315,6 @@ export interface OutlineAssignmentRow {
   /** The qualified `tier:id` spelling of the profile reference. */
   profile: string;
   focus: string | null;
-  /** `null` for an implementer — strategy is a validator-only dimension. */
-  strategy: string | null;
   runtime: string;
   /** True for an assignment retained by a DISABLED cohort (dormant config). */
   dormant?: true;
@@ -669,9 +663,7 @@ function staffingBlock(rows: OutlineAssignmentRow[]): string[] {
   return [
     "staffing (references):",
     ...rows.map((row) => {
-      const detail = [row.strategy, row.runtime]
-        .filter((part): part is string => part !== null)
-        .join(" ");
+      const detail = row.runtime;
       const focus = row.focus !== null ? `  focus "${row.focus}"` : "";
       const dormant = row.dormant ? "  (cohort disabled)" : "";
       return `  ${row.scope.padEnd(scopeWidth)}  ${row.role.padEnd(
@@ -698,12 +690,12 @@ function staffingRows(
   if (!tier) return [];
   const rows: OutlineAssignmentRow[] = [];
   if (tier.implementer) {
-    rows.push(assignmentRow(scope, "implementer", tier.implementer, null));
+    rows.push(assignmentRow(scope, "implementer", tier.implementer));
   }
   const cohort = tier.contextValidator;
   for (const assignment of cohort?.assignments ?? []) {
     rows.push({
-      ...assignmentRow(scope, "validator", assignment, assignment.strategy),
+      ...assignmentRow(scope, "validator", assignment),
       ...(cohort?.enabled === false ? { dormant: true as const } : {}),
     });
   }
@@ -714,7 +706,6 @@ function assignmentRow(
   scope: string,
   role: OutlineAssignmentRow["role"],
   assignment: z.infer<typeof outlineAssignmentSchema>,
-  strategy: string | null,
 ): OutlineAssignmentRow {
   return {
     scope,
@@ -722,7 +713,6 @@ function assignmentRow(
     assignmentId: assignment.id,
     profile: `${assignment.profile.tier}:${assignment.profile.id}`,
     focus: assignment.focus ?? null,
-    strategy,
     runtime: formatAgentModelSelection(
       assignment.agent.backend,
       assignment.agent.modelSelection,

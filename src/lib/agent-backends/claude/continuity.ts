@@ -3,10 +3,10 @@
  *
  * Handle spaces, both opaque to callers:
  * - `start`/`validate`/`resumeOrRecover` operate on SDK session ids. Every
- *   caller of these is a HEADLESS lane (graph task-strategy validators,
- *   collaboration lanes) whose turns run outside any CC conversation actor —
- *   conversation-anchored lanes carry `refKind: "conversation"` and never
- *   consult this adapter at all. So `start` mints a placeholder, exactly as
+ *   caller of these is a HEADLESS lane (collaboration lanes) whose turns run
+ *   outside any CC conversation actor — graph lanes are anchored to a CC
+ *   conversation and never consult this adapter at all. So `start` mints a
+ *   placeholder, exactly as
  *   Codex does: the real session id is only known after the first turn, which
  *   is why no caller resumes a `sessionAction: "create"` handle. Minting a CC
  *   conversation here instead produced one permanently empty conversation per

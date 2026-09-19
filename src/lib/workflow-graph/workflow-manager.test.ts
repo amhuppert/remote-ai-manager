@@ -3615,9 +3615,7 @@ describe("graph workflow manager", () => {
               lane: "implementer",
               contextId: "context-plan",
               backend: "claude",
-              refKind: "conversation",
               workflowConversationId: "conv-impl",
-              sessionRef: { backend: "claude", ref: "conv-impl" },
               metrics: {},
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -3629,13 +3627,9 @@ describe("graph workflow manager", () => {
               contextId: "context-plan",
               assignmentId: "reviewer-a",
               backend: "codex",
-              refKind: "backend",
-              // Production shape: the validator runner persists the synthetic
-              // dispatch id
-              // (__validator__:{executionId}:{contextId}:{lane}:{assignmentId}:{backend})
-              // onto the lane state before dispatching the turn.
-              workflowConversationId:
-                "__validator__:execution-1:context-plan:context_validator:reviewer-a:codex",
+              // Production shape: the validator runner persists the lane's
+              // durable conversation id before dispatching the turn.
+              workflowConversationId: "conv-validator-reviewer-a",
               metrics: {
                 lastTurnUsage: null,
               },
@@ -3646,9 +3640,7 @@ describe("graph workflow manager", () => {
               contextId: "context-plan",
               assignmentId: "reviewer-b",
               backend: "codex",
-              refKind: "backend",
-              workflowConversationId:
-                "__validator__:execution-1:context-plan:context_validator:reviewer-b:codex",
+              workflowConversationId: "conv-validator-reviewer-b",
               metrics: {
                 lastTurnUsage: null,
               },
@@ -3681,9 +3673,9 @@ describe("graph workflow manager", () => {
       .sort((a, b) => a.localeCompare(b));
     // conv-impl appears in both taskStates and the implementer lane — deduped.
     expect(conversationIds).toEqual([
-      "__validator__:execution-1:context-plan:context_validator:reviewer-a:codex",
-      "__validator__:execution-1:context-plan:context_validator:reviewer-b:codex",
       "conv-impl",
+      "conv-validator-reviewer-a",
+      "conv-validator-reviewer-b",
     ]);
   });
 
@@ -3709,9 +3701,7 @@ describe("graph workflow manager", () => {
               lane: "implementer",
               contextId: "context-plan",
               backend: "claude",
-              refKind: "conversation",
               workflowConversationId: "conv-impl",
-              sessionRef: { backend: "claude", ref: "conv-impl" },
               metrics: {},
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -3867,9 +3857,7 @@ describe("graph workflow manager", () => {
               lane: "implementer",
               contextId: "context-plan",
               backend: "claude",
-              refKind: "conversation",
               workflowConversationId: "conv-parked",
-              sessionRef: { backend: "claude", ref: "conv-parked" },
               metrics: {},
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -3879,9 +3867,7 @@ describe("graph workflow manager", () => {
               lane: "implementer",
               contextId: "context-implement",
               backend: "claude",
-              refKind: "conversation",
               workflowConversationId: "conv-live",
-              sessionRef: { backend: "claude", ref: "conv-live" },
               metrics: {},
               lastUsedAt: "2026-03-27T15:01:00.000Z",
             },
@@ -4011,9 +3997,7 @@ describe("graph workflow manager", () => {
             lane: "implementer",
             contextId: "context-plan",
             backend: "claude",
-            refKind: "conversation",
             workflowConversationId: "conv-parked",
-            sessionRef: { backend: "claude", ref: "conv-parked" },
             metrics: {},
             lastUsedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -4492,11 +4476,9 @@ describe("graph workflow manager", () => {
           "context-plan": {
             implementer: {
               backend: "claude",
-              refKind: "conversation",
               lane: "implementer",
               contextId: "context-plan",
               workflowConversationId: "conv-1",
-              sessionRef: { backend: "claude", ref: "conv-1" },
               metrics: {
                 contextTokens: 10_000,
                 contextWindowMax: 200_000,
@@ -5927,14 +5909,12 @@ describe("graph workflow manager", () => {
           profileRef: { tier: "builtin", id: "general-reviewer" },
           revision: 1,
           resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
-          strategy: "conversation",
         },
         {
           assignmentId: "perf-reviewer",
           profileRef: { tier: "builtin", id: "general-reviewer" },
           revision: 1,
           resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
-          strategy: "conversation",
         },
       ],
       specialists: {
@@ -7286,11 +7266,9 @@ describe("graph workflow manager", () => {
           "context-implement": {
             implementer: {
               backend: "claude",
-              refKind: "conversation",
               lane: "implementer",
               contextId: "context-implement",
               workflowConversationId: "conv-impl",
-              sessionRef: { backend: "claude", ref: "conv-impl" },
               metrics: {
                 contextTokens: 10,
                 contextWindowMax: 100,
@@ -7301,11 +7279,9 @@ describe("graph workflow manager", () => {
           "context-plan": {
             context_validator: {
               backend: "claude",
-              refKind: "conversation",
               lane: "context_validator",
               contextId: "context-plan",
               workflowConversationId: "conv-val",
-              sessionRef: { backend: "claude", ref: "conv-val" },
               metrics: {},
               lastUsedAt: "2026-03-27T15:11:00.000Z",
             },
@@ -7562,7 +7538,6 @@ describe("graph workflow manager", () => {
       };
       const lane = (conversationId: string, assignmentId: string) => ({
         backend: "claude" as const,
-        refKind: "conversation" as const,
         lane: "context_validator" as const,
         contextId: "context-implement",
         assignmentId,
@@ -9188,7 +9163,6 @@ describe("graph workflow manager", () => {
                     {
                       id: "general",
                       profile: { tier: "builtin", id: "general-reviewer" },
-                      strategy: "task",
                       authority: "blocking",
                       agent: {
                         backend: "codex",

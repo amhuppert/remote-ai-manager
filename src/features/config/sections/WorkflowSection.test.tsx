@@ -365,7 +365,6 @@ describe("WorkflowSection", () => {
     const SECURITY: ValidatorAssignment = {
       id: "security",
       profile: { tier: "global", id: "security-reviewer" },
-      strategy: "task",
       authority: "blocking",
       agent: {
         backend: "codex",
@@ -379,7 +378,6 @@ describe("WorkflowSection", () => {
     const GENERAL: ValidatorAssignment = {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "conversation",
       authority: "blocking",
       agent: {
         backend: "claude",

@@ -134,7 +134,6 @@ Tiers are sibling scopes, not a shadowing chain: `builtin:reviewer`, `global:rev
       {
         "id": "security",                                  // unique WITHIN the cohort
         "profile": { "tier": "global", "id": "security-reviewer" },
-        "strategy": "conversation",
         "agent": {
           "backend": "codex",
           "modelSelection": {
@@ -150,7 +149,7 @@ Tiers are sibling scopes, not a shadowing chain: `builtin:reviewer`, `global:rev
 
 - The assignment `id` is the durable use-site identity findings are grouped under. Keep it stable across revisions; renaming it is a new use site, not a rename.
 - `focus` narrows a general profile at one use site ("auth boundaries", "hot paths"). Durable behaviour belongs in the profile itself — if every use site repeats the same focus, the profile is wrong.
-- `strategy` is validator-only and independent of backend: `conversation` or `task`.
+- Every validator assignment runs as one durable conversation per assignment; there is no per-assignment execution strategy to choose.
 - Two assignments may name the SAME profile under different ids and focuses. That is the normal way to get two specialist passes from one general reviewer.
 
 ### Cohort rules

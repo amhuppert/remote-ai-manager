@@ -21,7 +21,6 @@ import {
   graphWorkflowAgentConfigSchema,
   type AgentAssignment,
   type GraphWorkflowAgentConfig,
-  type ValidatorAssignment,
   type ValidatorAuthority,
 } from "@/lib/workflow-graph/config-schemas";
 import {
@@ -30,7 +29,6 @@ import {
 } from "./assignment-focus";
 import { FieldRow } from "./FieldPrimitives";
 
-export const VALIDATOR_STRATEGY_OPTIONS = ["conversation", "task"] as const;
 export const VALIDATOR_AUTHORITY_OPTIONS = ["blocking", "advisory"] as const;
 
 /**
@@ -128,11 +126,6 @@ export function AgentRuntimeFields({
   );
 }
 
-export interface AssignmentStrategyControl {
-  value: ValidatorAssignment["strategy"];
-  onChange: (next: ValidatorAssignment["strategy"]) => void;
-}
-
 export interface AssignmentAuthorityControl {
   value: ValidatorAuthority;
   onChange: (next: ValidatorAuthority) => void;
@@ -149,13 +142,6 @@ export interface AssignmentEditorProps<T extends AgentAssignment> {
    * author just removed.
    */
   onChange: (next: T) => void;
-  /**
-   * Present only for use sites that HAVE a strategy. Passed as a control rather
-   * than read off the value so one editor serves both the implementer (no
-   * strategy) and a validator (one) without a widened assignment type that
-   * could carry a strategy where none is dispatched.
-   */
-  strategy?: AssignmentStrategyControl;
   /**
    * Present only for use sites that HAVE an authority — validators. An
    * implementer has no verdict to gate, so it has no axis here, and its
@@ -180,10 +166,9 @@ export interface AssignmentEditorProps<T extends AgentAssignment> {
  *
  * The axes are separate on purpose: a library profile supplies the durable
  * prompt identity, the instructions steer it at this use site only, the
- * authority decides what a verdict from it can do, the strategy decides how the
- * lane is dispatched, and the runtime is the concrete backend/model. None of
- * them implies another — a Codex agent under the conversation strategy carrying
- * a project profile is authorable here.
+ * authority decides what a verdict from it can do, and the runtime is the
+ * concrete backend/model. None of them implies another — a Codex agent
+ * carrying a project profile is authorable here.
  *
  * Authority and instructions are adjacent because they are one decision read
  * twice: the authority is what turns the same text from a subordinate steer
@@ -196,15 +181,14 @@ export interface AssignmentEditorProps<T extends AgentAssignment> {
  * not contain.
  *
  * Generic over the assignment so it edits the shared facet of whatever use site
- * holds it — a plain implementer assignment, a validator carrying strategy and
- * authority — and hands that same assignment back intact. A
+ * holds it — a plain implementer assignment, a validator carrying authority —
+ * and hands that same assignment back intact. A
  * non-generic editor would force every wrapper to re-widen the result by
  * merging it over the previous value, which is a deletion-losing operation.
  */
 export function AssignmentEditor<T extends AgentAssignment>({
   value,
   onChange,
-  strategy,
   authority,
   audience,
   libraryProjectName,
@@ -294,25 +278,6 @@ export function AssignmentEditor<T extends AgentAssignment>({
           ) : null}
         </div>
       </FieldRow>
-
-      {strategy ? (
-        <FieldRow label="Strategy">
-          <SegmentedControl
-            value={strategy.value}
-            onValueChange={(next) =>
-              strategy.onChange(next as ValidatorAssignment["strategy"])
-            }
-            disabled={readOnly}
-            aria-label="Validator execution strategy"
-          >
-            {VALIDATOR_STRATEGY_OPTIONS.map((option) => (
-              <SegmentedControlItem key={option} value={option}>
-                {option}
-              </SegmentedControlItem>
-            ))}
-          </SegmentedControl>
-        </FieldRow>
-      ) : null}
 
       <AgentRuntimeFields
         value={value.agent}

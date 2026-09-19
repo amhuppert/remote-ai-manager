@@ -1259,7 +1259,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -1448,7 +1447,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -1629,7 +1627,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -1806,7 +1803,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -1995,7 +1991,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -2184,7 +2179,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -2369,7 +2363,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -2574,7 +2567,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -2759,7 +2751,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -2948,7 +2939,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -3137,7 +3127,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -3326,7 +3315,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -3515,7 +3503,6 @@
                   }
                 }
               },
-              "strategy": "task",
               "authority": "blocking",
               "profileSnapshot": {
                 "tier": "builtin",
@@ -4309,8 +4296,7 @@
               "id": "general-reviewer"
             },
             "revision": 1,
-            "resolvedInstructionHash": "sha256:8cd1a23c68bf536812a58bd8ffc463302e54c34ecdca3a2dcf0fa901de886006",
-            "strategy": "task"
+            "resolvedInstructionHash": "sha256:8cd1a23c68bf536812a58bd8ffc463302e54c34ecdca3a2dcf0fa901de886006"
           }
         ],
         "specialists": {
@@ -4501,8 +4487,7 @@
               "id": "general-reviewer"
             },
             "revision": 1,
-            "resolvedInstructionHash": "sha256:8cd1a23c68bf536812a58bd8ffc463302e54c34ecdca3a2dcf0fa901de886006",
-            "strategy": "task"
+            "resolvedInstructionHash": "sha256:8cd1a23c68bf536812a58bd8ffc463302e54c34ecdca3a2dcf0fa901de886006"
           }
         ],
         "specialists": {
@@ -5009,12 +4994,7 @@
         "assignmentId": "general",
         "assignmentFingerprint": "sha256:8cd1a23c68bf536812a58bd8ffc463302e54c34ecdca3a2dcf0fa901de886006|task|blocking||true||codex|gpt-5.6-sol|xhigh",
         "backend": "codex",
-        "refKind": "backend",
-        "workflowConversationId": "__validator__:22707c00-b09b-4b24-ad24-e2f8b086262a:contracts-and-gating:context_validator:general:codex",
-        "sessionRef": {
-          "backend": "codex",
-          "ref": "a3177625-8e8a-4f2c-b285-092108ae54d6"
-        },
+        "workflowConversationId": "validator-conv-contracts-and-gating-general",
         "lastUsedAt": "2026-08-23T04:19:05.749Z"
       }
     },
@@ -5025,12 +5005,7 @@
         "assignmentId": "general",
         "assignmentFingerprint": "sha256:8cd1a23c68bf536812a58bd8ffc463302e54c34ecdca3a2dcf0fa901de886006|task|blocking||true||codex|gpt-5.6-sol|xhigh",
         "backend": "codex",
-        "refKind": "backend",
-        "workflowConversationId": "__validator__:22707c00-b09b-4b24-ad24-e2f8b086262a:registry-foundation:context_validator:general:codex",
-        "sessionRef": {
-          "backend": "codex",
-          "ref": "01a02c5a-64d8-7dc0-9d06-ea624e315ce1"
-        },
+        "workflowConversationId": "validator-conv-registry-foundation-general",
         "lastUsedAt": "2026-08-23T02:02:04.116Z"
       },
       "implementer": {
@@ -5038,12 +5013,7 @@
         "contextId": "registry-foundation",
         "assignmentFingerprint": "sha256:66e560d62e30d9d3e077d7719eb18ffef8aea2dabd0864f803154bee9a35e4b9||||true|250000|codex|gpt-5.6-terra|high",
         "backend": "codex",
-        "refKind": "conversation",
         "workflowConversationId": "79c6056c-5cc9-4772-9236-62afd5827c7f",
-        "sessionRef": {
-          "backend": "codex",
-          "ref": "79c6056c-5cc9-4772-9236-62afd5827c7f"
-        },
         "lastUsedAt": "2026-08-23T02:01:53.782Z"
       }
     }

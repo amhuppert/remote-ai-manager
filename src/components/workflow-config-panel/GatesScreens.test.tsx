@@ -74,14 +74,12 @@ const SEED_SEAT = seedSeat();
 function seat(overrides: {
   id: string;
   authority?: ValidatorAuthority;
-  strategy?: ValidatorAssignment["strategy"];
 }): ValidatorAssignment {
   const base = structuredClone(SEED_SEAT);
   return {
     ...base,
     id: overrides.id,
     authority: overrides.authority ?? base.authority,
-    strategy: overrides.strategy ?? base.strategy,
   };
 }
 
@@ -242,14 +240,14 @@ describe("Quality gates group screen", () => {
 });
 
 describe("Validator cohort roster screen", () => {
-  it("lists the seats in order with authority, agent and strategy", () => {
+  it("lists the seats in order with authority and agent", () => {
     const { editor } = editorFor({
       contextOverrides: {
         contextValidator: {
           enabled: true,
           assignments: [
             seat({ id: "general" }),
-            seat({ id: "security", authority: "advisory", strategy: "task" }),
+            seat({ id: "security", authority: "advisory" }),
           ],
         },
       },
@@ -258,7 +256,6 @@ describe("Validator cohort roster screen", () => {
 
     const security = screen.getByTestId("config-item-security");
     expect(security.textContent).toContain("advisory");
-    expect(security.textContent).toContain("task");
     // The selector holds the short id `sonnet`; the reader sees the catalog's
     // canonical name (README §3.3).
     expect(security.textContent).toContain("Sonnet");
@@ -380,16 +377,13 @@ describe("Validator seat screen", () => {
     ).not.toContain("Mandate");
   });
 
-  it("states what each authority and strategy decides", () => {
+  it("states what each authority decides", () => {
     const { editor } = editorFor({ contextOverrides: twoSeats });
     renderScreen(<ValidatorSeatScreen editor={editor} seatId="general" />);
 
     expect(
       screen.getByTestId("config-row-seat-authority").textContent,
     ).toContain("A blocking verdict reopens tasks and can fail the context.");
-    expect(
-      screen.getByTestId("config-row-seat-strategy").textContent,
-    ).toContain("One durable conversation per validator.");
   });
 
   it("edits one seat and carries its siblings through untouched", () => {
@@ -397,19 +391,17 @@ describe("Validator seat screen", () => {
     renderScreen(<ValidatorSeatScreen editor={editor} seatId="security" />);
 
     fireEvent.click(
-      within(screen.getByTestId("config-row-seat-strategy")).getByRole(
+      within(screen.getByTestId("config-row-seat-authority")).getByRole(
         "radio",
-        {
-          name: "task",
-        },
+        { name: "blocking" },
       ),
     );
 
     expect(cohortValue(onEdit)).toMatchObject({
       enabled: true,
       assignments: [
-        { id: "general", strategy: "conversation", authority: "blocking" },
-        { id: "security", strategy: "task", authority: "advisory" },
+        { id: "general", authority: "blocking" },
+        { id: "security", authority: "blocking" },
       ],
     });
     expect(setIntents(onEdit)[0]).toMatchObject({ granularity: "block" });
@@ -463,7 +455,6 @@ it("locks a started validator while retaining edits for an unstarted seat", () =
   });
   renderScreen(<ValidatorSeatScreen editor={editor} seatId="security" />);
   expect(screen.getByRole("radio", { name: "advisory" })).toBeDisabled();
-  expect(screen.getByRole("radio", { name: "task" })).toBeDisabled();
   expect(screen.getByLabelText("Agent profile")).toBeDisabled();
   cleanup();
   renderScreen(<ValidatorSeatScreen editor={editor} seatId="general" />);

@@ -33,7 +33,6 @@ const overviewEvents: GraphWorkflowExecutionEvent[] = [
         backend: "claude" as const,
         ref: "conv-val-1",
         lane: "context_validator" as const,
-        refKind: "conversation" as const,
         workflowConversationId: "conv-val-1",
       },
     },
@@ -74,19 +73,14 @@ const overviewEvents: GraphWorkflowExecutionEvent[] = [
         backend: "codex" as const,
         ref: "thread-abc123",
         lane: "context_validator" as const,
-        refKind: "backend" as const,
       },
       reviewArtifact: {
         backend: "codex" as const,
-        kind: "response" as const,
+        kind: "conversation" as const,
         ref: "thread-abc123",
-        response:
-          "Reviewed the POST /api/users endpoint. Found missing error handling for duplicate emails and insufficient input validation.",
         usage: {
-          inputTokens: 1240,
-          cachedInputTokens: 800,
-          outputTokens: 312,
           costUsd: null,
+          apiTurns: null,
         },
       },
     },
@@ -272,7 +266,6 @@ function makeExecution(
                 id: "general",
                 profile: { tier: "builtin", id: "general-reviewer" },
                 profileSnapshot: makeProfileSnapshot(),
-                strategy: "conversation",
                 authority: "blocking",
                 agent: {
                   backend: "claude",
@@ -704,21 +697,18 @@ const COHORT_ROSTER = [
     profileRef: { tier: "builtin" as const, id: "general-reviewer" },
     revision: 1,
     resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
-    strategy: "conversation" as const,
   },
   {
     assignmentId: "security",
     profileRef: { tier: "project" as const, id: "security-reviewer" },
     revision: 4,
     resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
-    strategy: "task" as const,
   },
   {
     assignmentId: "docs",
     profileRef: { tier: "global" as const, id: "docs-reviewer" },
     revision: 2,
     resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
-    strategy: "conversation" as const,
   },
 ];
 
@@ -745,7 +735,6 @@ function makeCohortRound(): GraphWorkflowValidationRound {
           ref: "conv-general",
           lane: "context_validator",
           assignmentId: "general",
-          refKind: "conversation",
           workflowConversationId: "conv-general",
         },
         reviewArtifact: null,
@@ -852,7 +841,6 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
           ref: "conv-general",
           lane: "context_validator",
           assignmentId: "general",
-          refKind: "conversation",
           workflowConversationId: "conv-general",
         },
         reviewArtifact: null,
@@ -879,19 +867,14 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
           ref: "thread-security",
           lane: "context_validator",
           assignmentId: "security",
-          refKind: "backend",
         },
         reviewArtifact: {
           backend: "codex",
-          kind: "response",
+          kind: "conversation",
           ref: "thread-security",
-          response:
-            "Reviewed the auth middleware and the request logger. The bearer token reaches the log sink unredacted.",
           usage: {
-            inputTokens: 2130,
-            cachedInputTokens: 1600,
-            outputTokens: 284,
             costUsd: null,
+            apiTurns: null,
           },
         },
         usage: null,
@@ -909,7 +892,6 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
           ref: "conv-docs",
           lane: "context_validator",
           assignmentId: "docs",
-          refKind: "conversation",
           workflowConversationId: "conv-docs",
         },
         reviewArtifact: null,
@@ -919,10 +901,8 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
   },
 };
 
-function agentForCohortStrategy(
-  strategy: "conversation" | "task",
-): GraphWorkflowAgentConfig {
-  if (strategy === "task") {
+function agentForCohortSeat(assignmentId: string): GraphWorkflowAgentConfig {
+  if (assignmentId === "security") {
     return {
       backend: "codex",
       modelSelection: {
@@ -972,9 +952,8 @@ function makeCohortExecution({
                 id: seat.profileRef.id,
                 revision: seat.revision,
               }),
-              strategy: seat.strategy,
               authority: "blocking" as const,
-              agent: agentForCohortStrategy(seat.strategy),
+              agent: agentForCohortSeat(seat.assignmentId),
             })),
           },
         },

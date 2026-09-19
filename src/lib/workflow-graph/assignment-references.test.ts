@@ -73,7 +73,6 @@ function validator(id: string, profile: AgentProfileRef): ValidatorAssignment {
   return {
     id,
     profile,
-    strategy: "conversation",
     authority: "advisory",
     agent: CLAUDE_AGENT,
   };

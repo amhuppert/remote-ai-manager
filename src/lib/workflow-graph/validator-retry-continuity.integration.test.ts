@@ -25,10 +25,7 @@ const BACKEND_REF: AgentSessionRef = {
   ref: "provider-session",
 };
 
-async function runRetryRound(
-  strategy: "conversation" | "task",
-  disposition: "retain" | "clear",
-) {
+async function runRetryRound(disposition: "retain" | "clear") {
   const fixture = createPersistenceFixture();
   const worktree = mkdtempSync(path.join(tmpdir(), "cc-validator-retry-"));
   try {
@@ -44,7 +41,6 @@ async function runRetryRound(
         seedAssignment({
           id: "reviewer",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy,
           authority: "blocking",
           agent: {
             backend: "claude",
@@ -67,7 +63,6 @@ async function runRetryRound(
       },
     };
     let createdConversations = 0;
-    let startedHandles = 0;
     const continuityService = createGraphLaneContinuity({
       laneService: createLaneService({
         store: createGraphLaneStore({
@@ -84,25 +79,8 @@ async function runRetryRound(
         promptCount: 1,
         backendRef: BACKEND_REF,
       }),
-      continuityAdapter: () => ({
-        backend: "claude",
-        async start() {
-          startedHandles += 1;
-          return { backend: "claude", ref: `initial-${startedHandles}` };
-        },
-        async validate() {
-          return { status: "valid" };
-        },
-        async resumeOrRecover() {
-          throw new Error("must not replace the continuation");
-        },
-        async fork() {
-          throw new Error("must not fork the continuation");
-        },
-      }),
     });
     const dispatched: string[] = [];
-    const resumeRefs: Array<AgentSessionRef | null> = [];
     const runner = createValidatorRunner({
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: async () => worktree,
@@ -114,7 +92,6 @@ async function runRetryRound(
       readValidatorConversationTelemetry: async () => null,
       executeWorkflowTaskRun: async (input) => {
         dispatched.push(input.binding.address.target.conversationId);
-        resumeRefs.push(input.resumeRef ?? null);
         return {
           kind: "error",
           error: "provider transport failure",
@@ -149,14 +126,7 @@ async function runRetryRound(
     const lane = storage.getActive(PROJECT, SESSION)?.laneStates[context.id]?.[
       "context_validator:reviewer"
     ];
-    return {
-      result,
-      dispatched,
-      resumeRefs,
-      createdConversations,
-      startedHandles,
-      lane,
-    };
+    return { result, dispatched, createdConversations, lane };
   } finally {
     fixture.close();
     rmSync(worktree, { recursive: true, force: true });
@@ -165,7 +135,7 @@ async function runRetryRound(
 
 describe("validator cohort retry continuity", () => {
   it("retries the first conversation instead of creating replacement conversations", async () => {
-    const run = await runRetryRound("conversation", "retain");
+    const run = await runRetryRound("retain");
     expect(run.result.kind).toBe("infra_exhausted");
     expect(run.dispatched).toEqual([
       "conversation-1",
@@ -176,22 +146,11 @@ describe("validator cohort retry continuity", () => {
     expect(run.lane?.workflowConversationId).toBe("conversation-1");
   });
 
-  it("resumes the backend handle persisted by the first task attempt", async () => {
-    const run = await runRetryRound("task", "retain");
+  it("stops dispatching a validator after its continuation is lost", async () => {
+    const run = await runRetryRound("clear");
     expect(run.result.kind).toBe("infra_exhausted");
-    expect(run.resumeRefs).toEqual([null, BACKEND_REF, BACKEND_REF]);
-    expect(run.startedHandles).toBe(1);
-    expect(run.lane?.sessionRef).toEqual(BACKEND_REF);
+    expect(run.dispatched).toHaveLength(1);
+    expect(run.lane?.staleSession).toBe(true);
+    expect(run.createdConversations).toBe(1);
   });
-
-  it.each(["conversation", "task"] as const)(
-    "stops dispatching a %s validator after its continuation is lost",
-    async (strategy) => {
-      const run = await runRetryRound(strategy, "clear");
-      expect(run.result.kind).toBe("infra_exhausted");
-      expect(run.dispatched).toHaveLength(1);
-      expect(run.lane?.staleSession).toBe(true);
-      expect(run.createdConversations + run.startedHandles).toBe(1);
-    },
-  );
 });

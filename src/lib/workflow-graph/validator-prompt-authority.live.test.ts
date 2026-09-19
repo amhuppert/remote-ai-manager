@@ -78,7 +78,10 @@ import {
   createValidatorRunner,
   type ValidatorRunResult,
 } from "./validator-runner";
-import { createWorkflowExecution } from "./test-fixtures";
+import {
+  createWorkflowExecution,
+  makeStubValidatorContinuityService,
+} from "./test-fixtures";
 import type { GraphWorkflowExecution } from "./schemas";
 import type {
   GraphWorkflowAgentConfig,
@@ -236,7 +239,6 @@ function seededValidator(
       },
       { ...(text.focus === undefined ? {} : { assignmentFocus: text.focus }) },
     ),
-    strategy: "task",
     authority: "blocking",
     agent,
   };
@@ -312,6 +314,7 @@ async function runAdversarialValidator(
   const context = contextFor(validator, execution);
 
   const runner = createValidatorRunner({
+    continuityService: makeStubValidatorContinuityService(),
     executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => fixture.worktreePath,
     resolveTimeoutMs: async () => RUN_TIMEOUT_MS,

@@ -418,7 +418,6 @@ function migrateSingletonValidator(
   const assignment =
     legacy.data.type === "codex"
       ? {
-          strategy: "task",
           agent: {
             backend: "codex",
             // Explicit values verbatim; only the absent ones materialize, and
@@ -431,7 +430,7 @@ function migrateSingletonValidator(
               codexDefaults.reasoningEffort,
           },
         }
-      : { strategy: "conversation", agent: legacy.data.agent };
+      : { agent: legacy.data.agent };
 
   return {
     enabled: legacy.data.enabled,

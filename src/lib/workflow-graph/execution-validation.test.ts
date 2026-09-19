@@ -345,7 +345,6 @@ describe("graph workflow execution validation service", () => {
           }),
           makeValidatorAssignment({
             id: "performance",
-            strategy: "task",
             authority: "blocking",
             agent: {
               backend: "codex",
@@ -400,11 +399,9 @@ describe("graph workflow execution validation service", () => {
         expect.objectContaining({
           id: "security",
           focus: "auth boundaries",
-          strategy: "conversation",
         }),
         expect.objectContaining({
           id: "performance",
-          strategy: "task",
           agent: {
             backend: "codex",
             modelSelection: {

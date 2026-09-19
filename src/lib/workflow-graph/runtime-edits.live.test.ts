@@ -648,7 +648,6 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
                         id: "general",
                         profile: { tier: "builtin", id: "general-reviewer" },
                         profileSnapshot: makeProfileSnapshot(),
-                        strategy: "conversation",
                         authority: "blocking",
                         agent: {
                           backend: "claude",
@@ -1401,7 +1400,6 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",
@@ -1501,7 +1499,6 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",
@@ -1539,7 +1536,6 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "conversation",
               authority: "blocking",
               agent: {
                 backend: "codex",

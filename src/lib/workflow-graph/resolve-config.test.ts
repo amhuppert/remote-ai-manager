@@ -49,7 +49,6 @@ const GLOBAL_VALIDATOR: ValidatorCohort = {
     {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "conversation",
       authority: "blocking",
       agent: {
         backend: "claude",
@@ -259,7 +258,6 @@ describe("resolveContext", () => {
         {
           id: "security",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "task",
           authority: "blocking",
           agent: {
             backend: "codex",
@@ -287,7 +285,6 @@ describe("resolveContext", () => {
         {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "conversation",
           authority: "blocking",
           agent: {
             backend: "claude",
@@ -1625,7 +1622,6 @@ describe("computeUsedBackends", () => {
   const CLAUDE_VALIDATOR: ValidatorAssignment = {
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
-    strategy: "conversation",
     authority: "blocking",
     agent: {
       backend: "claude",
@@ -1635,7 +1631,6 @@ describe("computeUsedBackends", () => {
   const CODEX_VALIDATOR: ValidatorAssignment = {
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
-    strategy: "task",
     authority: "blocking",
     agent: {
       backend: "codex",
@@ -1799,11 +1794,10 @@ describe("agent assignment cascade", () => {
     return { enabled, assignments };
   }
 
-  const CODEX_UNDER_CONVERSATION: ValidatorAssignment = {
-    id: "codex-conversational",
+  const CODEX_REVIEWER: ValidatorAssignment = {
+    id: "codex-reviewer",
     profile: { tier: "global", id: "deep-reviewer" },
     focus: "cross-module consistency",
-    strategy: "conversation",
     authority: "blocking",
     agent: {
       backend: "codex",
@@ -1814,10 +1808,9 @@ describe("agent assignment cascade", () => {
     },
   };
 
-  const CLAUDE_UNDER_TASK: ValidatorAssignment = {
-    id: "claude-task",
+  const CLAUDE_REVIEWER: ValidatorAssignment = {
+    id: "claude-reviewer",
     profile: { tier: "project", id: "spec-reviewer" },
-    strategy: "task",
     authority: "blocking",
     agent: {
       backend: "claude",
@@ -1842,36 +1835,32 @@ describe("agent assignment cascade", () => {
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
       {
-        contextValidator: cohort([CODEX_UNDER_CONVERSATION, CLAUDE_UNDER_TASK]),
+        contextValidator: cohort([CODEX_REVIEWER, CLAUDE_REVIEWER]),
       },
-      makeContext({ contextValidator: cohort([CLAUDE_UNDER_TASK]) }),
+      makeContext({ contextValidator: cohort([CLAUDE_REVIEWER]) }),
     );
 
-    expect(resolved.contextValidator.assignments).toEqual([CLAUDE_UNDER_TASK]);
+    expect(resolved.contextValidator.assignments).toEqual([CLAUDE_REVIEWER]);
   });
 
-  it("carries both strategies on both backends through the cascade unchanged", () => {
+  it("carries both backends through the cascade unchanged", () => {
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
       {},
       makeContext({
-        contextValidator: cohort([CODEX_UNDER_CONVERSATION, CLAUDE_UNDER_TASK]),
+        contextValidator: cohort([CODEX_REVIEWER, CLAUDE_REVIEWER]),
       }),
     );
 
     expect(
-      resolved.contextValidator.assignments.map((assignment) => [
-        assignment.strategy,
-        assignment.agent.backend,
-      ]),
-    ).toEqual([
-      ["conversation", "codex"],
-      ["task", "claude"],
-    ]);
+      resolved.contextValidator.assignments.map(
+        (assignment) => assignment.agent.backend,
+      ),
+    ).toEqual(["codex", "claude"]);
   });
 
   it("keeps a disabled cohort's assignments so re-enabling is lossless", () => {
-    const dormant = cohort([CODEX_UNDER_CONVERSATION], false);
+    const dormant = cohort([CODEX_REVIEWER], false);
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
       {},
@@ -1880,12 +1869,12 @@ describe("agent assignment cascade", () => {
 
     expect(resolved.contextValidator.enabled).toBe(false);
     expect(resolved.contextValidator.assignments).toEqual([
-      CODEX_UNDER_CONVERSATION,
+      CODEX_REVIEWER,
     ]);
   });
 
   it("inherits from the nearest declaring tier at every level", () => {
-    const workflowCohort = cohort([CLAUDE_UNDER_TASK]);
+    const workflowCohort = cohort([CLAUDE_REVIEWER]);
 
     // Context absent, workflow present → workflow wins.
     expect(
@@ -1914,7 +1903,6 @@ describe("agent assignment cascade", () => {
       {
         id: "general",
         profile: { tier: "builtin", id: "general-reviewer" },
-        strategy: "conversation",
         authority: "blocking",
         agent: {
           backend: "claude",
@@ -1937,8 +1925,8 @@ describe("agent assignment cascade", () => {
         makeContext({
           id: "ctx-1",
           contextValidator: cohort([
-            CODEX_UNDER_CONVERSATION,
-            CLAUDE_UNDER_TASK,
+            CODEX_REVIEWER,
+            CLAUDE_REVIEWER,
           ]),
         }),
       ],

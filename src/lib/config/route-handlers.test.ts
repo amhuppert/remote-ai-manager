@@ -323,7 +323,6 @@ describe("PUT /api/config", () => {
                 {
                   id: "org",
                   profile: { tier: "global", id: "never-created" },
-                  strategy: "conversation",
                   agent: {
                     backend: "claude",
                     modelSelection: {

@@ -668,7 +668,6 @@ export const ValidatorsClaudeAgent: Story = {
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "conversation",
               authority: "blocking",
               agent: {
                 backend: "claude",
@@ -699,7 +698,6 @@ export const ValidatorsCodexAgent: Story = {
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",
@@ -731,7 +729,6 @@ export const ValidatorsScriptPlusClaude: Story = {
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "conversation",
               authority: "blocking",
               agent: {
                 backend: "claude",
@@ -780,7 +777,6 @@ export const ValidatorsInheritedClaude: Story = {
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "conversation",
               authority: "blocking",
               agent: {
                 backend: "claude",
@@ -836,7 +832,6 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",
@@ -921,7 +916,6 @@ export const ApprovalGateWithValidators: Story = {
             {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",
@@ -1148,7 +1142,6 @@ export const ValidatorCohort: Story = {
             {
               id: "security",
               profile: { tier: "builtin", id: "security-reviewer" },
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",
@@ -1161,7 +1154,6 @@ export const ValidatorCohort: Story = {
             {
               id: "product",
               profile: { tier: "builtin", id: "general-reviewer" },
-              strategy: "conversation",
               authority: "advisory",
               agent: {
                 backend: "claude",
@@ -1446,7 +1438,6 @@ function InlineConfigurationStory({
           {
             id: "general",
             profile: { tier: "builtin", id: "general-reviewer" },
-            strategy: "task",
             authority: "blocking",
             agent: {
               backend: "codex",
@@ -1464,7 +1455,6 @@ function InlineConfigurationStory({
                     tier: "builtin" as const,
                     id: "security-reviewer",
                   },
-                  strategy: "task" as const,
                   authority: "blocking" as const,
                   agent: {
                     backend: "codex" as const,
@@ -1477,7 +1467,6 @@ function InlineConfigurationStory({
                 {
                   id: "product-and-accessibility",
                   profile: { tier: "builtin" as const, id: "general-reviewer" },
-                  strategy: "conversation" as const,
                   authority: "advisory" as const,
                   agent: {
                     backend: "claude" as const,

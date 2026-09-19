@@ -271,7 +271,6 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
                 id: "perf",
                 profile: { tier: "project", id: "perf-reviewer" },
                 focus: "Hot paths only",
-                strategy: "conversation",
                 agent: {
                   backend: "claude",
                   modelSelection: {

@@ -29,7 +29,6 @@ import {
 } from "@/lib/workflow-graph/execution-index";
 import { readConversationTelemetry } from "@/lib/workflow-graph/conversation-telemetry";
 import {
-  buildGraphWorkflowValidationReviewArtifact,
   type GraphWorkflowExecution,
   type GraphWorkflowLaneKind,
   type GraphWorkflowValidationConversationUsage,
@@ -62,7 +61,7 @@ import {
   adaptValidatorTaskResult,
   classifyGraphDispatchFailure,
 } from "./conversation-turn-result";
-import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
 import { type GraphExecutionContract } from "./execution-contract-port";
@@ -93,7 +92,6 @@ import type {
   ResolveValidatorCallInput,
   ResolvedValidatorCall,
   RecordLaneTurnOutcomeInput,
-  ValidatorExecutionStrategy,
 } from "@/lib/workflow-graph/lane-continuity";
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
@@ -293,8 +291,8 @@ export interface BuildContextValidationPromptInput {
   };
   /**
    * Effective ask-user-questions availability for this validator turn. It is
-   * enabled only for a conversation strategy whose backend declares native
-   * mid-turn asking (see `resolveValidatorAskUserQuestionsEnabled`). When true
+   * enabled only when the backend declares native mid-turn asking (see
+   * `resolveValidatorAskUserQuestionsEnabled`). When true
    * a short ask-protocol reminder section is added; otherwise none (Req
    * 8.1-8.4).
    */
@@ -309,16 +307,14 @@ export interface BuildContextValidationPromptInput {
 
 /**
  * The effective ask-user-questions flag for a context validator turn: the
- * context's resolved toggle AND a conversation strategy whose backend supports
- * native mid-turn asking (Req 8.1). Pure so the suppression rule is
- * unit-testable in isolation.
+ * context's resolved toggle AND a backend that supports native mid-turn asking
+ * (Req 8.1). Pure so the suppression rule is unit-testable in isolation.
  */
 export function resolveValidatorAskUserQuestionsEnabled(
   validator: ValidatorAssignment,
   context: GraphWorkflowCascadeContext,
 ): boolean {
   return (
-    validator.strategy === "conversation" &&
     context.askUserQuestions.enabled &&
     getBackendDescriptor(validator.agent.backend).conversation?.capabilities
       .nativeMidTurnAskUser === true
@@ -871,23 +867,23 @@ export interface ValidatorRunnerDeps {
    * unavailable-registry notice.
    */
   readRepoConfig?: typeof readRepoConfig;
-  continuityService?: ValidatorContinuityService;
+  /** Resolves each assignment's durable lane conversation before a turn. */
+  continuityService: ValidatorContinuityService;
   executionRepository?: ValidatorContinuityRepository;
   /**
    * Optional override for the conversation entrypoint that the validator
    * uses to drive each `task_run` turn. Every validator turn flows through
    * the conversation actor — there is no direct AgentCall facade call in
    * this module — so the actor handles transcript persistence, backend-native
-   * continuity (via context.backendRef), and structured-output dispatch in one
-   * place.
+   * continuity (via the conversation row), and structured-output dispatch in
+   * one place.
    */
   executeWorkflowTaskRun?: (
     input: ExecuteWorkflowTaskRunInput,
   ) => Promise<TaskRunResult>;
   /**
-   * Optional override for project-display-name resolution. Used only to
-   * populate the synthetic actor input for transient validator
-   * conversations — no state-store side effects depend on it.
+   * Optional override for project-display-name resolution, used to address
+   * the lane conversation the turn dispatches against.
    */
   getProjectDisplayName?: (projectPath: string) => string;
   /**
@@ -903,9 +899,8 @@ export interface ValidatorRunnerDeps {
   /**
    * Read the post-turn pending-question state of the validator's lane
    * conversation. Runs before verdict parsing so a question-ending turn yields
-   * `asked_user` instead of an unparseable verdict (Req 3.2). Returns null when
-   * the strategy has no CC conversation and therefore cannot produce
-   * `asked_user`. Defaults to reading the conversation via the state store.
+   * `asked_user` instead of an unparseable verdict (Req 3.2). Defaults to
+   * reading the conversation via the state store.
    */
   readLaneConversation?(
     projectPath: string,
@@ -914,9 +909,8 @@ export interface ValidatorRunnerDeps {
   ): Promise<LaneConversationPendingState | null>;
   /**
    * Read cost/turn telemetry for a validator CC conversation after its turn.
-   * Defaults to the transcript-backed reader. Conversation-strategy
-   * validators have no task-runner usage payload, so without this read every
-   * conversation-validator decision is unpriced in cost audits.
+   * Defaults to the transcript-backed reader; without it every validator
+   * decision is unpriced in cost audits.
    */
   readValidatorConversationTelemetry?(
     conversationId: string,
@@ -935,20 +929,6 @@ export interface ValidatorRunnerDeps {
 
 const validatorLogger = createLogger("graph-workflow-validator");
 
-/**
- * Resume reference for a reused validator lane, sourced entirely from durable
- * state. Task strategies resume through the lane's opaque backend ref;
- * conversation strategies resume through the CC conversation's persisted
- * state, so no ref is passed here. No in-memory ref cache exists — a process
- * restart resumes exactly what was persisted (bug §1.9.4).
- */
-function resolvedCallToResumeRef(
-  resolved: ResolvedValidatorCall,
-): AgentSessionRef | null {
-  if (resolved.sessionAction === "create") return null;
-  return resolved.strategy === "task" ? resolved.backendRef : null;
-}
-
 function buildConversationValidationSessionRef(
   backend: AgentBackendId,
   lane: GraphWorkflowLaneKind,
@@ -960,35 +940,7 @@ function buildConversationValidationSessionRef(
     ref: conversationId,
     lane,
     assignmentId,
-    refKind: "conversation",
     workflowConversationId: conversationId,
-  };
-}
-
-function buildTaskValidationSessionRef(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-  lane: GraphWorkflowLaneKind,
-  assignmentId: string,
-  backend: AgentBackendId,
-  continuationDisposition: TaskRunResult["continuationDisposition"],
-): GraphWorkflowValidationSessionRef | null {
-  if (continuationDisposition === "clear") return null;
-
-  const laneState =
-    execution.laneStates[contextId]?.[laneStateKey(lane, assignmentId)];
-  if (
-    laneState?.refKind !== "backend" ||
-    laneState.sessionRef?.backend !== backend
-  ) {
-    return null;
-  }
-
-  return {
-    ...laneState.sessionRef,
-    lane,
-    assignmentId,
-    refKind: "backend",
   };
 }
 
@@ -1005,13 +957,11 @@ function getContextTaskIds(index: ExecutionIndex, contextId: string): string[] {
 type ValidatorTaskResult = ReturnType<typeof adaptValidatorTaskResult>;
 
 interface ValidatorTaskInvocation {
-  strategy: "task" | "conversation";
   prompt: string;
   backend: AgentBackendId;
   workingDirectory: string;
   modelSelection: BackendModelSelection;
   timeoutMs: number;
-  resumeRef: AgentSessionRef | null | undefined;
   laneRef: { workflowId: string; laneId: GraphWorkflowLaneKind };
   projectPath: string;
   sessionName: string;
@@ -1037,51 +987,22 @@ interface ValidatorTaskInvocation {
   outputSchema: Record<string, unknown>;
 }
 
-/**
- * The dispatch id for a task-strategy validator turn, which has no CC
- * conversation of its own. The assignment segment is what keeps two cohort
- * members reviewing one context from sharing a dispatch anchor — and with it,
- * an abort registry entry.
- */
-function syntheticValidatorConversationId(
-  executionId: string,
-  contextId: string,
-  lane: GraphWorkflowLaneKind,
-  assignmentId: string,
-  backend: AgentBackendId,
-): string {
-  return `__validator__:${executionId}:${contextId}:${lane}:${assignmentId}:${backend}`;
-}
-
+/** The lane's durable conversation, addressed against the session worktree. */
 function buildValidatorBinding(
   invocation: ValidatorTaskInvocation,
   projectName: string,
 ): ConversationBinding {
-  // A validator lane runs against a session worktree, not the project root.
-  const address = {
-    projectPath: invocation.projectPath,
-    target: sessionConversationTarget(
-      projectName,
-      invocation.sessionName,
-      invocation.conversationId,
-    ),
-  };
-  if (invocation.strategy === "conversation")
-    return {
-      kind: "durable",
-      address,
-      worktreePath: invocation.workingDirectory,
-    };
-  // A synthetic validator lane has no persisted ConversationState record, so
-  // it runs the ephemeral persistence adapter — every durable side effect is
-  // inert.
   return {
-    kind: "ephemeral",
-    address,
+    kind: "durable",
+    address: {
+      projectPath: invocation.projectPath,
+      target: sessionConversationTarget(
+        projectName,
+        invocation.sessionName,
+        invocation.conversationId,
+      ),
+    },
     worktreePath: invocation.workingDirectory,
-    backend: invocation.backend,
-    role: null,
-    transcriptPath: null,
   };
 }
 
@@ -1094,7 +1015,6 @@ interface RunValidatorTurnInput {
   /** The cohort member running this turn — the lane's identity. */
   assignmentId: string;
   assignmentFingerprint: string;
-  strategy: ValidatorExecutionStrategy;
   backend: AgentBackendId;
   prompt: string;
   systemInstructions: string;
@@ -1191,9 +1111,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       },
       timeoutMs: invocation.timeoutMs,
       modelSelection: invocation.modelSelection,
-      ...(invocation.strategy === "task"
-        ? { resumeRef: invocation.resumeRef }
-        : {}),
       origin: {
         source: "workflow",
         workflow: {
@@ -1212,8 +1129,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
    * Validator"). Reads the lane conversation the turn dispatched against; if a
    * question batch is pending, returns an `asked_user` outcome so the caller
    * short-circuits before verdict parsing and the orchestrator maps it to the
-   * park path. Null → parse the verdict as normal. Strategies without a real CC
-   * conversation return null and therefore never produce `asked_user`.
+   * park path. Null → parse the verdict as normal.
    */
   async function checkValidatorPendingQuestion(
     projectPath: string,
@@ -1264,13 +1180,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       .then((mutation) => mutation.execution);
   }
 
-  function buildNoServiceMetadata(): ValidatorExecutionMetadata {
-    return {
-      sessionRef: null,
-      reviewArtifact: null,
-    };
-  }
-
   async function runValidatorTurn(
     input: RunValidatorTurnInput,
   ): Promise<ValidatorRunResult> {
@@ -1282,7 +1191,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       lane,
       assignmentId,
       assignmentFingerprint,
-      strategy,
       backend,
       prompt,
       systemInstructions,
@@ -1318,112 +1226,17 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       lane,
       assignmentId,
       engine: backend,
-      hasContinuityService: !!deps.continuityService,
     });
     validatorLogger.info("graph-workflow.validator.invoked", {
       executionId: execution.id,
       lane,
       assignmentId,
       engine: backend,
-      strategy,
     });
 
-    const taskConversationId = syntheticValidatorConversationId(
-      execution.id,
-      contextId,
-      lane,
-      assignmentId,
-      backend,
-    );
-    if (!deps.continuityService) {
-      const taskResult = await dispatchValidatorTurn({
-        strategy: "task",
-        prompt,
-        systemInstructions,
-        backend,
-        workingDirectory: worktreePath,
-        modelSelection,
-        timeoutMs,
-        resumeRef: undefined,
-        laneRef: { workflowId: execution.id, laneId: lane },
-        projectPath,
-        sessionName,
-        conversationId: taskConversationId,
-        fsWritePolicy,
-        outputSchema,
-      });
-
-      if (taskResult.transcript) {
-        execLogger?.writeValidatorTranscript(
-          artifactScope,
-          { lane, engine: backend },
-          taskResult.transcript,
-        );
-      }
-
-      const askedUser = await checkValidatorPendingQuestion(
-        projectPath,
-        sessionName,
-        execution.id,
-        contextId,
-        taskConversationId,
-        backend,
-      );
-      if (askedUser) {
-        return {
-          result: askedUser,
-          metadata: buildNoServiceMetadata(),
-        };
-      }
-
-      if (taskResult.error) {
-        const outcome: ValidatorOutcome = classifyGraphDispatchFailure(
-          taskResult,
-          backend,
-        );
-        execLogger?.validation(contextId, "validator.result_parsed", {
-          lane,
-          engine: backend,
-          parsePath: "runner_error" as const,
-          kind: outcome.kind,
-          issueCount: 0,
-          reopenTaskIds: [],
-        });
-        return {
-          result: outcome,
-          metadata: buildNoServiceMetadata(),
-        };
-      }
-
-      const text = taskResult.text ?? "";
-      const { result: parsed, parsePath } = parseValidatorResponse({
-        text,
-        engine: backend,
-        authority,
-        structuredOutput: taskResult.structuredOutput,
-        allowedTaskIds,
-        allowedCriterionIds,
-        requireIssueCriterionId,
-      });
-
-      execLogger?.validation(contextId, "validator.result_parsed", {
-        lane,
-        assignmentId,
-        engine: backend,
-        parsePath,
-        kind: parsed.kind,
-        ...validatorOutcomeLogFields(parsed),
-      });
-
-      return {
-        result: parsed,
-        metadata: buildNoServiceMetadata(),
-      };
-    }
-
     // A cohort keeps its candidate and assignment snapshot across retries,
-    // while each attempt must see the lane and continuation the last one saved.
-    // The fenced read leaves the round's frozen definition untouched.
+    // while each attempt must see the lane the last one saved. The fenced read
+    // leaves the round's frozen definition untouched.
     let continuityExecution = execution;
     if (deps.executionRepository) {
       const current = await deps.executionRepository.mutateActive(
@@ -1453,15 +1266,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       assignmentId,
       assignmentFingerprint,
       backend,
-      strategy,
       profileSnapshot,
-      taskContext: {
-        conversationId: taskConversationId,
-        modelSelection,
-        workingDirectory: worktreePath,
-        taskScope: null,
-      },
     });
+    const conversationId = resolved.conversationId;
 
     const laneKey = laneStateKey(lane, assignmentId);
     const resolvedLaneState =
@@ -1483,46 +1290,34 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       };
     }
 
-    const resumeRef = resolvedCallToResumeRef(resolved);
-    const dispatchConversationId =
-      resolved.strategy === "conversation"
-        ? resolved.conversationId
-        : taskConversationId;
     // Persist the lane binding BEFORE dispatch. Active cancellation
     // (pause/abort/halt/resume) collects abortable conversations from
-    // execution.laneStates; a lane resolved only in local state — every
-    // first conversation turn, and every task-strategy turn (whose
-    // synthetic dispatch id is never part of continuity state) — would otherwise be
-    // undiscoverable for the whole run, letting the turn burn to completion.
+    // execution.laneStates; a lane resolved only in local state — every first
+    // turn — would otherwise be undiscoverable for the whole run, letting the
+    // turn burn to completion.
     if (resolvedLaneState) {
-      const laneStateForDispatch = {
-        ...resolvedLaneState,
-        workflowConversationId: dispatchConversationId,
-      };
       await applyLaneStateUpdate(projectPath, sessionName, (latest) => ({
         ...latest,
         laneStates: {
           ...latest.laneStates,
           [contextId]: {
             ...latest.laneStates[contextId],
-            [laneKey]: laneStateForDispatch,
+            [laneKey]: resolvedLaneState,
           },
         },
       }));
     }
     const taskResult = await dispatchValidatorTurn({
-      strategy: resolved.strategy,
       prompt,
       systemInstructions,
       backend,
       workingDirectory: worktreePath,
       modelSelection,
       timeoutMs,
-      resumeRef,
       laneRef: { workflowId: execution.id, laneId: lane },
       projectPath,
       sessionName,
-      conversationId: dispatchConversationId,
+      conversationId,
       fsWritePolicy,
       outputSchema,
     });
@@ -1535,6 +1330,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       );
     }
 
+    const sessionRef = buildConversationValidationSessionRef(
+      backend,
+      lane,
+      assignmentId,
+      conversationId,
+    );
+
     // Pre-verdict park check: a pending question short-circuits before parsing
     // and before the continuity turn bookkeeping, so the asking turn never
     // reaches the inline validation-failure accounting (Req 3.2, 3.3).
@@ -1543,31 +1345,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       sessionName,
       execution.id,
       contextId,
-      dispatchConversationId,
+      conversationId,
       backend,
     );
     if (askedUser) {
       return {
         result: askedUser,
-        metadata: {
-          sessionRef:
-            resolved.strategy === "conversation"
-              ? buildConversationValidationSessionRef(
-                  backend,
-                  lane,
-                  assignmentId,
-                  resolved.conversationId,
-                )
-              : buildTaskValidationSessionRef(
-                  resolved.execution,
-                  contextId,
-                  lane,
-                  assignmentId,
-                  backend,
-                  taskResult.continuationDisposition,
-                ),
-          reviewArtifact: null,
-        },
+        metadata: { sessionRef, reviewArtifact: null },
       };
     }
 
@@ -1588,91 +1372,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           requireIssueCriterionId,
         });
 
-    if (resolved.strategy === "task") {
-      const updatedRef =
-        taskResult.backendRef?.backend === backend
-          ? (taskResult.backendRef?.ref ?? null)
-          : null;
-      const usage = taskResult.usage
-        ? {
-            inputTokens: taskResult.usage.inputTokens ?? 0,
-            cachedInputTokens: taskResult.usage.cachedInputTokens ?? 0,
-            outputTokens: taskResult.usage.outputTokens ?? 0,
-          }
-        : null;
-
-      const updatedExecution =
-        await deps.continuityService.recordLaneTurnOutcome({
-          execution: applyResolvedLaneState(execution),
-          projectPath,
-          sessionName,
-          contextId,
-          lane,
-          assignmentId,
-          outcome: {
-            backend,
-            lastTurnUsage: usage,
-            ...(updatedRef != null ? { ref: updatedRef } : {}),
-            continuationDisposition: taskResult.continuationDisposition,
-          },
-        });
-
-      const sessionRef = buildTaskValidationSessionRef(
-        updatedExecution,
-        contextId,
-        lane,
-        assignmentId,
-        backend,
-        taskResult.continuationDisposition,
-      );
-      const updatedLaneRef =
-        updatedExecution.laneStates[contextId]?.[laneKey]?.sessionRef;
-      const responseRef =
-        taskResult.backendRef?.backend === backend
-          ? taskResult.backendRef.ref
-          : updatedLaneRef?.backend === backend
-            ? (updatedLaneRef.ref ?? null)
-            : null;
-
-      const reviewArtifact = buildGraphWorkflowValidationReviewArtifact({
-        backend,
-        strategy,
-        ref: responseRef,
-        response: text,
-        usage: usage
-          ? { ...usage, costUsd: taskResult.usage?.costUsd ?? null }
-          : null,
-      });
-
-      execLogger?.validation(contextId, "validator.result_parsed", {
-        lane,
-        assignmentId,
-        engine: backend,
-        parsePath,
-        kind: parsed.kind,
-        ...validatorOutcomeLogFields(parsed),
-        sessionAction: resolved.sessionAction,
-        threadId: responseRef,
-      });
-      execLogger?.writeValidatorResponse(
-        artifactScope,
-        "context-validator.json",
-        {
-          raw: text,
-          parsed,
-          parsePath,
-        },
-      );
-
-      return {
-        result: parsed,
-        metadata: {
-          sessionRef,
-          reviewArtifact,
-        },
-      };
-    }
-
     await deps.continuityService.recordLaneTurnOutcome({
       execution: applyResolvedLaneState(execution),
       projectPath,
@@ -1689,23 +1388,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const backendSessionId = Object.is(taskResult.backendRef?.backend, backend)
       ? (taskResult.backendRef?.ref ?? null)
       : null;
-    const conversationSessionRef = buildConversationValidationSessionRef(
+    const reviewArtifact: GraphWorkflowValidationReviewArtifact = {
       backend,
-      lane,
-      assignmentId,
-      resolved.conversationId,
-    );
-    const conversationUsage = await readValidatorConversationTelemetry(
-      resolved.conversationId,
-    );
-    const reviewArtifact = buildGraphWorkflowValidationReviewArtifact({
-      backend,
-      strategy,
-      ref: resolved.conversationId,
-      response: text,
-      usage: null,
-      conversationUsage,
-    });
+      kind: "conversation",
+      ref: conversationId,
+      usage: await readValidatorConversationTelemetry(conversationId),
+    };
 
     execLogger?.validation(contextId, "validator.result_parsed", {
       lane,
@@ -1729,10 +1417,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
 
     return {
       result: parsed,
-      metadata: {
-        sessionRef: conversationSessionRef,
-        reviewArtifact,
-      },
+      metadata: { sessionRef, reviewArtifact },
     };
   }
 
@@ -1900,10 +1585,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     );
     const contextTasks = index.tasksByContext.get(input.context.id) ?? [];
     const execLogger = getExecutionLogger(input.execution.id);
-    // Dispatch reads the assignment directly: strategy and backend are
-    // independent axes, so all four combinations reach the right runner.
     const validatorPlan = {
-      strategy: input.validator.strategy,
       backend: input.validator.agent.backend,
       modelSelection: input.validator.agent.modelSelection,
     };
@@ -2036,7 +1718,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     execLogger?.validation(input.context.id, "context_validator.started", {
       assignmentId: input.validator.id,
       engine: validatorPlan.backend,
-      strategy: validatorPlan.strategy,
       promptLength: prompt.length,
       taskCount: contextTasks.length,
     });
@@ -2055,7 +1736,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         lane: "context_validator",
         assignmentId: input.validator.id,
         assignmentFingerprint: assignmentFingerprint(input.validator),
-        strategy: validatorPlan.strategy,
         backend: validatorPlan.backend,
         prompt,
         systemInstructions,
@@ -2093,7 +1773,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           error instanceof Error ? error : new Error(errorMessage),
           validatorPlan.backend,
         ),
-        metadata: buildNoServiceMetadata(),
+        metadata: { sessionRef: null, reviewArtifact: null },
       };
     }
   }

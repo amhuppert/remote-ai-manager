@@ -18,7 +18,10 @@ import {
   type AssignmentRoleLabel,
   type AssignmentTierLabel,
 } from "@/lib/workflow-graph/assignment-reference-labels";
-import { findLegacyAgentShapes } from "@/lib/workflow-graph/schema-cutover-guard";
+import {
+  findLegacyAgentShapes,
+  findRemovedValidatorStrategies,
+} from "@/lib/workflow-graph/schema-cutover-guard";
 import { lintPlanSemantics } from "./plan-lints";
 import {
   locatePlanIssuePath,
@@ -312,10 +315,14 @@ export function validateWorkflowPlan(
   options: WorkflowPlanValidationOptions = {},
 ): WorkflowPlanValidationResult {
   // Before the Zod parse: the strict assignment schema refuses a pre-cutover
-  // singleton with "unrecognized keys", which names neither the use site nor
-  // the shape to write. Running the located detector first turns that into the
+  // singleton, or an assignment still naming the retired validator strategy,
+  // with "unrecognized keys", which names neither the use site nor the shape
+  // to write. Running the located detectors first turns that into the
   // actionable refusal R3.2 requires — and it is a refusal, never a rewrite.
-  const legacyAgentShapes = findLegacyAgentShapes(rawBody);
+  const legacyAgentShapes = [
+    ...findLegacyAgentShapes(rawBody),
+    ...findRemovedValidatorStrategies(rawBody),
+  ];
   if (legacyAgentShapes.length > 0) {
     const rawDefinition = readField(rawBody, "definition");
     return {

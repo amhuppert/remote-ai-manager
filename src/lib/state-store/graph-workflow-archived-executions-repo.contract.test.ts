@@ -512,7 +512,6 @@ function maximalResolvedContext(): Record<string, unknown> {
           id: "security",
           profile: { tier: "project", id: "security-reviewer" },
           focus: "auth boundaries",
-          strategy: "conversation",
           authority: "blocking",
           agent: {
             backend: "claude",
@@ -820,7 +819,6 @@ function buildMaximalExecution(): unknown {
                 id: "security",
                 profile: { tier: "project", id: "security-reviewer" },
                 focus: "auth boundaries",
-                strategy: "conversation",
                 // Non-default authority: an authored blocking specialist must
                 // reload as blocking rather than decaying to the advisory
                 // default.
@@ -1169,7 +1167,6 @@ function buildMaximalExecution(): unknown {
               profileRef: { tier: "builtin", id: "general-reviewer" },
               revision: 3,
               resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
-              strategy: "conversation",
             },
           ],
           specialists: {
@@ -1227,7 +1224,6 @@ function buildMaximalExecution(): unknown {
                 ref: "conv-general-validator",
                 lane: "context_validator",
                 assignmentId: "general",
-                refKind: "conversation",
                 workflowConversationId: "conv-general-validator",
               },
               reviewArtifact: {
@@ -1482,50 +1478,32 @@ function buildMaximalExecution(): unknown {
     ],
     laneStates: {
       "ctx-1": {
-        "lane-key-1": {
-          lane: "implementer",
-          contextId: "ctx-1",
-          engine: "claude",
-          workflowConversationId: "wf-conv-1",
-          sessionRef: {
-            engine: "claude",
-            lane: "implementer",
-            conversationId: "conv-lane-1",
-          },
-          lastContextTokens: 12_000,
-          lastContextWindowMax: 200_000,
-          lastUsedAt: "2026-01-02T02:00:00Z",
-        },
         "context_validator:general": {
           backend: "claude",
-          refKind: "conversation",
           lane: "context_validator",
           contextId: "ctx-1",
           assignmentId: "general",
-          assignmentFingerprint: `sha256:${"d".repeat(64)}|conversation|true||claude|sonnet|medium`,
+          assignmentFingerprint: `sha256:${"d".repeat(64)}|true||claude|sonnet|medium`,
           workflowConversationId: "conv-general-validator",
-          sessionRef: {
-            backend: "claude",
-            ref: "conv-general-validator",
-          },
+          staleSession: false,
           metrics: {
             contextTokens: 42_000,
             contextWindowMax: 200_000,
+            lastTurnUsage: {
+              inputTokens: 1200,
+              cachedInputTokens: 400,
+              outputTokens: 300,
+            },
           },
           lastUsedAt: "2026-01-02T02:30:00Z",
         },
         "context_validator:security-reviewer": {
           backend: "codex",
-          refKind: "backend",
           lane: "context_validator",
           contextId: "ctx-1",
           assignmentId: "security-reviewer",
-          assignmentFingerprint: `sha256:${"e".repeat(64)}|task|true|60000|codex|gpt-5.4|high`,
+          assignmentFingerprint: `sha256:${"e".repeat(64)}|true|60000|codex|gpt-5.4|high`,
           workflowConversationId: "conv-security-validator",
-          sessionRef: {
-            backend: "codex",
-            ref: "thread-security-validator",
-          },
           metrics: {
             lastTurnUsage: {
               inputTokens: 1200,
@@ -1534,6 +1512,14 @@ function buildMaximalExecution(): unknown {
             },
           },
           lastUsedAt: "2026-01-02T02:45:00Z",
+        },
+        implementer: {
+          lane: "implementer",
+          contextId: "ctx-1",
+          backend: "claude",
+          workflowConversationId: "wf-conv-1",
+          metrics: { contextTokens: 12_000, contextWindowMax: 200_000 },
+          lastUsedAt: "2026-01-02T02:00:00Z",
         },
       },
     },
@@ -1854,8 +1840,8 @@ describe("graph-workflow-archived-executions-repo durability contract", () => {
       lane: "context_validator",
       contextId: "ctx-1",
       assignmentId: "security-reviewer",
-      assignmentFingerprint: `sha256:${"e".repeat(64)}|task|true|60000|codex|gpt-5.4|high`,
-      sessionRef: { backend: "codex", ref: "thread-security-validator" },
+      assignmentFingerprint: `sha256:${"e".repeat(64)}|true|60000|codex|gpt-5.4|high`,
+      workflowConversationId: "conv-security-validator",
     });
   });
 

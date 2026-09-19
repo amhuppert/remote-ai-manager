@@ -82,7 +82,6 @@ describe("ExecutionContextNode — output schema glyph (R7.7)", () => {
         {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "task",
           authority: "blocking",
           agent: {
             backend: "codex",
@@ -346,7 +345,6 @@ describe("ExecutionContextNode — card anatomy", () => {
                 parameters: { effort: "high" as const },
               },
             },
-            strategy: "conversation" as const,
             authority: "blocking" as const,
           },
           {
@@ -359,7 +357,6 @@ describe("ExecutionContextNode — card anatomy", () => {
                 parameters: { effort: "medium" as const },
               },
             },
-            strategy: "task" as const,
             authority: "advisory" as const,
           },
         ],
@@ -632,7 +629,6 @@ it("changes an existing validator's fast mode while keeping its model and level"
       {
         id: "general",
         profile: { tier: "builtin", id: "general-reviewer" },
-        strategy: "task",
         authority: "blocking",
         agent: {
           backend: "codex",

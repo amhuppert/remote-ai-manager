@@ -196,8 +196,8 @@ function upgradeImplementer(value: unknown): unknown {
 
 /**
  * The pre-cutover resolved validator was a provider-named discriminated union
- * (`type: 'claude' | 'codex'`) or `null` for "validation off". The strategy
- * each provider variant implied becomes the assignment's explicit strategy.
+ * (`type: 'claude' | 'codex'`) or `null` for "validation off". Each provider
+ * variant becomes one assignment carrying that provider's runtime.
  * `undefined` means "not that shape", exactly as above — note that the legacy
  * `null` VALUE is a shape the floor recognizes, not a rejection.
  */
@@ -210,7 +210,6 @@ function upgradeContextValidator(value: unknown): unknown {
   const assignment =
     legacy.data.type === "codex"
       ? {
-          strategy: "task",
           agent: upgradeAgent({
             backend: "codex",
             model: legacy.data.codex.model ?? LEGACY_CODEX_VALIDATOR_MODEL,
@@ -219,10 +218,7 @@ function upgradeContextValidator(value: unknown): unknown {
               LEGACY_CODEX_VALIDATOR_EFFORT,
           }),
         }
-      : {
-          strategy: "conversation",
-          agent: upgradeAgent(legacy.data.agent),
-        };
+      : { agent: upgradeAgent(legacy.data.agent) };
 
   return {
     enabled: legacy.data.enabled,

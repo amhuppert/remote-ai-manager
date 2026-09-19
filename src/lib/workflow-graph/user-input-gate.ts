@@ -298,9 +298,7 @@ export interface UserInputGateService {
 
 /**
  * Find the (contextId, laneKey) that owns a conversation by reverse-looking-up
- * the engine-uniform `workflowConversationId` field across every lane state. A
- * lane that never set the field (a task-strategy validator, which has no ask
- * transport at all) is skipped, so it never resolves.
+ * the engine-uniform `workflowConversationId` field across every lane state.
  */
 function findLaneByConversationId(
   execution: GraphWorkflowExecution,

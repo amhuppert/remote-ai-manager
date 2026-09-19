@@ -115,7 +115,6 @@ function seatVerdict(
       backend: "claude",
       ref: "conv_val_security",
       lane: "context_validator",
-      refKind: "conversation",
       workflowConversationId: "conv_val_security",
     },
     reviewArtifact: null,
@@ -161,7 +160,6 @@ function implementerLane(
         lane: "implementer",
         contextId: CONTEXT_ID,
         backend: "claude",
-        refKind: "conversation",
         workflowConversationId: conversationId,
         metrics: {},
         lastUsedAt: "2026-03-27T11:09:00.000Z",
@@ -401,14 +399,12 @@ describe("History tab — validation rounds card states", () => {
             profileRef: { tier: "project", id: "security-reviewer" },
             revision: 1,
             resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
-            strategy: "conversation",
           },
           {
             assignmentId: "performance",
             profileRef: { tier: "project", id: "performance-reviewer" },
             revision: 1,
             resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
-            strategy: "conversation",
           },
         ],
         specialists: {
@@ -466,14 +462,11 @@ describe("History tab — validation rounds card states", () => {
       seatVerdict({
         reviewArtifact: {
           backend: "claude",
-          kind: "response",
+          kind: "conversation",
           ref: "artifact/security-round-1",
-          response: "the timeout path skips the audit record",
           usage: {
-            inputTokens: 900,
-            cachedInputTokens: 0,
-            outputTokens: 120,
             costUsd: 0.42,
+            apiTurns: 3,
           },
         },
       }),
@@ -501,10 +494,6 @@ describe("History tab — validation rounds card states", () => {
     const footer = within(row).getByTestId("validation-round-footer");
     expect(footer).toHaveTextContent("$0.42");
     expect(footer).toHaveTextContent("artifact/security-round-1");
-    // Still closed: the footer is not the artifacts.
-    expect(row).not.toHaveTextContent(
-      "the timeout path skips the audit record",
-    );
   });
 
   // The aggregate carries only the lanes that reported a verdict, so a seat the
@@ -614,7 +603,6 @@ describe("History tab — validation rounds card states", () => {
             profileRef: { tier: "project", id: "security-reviewer" },
             revision: 1,
             resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
-            strategy: "conversation",
           },
         ],
         specialists: {},

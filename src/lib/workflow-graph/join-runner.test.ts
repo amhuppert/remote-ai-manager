@@ -1543,12 +1543,7 @@ describe("join-runner", () => {
           lane: "implementer",
           contextId: "context-source",
           backend: "claude",
-          refKind: "conversation",
           workflowConversationId: "conv-source-implementer",
-          sessionRef: {
-            backend: "claude",
-            ref: "conv-source-implementer",
-          },
           metrics: {},
           lastUsedAt: t0,
         },

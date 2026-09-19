@@ -69,6 +69,7 @@ import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
   makeProfileSnapshot,
+  makeStubValidatorContinuityService,
 } from "@/lib/workflow-graph/test-fixtures";
 import { runCircuitBreakerGate } from "./circuit-breaker-gate";
 import { runStructuredOutputGate } from "./structured-output-gate";
@@ -360,7 +361,6 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         backend: "claude",
         ref: "claude-conv-1",
         lane: "context_validator",
-        refKind: "conversation",
         workflowConversationId: "claude-conv-1",
       },
     });
@@ -385,7 +385,6 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         backend: "claude",
         ref: "claude-conv-1",
         lane: "context_validator",
-        refKind: "conversation",
         workflowConversationId: "claude-conv-1",
       },
     });
@@ -1038,6 +1037,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       });
 
       const runner = createValidatorRunner({
+        continuityService: makeStubValidatorContinuityService(),
         executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: async () => workingDir,
         resolveTimeoutMs: async () => 60_000,
@@ -1060,7 +1060,6 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
                         id: "general",
                         profile: { tier: "builtin", id: "general-reviewer" },
                         profileSnapshot: makeProfileSnapshot(),
-                        strategy: "conversation",
                         authority: "blocking",
                         agent: {
                           backend: "claude",

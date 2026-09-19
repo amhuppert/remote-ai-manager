@@ -39,6 +39,7 @@ import {
   graphWorkflowValidationAdvisorySchema,
   graphWorkflowValidationCandidateSchema,
   graphWorkflowValidationIncidentStageSchema,
+  graphWorkflowValidationConversationUsageSchema,
   graphWorkflowValidationReviewArtifactSchema,
   graphWorkflowValidationSessionRefSchema,
   type GraphWorkflowValidationReviewArtifact,
@@ -260,23 +261,13 @@ export type GraphWorkflowTaskStatusEvent = z.infer<
 >;
 
 /**
- * One lane's spend, hoisted out of its review artifact.
- *
- * The artifact's own usage is shaped by HOW the lane ran — a conversation
- * reports turns and cost, a task run reports tokens — so a cost audit over a
- * cohort would otherwise branch per entry before it could add anything up. One
- * shape with absent figures nulled makes the sum a projection instead.
+ * One lane's spend, hoisted out of its review artifact so a cost audit over a
+ * cohort adds entries up without opening each artifact. Transcript-derived:
+ * cost and API turns are what a conversation reports; token counts are not
+ * projected.
  */
-const graphWorkflowValidationSpecialistUsageSchema = z
-  .object({
-    inputTokens: z.number().int().min(0).nullable().default(null),
-    cachedInputTokens: z.number().int().min(0).nullable().default(null),
-    outputTokens: z.number().int().min(0).nullable().default(null),
-    costUsd: z.number().nullable().default(null),
-    /** Conversation-strategy validators only; token counts are not projected. */
-    apiTurns: z.number().int().min(0).nullable().default(null),
-  })
-  .strict();
+const graphWorkflowValidationSpecialistUsageSchema =
+  graphWorkflowValidationConversationUsageSchema.strict();
 export type GraphWorkflowValidationSpecialistUsage = z.infer<
   typeof graphWorkflowValidationSpecialistUsageSchema
 >;
@@ -339,22 +330,7 @@ export function deriveGraphWorkflowValidationSpecialistUsage(
   artifact: GraphWorkflowValidationReviewArtifact | null,
 ): GraphWorkflowValidationSpecialistUsage | null {
   if (artifact === null || artifact.usage === null) return null;
-  if (artifact.kind === "conversation") {
-    return {
-      inputTokens: null,
-      cachedInputTokens: null,
-      outputTokens: null,
-      costUsd: artifact.usage.costUsd,
-      apiTurns: artifact.usage.apiTurns,
-    };
-  }
-  return {
-    inputTokens: artifact.usage.inputTokens,
-    cachedInputTokens: artifact.usage.cachedInputTokens,
-    outputTokens: artifact.usage.outputTokens,
-    costUsd: artifact.usage.costUsd,
-    apiTurns: null,
-  };
+  return { costUsd: artifact.usage.costUsd, apiTurns: artifact.usage.apiTurns };
 }
 
 export const graphWorkflowValidationResultEventSchema = z.object({

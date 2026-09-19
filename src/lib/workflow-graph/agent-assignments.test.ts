@@ -26,7 +26,6 @@ function reviewer(overrides: Record<string, unknown> = {}) {
   return {
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
-    strategy: "conversation",
     agent: CLAUDE_AGENT,
     ...overrides,
   };
@@ -170,32 +169,10 @@ describe("agentAssignmentSchema", () => {
 });
 
 describe("validatorAssignmentSchema", () => {
-  it("carries strategy independently of the backend", () => {
-    const codexUnderConversation = validatorAssignmentSchema.parse(
-      reviewer({ agent: CODEX_AGENT, strategy: "conversation" }),
-    );
-    expect(codexUnderConversation.strategy).toBe("conversation");
-    expect(codexUnderConversation.agent.backend).toBe("codex");
-
-    const claudeUnderTask = validatorAssignmentSchema.parse(
-      reviewer({ strategy: "task" }),
-    );
-    expect(claudeUnderTask.strategy).toBe("task");
-    expect(claudeUnderTask.agent.backend).toBe("claude");
-  });
-
-  it("refuses a strategy outside the two execution strategies", () => {
-    const result = validatorAssignmentSchema.safeParse(
-      reviewer({ strategy: "script" }),
-    );
-    expect(result.success).toBe(false);
-  });
-
   it("defaults the built-in acceptance-criteria validator to blocking", () => {
     const parsed = validatorAssignmentSchema.parse({
       id: "acceptance-criteria",
       profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "conversation",
       agent: CLAUDE_AGENT,
     });
     expect(parsed.authority).toBe("blocking");
@@ -210,7 +187,6 @@ describe("validatorAssignmentSchema", () => {
       const parsed = validatorAssignmentSchema.parse({
         id: "specialist",
         profile,
-        strategy: "conversation",
         agent: CLAUDE_AGENT,
       });
       expect(parsed.authority, `${profile.tier}:${profile.id}`).toBe(
@@ -305,7 +281,6 @@ describe("validatorCohortSchema", () => {
     expect(parsed.assignments[0]).toMatchObject({
       id: "security",
       focus: "auth",
-      strategy: "conversation",
       agent: CODEX_AGENT,
     });
   });

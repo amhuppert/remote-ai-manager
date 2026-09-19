@@ -37,7 +37,6 @@ import type {
 } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
-  GraphWorkflowValidationReviewArtifact,
   GraphWorkflowValidationRound,
   GraphWorkflowValidationSessionRef,
 } from "@/lib/workflow-graph/schemas";
@@ -88,30 +87,7 @@ function conversationValidationRef(
     backend: "claude",
     ref,
     lane: "context_validator",
-    refKind: "conversation",
     workflowConversationId: ref,
-  };
-}
-
-function responseValidationRef(ref: string): GraphWorkflowValidationSessionRef {
-  return {
-    backend: "codex",
-    ref,
-    lane: "context_validator",
-    refKind: "backend",
-  };
-}
-
-function responseReviewArtifact(
-  ref: string,
-  response: string,
-): GraphWorkflowValidationReviewArtifact {
-  return {
-    backend: "codex",
-    kind: "response",
-    ref,
-    response,
-    usage: null,
   };
 }
 
@@ -172,7 +148,6 @@ describe("ContextDetail — ValidationCard markdown formatting", () => {
           backend: "claude",
           ref: "conv-canonical",
           lane: "context_validator",
-          refKind: "conversation",
           workflowConversationId: "conv-canonical",
         },
       }),
@@ -229,7 +204,6 @@ describe("ContextDetail — View Transcript button", () => {
           backend: TESTFAKE_BACKEND_ID,
           ref: "testfake-native-ref",
           lane: "context_validator",
-          refKind: "conversation",
           workflowConversationId: "workflow-conversation-1",
         },
       }),
@@ -273,138 +247,6 @@ describe("ContextDetail — View Transcript button", () => {
     expect(
       screen.queryByRole("button", { name: /View Transcript/i }),
     ).not.toBeInTheDocument();
-  });
-});
-
-describe("ContextDetail — Codex review artifact", () => {
-  it("renders a response artifact under its actual backend identity", () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        reviewArtifact: {
-          backend: TESTFAKE_BACKEND_ID,
-          kind: "response",
-          ref: "testfake-review-ref",
-          response: "Testfake review response",
-          usage: null,
-        },
-      }),
-    ]);
-
-    renderContextHistory(
-      <ContextDetail
-        execution={execution}
-        events={events}
-        contextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    expect(screen.getByText("Testfake Review")).toBeInTheDocument();
-    expect(screen.getByText("testfake-review-ref")).toBeInTheDocument();
-  });
-
-  it("parses JSON codex response and renders summary as markdown instead of raw JSON", async () => {
-    const jsonResponse = JSON.stringify({
-      pass: true,
-      summary: "Validated with `bunx vitest run` command. All 23 tests passed.",
-      issues: [],
-    });
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        reviewArtifact: responseReviewArtifact("thread-json-1", jsonResponse),
-        sessionRef: responseValidationRef("thread-json-1"),
-      }),
-    ]);
-
-    renderContextHistory(
-      <ContextDetail
-        execution={execution}
-        events={events}
-        contextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    // Summary text should be rendered (markdown strips backticks into <code>);
-    // the canonical adapter loads its renderer behind one dynamic import.
-    const codeEl = await screen.findByText("bunx vitest run", undefined, {
-      timeout: 15000,
-    });
-    expect(codeEl.closest("code")).toBeTruthy();
-    expect(screen.getByText(/All 23 tests passed/)).toBeInTheDocument();
-    // Raw JSON must NOT appear
-    expect(screen.queryByText(jsonResponse)).not.toBeInTheDocument();
-  });
-
-  it("renders issues from parsed codex response JSON", async () => {
-    const jsonResponse = JSON.stringify({
-      pass: false,
-      summary: "Found issues in implementation",
-      issues: [
-        {
-          title: "Missing test coverage",
-          description: "The `handleSubmit` function has no unit tests",
-        },
-        {
-          title: "Type error",
-          description: "Parameter type mismatch in `processData`",
-        },
-      ],
-    });
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        reviewArtifact: responseReviewArtifact("thread-json-2", jsonResponse),
-        sessionRef: responseValidationRef("thread-json-2"),
-      }),
-    ]);
-
-    renderContextHistory(
-      <ContextDetail
-        execution={execution}
-        events={events}
-        contextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    // Issue titles rendered
-    expect(screen.getByText("Missing test coverage")).toBeInTheDocument();
-    expect(screen.getByText("Type error")).toBeInTheDocument();
-    // Issue descriptions rendered with markdown (backtick code) once the
-    // canonical adapter's renderer resolves behind its dynamic import.
-    const codeEl = await screen.findByText("handleSubmit", undefined, {
-      timeout: 15000,
-    });
-    expect(codeEl.closest("code")).toBeTruthy();
-    expect(screen.getByText("processData").closest("code")).toBeTruthy();
-  });
-
-  it("renders non-JSON codex response as markdown", async () => {
-    const { execution, events } = makeExecutionWithHistory([
-      makeValidationEvent({
-        reviewArtifact: responseReviewArtifact(
-          "thread-plain",
-          "All tests pass with `vitest` runner.",
-        ),
-        sessionRef: responseValidationRef("thread-plain"),
-      }),
-    ]);
-
-    renderContextHistory(
-      <ContextDetail
-        execution={execution}
-        events={events}
-        contextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    // Inline code from backticks should be rendered as <code> once the
-    // canonical adapter's renderer resolves behind its dynamic import.
-    const codeEl = await screen.findByText("vitest", undefined, {
-      timeout: 15000,
-    });
-    expect(codeEl.closest("code")).toBeTruthy();
   });
 });
 
@@ -453,7 +295,6 @@ describe("ContextDetail — continued session badge", () => {
       backend: "claude",
       ref,
       lane: "context_validator",
-      refKind: "conversation",
       workflowConversationId: "conv-shared",
     });
     const history = [
@@ -1623,7 +1464,6 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
         makeValidatorAssignment({
           id: "security",
           profile: { tier: "project", id: "security-reviewer" },
-          strategy: "task",
           agent: {
             backend: "codex",
             modelSelection: {
@@ -1658,14 +1498,12 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
           profileRef: { tier: "builtin", id: "general-reviewer" },
           revision: 1,
           resolvedInstructionHash: GENERAL_HASH,
-          strategy: "conversation",
         },
         {
           assignmentId: "security",
           profileRef: { tier: "project", id: "security-reviewer" },
           revision: 4,
           resolvedInstructionHash: SECURITY_HASH,
-          strategy: "task",
         },
       ],
       specialists: {
@@ -1681,7 +1519,6 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
             ref: "conv-general",
             lane: "context_validator",
             assignmentId: "general",
-            refKind: "conversation",
             workflowConversationId: "conv-general",
           },
           reviewArtifact: null,
@@ -1937,125 +1774,6 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
     );
   });
 
-  it("groups per-assignment verdicts and artifacts under one aggregate round result", async () => {
-    const { execution } = makeExecutionWithHistory([]);
-    void execution;
-    const events: GraphWorkflowExecutionEvent[] = [
-      {
-        occurredAt: "2026-03-27T10:10:00.000Z",
-        preReset: false,
-        event: makeValidationEvent({
-          pass: false,
-          summary: "The cohort rejected the work",
-          reopenTaskIds: ["task-plan-1"],
-          roundSeq: 2,
-          sessionRef: null,
-          reviewArtifact: null,
-          specialists: [
-            {
-              assignmentId: "general",
-              profile: {
-                tier: "builtin",
-                id: "general-reviewer",
-                revision: 1,
-              },
-              resolvedInstructionHash: GENERAL_HASH,
-              advisories: [],
-              pass: true,
-              summary: "Implementation matches the criteria.",
-              issues: [],
-              sessionRef: {
-                backend: "claude",
-                ref: "conv-general",
-                lane: "context_validator",
-                assignmentId: "general",
-                refKind: "conversation",
-                workflowConversationId: "conv-general",
-              },
-              reviewArtifact: null,
-              usage: null,
-            },
-            {
-              assignmentId: "security",
-              profile: {
-                tier: "project",
-                id: "security-reviewer",
-                revision: 4,
-              },
-              resolvedInstructionHash: SECURITY_HASH,
-              advisories: [],
-              pass: false,
-              summary: "Secret is logged in plaintext.",
-              issues: [
-                {
-                  taskId: "task-plan-1",
-                  title: "Plaintext secret",
-                  description: "`token` is written to the log line.",
-                },
-              ],
-              sessionRef: responseValidationRef("thread-security"),
-              reviewArtifact: responseReviewArtifact(
-                "thread-security",
-                "Reviewed the auth path.",
-              ),
-              usage: null,
-            },
-          ],
-        }),
-      },
-    ];
-
-    render(
-      <ContextDetail
-        execution={cohortExecution(makeRound())}
-        events={events}
-        contextId="context-plan"
-        {...baseHandlers}
-      />,
-    );
-
-    selectDetailTab("History");
-    openRoundArtifacts(2);
-
-    // ONE aggregate card, carrying the deterministic round verdict.
-    const aggregates = screen.getAllByTestId("validation-aggregate");
-    expect(aggregates).toHaveLength(1);
-    const aggregate = aggregates[0]!;
-    expect(aggregate).toHaveTextContent("The cohort rejected the work");
-    expect(aggregate).toHaveTextContent("Round 2");
-
-    // …with one card per assignment nested inside it.
-    const specialists = within(aggregate).getAllByTestId(
-      "validation-specialist",
-    );
-    expect(specialists.map((card) => card.dataset.assignmentId)).toEqual([
-      "general",
-      "security",
-    ]);
-    expect(
-      within(specialists[0]!).getByTestId("validation-specialist-profile"),
-    ).toHaveTextContent("builtin:general-reviewer@1");
-    expect(specialists[0]!.dataset.verdict).toBe("pass");
-    expect(specialists[1]!.dataset.verdict).toBe("fail");
-    expect(specialists[1]!).toHaveTextContent("Secret is logged in plaintext.");
-    expect(specialists[1]!).toHaveTextContent("Issues (1)");
-    // The failing member's own artifact renders under its own card. The
-    // canonical Markdown adapter is loaded lazily, so the card is re-queried on
-    // each poll rather than held across the mount.
-    await waitFor(
-      () => {
-        const securityCard = screen.getAllByTestId("validation-specialist")[1];
-        expect(securityCard).toBeDefined();
-        expect(
-          within(securityCard!).getByText("Reviewed the auth path.", {
-            exact: false,
-          }),
-        ).toBeTruthy();
-      },
-      { timeout: 15000 },
-    );
-  });
-
   it("routes each specialist's transcript link to that assignment's lane", () => {
     const onViewConversation = vi.fn();
     const events: GraphWorkflowExecutionEvent[] = [
@@ -2086,7 +1804,6 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
                 ref: "conv-security",
                 lane: "context_validator",
                 assignmentId: "security",
-                refKind: "conversation",
                 workflowConversationId: "conv-security",
               },
               reviewArtifact: null,
@@ -2185,7 +1902,6 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
               ref: "conv-security",
               lane: "context_validator",
               assignmentId: "security",
-              refKind: "conversation",
               workflowConversationId: "conv-security",
             },
             reviewArtifact: null,
@@ -2328,6 +2044,115 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
     expect(issues).toHaveTextContent("Issues (1)");
     expect(issues).not.toHaveTextContent("Unattributed");
     expect(within(issues).getByText("Missing coverage")).toBeInTheDocument();
+  });
+
+  it("groups per-assignment verdicts and artifacts under one aggregate round result", () => {
+    const events: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-03-27T10:10:00.000Z",
+        preReset: false,
+        event: makeValidationEvent({
+          pass: false,
+          summary: "The cohort rejected the work",
+          reopenTaskIds: ["task-plan-1"],
+          roundSeq: 2,
+          sessionRef: null,
+          reviewArtifact: null,
+          specialists: [
+            {
+              assignmentId: "general",
+              profile: {
+                tier: "builtin",
+                id: "general-reviewer",
+                revision: 1,
+              },
+              resolvedInstructionHash: GENERAL_HASH,
+              advisories: [],
+              pass: true,
+              summary: "Implementation matches the criteria.",
+              issues: [],
+              sessionRef: {
+                backend: "claude",
+                ref: "conv-general",
+                lane: "context_validator",
+                assignmentId: "general",
+                workflowConversationId: "conv-general",
+              },
+              reviewArtifact: null,
+              usage: null,
+            },
+            {
+              assignmentId: "security",
+              profile: {
+                tier: "project",
+                id: "security-reviewer",
+                revision: 4,
+              },
+              resolvedInstructionHash: SECURITY_HASH,
+              advisories: [],
+              pass: false,
+              summary: "Secret is logged in plaintext.",
+              issues: [
+                {
+                  taskId: "task-plan-1",
+                  title: "Plaintext secret",
+                  description: "`token` is written to the log line.",
+                },
+              ],
+              sessionRef: {
+                backend: "codex",
+                ref: "conv-security",
+                lane: "context_validator",
+                assignmentId: "security",
+                workflowConversationId: "conv-security",
+              },
+              reviewArtifact: {
+                backend: "codex",
+                kind: "conversation",
+                ref: "conv-security",
+                usage: { costUsd: 0.2, apiTurns: 3 },
+              },
+              usage: { costUsd: 0.2, apiTurns: 3 },
+            },
+          ],
+        }),
+      },
+    ];
+
+    render(
+      <ContextDetail
+        execution={cohortExecution(makeRound())}
+        events={events}
+        contextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+    openRoundArtifacts(2);
+
+    // ONE aggregate card, carrying the deterministic round verdict.
+    const aggregates = screen.getAllByTestId("validation-aggregate");
+    expect(aggregates).toHaveLength(1);
+    const aggregate = aggregates[0]!;
+    expect(aggregate).toHaveTextContent("The cohort rejected the work");
+    expect(aggregate).toHaveTextContent("Round 2");
+
+    // …with one card per assignment nested inside it.
+    const specialists = within(aggregate).getAllByTestId(
+      "validation-specialist",
+    );
+    expect(specialists.map((card) => card.dataset.assignmentId)).toEqual([
+      "general",
+      "security",
+    ]);
+    expect(
+      within(specialists[0]!).getByTestId("validation-specialist-profile"),
+    ).toHaveTextContent("builtin:general-reviewer@1");
+    expect(specialists[0]!.dataset.verdict).toBe("pass");
+    expect(specialists[1]!.dataset.verdict).toBe("fail");
+    expect(specialists[1]!).toHaveTextContent("Secret is logged in plaintext.");
+    expect(specialists[1]!).toHaveTextContent("Issues (1)");
   });
 });
 
@@ -2581,14 +2406,12 @@ describe("ContextDetail — advisories in the round history (R9.2/R9.3/R9.5)", (
                 profileRef: { tier: "builtin", id: "general-reviewer" },
                 revision: 1,
                 resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
-                strategy: "conversation",
               },
               {
                 assignmentId: "security",
                 profileRef: { tier: "project", id: "security-reviewer" },
                 revision: 4,
                 resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
-                strategy: "conversation",
               },
             ],
             specialists: {
@@ -2834,7 +2657,6 @@ describe("ContextDetail — an origin link reaches the originating round (R9.4)"
           profileRef: { tier: "project", id: "security-reviewer" },
           revision: 4,
           resolvedInstructionHash: SECURITY_HASH,
-          strategy: "conversation",
         },
       ],
       specialists: {

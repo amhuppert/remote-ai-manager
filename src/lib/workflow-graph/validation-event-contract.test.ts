@@ -89,7 +89,6 @@ function sessionRef(assignmentId: string) {
     ref: `conversation-${assignmentId}`,
     lane: "context_validator" as const,
     assignmentId,
-    refKind: "conversation" as const,
   };
 }
 
@@ -271,13 +270,7 @@ describe("aggregate validation-result event stays additive (R12.2)", () => {
     );
     expect(security?.sessionRef).toEqual(sessionRef("security"));
     expect(security?.reviewArtifact).toEqual(reviewArtifact("security"));
-    expect(security?.usage).toEqual({
-      inputTokens: null,
-      cachedInputTokens: null,
-      outputTokens: null,
-      costUsd: 0.25,
-      apiTurns: 3,
-    });
+    expect(security?.usage).toEqual({ costUsd: 0.25, apiTurns: 3 });
     expect(security?.issues.map((issue) => issue.title)).toEqual([
       "security on task-plan-1",
     ]);
@@ -380,13 +373,7 @@ describe("a resumed round keeps its retained specialists' provenance (R12.2)", (
     );
     expect(general?.sessionRef).toEqual(sessionRef("general"));
     expect(general?.reviewArtifact).toEqual(reviewArtifact("general"));
-    expect(general?.usage).toEqual({
-      inputTokens: null,
-      cachedInputTokens: null,
-      outputTokens: null,
-      costUsd: 0.25,
-      apiTurns: 3,
-    });
+    expect(general?.usage).toEqual({ costUsd: 0.25, apiTurns: 3 });
   });
 
   it("persists each verdict's provenance as the round accepts it", async () => {

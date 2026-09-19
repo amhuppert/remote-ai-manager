@@ -11,7 +11,6 @@ import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
 import { ASSIGNMENT_INSTRUCTIONS_PRESENTATION } from "@/components/workflow-config/assignment-focus";
 import {
   VALIDATOR_AUTHORITY_OPTIONS,
-  VALIDATOR_STRATEGY_OPTIONS,
 } from "@/components/workflow-config/AssignmentEditor";
 import {
   AUTHORITY_PRESENTATION,
@@ -98,18 +97,8 @@ const AUTHORITY_HINT: Record<ValidatorAuthority, string> = {
   advisory: "Advisory findings reach the implementer as suggestions only.",
 };
 
-/** How the seat's lane is dispatched across rounds. */
-const STRATEGY_HINT: Record<ValidatorAssignment["strategy"], string> = {
-  conversation: "One durable conversation per validator.",
-  task: "A fresh task dispatch per round.",
-};
-
 function isAuthority(value: string): value is ValidatorAuthority {
   return (VALIDATOR_AUTHORITY_OPTIONS as readonly string[]).includes(value);
-}
-
-function isStrategy(value: string): value is ValidatorAssignment["strategy"] {
-  return (VALIDATOR_STRATEGY_OPTIONS as readonly string[]).includes(value);
 }
 
 /** The seat's profile and model parameters at a glance. */
@@ -291,7 +280,6 @@ export function ValidatorCohortScreen({
         AUTHORITY_PRESENTATION[assignment.authority].tone,
       ),
       agentModelChip(assignment.agent),
-      chipPart(assignment.strategy),
     ],
     meta: seatMeta(assignment),
     screenId: seatScreenId(assignment.id),
@@ -495,30 +483,6 @@ export function ValidatorSeatScreen({
             disabled={locked}
           />
         </ConfigControlRow>
-        <ConfigControlRow
-          rowId="seat-strategy"
-          label="Strategy"
-          hint={STRATEGY_HINT[seat.strategy]}
-          provenance={provenance}
-          disabled={locked}
-          control={
-            <SegmentedControl
-              aria-label={`Strategy for ${seat.id}`}
-              value={seat.strategy}
-              disabled={locked}
-              onValueChange={(next) => {
-                if (!isStrategy(next)) return;
-                editSeat({ ...seat, strategy: next });
-              }}
-            >
-              {VALIDATOR_STRATEGY_OPTIONS.map((option) => (
-                <SegmentedControlItem key={option} value={option}>
-                  {option}
-                </SegmentedControlItem>
-              ))}
-            </SegmentedControl>
-          }
-        />
       </ConfigRowGroup>
 
       <ConfigRowGroup label="Runtime">

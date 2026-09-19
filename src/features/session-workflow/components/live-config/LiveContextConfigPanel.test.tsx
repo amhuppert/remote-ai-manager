@@ -533,7 +533,6 @@ describe("LiveContextConfigPanel — what only the host can wire", () => {
             id: "general",
             profile: { tier: "builtin", id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
-            strategy: "conversation",
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -564,7 +563,6 @@ describe("LiveContextConfigPanel — what only the host can wire", () => {
                 lane: startedLane,
                 contextId: CONTEXT_ID,
                 backend: "claude",
-                refKind: "conversation",
                 workflowConversationId: "conv_started",
                 metrics: {},
                 lastUsedAt: "2026-09-18T10:00:00.000Z",

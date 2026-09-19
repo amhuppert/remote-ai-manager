@@ -169,7 +169,6 @@ function summarizeValidators(
 ): LiveOutlineValidatorSummary[] {
   return cohort.assignments.map((assignment) => ({
     ...summarizeProvenance(assignment),
-    strategy: assignment.strategy,
     backend: assignment.agent.backend,
     modelSelection: {
       modelId: assignment.agent.modelSelection.modelId,

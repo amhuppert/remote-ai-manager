@@ -217,7 +217,6 @@ describe("archived execution one-time assignment migration", () => {
         {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "conversation",
           agent: {
             backend: "claude",
             modelSelection: {
@@ -228,7 +227,7 @@ describe("archived execution one-time assignment migration", () => {
         },
       ],
     });
-    // A Codex validator ran the task strategy; omitting model and effort meant
+    // A Codex validator could omit model and effort, which meant
     // the task-run transport resolved agentBackends.codex, so the decode
     // materializes that profile — gpt-5.4 at high effort, not the UI default.
     expect(contexts[1]?.contextValidator).toMatchObject({
@@ -237,7 +236,6 @@ describe("archived execution one-time assignment migration", () => {
         {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "task",
           agent: {
             backend: "codex",
             modelSelection: {
@@ -464,7 +462,6 @@ describe("archived execution one-time assignment migration", () => {
         {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "conversation",
           agent: {
             backend: "claude",
             modelSelection: {

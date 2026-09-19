@@ -25,6 +25,7 @@ import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
   seedAssignment,
+  makeStubValidatorContinuityService,
 } from "./test-fixtures";
 
 const VALIDATOR_ENGINE = "claude" as const;
@@ -51,7 +52,6 @@ const emptyAgentCallUsage = {};
 const validatorConfig: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin" as const, id: "general-reviewer" },
-  strategy: "conversation" as const,
   authority: "blocking",
   agent: {
     backend: "claude",
@@ -235,6 +235,7 @@ async function runNewValidatorPath(
     async (_input: ExecuteWorkflowTaskRunInput) => taskRunResult,
   );
   const runner = createValidatorRunner({
+    continuityService: makeStubValidatorContinuityService(),
     executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => stubWorktreeDir,
     resolveTimeoutMs: async () => 300_000,

@@ -398,27 +398,22 @@ describe("assertExecutionSupported", () => {
     const execution = makeValidExecution();
     (execution as Record<string, unknown>).laneStates = {
       "ctx-1": {
-        context_validator: {
-          engine: "claude",
+        "context_validator:general": {
+          backend: "claude",
           lane: "context_validator",
           contextId: "ctx-1",
-          sessionRef: {
-            engine: "claude",
-            lane: "context_validator",
-            conversationId: "conv-1",
-          },
-          lastContextTokens: null,
-          lastContextWindowMax: null,
+          assignmentId: "general",
+          workflowConversationId: "conv-1",
+          metrics: {},
           lastUsedAt: timestamp,
         },
       },
     };
 
     const result = assertExecutionSupported(execution);
-    const lane = result.laneStates["ctx-1"]?.["context_validator"];
+    const lane = result.laneStates["ctx-1"]?.["context_validator:general"];
     expect(lane?.backend).toBe("claude");
-    if (lane?.backend === "claude") {
-    }
+    expect(lane?.metrics).toEqual({});
   });
 
   it("rejects an execution whose workingDefinition has contextSoftLimitTokens", () => {
@@ -641,7 +636,6 @@ describe("post-cutover refusal of legacy singleton agent shapes", () => {
         {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
-          strategy: "conversation",
           agent: {
             backend: "claude",
             modelSelection: {
@@ -670,6 +664,97 @@ describe("post-cutover refusal of legacy singleton agent shapes", () => {
           },
         },
       };
+
+    expect(() =>
+      assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),
+    ).not.toThrow();
+  });
+});
+
+// The validator `strategy` cutover: every validator assignment runs on one
+// durable conversation, so a saved document still naming a strategy is a
+// pre-cutover writer. Refused with the use site and the manual cleanup rather
+// than the strict schema's bare "unrecognized key".
+describe("post-cutover refusal of the validator strategy field", () => {
+  function cohortWithStrategy(strategy: string) {
+    return {
+      enabled: true,
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy,
+          agent: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  it.each(["conversation", "task"])(
+    "refuses a definition record whose validator assignment carries strategy %s, locating the use site",
+    (strategy) => {
+      const record = makeValidDefinitionRecord();
+      (
+        record.definition.executionContexts[0]! as Record<string, unknown>
+      ).contextValidator = cohortWithStrategy(strategy);
+
+      try {
+        assertDefinitionRecordSupported(record);
+        throw new Error("expected a refusal");
+      } catch (error) {
+        expect(error).toBeInstanceOf(LegacyWorkflowSchemaError);
+        const message = (error as Error).message;
+        expect(message).toContain(
+          "definition.executionContexts.0.contextValidator.assignments.0.strategy",
+        );
+        expect(message).toContain("config.json");
+        expect(message).toContain("archived executions");
+      }
+    },
+  );
+
+  it("refuses an execution whose workingDefinition validator carries strategy", () => {
+    const execution = makeValidExecution();
+    (
+      execution.workingDefinition.executionContexts[0]! as Record<
+        string,
+        unknown
+      >
+    ).contextValidator = cohortWithStrategy("task");
+
+    try {
+      assertExecutionSupported(execution);
+      throw new Error("expected a refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LegacyWorkflowSchemaError);
+      expect((error as Error).message).toContain(
+        "workingDefinition.executionContexts.0.contextValidator.assignments.0.strategy",
+      );
+    }
+  });
+
+  it("refuses the field at the save boundary too", () => {
+    const definition = makeValidDefinitionRecord().definition;
+    (
+      definition.workflowConfig as Record<string, unknown>
+    ).contextValidator = cohortWithStrategy("conversation");
+
+    expect(() =>
+      assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),
+    ).toThrow(LegacyWorkflowSchemaError);
+  });
+
+  it("leaves the lane-merge validation strategy alone — it is a different field", () => {
+    const definition = makeValidDefinitionRecord().definition;
+    (
+      definition.workflowConfig as Record<string, unknown>
+    ).laneMergeValidation = { strategy: "every-merge" };
 
     expect(() =>
       assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),

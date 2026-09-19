@@ -155,7 +155,6 @@ describe("openValidationRound", () => {
       makeSeededValidatorAssignment({
         id: "security-reviewer",
         profile: { tier: "project", id: "security" },
-        strategy: "task",
       }),
       makeSeededValidatorAssignment({ id: "general" }),
     ];
@@ -177,7 +176,6 @@ describe("openValidationRound", () => {
       revision: assignments[0]!.profileSnapshot.revision,
       resolvedInstructionHash:
         assignments[0]!.profileSnapshot.resolvedInstructionHash,
-      strategy: "task",
     });
   });
 

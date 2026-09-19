@@ -8,7 +8,6 @@ import {
   graphWorkflowResolvedContextSchema,
 } from "./definition-schemas";
 import {
-  validatorAssignmentSchema,
   graphWorkflowCommandSelectorSchema,
   graphWorkflowLaneMergeValidationConfigSchema,
 } from "./config-schemas";
@@ -176,9 +175,7 @@ export type LiveOutlineImplementerSummary = z.infer<
 >;
 
 export const liveOutlineValidatorSummarySchema = z
-  .object({
-    strategy: validatorAssignmentSchema.out.shape.strategy,
-  })
+  .object({})
   .loose()
   .extend(liveOutlineAssignmentProvenanceSchema.shape)
   .extend(liveOutlineAgentSummarySchema.shape);

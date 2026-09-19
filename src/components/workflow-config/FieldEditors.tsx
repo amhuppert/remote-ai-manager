@@ -52,10 +52,7 @@ interface AssignmentEditorSurfaceProps {
   open?: boolean;
 }
 
-/**
- * The implementer use site: one assignment, no strategy (there is one way to
- * dispatch an implementer).
- */
+/** The implementer use site: one assignment. */
 export function ImplementerEditor({
   value,
   onChange,
@@ -78,14 +75,11 @@ export function ImplementerEditor({
 
 /**
  * Editor for ONE validator assignment: the shared assignment editor plus the
- * axes only a validator has.
+ * axis only a validator has.
  *
- * Strategy and backend stay independent, so a Codex agent under conversation
- * strategy (or Claude under task) is authorable rather than implied by a
- * provider-named type. Authority is handed down as a control for the same
- * reason strategy is — it exists only where a verdict does. Replacing the
- * profile applies that profile's authority default; the author can still
- * override it independently afterward.
+ * Authority is handed down as a control because it exists only where a
+ * verdict does. Replacing the profile applies that profile's authority
+ * default; the author can still override it independently afterward.
  *
  * The shared editor's result is FORWARDED, never merged over the current value:
  * it returns this validator assignment whole, and merging would restore an
@@ -118,10 +112,6 @@ export function ContextValidatorEditor({
       <AssignmentEditor
         value={value}
         onChange={handleAssignmentChange}
-        strategy={{
-          value: value.strategy,
-          onChange: (strategy) => onChange({ ...value, strategy }),
-        }}
         authority={{
           value: value.authority,
           onChange: (authority) => onChange({ ...value, authority }),

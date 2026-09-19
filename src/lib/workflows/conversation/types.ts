@@ -254,8 +254,7 @@ export interface PromptActorResult {
   contextTokens: number | null;
   contextWindow: number | null;
   /** Backend-reported per-turn token usage (forwarded from AgentCallUsageMetrics).
-   *  Used by the codex continuity service to track lastTurnUsage on validator
-   *  lanes. Null when the backend does not report token counts. */
+   *  Null when the backend does not report token counts. */
   inputTokens: number | null;
   outputTokens: number | null;
   cachedInputTokens: number | null;

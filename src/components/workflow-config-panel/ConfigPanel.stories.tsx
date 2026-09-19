@@ -159,7 +159,6 @@ const DORMANT_COHORT: ValidatorCohort = {
     {
       id: "general",
       profile: ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF,
-      strategy: "conversation",
       authority: "blocking",
 
       agent: {
@@ -173,7 +172,6 @@ const DORMANT_COHORT: ValidatorCohort = {
     {
       id: "security",
       profile: { tier: "project", id: "security-reviewer" },
-      strategy: "task",
       authority: "advisory",
       focus: "auth boundaries and session fixation",
 

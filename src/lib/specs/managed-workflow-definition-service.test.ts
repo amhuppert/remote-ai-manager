@@ -63,12 +63,8 @@ describe("managed workflow definition service", () => {
         implementer: makeImplementerAssignment(agent),
         contextValidator: {
           enabled: true,
-          assignments: ["conversation", "task"].map((strategy) =>
-            makeValidatorAssignment({
-              id: strategy,
-              strategy: strategy === "task" ? "task" : "conversation",
-              agent,
-            }),
+          assignments: ["primary", "secondary"].map((id) =>
+            makeValidatorAssignment({ id, agent }),
           ),
         },
         planRepair: { enabled: true, maxAttemptsPerContext: 2, agent },

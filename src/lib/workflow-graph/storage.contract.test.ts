@@ -148,7 +148,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
             id: "general",
             profile: { tier: "builtin", id: "general-reviewer" },
             focus: "workflow-tier steer",
-            strategy: "conversation",
             authority: "blocking",
             agent: {
               backend: "claude",
@@ -317,7 +316,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           },
         },
         // Disabled with assignments intact: the dormant entries — their
-        // profiles, focus, strategy, per-assignment continuity, and runtime —
+        // profiles, focus, per-assignment continuity, and runtime —
         // must survive the round trip, or re-enabling would silently lose the
         // configured reviewers (R1.1, R2).
         contextValidator: {
@@ -327,7 +326,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
               id: "security",
               profile: { tier: "project", id: "security-reviewer" },
               focus: "auth boundaries and token handling",
-              strategy: "conversation",
               authority: "blocking",
               agent: {
                 backend: "claude",
@@ -341,7 +339,6 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
               id: "performance",
               profile: { tier: "global", id: "perf-reviewer" },
               focus: "hot paths only",
-              strategy: "task",
               authority: "blocking",
               agent: {
                 backend: "codex",

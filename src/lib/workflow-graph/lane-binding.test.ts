@@ -17,7 +17,6 @@ function laneState(
     lane,
     contextId,
     backend: "claude",
-    refKind: "conversation",
     workflowConversationId,
     metrics: {},
     lastUsedAt: "2026-09-01T10:00:00.000Z",

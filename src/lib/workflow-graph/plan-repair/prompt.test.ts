@@ -618,7 +618,6 @@ describe("buildPlanRepairPrompt: advisory evidence", () => {
               profileRef: { tier: "builtin" as const, id: "general-reviewer" },
               revision: 1,
               resolvedInstructionHash: `sha256:${assignmentId}`,
-              strategy: "conversation" as const,
             })),
             specialists: Object.fromEntries(
               Object.entries(seats).map(([assignmentId, advisories]) => [

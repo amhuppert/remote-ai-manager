@@ -78,7 +78,6 @@ function implementerLaneState(
     lane: "implementer",
     contextId: "context-implement",
     backend: "claude",
-    refKind: "conversation",
     workflowConversationId: conversationId,
     metrics: {},
     lastUsedAt: T,

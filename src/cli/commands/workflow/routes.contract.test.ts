@@ -1397,7 +1397,6 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
     return {
       id: "security",
       profile: { tier: "builtin", id: "general-reviewer" },
-      strategy: "conversation",
       agent: {
         backend: "claude",
         modelSelection: {
@@ -1766,7 +1765,6 @@ describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
     return {
       id: "security",
       profile,
-      strategy: "conversation",
       agent: {
         backend: "claude",
         modelSelection: {

@@ -144,7 +144,6 @@ function validatorAssignment(
 ) {
   return {
     ...assignment(id, focus),
-    strategy: "conversation" as const,
     authority,
   };
 }

@@ -231,7 +231,6 @@
                 "tier": "builtin",
                 "id": "general-reviewer"
               },
-              "strategy": "conversation",
               "authority": "blocking",
               "agent": {
                 "backend": "claude",
@@ -247,7 +246,6 @@
                 "tier": "builtin",
                 "id": "security-reviewer"
               },
-              "strategy": "conversation",
               "authority": "advisory",
               "agent": {
                 "backend": "claude",
@@ -263,7 +261,6 @@
                 "tier": "builtin",
                 "id": "type-api-contract-reviewer"
               },
-              "strategy": "conversation",
               "authority": "advisory",
               "agent": {
                 "backend": "claude",
@@ -279,7 +276,6 @@
                 "tier": "builtin",
                 "id": "test-reliability-reviewer"
               },
-              "strategy": "conversation",
               "authority": "advisory",
               "agent": {
                 "backend": "claude",

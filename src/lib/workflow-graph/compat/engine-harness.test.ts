@@ -35,7 +35,6 @@ function collisionDefinition() {
           assignments: [LEFT_SEAT, RIGHT_SEAT].map((id) => ({
             id,
             profile: { tier: "builtin", id: "general-reviewer" },
-            strategy: "conversation",
             authority: "blocking",
             agent: {
               backend: "claude",

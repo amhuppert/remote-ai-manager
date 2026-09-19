@@ -1466,10 +1466,11 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   const correctedTotalUsd = anyTranscriptCost ? correctedSum : null;
 
   // Validator spend that is invisible in conversation cost rows: response
-  // artifacts (task-strategy runs have no conversation row at all) and
-  // conversation artifacts whose CC conversation row recorded no cost.
-  // Accepts both the legacy `engine`/`threadId` artifact shape and the
-  // current `backend`/`kind` shape.
+  // artifacts from runs that predate conversation-anchored validators (those
+  // had no conversation row at all) and conversation artifacts whose CC
+  // conversation row recorded no cost. Audits read historical logs, so the
+  // legacy `engine`/`threadId` shape, the retired `response` kind, and the
+  // current `backend`/`kind` shape are all accepted.
   const pricedConversationIds = new Set(
     conversations
       .filter((row) => row.totalCostUsd !== null && row.totalCostUsd > 0)

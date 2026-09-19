@@ -210,7 +210,7 @@ it protects their shared fan-in target. The list is closed by
 | Block | Purpose |
 |---|---|
 | `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the backend and complete model selection that run it |
-| `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, authority, agent }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; `authority` (`blocking \| advisory`) decides whether the seat can reopen tasks — the built-in acceptance-criteria validator defaults blocking and every other profile defaults advisory; a disabled cohort keeps its assignments dormant |
+| `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, authority, agent }] }`. Every assignment runs on one durable CC conversation, dispatched through the conversation actor; `authority` (`blocking \| advisory`) decides whether the seat can reopen tasks — the built-in acceptance-criteria validator defaults blocking and every other profile defaults advisory; a disabled cohort keeps its assignments dormant |
 | `scriptValidator` | Deterministic validator that runs its ordered registered command selection. `{ commands: string[] }`; an empty list disables it |
 | `humanApprovalGate` | Whether a context pauses for operator approval before it lands. `{ enabled: boolean }`, default disabled |
 | `iterationPolicy` | `maxIterations` |
@@ -390,7 +390,7 @@ mirrors the human approval gate:
   restores the wait; answers recorded meanwhile apply immediately); abort
   withdraws all parked questions.
 
-Planner and collaboration conversations stay denied regardless of the toggle. A validator may ask only when its strategy is `conversation`, the context enables `askUserQuestions`, and the backend declares `nativeMidTurnAskUser`. Task-strategy validators remain ask-disabled even when they have a durable CC conversation identity (`validator-runner.ts`).
+Planner and collaboration conversations stay denied regardless of the toggle. A validator may ask only when the context enables `askUserQuestions` and the backend declares `nativeMidTurnAskUser` (`validator-runner.ts`).
 
 ## Planning source of truth
 
@@ -508,8 +508,8 @@ therefore arrives non-blocking; making it able to fail a context is a deliberate
 authoring act, and the author who performs it owns convergence for that standard
 (the circuit breaker and plan repair are the backstops, not a substitute).
 Authority is an `assignmentFingerprint` input and freezes once the assignment
-has a conversation. Backend, model, profile instructions, strategy, and focus
-freeze at the same boundary. These fields remain editable before first use and
+has a conversation. Backend, model, profile instructions, and focus freeze at
+the same boundary. These fields remain editable before first use and
 in templates for future executions.
 
 Authority selects three things:

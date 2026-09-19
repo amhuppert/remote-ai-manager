@@ -115,7 +115,6 @@ import {
   createValidatorRunner,
   type ValidatorRunResult,
 } from "./validator-runner";
-import type { ValidatorExecutionStrategy } from "./lane-continuity";
 import { createWorkflowExecution } from "./test-fixtures";
 import type { GraphWorkflowExecution } from "./schemas";
 import type {
@@ -251,7 +250,6 @@ function productionTaskRun(
 
 function seededValidator(
   backend: AgentBackendId,
-  strategy: ValidatorExecutionStrategy,
 ): SeededValidatorAssignment {
   if (backend === "cursor") {
     throw new Error("Cursor has no task facet for validator lanes");
@@ -278,7 +276,6 @@ function seededValidator(
       sourceContentHash: computeContentHash("Review carefully."),
       instructions: "Review carefully.",
     }),
-    strategy,
     authority: "blocking",
     agent,
   };
@@ -297,9 +294,8 @@ function contextFor(
 
 async function runValidatorRaw(
   backend: AgentBackendId,
-  strategy: ValidatorExecutionStrategy,
 ): Promise<ValidatorRunResult> {
-  const validator = seededValidator(backend, strategy);
+  const validator = seededValidator(backend);
   const execution = createWorkflowExecution();
   const context = contextFor(validator, execution);
 
@@ -320,22 +316,12 @@ async function runValidatorRaw(
       laneTmpDir: LANE_TMP_DIR,
     }),
     continuityService: {
-      resolveValidatorCall: async () =>
-        strategy === "conversation"
-          ? {
-              execution,
-              sessionAction: "create",
-              strategy: "conversation",
-              backend,
-              conversationId: "lane-conversation-1",
-            }
-          : {
-              execution,
-              sessionAction: "create",
-              strategy: "task",
-              backend,
-              backendRef: { backend, ref: "ref-1" },
-            },
+      resolveValidatorCall: async () => ({
+        execution,
+        sessionAction: "create",
+        backend,
+        conversationId: "lane-conversation-1",
+      }),
       recordLaneTurnOutcome: async () => execution,
     },
   });
@@ -349,11 +335,8 @@ async function runValidatorRaw(
   });
 }
 
-async function runValidator(
-  backend: AgentBackendId,
-  strategy: ValidatorExecutionStrategy,
-): Promise<void> {
-  const result = await runValidatorRaw(backend, strategy);
+async function runValidator(backend: AgentBackendId): Promise<void> {
+  const result = await runValidatorRaw(backend);
 
   // A run that never reached the runner would surface here as an infra error,
   // which would make every assertion below vacuous.
@@ -368,16 +351,11 @@ function neutralRequest(): Extract<AgentCallRequest, { kind: "task_run" }> {
   return request as Extract<AgentCallRequest, { kind: "task_run" }>;
 }
 
-describe.each([
-  ["claude", "task"],
-  ["claude", "conversation"],
-  ["codex", "task"],
-  ["codex", "conversation"],
-] as const)(
-  "validator write envelope — %s / %s strategy",
-  (backend, strategy) => {
+describe.each(["claude", "codex"] as const)(
+  "validator write envelope — %s",
+  (backend) => {
     it("carries the server-derived write policy to the neutral boundary and the runner", async () => {
-      await runValidator(backend, strategy);
+      await runValidator(backend);
 
       expect(neutralRequest().fsWritePolicy).toEqual(EXPECTED_POLICY);
       expect(runnerRequests).toHaveLength(1);
@@ -385,7 +363,7 @@ describe.each([
     });
 
     it("never carries the write-capable implementer configuration", async () => {
-      await runValidator(backend, strategy);
+      await runValidator(backend);
 
       expect(neutralCalls[0]?.taskExecution?.sandboxMode).not.toBe(
         "danger-full-access",
@@ -400,7 +378,7 @@ describe.each([
     });
 
     it("never lists the candidate worktree as writable", async () => {
-      await runValidator(backend, strategy);
+      await runValidator(backend);
 
       const policy = runnerRequests[0]?.fsWritePolicy;
       expect(policy?.allowWrite).not.toContain(WORKTREE_PATH);
@@ -501,7 +479,7 @@ describe.each(["claude", "codex"] as const)(
       if (!induce) throw new Error(`no sandbox inducer for ${backend}`);
       induce();
 
-      const result = await runValidatorRaw(backend, "task");
+      const result = await runValidatorRaw(backend);
 
       expect(result.result.kind).toBe("infra_error");
       // Never a verdict: an unsandboxed review is not a review this cohort

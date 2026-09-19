@@ -362,7 +362,6 @@ export function parseGraphLaneId(
 export interface FingerprintableAssignment {
   profileSnapshot: { resolvedInstructionHash: string };
   agent: GraphWorkflowAgentConfig;
-  strategy?: string;
   authority?: string;
   focus?: string;
 }
@@ -372,7 +371,6 @@ export function assignmentFingerprint(
 ): string {
   return [
     assignment.profileSnapshot.resolvedInstructionHash,
-    assignment.strategy ?? "",
     assignment.authority ?? "",
     assignment.focus ?? "",
     assignment.agent.backend,

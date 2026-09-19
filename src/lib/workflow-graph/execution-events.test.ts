@@ -892,12 +892,7 @@ describe("graph workflow execution event publisher", () => {
             lane: "context_validator",
             contextId: "context-plan",
             backend: TESTFAKE_BACKEND_ID,
-            refKind: "conversation",
             workflowConversationId: "workflow-conversation-1",
-            sessionRef: {
-              backend: TESTFAKE_BACKEND_ID,
-              ref: "testfake-validator-ref",
-            },
             metrics: {},
             lastUsedAt: "2026-03-28T10:04:00.000Z",
           },
@@ -919,7 +914,6 @@ describe("graph workflow execution event publisher", () => {
           backend: TESTFAKE_BACKEND_ID,
           ref: "workflow-conversation-1",
           lane: "context_validator",
-          refKind: "conversation",
           workflowConversationId: "workflow-conversation-1",
         },
       }),
@@ -931,7 +925,6 @@ describe("graph workflow execution event publisher", () => {
         backend: TESTFAKE_BACKEND_ID,
         ref: "workflow-conversation-1",
         lane: "context_validator",
-        refKind: "conversation",
         workflowConversationId: "workflow-conversation-1",
       },
     });

@@ -26,7 +26,6 @@ describe("nodeAgentPatch", () => {
     const first = {
       ...context.implementer,
       id: "general",
-      strategy: "task" as const,
       authority: "blocking" as const,
     };
     context.contextValidator.enabled = true;

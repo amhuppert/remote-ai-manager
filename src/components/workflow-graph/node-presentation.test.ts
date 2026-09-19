@@ -47,7 +47,6 @@ function context(
               parameters: { effort: "high" },
             },
           },
-          strategy: "conversation",
           authority: "blocking",
         },
         {
@@ -60,7 +59,6 @@ function context(
               parameters: { effort: "medium" },
             },
           },
-          strategy: "task",
           authority: "advisory",
         },
       ],

@@ -69,6 +69,35 @@ build out of the entire database over a field it would only meet on one
 attempt. Reach for a bump when a shape change breaks a *set* read — a column
 every row must satisfy, or a blob a list query parses eagerly.
 
+## Validator conversation cutover (schema version 22)
+
+Migration `0055-graph-workflow-validator-conversations` is stamp-only. It
+removes nothing: every validator assignment now runs on one durable CC
+conversation, so the assignment `strategy` field and the lane `refKind` /
+`sessionRef` fields simply stopped existing, and the stamp keeps an older build
+(which requires them) from opening the database. Saved data that still carries
+`strategy` is refused with a `LegacyWorkflowSchemaError` naming the JSON path
+(`schema-cutover-guard.ts`); nothing rewrites it. Clean each store by hand
+**before** starting a build at version 22:
+
+- **`config.json` → `workflowDefaults`.** Delete the `strategy` key from every
+  entry of `contextValidator.assignments`. The global config parses strictly,
+  so one leftover key makes `readConfig()` throw and the Config page fail.
+  For example, with `jq`:
+  `jq '(.workflowDefaults.contextValidator.assignments // []) |= map(del(.strategy))' config.json > config.next.json && mv config.next.json config.json`
+- **Saved workflow files** under `<configDir>/workflows/` (both scope tiers).
+  Delete the key from every validator assignment in `workflowConfig` and in
+  each `executionContexts[].contextValidator`, or delete the file and recreate
+  the workflow. A file left behind fails at load with the guard's message.
+- **Active and archived executions** (`graph_workflow_executions` and
+  `graph_workflow_archived_executions`, `execution_json` blob). An active
+  execution carrying the key halts at load; an archived one is skipped by the
+  history listing and refused when opened directly. Delete the rows, or strip
+  the key from `workingDefinition` with SQLite JSON functions and a backup.
+
+Take a backup of the config directory first; the previous cutover kept its
+copy under `<configDir>/backup-<name>-<timestamp>`.
+
 ## Ledger tables (three, distinct purposes)
 
 - `applied_migrations` — this runner's ledger (by name). New migrations record here.

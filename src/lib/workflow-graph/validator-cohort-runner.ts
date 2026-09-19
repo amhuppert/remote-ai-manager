@@ -780,7 +780,6 @@ export function createValidatorCohortRunner(
 
     execLogger?.validation(input.contextId, "context_validation.started", {
       assignmentId: validator.id,
-      strategy: validator.strategy,
       cohortSize,
       attempt,
       acceptanceCriteriaPreview: acceptanceCriteriaText(
@@ -791,7 +790,6 @@ export function createValidatorCohortRunner(
       executionId: input.execution.id,
       contextId: input.contextId,
       assignmentId: validator.id,
-      strategy: validator.strategy,
       cohortSize,
       attempt,
     });

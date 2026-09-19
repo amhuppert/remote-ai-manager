@@ -20,14 +20,12 @@ function round(
         profileRef: { tier: "builtin", id: "general-reviewer" },
         revision: 1,
         resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
-        strategy: "conversation",
       },
       {
         assignmentId: "security",
         profileRef: { tier: "project", id: "security-reviewer" },
         revision: 4,
         resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
-        strategy: "task",
       },
     ],
     specialists: {

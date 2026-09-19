@@ -439,7 +439,6 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
     // must carry the operator's agent selection verbatim onto the
     // built-in reviewer profile.
     const authoredToday: ValidatorAssignment = makeValidatorAssignment({
-      strategy: "conversation",
       // Blocking, because the seat an operator gets today for acceptance-criteria
       // verification is the seeded blocking one — the migrated legacy validator
       // must land on it rather than on the advisory default.

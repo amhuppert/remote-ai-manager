@@ -1333,7 +1333,6 @@ describe("graph expansion — generated child config (R7.2)", () => {
       seedAssignment({
         id: "invoker-reviewer",
         profile: { tier: "builtin", id: "general-reviewer" },
-        strategy: "conversation" as const,
         authority: "blocking" as const,
         agent: {
           backend: "claude",
@@ -1578,7 +1577,6 @@ describe("graph expansion — generated child config (R7.2)", () => {
                 {
                   id: "retired-reviewer",
                   profile: { tier: "project", id: "retired-reviewer" },
-                  strategy: "conversation",
                   authority: "advisory",
                   agent: {
                     backend: "claude",

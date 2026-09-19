@@ -797,7 +797,6 @@ describe("resolveViewingTask — codex implementer parity", () => {
           lane: "implementer",
           contextId: "context-codex-impl",
           backend: "codex",
-          refKind: "conversation",
           workflowConversationId: "cc-conv-codex-abc",
           metrics: {},
           lastUsedAt: "2026-03-27T16:20:00.000Z",
@@ -1039,7 +1038,6 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
           lane: "implementer",
           contextId: "context-codex-impl",
           backend: "codex",
-          refKind: "conversation",
           workflowConversationId: "cc-conv-codex-abc",
           metrics: {},
           lastUsedAt: "2026-03-27T16:20:00.000Z",
@@ -1525,7 +1523,6 @@ describe("GraphWorkflowPanel — advisory index origin link (R9.4)", () => {
                 profileRef: { tier: "project", id: "security-reviewer" },
                 revision: 4,
                 resolvedInstructionHash: SECURITY_HASH,
-                strategy: "conversation",
               },
             ],
             specialists: {

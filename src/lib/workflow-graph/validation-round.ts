@@ -131,7 +131,6 @@ export function buildValidationRoundRoster(
     profileRef: assignment.profile,
     revision: assignment.profileSnapshot.revision,
     resolvedInstructionHash: assignment.profileSnapshot.resolvedInstructionHash,
-    strategy: assignment.strategy,
   }));
 }
 
@@ -361,7 +360,6 @@ export function reconcileValidationRoster(
     // candidate, and a seat repointed at another profile makes that name wrong
     // even when the delivered instructions are indistinguishable.
     if (
-      assignment.strategy !== seat.strategy ||
       assignment.profile.tier !== seat.profileRef.tier ||
       assignment.profile.id !== seat.profileRef.id ||
       assignment.profileSnapshot.revision !== seat.revision ||

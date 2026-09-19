@@ -170,7 +170,6 @@ describe("WorkflowDefinitionCanvas — effective crew and overrides", () => {
           {
             id: "security",
             profile: { tier: "builtin", id: "general-reviewer" },
-            strategy: "conversation",
             authority: "blocking",
             agent: {
               backend: "claude",

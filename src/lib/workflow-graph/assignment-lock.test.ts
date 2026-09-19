@@ -31,7 +31,6 @@ function fixture(started = true) {
       contextId: context.id,
       assignmentId: role === "context_validator" ? "reviewer" : undefined,
       backend: "claude",
-      refKind: "conversation",
       workflowConversationId: `conversation-${role}`,
       sessionRef: { backend: "claude", ref: `conversation-${role}` },
       metrics: {},
@@ -105,7 +104,7 @@ describe("started workflow assignment freeze", () => {
     },
   );
 
-  it.each(["focus", "authority", "strategy", "remove"] as const)(
+  it.each(["focus", "authority", "remove"] as const)(
     "refuses a started validator's %s edit",
     (field) => {
       const { execution, context, deps } = fixture();
@@ -117,7 +116,6 @@ describe("started workflow assignment freeze", () => {
         updated.authority =
           assignment.authority === "blocking" ? "advisory" : "blocking";
       }
-      if (field === "strategy") updated.strategy = "task";
       const result = applyLiveExecutionEdits(
         execution,
         {

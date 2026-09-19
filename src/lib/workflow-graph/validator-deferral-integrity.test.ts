@@ -128,7 +128,6 @@ async function validatorPrompt(input: {
   const validator = context.implementer.profileSnapshot
     ? {
         ...context.implementer,
-        strategy: "task" as const,
         authority: "blocking" as const,
       }
     : neverContext();

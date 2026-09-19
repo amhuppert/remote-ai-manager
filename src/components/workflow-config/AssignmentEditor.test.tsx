@@ -50,7 +50,6 @@ const LISTING: AgentProfileLibraryListing = {
 const VALIDATOR: ValidatorAssignment = {
   id: "security",
   profile: { tier: "project", id: "house-style" },
-  strategy: "conversation",
   authority: "blocking",
 
   agent: {
@@ -190,22 +189,6 @@ describe("AssignmentEditor", () => {
     expect(next?.profile).toEqual({ tier: "project", id: "house-style" });
   });
 
-  it("renders no strategy selector for a use site that has no strategy", () => {
-    renderAssignment();
-    expect(
-      screen.queryByLabelText("Validator execution strategy"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("renders the strategy selector for a use site that has one", () => {
-    renderAssignment({
-      strategy: { value: "conversation", onChange: vi.fn() },
-    });
-    expect(
-      screen.getByLabelText("Validator execution strategy"),
-    ).toBeInTheDocument();
-  });
-
   it("renders no authority control for a use site that has no authority", () => {
     renderAssignment();
     expect(
@@ -320,23 +303,11 @@ describe("ContextValidatorEditor", () => {
     return { onChange, ...view };
   }
 
-  it("composes the shared assignment editor with authority and strategy", () => {
+  it("composes the shared assignment editor with authority", () => {
     renderValidator();
     expect(screen.getByLabelText("Agent profile")).toBeInTheDocument();
     expect(screen.getByLabelText("Mandate for security")).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("Validator execution strategy"),
-    ).toBeInTheDocument();
     expect(screen.getByLabelText("Validator authority")).toBeInTheDocument();
-  });
-
-  it("switches the execution strategy", () => {
-    const { onChange } = renderValidator();
-    const strategy = screen.getByLabelText("Validator execution strategy");
-    fireEvent.click(within(strategy).getByRole("radio", { name: "task" }));
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ strategy: "task" }),
-    );
   });
 
   it("writes the authority back onto the assignment", () => {
@@ -412,7 +383,6 @@ describe("ContextValidatorEditor", () => {
     expect(next).not.toHaveProperty("focus");
     expect(next).toMatchObject({
       id: "security",
-      strategy: "conversation",
       authority: "blocking",
     });
   });

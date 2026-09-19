@@ -8,6 +8,7 @@ import {
   graphWorkflowCommandSelectorSchema,
   graphWorkflowLaneMergeValidationConfigSchema,
   graphWorkflowScriptValidatorConfigSchema,
+  validatorAssignmentSchema,
 } from "./config-schemas";
 
 describe("graphWorkflowCommandSelectorSchema", () => {
@@ -209,4 +210,42 @@ describe("graphWorkflowAgentConfigSchema", () => {
       result.error?.issues.some((issue) => issue.path[0] === "model"),
     ).toBe(true);
   });
+});
+
+describe("validatorAssignmentSchema", () => {
+  const assignment = {
+    id: "general",
+    profile: { tier: "builtin", id: "general-reviewer" },
+    authority: "advisory",
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+    },
+  };
+
+  it("accepts an assignment without a strategy", () => {
+    expect(validatorAssignmentSchema.safeParse(assignment).success).toBe(true);
+  });
+
+  // Validators run on one durable conversation each; the retired strategy is
+  // an unrecognized key, not a defaulted one.
+  it.each(["conversation", "task"])(
+    "rejects a retired strategy %s at its own path",
+    (strategy) => {
+      const result = validatorAssignmentSchema.safeParse({
+        ...assignment,
+        strategy,
+      });
+
+      expect(result.success).toBe(false);
+      expect(
+        result.error?.issues.some(
+          (issue) =>
+            issue.code === "unrecognized_keys" &&
+            "keys" in issue &&
+            issue.keys.includes("strategy"),
+        ),
+      ).toBe(true);
+    },
+  );
 });

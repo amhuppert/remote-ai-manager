@@ -161,7 +161,19 @@ const EXPECTED_IMPLEMENTER_FORM =
 
 const EXPECTED_VALIDATOR_FORM =
   "a context validator is now a cohort: " +
-  "{ enabled, assignments: [{ id, profile, strategy, agent }] }";
+  "{ enabled, assignments: [{ id, profile, agent }] }";
+
+/**
+ * The validator `strategy` cutover. Every validator assignment runs on one
+ * durable CC conversation, so the field has no value left to carry and the
+ * strict assignment schema refuses it. Nothing rewrites saved data: the
+ * operator strips the key from each store by hand.
+ */
+const VALIDATOR_STRATEGY_CUTOVER_INSTRUCTIONS =
+  "Validator assignments no longer carry a strategy; every validator runs on " +
+  "one durable conversation. Remove the \"strategy\" key from each validator " +
+  "assignment by hand in config.json (workflowDefaults), in saved workflow " +
+  "files, and in archived executions; no migration rewrites them.";
 
 export interface LegacyAgentShapeIssue {
   /** JSON path of the offending field, relative to the value that was checked. */
@@ -193,6 +205,45 @@ function isLegacyContextValidator(value: unknown): boolean {
 
 function joinPath(base: string, segment: string): string {
   return base === "" ? segment : `${base}.${segment}`;
+}
+
+/**
+ * An agent assignment is the one holder whose `strategy` was retired; the
+ * lane-merge block and a declared output schema may legitimately use the word.
+ */
+function isAssignmentCarryingStrategy(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  return "profile" in obj && "agent" in obj && "strategy" in obj;
+}
+
+/** Every validator assignment in `value` still naming a strategy, located. */
+export function findRemovedValidatorStrategies(
+  value: unknown,
+  basePath = "",
+): LegacyAgentShapeIssue[] {
+  if (typeof value !== "object" || value === null) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) =>
+      findRemovedValidatorStrategies(entry, joinPath(basePath, String(index))),
+    );
+  }
+  const obj = value as Record<string, unknown>;
+  const issues: LegacyAgentShapeIssue[] = [];
+  if (isAssignmentCarryingStrategy(obj)) {
+    const path = joinPath(basePath, "strategy");
+    issues.push({
+      path,
+      message: `Removed validator strategy at ${path} — every validator runs on one durable conversation; delete the field.`,
+    });
+  }
+  for (const [key, nested] of Object.entries(obj)) {
+    if (OPAQUE_CONTENT_KEYS.has(key)) continue;
+    issues.push(...findRemovedValidatorStrategies(nested, joinPath(basePath, key)));
+  }
+  return issues;
 }
 
 /**
@@ -267,6 +318,13 @@ function detectLegacyShape(value: unknown): LegacyShapeDetection | null {
     return {
       detail: agentShapes.map((issue) => issue.message).join(" "),
       instruction: ASSIGNMENT_CUTOVER_INSTRUCTIONS,
+    };
+  }
+  const strategies = findRemovedValidatorStrategies(value);
+  if (strategies.length > 0) {
+    return {
+      detail: strategies.map((issue) => issue.message).join(" "),
+      instruction: VALIDATOR_STRATEGY_CUTOVER_INSTRUCTIONS,
     };
   }
   return null;
