@@ -10,6 +10,7 @@ import type {
   BackendConversationTranscriptProjection,
   BackendModelInfo,
   BackendTaskTranscriptProjection,
+  BackendSkillCatalogFacet,
 } from "../descriptor";
 import type { ConversationBackendFactory } from "../conversation";
 import type { BackendContinuityAdapter } from "../continuity";
@@ -196,6 +197,8 @@ export interface CodexDescriptorDeps {
   /** `createCodexRuntimeConfigAdapter()` in production; injected because the
    * adapter is server-only while this module's literals are client-imported. */
   runtimeConfig: BackendRuntimeConfigAdapter;
+  /** Native discovery is server-only; descriptor literals are client-imported. */
+  skillCatalog: BackendSkillCatalogFacet;
   taskRunner: AgentTaskRunner;
   prepareManagedSkillsCheckout(checkoutPath: string): Promise<void>;
   /** `codexMcpCapabilities` in production; injected because the MCP registry
@@ -210,6 +213,7 @@ export function createCodexBackendDescriptor(
   return {
     id: "codex",
     metadata: codexBackendMetadata,
+    skillCatalog: deps.skillCatalog,
     modelCatalog: {
       getCatalog: async ({ configuredSelection }) => {
         const { getStaticBackendModelCatalog } = await import("../catalog");

@@ -554,10 +554,11 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
       "proj",
       undefined,
       "claude",
-      { enabled: false },
+      { enabled: false, conversationId: "conv" },
     );
     expect(mockUseProjectCommandsQuery).toHaveBeenCalledWith("proj", "claude", {
       enabled: true,
+      conversationId: "conv",
     });
   });
 

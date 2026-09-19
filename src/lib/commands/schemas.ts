@@ -43,6 +43,8 @@ export const commandItemSchema = z.object({
   argumentHint: z.string().optional(),
   type: commandTypeSchema,
   source: z.string(),
+  /** Exact file returned by the backend's native skill catalog. */
+  skillPath: z.string().optional(),
   availability: commandAvailabilitySchema.optional(),
 });
 export type CommandItem = z.infer<typeof commandItemSchema>;
@@ -51,3 +53,8 @@ export const commandsResponseSchema = z.object({
   items: z.array(commandItemSchema),
 });
 export type CommandsResponse = z.infer<typeof commandsResponseSchema>;
+
+export const commandsChangedEventSchema = z.object({
+  type: z.literal("commands-changed"),
+});
+export type CommandsChangedEvent = z.infer<typeof commandsChangedEventSchema>;

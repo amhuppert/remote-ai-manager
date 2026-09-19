@@ -380,6 +380,7 @@ describe("queueMessage in_turn", () => {
     expect(queueUserInputMock).toHaveBeenCalledWith({
       onAccepted: expect.any(Function),
       content: [{ type: "text", text: "live message" }],
+      userPromptText: "live message",
     });
     expect(appendTranscriptEntryMock).toHaveBeenCalledTimes(1);
     expect(markDeliveredMock).toHaveBeenCalledWith({
@@ -437,6 +438,7 @@ describe("queueMessage in_turn", () => {
     });
     expect(queueUserInputMock).toHaveBeenCalledWith({
       onAccepted: expect.any(Function),
+      userPromptText: rawPrompt,
       content: [
         {
           type: "text",
@@ -588,6 +590,7 @@ describe("queueMessage in_turn", () => {
     // Runtime gets the base64 image block.
     expect(queueUserInputMock).toHaveBeenCalledWith({
       onAccepted: expect.any(Function),
+      userPromptText: "see this",
       content: [
         { type: "text", text: "see this" },
         { type: "image", mediaType: "image/png", base64Data: "BIN" },
@@ -737,6 +740,7 @@ describe("queueMessage in_turn", () => {
     expect(queueUserInputMock).toHaveBeenCalledWith({
       onAccepted: expect.any(Function),
       content: [{ type: "text", text: "/committed the fix already" }],
+      userPromptText: "/committed the fix already",
     });
     expect(result.deliveryTiming).toBe("in_turn");
   });
@@ -854,7 +858,7 @@ describe("queueMessage notepad injection", () => {
                 revision: 4,
                 openComments: { count: 0, latestCreatedAt: null },
                 writeMode: "read-only" as const,
-                content: `Canonical body.\n\n[Image: img-a]\n\n${NESTED_REF}`,
+                content: `Canonical body.\n\n[$host-only](</skills/host-only/SKILL.md>)\n\n[Image: img-a]\n\n${NESTED_REF}`,
               }
             : null,
         ),
@@ -868,6 +872,10 @@ describe("queueMessage notepad injection", () => {
     expect(delivered).toContain("write-mode: read-only");
     expect(delivered).toContain("read: cctl notepad get 'np-1'");
     expect(delivered).toContain("Canonical body.");
+    expect(delivered).toContain("[$host-only](</skills/host-only/SKILL.md>)");
+    expect(queueUserInputMock.mock.calls.at(-1)?.[0].userPromptText).toBe(
+      `Read ${NOTEPAD_REF} first.`,
+    );
     expect(delivered).toContain("[Image: img-a]");
     // Nested reference is delivered as a reference, not expanded content.
     expect(delivered).toContain(NESTED_REF);
@@ -1061,6 +1069,34 @@ describe("queueMessage notepad injection", () => {
         ],
       };
     }
+
+    it("keeps queued skill arguments separate from notices and reference summaries", async () => {
+      const queueUserInputMock = vi.fn(
+        async (input: ConversationQueuedUserInput) => input.onAccepted?.(),
+      );
+      getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+      const text =
+        '/wait-what <ticket-ref project-name="cc" ticket-number="90" identifier="cc#90" title="Captured" read-command="cctl ticket get cc#90" />';
+
+      await queueMessage({
+        ...baseParams,
+        text,
+        backend: "claude",
+        deps: {
+          ...deps,
+          prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+        },
+      });
+
+      const input = queueUserInputMock.mock.calls[0]?.[0];
+      expect(input).toMatchObject({
+        content: [{ type: "text", text }],
+        promptContext: expect.stringContaining(NOTICE_BLOCK),
+      });
+      expect(input?.promptContext).toContain("<reference-state-summaries>");
+      expect(input?.promptContext).toContain('id="90"');
+      expect(settleNotepadChangeNoticeMock).toHaveBeenCalledOnce();
+    });
 
     it("carries the notice a live turn would, while the durable row and transcript keep the user's text", async () => {
       const queueUserInputMock = vi.fn(

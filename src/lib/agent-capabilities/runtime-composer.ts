@@ -273,7 +273,7 @@ export function composeConversationStartRuntime(
  * enablement + deciding layer. Stale and verification-gated rows never reach
  * the seam.
  */
-function projectResolvedCascade(
+export function projectResolvedCascade(
   backend: AgentBackendId,
   views: Partial<
     Record<AgentCapabilityCascadeKind, AgentCapabilityViewResponse>

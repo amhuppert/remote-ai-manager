@@ -1,3 +1,4 @@
+import type { CommandsChangedEvent } from "@/lib/commands/schemas";
 import type { BundleTransferEvent } from "@/lib/tickets/bundle-transfer-schemas";
 import { z } from "zod";
 import type {
@@ -285,6 +286,7 @@ export type SSEEvent =
   | McpConfigUpdatedEvent
   | McpToolsUpdatedEvent
   | AgentCapabilitiesUpdatedEvent
+  | CommandsChangedEvent
   | AgentCapabilitiesDiscoveryUpdatedEvent
   | ScopedStatusEvent
   | SpawnResultEvent

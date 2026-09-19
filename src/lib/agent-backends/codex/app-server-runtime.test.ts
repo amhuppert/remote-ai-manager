@@ -57,6 +57,16 @@ function harness(
   const requests: { method: string; params: unknown }[] = [];
   const events: ConversationBackendEvent[] = [];
   const records: CodexInstructionRecord[] = [];
+  let skills = [
+    {
+      name: "wait-what",
+      description: "Rephrase",
+      path: "/skills/wait-what/SKILL.md",
+      scope: "user",
+      enabled: true,
+      pluginId: null,
+    },
+  ];
   let options: AppServerClientOptions | undefined;
   let drain = Promise.resolve();
   let barrier = Promise.resolve();
@@ -79,6 +89,8 @@ function harness(
     async request(method, params) {
       requests.push({ method, params });
       if (method === "initialize") return {};
+      if (method === "skills/list")
+        return { data: [{ cwd: options?.cwd ?? "/repo", skills, errors: [] }] };
       if (method === "thread/start" || method === "thread/resume")
         return {
           thread: { id: "thread-1" },
@@ -146,6 +158,7 @@ function harness(
       status: "linked",
       linkPath: "/repo/.agents/skills/command-center",
     }),
+    skillsChanged: vi.fn(),
     now: () => 1,
   };
   const runtime = new CodexConversationRuntime(
@@ -188,6 +201,12 @@ function harness(
   const transportFailure = (error: Error) => options?.onFailure(error);
   return {
     runtime,
+    get appServerOptions() {
+      return options;
+    },
+    setSkills(value: typeof skills) {
+      skills = value;
+    },
     input,
     events,
     requests,
@@ -211,6 +230,195 @@ async function until(predicate: () => boolean) {
 }
 
 describe("Codex app-server conversation runtime", () => {
+  it("delivers the selected native skill with context and images on start and steer", async () => {
+    const h = harness();
+    const prompt = "[$wait-what](</skills/wait-what/SKILL.md>) explain";
+    const turn = h.runtime.sendTurn({
+      ...h.input,
+      promptText: prompt,
+      promptContext: "<memory>context</memory>",
+      imageRefs: [
+        {
+          path: "/image.png",
+          mediaType: "image/png",
+          index: 1,
+          base64Data: "aW1hZ2U=",
+        },
+      ],
+    });
+    await until(() =>
+      h.events.some((event) => event.type === "input_accepted"),
+    );
+    await h.steer({
+      content: [{ type: "text", text: prompt }],
+      promptContext: "<ticket>context</ticket>",
+    });
+    h.finish();
+    await turn;
+    const invocation = {
+      type: "skill",
+      name: "wait-what",
+      path: "/skills/wait-what/SKILL.md",
+    };
+    expect(
+      h.requests.find((item) => item.method === "turn/start")?.params,
+    ).toMatchObject({
+      input: expect.arrayContaining([
+        invocation,
+        { type: "localImage", path: "/image.png" },
+      ]),
+    });
+    expect(
+      h.requests.find((item) => item.method === "turn/steer")?.params,
+    ).toMatchObject({ input: expect.arrayContaining([invocation]) });
+  });
+
+  it("refreshes native skills for queued selections after skills/changed", async () => {
+    const h = harness();
+    const prompt = "[$wait-what](</skills/wait-what/SKILL.md>)";
+    const turn = h.runtime.sendTurn({ ...h.input, promptText: prompt });
+    await until(() =>
+      h.events.some((event) => event.type === "input_accepted"),
+    );
+    h.setSkills([]);
+    h.notify("skills/changed", {});
+    const delivery = h.steer({ content: [{ type: "text", text: prompt }] });
+    const outcome = await delivery.then(
+      () => "accepted",
+      (error) => String(error),
+    );
+    h.finish();
+    await turn;
+    expect(outcome).toMatch(/no longer available/);
+    expect(h.deps.skillsChanged).toHaveBeenCalledTimes(2);
+    expect(
+      h.requests.filter((item) => item.method === "turn/steer"),
+    ).toHaveLength(0);
+    expect(
+      h.requests.filter((item) => item.method === "skills/list"),
+    ).toHaveLength(2);
+  });
+
+  it("uses current scoped capability settings and actual cwd for idle catalogs", async () => {
+    const h = harness({
+      fsWritePolicy: {
+        mode: "allowlist",
+        allowWrite: ["/scratch", "/scratch/tmp"],
+        denyWrite: ["/repo"],
+      },
+    });
+    await h.runtime.getSkillCommands({
+      backend: "codex",
+      kinds: [
+        {
+          kind: "skills",
+          items: [
+            {
+              itemId: "wait-what",
+              enabled: false,
+              originLayer: "conversation",
+            },
+          ],
+        },
+      ],
+    });
+    expect(h.appServerOptions?.config).toMatchObject({
+      skills: { config: [{ name: "wait-what", enabled: false }] },
+    });
+    expect(
+      h.requests.find((item) => item.method === "skills/list")?.params,
+    ).toMatchObject({ cwds: ["/scratch"] });
+  });
+
+  it("does not invoke skill references from host context", async () => {
+    const h = harness();
+    const promptText =
+      "<memory>[$wait-what](</skills/wait-what/SKILL.md>)</memory>\nDo something else";
+    const turn = h.runtime.sendTurn({
+      ...h.input,
+      promptText,
+      userPromptText: "Do something else",
+    });
+    await until(() =>
+      h.events.some((event) => event.type === "input_accepted"),
+    );
+    await h.steer({
+      content: [{ type: "text", text: promptText }],
+      userPromptText: "Do something else",
+    });
+    h.finish();
+    await turn;
+    expect(h.requests.filter((item) => item.method === "skills/list")).toEqual(
+      [],
+    );
+    expect(
+      h.requests.find((item) => item.method === "turn/start")?.params,
+    ).toMatchObject({ input: [{ type: "text", text: promptText }] });
+  });
+
+  it("invalidates an open command catalog when applied settings retire at turn completion", async () => {
+    const h = harness();
+    const turn = h.runtime.sendTurn(h.input);
+    await until(() =>
+      h.events.some((event) => event.type === "input_accepted"),
+    );
+    h.finish();
+    await turn;
+    expect(h.deps.skillsChanged).toHaveBeenCalledOnce();
+  });
+
+  it("does not start a model turn if cancelled while resolving the selected skill", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const catalog = Promise.withResolvers<unknown>();
+    const request = h.client.request.bind(h.client);
+    let readingSkills = false;
+    h.client.request = async (method, params) => {
+      if (method === "skills/list") {
+        readingSkills = true;
+        return catalog.promise;
+      }
+      return request(method, params);
+    };
+    const turn = h.runtime.sendTurn({
+      ...h.input,
+      promptText: "[$wait-what](</skills/wait-what/SKILL.md>)",
+      signal: controller.signal,
+    });
+    await until(() => readingSkills);
+    controller.abort();
+    catalog.resolve({
+      data: [
+        {
+          cwd: "/repo",
+          errors: [],
+          skills: [
+            {
+              name: "wait-what",
+              description: "Rephrase",
+              path: "/skills/wait-what/SKILL.md",
+              scope: "user",
+              enabled: true,
+            },
+          ],
+        },
+      ],
+    });
+    let settled = false;
+    const outcome = turn.finally(() => {
+      settled = true;
+    });
+    await until(
+      () => settled || h.requests.some((item) => item.method === "turn/start"),
+    );
+    if (!settled) h.finish("interrupted");
+    const result = await outcome;
+    expect(result.aborted).toBe(true);
+    expect(h.requests.filter((item) => item.method === "turn/start")).toEqual(
+      [],
+    );
+  });
+
   it("uses privileged creation instructions and deduplicates start acceptance", async () => {
     const h = harness();
     const turn = h.runtime.sendTurn(h.input);

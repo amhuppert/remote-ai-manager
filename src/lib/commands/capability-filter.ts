@@ -21,6 +21,9 @@ export function filterDisabledCommandItems(
   const disabledSkillKeys = collectDisabledSkillKeys(skillsView);
 
   return items.filter((item) => {
+    // Native catalog entries already reflect the runtime's applied config;
+    // pending UI capability edits must not override that authoritative list.
+    if (item.skillPath) return true;
     if (item.source === "managed") return true;
     if (item.type === "command") {
       return !disabledPluginShorts.has(item.source);

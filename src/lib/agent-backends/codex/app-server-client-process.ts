@@ -10,6 +10,7 @@ import {
   readProcessStartTicks,
 } from "@/lib/shared/process-identity";
 import type { AppServerProcessHost } from "./app-server-client";
+import { buildCodexConfigArgs } from "./app-server-config-args";
 import { CODEX_APP_SERVER_VERSION } from "./app-server-protocol";
 
 const packageSchema = z.object({ version: z.string() });
@@ -101,10 +102,10 @@ async function processTable(): Promise<Map<
 
 export function createAppServerProcessHost(): AppServerProcessHost {
   return {
-    spawn({ cwd, env }) {
+    spawn({ cwd, env, config }) {
       const child = spawn(
         resolveCodexAppServerExecutable(),
-        ["app-server", "--listen", "stdio://"],
+        ["app-server", "--listen", "stdio://", ...buildCodexConfigArgs(config)],
         {
           cwd,
           // Next globally requires NODE_ENV; Node's spawn permits its absence

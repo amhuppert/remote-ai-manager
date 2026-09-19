@@ -8,6 +8,7 @@ import { CLAUDE_NATIVE_MEMORY_SETTINGS } from "./native-memory";
  */
 
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
+import { createClaudePromptContext } from "./prompt-context";
 import type {
   Query,
   SDKMessage,
@@ -82,6 +83,7 @@ interface TurnOptions {
   captureInputUuid?: SDKUserMessage["uuid"];
   /** When true, AskUserQuestion tool is denied (used by autonomous callers) */
   autonomous?: boolean;
+  promptContext?: string;
 }
 
 export interface TurnResult {
@@ -225,7 +227,10 @@ export interface QuerySession {
    * promptNotDelivered-tagged error when the session is dead or dies before
    * consuming it, so the caller can leave the queue row pending.
    */
-  queueUserInput(content: string | MessageContentBlock[]): Promise<void>;
+  queueUserInput(
+    content: string | MessageContentBlock[],
+    promptContext?: string,
+  ): Promise<void>;
 
   /**
    * Cancel the idle TTL timer because the caller is about to send a new turn.
@@ -391,6 +396,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let captureObserver: ((message: SDKMessage) => void) | null = null;
   let pendingTurn: PendingTurn | null = null;
   let currentTurnOptions: TurnOptions | null = null;
+  const promptContextDelivery = createClaudePromptContext();
   let isFirstPrompt = true;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const stderrChunks: string[] = [];
@@ -500,6 +506,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     ? new AbortController()
     : undefined;
   const sdkOptions: Options = {
+    ...(!options.checkpointCapture
+      ? { hooks: promptContextDelivery.hooks }
+      : {}),
     ...(captureAbortController
       ? { abortController: captureAbortController }
       : {}),
@@ -753,6 +762,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     });
 
     const callerTraceContext = captureTraceContext();
+    const releaseContext = registerPromptContext(
+      prompt,
+      turnOptions?.promptContext,
+    );
     return new Promise<TurnResult>((resolve, reject) => {
       pendingTurn = {
         resolve,
@@ -791,7 +804,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           // path settles the turn.
         },
       );
-    });
+    }).finally(releaseContext);
   }
 
   // ------------------------------------------------------------------
@@ -800,11 +813,32 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
   async function queueUserInput(
     content: string | MessageContentBlock[],
+    promptContext?: string,
   ): Promise<void> {
     if (status === "dead") {
       throw createPromptNotDeliveredError();
     }
-    await pushInput(buildUserMessage(content));
+    const releaseContext = registerPromptContext(content, promptContext);
+    try {
+      await pushInput(buildUserMessage(content));
+    } catch (error) {
+      releaseContext();
+      throw error;
+    }
+  }
+
+  function registerPromptContext(
+    content: string | MessageContentBlock[],
+    context: string | undefined,
+  ): () => void {
+    const text =
+      typeof content === "string"
+        ? content
+        : content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("\n");
+    return promptContextDelivery.register(text, context);
   }
 
   // ------------------------------------------------------------------
@@ -1088,6 +1122,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   function close(): void {
+    promptContextDelivery.clear();
     // EOF-only shutdown permits native output recovery during its grace window.
     if (pendingTurn) captureAbortController?.abort();
     // Clear idle timer

@@ -12,6 +12,7 @@ export interface SlashCommandMarkerAttrs {
   source: string;
   description: string | null;
   argumentHint: string | null;
+  skillPath?: string | null;
 }
 
 declare module "@tiptap/core" {
@@ -25,8 +26,8 @@ declare module "@tiptap/core" {
 /**
  * Atomic inline node representing a selected slash command (Claude `/`) or
  * Codex skill (`$`) in the prompt editor. Wire-format round-trip is handled
- * by `serializePromptDoc`, which emits `attrs.name` verbatim — keeping the
- * agent payload identical to the pre-chip plain-text behavior.
+ * by `serializePromptDoc`, which preserves the selected Codex skill's path
+ * in an explicit reference while ordinary commands retain their name.
  */
 export const SlashCommandMarker = Node.create({
   name: "slashCommandMarker",
@@ -89,6 +90,16 @@ export const SlashCommandMarker = Node.create({
           const hint = attributes["argumentHint"];
           if (typeof hint !== "string" || hint.length === 0) return {};
           return { "data-argument-hint": hint };
+        },
+      },
+      skillPath: {
+        default: null as string | null,
+        parseHTML: (element) => element.getAttribute("data-skill-path"),
+        renderHTML: (attributes) => {
+          const path = attributes["skillPath"];
+          return typeof path === "string" && path
+            ? { "data-skill-path": path }
+            : {};
         },
       },
     };

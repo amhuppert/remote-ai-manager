@@ -29,6 +29,7 @@ export interface AppServerProcessHost {
   spawn(options: {
     cwd: string;
     env: Record<string, string>;
+    config?: Record<string, unknown>;
   }): AppServerProcess;
   processGroupId(pid: number): number | null;
   startTicks(pid: number): Promise<string | null>;
@@ -40,6 +41,8 @@ export interface AppServerClientOptions {
   captureCleanup?: boolean;
   cwd: string;
   env: Record<string, string>;
+  /** Process-level overrides also govern catalog requests such as skills/list. */
+  config?: Record<string, unknown>;
   /** Lossless archival and normalized content run in one ordered bounded drain. */
   onFrame(frame: AppServerFrame): Promise<void>;
   /** Synchronous lifecycle admission observer; must not persist or project output. */
@@ -135,7 +138,11 @@ export function createCodexAppServerClient(
       ? { exitGraceMs: 1000, termGraceMs: 1000, killGraceMs: 1000 }
       : {}),
   };
-  const child = host.spawn({ cwd: options.cwd, env: options.env });
+  const child = host.spawn({
+    cwd: options.cwd,
+    env: options.env,
+    config: options.config,
+  });
   const groupId = host.processGroupId(child.pid);
   const identity = bounded(
     host.startTicks(child.pid).catch(() => null),

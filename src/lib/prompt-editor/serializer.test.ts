@@ -40,6 +40,7 @@ const schema = new Schema({
         source: { default: "" },
         description: { default: null },
         argumentHint: { default: null },
+        skillPath: { default: null },
       },
     },
     fileMention: {
@@ -166,6 +167,7 @@ function slashChip(attrs: {
   trigger?: "/" | "$";
   kind?: "command" | "skill";
   source?: string;
+  skillPath?: string;
 }): ProseMirrorNode {
   return schema.nodes["slashCommandMarker"]!.create({
     name: attrs.name,
@@ -174,6 +176,7 @@ function slashChip(attrs: {
     source: attrs.source ?? "",
     description: null,
     argumentHint: null,
+    skillPath: attrs.skillPath ?? null,
   });
 }
 
@@ -471,6 +474,40 @@ describe("serializePromptDoc", () => {
     });
 
     expect(result.prompt).toBe("$wave");
+  });
+
+  it("serializes an explicitly selected Codex skill with its exact file identity", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          slashChip({
+            name: "$wave",
+            trigger: "$",
+            kind: "skill",
+            skillPath: "/skills/personal (copy)/SKILL.md",
+          }),
+          t(" explain the result"),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe(
+      "[$wave](</skills/personal%20%28copy%29/SKILL.md>) explain the result",
+    );
+  });
+
+  it("keeps slash skill invocations plain even when a path is present", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          slashChip({ name: "/wave", kind: "skill", skillPath: "/a/SKILL.md" }),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("/wave");
   });
 
   it("embeds a slash chip between surrounding text", () => {

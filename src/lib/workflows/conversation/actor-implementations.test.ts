@@ -3287,6 +3287,7 @@ describe("executePromptForMachine", () => {
       const turnInput = lastTurnInput();
       expect(turnInput.promptText.startsWith(TICKET_BLOCK)).toBe(true);
       expect(turnInput.promptText).toContain("do the work");
+      expect(turnInput).not.toHaveProperty("promptContext");
 
       expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
       const createRuntimeCall = (
@@ -3298,6 +3299,49 @@ describe("executePromptForMachine", () => {
       expect(runtimeArgs.sessionInstructions.join("\n")).not.toContain(
         "<active-ticket>",
       );
+    });
+
+    it.each([
+      "plain request",
+      "[$selected](</skills/selected/SKILL.md>) explain",
+    ])(
+      "keeps user skill selection provenance separate from host context: %s",
+      async (userText) => {
+        const hostText = `${TICKET_BLOCK}\n[$host-only](</skills/host-only/SKILL.md>)`;
+        conversationActors = createTestActorImplementations(
+          createMockDeps({ getLiveTicketBlock: vi.fn(async () => hostText) }),
+        );
+        const input = makeExecutePromptInput({
+          turn: { promptText: userText },
+        });
+        registerRuntime(input);
+
+        await conversationActors.executePromptForMachine(input);
+
+        expect(lastTurnInput()).toMatchObject({
+          promptText: `${hostText}\n\n${userText}`,
+          userPromptText: userText,
+        });
+      },
+    );
+
+    it("keeps an explicit skill invocation separate from transient context", async () => {
+      conversationActors = createTestActorImplementations(
+        createMockDeps({
+          getLiveTicketBlock: vi.fn(async () => TICKET_BLOCK),
+        }),
+      );
+      const input = makeExecutePromptInput({
+        turn: { promptText: "/wait-what explain the last answer" },
+      });
+      registerRuntime(input);
+
+      await conversationActors.executePromptForMachine(input);
+
+      expect(lastTurnInput()).toMatchObject({
+        promptText: "/wait-what explain the last answer",
+        promptContext: TICKET_BLOCK,
+      });
     });
 
     it("leaves the prompt untouched for unlinked sessions", async () => {

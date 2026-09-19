@@ -4,8 +4,9 @@ import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { describe, expect, it } from "vitest";
 import { deserializePromptDoc } from "./deserializer";
 import { serializePromptDoc } from "./serializer";
+import { SlashCommandMarker } from "./slash-command-marker-node";
 
-const schema = getSchema([StarterKit]);
+const schema = getSchema([StarterKit, SlashCommandMarker]);
 
 function roundTrip(prompt: string): string {
   const json = deserializePromptDoc({ prompt, images: [] });
@@ -14,6 +15,44 @@ function roundTrip(prompt: string): string {
 }
 
 describe("deserializePromptDoc code formatting", () => {
+  it("restores an explicit skill as a chip and retains its identity on resubmit", () => {
+    const prompt = "Use [$wave](</skills/Alex%20%28personal%29/SKILL.md>) now";
+    expect(deserializePromptDoc({ prompt, images: [] })).toMatchObject({
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Use " },
+            {
+              type: "slashCommandMarker",
+              attrs: {
+                name: "$wave",
+                trigger: "$",
+                kind: "skill",
+                skillPath: "/skills/Alex (personal)/SKILL.md",
+              },
+            },
+            { type: "text", text: " now" },
+          ],
+        },
+      ],
+    });
+    expect(roundTrip(prompt)).toBe(prompt);
+  });
+
+  it("keeps skill examples in code literal while restoring a later selection", () => {
+    const reference = "[$wave](</skills/wave/SKILL.md>)";
+    const prompt = `\`${reference}\`\n~~~markdown\n${reference}\n~~~\n${reference}`;
+    const json = deserializePromptDoc({ prompt, images: [] });
+    const chips = json.content?.flatMap((block) =>
+      (block.content ?? []).filter(
+        (node) => node.type === "slashCommandMarker",
+      ),
+    );
+    expect(chips).toHaveLength(1);
+    expect(roundTrip(prompt)).toBe(prompt);
+  });
+
   it("round-trips inline code and fenced code blocks with their language", () => {
     const prompt =
       "Run `bun test` first.\n```c++\nint main() {\n  return 0;\n}\n```\nThen report back.";

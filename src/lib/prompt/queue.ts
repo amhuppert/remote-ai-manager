@@ -768,11 +768,21 @@ async function queueMessageInOrder(
       read: (target) => deps.readLiveReference(target),
     });
     const summary = summarizedText.slice(sourceText.length);
+    const isNativeCommand = /^\/[\w:-]+(?:\s|$)/.test(sourceText);
     const summarizedContent: MessageContentBlock[] = summary
       ? [...deliveryContent, { type: "text", text: summary }]
       : deliveryContent;
+    const promptContext = isNativeCommand
+      ? [notepadChangeNotice?.block, summary.trimStart()]
+          .filter(Boolean)
+          .join("\n\n")
+      : undefined;
     await runtime.queueUserInput({
-      content: withNotepadChangeNotice(summarizedContent, notepadChangeNotice),
+      userPromptText: text ?? "",
+      content: isNativeCommand
+        ? deliveryContent
+        : withNotepadChangeNotice(summarizedContent, notepadChangeNotice),
+      ...(promptContext ? { promptContext } : {}),
       onAccepted,
     });
   } catch (err) {

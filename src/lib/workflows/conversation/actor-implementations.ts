@@ -197,6 +197,8 @@ interface DispatchTurnViaAgentCallInput {
   log: Logger;
   backend: AgentBackendId;
   promptText: string;
+  userPromptText: string;
+  promptContext?: string;
   imageRefs: ConversationBackendTurnInput["imageRefs"] | undefined;
   modelSelection: BackendModelSelection;
   autonomous: boolean;
@@ -269,6 +271,10 @@ async function dispatchTurnViaAgentCall(
           ? { waitForBackgroundTasks: true }
           : {}),
         sessionInstructions: [],
+        userPromptText: input.userPromptText,
+        ...(input.promptContext !== undefined
+          ? { promptContext: input.promptContext }
+          : {}),
         ...(input.imageRefs !== undefined
           ? { imageRefs: input.imageRefs }
           : {}),
@@ -1310,7 +1316,13 @@ async function executePromptForMachine(
       archiveQueuedInput: () => queuedAccounting.appendAcceptedUserEntry(),
       onQueueAccepted: () => queuedAccounting.handleInputAccepted(),
     });
-    const { promptText, syntheticForkSeed } = preparedContext;
+    const {
+      promptText,
+      userPromptText,
+      dispatchPromptText,
+      promptContext,
+      syntheticForkSeed,
+    } = preparedContext;
 
     // Pre-turn MCP apply, run by the facade in its fixed pre-dispatch order.
     // Only reused runtimes need it — a fresh runtime was created with the
@@ -1464,7 +1476,9 @@ async function executePromptForMachine(
       scopeRef,
       log: deps.log,
       backend: input.agentBackend,
-      promptText,
+      promptText: dispatchPromptText,
+      userPromptText,
+      ...(promptContext !== undefined ? { promptContext } : {}),
       imageRefs: imageRefs.length > 0 ? imageRefs : undefined,
       modelSelection: effectiveModelSelection,
       autonomous: input.turn.autonomous ?? false,

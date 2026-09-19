@@ -2,7 +2,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import { SlashCommand } from "./slash-command-extension";
+import { SlashCommand, type SlashCommandItem } from "./slash-command-extension";
+import { SlashCommandMarker } from "./slash-command-marker-node";
+import { serializePromptDoc } from "./serializer";
 
 beforeEach(() => {
   if (typeof Range !== "undefined") {
@@ -77,6 +79,65 @@ function makeEditorWithTriggers(triggerChars: readonly string[]) {
 }
 
 describe("SlashCommand extension — multiple triggers", () => {
+  it("keeps the selected skill identity through chip insertion and serialization", async () => {
+    let select: ((item: SlashCommandItem) => void) | undefined;
+    const skill = {
+      id: "wave-personal",
+      name: "$wave",
+      trigger: "$" as const,
+      kind: "skill" as const,
+      source: "user",
+      skillPath: "/skills/personal (copy)/SKILL.md",
+    };
+    const editor = new Editor({
+      element: document.createElement("div"),
+      extensions: [
+        StarterKit,
+        SlashCommandMarker,
+        SlashCommand.configure({
+          triggers: [
+            {
+              char: "$",
+              items: () => [skill],
+              render: () => ({
+                onStart: (props) => {
+                  select = props.command;
+                },
+              }),
+            },
+          ],
+        }),
+      ],
+    });
+    try {
+      editor.commands.insertContent("$wave");
+      await Promise.resolve();
+      expect(select).toBeTypeOf("function");
+      select?.(skill);
+
+      expect(
+        serializePromptDoc({ doc: editor.state.doc, attachments: [] }).prompt,
+      ).toBe("[$wave](</skills/personal%20%28copy%29/SKILL.md>) ");
+      expect(editor.getHTML()).toContain(
+        'data-skill-path="/skills/personal (copy)/SKILL.md"',
+      );
+      const restored = new Editor({
+        extensions: [StarterKit, SlashCommandMarker],
+        content: editor.getHTML(),
+      });
+      try {
+        expect(
+          serializePromptDoc({ doc: restored.state.doc, attachments: [] })
+            .prompt,
+        ).toBe("[$wave](</skills/personal%20%28copy%29/SKILL.md>)");
+      } finally {
+        restored.destroy();
+      }
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("fires onStart for the / trigger when typing / at start of line", async () => {
     const { editor, onStart } = makeEditorWithTriggers(["/", "$"]);
     editor.chain().insertContent("/").run();

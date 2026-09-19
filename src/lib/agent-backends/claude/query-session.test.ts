@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type {
+  Options,
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -162,6 +163,82 @@ beforeEach(() => {
 });
 
 describe("QuerySession.sendPrompt", () => {
+  it("does not give a queued command the context of a later identical command", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const call: { options: Options } = queryMock.mock.calls[0]?.[0];
+    const first = session.queueUserInput("/wait-what").catch(() => {});
+    const second = session
+      .queueUserInput("/wait-what", "later notice")
+      .catch(() => {});
+    const hook = call.options.hooks?.UserPromptSubmit?.[0]?.hooks[0];
+    const submit = () =>
+      hook?.(
+        {
+          hook_event_name: "UserPromptSubmit",
+          session_id: "session",
+          transcript_path: "/transcript",
+          cwd: "/project",
+          prompt: "/wait-what",
+        },
+        undefined,
+        { signal: new AbortController().signal },
+      );
+    try {
+      expect(await submit()).toEqual({});
+      expect(await submit()).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: "later notice",
+        },
+      });
+    } finally {
+      session.close();
+      await Promise.all([first, second]);
+    }
+  });
+
+  it("submits an explicit skill unchanged and supplies CC context through the SDK hook", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const call: { prompt: AsyncGenerator<SDKUserMessage>; options: Options } =
+      queryMock.mock.calls[0]?.[0];
+    const turn = session.sendPrompt("/wait-what shorter", vi.fn(), {
+      promptContext: "<memory-index>context</memory-index>",
+    });
+    try {
+      const message = await call.prompt.next();
+      expect(message.value?.message.content).toEqual([
+        { type: "text", text: "/wait-what shorter" },
+      ]);
+      const hook = call.options.hooks?.UserPromptSubmit?.[0]?.hooks[0];
+      expect(
+        await hook?.(
+          {
+            hook_event_name: "UserPromptSubmit",
+            session_id: "session",
+            transcript_path: "/transcript",
+            cwd: "/project",
+            prompt: "/wait-what shorter",
+          },
+          undefined,
+          { signal: new AbortController().signal },
+        ),
+      ).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: "<memory-index>context</memory-index>",
+        },
+      });
+    } finally {
+      const completion = turn.catch(() => {});
+      session.close();
+      await completion;
+    }
+  });
+
   it("resolves with correct TurnResult when result message arrives", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

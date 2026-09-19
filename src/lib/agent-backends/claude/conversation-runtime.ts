@@ -348,13 +348,35 @@ class ClaudeConversationRuntime
 
     const startTime = Date.now();
 
+    // Claude expands slash commands only for text-only SDK input. Multimodal
+    // turns retain the normal composition, including their inline images.
+    const isNativeCommand =
+      input.imageRefs.length === 0 &&
+      /^\/[\w:-]+(?:\s|$)/.test(input.promptText);
+    const promptContext = isNativeCommand
+      ? [
+          input.syntheticForkSeed,
+          input.promptContext,
+          this.outputFormat?.schema
+            ? renderStructuredOutputInstruction(this.outputFormat.schema)
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+      : undefined;
     const promptBlocks = appendStructuredOutputContract(
       buildClaudePromptBlocks({
-        promptText: input.promptText,
+        promptText: isNativeCommand
+          ? input.promptText
+          : [input.promptContext, input.promptText]
+              .filter(Boolean)
+              .join("\n\n"),
         imageRefs: input.imageRefs,
-        syntheticForkSeed: input.syntheticForkSeed ?? null,
+        syntheticForkSeed: isNativeCommand
+          ? null
+          : (input.syntheticForkSeed ?? null),
       }),
-      this.outputFormat?.schema,
+      isNativeCommand ? undefined : this.outputFormat?.schema,
     );
 
     const prompt: string | MessageContentBlock[] =
@@ -419,7 +441,7 @@ class ClaudeConversationRuntime
       const turnResult: TurnResult = await this.querySession.sendPrompt(
         prompt,
         emit,
-        { autonomous: input.autonomous },
+        { autonomous: input.autonomous, promptContext },
       );
 
       // Bounded wait barrier: if the turn opted in and the agent left waitable
@@ -569,7 +591,15 @@ class ClaudeConversationRuntime
     this.liveInputBarrier = previous.then(() => barrier.promise);
     try {
       await previous;
-      await this.querySession.queueUserInput(input.content);
+      const hasImages = input.content.some((block) => block.type === "image");
+      const content: MessageContentBlock[] =
+        hasImages && input.promptContext
+          ? [{ type: "text", text: input.promptContext }, ...input.content]
+          : input.content;
+      await this.querySession.queueUserInput(
+        content,
+        hasImages ? undefined : input.promptContext,
+      );
       try {
         await input.onAccepted?.();
       } catch (error) {
