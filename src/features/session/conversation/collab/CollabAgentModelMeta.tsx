@@ -1,14 +1,6 @@
 "use client";
 
-import { backendLabel } from "@/lib/agent-backends/catalog";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
-
-/** Display names for the two collaboration backends, shared by every card. */
-export const AGENT_LABEL: Record<CollaborationAgent, string> = {
-  claude: backendLabel("claude"),
-  codex: backendLabel("codex"),
-};
 
 /**
  * What the meta line can show for one lane. A structural subset of

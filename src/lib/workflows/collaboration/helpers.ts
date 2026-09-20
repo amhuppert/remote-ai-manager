@@ -33,11 +33,12 @@ import {
   prefixPromptWithTicketBlock,
 } from "./session-context";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
-import type {
-  CollaborationAgent,
-  CollaborationAgentArtifactPhase,
-  CollaborationArtifact,
-  CollaborationFlowAgent,
+import {
+  collaborationLaneDispatch,
+  type CollaborationAgent,
+  type CollaborationAgentArtifactPhase,
+  type CollaborationArtifact,
+  type CollaborationFlowAgent,
 } from "./types";
 
 export interface ArtifactTracker {
@@ -272,31 +273,23 @@ export async function callPrimitive(
     prompt.prompt,
   );
 
+  // The pair policy owns how each participant's lane is dispatched
+  // (`collaborationLaneDispatch`); the request differs only in kind and the
+  // task profile, never in what the lane is asked to do.
+  const shared = {
+    executionClass: "governed-execution",
+    backend,
+    prompt: composedPrompt,
+    laneRef,
+    writeCapability,
+    outputSchema: prompt.outputSchema,
+    ...governance,
+    ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
+  } as const;
   const request: AgentCallRequest =
-    backend === "claude"
-      ? {
-          kind: "conversation_turn",
-          executionClass: "governed-execution",
-          backend: "claude",
-          prompt: composedPrompt,
-          laneRef,
-          writeCapability,
-          outputSchema: prompt.outputSchema,
-          ...governance,
-          ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
-        }
-      : {
-          kind: "task_run",
-          executionClass: "governed-execution",
-          executionProfile: "standard",
-          backend: "codex",
-          prompt: composedPrompt,
-          laneRef,
-          writeCapability,
-          outputSchema: prompt.outputSchema,
-          ...governance,
-          ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
-        };
+    collaborationLaneDispatch(backend) === "conversation_turn"
+      ? { kind: "conversation_turn", ...shared }
+      : { kind: "task_run", executionProfile: "standard", ...shared };
 
   // Lane scheduling is owned by the WorkflowAgentCaller behind
   // `deps.callAgent` — the single acquisition point (D16). No scheduling here.

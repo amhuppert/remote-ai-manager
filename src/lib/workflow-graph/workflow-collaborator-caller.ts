@@ -13,8 +13,7 @@
  * recording, and continuity handling that the rest of workflow agent activity
  * uses. The envelope owns the workflow-scoped `LaneService` and seeds the
  * configured backend pair before the first call; subsequent calls reuse
- * those lanes through `agent_one`'s and `agent_two`'s opposite-backend
- * mapping. This is what wires collaboration sub-calls into the "normal
+ * those lanes through the flow-agent lane ids. This is what wires collaboration sub-calls into the "normal
  * workflow agent activity" path observable by the lane service, SSE status
  * bus, and the envelope's transcript writeback.
  *
@@ -33,16 +32,16 @@
  *   4. `generateFinalAnswer` — agent_one writes the final answer over the
  *      drafts + the latest counter-proposal/resolution decision.
  *
- * Agent backends mirror the user envelope's contract: `agent_one` and
- * `agent_two` run on opposite backends. Configuration only carries the
- * `secondAgent` (`agent_two`); `agent_one` is derived as the opposite.
+ * Agent backends mirror the user envelope's contract: configuration only
+ * carries the `secondAgent` (`agent_two`); `agent_one` runs its default
+ * partner from the collaboration pair policy.
  */
 
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   buildCollaborationLaneSeeds,
-  oppositeCollaborationBackend,
+  resolveGraphCollaborationBackends,
 } from "@/lib/workflows/collaboration/backend-pair";
 import type {
   AgentCallRequest,
@@ -172,11 +171,11 @@ export function createWorkflowCollaboratorCaller(
   input: WorkflowCollaboratorCallerInput,
 ): WorkflowCollaborationCollaboratorCaller {
   const agentTwoConfig = input.resolvedConfig.secondAgent.value;
-  const agentTwoBackend = agentTwoConfig.backend;
-  const agentOneBackend = oppositeCollaborationBackend(agentTwoBackend);
+  const { agent_one: agentOneBackend, agent_two: agentTwoBackend } =
+    resolveGraphCollaborationBackends(agentTwoConfig.backend);
   // Resolved per-field config from `resolveCollaborationConfigWithProvenance`
-  // configures agent_two only; agent_one runs on the opposite backend without
-  // explicit overrides so the underlying task runner uses its defaults.
+  // configures agent_two only; agent_one runs on the default partner backend
+  // without explicit overrides so the underlying task runner uses its defaults.
   const agentTwoModelSelection = agentTwoConfig.modelSelection;
   const now = input.now ?? (() => new Date().toISOString());
 

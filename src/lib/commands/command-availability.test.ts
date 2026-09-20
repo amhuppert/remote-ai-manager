@@ -93,6 +93,11 @@ describe("built-in command execution availability", () => {
       refusal: { code: "backend-catalog-unavailable" },
     });
   });
+  it("offers /collab to a Cursor conversation now that Cursor participates in Collaboration Mode", () => {
+    expect(commandAvailability(cursor, "/collab")).toEqual({
+      status: "available",
+    });
+  });
   it.each(["claude", "codex"] as const)(
     "preserves the supported %s command matrix",
     (backend) => {

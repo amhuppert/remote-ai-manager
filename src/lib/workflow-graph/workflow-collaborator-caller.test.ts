@@ -66,28 +66,31 @@ afterEach(async () => {
   await fs.rm(worktreePath, { recursive: true, force: true });
 });
 
+const SECOND_AGENT_FIXTURES = {
+  codex: {
+    backend: "codex",
+    modelSelection: {
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "medium", fast: "false" },
+    },
+  },
+  claude: {
+    backend: "claude",
+    modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+  },
+  cursor: {
+    backend: "cursor",
+    modelSelection: { modelId: "composer-2.5", parameters: {} },
+  },
+} as const;
+
 function resolvedConfigFixture(
-  backend: "claude" | "codex",
+  backend: keyof typeof SECOND_AGENT_FIXTURES,
 ): ResolvedCollaborationConfig {
   return {
     enabled: { value: true, source: "global" },
     secondAgent: {
-      value:
-        backend === "codex"
-          ? {
-              backend: "codex",
-              modelSelection: {
-                modelId: "gpt-5.4",
-                parameters: { reasoning: "medium", fast: "false" },
-              },
-            }
-          : {
-              backend: "claude",
-              modelSelection: {
-                modelId: "sonnet",
-                parameters: { effort: "medium" },
-              },
-            },
+      value: SECOND_AGENT_FIXTURES[backend],
       source: "global",
     },
     negotiationRounds: { value: 4, source: "global" },
@@ -284,6 +287,60 @@ describe("createWorkflowCollaboratorCaller", () => {
 
       expect(out.agentOneDraft.agent).toBe("agent_one");
       expect(out.agentTwoDraft.agent).toBe("agent_two");
+    });
+
+    it("runs a Cursor second agent as agent_two beside its default Claude partner, each as a task run on its own lane", async () => {
+      const { laneService, agentCaller, call } = buildInMemoryDeps(
+        async (req) => {
+          if (req.agentCallRequest.kind !== "task_run") {
+            throw new Error("expected task_run");
+          }
+          if (req.agentCallRequest.backend === "cursor") {
+            return completedResult("cursor", agentTwoDraftFixture());
+          }
+          return completedResult("claude", agentOneDraftFixture());
+        },
+      );
+
+      const caller = createWorkflowCollaboratorCaller({
+        resolvedConfig: resolvedConfigFixture("cursor"),
+        worktreePath,
+        brief: "use Postgres?",
+        parentImplementerTurnId: "impl-1",
+        executionContextId: "ctx-1",
+        conversationId: "conv-1",
+        workflowId: "wf-collab-cursor",
+        sessionKey: "/proj::sess",
+        agentCaller,
+        laneService,
+      });
+
+      await caller.runInitialDrafts({ brief: "use Postgres?" });
+
+      const byLane = new Map(
+        call.mock.calls.map(([req]) => [
+          req.laneRef.laneId,
+          req.agentCallRequest.kind === "task_run"
+            ? req.agentCallRequest.backend
+            : null,
+        ]),
+      );
+      expect(byLane.get("agent_one")).toBe("claude");
+      expect(byLane.get("agent_two")).toBe("cursor");
+
+      const agentTwoLane = await laneService.resolve({
+        workflowId: "wf-collab-cursor",
+        laneId: "agent_two",
+      });
+      expect(agentTwoLane?.backend).toBe("cursor");
+      // Agent Two's configured selection rides its own lane's requests only.
+      const cursorCall = call.mock.calls.find(
+        ([req]) => req.laneRef.laneId === "agent_two",
+      )?.[0];
+      expect(cursorCall?.agentCallRequest.modelSelection).toEqual({
+        modelId: "composer-2.5",
+        parameters: {},
+      });
     });
 
     it("seeds both flow-agent lanes under the supplied workflowId before the first call", async () => {

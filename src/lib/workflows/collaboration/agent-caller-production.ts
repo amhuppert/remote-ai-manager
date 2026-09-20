@@ -2,10 +2,11 @@ import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 /**
  * Production composition of `AsymmetricCollaborationSliceDeps.callAgent`.
  *
- * Wires the slice's lane-aware `callAgent` to real Claude / Codex backends:
+ * Wires the slice's lane-aware `callAgent` to the real registered backends:
  *
- *  1. `task_run` requests resolve a registered `AgentTaskRunner` from the
- *     agent-backends registry and execute via `executeAgentCall`. The
+ *  1. `task_run` requests (every non-Claude participant; see the pair policy's
+ *     `collaborationLaneDispatch`) resolve a registered `AgentTaskRunner` from
+ *     the agent-backends registry and execute via `executeAgentCall`. The
  *     working directory is the session worktree path so artifacts and
  *     subprocess writes stay scoped to the session per the worktree
  *     isolation rule in CLAUDE.md.
@@ -71,6 +72,7 @@ import {
   COLLABORATION_PROSE_TURN_INSTRUCTION,
   COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
 } from "./prompt-builders";
+import { collaborationAgentSchema } from "./types";
 
 const logger = createLogger("workflows.collaboration.agent-caller-production");
 
@@ -80,6 +82,23 @@ const logger = createLogger("workflows.collaboration.agent-caller-production");
  * the same session serializes regardless of which flow scheduled it.
  */
 const sharedCollaborationLaneScheduler = createLaneScheduler();
+
+/**
+ * How every collaboration task lane executes, whichever backend runs it: an
+ * unattended write-capable agent in the session worktree, with no approval
+ * prompts and no live web search. Each runner applies what it can enforce and
+ * delivers the rest as instructions — Codex sandboxes and gates natively,
+ * Cursor instructs and discloses the difference through its own warnings, and
+ * Claude's task runner reports the fields it does not model. The same literals
+ * the conversation-workflow task path and `cctl agent` runs use.
+ */
+const AUTONOMOUS_TASK_LANE_SETTINGS = {
+  sandboxMode: "danger-full-access",
+  approvalPolicy: "never",
+  webSearchMode: "disabled",
+  skipGitRepoCheck: true,
+  networkAccessEnabled: true,
+} as const;
 
 export interface CollaborationProductionAgentCallerInput {
   workflowId: string;
@@ -95,7 +114,7 @@ export interface CollaborationProductionAgentCallerInput {
    */
   originatingConversationId: string;
   /**
-   * Opt-in: let the Codex task lane act as the originating CC session, so the
+   * Opt-in: let a task lane act as the originating CC session, so the
    * `<active-ticket>` block's `cctl` retrieval commands can actually execute
    * there (a task subprocess otherwise has no CC identity at all).
    *
@@ -235,22 +254,14 @@ function buildInnerCallAgent(
     if (request.kind === "task_run") {
       const runner = resolveTaskRunner(request.backend);
       const laneDefaults = laneAgentConfigFor(input, request);
-      const codexResumeRef =
+      // A task lane resumes whatever ref its own backend recorded on the lane;
+      // a ref another backend minted is never handed across.
+      const taskResumeRef =
         continuity.laneAction === "reuse" &&
         continuity.resumeRef &&
-        continuity.resumeRef.backend === "codex"
+        continuity.resumeRef.backend === request.backend
           ? continuity.resumeRef
           : null;
-      const codexHardenedSettings =
-        request.backend === "codex"
-          ? {
-              sandboxMode: "danger-full-access" as const,
-              approvalPolicy: "never" as const,
-              webSearchMode: "disabled" as const,
-              skipGitRepoCheck: true,
-              networkAccessEnabled: true,
-            }
-          : {};
       const modelSelection =
         request.modelSelection ?? laneDefaults.modelSelection;
       const effectiveRequest = { ...request, modelSelection };
@@ -267,12 +278,12 @@ function buildInnerCallAgent(
           ...(laneDefaults.stallTimeoutMs !== undefined
             ? { stallTimeoutMs: laneDefaults.stallTimeoutMs }
             : {}),
-          ...(codexResumeRef !== null ? { resumeRef: codexResumeRef } : {}),
+          ...(taskResumeRef !== null ? { resumeRef: taskResumeRef } : {}),
           ...(ccSessionScope !== undefined ? { ccSessionScope } : {}),
-          ...codexHardenedSettings,
+          ...AUTONOMOUS_TASK_LANE_SETTINGS,
         }),
       });
-      const staleResumeMessage = codexResumeRef
+      const staleResumeMessage = taskResumeRef
         ? getStaleResumeFailureMessage(request.backend, result)
         : null;
       if (staleResumeMessage) {
@@ -289,10 +300,11 @@ function buildInnerCallAgent(
 
     const laneDefaults = laneAgentConfigFor(input, request);
     const backend = request.backend ?? laneDefaults.backend;
+    // Like the task path: only a ref this lane's own backend recorded resumes.
     const claudeResumeRef =
       continuity.laneAction === "reuse" &&
       continuity.resumeRef &&
-      continuity.resumeRef.backend === "claude"
+      continuity.resumeRef.backend === backend
         ? continuity.resumeRef
         : null;
     await assertBackendExecution(backend, {
@@ -468,11 +480,11 @@ function getStaleResumeFailureMessage(
 /**
  * Continuity adapter over collaboration's synthetic lane handles. A lane's
  * handle is minted locally (`collab-…`) rather than by the backend: Claude
- * lanes run against per-lane synthetic SDK session ids and Codex lanes learn
- * their real thread id only after the first turn, so handles are always
- * treated as valid and resume-as-is; staleness surfaces at call time through
- * the WorkflowAgentCaller's stale-ref retry. Fork has no collaboration
- * meaning.
+ * lanes run against per-lane synthetic SDK session ids, and task lanes (Codex
+ * threads, Cursor task refs) learn their real handle only after the first
+ * turn, so handles are always treated as valid and resume-as-is; staleness
+ * surfaces at call time through the WorkflowAgentCaller's stale-ref retry.
+ * Fork has no collaboration meaning.
  */
 function makeSyntheticContinuityAdapter(
   backend: AgentBackendId,
@@ -503,18 +515,19 @@ export function createCollaborationProductionAgentCaller(
   const newId = input.newId ?? (() => crypto.randomUUID().slice(0, 8));
   const innerCallAgent = buildInnerCallAgent(input);
 
+  // One adapter per participant the pair policy admits, so a lane on any of
+  // them resolves continuity here rather than by a backend-named lookup.
   const syntheticAdapters: Partial<
     Record<AgentBackendId, BackendContinuityAdapter>
-  > = {
-    claude: makeSyntheticContinuityAdapter(
-      "claude",
-      () => `collab-${input.workflowId}-${newId()}`,
-    ),
-    codex: makeSyntheticContinuityAdapter(
-      "codex",
-      () => `collab-codex-${input.workflowId}-${newId()}`,
-    ),
-  };
+  > = Object.fromEntries(
+    collaborationAgentSchema.options.map((backend) => [
+      backend,
+      makeSyntheticContinuityAdapter(
+        backend,
+        () => `collab-${backend}-${input.workflowId}-${newId()}`,
+      ),
+    ]),
+  );
 
   const callerDeps: Parameters<typeof createWorkflowAgentCaller>[0] = {
     callAgent: innerCallAgent,

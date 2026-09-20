@@ -28,9 +28,25 @@ describe("flowAgentToBackend", () => {
     expect(flowAgentToBackend("agent_one", "codex")).toBe("codex");
   });
 
-  it("maps agent_two to the opposite backend", () => {
+  it("maps agent_two to the primary's default partner for runs that predate per-agent configs", () => {
     expect(flowAgentToBackend("agent_two", "claude")).toBe("codex");
     expect(flowAgentToBackend("agent_two", "codex")).toBe("claude");
+    expect(flowAgentToBackend("agent_two", "cursor")).toBe("claude");
+  });
+
+  it("prefers the configured per-agent backends, including a Cursor pair", () => {
+    const agents = {
+      agent_one: {
+        backend: "cursor" as const,
+        modelSelection: { modelId: "composer-2.5", parameters: {} },
+      },
+      agent_two: {
+        backend: "cursor" as const,
+        modelSelection: { modelId: "composer-2.5", parameters: {} },
+      },
+    };
+    expect(flowAgentToBackend("agent_one", "cursor", agents)).toBe("cursor");
+    expect(flowAgentToBackend("agent_two", "cursor", agents)).toBe("cursor");
   });
 });
 

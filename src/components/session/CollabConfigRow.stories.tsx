@@ -6,6 +6,7 @@ import CollabConfigRow, {
   type CollabConfigRowProps,
 } from "@/components/session/CollabConfigRow";
 import {
+  getConfiguredBackendModelCatalog,
   getStaticBackendModelCatalog,
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
@@ -18,7 +19,11 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   codex: defaultSelectionForModel(CODEX_CATALOG, "gpt-5.4"),
   cursor: { modelId: "composer-2.5", parameters: {} },
 };
-const MODEL_CATALOGS = { claude: CLAUDE_CATALOG, codex: CODEX_CATALOG };
+const MODEL_CATALOGS: CollabConfigRowProps["modelCatalogs"] = {
+  claude: CLAUDE_CATALOG,
+  codex: CODEX_CATALOG,
+  cursor: getConfiguredBackendModelCatalog("cursor"),
+};
 
 function StatefulConfigRow(
   props: Omit<CollabConfigRowProps, "config" | "onChange"> & {

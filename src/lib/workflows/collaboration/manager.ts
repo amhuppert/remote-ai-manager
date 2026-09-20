@@ -47,7 +47,10 @@ import {
   type CollaborationLaneAgentsInput,
   type CollaborationProductionAgentCallerInput,
 } from "./agent-caller-production";
-import { oppositeCollaborationBackend } from "./backend-pair";
+import {
+  collaborationPairRefusal,
+  defaultCollaborationPartner,
+} from "./backend-pair";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { resolveConversationProfileSnapshot } from "@/lib/conversations/profile-resolution";
 import type {
@@ -106,7 +109,8 @@ import {
   collaborationAgentsMapSchema,
   collaborationArtifactSchema,
   collaborationAutonomousResolutionThresholdSchema,
-  isCollaborationAgent,
+  CollaborationPairNotSupportedError,
+  requireCollaborationAgent,
   type CollaborationAgent,
   type CollaborationAgentsMap,
   type CollaborationArtifact,
@@ -808,19 +812,16 @@ export interface CollaborationManagerDeps {
   }): Promise<AgentProfileSnapshot>;
 
   /**
-   * Resolves the Codex lane's independent runtime profile from global config.
-   * Standalone Collaboration mode carries no per-call settings, so these
-   * defaults must cross the manager boundary together. Defaults to reading the
-   * singleton global config; tests inject a deterministic value.
+   * Resolves one participant's independent runtime profile (complete model
+   * selection and timeouts) from global config. Standalone Collaboration mode
+   * carries no per-call settings, so these defaults must cross the manager
+   * boundary together; each lane resolves its own backend's profile without
+   * requiring that backend to be the conversation default. Defaults to reading
+   * the singleton global config; tests inject a deterministic value.
    */
-  resolveCodexModelConfig(): Promise<CollaborationBackendRuntimeConfig>;
-
-  /**
-   * Resolves the Claude lane's independent runtime profile from global config.
-   * The manager carries it alongside the Codex profile without requiring
-   * either backend to be selected as the conversation default.
-   */
-  resolveClaudeModelConfig(): Promise<CollaborationBackendRuntimeConfig>;
+  resolveBackendModelConfig(
+    backend: CollaborationAgent,
+  ): Promise<CollaborationBackendRuntimeConfig>;
 
   /**
    * Runs the slice. Production uses the imported
@@ -1026,17 +1027,7 @@ function resolveRuntimeConfigFor(
   deps: CollaborationManagerDeps,
   backend: CollaborationAgent,
 ): Promise<CollaborationBackendRuntimeConfig> {
-  // A selection map keyed by collaboration agent, not an identity branch: the
-  // two config resolvers are the manager's per-provider dependency surface, and
-  // the key type is exactly the set of backends the flow runs.
-  const resolvers: Record<
-    CollaborationAgent,
-    () => Promise<CollaborationBackendRuntimeConfig>
-  > = {
-    codex: () => deps.resolveCodexModelConfig(),
-    claude: () => deps.resolveClaudeModelConfig(),
-  };
-  return resolvers[backend]();
+  return deps.resolveBackendModelConfig(backend);
 }
 
 /**
@@ -1122,13 +1113,9 @@ const defaultDeps: CollaborationManagerDeps = {
   buildCallAgent: defaultBuildCallAgent,
   admitModelSelection: defaultAdmitModelSelection,
   resolveAgentTwoProfileSnapshot: defaultResolveAgentTwoProfileSnapshot,
-  async resolveCodexModelConfig() {
+  async resolveBackendModelConfig(backend) {
     const config = await defaultReadConfig();
-    return resolveCollaborationBackendModelConfig(config, "codex");
-  },
-  async resolveClaudeModelConfig() {
-    const config = await defaultReadConfig();
-    return resolveCollaborationBackendModelConfig(config, "claude");
+    return resolveCollaborationBackendModelConfig(config, backend);
   },
   runSlice: runAsymmetricCollaborationSlice,
   createEnvelopeRepository(input) {
@@ -1316,35 +1303,6 @@ export class CollaborationModelSelectionValidationError extends Error {
   }
 }
 
-/**
- * A registered backend that Collaboration Mode does not run was asked to take a
- * lane. Bounded and named rather than substituted: silently swapping in an
- * eligible backend would run a flow the caller did not ask for, and letting the
- * ineligible one through would dispatch a lane whose contracts were never
- * evidenced for it. Thrown before anything durable happens.
- */
-export class CollaborationBackendNotEligibleError extends Error {
-  constructor(
-    public readonly agent: "agent_one" | "agent_two",
-    public readonly backend: AgentBackendId,
-  ) {
-    super(
-      `Backend "${backend}" cannot take the ${agent} lane: Collaboration Mode runs ${collaborationAgentSchema.options.join(" and ")}.`,
-    );
-    this.name = "CollaborationBackendNotEligibleError";
-  }
-}
-
-function requireCollaborationAgent(
-  agent: "agent_one" | "agent_two",
-  backend: AgentBackendId,
-): CollaborationAgent {
-  if (!isCollaborationAgent(backend)) {
-    throw new CollaborationBackendNotEligibleError(agent, backend);
-  }
-  return backend;
-}
-
 async function admitCollaborationAgentSelections(
   deps: Pick<CollaborationManagerDeps, "admitModelSelection">,
   projectPath: string,
@@ -1525,13 +1483,24 @@ export function createCollaborationManager(
         parsed.modelSelection ?? agentOneRuntime.modelSelection;
 
       // Agent Two resolves explicit request config → global config default
-      // for its backend → catalog default. Its backend defaults to the
-      // opposite of Agent One's, but an explicit choice — including the same
-      // backend — always wins.
+      // for its backend → catalog default. Its backend defaults to Agent One's
+      // partner in the pair policy, but an explicit choice — including the
+      // same backend — always wins, provided the ordered pair is admitted.
       const agentTwoBackend: CollaborationAgent =
         parsed.agentTwo?.backend === undefined
-          ? oppositeCollaborationBackend(primaryAgentBackend)
+          ? defaultCollaborationPartner(primaryAgentBackend)
           : requireCollaborationAgent("agent_two", parsed.agentTwo.backend);
+      const pairRefusal = collaborationPairRefusal(
+        primaryAgentBackend,
+        agentTwoBackend,
+      );
+      if (pairRefusal !== null) {
+        throw new CollaborationPairNotSupportedError(
+          primaryAgentBackend,
+          agentTwoBackend,
+          pairRefusal,
+        );
+      }
       const agentTwoRuntime = await resolveRuntimeConfigFor(
         deps,
         agentTwoBackend,

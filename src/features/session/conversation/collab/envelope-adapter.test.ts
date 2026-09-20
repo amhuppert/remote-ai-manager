@@ -43,6 +43,35 @@ function makeEnvelope(
 }
 
 describe("parseCollabFeatureSnapshot", () => {
+  it("accepts every collaboration participant as the primary agent, including Cursor", () => {
+    const parsed = parseCollabFeatureSnapshot({
+      ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
+      primaryAgentBackend: "cursor",
+      agents: {
+        agent_one: {
+          backend: "cursor",
+          modelSelection: { modelId: "composer-2.5", parameters: {} },
+        },
+        agent_two: {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        },
+      },
+    });
+    expect(parsed?.primaryAgentBackend).toBe("cursor");
+    expect(parsed?.agents?.agent_one.backend).toBe("cursor");
+    expect(parsed?.agents?.agent_two.backend).toBe("claude");
+  });
+
+  it("rejects a primary agent outside the participation policy", () => {
+    expect(
+      parseCollabFeatureSnapshot({
+        ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
+        primaryAgentBackend: "outsider",
+      }),
+    ).toBeNull();
+  });
+
   it("returns null when the snapshot is not an object", () => {
     expect(parseCollabFeatureSnapshot(null)).toBeNull();
     expect(parseCollabFeatureSnapshot(undefined)).toBeNull();

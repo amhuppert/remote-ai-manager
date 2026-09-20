@@ -542,3 +542,126 @@ describe("callPrimitive agent-profile delivery", () => {
     return received[0]!;
   }
 });
+
+describe("callPrimitive lane dispatch", () => {
+  function completedOn(
+    backend: CollaborationAgent,
+    ref: string,
+  ): AgentCallResult {
+    return {
+      ...completed(proposedChangesContent),
+      backend,
+      backendRef: { backend, ref },
+      capabilities: {
+        ...completed(proposedChangesContent).capabilities,
+        backend,
+      },
+    };
+  }
+
+  async function dispatch(args: {
+    flowAgent: CollaborationFlowAgent;
+    backends: Record<CollaborationFlowAgent, CollaborationAgent>;
+    resultRef: string;
+  }): Promise<{ request: AgentCallRequest; laneRef: string | null }> {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    const workflowId = "wf-dispatch";
+    for (const lane of ["agent_one", "agent_two"] as const) {
+      await laneService.initialize({
+        workflowId,
+        laneId: lane,
+        backend: args.backends[lane],
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: true },
+        ref: null,
+        metrics: {},
+        lastUsedAt: "2026-05-01T00:00:00.000Z",
+      });
+    }
+    const backend = args.backends[args.flowAgent];
+    const received: AgentCallRequest[] = [];
+    const deps: AsymmetricCollaborationSliceDeps = {
+      callAgent: async (request) => {
+        received.push(request);
+        return completedOn(backend, args.resultRef);
+      },
+      laneService,
+      envelopeStore: createInMemoryWorkflowEnvelopeStore(),
+      statusBus: createStatusBus({ broadcast: () => {} }),
+      now: () => "2026-05-01T00:00:00.000Z",
+    };
+    const outcome = await callPrimitive({
+      input: {
+        workflowId,
+        brief: "Design Y.",
+        worktreePath: "/tmp/does-not-matter",
+        sessionKey: "tests/dispatch",
+        primaryAgentBackend: args.backends.agent_one,
+        negotiationRounds: 1,
+        autonomousResolutionThreshold: "major",
+        sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
+      },
+      deps,
+      flowAgent: args.flowAgent,
+      backend,
+      prompt: { prompt: "Draft.", outputSchema: { type: "object" } },
+    });
+    expect(outcome.kind).toBe("ok");
+    const lane = await laneService.resolve({
+      workflowId,
+      laneId: args.flowAgent,
+    });
+    return { request: received[0]!, laneRef: lane?.ref ?? null };
+  }
+
+  it("dispatches a Cursor agent_one lane as a Cursor task run keyed by its flow agent", async () => {
+    const { request, laneRef } = await dispatch({
+      flowAgent: "agent_one",
+      backends: { agent_one: "cursor", agent_two: "claude" },
+      resultRef: '{"taskId":"t-1"}',
+    });
+    expect(request.kind).toBe("task_run");
+    expect(request.backend).toBe("cursor");
+    expect(request).toMatchObject({
+      executionClass: "governed-execution",
+      executionProfile: "standard",
+      laneRef: { workflowId: "wf-dispatch", laneId: "agent_one" },
+      writeCapability: "write_capable",
+    });
+    // The Cursor ref lands on agent_one's lane, so the next phase resumes it.
+    expect(laneRef).toBe('{"taskId":"t-1"}');
+  });
+
+  it("dispatches a Cursor agent_two lane as a Cursor task run beside a Codex agent_one", async () => {
+    const { request, laneRef } = await dispatch({
+      flowAgent: "agent_two",
+      backends: { agent_one: "codex", agent_two: "cursor" },
+      resultRef: '{"taskId":"t-2"}',
+    });
+    expect(request.kind).toBe("task_run");
+    expect(request.backend).toBe("cursor");
+    expect(request.laneRef).toEqual({
+      workflowId: "wf-dispatch",
+      laneId: "agent_two",
+    });
+    expect(laneRef).toBe('{"taskId":"t-2"}');
+  });
+
+  it("keeps Claude lanes on conversation turns and Codex lanes on Codex task runs", async () => {
+    const claude = await dispatch({
+      flowAgent: "agent_two",
+      backends: { agent_one: "cursor", agent_two: "claude" },
+      resultRef: "sess-1",
+    });
+    expect(claude.request.kind).toBe("conversation_turn");
+    expect(claude.request.backend).toBe("claude");
+
+    const codex = await dispatch({
+      flowAgent: "agent_one",
+      backends: { agent_one: "codex", agent_two: "cursor" },
+      resultRef: "thread-1",
+    });
+    expect(codex.request.kind).toBe("task_run");
+    expect(codex.request.backend).toBe("codex");
+  });
+});

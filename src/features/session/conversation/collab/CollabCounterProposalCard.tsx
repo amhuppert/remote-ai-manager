@@ -1,5 +1,7 @@
 "use client";
 
+import { backendLabel } from "@/lib/agent-backends/catalog";
+
 import type {
   CollaborationAgent,
   CollaborationAgentModelSettings,
@@ -9,9 +11,7 @@ import type {
   CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
-import CollabAgentModelMeta, {
-  AGENT_LABEL,
-} from "@/features/session/conversation/collab/CollabAgentModelMeta";
+import CollabAgentModelMeta from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
@@ -34,6 +34,7 @@ import {
   changeListRationale,
   idList,
   idListItem,
+  collabAgentTone,
 } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabCounterProposalCardProps {
@@ -107,12 +108,16 @@ export default function CollabCounterProposalCard({
     <CollabCollapsibleCard
       agent={fromAgent}
       kind="counter_proposal"
-      ariaLabel={`Counter-proposal round ${round} from ${AGENT_LABEL[fromAgent]}`}
+      ariaLabel={`Counter-proposal round ${round} from ${backendLabel(fromAgent)}`}
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className={cardAgent} data-agent={fromAgent}>
-            {AGENT_LABEL[fromAgent]}
+          <span
+            className={cardAgent}
+            data-agent={fromAgent}
+            data-tone={collabAgentTone(fromAgent)}
+          >
+            {backendLabel(fromAgent)}
             <CollabAgentModelMeta settings={fromModelSettings} />
           </span>
           <span className={cardEyebrow}>Counter-proposal</span>

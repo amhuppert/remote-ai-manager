@@ -28,6 +28,7 @@ import {
   type CollaborationAgent,
   type CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import { defaultCollaborationPartner } from "@/lib/workflows/collaboration/backend-pair";
 import type {
   PublicConversationState,
   TranscriptMessage,
@@ -159,17 +160,17 @@ export function useCollabContext({
       ? null
       : asCollaborationAgent(activeConversation.agentBackend);
   // Agent Two's draft seeds lazily so the default tracks the conversation's
-  // backend: the suggested backend is the opposite of Agent One's (an explicit
-  // same-backend choice is fine), and its complete model selection seeds from
-  // the global per-backend defaults so what the row shows is what the start
-  // request sends.
+  // backend: the suggested backend is Agent One's default partner in the pair
+  // policy (an explicit same-backend choice is fine), and its complete model
+  // selection seeds from the global per-backend defaults so what the row shows
+  // is what the start request sends.
   const effectiveCollabConfig = useMemo(() => {
     const agentTwo =
       collabConfigDraft.agentTwo ??
       seedAgentTwoDraft(
-        // The suggested partner is the opposite of Agent One. With no Agent One
-        // the row does not render at all, so the seed is inert.
-        originatingCollabAgent === "codex" ? "claude" : "codex",
+        // With no Agent One the row does not render at all, so the seed is
+        // inert.
+        defaultCollaborationPartner(originatingCollabAgent ?? "claude"),
         backendDefaults,
       );
     return { ...collabConfigDraft, agentTwo };

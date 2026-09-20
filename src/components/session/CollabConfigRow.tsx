@@ -17,8 +17,11 @@ import type { SelectContentLayer } from "@/components/ui/Select";
 import { STANDARD_AGENT_PROFILE_VALUE } from "@/components/agent-profiles/agent-profile-picker-state";
 import {
   backendLabel,
+  backendToneToken,
   type BackendSelectionDefaultsById,
+  type BackendValueMap,
 } from "@/lib/agent-backends/catalog";
+import BackendExecutionWarning from "@/components/BackendExecutionWarning";
 import type {
   BackendModelCatalog,
   BackendModelSelection,
@@ -60,23 +63,20 @@ export interface CollabConfigRowProps {
   agentOne?: CollabAgentOneSummary;
   /** Seeds Agent Two's complete model selection when its backend changes. */
   backendDefaults: BackendSelectionDefaultsById;
-  /** Project-effective catalogs for the backends Collaboration Mode can run. */
-  modelCatalogs: Readonly<Record<CollabAgent, BackendModelCatalog | null>>;
+  /** Project-effective catalogs, keyed by backend; null while unavailable. */
+  modelCatalogs: BackendValueMap<BackendModelCatalog | null>;
   /** Scopes the profile picker's listing; absent outside a project. */
   projectName?: string;
   /** Stacking tier for Agent Two's portaled profile/model-parameter lists. */
   selectContentLayer?: SelectContentLayer;
 }
 
-const AGENT_LABEL: Record<CollabAgent, string> = {
-  claude: backendLabel("claude"),
-  codex: backendLabel("codex"),
-};
-
 const fieldLabelClass =
   "font-mono text-[0.7rem] font-semibold tracking-[0.06em] uppercase text-text-secondary";
+// Identity colour keyed on the catalog's tone token (`data-tone`), the same
+// closed allowlist BackendToggle renders its active option with.
 const agentReadonlyClass =
-  "rounded-sm bg-bg-raised px-[8px] py-[3px] font-mono text-[0.78rem] font-semibold data-[agent=claude]:text-cyan data-[agent=codex]:text-violet";
+  "rounded-sm bg-bg-raised px-[8px] py-[3px] font-mono text-[0.78rem] font-semibold data-[tone=cyan]:text-cyan data-[tone=violet]:text-violet data-[tone=amber]:text-amber";
 
 const NEGOTIATION_ROUNDS_MIN = 1;
 const NEGOTIATION_ROUNDS_MAX = 20;
@@ -165,8 +165,12 @@ export default function CollabConfigRow({
             title="Uses this conversation's settings"
           >
             <span className={fieldLabelClass}>1st agent</span>
-            <span className={agentReadonlyClass} data-agent={originatingAgent}>
-              {AGENT_LABEL[originatingAgent]}
+            <span
+              className={agentReadonlyClass}
+              data-agent={originatingAgent}
+              data-tone={backendToneToken(originatingAgent)}
+            >
+              {backendLabel(originatingAgent)}
             </span>
             {agentOne && (
               <span className="font-mono text-[0.72rem] text-text-secondary">
@@ -298,7 +302,7 @@ export default function CollabConfigRow({
         {agentTwoCatalog === null ? (
           <UnavailableModelSelectionControl
             selection={agentTwoSelection}
-            reason={`Model options are unavailable for ${AGENT_LABEL[agentTwo.backend]}.`}
+            reason={`Model options are unavailable for ${backendLabel(agentTwo.backend)}.`}
           />
         ) : (
           <DesktopModelSelectionControls
@@ -310,6 +314,12 @@ export default function CollabConfigRow({
             selectContentLayer={selectContentLayer}
           />
         )}
+      </div>
+      {/* Backend differences are disclosed where the second agent is chosen:
+          a participant whose limits are instruction-only says so here, the
+          same note the composer shows for the conversation's own backend. */}
+      <div data-field="second-agent-warnings">
+        <BackendExecutionWarning backend={agentTwo.backend} />
       </div>
     </div>
   );

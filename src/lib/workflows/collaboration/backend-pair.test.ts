@@ -1,40 +1,92 @@
 import { describe, expect, it } from "vitest";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
-  COLLABORATION_BACKEND_PAIR,
+  COLLABORATION_DEFAULT_PARTNER,
   COLLABORATION_FLOW_AGENTS,
+  COLLABORATION_SUPPORTED_PAIRS,
   agentOneLaneSeedRef,
   buildCollaborationLaneSeeds,
-  oppositeCollaborationBackend,
+  collaborationPairRefusal,
+  defaultCollaborationPartner,
+  resolveGraphCollaborationBackends,
 } from "./backend-pair";
+import { collaborationAgentSchema } from "./types";
 
-describe("COLLABORATION_BACKEND_PAIR", () => {
-  it("is the ordered Claude×Codex pair (claude first, codex second)", () => {
-    expect(COLLABORATION_BACKEND_PAIR).toEqual(["claude", "codex"]);
+describe("COLLABORATION_DEFAULT_PARTNER", () => {
+  it("names a default partner for every collaboration agent", () => {
+    expect(Object.keys(COLLABORATION_DEFAULT_PARTNER).sort()).toEqual(
+      [...collaborationAgentSchema.options].sort(),
+    );
+  });
+
+  it("keeps the historical Claude/Codex suggestion and partners Cursor with Claude", () => {
+    expect(defaultCollaborationPartner("claude")).toBe("codex");
+    expect(defaultCollaborationPartner("codex")).toBe("claude");
+    expect(defaultCollaborationPartner("cursor")).toBe("claude");
+  });
+
+  it("never suggests a same-backend pair by default", () => {
+    for (const backend of collaborationAgentSchema.options) {
+      expect(defaultCollaborationPartner(backend)).not.toBe(backend);
+    }
+  });
+});
+
+describe("COLLABORATION_SUPPORTED_PAIRS", () => {
+  // The matrix is written out explicitly so adding a participant to the enum
+  // is a conscious decision about every position it may take, not an
+  // accident of the enum growing.
+  it("admits every ordered pair of collaboration agents, including same-backend pairs", () => {
+    const expected = collaborationAgentSchema.options
+      .flatMap((one) =>
+        collaborationAgentSchema.options.map((two) => `${one}/${two}`),
+      )
+      .sort();
+    const actual = COLLABORATION_SUPPORTED_PAIRS.map(
+      ([one, two]) => `${one}/${two}`,
+    ).sort();
+    expect(actual).toEqual(expected);
+    expect(new Set(actual).size).toBe(actual.length);
+  });
+
+  it.each([
+    ["cursor", "claude"],
+    ["cursor", "codex"],
+    ["claude", "cursor"],
+    ["codex", "cursor"],
+    ["cursor", "cursor"],
+  ] as const)("accepts the %s/%s pair", (one, two) => {
+    expect(collaborationPairRefusal(one, two)).toBeNull();
+  });
+});
+
+describe("resolveGraphCollaborationBackends", () => {
+  it("derives agent_one as the configured second agent's default partner", () => {
+    expect(resolveGraphCollaborationBackends("codex")).toEqual({
+      agent_one: "claude",
+      agent_two: "codex",
+    });
+    expect(resolveGraphCollaborationBackends("cursor")).toEqual({
+      agent_one: "claude",
+      agent_two: "cursor",
+    });
+    expect(resolveGraphCollaborationBackends("claude")).toEqual({
+      agent_one: "codex",
+      agent_two: "claude",
+    });
+  });
+
+  it("refuses a registered backend outside the collaboration policy loudly, naming the lane", () => {
+    const unknown = "nonexistent" as AgentBackendId;
+    expect(() => resolveGraphCollaborationBackends(unknown)).toThrow(
+      /agent_two/,
+    );
   });
 });
 
 describe("COLLABORATION_FLOW_AGENTS", () => {
   it("is the ordered flow-agent pair (agent_one first, agent_two second)", () => {
     expect(COLLABORATION_FLOW_AGENTS).toEqual(["agent_one", "agent_two"]);
-  });
-});
-
-describe("oppositeCollaborationBackend", () => {
-  it("maps claude → codex", () => {
-    expect(oppositeCollaborationBackend("claude")).toBe("codex");
-  });
-
-  it("maps codex → claude", () => {
-    expect(oppositeCollaborationBackend("codex")).toBe("claude");
-  });
-
-  it("is an involution over the pair (opposite of opposite is identity)", () => {
-    for (const backend of COLLABORATION_BACKEND_PAIR) {
-      expect(
-        oppositeCollaborationBackend(oppositeCollaborationBackend(backend)),
-      ).toBe(backend);
-    }
   });
 });
 

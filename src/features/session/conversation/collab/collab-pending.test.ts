@@ -13,12 +13,15 @@ import {
   makeResolutionDecisionFail,
   makeResolutionDecisionFinal,
 } from "@/lib/workflows/collaboration/test-fixtures";
-import type { CollaborationArtifact } from "@/lib/workflows/collaboration/types";
+import type {
+  CollaborationAgent,
+  CollaborationArtifact,
+} from "@/lib/workflows/collaboration/types";
 
 function pendingFor(
   artifacts: CollaborationArtifact[],
   status: CollabPassageStatus,
-  primary: "claude" | "codex" = "claude",
+  primary: CollaborationAgent = "claude",
 ) {
   return deriveCollabPendingSteps(
     groupCollabArtifacts(artifacts),
@@ -51,6 +54,11 @@ describe("deriveCollabPendingSteps", () => {
     expect(steps.map((s) => s.agent)).toEqual(["claude", "codex"]);
     expect(steps.every((s) => s.mergeIntoDraftsRow)).toBe(true);
     expect(steps.every((s) => s.statusText === "drafting")).toBe(true);
+  });
+
+  it("labels a Cursor-initiated run's pending drafts as Cursor and its default partner", () => {
+    const steps = pendingFor([], "drafting", "cursor");
+    expect(steps.map((s) => s.agent)).toEqual(["cursor", "claude"]);
   });
 
   it("shows only the missing lane's draft when one draft has landed", () => {

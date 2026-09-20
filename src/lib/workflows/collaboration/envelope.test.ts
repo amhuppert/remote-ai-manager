@@ -76,12 +76,15 @@ import {
   type StatusBusEnvelope,
 } from "@/lib/events/status-bus";
 
-import {
-  asCollaborationAgent,
-  type CollaborationAgent,
-} from "@/lib/workflows/collaboration/types";
+import { type CollaborationAgent } from "@/lib/workflows/collaboration/types";
 
-type Backend = CollaborationAgent;
+// These scripted harnesses queue responses for the two backends their
+// scenarios run; the pair policy admits more participants than they script.
+type Backend = Extract<CollaborationAgent, "claude" | "codex">;
+
+function asScriptedBackend(value: string): Backend | null {
+  return value === "claude" || value === "codex" ? value : null;
+}
 
 type ArtifactKind =
   | CollaborationInitialDraftOutput
@@ -229,10 +232,10 @@ function makeProgrammedCallAgent(
       request.kind === "conversation_turn"
         ? (request.backend ?? "claude")
         : request.backend;
-    const backend = asCollaborationAgent(requestedBackend);
+    const backend = asScriptedBackend(requestedBackend);
     if (backend === null) {
       throw new Error(
-        `collaboration dispatched an ineligible backend: ${requestedBackend}`,
+        `collaboration dispatched a backend this harness does not script: ${requestedBackend}`,
       );
     }
     const queue = queues[backend];

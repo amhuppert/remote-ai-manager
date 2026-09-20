@@ -6,6 +6,7 @@
  * Web `Request` API, and assertions read the response body and status. No
  * `vi.mock` — every dependency is injected.
  */
+import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import { describe, it, expect, vi } from "vitest";
 
 import { createCollaborationRouteHandlers } from "./route-handlers";
@@ -257,13 +258,23 @@ describe("collaboration route handlers — START", () => {
   // Adopting the backend onto the conversation is a persisted mutation, so a
   // backend collaboration cannot run has to be refused BEFORE it — otherwise a
   // refused start still leaves the conversation switched (spec R15.2).
-  it("returns a bounded 4xx for a backend Collaboration Mode does not run, adopting nothing and starting nothing", async () => {
+  it("returns the facet-gate 4xx for a participant whose lane facet is withdrawn, adopting nothing and starting nothing", async () => {
     const { manager, startCalls } = buildScriptedManager();
     const setConversationBackend = vi.fn();
     const handlers = createCollaborationRouteHandlers({
       resolveProjectPath: async () => "/projects/example",
       setConversationBackend,
       manager,
+      getBackendCatalogEntry: (backend) => {
+        const entry = getBackendCatalogEntry(backend);
+        return backend === "cursor"
+          ? {
+              ...entry,
+              facets: { ...entry.facets, tasks: false },
+              execution: { ...entry.execution, tasks: null },
+            }
+          : entry;
+      },
     });
 
     const response = await handlers.START(
@@ -282,10 +293,49 @@ describe("collaboration route handlers — START", () => {
 
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string; code?: string };
+    expect(body.error).toMatch(/task/i);
     expect(body.error).toMatch(/collaboration/i);
-    expect(body.code).toBe("COLLABORATION_BACKEND_NOT_ELIGIBLE");
+    expect(body.code).toBe("backend-facet-unsupported");
     expect(setConversationBackend).not.toHaveBeenCalled();
     expect(startCalls).toHaveLength(0);
+  });
+
+  it("adopts Cursor onto the conversation and starts the run when Cursor initiates", async () => {
+    const { manager, startCalls } = buildScriptedManager();
+    const setConversationBackend = vi.fn(async () => {});
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      setConversationBackend,
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design X",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
+          backend: "cursor",
+          agentTwo: { backend: "codex" },
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(setConversationBackend).toHaveBeenCalledWith(
+      "/projects/example",
+      "sess-1",
+      "conv-1",
+      "cursor",
+    );
+    expect(startCalls).toHaveLength(1);
+    expect(startCalls[0]).toMatchObject({
+      backend: "cursor",
+      agentTwo: { backend: "codex" },
+    });
   });
 
   it("returns 400 when conversationId is missing from the body", async () => {

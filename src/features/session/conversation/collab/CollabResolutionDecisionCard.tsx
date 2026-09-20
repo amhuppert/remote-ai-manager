@@ -1,5 +1,7 @@
 "use client";
 
+import { backendLabel } from "@/lib/agent-backends/catalog";
+
 import type {
   CollaborationAgent,
   CollaborationAgentModelSettings,
@@ -11,9 +13,7 @@ import type {
   CollaborationUserQuestion,
 } from "@/lib/workflows/collaboration/types";
 import { cn } from "@/lib/ui/cn";
-import CollabAgentModelMeta, {
-  AGENT_LABEL,
-} from "@/features/session/conversation/collab/CollabAgentModelMeta";
+import CollabAgentModelMeta from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
@@ -27,6 +27,7 @@ import {
   cardSummary,
   cardVerdict,
   cardVerdictColor,
+  collabAgentTone,
 } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabResolutionDecisionCardProps {
@@ -146,8 +147,12 @@ export default function CollabResolutionDecisionCard({
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className={cardAgent} data-agent={agent}>
-            {AGENT_LABEL[agent]}
+          <span
+            className={cardAgent}
+            data-agent={agent}
+            data-tone={collabAgentTone(agent)}
+          >
+            {backendLabel(agent)}
             <CollabAgentModelMeta settings={modelSettings} />
           </span>
           <span className={cardEyebrow}>Resolution</span>

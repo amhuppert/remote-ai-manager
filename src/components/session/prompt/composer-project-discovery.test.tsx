@@ -142,7 +142,12 @@ describe("project conversation composer discovery", () => {
     await waitFor(() => {
       expect(screen.getByText("/deploy")).toBeInTheDocument();
     });
-    expect(requested).toContain("/api/projects/proj/commands?backend=claude");
+    // The project-root route, never `/sessions/__project__/commands`. Command
+    // discovery is conversation-scoped, so the request carries the
+    // conversation whose capability cascade filters what it may offer.
+    expect(requested).toContain(
+      "/api/projects/proj/commands?backend=claude&conversationId=plc-1",
+    );
   });
 
   it("requests the project-root file scan and renders its results", async () => {

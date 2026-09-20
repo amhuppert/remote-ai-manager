@@ -1,5 +1,7 @@
 "use client";
 
+import { backendLabel } from "@/lib/agent-backends/catalog";
+
 import type {
   CollaborationAgent,
   CollaborationAgentModelSettings,
@@ -7,9 +9,7 @@ import type {
   CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
-import CollabAgentModelMeta, {
-  AGENT_LABEL,
-} from "@/features/session/conversation/collab/CollabAgentModelMeta";
+import CollabAgentModelMeta from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
@@ -26,6 +26,7 @@ import {
   cardSection,
   cardSectionTitle,
   cardSummary,
+  collabAgentTone,
 } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabInitialDraftCardProps {
@@ -64,12 +65,16 @@ export default function CollabInitialDraftCard({
     <CollabCollapsibleCard
       agent={agent}
       kind="initial_draft"
-      ariaLabel={`Initial draft from ${AGENT_LABEL[agent]}`}
+      ariaLabel={`Initial draft from ${backendLabel(agent)}`}
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className={cardAgent} data-agent={agent}>
-            {AGENT_LABEL[agent]}
+          <span
+            className={cardAgent}
+            data-agent={agent}
+            data-tone={collabAgentTone(agent)}
+          >
+            {backendLabel(agent)}
             <CollabAgentModelMeta settings={modelSettings} />
           </span>
           <span className={cardEyebrow}>Initial Draft</span>

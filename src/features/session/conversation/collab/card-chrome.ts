@@ -1,4 +1,8 @@
-import type { CollaborationResolutionDecisionNextAction } from "@/lib/workflows/collaboration/types";
+import { backendToneToken } from "@/lib/agent-backends/catalog";
+import type {
+  CollaborationAgent,
+  CollaborationResolutionDecisionNextAction,
+} from "@/lib/workflows/collaboration/types";
 
 /**
  * Shared Tailwind class recipes for the collab artifact-card chrome — the
@@ -8,15 +12,27 @@ import type { CollaborationResolutionDecisionNextAction } from "@/lib/workflows/
  * migrated chrome. Migrated 1:1 from the `.collab-artifact-card-*` family that
  * formerly lived in `conversation.css`.
  *
- * `cardAgent` colors by the `data-agent` attribute (claude/codex carry no
- * underscore, so the `data-[agent=…]` variant is selector-safe). `cardVerdict`
- * cannot: its `next-action` values include underscores (`continue_negotiation`,
- * `ask_user`), which Tailwind rewrites to spaces inside `data-[…]`, so the color
- * is a static map keyed by the union instead (`cardVerdictColor`).
+ * Agent identity colours key on the catalog's design-system tone token via a
+ * `data-tone` attribute (`collabAgentTone`), never on the backend id: the
+ * catalog owns which backend maps to which tone, and a participant added to the
+ * collaboration policy needs no card edits as long as its tone is one of the
+ * three the design system defines. A closed allowlist because Tailwind cannot
+ * generate a class from a runtime token. `cardVerdict` keeps a static map: its
+ * `next-action` values include underscores, which Tailwind rewrites to spaces
+ * inside `data-[…]`.
  */
 
+/** The catalog tone a collaboration agent's cards render under. */
+export function collabAgentTone(agent: CollaborationAgent): string {
+  return backendToneToken(agent);
+}
+
 export const cardAgent =
-  "font-mono text-[0.78rem] font-semibold uppercase tracking-[0.04em] data-[agent=claude]:text-cyan data-[agent=codex]:text-violet";
+  "font-mono text-[0.78rem] font-semibold uppercase tracking-[0.04em] data-[tone=cyan]:text-cyan data-[tone=violet]:text-violet data-[tone=amber]:text-amber";
+
+/** The 3px identity rail every artifact card and pending card carries. */
+export const cardRail =
+  "border-l-[3px] data-[tone=cyan]:border-l-cyan data-[tone=violet]:border-l-violet data-[tone=amber]:border-l-amber";
 
 export const cardEyebrow =
   "font-mono text-[0.72rem] font-semibold tracking-[0.08em] uppercase text-text-secondary";

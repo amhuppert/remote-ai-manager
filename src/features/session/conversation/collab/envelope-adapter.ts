@@ -1,4 +1,5 @@
 import {
+  asCollaborationAgent,
   collaborationAgentsMapSchema,
   collaborationArtifactSchema,
   type CollaborationAgent,
@@ -7,6 +8,7 @@ import {
   type CollaborationResolvedAgent,
 } from "@/lib/workflows/collaboration/types";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 
 /**
  * One lane's display identity. The persisted `agents` entry carries the full
@@ -91,21 +93,14 @@ export interface CollabPassageProps {
 const VALID_THRESHOLDS: ReadonlySet<CollaborationAutonomousResolutionThreshold> =
   new Set(["none", "minor", "major", "blocking"]);
 
-const VALID_AGENTS: ReadonlySet<CollaborationAgent> = new Set([
-  "claude",
-  "codex",
-]);
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
 }
 
 function parseAgent(value: unknown): CollaborationAgent | null {
-  return typeof value === "string" &&
-    VALID_AGENTS.has(value as CollaborationAgent)
-    ? (value as CollaborationAgent)
-    : null;
+  const backend = agentBackendSchema.safeParse(value);
+  return backend.success ? asCollaborationAgent(backend.data) : null;
 }
 
 function parseThreshold(

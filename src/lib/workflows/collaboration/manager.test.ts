@@ -484,21 +484,35 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
         instructions: input.ref ? `instructions for ${input.ref.id}` : "",
       });
     },
-    resolveCodexModelConfig: async () => ({
-      modelSelection: {
-        modelId: "gpt-5.4",
-        parameters: { reasoning: "high", fast: "false" },
-      },
-      timeoutMs: 0,
-      stallTimeoutMs: 60_000,
-      ...options.resolveCodexModelConfigResult,
-    }),
-    resolveClaudeModelConfig: async () => ({
-      modelSelection: { modelId: "opus", parameters: { effort: "high" } },
-      timeoutMs: 0,
-      stallTimeoutMs: 0,
-      ...options.resolveClaudeModelConfigResult,
-    }),
+    // One resolver over every participant, keyed by the backend the lane runs;
+    // the per-backend fixtures below are what a real config read would yield.
+    resolveBackendModelConfig: async (backend) => {
+      switch (backend) {
+        case "codex":
+          return {
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: "false" },
+            },
+            timeoutMs: 0,
+            stallTimeoutMs: 60_000,
+            ...options.resolveCodexModelConfigResult,
+          };
+        case "claude":
+          return {
+            modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+            timeoutMs: 0,
+            stallTimeoutMs: 0,
+            ...options.resolveClaudeModelConfigResult,
+          };
+        case "cursor":
+          return {
+            modelSelection: { modelId: "composer-2.5", parameters: {} },
+            timeoutMs: 0,
+            stallTimeoutMs: 120_000,
+          };
+      }
+    },
     runSlice: async (input, sliceDeps) => {
       runSliceCalls.push({ input, deps: sliceDeps });
       try {
@@ -1078,7 +1092,7 @@ describe("createCollaborationManager.start", () => {
 
   it("does not persist a start when fallible runtime preparation fails", async () => {
     const { deps, runSliceCalls, persistedStarts } = buildScriptedDeps();
-    deps.resolveCodexModelConfig = async () => {
+    deps.resolveBackendModelConfig = async () => {
       throw new Error("config unavailable");
     };
     const manager = createCollaborationManager(deps);
@@ -1153,6 +1167,74 @@ describe("createCollaborationManager.start", () => {
     if (!call) throw new Error("expected one runSlice call");
     expect(call.input.primaryAgentBackend).toBe("claude");
   });
+
+  it("starts a Cursor conversation with Claude as Agent Two by default and forwards the Cursor lane's own model config", async () => {
+    const { deps, buildCallAgentCalls, runSliceCalls, runSliceCompletion } =
+      buildScriptedDeps({
+        resolveSessionResult: { worktreePath: "/wt/xyz" },
+        resolveConversationResult: { agentBackend: "cursor" },
+      });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    await runSliceCompletion;
+
+    expect(buildCallAgentCalls[0]?.agents).toMatchObject({
+      agent_one: {
+        backend: "cursor",
+        modelSelection: { modelId: "composer-2.5", parameters: {} },
+      },
+      agent_two: { backend: "claude" },
+    });
+    const call = runSliceCalls[0];
+    expect(call?.input.primaryAgentBackend).toBe("cursor");
+    expect(call?.input.agents?.agent_one.backend).toBe("cursor");
+    expect(call?.input.agents?.agent_two.backend).toBe("claude");
+  });
+
+  it.each([
+    ["claude", "cursor"],
+    ["codex", "cursor"],
+    ["cursor", "codex"],
+    ["cursor", "cursor"],
+  ] as const)(
+    "admits an explicit %s/%s pair, keeping each lane's identity on its own flow agent",
+    async (agentOneBackend, agentTwoBackend) => {
+      const { deps, buildCallAgentCalls, runSliceCompletion } =
+        buildScriptedDeps({
+          resolveSessionResult: { worktreePath: "/wt/xyz" },
+          resolveConversationResult: { agentBackend: agentOneBackend },
+        });
+      const manager = createCollaborationManager(deps);
+
+      await manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 2,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+        agentTwo: { backend: agentTwoBackend },
+      });
+
+      await runSliceCompletion;
+
+      expect(buildCallAgentCalls[0]?.agents.agent_one.backend).toBe(
+        agentOneBackend,
+      );
+      expect(buildCallAgentCalls[0]?.agents.agent_two.backend).toBe(
+        agentTwoBackend,
+      );
+    },
+  );
 
   it("forwards the workflowId, worktreePath, and resolved codex + claude model config to buildCallAgent", async () => {
     const { deps, buildCallAgentCalls, runSliceCompletion } = buildScriptedDeps(

@@ -54,7 +54,7 @@ import { buildAgentOneFinalAnswerPrompt } from "./prompt-builders";
 import {
   agentOneLaneSeedRef,
   buildCollaborationLaneSeeds,
-  oppositeCollaborationBackend,
+  defaultCollaborationPartner,
 } from "./backend-pair";
 import {
   decideCollaborationNextStep,
@@ -331,7 +331,7 @@ export async function runAsymmetricCollaborationSlice(
   const now = deps.now ?? (() => new Date().toISOString());
   const agentTwoBackend: CollaborationAgent =
     input.agents?.agent_two.backend ??
-    oppositeCollaborationBackend(input.primaryAgentBackend);
+    defaultCollaborationPartner(input.primaryAgentBackend);
   const backendForAgent = (
     agent: CollaborationFlowAgent,
   ): CollaborationAgent =>

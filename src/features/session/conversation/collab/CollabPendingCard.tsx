@@ -1,34 +1,24 @@
 "use client";
 
+import { backendLabel } from "@/lib/agent-backends/catalog";
+
 import { cn } from "@/lib/ui/cn";
-import type {
-  CollaborationAgent,
-  CollaborationAgentModelSettings,
-} from "@/lib/workflows/collaboration/types";
-import CollabAgentModelMeta, {
-  AGENT_LABEL,
-} from "@/features/session/conversation/collab/CollabAgentModelMeta";
+import type { CollaborationAgentModelSettings } from "@/lib/workflows/collaboration/types";
+import CollabAgentModelMeta from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import {
   cardAgent,
   cardEyebrow,
+  cardRail,
   cardRound,
+  collabAgentTone,
 } from "@/features/session/conversation/collab/card-chrome";
 import type { CollabPendingStep } from "@/features/session/conversation/collab/collab-pending";
 
-// Agent identity accent, matching the finished cards' 3px left rail
-// (CollabCollapsibleCard `agentBorder`).
-const railBorder: Record<CollaborationAgent, string> = {
-  claude: "border-l-[3px] border-l-cyan",
-  codex: "border-l-[3px] border-l-violet",
-};
-
-// Sweeping scan line tinted to the working agent. `var(--cyan|--violet)` carries
-// no colour literal, so the arbitrary utility passes the no-hardcoded-color gate.
-const scanGradient: Record<CollaborationAgent, string> = {
-  claude: "bg-[linear-gradient(90deg,transparent,var(--cyan)_50%,transparent)]",
-  codex:
-    "bg-[linear-gradient(90deg,transparent,var(--violet)_50%,transparent)]",
-};
+// Sweeping scan line tinted to the working agent's catalog tone.
+// `var(--cyan|--violet|--amber)` carries no colour literal, so the arbitrary
+// utility passes the no-hardcoded-color gate.
+const scanGradient =
+  "data-[tone=cyan]:bg-[linear-gradient(90deg,transparent,var(--cyan)_50%,transparent)] data-[tone=violet]:bg-[linear-gradient(90deg,transparent,var(--violet)_50%,transparent)] data-[tone=amber]:bg-[linear-gradient(90deg,transparent,var(--amber)_50%,transparent)]";
 
 // Skeleton bars: descending widths so the block reads as prose, staggered so the
 // shimmer ripples rather than pulsing in lockstep. Sliced by `step.lines`.
@@ -58,31 +48,35 @@ export default function CollabPendingCard({
   modelSettings,
 }: CollabPendingCardProps): React.JSX.Element {
   const { agent, eyebrow, statusText, round, lines, kind } = step;
+  const tone = collabAgentTone(agent);
   const barCount = Math.min(lines, SHIMMER_WIDTHS.length);
 
   return (
     <section
       role="status"
-      aria-label={`${AGENT_LABEL[agent]} is ${statusText}`}
+      aria-label={`${backendLabel(agent)} is ${statusText}`}
       className={cn(
         "relative flex min-w-0 flex-col overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-raised",
-        railBorder[agent],
+        // Matches the finished cards' 3px identity rail.
+        cardRail,
       )}
       data-collab-pending="true"
       data-pending-kind={kind}
       data-agent={agent}
+      data-tone={tone}
     >
       <span
         aria-hidden="true"
         className={cn(
           "pointer-events-none absolute inset-x-0 top-0 h-[2px] animate-collab-scan bg-[length:200%_100%] motion-reduce:hidden",
-          scanGradient[agent],
+          scanGradient,
         )}
+        data-tone={tone}
       />
 
       <div className="flex min-w-0 flex-wrap items-center gap-sm px-md py-sm">
-        <span className={cardAgent} data-agent={agent}>
-          {AGENT_LABEL[agent]}
+        <span className={cardAgent} data-agent={agent} data-tone={tone}>
+          {backendLabel(agent)}
           <CollabAgentModelMeta settings={modelSettings} />
         </span>
         <span className={cardEyebrow}>{eyebrow}</span>

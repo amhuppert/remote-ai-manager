@@ -24,7 +24,7 @@ import { createWorkflowCollaboratorCaller } from "@/lib/workflow-graph/workflow-
 
 import type { GraphWorkflowToolServerContext } from "@/lib/workflow-graph/lane-tool-service";
 import { createCollaborationProductionAgentCaller } from "@/lib/workflows/collaboration/agent-caller-production";
-import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
+import { resolveGraphCollaborationBackends } from "@/lib/workflows/collaboration/backend-pair";
 import { resolveConfiguredAgentBackendDefaults } from "@/lib/agent-backends/conversation-policy";
 import { decideCollaborationNextStep } from "@/lib/workflows/collaboration/policy";
 import { createWorkflowCollaborationEnvelope } from "@/lib/workflows/collaboration/workflow-envelope";
@@ -261,16 +261,15 @@ export async function loadGraphWorkflowLaneToolContext(
                 sessionName,
               }),
             });
-            // Agent Two runs the resolved workflow config; Agent One keeps
-            // the historical opposite-backend pairing on global config
+            // Agent Two runs the resolved workflow config; Agent One runs
+            // its default partner from the pair policy on global config
             // defaults. Every lane crosses the caller boundary with a
             // concrete model — a lane without one would fall back to the
             // SDK's own default, which some accounts cannot access.
             const collabConfig = await readConfig();
             const agentTwoAgentConfig = resolvedCollaboration.secondAgent.value;
-            const agentOneBackend = oppositeCollaborationBackend(
-              agentTwoAgentConfig.backend,
-            );
+            const { agent_one: agentOneBackend } =
+              resolveGraphCollaborationBackends(agentTwoAgentConfig.backend);
             const agentOneDefaults = resolveConfiguredAgentBackendDefaults(
               collabConfig,
               agentOneBackend,

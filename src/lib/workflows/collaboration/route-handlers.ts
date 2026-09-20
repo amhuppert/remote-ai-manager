@@ -32,19 +32,19 @@ import {
   getSession as defaultGetSession,
 } from "@/lib/state-store";
 import { setConversationBackend as defaultSetConversationBackend } from "@/lib/conversations/service";
-import { collaborationBackendRefusal } from "./types";
-import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import {
-  backendFacetRefusalFor,
-  GATED_BACKEND_FACET_ERROR_CODE,
-} from "@/lib/agent-backends/facet-gating";
+  collaborationBackendAdmission,
+  CollaborationBackendNotEligibleError,
+  CollaborationPairNotSupportedError,
+} from "./types";
+import { getBackendCatalogEntry as defaultGetBackendCatalogEntry } from "@/lib/agent-backends/catalog";
+import { GATED_BACKEND_FACET_ERROR_CODE } from "@/lib/agent-backends/facet-gating";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ApiError } from "@/lib/api/errors";
 import {
   collaborationResumeRequestSchema,
   collaborationStartRequestSchema,
   collaborationStopRequestSchema,
-  CollaborationBackendNotEligibleError,
   CollaborationConversationMismatchError,
   CollaborationConversationNotFoundError,
   CollaborationNotResumableError,
@@ -91,6 +91,12 @@ export interface CollaborationRouteDeps {
     conversationId: string,
     backend: AgentBackendId,
   ) => Promise<void>;
+  /**
+   * The catalog entry the start refusal reads a requested backend's facets
+   * from. Defaults to the static catalog; tests inject entries with facets
+   * withdrawn to drive the refusal path.
+   */
+  getBackendCatalogEntry: typeof defaultGetBackendCatalogEntry;
 }
 
 const defaultDeps: CollaborationRouteDeps = {
@@ -103,6 +109,7 @@ const defaultDeps: CollaborationRouteDeps = {
     defaultClearConversationPendingPromptTextIfMatches,
   readArtifactFile: (absolutePath) => readFile(absolutePath, "utf-8"),
   setConversationBackend: defaultSetConversationBackend,
+  getBackendCatalogEntry: defaultGetBackendCatalogEntry,
 };
 
 async function resolveSessionParams(
@@ -309,29 +316,29 @@ export function createCollaborationRouteHandlers(
       // switched to it (spec R15.2). The manager raises its own refusal when it
       // resolves the lanes, but only after that write has happened.
       //
-      // Same text the picker shows on the refused option, so the affordance and
-      // the API cannot disagree. The code distinguishes the two causes: a
-      // missing task facet is the facet refusal every gated route returns, and
-      // pair-membership keeps the collaboration-specific code it already had.
+      // Same decision the picker shows on a refused option, so the affordance
+      // and the API cannot disagree. The code distinguishes the two causes: a
+      // missing lane facet is the facet refusal every gated route returns, and
+      // participation policy keeps the collaboration-specific code it already
+      // had.
       if (parsed.data.backend) {
         const requested = parsed.data.backend;
-        const refusal = collaborationBackendRefusal(
-          getBackendCatalogEntry(requested),
+        const admission = collaborationBackendAdmission(
+          deps.getBackendCatalogEntry(requested),
         );
-        if (refusal !== null) {
-          const facetUnsupported =
-            backendFacetRefusalFor(requested, "tasks") !== null;
+        if (!admission.ok) {
           logger.warn("collaboration.route.backend_ineligible", {
             conversationId: parsed.data.conversationId,
             requestedBackend: requested,
-            cause: facetUnsupported ? "task_facet" : "pair_policy",
+            cause: admission.cause,
           });
           return NextResponse.json(
             {
-              error: refusal,
-              code: facetUnsupported
-                ? GATED_BACKEND_FACET_ERROR_CODE
-                : "COLLABORATION_BACKEND_NOT_ELIGIBLE",
+              error: admission.reason,
+              code:
+                admission.cause === "facet"
+                  ? GATED_BACKEND_FACET_ERROR_CODE
+                  : "COLLABORATION_BACKEND_NOT_ELIGIBLE",
             } satisfies ApiError,
             { status: 400 },
           );
@@ -428,7 +435,10 @@ export function createCollaborationRouteHandlers(
             { status: 409 },
           );
         }
-        if (err instanceof CollaborationBackendNotEligibleError) {
+        if (
+          err instanceof CollaborationBackendNotEligibleError ||
+          err instanceof CollaborationPairNotSupportedError
+        ) {
           return NextResponse.json(
             {
               error: err.message,

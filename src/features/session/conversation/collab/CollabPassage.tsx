@@ -22,6 +22,8 @@ import type {
   CollaborationReference,
   CollaborationResolutionDecisionOutput,
 } from "@/lib/workflows/collaboration/types";
+import { defaultCollaborationPartner } from "@/lib/workflows/collaboration/backend-pair";
+import { collabAgentTone } from "@/features/session/conversation/collab/card-chrome";
 import CollabInitialDraftCard from "@/features/session/conversation/collab/CollabInitialDraftCard";
 import CollabCrossReviewCard from "@/features/session/conversation/collab/CollabCrossReviewCard";
 import CollabProposedChangesCard from "@/features/session/conversation/collab/CollabProposedChangesCard";
@@ -63,11 +65,9 @@ const laneClass: Record<CollabConnectorAnchor, string> = {
   full: "col-[1/-1] max-900:col-[1]",
 };
 
-// Passage accent rail color by the primary agent (legacy `[data-primary=codex]`).
-const passageBorder: Record<CollaborationAgent, string> = {
-  claude: "border-l-cyan",
-  codex: "border-l-violet",
-};
+// Passage accent rail colour by the primary agent's catalog tone (`data-tone`).
+const passageBorder =
+  "data-[tone=cyan]:border-l-cyan data-[tone=violet]:border-l-violet data-[tone=amber]:border-l-amber";
 
 interface CollabPauseHandlers {
   drafts: Record<string, string>;
@@ -125,11 +125,11 @@ export function flowAgentToBackend(
   agents?: CollabAgentsDisplayMap,
 ): CollaborationAgent {
   // Configured per-agent backends win (a pair may share one backend); the
-  // opposite-backend derivation covers runs that predate per-agent configs.
+  // default-partner derivation covers runs that predate per-agent configs.
   const configured = agents?.[flow]?.backend;
   if (configured !== undefined) return configured;
   if (flow === "agent_one") return primary;
-  return primary === "claude" ? "codex" : "claude";
+  return defaultCollaborationPartner(primary);
 }
 
 export function isCollabPassageTerminal(status: CollabPassageStatus): boolean {
@@ -940,8 +940,9 @@ export default function CollabPassage({
     <article
       className={cn(
         "flex min-w-0 flex-col gap-md border-0 border-l-[3px] border-solid pl-md max-768:pl-sm",
-        passageBorder[primary],
+        passageBorder,
       )}
+      data-tone={collabAgentTone(primary)}
       data-workflow-id={workflowId}
       data-status={status}
       data-primary={primary}

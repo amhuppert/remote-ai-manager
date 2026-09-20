@@ -599,6 +599,122 @@ describe("createCollaborationProductionCallAgent", () => {
     expect(taskRequests[2]?.prompt).toBe("round 2");
   });
 
+  it("starts a fresh Cursor task on the first lane call and resumes the runner-returned Cursor ref later, under the autonomous lane settings", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-cursor-continuity",
+      laneId: "agent_two",
+      backend: "cursor",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      ref: null,
+      metrics: {},
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const taskRequests: AgentTaskRequest[] = [];
+    let callCount = 0;
+    const runner: AgentTaskRunner = {
+      backend: "cursor",
+      async run(request): Promise<AgentTaskResult> {
+        taskRequests.push(request);
+        callCount += 1;
+        const structuredOutput = draftOutput(callCount);
+        return {
+          backendRef: {
+            backend: "cursor",
+            ref: `{"taskId":"task-${callCount}"}`,
+          },
+          text: JSON.stringify(structuredOutput),
+          structuredOutput,
+          usage: { inputTokens: 10, outputTokens: 5 },
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+        };
+      },
+    };
+
+    const cursorSelection = { modelId: "composer-2.5", parameters: {} };
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-cursor-continuity",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      agents: collabAgents({
+        agent_two: {
+          backend: "cursor",
+          modelSelection: cursorSelection,
+          stallTimeoutMs: 45_000,
+        },
+      }),
+      getTaskRunner: () => runner,
+    });
+
+    const request = (round: number): AgentCallRequest => ({
+      executionClass: "governed-execution" as const,
+      kind: "task_run",
+      executionProfile: "standard",
+      backend: "cursor",
+      prompt: `round ${round}`,
+      systemInstructions: "charter for the lane",
+      laneRef: { workflowId: "wf-cursor-continuity", laneId: "agent_two" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    await callAgent(request(1));
+    await callAgent(request(2));
+
+    expect(taskRequests).toHaveLength(4);
+    // Round 1 work turn starts a fresh Cursor task.
+    expect(taskRequests[0]?.resumeRef).toBeUndefined();
+    expect(taskRequests[0]?.prompt).toBe("round 1");
+    // Round 1 format turn resumes the work turn's task ref.
+    expect(taskRequests[1]?.resumeRef).toEqual({
+      backend: "cursor",
+      ref: '{"taskId":"task-1"}',
+    });
+    // Round 2 work turn resumes the latest recorded ref.
+    expect(taskRequests[2]?.resumeRef).toEqual({
+      backend: "cursor",
+      ref: '{"taskId":"task-2"}',
+    });
+
+    // Every task lane runs under the same autonomous settings in the session
+    // worktree with the lane's complete selection and governance.
+    expect(taskRequests[0]).toMatchObject({
+      workingDirectory: "/worktrees/sess-1",
+      autonomous: true,
+      modelSelection: cursorSelection,
+      systemInstructions: ["charter for the lane"],
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "never",
+      networkAccessEnabled: true,
+      skipGitRepoCheck: true,
+      webSearchMode: "disabled",
+      stallTimeoutMs: 45_000,
+    });
+
+    // Usage lands on the Cursor lane, attributed to agent_two.
+    const lane = await laneService.resolve({
+      workflowId: "wf-cursor-continuity",
+      laneId: "agent_two",
+    });
+    expect(lane?.backend).toBe("cursor");
+    // Two schema-bearing rounds are four task runs; the lane holds the last.
+    expect(lane?.ref).toBe('{"taskId":"task-4"}');
+    expect(lane?.metrics.lastTurnUsage?.inputTokens).toBeGreaterThan(0);
+  });
+
   it("does NOT pass a Codex resumeRef when the lane policy disables continuity, even if a prior threadId is recorded", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
@@ -2004,6 +2120,70 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
         CC_API_TOKEN: "instance-token-secret",
       });
       expect(codex.capturedEnvs[0]?.PATH).toBe("/cc/config/bin:/usr/bin");
+    });
+
+    it("gives an opted-in Cursor collaboration task the originating session's CC scope", async () => {
+      const laneService = createLaneService({
+        store: createInMemoryLaneStore(),
+      });
+      await laneService.initialize({
+        workflowId: SESSION_SCOPE_INPUT.workflowId,
+        laneId: "agent_one",
+        backend: "cursor",
+        writeCapability: "write_capable",
+        policy: { continuityEnabled: true },
+        ref: null,
+        metrics: {},
+        lastUsedAt: "2026-04-28T10:00:00.000Z",
+      });
+      const sink: AgentTaskRequest[] = [];
+      const runner: AgentTaskRunner = {
+        backend: "cursor",
+        async run(request): Promise<AgentTaskResult> {
+          sink.push(request);
+          return {
+            backendRef: { backend: "cursor", ref: '{"taskId":"t"}' },
+            text: "prose answer",
+            usage: null,
+            error: null,
+            timedOut: false,
+            failure: null,
+            continuationDisposition: "retain",
+          };
+        },
+      };
+
+      const callAgent = createCollaborationProductionCallAgent({
+        ...SESSION_SCOPE_INPUT,
+        laneService,
+        agents: collabAgents({
+          agent_one: {
+            backend: "cursor",
+            modelSelection: { modelId: "composer-2.5", parameters: {} },
+          },
+        }),
+        grantsOriginatingSessionScope: true,
+        getTaskRunner: () => runner,
+      });
+
+      await callAgent({
+        executionClass: "governed-execution",
+        kind: "task_run",
+        executionProfile: "standard",
+        backend: "cursor",
+        prompt: "do the collaborative work",
+        laneRef: {
+          workflowId: SESSION_SCOPE_INPUT.workflowId,
+          laneId: "agent_one",
+        },
+        writeCapability: "write_capable",
+      });
+
+      expect(sink[0]?.ccSessionScope).toEqual({
+        project: "example",
+        session: "sess-1",
+        conversationId: "conv-originating",
+      });
     });
 
     it("leaves the task env neutralized for a caller composed without the grant (the graph-workflow shape)", async () => {

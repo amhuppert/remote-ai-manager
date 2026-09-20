@@ -8,12 +8,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/Collapsible";
 import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
-
-// Agent identity accent: a 3px left border over the card's 1px box.
-const agentBorder: Record<CollaborationAgent, string> = {
-  claude: "border-l-[3px] border-l-cyan",
-  codex: "border-l-[3px] border-l-violet",
-};
+import {
+  cardRail,
+  collabAgentTone,
+} from "@/features/session/conversation/collab/card-chrome";
 
 // Navigation pulse: the host (CollabPassage CardHost) carries `group/collab-card`
 // and toggles `data-pulse` on jump; the animation rides the card via the group
@@ -88,10 +86,12 @@ export default function CollabCollapsibleCard({
     <section
       className={cn(
         "flex min-w-0 flex-col overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-raised",
-        agent && agentBorder[agent],
+        // Agent identity accent: a 3px left rail over the card's 1px box.
+        agent && cardRail,
         pulse,
       )}
       data-agent={agent}
+      data-tone={agent && collabAgentTone(agent)}
       data-kind={kind}
       data-open={open ? "true" : "false"}
       aria-label={ariaLabel}

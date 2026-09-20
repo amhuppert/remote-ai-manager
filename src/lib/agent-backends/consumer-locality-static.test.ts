@@ -21,8 +21,10 @@
  * backend IS edits there), `shared/schemas.ts` (allowed edit #1),
  * `agent-capabilities/{claude,codex}-discovery.ts` (backend-owned discovery
  * providers behind the explicit discovery interface), `workflows/collaboration/**`
- * (the Claude/Codex pair is named config per P10), and UI catalog consumers
- * (they render from the backend catalog).
+ * (participation, default partners, and lane dispatch are named product policy
+ * per P10 — `types.ts` and `backend-pair.ts` list every participant
+ * explicitly), and UI catalog consumers (they render from the backend
+ * catalog).
  */
 
 import { readFileSync } from "node:fs";
@@ -300,8 +302,16 @@ describe("consumer-locality static half: corpus E backend-id scan", () => {
  * dispatched on `backend === "codex"` with a fallback that pointed every other
  * backend at Claude's directories, and is now a total per-backend discoverer
  * map (spec D14).
+ *
+ * Ratcheted 4 → 0 by the Cursor collaboration slice, which held the last four:
+ * `collaboration/helpers.ts` chose the lane's request kind with
+ * `backend === "claude"` and now reads `collaborationLaneDispatch`, while
+ * `collaboration/agent-caller-production.ts` named Codex and Claude to pick a
+ * resume ref and the hardened task settings, and now compares each resume ref
+ * against the lane's own backend under one shared settings constant. At zero
+ * the pin is strongest: any new identity branch in this corpus fails it.
  */
-export const SCOPED_BACKEND_IDENTITY_BRANCH_LINES = 4;
+export const SCOPED_BACKEND_IDENTITY_BRANCH_LINES = 0;
 
 // Use the corpus's provider-literal rule without its stateful global flag.
 // Equality between opaque backend values is an ownership check, not dispatch.

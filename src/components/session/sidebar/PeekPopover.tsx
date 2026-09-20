@@ -53,11 +53,11 @@ import {
   stripCollabPrefix,
 } from "@/lib/conversation-commands/parse";
 import { buildAgentTwoStartRequest } from "@/lib/workflows/collaboration/agent-two-request";
+import { defaultCollaborationPartner } from "@/lib/workflows/collaboration/backend-pair";
 import {
-  COLLABORATION_BACKEND_PAIR,
-  oppositeCollaborationBackend,
-} from "@/lib/workflows/collaboration/backend-pair";
-import { asCollaborationAgent } from "@/lib/workflows/collaboration/types";
+  asCollaborationAgent,
+  collaborationAgentSchema,
+} from "@/lib/workflows/collaboration/types";
 import {
   type CollabConfigDraft,
   seedAgentTwoDraft,
@@ -171,7 +171,7 @@ function ProjectCollabConfigRow({
   const modelCatalogs = useMemo(
     () =>
       Object.fromEntries(
-        COLLABORATION_BACKEND_PAIR.map((backend) => [
+        collaborationAgentSchema.options.map((backend) => [
           backend,
           projectModelOptions.data?.find(
             (options) => options.backend === backend,
@@ -223,7 +223,7 @@ function PeekReplyComposer({
     const agentTwo =
       collabConfigDraft.agentTwo ??
       seedAgentTwoDraft(
-        oppositeCollaborationBackend(originatingAgent ?? "claude"),
+        defaultCollaborationPartner(originatingAgent ?? "claude"),
         backendDefaults,
       );
     return { ...collabConfigDraft, agentTwo };

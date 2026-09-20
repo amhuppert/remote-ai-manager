@@ -6,6 +6,7 @@ import CollabConfigRow, {
   type CollabConfigRowProps,
 } from "@/components/session/CollabConfigRow";
 import {
+  getConfiguredBackendModelCatalog,
   getStaticBackendModelCatalog,
   listBackendCatalogEntries,
   type BackendSelectionDefaultsById,
@@ -20,7 +21,11 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   codex: defaultSelectionForModel(CODEX_CATALOG, "gpt-5.4"),
   cursor: { modelId: "composer-2.5", parameters: {} },
 };
-const MODEL_CATALOGS = { claude: CLAUDE_CATALOG, codex: CODEX_CATALOG };
+const MODEL_CATALOGS: CollabConfigRowProps["modelCatalogs"] = {
+  claude: CLAUDE_CATALOG,
+  codex: CODEX_CATALOG,
+  cursor: getConfiguredBackendModelCatalog("cursor"),
+};
 
 function renderRow(
   overrides: Partial<CollabConfigRowProps> = {},
@@ -128,6 +133,48 @@ describe("CollabConfigRow", () => {
 
     cursor.click();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("offers Cursor as the second agent and reseeds its runtime from Cursor's defaults", () => {
+    const onChange = vi.fn();
+    renderRow({ onChange });
+
+    const cursor = screen.getByRole("button", { name: "Cursor" });
+    expect(cursor).not.toHaveAttribute("aria-disabled");
+    cursor.click();
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentTwo: {
+          backend: "cursor",
+          modelSelection: BACKEND_DEFAULTS.cursor,
+        },
+      }),
+    );
+  });
+
+  // Backend differences are informational, never a gate: choosing Cursor
+  // shows its execution limits beside the picker instead of refusing it.
+  it("discloses the chosen second agent's execution limits without disabling the choice", () => {
+    renderRow({
+      config: {
+        agentTwo: {
+          backend: "cursor",
+          modelSelection: BACKEND_DEFAULTS.cursor,
+        },
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+      },
+    });
+
+    const note = screen.getByRole("note");
+    expect(note.textContent).toContain("Cursor execution limits");
+    expect(note.textContent).toMatch(/instructions/i);
+  });
+
+  it("shows no execution note for a second agent with enforced limits and no warnings", () => {
+    renderRow();
+    expect(screen.queryByRole("note")).toBeNull();
   });
 
   it("reseeds Agent Two's runtime from the new backend's defaults on backend switch", () => {

@@ -1,5 +1,5 @@
 /**
- * Collaboration flow-agent lane identity and the default backend pairing.
+ * Collaboration flow-agent lane identity and the pair policy.
  *
  * A collaboration run has exactly two flow agents — `agent_one` (the
  * originating conversation's agent) and `agent_two` — and each owns one lane
@@ -7,18 +7,24 @@
  * name: both agents may run the same backend, and two same-backend lanes must
  * stay distinct records with isolated continuity refs.
  *
- * `COLLABORATION_BACKEND_PAIR` / `oppositeCollaborationBackend` survive as the
- * DEFAULT-SUGGESTION helper only: when a caller does not configure Agent Two,
- * its backend defaults to the opposite of Agent One's. They are no longer
- * derivation authority for lane identity or per-lane settings.
+ * The pair policy lives here, next to the lane identity it governs:
  *
- * Seed policy (continuity, per-lane resume ref, each agent's backend) stays a
- * caller concern so each envelope expresses its own variant over the fixed
- * flow-agent pair.
+ *  - `COLLABORATION_SUPPORTED_PAIRS` is the explicit matrix of ordered
+ *    (agent_one, agent_two) backend pairs the flow admits.
+ *  - `COLLABORATION_DEFAULT_PARTNER` is the DEFAULT-SUGGESTION half: when a
+ *    caller does not configure Agent Two, its backend defaults to Agent One's
+ *    partner here. It is never derivation authority for lane identity or
+ *    per-lane settings — an explicitly configured Agent Two backend (including
+ *    the same backend as Agent One) always wins.
+ *
+ * Which backends participate at all is `collaborationAgentSchema` in
+ * ./types.ts; this module only says how participants pair. Seed policy
+ * (continuity, per-lane resume ref) stays a caller concern so each envelope
+ * expresses its own variant over the fixed flow-agent pair.
  */
 
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import type { CollaborationAgent } from "./types";
+import { requireCollaborationAgent, type CollaborationAgent } from "./types";
 import type { CollaborationFlowAgent } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   LanePolicy,
@@ -33,25 +39,81 @@ import type {
 export const COLLABORATION_FLOW_AGENTS = ["agent_one", "agent_two"] as const;
 
 /**
- * The ordered default backend pairing (claude first, codex second). Used only
- * to suggest Agent Two's default backend as the opposite of Agent One's.
+ * The suggested partner for each participant when the caller configures no
+ * Agent Two. Claude and Codex keep their historical pairing; Cursor is
+ * partnered with Claude so its default counterpart is the participant with the
+ * strongest enforcement and continuity guarantees.
  */
-export const COLLABORATION_BACKEND_PAIR = ["claude", "codex"] as const;
-
-/** The two backends of the default pairing, as a readonly tuple. */
-export type CollaborationBackendPair = typeof COLLABORATION_BACKEND_PAIR;
+export const COLLABORATION_DEFAULT_PARTNER: Readonly<
+  Record<CollaborationAgent, CollaborationAgent>
+> = {
+  claude: "codex",
+  codex: "claude",
+  cursor: "claude",
+};
 
 /**
- * The backend paired opposite `backend` in the DEFAULT pairing. This is the
- * suggestion a caller applies when Agent Two has no explicit backend; an
- * explicitly configured Agent Two backend (including the same backend as
- * Agent One) always wins.
+ * The backend suggested for Agent Two when Agent One runs `backend`. A
+ * suggestion only — see the module doc.
  */
-export function oppositeCollaborationBackend(
-  backend: AgentBackendId,
+export function defaultCollaborationPartner(
+  backend: CollaborationAgent,
 ): CollaborationAgent {
-  const [first, second] = COLLABORATION_BACKEND_PAIR;
-  return backend === first ? second : first;
+  return COLLABORATION_DEFAULT_PARTNER[backend];
+}
+
+/**
+ * Every ordered (agent_one, agent_two) backend pair Collaboration Mode admits.
+ * Written out rather than derived so that adding a participant is a decision
+ * about every position it may take; `backend-pair.test.ts` pins the matrix to
+ * the full cross product of the participation enum, so a participant that is
+ * added to the enum without being placed here fails loudly.
+ */
+export const COLLABORATION_SUPPORTED_PAIRS: ReadonlyArray<
+  readonly [agentOne: CollaborationAgent, agentTwo: CollaborationAgent]
+> = [
+  ["claude", "codex"],
+  ["claude", "claude"],
+  ["claude", "cursor"],
+  ["codex", "claude"],
+  ["codex", "codex"],
+  ["codex", "cursor"],
+  ["cursor", "claude"],
+  ["cursor", "codex"],
+  ["cursor", "cursor"],
+];
+
+/**
+ * Why the ordered pair is not admitted, or null when it is. Every ordered pair
+ * of participants is admitted today, so this refuses only a pair the matrix
+ * above omits — the guard that keeps the matrix authoritative if a future
+ * participant is admitted to one position only.
+ */
+export function collaborationPairRefusal(
+  agentOne: CollaborationAgent,
+  agentTwo: CollaborationAgent,
+): string | null {
+  const supported = COLLABORATION_SUPPORTED_PAIRS.some(
+    ([one, two]) => one === agentOne && two === agentTwo,
+  );
+  if (supported) return null;
+  return `Collaboration Mode does not run ${agentOne} as agent_one with ${agentTwo} as agent_two`;
+}
+
+/**
+ * The two lane backends of a graph-workflow collaboration, whose configuration
+ * names only `secondAgent`: Agent Two runs it and Agent One runs its default
+ * partner. A configured backend outside the participation policy fails here,
+ * before any lane is seeded.
+ */
+export function resolveGraphCollaborationBackends(
+  secondAgent: AgentBackendId,
+): Record<CollaborationFlowAgent, CollaborationAgent> {
+  const agentTwo = requireCollaborationAgent("agent_two", secondAgent);
+  return {
+    agent_one: defaultCollaborationPartner(agentTwo),
+    agent_two: agentTwo,
+  };
 }
 
 /**

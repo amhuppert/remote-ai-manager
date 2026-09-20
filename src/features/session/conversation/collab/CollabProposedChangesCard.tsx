@@ -1,5 +1,7 @@
 "use client";
 
+import { backendLabel } from "@/lib/agent-backends/catalog";
+
 import type {
   CollaborationAgent,
   CollaborationAgentModelSettings,
@@ -9,9 +11,7 @@ import type {
   CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
-import CollabAgentModelMeta, {
-  AGENT_LABEL,
-} from "@/features/session/conversation/collab/CollabAgentModelMeta";
+import CollabAgentModelMeta from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
@@ -32,6 +32,7 @@ import {
   changeListRationale,
   cardSection,
   cardSectionTitle,
+  collabAgentTone,
 } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabProposedChangesCardProps {
@@ -72,12 +73,16 @@ export default function CollabProposedChangesCard({
     <CollabCollapsibleCard
       agent={fromAgent}
       kind="proposed_changes"
-      ariaLabel={`Proposed changes round ${round} from ${AGENT_LABEL[fromAgent]}`}
+      ariaLabel={`Proposed changes round ${round} from ${backendLabel(fromAgent)}`}
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className={cardAgent} data-agent={fromAgent}>
-            {AGENT_LABEL[fromAgent]}
+          <span
+            className={cardAgent}
+            data-agent={fromAgent}
+            data-tone={collabAgentTone(fromAgent)}
+          >
+            {backendLabel(fromAgent)}
             <CollabAgentModelMeta settings={fromModelSettings} />
           </span>
           <span className={cardEyebrow}>Proposed changes</span>

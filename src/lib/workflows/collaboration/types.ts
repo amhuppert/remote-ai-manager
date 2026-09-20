@@ -23,10 +23,15 @@ import {
 } from "@/lib/agent-backends/schemas";
 import {
   backendLabel,
+  findBackendCatalogEntry,
   type BackendCatalogEntry,
 } from "@/lib/agent-backends/catalog";
-import { backendFacetRefusal } from "@/lib/agent-backends/facet-gating";
+import {
+  backendFacetRefusal,
+  type GatedBackendFacet,
+} from "@/lib/agent-backends/facet-gating";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { CollaborationFlowAgent } from "@/lib/workflow-graph/collaboration-schemas";
 
 export {
   type CollaborationArtifactAgreement,
@@ -78,17 +83,25 @@ export {
 
 /**
  * The backends Collaboration Mode runs — the ONE documented product-policy site
- * for that question.
+ * for participation.
  *
- * Collaboration is a Claude x Codex feature, not "whatever is registered": the
- * flow's cross-review, disagreement, and resolution contracts were designed and
- * evidenced for that pair, and its cards carry a per-agent accent for each. A
- * newly registered backend is therefore ineligible until its participation is
- * separately evidenced, and this enum is what refuses it — at the schema
- * boundary, as a bounded client error, rather than by an identity branch spread
- * across the orchestrator and every card.
+ * Participation is explicit product policy, not "whatever is registered": the
+ * flow's cross-review, disagreement, and resolution contracts are evidenced per
+ * participant before it is listed here, and its cards carry a catalog-owned
+ * accent for each. A newly registered backend is therefore ineligible until its
+ * participation is separately evidenced — registering a task runner alone
+ * admits nothing — and this enum is what refuses it, at the schema boundary as
+ * a bounded client error rather than by an identity branch spread across the
+ * orchestrator and every card.
+ *
+ * Every participant may take either flow-agent position, including alongside
+ * itself; `COLLABORATION_SUPPORTED_PAIRS` in ./backend-pair.ts writes that
+ * matrix out explicitly, and `COLLABORATION_DEFAULT_PARTNER` there names the
+ * suggested partner for each. Cursor's limits are the Cursor adapter's:
+ * filesystem and network limits reach it as instructions rather than
+ * enforcement, and it reports token usage without a cost figure.
  */
-export const collaborationAgentSchema = z.enum(["claude", "codex"]);
+export const collaborationAgentSchema = z.enum(["claude", "codex", "cursor"]);
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;
 
 /** Whether a registered backend may participate in Collaboration Mode. */
@@ -110,41 +123,160 @@ export function asCollaborationAgent(
 }
 
 /**
- * Why a registered backend is outside the evidenced pair, or null when it is in
- * it. The pair-membership half of {@link collaborationBackendRefusal}.
+ * A registered backend outside the participation policy was asked to take a
+ * lane. Bounded and named rather than substituted: silently swapping in an
+ * eligible backend would run a flow the caller did not ask for, and letting
+ * the ineligible one through would dispatch a lane whose contracts were never
+ * evidenced for it. Thrown before anything durable happens.
+ */
+export class CollaborationBackendNotEligibleError extends Error {
+  constructor(
+    public readonly agent: CollaborationFlowAgent,
+    public readonly backend: AgentBackendId,
+  ) {
+    super(
+      `Backend "${backend}" cannot take the ${agent} lane: Collaboration Mode runs ${listCollaborationAgentLabels()}.`,
+    );
+    this.name = "CollaborationBackendNotEligibleError";
+  }
+}
+
+/**
+ * Both backends participate but the ordered pair is outside the supported
+ * matrix (`COLLABORATION_SUPPORTED_PAIRS`). Unreachable while every ordered
+ * pair is admitted; kept as the bounded refusal the matrix would produce.
+ */
+export class CollaborationPairNotSupportedError extends Error {
+  constructor(
+    public readonly agentOneBackend: CollaborationAgent,
+    public readonly agentTwoBackend: CollaborationAgent,
+    reason: string,
+  ) {
+    super(reason);
+    this.name = "CollaborationPairNotSupportedError";
+  }
+}
+
+/** The backend narrowed to a collaboration agent for `agent`'s lane, or a
+ *  {@link CollaborationBackendNotEligibleError}. */
+export function requireCollaborationAgent(
+  agent: CollaborationFlowAgent,
+  backend: AgentBackendId,
+): CollaborationAgent {
+  if (!isCollaborationAgent(backend)) {
+    throw new CollaborationBackendNotEligibleError(agent, backend);
+  }
+  return backend;
+}
+
+/** "Claude, Codex, and Cursor" — the participants as prose, for refusals. */
+function listCollaborationAgentLabels(): string {
+  const labels = collaborationAgentSchema.options.map(backendLabel);
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+/**
+ * Why a registered backend is outside the participation policy, or null when
+ * it is in it. The policy half of {@link collaborationBackendAdmission}.
  */
 export function collaborationAgentRefusal(
   backend: AgentBackendId,
 ): string | null {
   if (isCollaborationAgent(backend)) return null;
-  return `${backendLabel(backend)} cannot take a Collaboration Mode lane: collaboration runs ${collaborationAgentSchema.options.map(backendLabel).join(" and ")} only`;
+  const label = findBackendCatalogEntry(backend)?.label ?? backend;
+  return `${label} cannot take a Collaboration Mode lane: collaboration runs ${listCollaborationAgentLabels()} only`;
+}
+
+/**
+ * How a participant's lane is dispatched through AgentCall. The one place that
+ * decides it: `callPrimitive` (./helpers.ts) builds the request from this, and
+ * the admission below gates on the facet the dispatch actually uses.
+ *
+ * Claude lanes are conversation turns so Agent One can resume the originating
+ * Claude conversation with its full context and hold background subagents open.
+ * Every other participant runs as a task: the task runners already own resume
+ * (Codex threads, Cursor task refs bound to the originating conversation when
+ * the run grants it), governance delivery, and structured-output transport for
+ * their provider.
+ */
+export type CollaborationLaneDispatch = "conversation_turn" | "task_run";
+
+export const COLLABORATION_LANE_DISPATCH: Readonly<
+  Record<CollaborationAgent, CollaborationLaneDispatch>
+> = {
+  claude: "conversation_turn",
+  codex: "task_run",
+  cursor: "task_run",
+};
+
+export function collaborationLaneDispatch(
+  backend: CollaborationAgent,
+): CollaborationLaneDispatch {
+  return COLLABORATION_LANE_DISPATCH[backend];
+}
+
+/** The catalog facet a participant's lane dispatch needs. */
+export function collaborationLaneFacet(
+  backend: CollaborationAgent,
+): GatedBackendFacet {
+  return collaborationLaneDispatch(backend) === "conversation_turn"
+    ? "conversation"
+    : "tasks";
+}
+
+/**
+ * Whether a registered backend can take a collaboration lane, and if not, which
+ * of the two independent gates refused it:
+ *
+ *  - `pair_policy` — the backend is outside the participation list. Asked
+ *    first: a backend the policy does not run has no lane dispatch, so no facet
+ *    question even applies to it.
+ *  - `facet` — the backend participates, but its catalog entry lacks the
+ *    facet its lane dispatch uses (the same `backendFacetRefusal` the task and
+ *    workflow-role pickers read, spec D13).
+ *
+ * The one decision the picker's disabled reason, the start route's error code,
+ * and the manager's admission all read, so none of them can disagree.
+ */
+export type CollaborationBackendAdmission =
+  | { ok: true }
+  | { ok: false; cause: "pair_policy" | "facet"; reason: string };
+
+export function collaborationBackendAdmission(
+  entry: BackendCatalogEntry,
+): CollaborationBackendAdmission {
+  const agent = asCollaborationAgent(entry.id);
+  if (agent === null) {
+    return {
+      ok: false,
+      cause: "pair_policy",
+      reason: `${entry.label} cannot take a Collaboration Mode lane: collaboration runs ${listCollaborationAgentLabels()} only`,
+    };
+  }
+  const facetRefusal = backendFacetRefusal(
+    entry,
+    collaborationLaneFacet(agent),
+  );
+  if (facetRefusal !== null) {
+    return {
+      ok: false,
+      cause: "facet",
+      reason: `${facetRefusal}, so it cannot take a Collaboration Mode lane`,
+    };
+  }
+  return { ok: true };
 }
 
 /**
  * Why a registered backend cannot take a collaboration lane, or null when it
  * can — the one text a collaboration picker shows on a refused option and its
- * API returns.
- *
- * The FIRST question is catalog data, not this module's enum: a non-Claude lane
- * is dispatched as a `task_run` (see `buildLaneRequest` in ./helpers.ts), so a
- * backend whose catalog entry registers no task facet cannot take one at all —
- * the same `backendFacetRefusal` the task and workflow-role pickers read (spec
- * D13). The pair enum answers only for a backend that clears that gate and is
- * still not one of the two the flow's cross-review and resolution contracts
- * were evidenced for.
- *
- * Ordering matters for honesty: reporting "not one of the two" for a backend
- * that has no task runner at all would name a policy where the real blocker is
- * a missing facet.
+ * API returns. See {@link collaborationBackendAdmission} for the two causes.
  */
 export function collaborationBackendRefusal(
   entry: BackendCatalogEntry,
 ): string | null {
-  const facetRefusal = backendFacetRefusal(entry, "tasks");
-  if (facetRefusal !== null) {
-    return `${facetRefusal}, so it cannot take a Collaboration Mode lane`;
-  }
-  return collaborationAgentRefusal(entry.id);
+  const admission = collaborationBackendAdmission(entry);
+  return admission.ok ? null : admission.reason;
 }
 
 /**

@@ -2,7 +2,7 @@
 
 Command Center runs Cursor as a third agent backend alongside Claude and Codex. Phase 1 delivers **conversations only**: you can pick Cursor in any conversation composer, and it streams, persists, resumes, and cancels the same way the other backends do.
 
-Everything else — tasks, workflow roles, Collaboration Mode — is not available for Cursor, and the UI says so on the option rather than hiding it. See [Unsupported in Phase 1](#unsupported-in-phase-1).
+Later phases added tasks, workflow roles, and Collaboration Mode. Where a surface still cannot run Cursor, the UI says so on the option rather than hiding it. See [Unsupported in Phase 1](#unsupported-in-phase-1) and [Collaboration Mode](#collaboration-mode).
 
 ---
 
@@ -157,7 +157,6 @@ Command Center declares these unsupported for Cursor in the backend descriptor, 
 | Not supported | What that means |
 | --- | --- |
 | **Task facet** | No Cursor agent runs. Task creation, workflow role assignment (including validator roles), and the naming/compaction/workflow-agent backend pickers show Cursor disabled. |
-| **Collaboration Mode** | Collaboration runs Claude and Codex only; the pairing's cross-review and resolution contracts were evidenced for that pair. A Cursor conversation offers no `/collab` row. |
 | **Native mid-turn ask** | No approval or question prompt is awaited or surfaced. |
 | **Filesystem write restriction** | Not claimed and not enforced; the run is unsandboxed. |
 | **Network confinement** | Not claimed and not enforced. |
@@ -171,6 +170,19 @@ Command Center declares these unsupported for Cursor in the backend descriptor, 
 | **Claude/Codex parity** | Not claimed. Cursor is a conversation backend with the limits on this page. |
 
 Structured output works through the same shared post-validation path every backend uses, including its single bounded repair attempt.
+
+## Collaboration Mode
+
+Cursor participates in Collaboration Mode in either position: a Cursor conversation can start `/collab`, and Cursor can be picked as the second agent of any Claude, Codex, or Cursor conversation. Graph-workflow collaboration accepts Cursor as `secondAgent`; Agent One then runs Cursor's default partner, Claude. The supported pairs are listed explicitly in `src/lib/workflows/collaboration/backend-pair.ts`.
+
+A Cursor lane runs as a Cursor task in the session worktree with the same autonomous settings every collaboration task lane gets. What differs is what Cursor can enforce:
+
+| Aspect | What a Cursor lane does |
+| --- | --- |
+| **Continuity** | Agent One resumes the originating Cursor conversation's agent when the run grants it the session's CC scope (standalone `/collab`); every later phase resumes the lane's own task ref. Graph-workflow lanes start fresh. |
+| **Sandbox, approvals, web search** | Delivered as instructions, not enforced; the run logs `cursor.task_policy_instruction_only`. The `/collab` row shows Cursor's execution warnings next to the second-agent picker. |
+| **Cost** | Token usage is attributed to the Cursor lane; `costUsd` stays unknown rather than estimated. |
+| **Structured output** | The shared prose-then-format flow and post-validation gate, as for Codex. |
 
 ---
 
@@ -198,7 +210,7 @@ The observed results and the explicit limits of that evidence are recorded in [`
 | Cursor turns fail with a runtime/platform error | The worker's Node is below 22.13, or `@cursor/sdk` / the derived `@cursor/sdk-${platform}-${arch}` package at 1.0.28 is missing, mismatched, or incompletely extracted. |
 | The model selector shows a model in red | The configured model is not in this project's `agentBackends.cursor.supportedModels`. Pick a listed one or add it to `CommandCenter.json`. |
 | A turn is refused before it starts, naming a model | Same cause, arriving from the API — the model was validated before any worker or billable turn. |
-| Cursor is greyed out in a picker | That surface needs the task facet or Collaboration Mode; hover the option for the reason. |
+| Cursor is greyed out in a picker | That surface needs a facet Cursor's catalog entry does not register; hover the option for the reason. |
 | The slash-command popup is empty | Expected: Cursor has no command or skill surface. |
 | A script inside a Cursor conversation cannot find an API token | Expected: credential-shaped environment variables are stripped from Cursor workers. See [Cursor workers inherit no credentials](#cursor-workers-inherit-no-credentials-from-the-server). |
 | Cost shows as unavailable | Expected and permanent for Phase 1. Token counts are reported; cost is not. |

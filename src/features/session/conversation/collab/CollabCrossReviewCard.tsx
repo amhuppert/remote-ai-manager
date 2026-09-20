@@ -1,5 +1,7 @@
 "use client";
 
+import { backendLabel } from "@/lib/agent-backends/catalog";
+
 import type {
   CollaborationAgent,
   CollaborationAgentModelSettings,
@@ -9,9 +11,7 @@ import type {
   CollaborationReference,
   CollaborationReviseSelfArtifact,
 } from "@/lib/workflows/collaboration/types";
-import CollabAgentModelMeta, {
-  AGENT_LABEL,
-} from "@/features/session/conversation/collab/CollabAgentModelMeta";
+import CollabAgentModelMeta from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
@@ -21,6 +21,7 @@ import {
   cardEyebrow,
   cardNarrative,
   cardSummary,
+  collabAgentTone,
 } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabCrossReviewCardProps {
@@ -60,16 +61,20 @@ export default function CollabCrossReviewCard({
     <CollabCollapsibleCard
       agent={reviewerAgent}
       kind="cross_review"
-      ariaLabel={`Review of ${AGENT_LABEL[targetAgent]}'s draft by ${AGENT_LABEL[reviewerAgent]}`}
+      ariaLabel={`Review of ${backendLabel(targetAgent)}'s draft by ${backendLabel(reviewerAgent)}`}
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className={cardAgent} data-agent={reviewerAgent}>
-            {AGENT_LABEL[reviewerAgent]}
+          <span
+            className={cardAgent}
+            data-agent={reviewerAgent}
+            data-tone={collabAgentTone(reviewerAgent)}
+          >
+            {backendLabel(reviewerAgent)}
             <CollabAgentModelMeta settings={reviewerModelSettings} />
           </span>
           <span className={cardEyebrow}>
-            Review of {AGENT_LABEL[targetAgent]}&rsquo;s draft
+            Review of {backendLabel(targetAgent)}&rsquo;s draft
           </span>
           <span className={cardSummary}>{headerSummary}</span>
         </>

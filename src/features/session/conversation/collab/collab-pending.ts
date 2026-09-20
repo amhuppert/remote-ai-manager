@@ -1,4 +1,5 @@
 import { backendLabel } from "@/lib/agent-backends/catalog";
+import { defaultCollaborationPartner } from "@/lib/workflows/collaboration/backend-pair";
 import type { CollabAgentsDisplayMap } from "@/features/session/conversation/collab/envelope-adapter";
 import type {
   CollaborationAgent,
@@ -168,15 +169,13 @@ export function deriveCollabPendingSteps(
   if (status !== "drafting" && status !== "negotiating") return [];
 
   // Configured per-agent backends win (they may name the SAME backend for
-  // both agents); the opposite-backend derivation is only the fallback for
+  // both agents); the default-partner derivation is only the fallback for
   // runs that predate per-agent configs.
   const backendOf: BackendOf = (flowAgent) =>
     agents?.[flowAgent]?.backend ??
     (flowAgent === "agent_one"
       ? primary
-      : primary === "claude"
-        ? "codex"
-        : "claude");
+      : defaultCollaborationPartner(primary));
 
   // Walk the frontier most-advanced-first so a partial snapshot (a later beat
   // present without an earlier one) resolves to the furthest step reached, never

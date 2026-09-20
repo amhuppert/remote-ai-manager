@@ -773,12 +773,18 @@ export const SEAMS: readonly SeamDefinition[] = [
     // row with the wrong agent on a conversation Collaboration Mode does not
     // run. It now calls `asCollaborationAgent`, whose null is the signal
     // PromptComposer already gated the row on.
+    // Ratcheted 9 → 5 with the Cursor collaboration slice: the collaboration
+    // pair policy became explicit data (`collaborationAgentSchema`,
+    // `COLLABORATION_DEFAULT_PARTNER`, `COLLABORATION_LANE_DISPATCH`), so the
+    // lane dispatch stopped comparing against Claude, the production caller
+    // resumes whichever ref the lane's own backend recorded instead of naming
+    // Claude and Codex, and the UI reads default partners from the policy.
     // Catalog-driven model controls consume neutral catalog metadata; this
     // ceiling covers the remaining product-policy identity sites below.
-    reviewedCeiling: 9,
+    reviewedCeiling: 5,
     unit: 'backend ===/!== "claude"|"codex" comparisons + case labels',
     corpus:
-      "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Permanent-survivor floor (ceiling > 0, not expected to reach 0): per P3 the surviving branches are sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the curated collaboration pair (D19: the Claude×Codex pairing is the feature; identity is intrinsic), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",
+      "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Permanent-survivor floor (ceiling > 0, not expected to reach 0): per P3 the surviving branches are sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the collaboration pair policy (`backend-pair.ts`/`types.ts` — participation, default partners and lane dispatch are named product policy over the participant enum, not derivation from registration), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",
     allowlist: BACKEND_IDENTITY_ALLOWLIST,
     inCorpus(relPath) {
       return (
@@ -1005,7 +1011,7 @@ export const SEAMS: readonly SeamDefinition[] = [
       {
         path: "src/features/session/conversation/collab/",
         justification:
-          "Collaboration's explicit two-agent pair configuration is exempt by design decision D19 — the Claude/Codex pair IS the feature, not an enumeration to migrate.",
+          "Collaboration participation is explicit product policy (`collaborationAgentSchema`, every registered backend today); its cards render labels and tones from the backend catalog, so this entry survives only for the pair-derived fixtures and adapters that decode legacy envelopes. Delete when the collab directory's enumeration count reaches zero on its own.",
       },
     ],
     inCorpus(relPath) {

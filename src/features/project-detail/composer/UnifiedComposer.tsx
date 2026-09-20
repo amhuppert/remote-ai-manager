@@ -14,7 +14,7 @@ import { useProjectModelOptionsQuery } from "@/lib/agent-backends/queries";
 import type { BackendValueMap } from "@/lib/agent-backends/catalog";
 import { seedAgentTwoDraft } from "@/stores/collaboration.store";
 import { asCollaborationAgent } from "@/lib/workflows/collaboration/types";
-import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
+import { defaultCollaborationPartner } from "@/lib/workflows/collaboration/backend-pair";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
@@ -518,7 +518,11 @@ export default function UnifiedComposer({
         hasCollabChip={false}
         effectiveCollabConfig={{
           agentTwo: seedAgentTwoDraft(
-            oppositeCollaborationBackend(agentBackend),
+            // Inert when the composer's backend cannot collaborate: the row
+            // never renders, and the start request carries the row's draft.
+            defaultCollaborationPartner(
+              asCollaborationAgent(agentBackend) ?? "claude",
+            ),
             backendDefaults,
           ),
           negotiationRounds: 3,

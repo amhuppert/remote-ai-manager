@@ -63,14 +63,23 @@ describe("useCollabContext originating agent", () => {
     ).toBe("codex");
   });
 
-  // Null is the signal PromptComposer gates the /collab row on. Reporting a
-  // backend the conversation is not running would show the row with the wrong
-  // agent named, and send a start request that adopts that backend onto the
-  // conversation (spec R15.1, charter no-silent-substitution).
-  it("reports no originating agent for a conversation Collaboration Mode does not run", () => {
+  it("reports a Cursor conversation as the originating agent and seeds Claude as its default partner", () => {
+    const { result } = renderCollabContext(conversationOn("cursor"));
+    expect(result.current.originatingCollabAgent).toBe("cursor");
+    expect(result.current.effectiveCollabConfig.agentTwo).toEqual({
+      backend: "claude",
+      modelSelection: BACKEND_DEFAULTS.claude,
+    });
+  });
+
+  it("seeds Codex for a Claude conversation and Claude for a Codex conversation", () => {
     expect(
-      renderCollabContext(conversationOn("cursor")).result.current
-        .originatingCollabAgent,
-    ).toBeNull();
+      renderCollabContext(conversationOn("claude")).result.current
+        .effectiveCollabConfig.agentTwo.backend,
+    ).toBe("codex");
+    expect(
+      renderCollabContext(conversationOn("codex")).result.current
+        .effectiveCollabConfig.agentTwo.backend,
+    ).toBe("claude");
   });
 });

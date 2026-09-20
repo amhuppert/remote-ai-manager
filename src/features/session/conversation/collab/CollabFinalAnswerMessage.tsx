@@ -1,5 +1,7 @@
 "use client";
 
+import { backendLabel } from "@/lib/agent-backends/catalog";
+
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import type {
@@ -7,11 +9,10 @@ import type {
   CollaborationAgentModelSettings,
   CollaborationGeneratedArtifact,
 } from "@/lib/workflows/collaboration/types";
-import CollabAgentModelMeta, {
-  AGENT_LABEL,
-} from "@/features/session/conversation/collab/CollabAgentModelMeta";
+import CollabAgentModelMeta from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import { MessageMarkdown } from "@/components/markdown/Markdown";
+import { collabAgentTone } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabFinalAnswerMessageProps {
   agent: CollaborationAgent;
@@ -22,16 +23,12 @@ export interface CollabFinalAnswerMessageProps {
   artifactFileUrl?: (artifact: CollaborationGeneratedArtifact) => string;
 }
 
-// Agent identity accent + role color (legacy `[data-agent=codex]` overrode the
-// default cyan).
-const borderByAgent: Record<CollaborationAgent, string> = {
-  claude: "border-l-cyan",
-  codex: "border-l-violet",
-};
-const roleColorByAgent: Record<CollaborationAgent, string> = {
-  claude: "text-cyan",
-  codex: "text-violet",
-};
+// Agent identity accent + role color, keyed on the catalog tone via
+// `data-tone` (see card-chrome).
+const borderByTone =
+  "data-[tone=cyan]:border-l-cyan data-[tone=violet]:border-l-violet data-[tone=amber]:border-l-amber";
+const roleColorByTone =
+  "data-[tone=cyan]:text-cyan data-[tone=violet]:text-violet data-[tone=amber]:text-amber";
 
 export default function CollabFinalAnswerMessage({
   agent,
@@ -41,6 +38,7 @@ export default function CollabFinalAnswerMessage({
   answer_artifact_id,
   artifactFileUrl,
 }: CollabFinalAnswerMessageProps): React.JSX.Element {
+  const tone = collabAgentTone(agent);
   const answerArtifact = useMemo(
     () => artifacts.find((artifact) => artifact.id === answer_artifact_id),
     [answer_artifact_id, artifacts],
@@ -102,20 +100,22 @@ export default function CollabFinalAnswerMessage({
     <article
       className={cn(
         "relative flex flex-col gap-sm rounded-md border border-l-2 border-solid border-border-subtle bg-bg-surface p-md [.conversation-virtuoso-item_&]:pb-[24px]",
-        borderByAgent[agent],
+        borderByTone,
       )}
       data-agent={agent}
+      data-tone={tone}
       data-kind="final_answer"
-      aria-label={`Final answer from ${AGENT_LABEL[agent]}`}
+      aria-label={`Final answer from ${backendLabel(agent)}`}
     >
       <header className="flex items-center gap-sm">
         <span
           className={cn(
             "font-mono text-[0.72rem] font-semibold tracking-[0.08em] uppercase",
-            roleColorByAgent[agent],
+            roleColorByTone,
           )}
+          data-tone={tone}
         >
-          {AGENT_LABEL[agent]}
+          {backendLabel(agent)}
           <CollabAgentModelMeta settings={modelSettings} />
         </span>
       </header>
