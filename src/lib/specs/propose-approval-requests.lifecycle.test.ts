@@ -9,7 +9,11 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { createNotificationsRepo } from "@/lib/notifications/repo";
+import { deriveNotificationOutcomes } from "@/components/session/sidebar/active-work-adapters";
+import {
+  createNotificationsRepo,
+  type NotificationsRepo,
+} from "@/lib/notifications/repo";
 import { createNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
@@ -50,6 +54,7 @@ const HUMAN = { kind: "human" } as const;
 describe("propose approval requests across the real revision lifecycle", () => {
   let db: Db;
   let eventsRepo: SpecEventsRepo;
+  let notificationsRepo: NotificationsRepo;
   let authoring: AuthoringService;
   let review: ReviewService;
   let specId: string;
@@ -67,7 +72,7 @@ describe("propose approval requests across the real revision lifecycle", () => {
       appendInTransaction: eventsRepo.appendInTransaction,
       publish: () => ({ delivered: true }),
     });
-    const notificationsRepo = createNotificationsRepo(db);
+    notificationsRepo = createNotificationsRepo(db);
     const notifications = createNotificationsService({
       repo: () => notificationsRepo,
       publish: () => ({ delivered: true }),
@@ -101,7 +106,9 @@ describe("propose approval requests across the real revision lifecycle", () => {
       links: linksRepo,
       events,
       waivers: deliveryRepo,
+      attention: eventsRepo,
       policyNotifier: notifier,
+      notifier,
       approvalRequests: {
         requestApproval: (input) => review.requestApproval(input),
       },
@@ -252,6 +259,104 @@ describe("propose approval requests across the real revision lifecycle", () => {
       },
     ]);
     expect(openRunRequestIds()).toEqual([runAsk.value.attentionId]);
+  });
+
+  /**
+   * Returning to Requirements ends the Design revision the same way Request
+   * Changes ends a reviewed one, so the ask the design proposal filed must end
+   * with it: the human otherwise keeps a "Design approval required" entry for
+   * a revision no later sign-off can answer (command-center#152).
+   */
+  it("retires the design ask and closes its queue entry when the proposed design returns to Requirements", async () => {
+    const requirementsAsk = await proposeAndReadTheGateAsk(firstRevisionId);
+    expect(requirementsAsk).toMatchObject({
+      gate: "requirements",
+      outcome: "filed",
+    });
+    const signedOff = await review.approveRemainingAndSignOff({
+      specId,
+      revisionId: firstRevisionId,
+      approver: "alex",
+      actor: HUMAN,
+    });
+    if (!signedOff.ok) {
+      throw new Error(
+        `requirements sign-off refused: ${signedOff.refusal.unmetConditions.join(" ")}`,
+      );
+    }
+    const { revision: design } = await authoring.openAmendment({
+      specId,
+      actor: AGENT,
+    });
+    expect(design.authoringStage).toBe("design");
+    await authoring.upsertDraftElement({
+      specId,
+      revisionId: design.id,
+      elementId: "decision-1",
+      kind: "decision",
+      parentElementId: null,
+      position: 2,
+      payload: {
+        kind: "decision",
+        title: "Refuse at the server",
+        chosenApproach: "The transition guard lives in the write service.",
+        rejectedAlternatives: [],
+        reason: "Clients cannot be trusted to sequence the stages.",
+        tracedRequirementElementIds: ["requirement-1"],
+      },
+      baseElementVersion: null,
+      actor: AGENT,
+    });
+    const proposed = await authoring.proposeRevision({
+      specId,
+      revisionId: design.id,
+      actor: AGENT,
+    });
+    if (!proposed.ok) {
+      throw new Error(
+        `design proposal refused: ${proposed.refusal.unmetConditions.join(" ")}`,
+      );
+    }
+    const designAsk = proposed.approvalRequests.find(
+      (ask) => ask.gate === "design",
+    );
+    expect(designAsk).toMatchObject({ outcome: "filed" });
+    const designAttentionId = designAsk?.attentionId ?? null;
+    if (designAttentionId === null) throw new Error("no design ask filed");
+    expect(openAuthoringRequests().map((ask) => ask.attentionId)).toEqual([
+      designAttentionId,
+    ]);
+
+    const returned = await authoring.returnToRequirements({
+      specId,
+      expectedRevisionId: design.id,
+      reason: "The requirements need another pass first.",
+      actor: AGENT,
+    });
+
+    expect(returned.withdrawnRevision).toMatchObject({
+      id: design.id,
+      state: "withdrawn",
+    });
+    expect(openAuthoringRequests()).toEqual([]);
+    const rows = notificationsRepo.findSpecNotificationsBySpecId(specId);
+    expect(
+      rows.filter((row) => row.type === "spec-attention-resolved"),
+    ).toEqual([
+      expect.objectContaining({
+        gate: "design",
+        gateRequestId: designAttentionId,
+        title: "Design request closed",
+        message:
+          "Re Proposed: the revision it asked about was returned to Requirements",
+      }),
+    ]);
+    // What the topbar's Needs You badge derives from the same rows.
+    expect(
+      deriveNotificationOutcomes(rows, []).needsAction.map(
+        (item) => item.phase,
+      ),
+    ).toEqual([]);
   });
 
   /**

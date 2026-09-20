@@ -153,6 +153,7 @@ beforeEach(() => {
   let ids = 0;
   let times = 0;
   const deps = {
+    attention: specEvents,
     specs: fixture.specs,
     review,
     links,

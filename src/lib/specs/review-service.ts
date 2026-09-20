@@ -50,6 +50,7 @@ import { draftAuthoringSequence } from "./authoring-sequence";
 import {
   assumptionAuditSnapshot,
   assumptionCitationSnapshot,
+  openAuthoringRequestsForRevision,
   prepareApprovalRequestRetirement,
   questionAuditSnapshot,
   type SpecApprovalRequestsClosedNotice,
@@ -1194,14 +1195,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     specId: string,
     revisionId: string,
   ): OpenApprovalRequest[] {
-    return deps.attention
-      .listOpenApprovalRequests(specId)
-      .filter(
-        (request) =>
-          request.executionId === null &&
-          request.revisionId === revisionId &&
-          !EXECUTION_SCOPED_GATES.has(request.gate),
-      );
+    return openAuthoringRequestsForRevision(
+      deps.attention.listOpenApprovalRequests(specId),
+      revisionId,
+    );
   }
 
   /**

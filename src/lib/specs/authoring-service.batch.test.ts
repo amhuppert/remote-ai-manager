@@ -56,6 +56,7 @@ beforeEach(() => {
         return { delivered: true };
       },
     }),
+    attention: eventRows,
     newId(prefix) {
       idSequence += 1;
       return `${prefix}-${idSequence}`;

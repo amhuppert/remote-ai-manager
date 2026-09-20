@@ -33,6 +33,7 @@ import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { stableStringify } from "@/lib/state-store/serialization";
 
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 
 import type {
   PreparedSpecEventPublication,
@@ -42,6 +43,11 @@ import type {
   SpecPolicyAdmissionNotice,
   SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
+import {
+  openAuthoringRequestsForRevision,
+  prepareApprovalRequestRetirement,
+  type SpecApprovalRequestsClosedNotice,
+} from "./attention-records";
 import { markWaiversStaleAtSignOffInTransaction } from "./waiver-staleness";
 import type { ApprovalLedger } from "./approval-ledger";
 import {
@@ -366,6 +372,10 @@ export const openAmendmentInputSchema = z
   .strict();
 export type OpenAmendmentInput = z.infer<typeof openAmendmentInputSchema>;
 
+/** Why a Design ask ends when its revision returns to Requirements. */
+const RETURNED_TO_REQUIREMENTS_REASON =
+  "the revision it asked about was returned to Requirements";
+
 export const returnToRequirementsInputSchema = z
   .object({
     specId: z.string().min(1),
@@ -478,8 +488,18 @@ export interface AuthoringServiceDeps {
    * changed must go stale in the same transaction.
    */
   waivers?: Pick<SpecDeliveryRepo, "findWaiversBySpecId" | "saveWaiver">;
+  /**
+   * The open approval requests a revision-ending act must retire with it. A
+   * withdrawn revision that keeps its asks open leaves a Needs You entry no
+   * later approval can ever answer, so this is not optional.
+   */
+  attention: Pick<SpecEventsRepo, "listOpenApprovalRequests">;
   /** Post-hoc notices for Notify-dial authoring-gate admissions (R11.2). */
   policyNotifier?: SpecPolicyAdmissionNotifier;
+  /** Closes the Needs You entries of asks a revision-ending act retired. */
+  notifier?: {
+    approvalRequestsClosed(notice: SpecApprovalRequestsClosedNotice): void;
+  };
   /**
    * Files the gate-scoped asks a successful proposal owes (R10.13). Optional
    * because the authoring service is composed on its own in narrower entry
@@ -3074,6 +3094,22 @@ export function createAuthoringService(
           const withdrawnRevision = repo.withdrawAuthoringRevision({
             revisionId: target.id,
           });
+          // The withdrawn revision's asks end with it, as they do under
+          // Request Changes: no later sign-off names this revision, so an ask
+          // left open here is a Needs You entry nothing can ever answer.
+          const endedRequests = openAuthoringRequestsForRevision(
+            deps.attention.listOpenApprovalRequests(spec.id),
+            target.id,
+          );
+          const retirements = endedRequests.map((request) =>
+            prepareApprovalRequestRetirement(deps.events, {
+              spec,
+              actor: parsed.actor,
+              occurredAt,
+              attentionId: request.attentionId,
+              reason: RETURNED_TO_REQUIREMENTS_REASON,
+            }),
+          );
           const revision = repo.createDraftFromBase({
             id: newId("revision"),
             specId: spec.id,
@@ -3101,14 +3137,44 @@ export function createAuthoringService(
               revisionId: revision.id,
             },
           });
-          return { revision, withdrawnRevision, prepared };
+          return {
+            revision,
+            withdrawnRevision,
+            prepared: [...retirements, prepared],
+            endedAttentionIds: endedRequests.map(
+              (request) => request.attentionId,
+            ),
+          };
         },
       );
-      publish(result.prepared);
+      for (const entry of result.prepared) publish(entry);
+      // Announcement work: the retirements are durable, so a notifier failure
+      // leaves a stale queue row behind and is logged, never charged back to
+      // the caller whose return did land.
+      if (result.endedAttentionIds.length > 0) {
+        try {
+          deps.notifier?.approvalRequestsClosed({
+            specId: parsed.specId,
+            attentionIds: result.endedAttentionIds,
+            reason: RETURNED_TO_REQUIREMENTS_REASON,
+            occurredAt,
+          });
+        } catch (error) {
+          logger.warn(
+            "specs.authoring.approval_requests_closed_notify_failed",
+            {
+              specId: parsed.specId,
+              attentionIds: result.endedAttentionIds,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+        }
+      }
       logger.info("specs.authoring.returned-to-requirements", {
         specId: parsed.specId,
         withdrawnRevisionId: result.withdrawnRevision.id,
         revisionId: result.revision.id,
+        retiredAttentionIds: result.endedAttentionIds,
         actorKind: parsed.actor.kind,
         reasonLength: parsed.reason.length,
       });

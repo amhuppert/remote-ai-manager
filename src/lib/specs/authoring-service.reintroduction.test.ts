@@ -79,6 +79,7 @@ beforeEach(() => {
       appendInTransaction: events.appendInTransaction,
       publish: () => ({ delivered: true }),
     }),
+    attention: events,
     newId(prefix) {
       idSequence += 1;
       return `${prefix}-${idSequence}`;

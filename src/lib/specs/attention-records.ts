@@ -1,7 +1,10 @@
+import type { OpenApprovalRequest } from "@/lib/state-store/spec-events-repo";
+
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
 } from "./events";
+import { EXECUTION_SCOPED_GATES } from "./gate-projection";
 import {
   actorProvenanceSchema,
   specRecordAuditSnapshotSchema,
@@ -24,6 +27,26 @@ export interface SpecApprovalRequestsClosedNotice {
   attentionIds: string[];
   reason: string;
   occurredAt: string;
+}
+
+/**
+ * The open asks a revision-scoped act can answer or end: the ones filed
+ * against that revision by its review, not by a run. A run's own gates
+ * outlive the revision (R3.6), so an execution-scoped ask — by run identity
+ * or by gate — is never one of them. Every act that ends a revision (request
+ * changes, withdraw, dismiss, return to Requirements) selects with this one
+ * rule, so no act can strand an ask another would have retired.
+ */
+export function openAuthoringRequestsForRevision(
+  requests: readonly OpenApprovalRequest[],
+  revisionId: string,
+): OpenApprovalRequest[] {
+  return requests.filter(
+    (request) =>
+      request.executionId === null &&
+      request.revisionId === revisionId &&
+      !EXECUTION_SCOPED_GATES.has(request.gate),
+  );
 }
 
 /**

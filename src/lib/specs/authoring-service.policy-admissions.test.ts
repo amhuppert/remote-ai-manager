@@ -81,6 +81,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
     approvalRequestCalls = [];
     specs = createSpecsRepo(db, writeQueue);
     authoring = createAuthoringService({
+      attention: eventsRepo,
       specs,
       review: reviewRepo,
       links: createSpecLinksRepo(db),

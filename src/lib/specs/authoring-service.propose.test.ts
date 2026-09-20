@@ -91,6 +91,7 @@ beforeEach(() => {
   approvalRequestResponder = (input) =>
     Promise.resolve(filedReceipt(input.gate, input.revisionId));
   service = createAuthoringService({
+    attention: eventRows,
     specs,
     review,
     links: createSpecLinksRepo(db),

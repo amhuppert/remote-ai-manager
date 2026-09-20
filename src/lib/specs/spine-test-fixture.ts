@@ -617,7 +617,9 @@ export function createSpecSpineWorld(
     links,
     events,
     waivers: delivery,
+    attention: eventsRepo,
     policyNotifier,
+    notifier: policyNotifier,
     approvalRequests: {
       requestApproval: (input) => reviewService.requestApproval(input),
     },

@@ -1,3 +1,4 @@
+import { closeWithdrawnRevisionApprovalRequests } from "./0056-close-withdrawn-revision-approval-requests";
 import { graphWorkflowValidatorConversations } from "./0055-graph-workflow-validator-conversations";
 import { graphWorkflowContinuousConversations } from "./0054-graph-workflow-continuous-conversations";
 import { addCheckpointHandoff } from "./0053-add-checkpoint-handoff";
@@ -147,6 +148,7 @@ export const migrations: readonly StateMigration[] = [
   addCheckpointHandoff,
   graphWorkflowContinuousConversations,
   graphWorkflowValidatorConversations,
+  closeWithdrawnRevisionApprovalRequests,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

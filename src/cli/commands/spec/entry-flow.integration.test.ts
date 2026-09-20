@@ -116,7 +116,13 @@ describe("native /spec first-save visibility", () => {
       appendInTransaction: eventRepo.appendInTransaction,
       publish: () => ({ delivered: true }),
     });
-    const authoring = createAuthoringService({ specs, review, links, events });
+    const authoring = createAuthoringService({
+      specs,
+      review,
+      links,
+      events,
+      attention: eventRepo,
+    });
     const services = { authoring } as unknown as SpecMutationServices;
     const writeDeps: SpecWriteRouteDeps = {
       auth,

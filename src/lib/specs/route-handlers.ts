@@ -455,6 +455,7 @@ function createDefaultDeps(): SpecRouteDeps {
     events: createSpecEventsPublisher({
       appendInTransaction: (event) => eventsRepo.append(event),
     }),
+    attention: eventsRepo,
   });
   // Verification reads the linked run through the SAME observe seam the
   // abandon coordinator acts through, so an orphan it reports is an orphan

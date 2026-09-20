@@ -75,8 +75,9 @@ beforeEach(() => {
   linksRepo = createSpecLinksRepo(db);
   delivery = createSpecDeliveryRepo(db);
   executionBindings = createSpecExecutionBindingRepo(db);
+  const eventsRepo = createSpecEventsRepo(db);
   const events = createSpecEventsPublisher({
-    appendInTransaction: createSpecEventsRepo(db).appendInTransaction,
+    appendInTransaction: eventsRepo.appendInTransaction,
     publish: () => ({ delivered: true }),
   });
   idSequence = 0;
@@ -94,6 +95,7 @@ beforeEach(() => {
     review,
     links: linksRepo,
     events,
+    attention: eventsRepo,
     newId,
     now,
   });

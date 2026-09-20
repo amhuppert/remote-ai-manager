@@ -131,7 +131,9 @@ export async function createProductionSpecRouteServices(
     links: linksRepo,
     events,
     waivers: deliveryRepo,
+    attention: eventsRepo,
     policyNotifier: notifier,
+    notifier,
     approvalRequests: {
       requestApproval: (input) => review.requestApproval(input),
     },

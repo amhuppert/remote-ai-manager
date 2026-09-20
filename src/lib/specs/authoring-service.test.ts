@@ -85,6 +85,7 @@ beforeEach(() => {
     review: createSpecReviewRepo(db),
     links: createSpecLinksRepo(db),
     events,
+    attention: eventRows,
     newId(prefix) {
       idSequence += 1;
       return `${prefix}-${idSequence}`;

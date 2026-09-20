@@ -37,14 +37,16 @@ beforeEach(() => {
   specs = createSpecsRepo(db, writeQueue);
   let idSequence = 0;
   let timeSequence = 0;
+  const eventRows = createSpecEventsRepo(db);
   authoring = createAuthoringService({
     specs,
     review: createSpecReviewRepo(db),
     links: createSpecLinksRepo(db),
     events: createSpecEventsPublisher({
-      appendInTransaction: createSpecEventsRepo(db).appendInTransaction,
+      appendInTransaction: eventRows.appendInTransaction,
       publish: () => ({ delivered: true }),
     }),
+    attention: eventRows,
     newId(prefix: string) {
       idSequence += 1;
       return `${prefix}-${idSequence}`;

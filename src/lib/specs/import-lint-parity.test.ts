@@ -84,6 +84,7 @@ beforeEach(() => {
     review,
     links,
     events,
+    attention: eventRows,
     newId(prefix: string) {
       ids += 1;
       return `${prefix}-${ids}`;

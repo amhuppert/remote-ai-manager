@@ -436,6 +436,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0053-add-checkpoint-handoff",
       "0054-graph-workflow-continuous-conversations",
       "0055-graph-workflow-validator-conversations",
+      "0056-close-withdrawn-revision-approval-requests",
     ]);
   });
 

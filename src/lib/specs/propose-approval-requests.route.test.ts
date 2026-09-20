@@ -96,6 +96,7 @@ describe("propose route files the gate asks it leaves pending", () => {
     // The service factory's composition: authoring is built after review so a
     // propose can file through the same request verb a human or an agent calls.
     const authoring = createAuthoringService({
+      attention: eventsRepo,
       specs,
       review: reviewRepo,
       links: linksRepo,
