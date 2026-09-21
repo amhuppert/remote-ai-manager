@@ -13,7 +13,6 @@ function makeRuntime(close: () => Promise<void>): ConversationBackendRuntime {
     backend: "cursor",
     status: "alive",
     modelSelection: { modelId: "composer-2.5", parameters: { fast: "true" } },
-    outputFormat: undefined,
 
     sendTurn: () => {
       throw new Error("this fixture never dispatches a turn");

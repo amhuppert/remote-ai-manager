@@ -44,7 +44,6 @@ export function createMockBackendRuntime(
       modelId: "opus",
       parameters: { effort: "high" },
     },
-    outputFormat: undefined,
 
     sendTurn: vi.fn(),
     close: vi.fn(async () => {}),

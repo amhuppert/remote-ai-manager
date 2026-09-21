@@ -2,6 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import type {
   ConversationBackendCreateInput,
   ConversationBackendTurnResult,
+  ConversationBackendTurnInput,
 } from "@/lib/agent-backends/conversation";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { readNextTurnContextLoss } from "./pre-turn/next-turn-context-loss";
@@ -85,11 +86,11 @@ async function configurationFixture(focusPresent = false) {
     async turn(turn: {
       promptText: string;
       askUserQuestionsEnabled?: boolean;
-      outputFormat?: ConversationBackendCreateInput["outputFormat"];
+      outputFormat?: ConversationBackendTurnInput["outputFormat"];
     }) {
       const execution = await active.manager.executeConversationTurn({
         binding: active.binding,
-        turn,
+        turn: { ...turn, structuredOutputTurns: "single" },
       });
       expect(execution.kind).toBe("settled");
       if (execution.kind !== "settled") throw new Error(execution.message);
@@ -116,7 +117,7 @@ async function configurationFixture(focusPresent = false) {
   };
 }
 
-it("reuses semantically equal schemas and refreshes changed schema content", async () => {
+it("reuses the runtime across equal, changed, and removed turn schemas", async () => {
   const f = await configurationFixture();
   await f.turn({
     promptText: "first",
@@ -146,8 +147,10 @@ it("reuses semantically equal schemas and refreshes changed schema content", asy
       schema: { type: "object", properties: { answer: { type: "number" } } },
     },
   });
-  expect(f.created).toHaveLength(2);
-  expect(f.closes).toBe(1);
+  await f.turn({ promptText: "fourth" });
+  expect(f.created).toHaveLength(1);
+  expect(f.closes).toBe(0);
+  expect(f.created[0]).not.toHaveProperty("outputFormat");
 });
 
 it("refreshes ask policy and keeps its known selection in the at-rest preview", async () => {

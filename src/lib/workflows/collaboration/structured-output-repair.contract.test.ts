@@ -122,20 +122,20 @@ describe("collaboration structured-output repair contract", () => {
     };
 
     let claudeWorkTurns = 0;
+    let claudeRuntimeCreations = 0;
     const claudeFormatPrompts: string[] = [];
     let artifactExistedBeforeRepair = false;
     const claudeFactory: ConversationBackendFactory = {
       backend: "claude",
       async createRuntime(input): Promise<ConversationBackendRuntime> {
-        const isFormatRuntime = input.outputFormat !== undefined;
+        claudeRuntimeCreations += 1;
         let formatTurns = 0;
         return {
           backend: "claude",
           status: "alive",
           modelSelection: input.modelSelection,
-          outputFormat: input.outputFormat,
           async sendTurn(turnInput): Promise<ConversationBackendTurnResult> {
-            if (!isFormatRuntime) {
+            if (turnInput.outputFormat === undefined) {
               claudeWorkTurns += 1;
               await writeMainArtifact(worktreePath, claudeContent);
               return conversationResult("Claude work turn completed.");
@@ -268,6 +268,7 @@ describe("collaboration structured-output repair contract", () => {
       backendForAgent: (agent) => (agent === "agent_one" ? "claude" : "codex"),
     });
 
+    expect(claudeRuntimeCreations).toBe(1);
     expect(outcome.kind).toBe("ok");
     expect(claudeWorkTurns).toBe(1);
     expect(claudeFormatPrompts).toHaveLength(2);

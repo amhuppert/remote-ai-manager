@@ -1042,6 +1042,9 @@ describe("CodexTaskRunner", () => {
             ? { ...valid, taskId: "task-outside-context" }
             : valid;
       runMock.mockReset();
+      runMock.mockResolvedValueOnce({
+        finalResponse: "Reviewed task-1 and found no defects.",
+      });
       runMock.mockResolvedValueOnce({ finalResponse: JSON.stringify(initial) });
       if (firstResponse !== "valid") {
         runMock.mockResolvedValueOnce({ finalResponse: JSON.stringify(valid) });
@@ -1077,13 +1080,18 @@ describe("CodexTaskRunner", () => {
       if (result.outcome.kind !== "completed")
         throw new Error("Expected a validated verdict");
       expect(result.outcome.structuredOutput).toEqual(valid);
-      expect(runMock).toHaveBeenCalledTimes(firstResponse === "valid" ? 1 : 2);
-      for (const [prompt, options] of runMock.mock.calls) {
+      expect(runMock).toHaveBeenCalledTimes(firstResponse === "valid" ? 2 : 3);
+      expect(runMock.mock.calls[0]?.[0]).not.toContain(
+        renderStructuredOutputInstruction(schema),
+      );
+      expect(resumeThreadMock.mock.calls[0]?.[0]).toBe("thread-abc");
+      for (const [prompt, options] of runMock.mock.calls.slice(1)) {
         expect(options).not.toHaveProperty("outputSchema");
         expect(prompt).toContain(renderStructuredOutputInstruction(schema));
       }
       if (firstResponse !== "valid") {
-        const repair = runMock.mock.calls[1]![0];
+        const repair = runMock.mock.calls[2]![0];
+        expect(resumeThreadMock.mock.calls[1]?.[0]).toBe("thread-resumed");
         expect(repair).toContain(
           firstResponse === "null" ? "$.planDefects" : "$.taskId",
         );

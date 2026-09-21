@@ -41,14 +41,7 @@ export const BUILT_IN_COMMAND_EXECUTION = {
   "/spec": { required: [], stages: [] },
   "/align": { required: [], stages: [] },
   "/ticket": {
-    required: [
-      { ...messageGenerationRequirements, operation: "ticket" },
-      {
-        ...messageGenerationRequirements,
-        operation: "ticket-repair",
-        executionProfile: "isolated-one-shot",
-      },
-    ],
+    required: [{ ...messageGenerationRequirements, operation: "ticket" }],
     stages: [],
   },
   "/collab": {
@@ -67,13 +60,7 @@ export const BUILT_IN_COMMAND_EXECUTION = {
     stages: [
       {
         stage: "message-generation",
-        requirements: [
-          messageGenerationRequirements,
-          {
-            ...messageGenerationRequirements,
-            executionProfile: "isolated-one-shot",
-          },
-        ],
+        requirements: [messageGenerationRequirements],
       },
       {
         stage: "validation-repair",
@@ -86,13 +73,7 @@ export const BUILT_IN_COMMAND_EXECUTION = {
     stages: [
       {
         stage: "message-generation",
-        requirements: [
-          messageGenerationRequirements,
-          {
-            ...messageGenerationRequirements,
-            executionProfile: "isolated-one-shot",
-          },
-        ],
+        requirements: [messageGenerationRequirements],
       },
       {
         stage: "validation-repair",

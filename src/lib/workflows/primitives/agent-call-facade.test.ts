@@ -27,9 +27,9 @@ import { createStubFailureClassifier } from "@/lib/agent-backends/errors";
 import {
   STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATHS,
   STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATH_CHARS,
-} from "@/lib/agent-backends/structured-output-repair";
+} from "@/lib/agent-backends/structured-output-prompt";
 import {
-  buildStructuredOutputRepairRequest,
+  buildFormatTurnRequest,
   executeAgentCall,
   resolveSchedulingHint,
   type AgentCallFacadeDeps,
@@ -116,7 +116,6 @@ function makeConversationRuntime(
     backend,
     status: "alive",
     modelSelection: selectionForBackend(backend),
-    outputFormat: undefined,
 
     async sendTurn(input) {
       if (opts.capture) opts.capture.value = input;
@@ -294,6 +293,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: {
           type: "object",
           properties: { ok: { type: "boolean" } },
@@ -324,8 +324,8 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["ok"] },
-        structuredOutputRepair: { maxAttempts: 0 },
       },
       buildDepsForConversation({
         runtime,
@@ -355,6 +355,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "task_run",
         backend: "codex",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object" },
       },
       buildDepsForTask({
@@ -379,6 +380,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object" },
       },
       buildDepsForConversation({
@@ -431,6 +433,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["ok"] },
       },
       buildDepsForConversation({
@@ -477,6 +480,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["ok"] },
       },
       buildDepsForConversation({
@@ -521,8 +525,8 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["ok"] },
-        structuredOutputRepair: { maxAttempts: 0 },
       },
       buildDepsForConversation({
         runtime,
@@ -535,7 +539,7 @@ describe("executeAgentCall — structured-output gate", () => {
         },
       }),
     );
-    expect(capturedValues).toEqual([undefined]);
+    expect(capturedValues).toEqual([undefined, undefined]);
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("schema_validation");
@@ -559,6 +563,7 @@ describe("executeAgentCall — structured-output gate", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object" },
       },
       buildDepsForConversation({
@@ -601,6 +606,7 @@ describe("executeAgentCall — structured-output gate fall-through", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["ok"] },
       },
       buildDepsForConversation({
@@ -633,6 +639,7 @@ describe("executeAgentCall — structured-output gate fall-through", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["ok"] },
       },
       buildDepsForConversation({
@@ -670,6 +677,7 @@ describe("executeAgentCall — structured-output gate fall-through", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["ok"] },
       },
       buildDepsForConversation({
@@ -741,6 +749,7 @@ describe("executeAgentCall — guaranteed structured-output validation", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "go",
+        structuredOutputTurns: "single",
         outputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1295,6 +1304,7 @@ describe("executeAgentCall — widened result fields", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "hi",
+        structuredOutputTurns: "single",
         outputSchema: {
           type: "object",
           properties: { answer: { type: "number" } },
@@ -1323,6 +1333,7 @@ describe("executeAgentCall — widened result fields", () => {
         kind: "conversation_turn",
         backend: "codex",
         prompt: "hi",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object", required: ["answer"] },
       },
       buildDepsForConversation({ runtime, view: CODEX_VIEW }),
@@ -1349,7 +1360,7 @@ describe("executeAgentCall — structured-output repair", () => {
     required: ["summary", "artifacts"],
   };
 
-  it("repairs a task_run in one fresh isolated call while preserving the original continuation", async () => {
+  it("repairs a task_run on its session while retaining scope and the latest continuation", async () => {
     const requests: AgentTaskRequest[] = [];
     const resolveTaskRunner = vi.fn();
     const recordContinuity = vi.fn();
@@ -1391,7 +1402,7 @@ describe("executeAgentCall — structured-output repair", () => {
           };
         }
         return {
-          backendRef: null,
+          backendRef: { backend: "codex", ref: "thread-repaired" },
           text: JSON.stringify(validOutput),
           usage: { inputTokens: 3, outputTokens: 2, costUsd: 0.2 },
           error: null,
@@ -1441,6 +1452,7 @@ describe("executeAgentCall — structured-output repair", () => {
             base64Data: "image-data",
           },
         ],
+        structuredOutputTurns: "single",
         outputSchema: schema,
       },
       {
@@ -1464,37 +1476,40 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(requests[0]?.modelSelection).toEqual(CODEX_SELECTION);
     expect(requests[1]?.modelSelection).toEqual(CODEX_SELECTION);
     expect(requests[1]).toMatchObject({
-      executionProfile: "isolated-one-shot",
-      resumeRef: null,
+      executionProfile: "standard",
+      resumeRef: { backend: "codex", ref: "thread-original" },
       outputSchema: schema,
     });
-    // The repair is an isolated one-shot, but it must still run under the
-    // instructions that governed the original call.
+    // The resumed repair keeps the governing instructions and session identity.
     expect(requests[1]?.systemInstructions).toEqual(["use the project tools"]);
     expect(requests[1]?.tooling).toBeUndefined();
     expect(requests[1]?.imagePaths).toBeUndefined();
-    // The governed call may act as its originating conversation; its repair is
-    // a hermetic one-shot and must not (spec memory R10).
+    // Standard-profile repair continues the memory policy of its work session.
     expect(requests[0]?.ccSessionScope).toEqual({
       project: "example",
       session: "sess-1",
       conversationId: "conv-originating",
     });
-    expect(requests[1]?.ccSessionScope).toBeUndefined();
+    expect(requests[1]?.ccSessionScope).toEqual(requests[0]?.ccSessionScope);
     expect(requests[0]?.conversationTarget?.conversationId).toBe(
       "conv-originating",
     );
-    expect(requests[1]?.conversationTarget).toBeUndefined();
+    expect(requests[1]?.conversationTarget).toEqual(
+      requests[0]?.conversationTarget,
+    );
     expect(result.backendRef).toEqual({
       backend: "codex",
-      ref: "thread-original",
+      ref: "thread-repaired",
     });
     expect(result.usage.costUsd).toBeCloseTo(0.3);
     expect(result.outcome.kind).toBe("completed");
     if (result.outcome.kind === "completed") {
       expect(result.outcome.text).toBe(JSON.stringify(validOutput));
       expect(result.outcome.structuredOutput).toEqual(validOutput);
-      expect(result.outcome.transcript).toEqual(repairedTranscript);
+      expect(result.outcome.transcript).toEqual([
+        ...initialTranscript,
+        ...repairedTranscript,
+      ]);
       expect(result.outcome.parse).toEqual({
         source: "raw_json",
         repaired: true,
@@ -1504,7 +1519,7 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(recordContinuity).toHaveBeenCalledTimes(1);
     expect(recordContinuity).toHaveBeenCalledWith({
       backend: "codex",
-      backendRef: { backend: "codex", ref: "thread-original" },
+      backendRef: { backend: "codex", ref: "thread-repaired" },
       continuationDisposition: "retain",
     });
     expect(info).toHaveBeenCalledWith(
@@ -1558,7 +1573,6 @@ describe("executeAgentCall — structured-output repair", () => {
       backend: "claude",
       status: "alive",
       modelSelection: CLAUDE_SELECTION,
-      outputFormat: undefined,
 
       async sendTurn(input) {
         turnInputs.push(input);
@@ -1612,6 +1626,7 @@ describe("executeAgentCall — structured-output repair", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: schema,
       },
       {
@@ -1697,6 +1712,7 @@ describe("executeAgentCall — structured-output repair", () => {
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: { type: "object" },
       },
       {
@@ -1730,7 +1746,7 @@ describe("executeAgentCall — structured-output repair", () => {
     ).toBe(true);
   });
 
-  it("returns enriched schema_validation details while preserving original task evidence after repair fails", async () => {
+  it("returns enriched schema_validation details with all evidence and latest continuity after repair fails", async () => {
     const requests: AgentTaskRequest[] = [];
     const warn = vi.fn();
     const initialTranscript = [
@@ -1777,6 +1793,7 @@ describe("executeAgentCall — structured-output repair", () => {
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: schema,
       },
       {
@@ -1802,10 +1819,7 @@ describe("executeAgentCall — structured-output repair", () => {
     );
 
     expect(requests).toHaveLength(2);
-    expect(result.backendRef).toEqual({
-      backend: "codex",
-      ref: "thread-original",
-    });
+    expect(result.backendRef).toBeNull();
     expect(result.artifacts).toEqual([
       {
         kind: "design_doc",
@@ -1815,7 +1829,18 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("schema_validation");
-      expect(result.outcome.transcript).toEqual(initialTranscript);
+      expect(result.outcome.transcript).toEqual([
+        ...initialTranscript,
+        {
+          seq: 0,
+          backend: "codex",
+          type: "agent_message",
+          raw: { type: "agent_message", text: "repair evidence" },
+        },
+      ]);
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: JSON.stringify({ summary: "invalid-2" }) },
+      ]);
       expect(result.outcome.error.backendDetails).toMatchObject({
         errors: ["$.artifacts is required"],
         candidateSources: ["raw_json"],
@@ -1841,7 +1866,7 @@ describe("executeAgentCall — structured-output repair", () => {
     );
   });
 
-  it("preserves original conversation content blocks after a failed repair", async () => {
+  it("returns the refused repair content blocks after a failed repair", async () => {
     let turns = 0;
     const originalBlocks = [
       { type: "text" as const, text: JSON.stringify({ summary: "original" }) },
@@ -1884,6 +1909,7 @@ describe("executeAgentCall — structured-output repair", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: schema,
       },
       buildDepsForConversation({ runtime, view: CLAUDE_VIEW }),
@@ -1899,12 +1925,14 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(result.backgroundWait).toEqual(backgroundWait);
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
-      expect(result.outcome.contentBlocks).toEqual(originalBlocks);
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: JSON.stringify({ summary: "repair" }) },
+      ]);
       expect(result.outcome.numTurns).toBe(5);
     }
   });
 
-  it("propagates an aborted conversation repair with latest continuity and original evidence", async () => {
+  it("propagates an aborted conversation repair with latest continuity and repair evidence", async () => {
     let turns = 0;
     const originalBlocks = [
       { type: "text" as const, text: JSON.stringify({ summary: "original" }) },
@@ -1953,6 +1981,7 @@ describe("executeAgentCall — structured-output repair", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: schema,
       },
       buildDepsForConversation({
@@ -1963,7 +1992,10 @@ describe("executeAgentCall — structured-output repair", () => {
     );
 
     expect(turns).toBe(2);
-    expect(result.backendRef).toBeNull();
+    expect(result.backendRef).toEqual({
+      backend: "claude",
+      ref: "session-repair",
+    });
     expect(result.continuationDisposition).toBe("clear");
     expect(result.artifacts).toEqual(artifacts);
     expect(result.usage).toMatchObject({
@@ -1975,12 +2007,14 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("aborted");
-      expect(result.outcome.contentBlocks).toEqual(originalBlocks);
+      expect(result.outcome.contentBlocks).toEqual([
+        { type: "text", text: "repair cancelled" },
+      ]);
       expect(result.outcome.numTurns).toBe(3);
     }
   });
 
-  it("keeps the known conversation ref when a turnless repair failure retains continuity", async () => {
+  it("returns the turnless repair failure continuity without inventing evidence", async () => {
     let turns = 0;
     const originalBlocks = [
       { type: "text" as const, text: JSON.stringify({ summary: "original" }) },
@@ -2011,6 +2045,7 @@ describe("executeAgentCall — structured-output repair", () => {
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: schema,
       },
       {
@@ -2019,19 +2054,16 @@ describe("executeAgentCall — structured-output repair", () => {
       },
     );
 
-    expect(result.backendRef).toEqual({
-      backend: "claude",
-      ref: "session-initial",
-    });
+    expect(result.backendRef).toBeNull();
     expect(result.continuationDisposition).toBe("retain");
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("backend_error");
-      expect(result.outcome.contentBlocks).toEqual(originalBlocks);
+      expect(result.outcome.contentBlocks).toBeUndefined();
     }
   });
 
-  it("propagates a timed-out task repair while retaining the original continuation and transcript", async () => {
+  it("propagates a timed-out task repair with cleared continuation and original transcript", async () => {
     const requests: AgentTaskRequest[] = [];
     const initialTranscript = [
       {
@@ -2078,17 +2110,15 @@ describe("executeAgentCall — structured-output repair", () => {
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: schema,
       },
       buildDepsForTask({ runner, view: CODEX_VIEW, artifacts }),
     );
 
     expect(requests).toHaveLength(2);
-    expect(result.backendRef).toEqual({
-      backend: "codex",
-      ref: "thread-original",
-    });
-    expect(result.continuationDisposition).toBe("retain");
+    expect(result.backendRef).toBeNull();
+    expect(result.continuationDisposition).toBe("clear");
     expect(result.artifacts).toEqual(artifacts);
     expect(result.usage.inputTokens).toBe(5);
     expect(result.outcome.kind).toBe("failed");
@@ -2098,7 +2128,7 @@ describe("executeAgentCall — structured-output repair", () => {
     }
   });
 
-  it("does not dispatch a repair when maxAttempts is zero", async () => {
+  it("does not dispatch a repair for an isolated single call", async () => {
     let calls = 0;
     const runner: AgentTaskRunner = {
       backend: "codex",
@@ -2120,10 +2150,11 @@ describe("executeAgentCall — structured-output repair", () => {
       {
         executionClass: "nongoverned-task" as const,
         kind: "task_run",
+        executionProfile: "isolated-one-shot",
         backend: "codex",
         prompt: "produce a manifest",
+        structuredOutputTurns: "single",
         outputSchema: schema,
-        structuredOutputRepair: { maxAttempts: 0 },
       },
       buildDepsForTask({ runner, view: CODEX_VIEW }),
     );
@@ -2133,7 +2164,7 @@ describe("executeAgentCall — structured-output repair", () => {
   });
 });
 
-describe("buildStructuredOutputRepairRequest", () => {
+describe("buildFormatTurnRequest", () => {
   const schema = { type: "object", required: ["summary"] };
   const governingFields = {
     executionClass: "governed-execution" as const,
@@ -2162,7 +2193,7 @@ describe("buildStructuredOutputRepairRequest", () => {
   };
 
   it("carries the governing fields of a conversation_turn into the repair turn", () => {
-    const repair = buildStructuredOutputRepairRequest({
+    const repair = buildFormatTurnRequest({
       request: {
         kind: "conversation_turn",
         prompt: "produce a manifest",
@@ -2185,7 +2216,7 @@ describe("buildStructuredOutputRepairRequest", () => {
   });
 
   it("carries the governing fields of a task_run into the repair run", () => {
-    const repair = buildStructuredOutputRepairRequest({
+    const repair = buildFormatTurnRequest({
       request: {
         kind: "task_run",
         backend: "codex",
@@ -2199,7 +2230,6 @@ describe("buildStructuredOutputRepairRequest", () => {
     });
 
     expect(repair).toEqual({
-      executionProfile: "isolated-one-shot",
       kind: "task_run",
       backend: "codex",
       prompt: "your prior output failed validation",
@@ -2210,7 +2240,7 @@ describe("buildStructuredOutputRepairRequest", () => {
   });
 
   it("omits governing fields the original request never set", () => {
-    const repair = buildStructuredOutputRepairRequest({
+    const repair = buildFormatTurnRequest({
       request: {
         executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",

@@ -568,7 +568,7 @@ describe("executeWorkflowTaskRun", () => {
     expect(pendingRunTaskRunInvocations).toHaveLength(0);
   });
 
-  it("returns the parsed structured output when outputFormat is set", async () => {
+  it("formats completed work on its continuation when outputFormat is set", async () => {
     const structured = { answer: 42, label: "the-meaning" };
 
     const callPromise = managerFixture.executeWorkflowTaskRun({
@@ -596,13 +596,28 @@ describe("executeWorkflowTaskRun", () => {
       timeoutMs: 5000,
     });
 
-    const invocation = await nextPendingInvocation();
-    expect(invocation.input.outputSchema).toEqual({
+    const work = await nextPendingInvocation();
+    expect(work.input.outputSchema).toBeUndefined();
+    work.resolve(
+      defaultResult({
+        backendRef: { backend: "claude", ref: "work-session" },
+        contentBlocks: [
+          { type: "text", text: "The answer is 42, the-meaning." },
+        ],
+      }),
+    );
+    const format = await nextPendingInvocation();
+    expect(format.input.resumeRef).toEqual({
+      backend: "claude",
+      ref: "work-session",
+    });
+    expect(format.input.outputSchema).toEqual({
       type: "object",
       properties: { answer: { type: "number" }, label: { type: "string" } },
     });
-    invocation.resolve(
+    format.resolve(
       defaultResult({
+        backendRef: { backend: "claude", ref: "format-session" },
         contentBlocks: [],
         structuredOutput: structured,
       }),
@@ -612,6 +627,10 @@ describe("executeWorkflowTaskRun", () => {
     expect(result.kind).toBe("structured");
     if (result.kind === "structured") {
       expect(result.structuredOutput).toEqual(structured);
+      expect(result.backendRef).toEqual({
+        backend: "claude",
+        ref: "format-session",
+      });
     }
   });
 
@@ -761,6 +780,7 @@ describe("executeWorkflowTaskRun", () => {
       executionClass: "nongoverned-task" as const,
       kind: "task_run",
       prompt: "generate message",
+      structuredOutputTurns: "single",
       outputFormat: {
         type: "json_schema",
         schema: { type: "object" },

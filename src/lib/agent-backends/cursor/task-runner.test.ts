@@ -232,7 +232,7 @@ describe("Cursor task runner", () => {
     });
     expect(transport.workers[0]?.closeCount).toBe(1);
   });
-  it("repairs malformed structured output through a fresh isolated task", async () => {
+  it("repairs malformed structured output by resuming the same task store", async () => {
     let count = 0;
     const { runner, transport } = harness({
       onTurn(turn, worker) {
@@ -250,6 +250,7 @@ describe("Cursor task runner", () => {
         backend: "cursor",
         executionClass: "nongoverned-task",
         prompt: request.prompt,
+        structuredOutputTurns: "single",
         outputSchema: {
           type: "object",
           properties: { answer: { type: "number" } },
@@ -281,8 +282,10 @@ describe("Cursor task runner", () => {
     });
     expect(
       transport.startInputs.map((input) => input.executionProfile),
-    ).toEqual(["standard", "isolated-one-shot"]);
-    expect(transport.startInputs[1]?.target).toBeNull();
+    ).toEqual(["standard", "standard"]);
+    expect(transport.startInputs[1]?.storePath).toBe(
+      transport.startInputs[0]?.storePath,
+    );
     expect(result.backendRef).toBeTruthy();
   });
   it("resumes the same task store with a fresh worker after the runner is recreated", async () => {

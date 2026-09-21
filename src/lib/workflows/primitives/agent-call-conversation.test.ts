@@ -84,7 +84,6 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
     backend: "claude",
     status: "alive",
     modelSelection: CLAUDE_SELECTION,
-    outputFormat: undefined,
 
     async sendTurn(input) {
       sendTurnCalls.value += 1;
@@ -361,7 +360,6 @@ describe("dispatchConversationTurn", () => {
       backend: "claude",
       status: "alive",
       modelSelection: CLAUDE_SELECTION,
-      outputFormat: undefined,
 
       async sendTurn() {
         throw new Error("network down");

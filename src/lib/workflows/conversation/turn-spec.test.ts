@@ -18,12 +18,25 @@ describe("turn normalization", () => {
         executionClass: "nongoverned-task",
         promptText: "Generate a ticket",
         outputFormat: { type: "json_schema", schema },
+        structuredOutputTurns: "single",
       },
       "cursor",
     );
     expect(turn.outputFormat?.schema).toEqual(expected);
+    expect(turn.structuredOutputTurns).toBe("single");
     expect(structuredClone(turn).outputFormat?.schema).toEqual(expected);
     expect(Reflect.ownKeys(schema)).toContain("~standard");
+  });
+
+  it("preserves the structured-output mode on a conversation turn", () => {
+    const turn = normalizeTurn(
+      { promptText: "Review", structuredOutputTurns: "work_then_format" },
+      "claude",
+    );
+    expect(turn.structuredOutputTurns).toBe("work_then_format");
+    expect(structuredClone(turn).structuredOutputTurns).toBe(
+      "work_then_format",
+    );
   });
 
   it("normalizes defaults without losing an explicit disabled asking policy", () => {

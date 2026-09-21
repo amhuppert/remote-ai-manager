@@ -1,6 +1,5 @@
 import type { GraphWorkflowExecution } from "./schemas";
 import type { RepoValidationConfig } from "@/lib/validation/schemas";
-import { criterionRecordsOf } from "./criteria/criterion-records";
 import { assignmentFingerprint } from "./lane-identity";
 import { reconcileValidationRoster } from "./validation-round";
 import { renderCharterPromptSection } from "./charter/render";
@@ -9,10 +8,6 @@ import {
   resolveScopedCharterForContext,
 } from "./charter/invariant-scope";
 import { buildValidatorRoleContract } from "./role-instructions";
-import {
-  buildValidatorOutputSchema,
-  issueCriterionCitationFor,
-} from "./validator-output-schema";
 import {
   buildValidationCommandsSection,
   buildValidatorDeterministicChecksGuidance,
@@ -103,27 +98,15 @@ export function createValidatorRuntimeInstructionReader(
           }) ?? context.id,
         )
       : null;
-    const verdictSchema = buildValidatorOutputSchema({
-      authority: assignment.authority,
-      taskIds: execution.workingDefinition.tasks
-        .filter((task) => task.contextId === context.id)
-        .sort((left, right) => left.order - right.order)
-        .map((task) => task.id),
-      criterionIds: criterionRecordsOf(context.acceptanceCriteria).map(
-        (criterion) => criterion.id,
-      ),
-      issueCriterionCitation: issueCriterionCitationFor(assignment),
-    });
     return [
       charter,
       buildValidationCommandsSection(selections),
       buildValidatorDeterministicChecksGuidance(selections),
       buildValidatorRoleContract(
         assignment.authority === "advisory"
-          ? { authority: "advisory", verdictSchema }
+          ? { authority: "advisory" }
           : {
               authority: "blocking",
-              verdictSchema,
               ...(assignment.focus === undefined
                 ? {}
                 : { mandate: assignment.focus }),

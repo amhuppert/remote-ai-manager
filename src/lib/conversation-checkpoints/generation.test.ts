@@ -64,7 +64,7 @@ function structuredResult(output: unknown): TaskRunResult {
     structuredOutput: output,
     text: "",
     usage: USAGE,
-    backendRef: null,
+    backendRef: { backend: "claude", ref: "latest-working-state-session" },
     continuationDisposition: "retain",
   };
 }
@@ -403,6 +403,7 @@ describe("generateCheckpoint — envelope reuse", () => {
     if (!result.ok) return;
     expect(calls).toHaveLength(1);
     expect(calls[0]?.prompt).toContain("checkpoint working state");
+    expect(calls[0]?.structuredOutputTurns).toBe("work_then_format");
     expect(result.generationPassCount).toBe(1);
     expect(result.payload.artifactProvenance).toEqual({
       artifactId: "artifact-1",
@@ -507,9 +508,50 @@ describe("generateCheckpoint — bounded repair", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(seedAttempts).toBe(2);
+    expect(calls[2]?.resumeRef).toEqual({
+      backend: "claude",
+      ref: "latest-working-state-session",
+    });
+    expect(calls[1]?.structuredOutputTurns).toBe("work_then_format");
+    expect(calls[2]?.structuredOutputTurns).toBe("single");
     expect(result.generationPassCount).toBe(3);
     expect(result.payload.generationPassCount).toBe(3);
   });
+
+  it.each(["missing", "cleared"] as const)(
+    "does not start a fresh working-state repair when continuity is %s",
+    async (continuity) => {
+      const invalid = {
+        ...WORKING_STATE,
+        nextActions: [
+          {
+            text: "outside",
+            sourceRefs: [{ messageIndex: 0, seqStart: 99, seqEnd: 99 }],
+          },
+        ],
+      };
+      const result = await generateCheckpoint(await makeInput(), {
+        executeTaskRun: async (input) => {
+          const result = await modelDouble(invalid)(input);
+          return {
+            ...result,
+            backendRef:
+              continuity === "missing"
+                ? null
+                : { backend: "claude", ref: "unusable" },
+            continuationDisposition:
+              continuity === "cleared" ? "clear" : "retain",
+          };
+        },
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        generationPassCount: 2,
+        failure: { code: "working_state_invalid" },
+      });
+      expect(calls).toHaveLength(2);
+    },
+  );
 
   it("fails without a payload when the repaired working state is still invalid", async () => {
     const invalid = {
@@ -536,7 +578,17 @@ describe("generateCheckpoint — bounded repair", () => {
     const invalidOnce = (() => {
       let served = 0;
       return () =>
-        served++ === 0 ? { not: "a working state" } : WORKING_STATE;
+        served++ === 0
+          ? {
+              ...WORKING_STATE,
+              nextActions: [
+                {
+                  text: "outside the boundary",
+                  sourceRefs: [{ messageIndex: 0, seqStart: 99, seqEnd: 99 }],
+                },
+              ],
+            }
+          : WORKING_STATE;
     })();
     await generateCheckpoint(await makeInput(), {
       executeTaskRun: async (input) => {
@@ -559,8 +611,8 @@ describe("generateCheckpoint — bounded repair", () => {
       })),
     ).toEqual([
       { index: 1, kind: "initial", outcome: "ok" },
-      { index: 2, kind: "initial", outcome: "schema" },
-      { index: 3, kind: "schema_repair", outcome: "ok" },
+      { index: 2, kind: "initial", outcome: "guard" },
+      { index: 3, kind: "guard_repair", outcome: "ok" },
     ]);
     for (const [, fields] of passes) {
       expect(fields).toMatchObject({
@@ -596,7 +648,7 @@ describe("generateCheckpoint — bounded repair", () => {
     expect(JSON.stringify(fields)).not.toContain("deploy key");
   });
 
-  it("fails when the model returns output the working-state schema rejects twice", async () => {
+  it("does not retry a facade result rejected by the working-state schema", async () => {
     const result = await generateCheckpoint(await makeInput(), {
       executeTaskRun: modelDouble({ not: "a working state" }),
     });
@@ -604,6 +656,7 @@ describe("generateCheckpoint — bounded repair", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.failure.code).toBe("working_state_schema");
+    expect(calls).toHaveLength(2);
   });
 
   it("fails when the envelope pass fails, without attempting a seed pass", async () => {
@@ -675,6 +728,36 @@ describe("generateCheckpoint — bounded repair", () => {
     expect(rendered).not.toContain("ECHOED-PROMPT-BODY");
     expect(rendered).not.toContain("sess_01JQRESUME");
   });
+
+  it.each(["envelope", "working-state"] as const)(
+    "does not log source text from a %s facade schema refusal",
+    async (stage) => {
+      const result = await generateCheckpoint(await makeInput(), {
+        executeTaskRun: async (input) => {
+          if (
+            stage === "working-state" &&
+            !input.prompt.includes("checkpoint working state")
+          ) {
+            return structuredResult(envelopeFromPrompt(input.prompt));
+          }
+          return {
+            kind: "error",
+            error: "invalid JSON near ECHOED-PROMPT-BODY",
+            structuredOutputIssues: ["invalid JSON near ECHOED-PROMPT-BODY"],
+            aborted: false,
+            usage: USAGE,
+            backendRef: null,
+            continuationDisposition: "retain",
+          };
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain("ECHOED-PROMPT-BODY");
+      expect(JSON.stringify(logSpies.warn.mock.calls)).not.toContain(
+        "ECHOED-PROMPT-BODY",
+      );
+    },
+  );
 
   it("logs a rejected working state by its field paths, not the model's prose", async () => {
     await generateCheckpoint(await makeInput(), {

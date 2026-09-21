@@ -29,7 +29,6 @@ function fakeRuntime(input: {
       modelId: "opus",
       parameters: { effort: "high" },
     },
-    outputFormat: undefined,
 
     appliedConfigs,
     async sendTurn() {

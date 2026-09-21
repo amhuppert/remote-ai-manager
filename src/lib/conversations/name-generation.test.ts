@@ -283,7 +283,7 @@ describe("generateAndApplyConversationName", () => {
     expect(sanitizeGeneratedName(raw)).toBe(expected);
   });
 
-  it("falls back to the first non-empty text line when structured output is missing", async () => {
+  it("refuses unstructured naming text without mutating state or starting a repair", async () => {
     const harness = createHarness({
       run: async () =>
         taskResult({
@@ -292,12 +292,16 @@ describe("generateAndApplyConversationName", () => {
         }),
     });
 
-    await generateAndApplyConversationName(generationInput(), harness.deps);
+    await expect(
+      generateAndApplyConversationName(generationInput(), harness.deps),
+    ).rejects.toThrow();
 
     expect(await reloadConversation()).toMatchObject({
-      name: "Fallback From Text",
-      nameOrigin: "auto",
+      name: `${SESSION_NAME} 1`,
+      nameOrigin: "default",
     });
+    expect(harness.requests).toHaveLength(1);
+    expect(harness.published).toHaveLength(0);
   });
 
   it.each([

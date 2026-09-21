@@ -8,6 +8,7 @@ const input = {
   worktreePath: "/merge-worktree",
   prompt: "Return the answer",
   timeoutMs: 4567,
+  structuredOutputTurns: "single" as const,
   outputFormat: {
     type: "json_schema" as const,
     schema: {

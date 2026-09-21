@@ -651,6 +651,7 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
     return settledConversationTurn({
       outcome: {
         kind: "completed",
+        structuredOutput: { summary: "All good", issues: [], advisories: [] },
         text: JSON.stringify({
           summary: "All good",
           issues: [],

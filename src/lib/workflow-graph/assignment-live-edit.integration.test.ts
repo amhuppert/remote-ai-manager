@@ -488,7 +488,6 @@ describe("live-edited assignment instruction placement (R4.1)", () => {
     const payload = composeWorkflowRoleInstructions({
       roleContract: buildValidatorRoleContract({
         authority: "blocking",
-        verdictSchema: { type: "object" },
         mandate: blocking.focus ?? "",
       }),
       profileBlock: snapshot?.renderedInstructionBlock ?? "",

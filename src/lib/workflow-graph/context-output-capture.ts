@@ -13,6 +13,7 @@
  * prompt and the issue mapping are testable as pure functions.
  */
 
+import { renderFormatTurnPrompt } from "@/lib/agent-backends/structured-output-prompt";
 import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { GraphWorkflowValidationIssue } from "@/lib/workflow-graph/definition-schemas";
 
@@ -93,22 +94,8 @@ export function buildOutputCapturePrompt(input: {
   }
 
   sections.push(
-    [
-      "### Output schema",
-      "Your response must conform to this JSON Schema exactly:",
-      "```json",
-      JSON.stringify(input.outputSchema, null, 2),
-      "```",
-    ].join("\n"),
-  );
-
-  sections.push(
-    [
-      "### How to respond",
-      "Respond with the JSON object ONLY. No prose, no preamble, no explanation, no markdown fence around it, no trailing commentary.",
-      "Do not run any tools on this turn — draw every value from the work you already completed in this conversation.",
-      "Every `required` property must be present, and no property outside the schema may appear.",
-    ].join("\n"),
+    renderFormatTurnPrompt(input.outputSchema),
+    "Do not run any tools on this turn — draw every value from the work you already completed in this conversation.",
   );
 
   return sections.join("\n\n");

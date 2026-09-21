@@ -11,6 +11,7 @@
 import { z } from "zod";
 
 import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { CompactionConfig } from "@/lib/config/schemas";
 import { createLogger, type Logger } from "@/lib/logging";
 import {
@@ -42,7 +43,7 @@ import {
   CHECKPOINT_NOT_ESTABLISHED,
   type CheckpointBuildIssue,
   type CheckpointSeedIdentity,
-  type CheckpointWorkingState,
+  type BuiltCheckpointSeed,
 } from "./builder";
 import { CHECKPOINT_BUILDER_VERSION } from "./budget";
 import {
@@ -56,7 +57,7 @@ import {
 import { decideEnvelopeReuse, type CapturedCheckpointSource } from "./source";
 
 /** Bumped when the working-state prompt or its schema changes. */
-export const CHECKPOINT_GENERATOR_VERSION = "2";
+export const CHECKPOINT_GENERATOR_VERSION = "4";
 
 export interface GenerateCheckpointInput {
   /** Current validated capture only; never supplied to evidence generation. */
@@ -80,7 +81,7 @@ export interface GenerateCheckpointDeps {
 }
 
 export interface CheckpointGenerationTelemetry {
-  /** Every model call: envelope folds, envelope repairs, and the seed passes. */
+  /** Every facade call: envelope folds, guard re-prompts, and seed passes. */
   generationPassCount: number;
   usage: CheckpointUsage;
 }
@@ -116,7 +117,7 @@ const CHECKPOINT_WORKING_STATE_JSON_SCHEMA: Record<string, unknown> =
 
 const WORKING_STATE_INSTRUCTIONS = [
   "You are extracting the checkpoint working state of a coding-agent conversation for Command Center.",
-  "Respond with a single JSON object conforming to the schema below.",
+  "Work in prose first: cover every property of the checkpoint working state schema below, with the sourceRefs each entry needs. A follow-up turn will ask you to emit the working state as a single JSON object conforming to that schema.",
   "",
   "Rules:",
   "- Report only what the supplied evidence establishes. Never invent a decision, outcome, path, or approval.",
@@ -194,12 +195,11 @@ function renderArchiveTail(source: CapturedCheckpointSource): string {
 function buildWorkingStatePrompt(
   source: CapturedCheckpointSource,
   envelope: CompactionEnvelope,
-  feedback: string | null,
 ): string {
-  const sections = [
+  return [
     WORKING_STATE_INSTRUCTIONS,
     "",
-    "## Output schema (checkpoint working state)",
+    "## Checkpoint working state schema (enforced on the follow-up format turn)",
     "```json",
     JSON.stringify(CHECKPOINT_WORKING_STATE_JSON_SCHEMA),
     "```",
@@ -214,16 +214,7 @@ function buildWorkingStatePrompt(
     "",
     "## Recent archive tail",
     renderArchiveTail(source),
-  ];
-  if (feedback !== null) {
-    sections.push(
-      "",
-      "## Previous attempt rejected",
-      feedback,
-      "Respond again with a single corrected JSON object.",
-    );
-  }
-  return sections.join("\n");
+  ].join("\n");
 }
 
 function issueFeedback(issues: CheckpointBuildIssue[]): string {
@@ -233,8 +224,14 @@ function issueFeedback(issues: CheckpointBuildIssue[]): string {
 }
 
 type WorkingStateAttempt =
-  | { status: "ok"; state: CheckpointWorkingState }
-  | { status: "schema"; paths: string[]; detail: string }
+  | { status: "ok"; seed: BuiltCheckpointSeed }
+  | {
+      status: "guard";
+      issues: CheckpointBuildIssue[];
+      resumeRef: AgentSessionRef | null;
+    }
+  | { status: "schema"; paths: string[] }
+  | { status: "cancelled" }
   | { status: "model"; failureKind: string | null };
 
 /**
@@ -269,7 +266,7 @@ export async function generateCheckpoint(
   let usage: CheckpointUsage | null = null;
 
   /**
-   * Every model call this build makes — envelope folds, repairs, and the
+   * Every facade call this build makes — envelope folds, guard re-prompts, and the
    * working-state passes — is both summed into the operation's usage and
    * logged. The fields are shapes and counters only: an input size rather than
    * the prompt, a pass kind rather than the feedback that provoked it.
@@ -410,14 +407,19 @@ export async function generateCheckpoint(
   }
 
   async function attemptWorkingState(
-    feedback: string | null,
+    prompt: string,
     passKind: EnvelopeGenerationPass["kind"],
+    resumeRef?: AgentSessionRef,
   ): Promise<WorkingStateAttempt> {
-    const prompt = buildWorkingStatePrompt(source, envelope, feedback);
+    if (deps.signal?.aborted ?? false) return { status: "cancelled" };
     const result = await deps.executeTaskRun({
       kind: "task_run",
       executionClass: "nongoverned-task",
       executionProfile: "standard",
+      // The work turn extracts in prose; the seed-check correction resumes
+      // that session and is already a format request.
+      structuredOutputTurns: resumeRef ? "single" : "work_then_format",
+      ...(resumeRef ? { resumeRef } : {}),
       prompt,
       outputFormat: {
         type: "json_schema",
@@ -449,6 +451,13 @@ export async function generateCheckpoint(
       });
     };
 
+    if (
+      result.kind === "error" &&
+      result.structuredOutputIssues !== undefined
+    ) {
+      emit("schema");
+      return { status: "schema", paths: ["(structured output refused)"] };
+    }
     if (result.kind === "error") {
       emit("model");
       return { status: "model", failureKind: result.failure?.kind ?? null };
@@ -463,55 +472,14 @@ export async function generateCheckpoint(
         ? {
             status: "schema",
             paths: ["(no structured output)"],
-            detail: "the response contained no structured output",
           }
         : {
             status: "schema",
             paths: parsed.error.issues.map(
               (issue) => `${issue.path.join(".") || "(root)"}[${issue.code}]`,
             ),
-            detail: parsed.error.issues
-              .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-              .join("; "),
           };
     }
-    emit("ok");
-    return { status: "ok", state: parsed.data };
-  }
-
-  let feedback: string | null = null;
-  let repairUsed = false;
-  for (;;) {
-    if (deps.signal?.aborted ?? false) {
-      return fail("cancelled", "checkpoint generation was cancelled", {
-        cause: "cancelled",
-      });
-    }
-    const attempt = await attemptWorkingState(
-      feedback,
-      repairUsed ? "schema_repair" : "initial",
-    );
-
-    if (attempt.status === "model") {
-      return fail(
-        "working_state_model_error",
-        "the checkpoint working-state pass did not complete",
-        { cause: "model_error", failureKind: attempt.failureKind },
-      );
-    }
-    if (attempt.status === "schema") {
-      if (repairUsed) {
-        return fail(
-          "working_state_schema",
-          `the checkpoint working state did not satisfy its schema after one repair (${attempt.paths.join(", ")})`,
-          { cause: "schema_invalid", at: attempt.paths },
-        );
-      }
-      repairUsed = true;
-      feedback = `Your previous response violated the working-state schema: ${attempt.detail}`;
-      continue;
-    }
-
     const build = buildCheckpointSeed({
       identity,
       source: {
@@ -519,65 +487,103 @@ export async function generateCheckpoint(
         capturedThroughSeq: source.basis.capturedThroughSeq,
         totalMessages: source.totalMessages,
       },
-      workingState: attempt.state,
+      workingState: parsed.data,
       ...(input.agentHandoff !== undefined
         ? { agentHandoff: input.agentHandoff }
         : {}),
       entries: source.captured.entries,
     });
     if (!build.ok) {
-      if (repairUsed) {
-        return fail(
-          "working_state_invalid",
-          build.issues
-            .map((issue) => `${issue.code}: ${issue.detail}`)
-            .join("; "),
-          {
-            cause: "working_state_invalid",
-            at: build.issues.map((issue) => issue.code),
-          },
-        );
-      }
-      repairUsed = true;
-      feedback = issueFeedback(build.issues);
-      continue;
+      emit("guard");
+      return {
+        status: "guard",
+        issues: build.issues,
+        resumeRef:
+          result.continuationDisposition === "retain"
+            ? result.backendRef
+            : null,
+      };
     }
-
-    const payload: CheckpointPayload = {
-      id: identity.checkpointId,
-      schemaVersion: CHECKPOINT_PAYLOAD_SCHEMA_VERSION,
-      sourceBasis: source.basis,
-      artifactProvenance: reuse.reusable ? reuse.provenance : null,
-      versions: {
-        generatorVersion: CHECKPOINT_GENERATOR_VERSION,
-        builderVersion: CHECKPOINT_BUILDER_VERSION,
-        normalizerVersion: NORMALIZER_VERSION,
-      },
-      modelSelection,
-      sections: build.seed.sections as CheckpointPayload["sections"],
-      seedText: build.seed.seedText,
-      seedSha256: build.seed.seedSha256,
-      sectionBytes: build.seed.sectionBytes,
-      omissions: build.seed.omissions,
-      generationPassCount: passCount,
-      createdAt: input.createdAt,
-    };
-    log.info("checkpoint.generation.completed", {
-      conversationId: identity.conversationId,
-      operationId: identity.checkpointId,
-      capturedThroughSeq: source.basis.capturedThroughSeq,
-      seedBytes: payload.sectionBytes.total,
-      seedSha256: payload.seedSha256,
-      generationPassCount: passCount,
-      envelopeReused: reuse.reusable,
-    });
-    return {
-      ok: true,
-      payload,
-      ...(build.seed.handoffDecision
-        ? { handoffDecision: build.seed.handoffDecision }
-        : {}),
-      ...telemetry(),
-    };
+    emit("ok");
+    return { status: "ok", seed: build.seed };
   }
+
+  let attempt = await attemptWorkingState(
+    buildWorkingStatePrompt(source, envelope),
+    "initial",
+  );
+  if (attempt.status === "guard" && attempt.resumeRef !== null) {
+    attempt = await attemptWorkingState(
+      `${issueFeedback(attempt.issues)}\nCorrect the checkpoint working state using the same captured evidence.`,
+      "guard_repair",
+      attempt.resumeRef,
+    );
+  }
+  if (attempt.status === "cancelled") {
+    return fail("cancelled", "checkpoint generation was cancelled", {
+      cause: "cancelled",
+    });
+  }
+  if (attempt.status === "model") {
+    return fail(
+      "working_state_model_error",
+      "the checkpoint working-state pass did not complete",
+      { cause: "model_error", failureKind: attempt.failureKind },
+    );
+  }
+  if (attempt.status === "schema") {
+    return fail(
+      "working_state_schema",
+      `the checkpoint working state did not satisfy its schema (${attempt.paths.join(", ")})`,
+      { cause: "schema_invalid", at: attempt.paths },
+    );
+  }
+  if (attempt.status === "guard") {
+    return fail(
+      "working_state_invalid",
+      attempt.issues
+        .map((issue) => `${issue.code}: ${issue.detail}`)
+        .join("; "),
+      {
+        cause: "working_state_invalid",
+        at: attempt.issues.map((issue) => issue.code),
+      },
+    );
+  }
+  const { seed } = attempt;
+
+  const payload: CheckpointPayload = {
+    id: identity.checkpointId,
+    schemaVersion: CHECKPOINT_PAYLOAD_SCHEMA_VERSION,
+    sourceBasis: source.basis,
+    artifactProvenance: reuse.reusable ? reuse.provenance : null,
+    versions: {
+      generatorVersion: CHECKPOINT_GENERATOR_VERSION,
+      builderVersion: CHECKPOINT_BUILDER_VERSION,
+      normalizerVersion: NORMALIZER_VERSION,
+    },
+    modelSelection,
+    sections: seed.sections as CheckpointPayload["sections"],
+    seedText: seed.seedText,
+    seedSha256: seed.seedSha256,
+    sectionBytes: seed.sectionBytes,
+    omissions: seed.omissions,
+    generationPassCount: passCount,
+    createdAt: input.createdAt,
+  };
+  log.info("checkpoint.generation.completed", {
+    conversationId: identity.conversationId,
+    operationId: identity.checkpointId,
+    capturedThroughSeq: source.basis.capturedThroughSeq,
+    seedBytes: payload.sectionBytes.total,
+    seedSha256: payload.seedSha256,
+    generationPassCount: passCount,
+    envelopeReused: reuse.reusable,
+  });
+  return {
+    ok: true,
+    payload,
+    ...(seed.handoffDecision ? { handoffDecision: seed.handoffDecision } : {}),
+    ...telemetry(),
+  };
 }

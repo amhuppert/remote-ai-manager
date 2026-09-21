@@ -92,23 +92,6 @@ export interface WorkflowAgentCallerRequest {
   sessionKey: string;
   writeCapability?: LaneWriteCapability;
   agentCallRequest: AgentCallRequest;
-  /**
-   * Optional second backend turn run on the SAME lane inside the SAME
-   * scheduled critical section as `agentCallRequest`. This is the two-pass
-   * prose-then-format collaboration repair: the work turn (`agentCallRequest`)
-   * answers in prose, then this format turn restates the answer as
-   * schema-conforming JSON. Modeling it as one caller request keeps the whole
-   * prose→format operation a single serialized semantic phase — the scheduler
-   * is acquired exactly once around both turns (D16), so no competing
-   * same-session writer can interleave between them.
-   *
-   * The format turn resolves continuity independently, so on a
-   * continuity-enabled lane it resumes the ref the work turn advanced, and on
-   * a continuity-disabled lane it starts fresh (matching a lane's per-turn
-   * continuity policy). When the work turn does not `complete`, the format
-   * turn is skipped and the work result is returned.
-   */
-  formatFollowUp?: AgentCallRequest;
 }
 
 export interface WorkflowAgentCallerDeps {
@@ -190,44 +173,6 @@ async function executeWithContinuity(
   log: Logger,
   now: () => string,
 ): Promise<AgentCallResult> {
-  const workResult = await runOneTurn(
-    request,
-    request.agentCallRequest,
-    deps,
-    resolveAdapter,
-    log,
-    now,
-  );
-
-  // The prose→format two-pass repair runs both turns in this same scheduled
-  // section (single acquisition, D16). The format turn only runs if the work
-  // turn completed; it re-resolves continuity so it resumes the ref the work
-  // turn advanced (continuity-enabled lane) or starts fresh (disabled).
-  if (
-    request.formatFollowUp === undefined ||
-    workResult.outcome.kind !== "completed"
-  ) {
-    return workResult;
-  }
-
-  return runOneTurn(
-    request,
-    request.formatFollowUp,
-    deps,
-    resolveAdapter,
-    log,
-    now,
-  );
-}
-
-async function runOneTurn(
-  request: WorkflowAgentCallerRequest,
-  agentCallRequest: AgentCallRequest,
-  deps: WorkflowAgentCallerDeps,
-  resolveAdapter: (backend: AgentBackendId) => BackendContinuityAdapter,
-  log: Logger,
-  now: () => string,
-): Promise<AgentCallResult> {
   const lane = await deps.laneService.resolve(request.laneRef);
   if (!lane) {
     throw new Error(
@@ -242,7 +187,7 @@ async function runOneTurn(
 
   let result: AgentCallResult;
   try {
-    result = await deps.callAgent(agentCallRequest, activeContinuity);
+    result = await deps.callAgent(request.agentCallRequest, activeContinuity);
   } catch (err) {
     if (!isStaleBackendRefError(err)) {
       throw err;
@@ -256,7 +201,7 @@ async function runOneTurn(
     const recovered = await startFreshBackend(activeLane, adapter, deps, log);
     activeContinuity = recovered.continuity;
     activeLane = recovered.lane;
-    result = await deps.callAgent(agentCallRequest, activeContinuity);
+    result = await deps.callAgent(request.agentCallRequest, activeContinuity);
   }
 
   await applyPostTurnOutcome({

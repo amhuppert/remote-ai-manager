@@ -44,25 +44,31 @@ agent workflows.
 
 ## Recommended Flow
 
-Use a two-turn protocol for important structured responses:
+Use `executeAgentCall` with `outputSchema`. The facade owns the default
+`work_then_format` sequence:
 
-1. **Analysis turn**
-   - Give the agent the task and role instructions.
-   - Allow normal prose, notes, drafts, and reasoning output.
-   - Encourage the agent to create any required files during this turn when the
-     workflow supports file writes.
-   - Do not enforce the final JSON schema in this turn.
+1. Run the substantive work with no schema and a prose directive. Create any
+   required artifacts during this turn.
+2. Continue the same session to format that work against the full schema.
+   Formatting adds no per-turn tooling, images, or context and forbids tools.
+3. If the gate rejects the result, continue that session once with the named
+   validation issues. Return the accepted payload or an honest refusal.
 
-2. **Formatting turn**
-   - Tell the agent to use its prior answer and generated files.
-   - Require the agent to create or update the standard artifact files before
-     responding.
-   - Require the final response to be only the structured manifest.
-   - Explicitly forbid embedding file contents, markdown bodies, or long prose
-     in the manifest.
+Do not implement a second formatting or schema-retry sequence in the caller.
+Parse `result.structuredOutput` with the domain's Zod schema. A semantic guard
+may make one conditional correction call in `single` mode using the latest
+continuation; that call gets its own bounded schema repair.
 
-This reduces failure pressure because the second turn has one job: produce the
-correct manifest.
+Use explicit `single` mode for trivial payloads and requests that only capture
+work already done. Isolated one-shots require it and get no repair. A domain
+correction call that resumes the latest continuation is also `single`, because
+its feedback is already the format request. Compaction, checkpoint working
+state, plan repair, debug phases, validators, and advisory response all run
+two turns; the facade receives the actor's pending question fact and skips
+formatting when the work asked a question.
+
+Checkpoint handoff capture remains on its capture-window runtime path. It uses
+the shared schema instruction and text validator, with no repair.
 
 ## Schema Design Rules
 
@@ -103,22 +109,15 @@ Callers hand their authoritative schema to the neutral conversation/task
 request. The schema may be generated from Zod or authored independently; it is
 not the caller's job to produce a provider-specific copy.
 
-Each backend descriptor declares where structured-output enforcement happens:
+Each backend descriptor declares where enforcement happens. Claude, Codex, and
+Cursor currently use `post_validation`: their adapters append the full authored
+schema with the shared prompt builder. No schema is sent through Claude's
+`outputFormat` or Codex's `outputSchema` SDK wire. A schema is a per-turn input,
+never runtime creation state, so changing or removing it does not recreate the
+session.
 
-- Claude declares `structuredOutput: "post_validation"`. Its adapters render the
-  complete JSON Schema into a deterministic final-message instruction appended
-  to the prompt. Nothing reaches the Claude SDK's native `outputFormat` wire;
-  the response text is extracted and validated by Command Center after the turn.
-- Codex declares `structuredOutput: "backend_native"`. Its adapter sends the
-  complete schema through Codex's native final-response enforcement. Command
-  Center still runs the same extraction and validation gate afterward, so native
-  enforcement is an accelerator rather than a correctness dependency.
-
-The rendered Claude contract retains every JSON Schema keyword, including string
-length, pattern, numeric-range, and array-length constraints. Prompting with a
-schema is not constrained decoding: descriptions and explicit instructions help
-the model satisfy those constraints, while the shared gate and owning Zod schema
-remain responsible for authoritative acceptance.
+Prompting is not constrained decoding. The shared gate validates the authored
+JSON Schema after extraction, and the domain Zod schema remains authoritative.
 
 Rules:
 
@@ -186,11 +185,12 @@ large JSON field.
 
 ## Prompting Rules
 
-The formatting prompt should be direct and repetitive about the contract:
+The work prompt owns artifact creation; the shared formatting prompt owns the
+final JSON instruction. State these domain requirements during work:
 
-- Create the required artifact files first.
+- Create the required artifact files.
 - Put the complete answer or analysis in those files.
-- Return only the JSON manifest.
+- Describe the completed work and the artifact paths for the following format turn.
 - Keep every manifest text field short and bounded.
 - Do not include markdown file contents in JSON.
 - Ensure every artifact reference uses the exact required path pattern.
@@ -222,16 +222,18 @@ in the response.
 
 ### Repair turn
 
-When every first-pass candidate fails the AgentCall gate, Command Center makes
-one bounded repair turn by default. The repair prompt contains the complete
-schema, a bounded tail of the rejected output, and named validation issues; it
-does not repeat the full work context. A task run repairs through a fresh
-isolated one-shot, while a conversation turn uses one corrective turn on its
-resolved runtime. Callers can explicitly set the repair budget to zero.
+When the format result fails the gate, the facade resumes the same session once
+with the full schema and bounded named issues. A task repair resumes the last
+turn's opaque continuation; a conversation repair uses the resolved runtime.
+Session identity, governing instructions, and write policy carry forward.
+There is no isolated fallback or caller-controlled repair budget.
 
-The repaired response is extracted and gated exactly once more. A second failure
-returns the normal schema-validation outcome with candidate diagnostics while
-preserving the original transcript, content blocks, and artifact references.
+Isolated one-shots refuse invalid output immediately. Failed/cancelled work is
+returned without formatting, and a completed task without usable continuation
+cannot enter the format turn. Schema-valid but hollow content remains a domain
+validation concern; the protocol cannot prove semantic fidelity.
 
-Keep the contract boring: prose in files, small manifests in JSON, strict
-validation at the boundary.
+After several turns, results contain ordered transcripts and the work artifacts.
+The accepted payload or rejected content, backend ref, and continuation verdict
+come from the last turn. Token/cost/duration counters sum; context and cumulative
+cost snapshots use the latest reported values.

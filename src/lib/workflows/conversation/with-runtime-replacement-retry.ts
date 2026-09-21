@@ -209,9 +209,6 @@ export function withRuntimeReplacementRetry(
     get modelSelection() {
       return live().modelSelection;
     },
-    get outputFormat() {
-      return live().outputFormat;
-    },
 
     sendTurn: sendTurnWithRetry,
     notifyTurnStarting: () => live().notifyTurnStarting?.(),

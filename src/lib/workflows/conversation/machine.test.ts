@@ -1208,6 +1208,39 @@ describe("conversationMachine", () => {
       expect(snap.context.totals.totalCostUsd).toBeCloseTo(0.01);
     });
 
+    it("dispatches a schema-bearing debug phase under the facade's default two-turn protocol", async () => {
+      const dispatched: ExecutePromptInput["turn"][] = [];
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          dispatched.push(input.turn);
+          await new Promise((r) => setTimeout(r, 0));
+          return successResult({ structuredOutput: HYPOTHESIS_PAYLOAD });
+        },
+      );
+      const actor = createActor(makeTestMachine({ executePrompt }), {
+        input: defaultInput,
+      });
+      activeActors.push(actor);
+      actor.start();
+      enterDebug(actor);
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Investigate",
+        streamId: "s1",
+      });
+      await waitForContext(
+        actor,
+        (c) =>
+          (c.debugMode as { phase?: string } | null)?.phase ===
+          "awaiting_reproduction",
+      );
+
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]?.outputFormat?.type).toBe("json_schema");
+      expect(dispatched[0]?.structuredOutputTurns).toBeUndefined();
+    });
+
     it("a failed phase-advancing turn parks in debug with the turn preserved; retry_turn re-enters the spine", async () => {
       const executedPrompts: string[] = [];
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(

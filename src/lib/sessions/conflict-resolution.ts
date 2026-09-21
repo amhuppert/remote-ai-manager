@@ -15,7 +15,6 @@ import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/e
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { buildIncomingChangesSection as defaultBuildIncomingChangesSection } from "@/lib/merge-intents/incoming-changes";
 import type { IncomingChangesParams } from "@/lib/merge-intents/incoming-changes";
-import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
 import {
   isAbortFailure,
   type AgentFailureClassification,
@@ -198,16 +197,16 @@ Follow these steps precisely:
 3. For each file, determine the best resolution by understanding the intent of both sides.
 4. Edit each file to remove all conflict markers and produce the correct merged content.
 5. Stage each resolved file with \`git add <file>\`.
-6. After resolving ALL conflicts, return your analysis as the structured output the response schema requires (one entry per conflicted file).
+6. After resolving ALL conflicts, explain in prose what each conflict was, how you resolved it, and why.
 
 IMPORTANT:
-- Resolve ALL conflicted files before producing the structured output.
+- Resolve ALL conflicted files before reporting the outcome.
 - Every conflict marker must be removed — no <<<<<<< or ======= or >>>>>>> markers should remain.
 - Stage every resolved file with git add.
 - Work ONLY in the current working directory — never cd into another worktree or repository.
 - NEVER initiate a merge yourself: do not run git merge, git pull, git rebase, or git cherry-pick. The orchestrator has already started the merge you are resolving.
 - NEVER run git commit. Leave the merge in progress with every resolved file staged; the orchestrator commits it.
-- If git reports no conflicted files and no merge is in progress, there is nothing to resolve: return an empty conflicts array as the structured output. Do NOT infer an intended merge from history and start it.`;
+- If git reports no conflicted files and no merge is in progress, there is nothing to resolve: explain that no conflicts need resolution. Do NOT infer an intended merge from history and start it.`;
 
 const CONFLICT_ANALYSIS_INSTRUCTIONS = `You are a merge conflict analysis specialist. Your task is to analyze all git merge conflicts in this worktree and describe them, WITHOUT resolving them.
 
@@ -216,14 +215,14 @@ Follow these steps precisely:
 1. Run \`git diff --name-only --diff-filter=U\` to find all conflicted files.
 2. Read each conflicted file and analyze the conflict markers (<<<<<<< HEAD, =======, >>>>>>> markers).
 3. For each file, understand the intent of both sides and propose how the conflict should be resolved.
-4. Return your analysis as the structured output the response schema requires (one entry per conflicted file).
+4. Explain each conflict in prose, including your proposed resolution and rationale.
 
 IMPORTANT:
 - DO NOT edit any files. DO NOT remove conflict markers. DO NOT run git add. This is analysis only.
-- Analyze ALL conflicted files before producing the structured output.
+- Analyze ALL conflicted files before reporting your findings.
 - Work ONLY in the current working directory — never cd into another worktree or repository.
 - NEVER run git merge, git pull, git rebase, or any other command that mutates the worktree.
-- If git reports no conflicted files, there is nothing to analyze: return an empty conflicts array as the structured output.`;
+- If git reports no conflicted files, there is nothing to analyze: explain that no conflicts were found.`;
 
 // ============================================================
 // Resolution Context Prompt Builder
@@ -304,40 +303,16 @@ function buildDecisionsPrompt(decisions: ConflictDecisionInput[]): string {
 // Conflict Entry Parsing
 // ============================================================
 
-// Accepts either the wrapped object `{ conflicts: [...] }` produced by the
-// Anthropic tool-call path, or the bare array a model may emit in free text.
-const conflictEntriesPayloadSchema = z.union([
-  z.object({ conflicts: z.array(conflictEntrySchema) }),
-  z.array(conflictEntrySchema),
-]);
+const conflictEntriesPayloadSchema = z.object({
+  conflicts: z.array(conflictEntrySchema),
+});
 
-function unwrapEntries(
-  parsed: z.infer<typeof conflictEntriesPayloadSchema>,
-): ConflictEntry[] {
-  return Array.isArray(parsed) ? parsed : parsed.conflicts;
-}
-
-/**
- * Parse conflict entries from a task-run result via the shared
- * structured-output module (extraction precedence native → raw JSON → last
- * fenced block, first schema-passing candidate wins). An invalid native
- * candidate does not hard-fail: the chain falls through to a schema-valid raw
- * or fenced text candidate in the same turn (Phase 3 review F5, approved in
- * the 2026-07-13 addendum to the Phase 1 slice designs).
- */
+/** Apply domain validation to the facade's accepted structured payload. */
 export function parseConflictEntries(
-  text: string | null,
   structuredOutput: unknown,
 ): { conflicts: ConflictEntry[] } | { error: string } {
-  const validated = validateStructuredOutput(conflictEntriesPayloadSchema, {
-    ...(structuredOutput != null ? { native: structuredOutput } : {}),
-    text,
-  });
-  if (!validated.ok) {
-    return { error: validated.error };
-  }
-  logger.debug("conflict-resolution.parsed", { source: validated.source });
-  return { conflicts: unwrapEntries(validated.value) };
+  const parsed = conflictEntriesPayloadSchema.safeParse(structuredOutput);
+  return parsed.success ? parsed.data : { error: parsed.error.message };
 }
 
 // ============================================================
@@ -523,6 +498,7 @@ async function dispatchConflictTurn(input: {
       prompt: input.prompt,
       systemInstructions: input.systemInstructions,
       outputFormat,
+      structuredOutputTurns: "work_then_format",
       timeoutMs: input.timeoutMs,
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
     });
@@ -555,6 +531,7 @@ async function dispatchConflictTurn(input: {
     timeoutMs: input.timeoutMs,
     signal: input.signal,
     outputFormat,
+    structuredOutputTurns: "work_then_format",
     origin: { source: "workflow" },
   });
 }
@@ -711,8 +688,9 @@ function mapTaskRunResultToResolution(
     return { status: "infrastructure", failure };
   }
 
-  const { text, structuredOutput } = extractTextAndStructured(result);
-  const parseResult = parseConflictEntries(text, structuredOutput);
+  const parseResult = parseConflictEntries(
+    result.kind === "structured" ? result.structuredOutput : undefined,
+  );
   if ("error" in parseResult) {
     logger.warn("conflict-resolution.parse_error", {
       worktreePath,
@@ -747,8 +725,9 @@ function mapTaskRunResultToAnalysis(
     return { status: "infrastructure", failure };
   }
 
-  const { text, structuredOutput } = extractTextAndStructured(result);
-  const parseResult = parseConflictEntries(text, structuredOutput);
+  const parseResult = parseConflictEntries(
+    result.kind === "structured" ? result.structuredOutput : undefined,
+  );
   if ("error" in parseResult) {
     logger.warn("conflict-analysis.parse_error", {
       worktreePath,
@@ -765,19 +744,6 @@ function mapTaskRunResultToAnalysis(
     conflictCount: parseResult.conflicts.length,
   });
   return { status: "analyzed", conflicts: parseResult.conflicts };
-}
-
-function extractTextAndStructured(result: TaskRunResult): {
-  text: string | null;
-  structuredOutput: unknown;
-} {
-  if (result.kind === "structured") {
-    return { text: null, structuredOutput: result.structuredOutput };
-  }
-  if (result.kind === "text") {
-    return { text: result.text, structuredOutput: undefined };
-  }
-  return { text: null, structuredOutput: undefined };
 }
 
 // ============================================================

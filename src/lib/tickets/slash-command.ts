@@ -376,6 +376,7 @@ export function createTicketCommandRunner(
           hint: input.hint,
           fallbackContext,
         }),
+        structuredOutputTurns: "single",
         outputFormat: {
           type: "json_schema",
           schema: TICKET_COMMAND_JSON_SCHEMA,

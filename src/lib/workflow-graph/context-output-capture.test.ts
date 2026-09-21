@@ -12,6 +12,7 @@ import {
   buildOutputCapturePrompt,
   toOutputSchemaIssues,
 } from "./context-output-capture";
+import { renderFormatTurnPrompt } from "@/lib/agent-backends/structured-output-prompt";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 
 describe("toOutputSchemaIssues", () => {
@@ -116,8 +117,7 @@ describe("buildOutputCapturePrompt", () => {
     });
 
     expect(prompt).toContain("Plan the work");
-    expect(prompt).toContain(JSON.stringify(schema, null, 2));
-    expect(prompt).toContain("Respond with the JSON object ONLY");
+    expect(prompt).toContain(renderFormatTurnPrompt(schema));
     expect(prompt).not.toContain("previously rejected");
   });
 

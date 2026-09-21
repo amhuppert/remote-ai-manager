@@ -15,7 +15,6 @@ function stubRuntime(
     backend: "cursor",
     status,
     modelSelection: MODEL_SELECTION,
-    outputFormat: undefined,
 
     async sendTurn(): Promise<never> {
       throw new Error("not driven in this test");

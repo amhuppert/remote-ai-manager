@@ -18,7 +18,6 @@ function makeRuntime(
       modelId: "opus",
       parameters: { effort: "high" },
     },
-    outputFormat: partial.outputFormat,
 
     sendTurn: partial.sendTurn ?? vi.fn(),
     close: partial.close ?? vi.fn(),

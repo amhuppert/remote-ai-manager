@@ -145,7 +145,6 @@ function makeFakeRuntime(options: {
     status: "alive" as const,
     modelId: undefined,
     reasoningEffort: undefined,
-    outputFormat: undefined,
     isTurnActive: options.isTurnActive ?? false,
     applyCalls,
     async sendTurn(

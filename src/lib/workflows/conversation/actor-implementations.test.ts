@@ -1827,14 +1827,13 @@ describe("executePromptForMachine", () => {
     );
   });
 
-  it("recreates runtime when outputFormat changes", async () => {
-    const existingRuntime = createMockBackendRuntime({
-      outputFormat: undefined,
-    });
+  it("reuses the runtime when a turn requests structured output", async () => {
+    const existingRuntime = createMockBackendRuntime();
 
     const schema = { type: "object", properties: { name: { type: "string" } } };
     const input = makeExecutePromptInput({
       turn: {
+        structuredOutputTurns: "single",
         outputFormat: { type: "json_schema", schema },
       },
     });
@@ -1850,38 +1849,11 @@ describe("executePromptForMachine", () => {
 
     await conversationActors.executePromptForMachine(input);
 
-    expect(existingRuntime.close).toHaveBeenCalled();
-    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    expect(existingRuntime.close).not.toHaveBeenCalled();
+    expect(mockFactory.createRuntime).not.toHaveBeenCalled();
   });
 
-  it("recreates runtime when outputFormat is removed", async () => {
-    const schema = { type: "object", properties: { name: { type: "string" } } };
-    const existingRuntime = createMockBackendRuntime({
-      outputFormat: { type: "json_schema" as const, schema },
-    });
-
-    const input = makeExecutePromptInput({
-      turn: {
-        outputFormat: undefined,
-      },
-    });
-    const key = conversationRuntimeKey(
-      input.projectPath,
-      conversationTargetStoreSessionName(input.target),
-      input.target.conversationId,
-    );
-    registerConversationRuntime(key, {
-      managed: createManagedRuntimeFixture(key, existingRuntime),
-      abortController: new AbortController(),
-    });
-
-    await conversationActors.executePromptForMachine(input);
-
-    expect(existingRuntime.close).toHaveBeenCalled();
-    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
-  });
-
-  it("passes outputFormat to factory.createRuntime for debug phases", async () => {
+  it("keeps debug outputFormat on the turn rather than runtime creation", async () => {
     mockSendTurn.mockResolvedValueOnce({
       ...defaultTurnResult,
       contentBlocks: [{ type: "text", text: "{}" }],
@@ -1890,6 +1862,7 @@ describe("executePromptForMachine", () => {
 
     const input = makeExecutePromptInput({
       turn: {
+        structuredOutputTurns: "single",
         outputFormat: {
           type: "json_schema",
           schema: { type: "object" },
@@ -1923,6 +1896,12 @@ describe("executePromptForMachine", () => {
     const result = await conversationActors.executePromptForMachine(input);
 
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    expect(mockFactory.createRuntime.mock.calls[0]?.[0]).not.toHaveProperty(
+      "outputFormat",
+    );
+    expect(mockSendTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ outputFormat: input.turn.outputFormat }),
+    );
     expect(result.error).toBeNull();
   });
 
@@ -2144,6 +2123,83 @@ describe("executePromptForMachine", () => {
       { type: "text", text: "Recovered turn" },
     ]);
   });
+
+  it.each([true, false])(
+    "preserves completed work when formatting needs runtime replacement (usable ref: %s)",
+    async (hasUsableRef) => {
+      const workRef = hasUsableRef
+        ? { backend: "claude" as const, ref: "session-after-work" }
+        : null;
+      let status: "alive" | "dead" = "alive";
+      let calls = 0;
+      const workSendTurn = vi.fn(async () => {
+        calls++;
+        if (calls === 1) {
+          return {
+            ...defaultTurnResult,
+            backendRef: workRef,
+            contentBlocks: [
+              { type: "text" as const, text: "The work is complete." },
+            ],
+          };
+        }
+        status = "dead";
+        throw makeUndeliveredPromptFailure();
+      });
+      const workRuntime = createMockBackendRuntime({ sendTurn: workSendTurn });
+      Object.defineProperty(workRuntime, "status", { get: () => status });
+      const formattedSendTurn = vi.fn(async () => ({
+        ...defaultTurnResult,
+        backendRef: workRef,
+        contentBlocks: [
+          { type: "text" as const, text: '{"answer":"complete"}' },
+        ],
+      }));
+      mockFactory.createRuntime.mockResolvedValue(
+        createMockBackendRuntime({ sendTurn: formattedSendTurn }),
+      );
+      const input = makeExecutePromptInput({
+        backendRef: { backend: "claude", ref: "session-before-work" },
+        turn: {
+          structuredOutputTurns: "work_then_format",
+          outputFormat: {
+            type: "json_schema",
+            schema: {
+              type: "object",
+              properties: { answer: { type: "string" } },
+              required: ["answer"],
+            },
+          },
+        },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
+      );
+      registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key, workRuntime),
+        abortController: new AbortController(),
+      });
+
+      const result = await conversationActors.executePromptForMachine(input);
+
+      expect(workSendTurn).toHaveBeenCalledTimes(2);
+      if (hasUsableRef) {
+        expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+        expect(
+          mockFactory.createRuntime.mock.calls[0]?.[0].persistedRef,
+        ).toEqual(workRef);
+        expect(formattedSendTurn).toHaveBeenCalledTimes(1);
+        expect(result.error).toBeNull();
+        expect(result.structuredOutput).toEqual({ answer: "complete" });
+      } else {
+        expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+        expect(formattedSendTurn).not.toHaveBeenCalled();
+        expect(result.error).not.toBeNull();
+      }
+    },
+  );
 
   it("marks result as aborted when abort signal fires", async () => {
     const abortController = new AbortController();
@@ -3135,6 +3191,7 @@ describe("executePromptForMachine", () => {
 
     const input = makeExecutePromptInput({
       turn: {
+        structuredOutputTurns: "single",
         outputFormat: {
           type: "json_schema",
           schema: { type: "object" },
@@ -4905,7 +4962,7 @@ describe("executePromptForMachine", () => {
   // ---------------------------------------------------------------
   // Shared structured-output gate — both streaming conversation_turn
   // and single-shot task_run paths must funnel structured-output
-  // extraction and validation through applyStructuredOutputGate so
+  // extraction and validation through the facade's structured-output protocol so
   // workflows see one normalized outcome.
   // ---------------------------------------------------------------
   it("consumes the shared gate's parsed structuredOutput when the backend leaves it unset and the gate parses it from text", async () => {
@@ -4917,6 +4974,7 @@ describe("executePromptForMachine", () => {
 
     const input = makeExecutePromptInput({
       turn: {
+        structuredOutputTurns: "single",
         outputFormat: {
           type: "json_schema",
           schema: {
@@ -4953,6 +5011,7 @@ describe("executePromptForMachine", () => {
 
     const input = makeExecutePromptInput({
       turn: {
+        structuredOutputTurns: "single",
         outputFormat: {
           type: "json_schema",
           schema: {
@@ -7810,7 +7869,7 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       });
       mockFactory.createRuntime.mockResolvedValue(freshRuntime);
 
-      // Pin the complete selection so it and outputFormat both match the live
+      // Pin the complete selection so it matches the live
       // runtime, isolating the alignment version as the sole recreation trigger
       // this regression exercises.
       const input = makeExecutePromptInput({
@@ -8453,7 +8512,7 @@ describe("runTaskRunTurnForMachine", () => {
     expect(runner.run).toHaveBeenCalledTimes(1);
   });
 
-  it("task_run WITH outputFormat: routes outputSchema through applyStructuredOutputGate, persists one assistant entry, and exposes the parsed structuredOutput", async () => {
+  it("task_run WITH outputFormat: routes outputSchema through the facade structured-output protocol, persists one assistant entry, and exposes the parsed structuredOutput", async () => {
     const runner = makeMockTaskRunner(async (req) => {
       expect(req.outputSchema).toEqual({
         type: "object",
@@ -8479,6 +8538,7 @@ describe("runTaskRunTurnForMachine", () => {
 
     const input = makeRunTaskRunInput({
       turn: {
+        structuredOutputTurns: "single",
         outputFormat: {
           type: "json_schema",
           schema: {
@@ -8530,6 +8590,7 @@ describe("runTaskRunTurnForMachine", () => {
     const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
         turn: {
+          structuredOutputTurns: "single",
           outputFormat: {
             type: "json_schema",
             schema: {
@@ -8571,6 +8632,7 @@ describe("runTaskRunTurnForMachine", () => {
     const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
         turn: {
+          structuredOutputTurns: "single",
           outputFormat: {
             type: "json_schema",
             schema: {
@@ -8615,6 +8677,7 @@ describe("runTaskRunTurnForMachine", () => {
     const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
         turn: {
+          structuredOutputTurns: "single",
           outputFormat: {
             type: "json_schema",
             schema: {

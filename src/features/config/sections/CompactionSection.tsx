@@ -2,10 +2,7 @@ import BackendExecutionWarning from "@/components/BackendExecutionWarning";
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { backendExecutionRefusalIn } from "@/lib/agent-backends/execution-admission";
-import {
-  compactionExecutionRequirements,
-  compactionRepairRequirements,
-} from "@/lib/config/task-admission";
+import { compactionExecutionRequirements } from "@/lib/config/task-admission";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import type {
   BackendModelCatalog,
@@ -130,17 +127,10 @@ export function CompactionSection({
             // Compaction dispatches a task run, so a backend with no task facet
             // cannot be selected here (spec D13).
             getOptionDisabledReason={(id) =>
-              (
-                backendExecutionRefusalIn(
-                  availableBackends,
-                  id,
-                  compactionExecutionRequirements,
-                ) ??
-                backendExecutionRefusalIn(
-                  availableBackends,
-                  id,
-                  compactionRepairRequirements,
-                )
+              backendExecutionRefusalIn(
+                availableBackends,
+                id,
+                compactionExecutionRequirements,
               )?.message ?? null
             }
             onChange={(value) => {

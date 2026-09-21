@@ -17,10 +17,6 @@ import {
 import { assignmentFingerprint, laneStateKey } from "./lane-identity";
 import { createValidatorRuntimeInstructionReader } from "./validator-runtime-instructions";
 import {
-  buildValidatorOutputSchema,
-  issueCriterionCitationFor,
-} from "./validator-output-schema";
-import {
   freezeValidationCandidate,
   openValidationRound,
 } from "./validation-round";
@@ -172,18 +168,8 @@ describe("validator instructions composed by the conversation actor", () => {
       instructions.indexOf("PROFILE SECURITY SPECIALIZATION"),
     );
     expect(instructions.endsWith("PROFILE SECURITY SPECIALIZATION")).toBe(true);
-    expect(instructions).toContain(
-      JSON.stringify(
-        buildValidatorOutputSchema({
-          authority: f.assignment.authority,
-          taskIds: f.execution.workingDefinition.tasks
-            .filter((task) => task.contextId === f.context.id)
-            .map((task) => task.id),
-          criterionIds: ["api"],
-          issueCriterionCitation: issueCriterionCitationFor(f.assignment),
-        }),
-      ),
-    );
+    expect(instructions).toContain("Complete your review in prose");
+    expect(instructions).not.toContain('"type":"object"');
   });
 
   it.each([true, false])(
@@ -203,7 +189,7 @@ describe("validator instructions composed by the conversation actor", () => {
     const instructions = await fixture("advisory").compose(false);
     expect(instructions).toContain("You hold no blocking authority");
     expect(instructions).not.toContain("## Mandate");
-    expect(instructions).toContain('"required":["summary","advisories"]');
+    expect(instructions).toContain("It carries advisories and nothing else");
     expect(instructions).not.toContain('"planDefects":');
   });
 

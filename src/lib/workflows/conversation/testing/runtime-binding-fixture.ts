@@ -20,7 +20,6 @@ export function createManagedRuntimeFixture(
       runtimeConfigurationFixture({
         backend: backend.backend,
         modelSelection: backend.modelSelection,
-        outputFormat: backend.outputFormat,
         fsWritePolicy: backend.fsWritePolicy,
         ...(key.split("::")[1] === "__project__"
           ? {

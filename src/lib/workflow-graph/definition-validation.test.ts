@@ -8,6 +8,7 @@ import {
 } from "./test-fixtures";
 import { getFsWriteRestrictionForBackend } from "@/lib/agent-backends/catalog";
 import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
+import { workflowBackendRefusal } from "./backend-admission";
 
 import {
   validateAuthoredDefinition,
@@ -81,6 +82,33 @@ describe("workflow-graph validation", () => {
         ok: true,
         errors: [],
       });
+    },
+  );
+
+  it("keeps a standard-only backend eligible for workflow assignment", () => {
+    const entry = structuredClone(getBackendCatalogEntry("claude"));
+    if (entry.execution.tasks) entry.execution.tasks.profiles = ["standard"];
+    expect(workflowBackendRefusal(entry)).toBeNull();
+  });
+
+  it.each(["authored", "resolved"] as const)(
+    "admits %s workflow roles without an isolated repair profile",
+    (kind) => {
+      const deps = {
+        executionEntryFor(
+          backend: Parameters<typeof getBackendCatalogEntry>[0],
+        ) {
+          const entry = structuredClone(getBackendCatalogEntry(backend));
+          if (entry.execution.tasks)
+            entry.execution.tasks.profiles = ["standard"];
+          return entry;
+        },
+      };
+      const result =
+        kind === "authored"
+          ? validateWorkflowDefinition(createWorkflowDefinition(), deps)
+          : validateResolvedWorkflow(createResolvedWorkflowDefinition(), deps);
+      expect(result).toEqual({ ok: true, errors: [] });
     },
   );
 

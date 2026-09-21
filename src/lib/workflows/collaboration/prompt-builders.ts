@@ -99,22 +99,6 @@ interface FinalAnswerInput {
   userAnswers?: CollaborationUserAnswer[];
 }
 
-// Every phase prompt ends with the structured-output reminder. The
-// collaboration agent caller runs schema-bearing calls in two turns: a prose
-// work turn where this reminder is swapped for COLLABORATION_PROSE_TURN_INSTRUCTION
-// so the agent reasons freely, then a format turn driven by
-// COLLABORATION_FORMAT_TURN_INSTRUCTION that restates the answer as JSON under
-// schema enforcement. Single-call consumers (the graph-scoped collaborator)
-// keep this reminder verbatim.
-export const COLLABORATION_STRUCTURED_OUTPUT_REMINDER =
-  "Return only the structured JSON object that matches the supplied JSON Schema. Substantive content must already be written to the required generated artifact files; the JSON object must contain only short summaries, decisions, ids, and file references. Do not include prose outside the object.";
-
-export const COLLABORATION_PROSE_TURN_INSTRUCTION =
-  "Complete the phase work in prose and write the required generated artifact file(s) exactly as instructed above. Do not emit JSON yet; a follow-up message will ask you to produce the small structured manifest.";
-
-export const COLLABORATION_FORMAT_TURN_INSTRUCTION =
-  "Convert your previous response into a single JSON object that conforms to the required output schema. Return only the small structured manifest: short summaries, decisions, ids, and references to generated artifact files. Do not restate full details and do not copy generated file contents into JSON. Output only the JSON object, with no prose outside it.";
-
 function joinLines(...lines: Array<string | string[]>): string {
   return lines
     .flat()
@@ -323,7 +307,6 @@ export function buildAgentOneInitialDraftPrompt(
       phase: "initial_draft",
     }),
     ``,
-    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -355,7 +338,6 @@ export function buildAgentTwoInitialDraftPrompt(
       phase: "initial_draft",
     }),
     ``,
-    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -390,7 +372,6 @@ export function buildAgentOneProposedChangesPrompt(
       phase: "proposed_changes",
     }),
     ``,
-    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -426,7 +407,6 @@ export function buildAgentTwoCrossReviewPrompt(
       phase: "cross_review",
     }),
     ``,
-    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -477,7 +457,6 @@ export function buildAgentTwoCounterProposalPrompt(
       phase: "counter_proposal",
     }),
     ``,
-    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -536,7 +515,6 @@ export function buildAgentOneResolutionDecisionPrompt(
       phase: "resolution_decision",
     }),
     ``,
-    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -620,7 +598,6 @@ export function buildAgentOneFinalAnswerPrompt(
     ``,
     `Set answer_artifact_id to "answer" and audit_artifact_id to "audit". The structured JSON must not contain the final answer body or audit body.`,
     ``,
-    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
 
   return {

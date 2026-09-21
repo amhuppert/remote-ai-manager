@@ -87,9 +87,6 @@ export const outputSchemaInputSchema = z.preprocess(
       : value,
   z.record(z.string(), z.unknown()),
 );
-const structuredOutputRepairInputSchema = z.object({
-  maxAttempts: z.number().int().min(0).max(1),
-});
 
 const baseRequestFields = {
   ...executionIntentSchema.shape,
@@ -102,7 +99,9 @@ const baseRequestFields = {
   systemInstructions: z.string().optional(),
   tooling: portableMcpConfigInputSchema.optional(),
   outputSchema: outputSchemaInputSchema.optional(),
-  structuredOutputRepair: structuredOutputRepairInputSchema.optional(),
+  // Default: prose work, then formatting on the same session. Use single for
+  // trivial payloads, format-only requests, and isolated one-shots.
+  structuredOutputTurns: z.enum(["work_then_format", "single"]).optional(),
   writeCapability: laneWriteCapabilitySchema.optional(),
   // 0 is the project-wide "no timeout" sentinel; positive values cap the
   // turn. Both task runners (`claude/task-runner`, `codex/task-runner`) and

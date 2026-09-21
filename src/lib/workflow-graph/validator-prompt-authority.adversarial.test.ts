@@ -42,6 +42,7 @@ vi.mock("@/lib/shared/sdk-env", () => ({}));
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { renderStructuredOutputInstruction } from "@/lib/agent-backends/structured-output-prompt";
 import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
 import { createValidatorConversationHarness } from "./testing/validator-conversation-harness";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -255,8 +256,10 @@ function privilegedPayload(): string {
   return currentProvider().privilegedInstructions;
 }
 
-function userPrompt(): string {
-  return currentProvider().userPrompt;
+function workPrompt(): string {
+  const workTurn = currentProvider().turns.find((turn) => !turn.outputFormat);
+  if (!workTurn) throw new Error("Validator did not dispatch a work turn");
+  return workTurn.prompt;
 }
 
 function occurrences(haystack: string, needle: string): number {
@@ -354,10 +357,23 @@ describe.each(["claude", "codex"] as const)(
         // the user prompt. The demands cannot reach that prompt at all, so
         // "ignore the acceptance criteria" has nothing to edit: it can only
         // ask, from inside a block the frame above it has already subordinated.
-        const prompt = userPrompt();
-        expect(prompt).toContain(ACCEPTANCE_CRITERIA);
-        expect(prompt).not.toContain(ADVERSARY_MARKER);
-        expect(prompt).not.toContain(WORKFLOW_ROLE_CONTRACT_HEADING);
+        const turns = currentProvider().turns;
+        expect(turns).toHaveLength(2);
+        const [work, format] = turns;
+        expect(work?.outputFormat).toBeUndefined();
+        expect(work?.prompt).toContain(ACCEPTANCE_CRITERIA);
+        expect(format?.outputFormat?.type).toBe("json_schema");
+        if (!format?.outputFormat)
+          throw new Error("Missing format-turn schema");
+        const instruction = renderStructuredOutputInstruction(
+          format.outputFormat.schema,
+        );
+        expect(work?.prompt).not.toContain(instruction);
+        expect(format.prompt).toContain(instruction);
+        for (const turn of turns) {
+          expect(turn.prompt).not.toContain(ADVERSARY_MARKER);
+          expect(turn.prompt).not.toContain(WORKFLOW_ROLE_CONTRACT_HEADING);
+        }
       });
 
       it("keeps the candidate worktree outside the writable set handed to the provider", async () => {
@@ -540,13 +556,13 @@ describe.each(["claude", "codex"] as const)(
       // The mandate is per-seat and the turn prompt is shared, so the mandate
       // has no route into it — which is what keeps the divergence confined to
       // one channel.
-      const prompt = userPrompt();
+      const prompt = workPrompt();
       expect(prompt).not.toContain(MANDATE_A);
       expect(prompt).not.toContain(ADVERSARY_MARKER);
 
       // Writing at the authoritative layer still does not let the author (or
       // anything that reached this field) rewrite the verdict contract: the
-      // schema quoted in the contract is the harness's.
+      // schema carried by the format turn is the harness's.
       expect(run.result.kind).toBe("pass");
       const replaced = await runValidator({
         backend,
@@ -565,7 +581,7 @@ describe.each(["claude", "codex"] as const)(
       });
       const first = {
         payload: privilegedPayload(),
-        evidence: sharedEvidence(userPrompt()),
+        evidence: sharedEvidence(workPrompt()),
       };
 
       await runValidator({
@@ -575,7 +591,7 @@ describe.each(["claude", "codex"] as const)(
       });
       const second = {
         payload: privilegedPayload(),
-        evidence: sharedEvidence(userPrompt()),
+        evidence: sharedEvidence(workPrompt()),
       };
 
       // Two seats of one round: what they were shown of the candidate — the

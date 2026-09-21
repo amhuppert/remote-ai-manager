@@ -43,7 +43,6 @@ export function createHostedBackendFixture(
         runtimeConfigurationFixture({
           backend: backend.backend,
           modelSelection: backend.modelSelection,
-          outputFormat: backend.outputFormat,
           fsWritePolicy: backend.fsWritePolicy,
         }),
         {

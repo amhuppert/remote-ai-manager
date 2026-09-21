@@ -67,11 +67,6 @@ import {
 } from "@/lib/workflows/primitives/lane-scheduler";
 import type { LaneService } from "@/lib/workflows/primitives/lane-service";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
-import {
-  COLLABORATION_FORMAT_TURN_INSTRUCTION,
-  COLLABORATION_PROSE_TURN_INSTRUCTION,
-  COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
-} from "./prompt-builders";
 import { collaborationAgentSchema } from "./types";
 
 const logger = createLogger("workflows.collaboration.agent-caller-production");
@@ -315,9 +310,6 @@ function buildInnerCallAgent(
     const factory = resolveConversationFactory(backend);
     const conversationId =
       claudeResumeRef?.ref ?? `collab-${input.workflowId}-${newId()}`;
-    const outputFormat = request.outputSchema
-      ? { type: "json_schema" as const, schema: request.outputSchema }
-      : undefined;
     const modelSelection =
       request.modelSelection ?? laneDefaults.modelSelection;
     // Semantic → transport: the request's governing instructions become the
@@ -347,7 +339,6 @@ function buildInnerCallAgent(
       worktreePath: input.worktreePath,
       persistedRef: claudeResumeRef,
       modelSelection,
-      ...(outputFormat !== undefined ? { outputFormat } : {}),
       sessionInstructions,
       tooling: {},
     });
@@ -560,40 +551,6 @@ export function createCollaborationProductionAgentCaller(
 }
 
 /**
- * Turn a schema-bearing phase prompt into its prose work-turn form by swapping
- * the builder-owned structured-output reminder for the prose directive.
- *
- * The reminder is only ever the prompt's terminal segment — every phase builder
- * emits it last — so the swap is anchored to the suffix. A blind
- * `replace()` would rewrite the FIRST occurrence anywhere in the prompt, and by
- * this point `callPrimitive` has prefixed the captured `<active-ticket>` block,
- * whose title and description are unrestricted user text: a ticket that quotes
- * the reminder would have its own words rewritten while the real trailing
- * reminder survived. The canonical block has to reach the agent byte-for-byte.
- */
-function swapTrailingReminderForProseDirective(
-  prompt: string,
-  context: { workflowId: string; laneId: string | undefined },
-): string {
-  if (!prompt.endsWith(COLLABORATION_STRUCTURED_OUTPUT_REMINDER)) {
-    // Not a builder-shaped phase prompt. Dispatch it unchanged rather than
-    // guessing which occurrence was meant; the work turn then keeps whatever
-    // output directive its author wrote.
-    logger.warn("collaboration.work_turn.prose_swap_skipped", {
-      workflowId: context.workflowId,
-      laneId: context.laneId,
-    });
-    return prompt;
-  }
-  return (
-    prompt.slice(
-      0,
-      prompt.length - COLLABORATION_STRUCTURED_OUTPUT_REMINDER.length,
-    ) + COLLABORATION_PROSE_TURN_INSTRUCTION
-  );
-}
-
-/**
  * Adapts a `WorkflowAgentCaller` into the `(request) => Promise<AgentCallResult>`
  * signature the slice's `callAgent` dep expects.
  *
@@ -602,11 +559,8 @@ function swapTrailingReminderForProseDirective(
  * loudly rather than falling back to an unscheduled direct backend call, which
  * would bypass the single scheduler acquisition point (D16).
  *
- * A schema-bearing request becomes ONE two-turn caller request (prose work
- * turn + format follow-up), so the whole prose→format repair is a single
- * serialized semantic operation: the scheduler is acquired exactly once around
- * both underlying backend turns and no competing same-session writer can
- * interleave between them.
+ * The facade owns every structured-output turn inside the caller's single
+ * scheduled operation, so no same-session writer interleaves with formatting.
  */
 export function createCollaborationProductionCallAgent(
   input: CollaborationProductionAgentCallerInput,
@@ -620,49 +574,16 @@ export function createCollaborationProductionCallAgent(
     }
     const laneRef = request.laneRef;
 
-    // A request without a structured-output schema is a single turn.
-    if (request.outputSchema === undefined) {
-      return caller.call({
-        laneRef,
-        sessionKey: input.sessionKey,
-        ...(request.writeCapability !== undefined
-          ? { writeCapability: request.writeCapability }
-          : {}),
-        agentCallRequest: request,
-      });
-    }
-
-    // Two-step structured output. The work turn answers in prose (schema
-    // stripped, the JSON reminder swapped for a prose directive); the format
-    // follow-up restates that answer as schema-conforming JSON through the
-    // backend transport and shared gate. Both turns run inside ONE scheduled
-    // critical section: the format turn resumes the work turn's session via the
-    // lane's continuity
-    // ref, so the model formats an answer it has already produced instead of
-    // reasoning and conforming to the schema in a single pass (which fails when
-    // the task is large enough that the agent is still mid-reasoning at
-    // enforcement time).
-    const workTurn: AgentCallRequest = {
-      ...request,
-      outputSchema: undefined,
-      prompt: swapTrailingReminderForProseDirective(request.prompt, {
-        workflowId: input.workflowId,
-        laneId: laneRef.laneId,
-      }),
-    };
-    const formatTurn: AgentCallRequest = {
-      ...request,
-      imageRefs: undefined,
-      prompt: COLLABORATION_FORMAT_TURN_INSTRUCTION,
-    };
     return caller.call({
       laneRef,
       sessionKey: input.sessionKey,
       ...(request.writeCapability !== undefined
         ? { writeCapability: request.writeCapability }
         : {}),
-      agentCallRequest: workTurn,
-      formatFollowUp: formatTurn,
+      agentCallRequest: {
+        ...request,
+        structuredOutputTurns: "work_then_format",
+      },
     });
   };
 }

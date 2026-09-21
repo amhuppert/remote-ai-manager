@@ -36,10 +36,6 @@ export interface StructuredOutputCandidate {
   source: StructuredOutputSource;
 }
 
-export type ExtractStructuredOutputResult =
-  | { ok: true; value: unknown; source: StructuredOutputSource }
-  | { ok: false; error: string };
-
 export type ValidateStructuredOutputResult<T> =
   | { ok: true; value: T; source: StructuredOutputSource }
   | { ok: false; error: string; stage: "extraction" | "validation" };
@@ -72,24 +68,6 @@ export function extractStructuredOutputCandidates(
     }
   }
   return candidates;
-}
-
-export function extractStructuredOutput(
-  input: StructuredOutputInput,
-  options?: ExtractStructuredOutputOptions,
-): ExtractStructuredOutputResult {
-  const candidates = extractStructuredOutputCandidates(input, options);
-  const first = candidates[0];
-  if (first !== undefined) {
-    logger.debug("structured_output.extracted", { source: first.source });
-    return { ok: true, value: first.value, source: first.source };
-  }
-  const error = describeExtractionFailure(input, options);
-  logger.warn("structured_output.validation_failed", {
-    stage: "extraction",
-    error,
-  });
-  return { ok: false, error };
 }
 
 /**

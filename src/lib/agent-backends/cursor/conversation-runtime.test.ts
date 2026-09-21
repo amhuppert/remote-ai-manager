@@ -796,18 +796,27 @@ describe("turn configuration", () => {
     ).toEqual([{ data: "AAAA", mimeType: "image/png" }]);
   });
 
-  it("appends the shared structured-output instruction and surfaces no native value", async () => {
+  it("renders the schema only on the requested format turn of the same runtime", async () => {
     const schema = { type: "object", properties: { ok: { type: "boolean" } } };
-    const harness = createHarness({
-      create: { outputFormat: { type: "json_schema", schema } },
+    const harness = createHarness();
+    await harness.send({ promptText: "Inspect the result" });
+    const result = await harness.send({
+      promptText: "Format the result",
+      outputFormat: { type: "json_schema", schema },
     });
-
-    const result = await harness.send();
-    const dispatched = elementAt(
-      elementAt(harness.transport.workers, 0).turns,
-      0,
-    ).input.promptText;
-    expect(dispatched).toContain(renderStructuredOutputInstruction(schema));
+    await harness.send({ promptText: "Continue working" });
+    const dispatched = harness.transport.workers
+      .flatMap((worker) => worker.turns)
+      .map((turn) => turn.input.promptText);
+    expect(dispatched).toHaveLength(3);
+    expect(dispatched[0]).not.toContain(
+      renderStructuredOutputInstruction(schema),
+    );
+    expect(dispatched[1]).toContain(renderStructuredOutputInstruction(schema));
+    expect(dispatched[2]).not.toContain(
+      renderStructuredOutputInstruction(schema),
+    );
+    expect(harness.transport.workers).toHaveLength(1);
     expect(result.structuredOutput).toBeUndefined();
   });
 

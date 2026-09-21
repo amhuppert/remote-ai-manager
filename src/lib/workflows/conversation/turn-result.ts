@@ -348,8 +348,8 @@ function readStructuredOutputGateIssues(
 
 /**
  * Pull the structured-output gate's bounded-repair spend out of the same opaque
- * `backendDetails`. This is the gate's OWN repair turn — the one
- * `applyStructuredOutputGate` runs before it refuses — and it is the only
+ * `backendDetails`. This is the gate's OWN repair turn — the one the facade's
+ * structured-output protocol runs before it refuses — and it is the only
  * repair provenance a schema refusal has. Returns undefined when the details
  * carry neither number, so a caller reports no repair rather than an invented
  * zero.

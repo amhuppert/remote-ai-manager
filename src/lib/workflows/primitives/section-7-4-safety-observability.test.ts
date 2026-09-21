@@ -183,7 +183,6 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
           contextWindowMetrics: true,
         },
         modelSelection: CLAUDE_MODEL_SELECTION,
-        outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
           backendRef: { backend: "claude", sessionId: "s1" },

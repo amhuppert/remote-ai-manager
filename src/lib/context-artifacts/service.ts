@@ -12,10 +12,7 @@ import { targetFromStoreSessionName } from "@/lib/conversations/conversation-tar
  */
 
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
-import {
-  compactionExecutionRequirements,
-  compactionRepairRequirements,
-} from "@/lib/config/task-admission";
+import { compactionExecutionRequirements } from "@/lib/config/task-admission";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
@@ -481,7 +478,6 @@ export function createCompactionService(
       config.backend,
       compactionExecutionRequirements,
     );
-    await assertBackendExecution(config.backend, compactionRepairRequirements);
     const modelSelection =
       input.kind === "conversation_compaction"
         ? config.conversationModelSelection

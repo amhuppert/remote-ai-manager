@@ -375,7 +375,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           backend: "claude",
           prompt: "p",
           outputSchema: { type: "object" },
-          structuredOutputRepair: { maxAttempts: 0 },
+          structuredOutputTurns: "single",
         },
         {
           resolveTaskRunner: () => ({
@@ -395,6 +395,8 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
         /structured output failed validation/,
       );
       expect(validateStructuredOutput).toHaveBeenCalledTimes(1);
+      expect(runner.run).toHaveBeenCalledTimes(1);
+      expect(result.backendRef).toBeNull();
     });
 
     it("conversation_turn path with outputSchema present routes structured-output failures through failureKind=schema_validation (parity with task_run)", async () => {
@@ -412,7 +414,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           contextWindowMetrics: true,
         },
         modelSelection: CLAUDE_MODEL_SELECTION,
-        outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
           backendRef: { backend: "claude", sessionId: "s1" },
@@ -474,7 +475,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           contextWindowMetrics: false,
         },
         modelSelection: CODEX_MODEL_SELECTION,
-        outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
           backendRef: { backend: "codex", threadId: "t1" },
@@ -723,7 +723,6 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           contextWindowMetrics: true,
         },
         modelSelection: CLAUDE_MODEL_SELECTION,
-        outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
           backendRef: { backend: "claude", sessionId: "s1" },

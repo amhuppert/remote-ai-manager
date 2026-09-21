@@ -14,7 +14,6 @@ function makeMockRuntime(
     backend: "claude",
     status: "alive",
     modelSelection: { modelId: "opus", parameters: { effort: "high" } },
-    outputFormat: undefined,
 
     sendTurn: vi.fn(),
     close: vi.fn(async () => {}),

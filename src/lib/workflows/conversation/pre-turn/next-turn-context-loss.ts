@@ -59,10 +59,9 @@ const NO_NEXT_TURN_CONTEXT_LOSS: NextTurnContextLoss = {
 /**
  * The configuration the next turn of a conversation AT REST would run under.
  *
- * Three of its dimensions — the model selection, `outputFormat`, and
- * `fsWritePolicy` — are SUPPLIED AT DISPATCH and unobservable outside a turn.
- * A model override exists only when a caller names one on submission, a schema
- * only when a structured-output request carries it, and a lane's write envelope
+ * Two of its dimensions — the model selection and `fsWritePolicy` — are
+ * supplied at dispatch and unobservable outside a turn. A model override exists
+ * only when a caller names one on submission, and a lane's write envelope
  * only once the runner composes it from placement as the turn starts. None of
  * them is held as conversation state, so no reader outside a turn can see the
  * value the next dispatch will supply — not because it cannot change, but
@@ -76,7 +75,7 @@ const NO_NEXT_TURN_CONTEXT_LOSS: NextTurnContextLoss = {
  *
  * The consequence is an accepted divergence (operator decision, 2026-09-04),
  * pinned by "the dispatch-supplied boundary" in this module's test: a dispatch
- * that supplies a different model, schema, or envelope makes the turn rebuild
+ * that supplies a different model or envelope makes the turn rebuild
  * the runtime, and with no stored resume handle to carry the conversation
  * across it composes a full block where this preview printed a delta.
  * Closing it for `fsWritePolicy` would mean deriving the allowlist outside

@@ -18,9 +18,9 @@ import type {
   ConversationBackendCreateInput,
   ConversationBackendEvent,
   ConversationBackendTurnResult,
+  ConversationBackendTurnInput,
 } from "../conversation";
 import { conversationTranscriptFrame } from "../transcript";
-import { buildStructuredOutputRepairPrompt } from "../structured-output-repair";
 import { validateStructuredOutput } from "../structured-output";
 import { createCursorTaskStore } from "./background-task-store";
 import { applyCursorTaskEvent } from "./background-tasks";
@@ -127,9 +127,11 @@ interface PersistingHarness {
   events: ConversationBackendEvent[];
   /** Ref the "machine" persisted, updated the moment backend_init arrives. */
   persistedRef: { value: string | null };
-  send(overrides?: {
-    promptText?: string;
-  }): Promise<ConversationBackendTurnResult>;
+  send(
+    overrides?: Partial<
+      Pick<ConversationBackendTurnInput, "promptText" | "outputFormat">
+    >,
+  ): Promise<ConversationBackendTurnResult>;
   transcriptLines(): Promise<Record<string, unknown>[]>;
 }
 
@@ -169,6 +171,7 @@ function createPersistingHarness(
     send: (overrides = {}) =>
       runtime.sendTurn({
         promptText: overrides.promptText ?? "do the thing",
+        outputFormat: overrides.outputFormat,
         imageRefs: [],
         sessionInstructions: [],
         modelSelection: MODEL_SELECTION,
@@ -756,9 +759,6 @@ function validateTurn(result: ConversationBackendTurnResult) {
 describe("structured output through the shared post-validation path", () => {
   it("accepts a valid final response with no Cursor-specific pipeline", async () => {
     const harness = createPersistingHarness({
-      create: {
-        outputFormat: { type: "json_schema", schema: REPORT_JSON_SCHEMA },
-      },
       worker: {
         onTurn: (turn, worker) => {
           worker.sendInputAccepted(turn.runId);
@@ -772,7 +772,9 @@ describe("structured output through the shared post-validation path", () => {
       },
     });
 
-    const result = await harness.send();
+    const result = await harness.send({
+      outputFormat: { type: "json_schema", schema: REPORT_JSON_SCHEMA },
+    });
     // The adapter forwards no native structured value — the shared extractor
     // is the only thing that reads the output.
     expect(result.structuredOutput).toBeUndefined();
@@ -781,76 +783,6 @@ describe("structured output through the shared post-validation path", () => {
       value: { verdict: "pass" },
       source: "raw_json",
     });
-  });
-
-  it("repairs an invalid response in one bounded repair turn", async () => {
-    let turnIndex = 0;
-    const harness = createPersistingHarness({
-      create: {
-        outputFormat: { type: "json_schema", schema: REPORT_JSON_SCHEMA },
-      },
-      worker: {
-        onTurn: (turn, worker) => {
-          turnIndex += 1;
-          worker.sendInputAccepted(turn.runId);
-          worker.sendNativeEvent(
-            turn.runId,
-            0,
-            ASSISTANT(turnIndex === 1 ? "sorry, no JSON" : '{"verdict":"ok"}'),
-          );
-          worker.settle(turn.runId, "completed");
-        },
-      },
-    });
-
-    const first = await harness.send();
-    const firstValidation = validateTurn(first);
-    expect(firstValidation.ok).toBe(false);
-    if (firstValidation.ok) return;
-
-    const repairPrompt = buildStructuredOutputRepairPrompt({
-      schema: REPORT_JSON_SCHEMA,
-      priorOutputText: first.finalText ?? "",
-      issues: [firstValidation.error],
-    });
-    const repaired = await harness.send({ promptText: repairPrompt });
-
-    expect(validateTurn(repaired)).toMatchObject({
-      ok: true,
-      value: { verdict: "ok" },
-    });
-    // One repair, not a loop: exactly two dispatches reached the worker.
-    expect(elementAt(harness.transport.workers, 0).turns).toHaveLength(2);
-    expect(
-      elementAt(elementAt(harness.transport.workers, 0).turns, 1).input
-        .promptText,
-    ).toContain(repairPrompt);
-  });
-
-  it("reports a bounded validation failure when the repair turn also fails", async () => {
-    const harness = createPersistingHarness({
-      create: {
-        outputFormat: { type: "json_schema", schema: REPORT_JSON_SCHEMA },
-      },
-      worker: {
-        onTurn: (turn, worker) => {
-          worker.sendInputAccepted(turn.runId);
-          worker.sendNativeEvent(turn.runId, 0, ASSISTANT("still not JSON"));
-          worker.settle(turn.runId, "completed");
-        },
-      },
-    });
-
-    const first = await harness.send();
-    const repaired = await harness.send({ promptText: "repair please" });
-    const validation = validateTurn(repaired);
-
-    expect(validateTurn(first).ok).toBe(false);
-    expect(validation.ok).toBe(false);
-    if (validation.ok) return;
-    // A failed contract is a neutral error, not a Cursor one.
-    expect(typeof validation.error).toBe("string");
-    expect(repaired.failure).toBeNull();
   });
 });
 

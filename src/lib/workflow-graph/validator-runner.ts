@@ -93,10 +93,6 @@ import {
   type ValidationDiffScope,
 } from "./validation-diff-scope";
 import type { CandidateScope } from "@/lib/git/diff";
-import {
-  validateStructuredOutput,
-  type StructuredOutputSource,
-} from "@/lib/agent-backends/structured-output";
 
 import {
   buildValidatorOutputSchema,
@@ -276,7 +272,7 @@ export function buildContextValidationPrompt(
     "",
     "## Required Output",
     "",
-    "Output a JSON object with these fields:",
+    "Establish every item below in your review. A follow-up turn will ask you to report them as the structured verdict, whose fields are:",
     "- `summary` (string): Brief explanation of your assessment.",
     ...requiredOutputFieldLines(
       input.validator.authority,
@@ -501,24 +497,10 @@ function wireResultToOutcome(
 
 export interface ParsedValidatorResponse {
   result: ValidatorOutcome;
-  parsePath:
-    | "structured_output"
-    | "raw_json"
-    | "fenced_json_block"
-    | "runner_error";
+  parsePath: "structured_output" | "runner_error";
 }
 
-const PARSE_PATH_BY_SOURCE: Record<
-  StructuredOutputSource,
-  Exclude<ParsedValidatorResponse["parsePath"], "runner_error">
-> = {
-  native: "structured_output",
-  raw_json: "raw_json",
-  fenced: "fenced_json_block",
-};
-
 export interface ParseValidatorResponseInput {
-  text: string;
   engine: AgentBackendId;
   /**
    * Selects the parse twin. Required rather than defaulted: a caller that
@@ -539,16 +521,13 @@ export interface ParseValidatorResponseInput {
 }
 
 /**
- * Maps a validator turn's output onto a `ValidatorOutcome` via the shared
- * structured-output module (extraction precedence native → raw JSON → last
- * fenced block, first schema-passing candidate wins), then applies the
- * validator-specific task-id containment check.
+ * Parses the facade-accepted payload with the domain schema, then applies
+ * validator-specific task and criterion containment checks.
  */
 export function parseValidatorResponse(
   input: ParseValidatorResponseInput,
 ): ParsedValidatorResponse {
   const {
-    text,
     engine,
     authority,
     structuredOutput,
@@ -561,39 +540,33 @@ export function parseValidatorResponse(
     ? new Set(allowedCriterionIds)
     : null;
 
-  const validated = validateStructuredOutput(
+  const validated = (
     authority === "advisory"
       ? workflowAdvisoryValidatorResultSchema
-      : workflowBlockingValidatorResultSchema,
-    {
-      ...(structuredOutput != null ? { native: structuredOutput } : {}),
-      text,
-    },
-  );
+      : workflowBlockingValidatorResultSchema
+  ).safeParse(structuredOutput);
 
-  if (!validated.ok) {
+  if (!validated.success) {
     return {
       result: {
         kind: "infra_error",
-        reason:
-          validated.stage === "extraction" ? "unparseable" : "schema_mismatch",
-        message: validated.error,
+        reason: "schema_mismatch",
+        message: validated.error.message,
         engine,
       },
-      // No candidate was accepted; log the terminal fallback path.
-      parsePath: "fenced_json_block",
+      parsePath: "structured_output",
     };
   }
 
   return {
     result: wireResultToOutcome(
-      validated.value,
+      validated.data,
       engine,
       allowedTaskIdSet,
       allowedCriterionIdSet,
       requireIssueCriterionId ?? false,
     ),
-    parsePath: PARSE_PATH_BY_SOURCE[validated.source],
+    parsePath: "structured_output",
   };
 }
 
@@ -877,6 +850,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           askUserQuestionsEnabled: invocation.askUserQuestionsEnabled,
           fsWritePolicy: invocation.fsWritePolicy,
           outputFormat,
+          structuredOutputTurns: "work_then_format",
           modelSelection: invocation.modelSelection,
         },
         executionContext: {
@@ -1144,7 +1118,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           parsePath: "runner_error",
         }
       : parseValidatorResponse({
-          text,
           engine: backend,
           authority,
           structuredOutput: taskResult.structuredOutput,
@@ -1419,8 +1392,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       contextId: input.context.id,
     });
 
-    // One schema per dispatch, quoted in the role contract and enforced by the
-    // provider: the validator is told exactly the shape it will be held to.
+    // The facade carries this schema on the format turn after review work.
     const outputSchema = buildValidatorOutputSchema({
       authority: input.validator.authority,
       taskIds: allowedTaskIds,

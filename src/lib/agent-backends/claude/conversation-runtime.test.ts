@@ -476,7 +476,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     });
   });
 
-  it("renders the stored full schema into each turn without using SDK outputFormat", async () => {
+  it("renders a schema only on the requested format turn of the same runtime", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -503,7 +503,6 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       persistedRef: null,
       sessionInstructions: [],
       tooling: {},
-      outputFormat,
     });
 
     const callArg = queryMock.mock.calls[0]![0]! as {
@@ -511,10 +510,34 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       options: { outputFormat?: unknown };
     };
     expect(callArg.options).not.toHaveProperty("outputFormat");
-    expect(runtime.outputFormat).toBe(outputFormat);
+    const work = runtime.sendTurn({
+      promptText: "Inspect the result",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    const workDelivered = await callArg.prompt.next();
+    expect(workDelivered.value?.message.content).toEqual([
+      { type: "text", text: "Inspect the result" },
+    ]);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-structured",
+      uuid: "result-work",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 1,
+      result: "The result is done with one reference.",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await work;
 
     const turnPromise = runtime.sendTurn({
       promptText: "Format the result",
+      outputFormat,
       imageRefs: [],
       sessionInstructions: [],
       autonomous: false,
@@ -594,12 +617,12 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       persistedRef: null,
       sessionInstructions: [],
       tooling: {},
-      outputFormat: { type: "json_schema", schema },
     });
     const channel: AsyncGenerator<SDKUserMessage> =
       queryMock.mock.calls[0]![0].prompt;
 
     const turnPromise = runtime.sendTurn({
+      outputFormat: { type: "json_schema", schema },
       promptText,
       imageRefs: [],
       sessionInstructions: [],
@@ -644,11 +667,11 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       persistedRef: null,
       sessionInstructions: [],
       tooling: {},
-      outputFormat: { type: "json_schema", schema },
     });
     const call: { prompt: AsyncGenerator<SDKUserMessage>; options: Options } =
       queryMock.mock.calls[0]?.[0];
     const turn = runtime.sendTurn({
+      outputFormat: { type: "json_schema", schema },
       promptText: "/wait-what shorter",
       promptContext: "<memory-index>remember</memory-index>",
       syntheticForkSeed: "<fork-seed>history</fork-seed>",
@@ -710,12 +733,12 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       persistedRef: null,
       sessionInstructions: [],
       tooling: {},
-      outputFormat: { type: "json_schema", schema },
     });
     const channel: AsyncGenerator<SDKUserMessage> =
       queryMock.mock.calls[0]![0].prompt;
 
     const turnPromise = runtime.sendTurn({
+      outputFormat: { type: "json_schema", schema },
       promptText: "Inspect the attachment",
       imageRefs: [
         {

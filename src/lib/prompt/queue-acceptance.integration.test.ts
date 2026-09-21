@@ -55,7 +55,6 @@ describe.each(["session", "project"] as const)(
         backend: "claude",
         status: "alive",
         modelSelection: { modelId: "opus", parameters: {} },
-        outputFormat: undefined,
         sendTurn: async () => {
           throw new Error("unexpected turn");
         },

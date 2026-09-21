@@ -200,7 +200,6 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
         current: { ...runtimeConfigurationFixture(), ...alive },
         desired: runtimeConfigurationFixture({
           modelSelection: selection,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: POLICY,
         }),
@@ -222,7 +221,6 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: selection,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: widened,
         }),
@@ -239,7 +237,6 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: selection,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -258,7 +255,6 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: selection,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: { ...POLICY, allowWrite: [...POLICY.allowWrite] },
         }),

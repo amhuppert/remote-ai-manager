@@ -22,7 +22,6 @@ import {
   COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
 } from "./types";
 import {
-  COLLABORATION_FORMAT_TURN_INSTRUCTION,
   buildAgentOneFinalAnswerPrompt,
   buildAgentOneInitialDraftPrompt,
   buildAgentOneProposedChangesPrompt,
@@ -50,20 +49,6 @@ const WORKFLOW_ID = "wf-fixture";
 function mainPath(artifact: { artifacts: Array<{ path: string }> }): string {
   return artifact.artifacts[0]!.path;
 }
-
-describe("structured-output turn instructions", () => {
-  it("keeps the format turn as a small manifest and forbids file contents in JSON", () => {
-    expect(COLLABORATION_FORMAT_TURN_INSTRUCTION).toMatch(
-      /small structured manifest/i,
-    );
-    expect(COLLABORATION_FORMAT_TURN_INSTRUCTION).toMatch(
-      /do not copy generated file contents/i,
-    );
-    expect(COLLABORATION_FORMAT_TURN_INSTRUCTION).not.toMatch(
-      /restate the full substance/i,
-    );
-  });
-});
 
 describe("buildAgentOneInitialDraftPrompt", () => {
   it("requests the initial_draft schema and binds the agent_one role", () => {

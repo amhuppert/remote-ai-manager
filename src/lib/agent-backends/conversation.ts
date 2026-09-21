@@ -246,9 +246,6 @@ export interface ConversationBackendRuntime {
   /** Configuration is prepared at dispatch and acknowledged with its exact hash. */
   readonly mcpConfigDelivery?: "input-accepted";
   readonly modelSelection: BackendModelSelection;
-  readonly outputFormat:
-    | { type: "json_schema"; schema: Record<string, unknown> }
-    | undefined;
 
   /**
    * The write envelope baked into this runtime at creation, or undefined for an
@@ -336,7 +333,6 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
   worktreePath: string;
   persistedRef: AgentSessionRef | null;
   modelSelection: BackendModelSelection;
-  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
 
   sessionInstructions: string[];
   tooling: ConversationToolingOverrides;

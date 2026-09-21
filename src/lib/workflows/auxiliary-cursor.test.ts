@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type {
+  AgentTaskRequest,
+  AgentTaskResult,
+} from "@/lib/agent-backends/task";
 import { createCursorTaskRunner } from "@/lib/agent-backends/cursor/task-runner";
 import { createScriptedTransport } from "@/lib/agent-backends/cursor/testing/scripted-worker";
 import { translatePortableMcpToCursor } from "@/lib/agent-backends/cursor/mcp-translation";
@@ -30,6 +34,9 @@ const conflicts = [
 ];
 
 function harness(text: string) {
+  const requests: AgentTaskRequest[] = [];
+  let latestRef: AgentTaskResult["backendRef"] | undefined;
+  let runCounter = 0;
   const transport = createScriptedTransport({
     onTurn(turn, worker) {
       worker.sendNativeEvent(turn.runId, 0, {
@@ -44,24 +51,28 @@ function harness(text: string) {
     storePath: (id) => `/state/${id}`,
     resolveModel: async (selection) => ({ ok: true, selection }),
     translatePortableMcpToCursor,
-    newRunId: () => "cursor-assistance",
+    newRunId: () => `cursor-assistance-${++runCounter}`,
     now: Date.now,
     stallTimeoutMs: 1000,
     cancelSettleTimeoutMs: 50,
   });
   return {
     transport,
+    requests,
     executeWorkflowTaskRun: async () => {
       throw new Error("Conversation resume unavailable");
     },
     executeFreshTaskRun: (input: ExecuteFreshTaskRunInput) =>
       executeFreshTaskRun(input, {
         resolveIdentity: async () => ({ backend: "cursor", modelSelection }),
-        runTask: (backend, request) => {
+        runTask: async (backend, request) => {
           if (backend !== "cursor") throw new Error(`${backend} unavailable`);
-          expect(request.resumeRef).toBeUndefined();
+          expect(request.resumeRef).toEqual(latestRef);
+          requests.push(request);
           expect(request.modelSelection).toEqual(modelSelection);
-          return runner.run(request);
+          const result = await runner.run(request);
+          latestRef = result.backendRef;
+          return result;
         },
       }),
   };
@@ -101,7 +112,11 @@ describe("Cursor git assistance through the task adapter", () => {
         operation === "analyzeConflicts" ? "analyzed" : "resolved",
       );
       expect(result).toMatchObject({ conflicts });
-      expect(deps.transport.startInputs).toHaveLength(1);
+      expect(deps.requests).toHaveLength(2);
+      expect(deps.requests[0]?.outputSchema).toBeUndefined();
+      expect(deps.requests[1]?.outputSchema).toBeDefined();
+      expect(deps.requests[1]?.resumeRef).toBeDefined();
+      expect(deps.transport.startInputs).toHaveLength(2);
       expect(deps.transport.startInputs[0]?.cwd).toBe(context.worktreePath);
     },
   );

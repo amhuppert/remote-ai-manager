@@ -209,9 +209,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly backend = CURSOR_BACKEND_ID;
   readonly mcpConfigDelivery = "input-accepted" as const;
   readonly modelSelection: BackendModelSelection;
-  readonly outputFormat:
-    | { type: "json_schema"; schema: Record<string, unknown> }
-    | undefined;
 
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
@@ -317,7 +314,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.workflowContextId = input.workflowContextId;
     this.workflowCallerConversationId = input.workflowCallerConversationId;
     this.modelSelection = input.modelSelection;
-    this.outputFormat = input.outputFormat;
 
     this.fsWritePolicy = input.fsWritePolicy;
     this.backendRef =
@@ -1947,7 +1943,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // Post-validation structured output (D16): the shared instruction is the
     // whole adapter contribution. Extraction, validation, and the bounded
     // repair turn are the shared machinery's, above this seam.
-    const schema = input.outputFormat?.schema ?? this.outputFormat?.schema;
+    const schema = input.outputFormat?.schema;
     return schema === undefined
       ? prompt
       : appendStructuredOutputInstruction(prompt, schema);

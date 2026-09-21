@@ -135,6 +135,7 @@ describe("resolveConflicts (executeWorkflowTaskRun)", () => {
     ).toBe(SESSION_NAME);
     expect(input.binding.address.target.conversationId).toBe(CONVERSATION_ID);
     expect(input.kind).toBe("task_run");
+    expect(input.structuredOutputTurns).toBe("work_then_format");
     expect(typeof input.prompt).toBe("string");
     expect(input.prompt).toContain("Resolve all merge conflicts");
     expect(typeof input.systemInstructions).toBe("string");
@@ -199,7 +200,7 @@ describe("resolveConflicts (executeWorkflowTaskRun)", () => {
     }
   });
 
-  it("falls back to fenced-JSON text parse when structuredOutput is absent (text kind)", async () => {
+  it("refuses unvalidated text even when it contains a valid conflict envelope", async () => {
     const text = `Here is the analysis:
 
 \`\`\`json
@@ -216,10 +217,10 @@ ${JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2)}
       conversationId: CONVERSATION_ID,
     });
 
-    expect(result.status).toBe("resolved");
-    if (result.status === "resolved") {
-      expect(result.conflicts).toHaveLength(2);
-    }
+    expect(result).toMatchObject({
+      status: "infrastructure",
+      failure: { kind: "schema_validation" },
+    });
   });
 
   it("returns an infrastructure outcome when executeWorkflowTaskRun returns kind=error", async () => {
@@ -433,7 +434,7 @@ describe("resolver prompt hardening", () => {
 
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
     expect(input.systemInstructions).toContain("NEVER initiate a merge");
-    expect(input.systemInstructions).toContain("empty conflicts array");
+    expect(input.systemInstructions).toContain("there is nothing to");
     expect(input.systemInstructions).toContain("current working directory");
   });
 
@@ -453,7 +454,7 @@ describe("resolver prompt hardening", () => {
 
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
     expect(input.systemInstructions).toContain("NEVER run git merge");
-    expect(input.systemInstructions).toContain("empty conflicts array");
+    expect(input.systemInstructions).toContain("there is nothing to");
   });
 });
 
@@ -1060,97 +1061,20 @@ describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
   });
 });
 
-// ============================================================
-// Parity: same structured input produces the same parsed conflicts
-// regardless of whether the runner returned them via structuredOutput
-// or as fenced JSON in text. The structured-output contract must survive
-// the migration to executeWorkflowTaskRun.
-// ============================================================
-
-describe("conflict-resolution structured-output parity", () => {
-  it("produces identical resolved conflicts whether routed via structuredOutput or fenced-JSON text", async () => {
-    const fixture = { conflicts: SAMPLE_ENTRIES };
-
-    const structuredRunner = vi.fn().mockResolvedValue(structuredOk(fixture));
-    const structuredDeps = createTestDeps({
-      executeWorkflowTaskRun: structuredRunner,
+describe("conflict entry domain validation", () => {
+  it("accepts the facade's structured envelope", () => {
+    expect(parseConflictEntries({ conflicts: SAMPLE_ENTRIES })).toEqual({
+      conflicts: SAMPLE_ENTRIES,
     });
-    const { resolveConflicts: resolveStructured } =
-      createConflictResolver(structuredDeps);
-    const structuredResult = await resolveStructured({
-      worktreePath: "/tmp/worktree",
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-    });
-
-    const text = `\`\`\`json\n${JSON.stringify(fixture, null, 2)}\n\`\`\``;
-    const textRunner = vi.fn().mockResolvedValue(textOk(text));
-    const textDeps = createTestDeps({ executeWorkflowTaskRun: textRunner });
-    const { resolveConflicts: resolveText } = createConflictResolver(textDeps);
-    const textResult = await resolveText({
-      worktreePath: "/tmp/worktree",
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-    });
-
-    expect(structuredResult).toEqual(textResult);
-    expect(structuredResult.status).toBe("resolved");
-    if (structuredResult.status === "resolved") {
-      expect(structuredResult.conflicts).toEqual(SAMPLE_ENTRIES);
-    }
-  });
-});
-
-// ============================================================
-// F5 pin: the shared structured-output chain widens conflict-resolution's
-// rejection behavior — an INVALID native candidate no longer hard-fails; the
-// chain falls through to a schema-valid raw/fenced text candidate in the same
-// turn. This widening is approved (2026-07-13 addendum to the Phase 1 slice
-// designs) and pinned here at the conflict-resolution consumer so a
-// "stop after invalid native" regression fails the suite.
-// ============================================================
-
-describe("conflict-resolution invalid-native fall-through (F5 pin)", () => {
-  it("accepts a valid fenced-JSON text candidate after an invalid native one", () => {
-    const invalidNative = { conflicts: [{ file: "x" }] };
-    const validFencedText = [
-      "I resolved the conflicts:",
-      "```json",
-      JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2),
-      "```",
-    ].join("\n");
-
-    const result = parseConflictEntries(validFencedText, invalidNative);
-
-    expect("error" in result).toBe(false);
-    if (!("error" in result)) {
-      expect(result.conflicts).toEqual(SAMPLE_ENTRIES);
-    }
   });
 
-  it("accepts a valid raw-JSON text candidate after an invalid native one", () => {
-    const invalidNative = { conflicts: [{ file: "x" }] };
-    const validRawText = JSON.stringify({ conflicts: SAMPLE_ENTRIES });
-
-    const result = parseConflictEntries(validRawText, invalidNative);
-
-    expect("error" in result).toBe(false);
-    if (!("error" in result)) {
-      expect(result.conflicts).toEqual(SAMPLE_ENTRIES);
-    }
-  });
-
-  it("still fails when the invalid native candidate has no recoverable text", () => {
-    const invalidNative = { conflicts: [{ file: "x" }] };
-
-    const result = parseConflictEntries(
-      "prose with no JSON at all",
-      invalidNative,
-    );
-
-    expect("error" in result).toBe(true);
+  it.each([
+    ["invalid entry", { conflicts: [{ file: "x" }] }],
+    ["absent payload", undefined],
+    ["bare array", SAMPLE_ENTRIES],
+    ["raw JSON text", JSON.stringify({ conflicts: SAMPLE_ENTRIES })],
+  ])("refuses %s", (_description, value) => {
+    expect(parseConflictEntries(value)).toHaveProperty("error");
   });
 });
 
@@ -1183,6 +1107,7 @@ describe("fresh-run dispatch (#78)", () => {
     expect(input.worktreePath).toBe("/worktrees/merge-target");
     expect(input.identityConversationId).toBe(CONVERSATION_ID);
     expect(input.outputFormat?.type).toBe("json_schema");
+    expect(input.structuredOutputTurns).toBe("work_then_format");
     expect(input.prompt).toContain("Analyze all merge conflicts");
   });
 

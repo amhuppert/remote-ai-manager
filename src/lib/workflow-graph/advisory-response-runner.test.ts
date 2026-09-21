@@ -9,10 +9,7 @@ import {
   buildAdvisoryDispositionsOutputSchema,
   stampAdvisoryIdentities,
 } from "@/lib/workflow-graph/advisory-delivery";
-import {
-  ADVISORY_RESPONSE_ATTEMPTS,
-  createGraphWorkflowAdvisoryResponseRunner,
-} from "@/lib/workflow-graph/advisory-response-runner";
+import { createGraphWorkflowAdvisoryResponseRunner } from "@/lib/workflow-graph/advisory-response-runner";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
@@ -292,6 +289,11 @@ describe("advisory-response turn", () => {
     expect(outcome.dispositions).toHaveLength(2);
     expect(runner.executeConversationTurn).toHaveBeenCalledTimes(2);
     expect(
+      runner.executeConversationTurn.mock.calls.map(
+        ([request]) => request.turn.structuredOutputTurns,
+      ),
+    ).toEqual(["work_then_format", "single"]);
+    expect(
       runner.executeConversationTurn.mock.calls[1]?.[0].turn.promptText,
     ).toContain("2:security:2");
   });
@@ -314,7 +316,7 @@ describe("advisory-response turn", () => {
     expect(runner.executeConversationTurn).toHaveBeenCalledTimes(2);
   });
 
-  it("re-asks when the gate itself refused the payload", async () => {
+  it("fails immediately when the facade gate refused the payload", async () => {
     const runner = run([
       settledConversationTurn({
         outcome: {
@@ -335,14 +337,30 @@ describe("advisory-response turn", () => {
       ]),
     ]);
 
-    const outcome = await runner.runAdvisoryResponse(input());
-
-    expect(outcome.dispositions).toHaveLength(2);
-    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(2);
-    expect(
-      runner.executeConversationTurn.mock.calls[1]?.[0].turn.promptText,
-    ).toContain("$.dispositions[0].reason is required");
+    await expect(runner.runAdvisoryResponse(input())).rejects.toThrow(
+      "structured output did not validate",
+    );
+    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    [
+      "text",
+      settledConversationTurn({
+        outcome: { kind: "completed", text: "no payload" },
+      }),
+    ],
+    ["invalid shape", structured([null])],
+  ])(
+    "does not re-prompt a %s result as though it were a coverage violation",
+    async (_kind, result) => {
+      const runner = run([result]);
+      await expect(runner.runAdvisoryResponse(input())).rejects.toBeInstanceOf(
+        AgentTurnFailedError,
+      );
+      expect(runner.executeConversationTurn).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("fails the turn once its attempts are spent rather than returning a set the gate never validated", async () => {
     const runner = run([
@@ -354,9 +372,7 @@ describe("advisory-response turn", () => {
     await expect(runner.runAdvisoryResponse(input())).rejects.toBeInstanceOf(
       AgentTurnFailedError,
     );
-    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(
-      ADVISORY_RESPONSE_ATTEMPTS,
-    );
+    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(2);
   });
 
   it("names the coverage violation in the failure it raises", async () => {

@@ -417,6 +417,9 @@ describe("createWorkflowCollaboratorCaller", () => {
           req.agentCallRequest.backend === "codex" ? "agent_two" : "agent_one";
         expect(req.laneRef.laneId).toBe(expectedLane);
         expect(req.agentCallRequest.laneRef?.laneId).toBe(expectedLane);
+        expect(req.agentCallRequest.structuredOutputTurns).toBe(
+          "work_then_format",
+        );
       }
     });
 

@@ -525,8 +525,8 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       "",
       "## Output",
       "",
-      "Return the structured verdict: `planningDefect` (boolean), `diagnosis` (your root-cause analysis — it becomes the halt summary when you decline), and `operations` (empty when planningDefect is false).",
-      "Each `operations` entry MUST use this transport envelope: `type` is the logical operation's type, and `payload` is a JSON-encoded object string containing every other field. Do not repeat `type` inside `payload`.",
+      "Work through the diagnosis in prose. A follow-up turn will ask for the structured verdict: `planningDefect` (boolean), `diagnosis` (your root-cause analysis — it becomes the halt summary when you decline), and `operations` (empty when planningDefect is false).",
+      "In that verdict, each `operations` entry MUST use this transport envelope: `type` is the logical operation's type, and `payload` is a JSON-encoded object string containing every other field. Do not repeat `type` inside `payload`.",
       'Example: `{ "planningDefect": true, "diagnosis": "The criterion names a removed endpoint.", "operations": [{ "type": "update-context", "payload": "{\\"contextId\\":\\"context-implement\\",\\"acceptanceCriteria\\":[{\\"id\\":\\"ac-1\\",\\"statement\\":\\"Use the supported endpoint.\\"}]}" }] }`',
     ].join("\n"),
   );

@@ -179,11 +179,8 @@ interface ScriptedExec {
 }
 
 /**
- * Scripted stand-in for `executeAgentCall`. The production caller issues a
- * prose work turn (no outputSchema) followed by a format turn (outputSchema
- * set) for every schema-carrying request, so schema-less requests get a
- * text-only completion and each schema-carrying request consumes the next
- * scripted structured output for its backend.
+ * Scripted facade result for each collaboration phase. The facade owns its
+ * backend turns; this fixture exercises the phase scheduler and lane bookkeeping.
  */
 function makeScriptedExec(
   workflowId: string,
@@ -249,7 +246,6 @@ const stubClaudeFactory: ConversationBackendFactory = {
       backend: "claude",
       status: "alive",
       modelSelection: input.modelSelection,
-      outputFormat: input.outputFormat,
       alignmentVersion: null,
       applyPortableMcpConfig: async () => ({
         disposition: "applied_now" as const,
@@ -375,11 +371,8 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
 
     // Every executed turn was admitted through the single scheduler
     // acquisition point inside the WorkflowAgentCaller, and each schema-bearing
-    // phase is ONE scheduled semantic operation: 7 phase calls run 14 backend
-    // turns (prose work + format), but the scheduler is acquired exactly ONCE
-    // per phase (7 acquisitions), so the two turns of a phase cannot be
-    // interleaved by a competing same-session writer.
-    expect(scripted.requests).toHaveLength(14);
+    // phase is one facade call and one scheduler acquisition.
+    expect(scripted.requests).toHaveLength(7);
     expect(instrumented.acquisitions).toHaveLength(7);
     expect(
       instrumented.acquisitions.every(
@@ -421,33 +414,28 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
     });
 
     let turnIndex = 0;
-    const exec = async (
-      request: AgentCallRequest,
-    ): Promise<AgentCallResult> => {
-      const isWorkTurn = request.outputSchema === undefined;
-      if (isWorkTurn) {
-        order.push("work_turn_start");
-        await workTurnParked;
-        order.push("work_turn_end");
-      } else {
-        order.push("format_turn_end");
-      }
-      turnIndex += 1;
-      const backendRef = { backend: "codex", ref: `th-${turnIndex}` } as const;
-      return {
-        backend: "codex",
-        backendRef,
-        capabilities: makeCapabilities("codex"),
-        usage: { durationMs: 1 },
-        artifacts: [],
-        outcome: isWorkTurn
-          ? { kind: "completed", text: "prose" }
-          : {
-              kind: "completed",
-              text: "formatted",
-              structuredOutput: { ok: true },
-            },
-      };
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(request) {
+        const isWorkTurn = request.outputSchema === undefined;
+        if (isWorkTurn) {
+          order.push("work_turn_start");
+          await workTurnParked;
+          order.push("work_turn_end");
+        } else {
+          order.push("format_turn_end");
+        }
+        turnIndex += 1;
+        return {
+          backendRef: { backend: "codex", ref: `th-${turnIndex}` },
+          text: isWorkTurn ? "prose" : '{"ok":true}',
+          usage: null,
+          error: null,
+          timedOut: false,
+          failure: null,
+          continuationDisposition: "retain",
+        };
+      },
     };
 
     const callAgent = createCollaborationProductionCallAgent({
@@ -475,8 +463,7 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
           },
         },
       },
-      executeAgentCallImpl: (request) => exec(request),
-      getTaskRunner: () => stubTaskRunner,
+      getTaskRunner: () => runner,
       getConversationBackendFactory: () => stubClaudeFactory,
     });
 

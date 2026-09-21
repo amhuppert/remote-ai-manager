@@ -168,30 +168,35 @@ describe("agentCallRequestSchema", () => {
     }
   });
 
-  it("accepts an explicit structured-output repair budget including opt-out", () => {
+  it("accepts an explicit structured-output turn mode", () => {
     const parsed = agentCallRequestSchema.parse({
       kind: "task_run",
       executionClass: "nongoverned-task",
       backend: "codex",
       prompt: "do the thing",
       outputSchema: { type: "object" },
-      structuredOutputRepair: { maxAttempts: 0 },
+      structuredOutputTurns: "single",
     });
 
-    expect(parsed.structuredOutputRepair).toEqual({ maxAttempts: 0 });
+    expect(parsed.structuredOutputTurns).toBe("single");
   });
 
-  it("rejects a structured-output repair budget outside the single-attempt contract", () => {
-    for (const maxAttempts of [-1, 1.5, 2]) {
-      expect(
-        agentCallRequestSchema.safeParse({
-          kind: "conversation_turn",
-          executionClass: "ordinary-conversation",
-          prompt: "do the thing",
-          outputSchema: { type: "object" },
-          structuredOutputRepair: { maxAttempts },
-        }).success,
-      ).toBe(false);
+  it("rejects caller-owned repair budgets", () => {
+    const result = agentCallRequestSchema.safeParse({
+      kind: "conversation_turn",
+      executionClass: "ordinary-conversation",
+      prompt: "do the thing",
+      outputSchema: { type: "object" },
+      structuredOutputRepair: { maxAttempts: 0 },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual([
+        expect.objectContaining({
+          code: "unrecognized_keys",
+          keys: ["structuredOutputRepair"],
+        }),
+      ]);
     }
   });
 

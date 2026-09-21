@@ -66,6 +66,7 @@ const executionFields = {
   // validator, collaboration round responses) opt into the backend-neutral
   // structured-output pipeline; everyone else gets unconstrained text.
   outputFormat: structuredOutputFormatSchema.optional(),
+  structuredOutputTurns: z.enum(["work_then_format", "single"]).optional(),
   /**
    * Server-derived filesystem-write envelope for this implementer turn, composed
    * by the graph-workflow implementer runner from the context's authored

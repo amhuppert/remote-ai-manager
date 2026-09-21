@@ -64,7 +64,6 @@ describe("abort-registry", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      outputFormat: undefined,
 
       sendTurn: async () => {
         throw new Error("sendTurn is not exercised by abort");

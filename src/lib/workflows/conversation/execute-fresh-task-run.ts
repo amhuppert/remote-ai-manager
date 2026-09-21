@@ -61,6 +61,7 @@ export interface ExecuteFreshTaskRunInput {
   prompt: string;
   systemInstructions?: string;
   outputFormat?: StructuredOutputFormat;
+  structuredOutputTurns?: "work_then_format" | "single";
   timeoutMs?: number;
   signal?: AbortSignal;
 }
@@ -140,6 +141,7 @@ export async function executeFreshTaskRun(
       ...(input.systemInstructions !== undefined
         ? { systemInstructions: input.systemInstructions }
         : {}),
+      structuredOutputTurns: input.structuredOutputTurns,
       ...(input.outputFormat !== undefined
         ? { outputSchema: input.outputFormat.schema }
         : {}),

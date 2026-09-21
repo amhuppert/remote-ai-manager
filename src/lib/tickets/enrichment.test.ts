@@ -207,6 +207,7 @@ describe("createTicketEnrichmentService", () => {
       stage: "structured_output",
     });
     expect(harness.appendInputs).toEqual([]);
+    expect(harness.requests).toHaveLength(1);
   });
 
   it("enforces the 2 KB cap in UTF-8 bytes", async () => {

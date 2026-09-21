@@ -45,18 +45,17 @@ export function validateWorkflowExecutionAdmission(
     operation: string,
     contextId?: string,
   ): void {
-    for (const executionProfile of ["standard", "isolated-one-shot"] as const)
-      sites.push({
-        backend,
-        field,
-        contextId,
-        requirements: {
-          facet: "tasks",
-          executionClass: "governed-execution",
-          executionProfile,
-          operation,
-        },
-      });
+    sites.push({
+      backend,
+      field,
+      contextId,
+      requirements: {
+        facet: "tasks",
+        executionClass: "governed-execution",
+        executionProfile: "standard",
+        operation,
+      },
+    });
   }
   function implementer(
     assignment: Assignment | undefined,

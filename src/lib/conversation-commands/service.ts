@@ -374,6 +374,7 @@ export function createConversationCommandService(
         executionClass: "nongoverned-task",
         executionProfile: "standard",
         prompt: buildGenerationPrompt(ctx),
+        structuredOutputTurns: "single",
         outputFormat: {
           type: "json_schema",
           schema:

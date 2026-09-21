@@ -297,7 +297,7 @@ export async function checkExternalTurnCoherence(
 }
 
 /**
- * Conversation-facet native structured output: the schema on the create input
+ * Conversation-facet native structured output: the schema on the turn input
  * must be forwarded to the provider port (observed via the harness capture)
  * and the provider's structured value must surface on the turn result.
  */
@@ -311,16 +311,15 @@ export async function checkConversationStructuredOutputForwarding(
       "conversation structuredOutput is 'backend_native' but the harness provides no structuredOutput drive",
     );
   }
-  const runtime = await createRuntimeFor(facet, harness, {
-    outputFormat: { type: "json_schema", schema: drive.schema },
-  });
+  const runtime = await createRuntimeFor(facet, harness);
   try {
-    const result = await runtime.sendTurn(
-      buildTurnInput(
+    const result = await runtime.sendTurn({
+      ...buildTurnInput(
         "conformance structured-output turn",
         runtime.modelSelection,
       ),
-    );
+      outputFormat: { type: "json_schema", schema: drive.schema },
+    });
     expect(result.failure).toBeNull();
     expect(result.structuredOutput).toEqual(drive.expected);
     expect(drive.readForwardedSchema()).toBeDefined();
@@ -350,16 +349,15 @@ export async function checkConversationStructuredOutputPostValidation(
     );
   }
 
-  const runtime = await createRuntimeFor(facet, harness, {
-    outputFormat: { type: "json_schema", schema: drive.schema },
-  });
+  const runtime = await createRuntimeFor(facet, harness);
   try {
-    const result = await runtime.sendTurn(
-      buildTurnInput(
+    const result = await runtime.sendTurn({
+      ...buildTurnInput(
         "conformance structured-output turn",
         runtime.modelSelection,
       ),
-    );
+      outputFormat: { type: "json_schema", schema: drive.schema },
+    });
     expect(result.failure).toBeNull();
     expect(drive.readForwardedSchema()).toBeUndefined();
     expect(result.structuredOutput).toBeUndefined();
@@ -657,7 +655,6 @@ export function describeBackendConformance(
           modelId: descriptor.metadata.defaultModelId,
           parameters: {},
         },
-        outputFormat: undefined,
 
         async sendTurn(): Promise<never> {
           throw new Error("not used by conformance");

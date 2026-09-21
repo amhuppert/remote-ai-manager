@@ -258,7 +258,6 @@ export function createTestFakeBackend(
         return overrides.runtimeIsTurnActive === true || hangingTurnActive;
       },
       modelSelection: input.modelSelection,
-      outputFormat: input.outputFormat,
 
       async sendTurn(
         turnInput: ConversationBackendTurnInput,

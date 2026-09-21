@@ -47,15 +47,45 @@ A turn result carries the cost attributed to THAT turn (`costUsd`) and, for prov
 
 ## Structured output
 
-The caller supplies its authoritative JSON Schema through the neutral conversation/task request. It may be generated from Zod or authored independently; callers do not maintain provider-specific copies.
+Structured callers use AgentCall with the authoritative `outputSchema` and an
+optional `structuredOutputTurns: "work_then_format" | "single"`. The default is
+`work_then_format`: schema-free prose work, a format turn on the same session,
+one format repair with named gate issues if necessary, then a refusal.
 
-- Claude and Codex declare `structuredOutput: "post_validation"` on both task and conversation facets. Their adapters append the authored schema as a deterministic final-message contract using `structured-output-prompt.ts`, including on image-bearing prompts and repair turns. No schema reaches the Claude SDK's `outputFormat` or the Codex SDK's `outputSchema` wire.
-- Adapters return final-response text without projecting schemas or rewriting payloads. Optional properties remain optional, and provider-emitted nulls are judged against the authored schema by the shared gate.
-- The shared extractor tries native output, raw response JSON, then the last fenced JSON block. The AgentCall facade validates every candidate through the same post-turn gate regardless of backend capability.
-- A failed facade gate gets one bounded repair turn by default. Task runs repair in a fresh isolated one-shot; conversation turns use one corrective turn on the resolved runtime. Callers may explicitly set the repair budget to zero.
-- Domain Zod schemas remain authoritative for post-parse acceptance with `safeParse`.
+- `agent-call-facade.ts` owns the sequence, gate, repair, and result aggregation.
+  No caller extracts a facade result again: domains apply Zod `safeParse` to its
+  structured payload and own semantic guards. A domain correction is one
+  conditional call, with its latest continuation and `single` mode.
+- Schemas belong only to turns. Runtime creation, runtime configuration and
+  recreation decisions carry no output schema. Claude, Codex, and Cursor use
+  `post_validation`; adapters append the shared instruction from
+  `structured-output-prompt.ts` and do not send provider-native schema fields.
+- Format and repair turns retain session identity, working directory, governing
+  instructions, and write policy. They omit new per-turn tooling, context, and
+  images and instruct the model not to run tools. They never reconstruct work
+  in a fresh context from the rejected text alone.
+- Task formatting resumes the immediately preceding turn's `backendRef`.
+  Missing or cleared continuation refuses two-turn completion. Isolated
+  one-shots must use `single` and never repair. Failed or cancelled work and
+  question-ending conversation turns do not dispatch a format turn.
+- The shared extractor tries native output, raw response JSON, then the last
+  fenced JSON block. The facade gates every candidate against the authored
+  schema; the first passing candidate wins. Domain Zod remains authoritative.
+- Results retain work artifacts and ordered transcripts, use the last turn's
+  payload and continuity, sum usage counters, and retain the latest snapshots.
+  A refusal exposes the last rejected content and gate issues.
+- `single` is explicit for naming/enrichment, ticket/commit payloads, D2 output
+  capture, and the one domain correction call compaction, checkpoint working
+  state, and advisory response make on their latest continuation. Every other
+  structured caller, including validators, advisory response, plan repair,
+  debug phases, compaction, and checkpoint working state, runs the default
+  protocol; the actor's pending-question fact is checked before formatting.
+- Checkpoint handoff capture remains the deliberate exception to the facade:
+  its capture-window path shares the prompt builder and validates text through
+  `validateStructuredOutput`, without repair.
 
-Keep structured-output transport below the backend seam. Neutral callers select behavior from declared capabilities and must not branch on provider identity.
+Keep transport below the backend seam; select behavior from declared
+capabilities rather than provider identity.
 
 ## Model selection
 

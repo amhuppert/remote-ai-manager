@@ -22,8 +22,8 @@
  * provider-native backend will accept can say. What it cannot say is checked in
  * {@link parseAdvisoryDispositions}: that the returned set is exactly the
  * delivered set, no advisory missed, invented, or answered twice, and that a
- * decline carries its reason. Each is reported as the same kind of failure as a
- * schema rejection, so the same retry answers it. Nothing else may produce a
+ * decline carries its reason. The domain asks once more only for coverage
+ * violations; schema repair belongs to the facade. Nothing else may produce a
  * disposition: a delivered advisory carries the turn's validated answer or the
  * turn failed, because the only value the engine could write in its place is one
  * no one decided.
@@ -163,14 +163,14 @@ export function buildAdvisoryResponsePrompt(input: {
     "",
     ...input.advisories.map(renderAdvisory),
     "",
-    "## Required Output",
+    "## Required Response",
     "",
-    `Return exactly ${count} disposition${count === 1 ? "" : "s"} — one per advisory above, carrying that advisory's identity verbatim:`,
+    `Explain your disposition for each of the ${count} advisories above in prose, identifying each advisory:`,
     "- `addressed`: you changed the work in response to it.",
     "- `declined`: you are not acting on it. A one-line `reason` is required.",
     "- `deferred`: worth doing, but not as part of this execution context.",
     "",
-    "Every disposition carries a `reason` field: the one-line explanation when you decline, and `null` otherwise.",
+    "Explain why you decline an advisory. A follow-up turn will record the dispositions in the required format.",
   ].join("\n");
 }
 
@@ -188,16 +188,15 @@ export function buildAdvisoryResponseRetryPrompt(input: {
   issues: readonly string[];
 }): string {
   return [
-    "Your dispositions did not match the advisories that were delivered:",
+    `Your dispositions for execution context "${input.contextTitle}" did not match the advisories that were delivered:`,
     "",
     ...input.issues.map((issue) => `- ${issue}`),
     "",
-    "Answer again, with exactly one disposition per advisory below and each advisory's identity verbatim.",
+    "Return the corrected dispositions with exactly one entry per advisory identity below. Include a one-line reason for each decline.",
     "",
-    buildAdvisoryResponsePrompt({
-      contextTitle: input.contextTitle,
-      advisories: input.advisories,
-    }),
+    ADVISORY_NON_BINDING_FRAMING,
+    "",
+    ...input.advisories.map(renderAdvisory),
   ].join("\n");
 }
 
@@ -270,7 +269,7 @@ export interface RecordedAdvisoryDisposition {
 
 export type ParsedAdvisoryDispositions =
   | { ok: true; dispositions: RecordedAdvisoryDisposition[] }
-  | { ok: false; issues: string[] };
+  | { ok: false; kind: "schema" | "coverage"; issues: string[] };
 
 /**
  * Read the response turn's payload as one disposition per delivered advisory.
@@ -281,9 +280,8 @@ export type ParsedAdvisoryDispositions =
  * answered twice. A bare decline is the fourth, and it lives here rather than in
  * the dispatched schema because the shape a provider-native backend accepts
  * cannot make one field's presence depend on another's value. Each is reported
- * by identity so the retry prompt can name it, and each is the same kind of
- * failure as a schema rejection, because a disposition set that does not cover
- * the batch is not a partial answer the engine may keep.
+ * by identity so the domain re-prompt can name it. Schema failures remain
+ * distinguishable because the facade already exhausted its schema repair.
  */
 export function parseAdvisoryDispositions(input: {
   structuredOutput: unknown;
@@ -295,6 +293,7 @@ export function parseAdvisoryDispositions(input: {
   if (!parsed.success) {
     return {
       ok: false,
+      kind: "schema",
       issues: parsed.error.issues.map(
         (issue) => `${issue.path.join(".") || "$"}: ${issue.message}`,
       ),
@@ -343,7 +342,7 @@ export function parseAdvisoryDispositions(input: {
     issues.push(`Advisory ${key} was delivered but received no disposition.`);
   }
 
-  if (issues.length > 0) return { ok: false, issues };
+  if (issues.length > 0) return { ok: false, kind: "coverage", issues };
 
   // Emitted in DELIVERED order, not in the order the turn answered: the record
   // this writes onto is ordered by identity, and a caller zipping the two lists

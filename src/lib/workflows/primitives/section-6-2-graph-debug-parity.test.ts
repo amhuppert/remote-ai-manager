@@ -17,10 +17,9 @@ import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/e
  *    the shared `ArtifactRegistry` primitive.
  *  - The conversation manager publishes `debug-mode-status` /
  *    `debug-log-received` events through `publishEvent`.
- *  - `validator-runner.ts` builds `task_run` `AgentCallRequest`s and dispatches
- *    them through the shared `executeAgentCall` facade (verified by the
- *    "validator-runner builds task_run requests through deps.executeAgentCall"
- *    test below).
+ *  - `validator-runner.ts` dispatches structured conversation turns through
+ *    the conversation manager, whose actor owns the shared `executeAgentCall`
+ *    facade (verified by the validator dispatch contract test below).
  *  - `iteration-orchestrator.ts` routes both circuit-breaker trip points
  *    (script-validator failure path, context-validator failure path) through
  *    the shared `runCircuitBreakerGate` primitive instead of inline
@@ -1013,20 +1012,18 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
   });
 
   describe("graph implementer + validator route through the conversation entrypoint (Task 6.2)", () => {
-    it("validator-runner builds task_run requests through deps.executeWorkflowTaskRun", async () => {
+    it("validator-runner dispatches a structured conversation and accepts its verdict", async () => {
       const { createValidatorRunner, buildValidatorOutputSchema } =
         await import("@/lib/workflow-graph/validator-runner");
       const fixtures = await import("@/lib/workflow-graph/test-fixtures");
 
+      const verdict = { summary: "All good", issues: [], advisories: [] };
       const executeConversationTurnSpy = vi.fn().mockResolvedValue(
         settledConversationTurn({
           outcome: {
             kind: "completed",
-            text: JSON.stringify({
-              summary: "All good",
-              issues: [],
-              advisories: [],
-            }),
+            text: JSON.stringify(verdict),
+            structuredOutput: verdict,
           },
         }),
       );
@@ -1079,7 +1076,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         (c) => c.id === "context-plan",
       )!;
 
-      await runner.runContextValidator({
+      const validation = await runner.runContextValidator({
         projectPath: "/repo",
         sessionName: "session-1",
         execution,
@@ -1087,10 +1084,12 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         validator: contextDef.contextValidator.assignments[0]!,
       });
 
+      expect(validation.result.kind).toBe("pass");
       expect(executeConversationTurnSpy).toHaveBeenCalledTimes(1);
       const [input] = executeConversationTurnSpy.mock.calls[0]!;
       expect(input.turn).toMatchObject({
         kind: "conversation_turn",
+        structuredOutputTurns: "work_then_format",
         outputFormat: {
           type: "json_schema",
           schema: buildValidatorOutputSchema({

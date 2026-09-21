@@ -98,7 +98,8 @@ describe("graph workflow output capture runner", () => {
     });
     expect(dispatched.fsWritePolicy).toBeUndefined();
     expect(dispatched.prompt).toContain('"summary"');
-    expect(dispatched.prompt).toContain("JSON object ONLY");
+    expect(dispatched.prompt).toContain("Output only the JSON object");
+    expect(dispatched.structuredOutputTurns).toBe("single");
 
     expect(outcome).toEqual({
       kind: "captured",

@@ -1,13 +1,9 @@
-import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
-import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
+import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
-import type {
-  AgentTaskResult,
-  AgentTaskRunner,
-} from "@/lib/agent-backends/task";
+import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { QuickTicketConversationContext } from "./schemas";
@@ -219,64 +215,60 @@ export function createTicketEnrichmentService(
         hasConversationContext: input.conversationContext !== undefined,
       });
 
-      let result: AgentTaskResult;
+      let result: AgentCallResult;
       try {
-        result = await runAdmittedTask(
-          input.backend,
+        result = await executeAgentCall(
           {
+            kind: "task_run",
+            backend: input.backend,
             executionClass: "nongoverned-task",
-            workingDirectory: input.projectPath,
             prompt: buildEnrichmentPrompt(input),
             modelSelection: input.modelSelection,
             outputSchema: TICKET_ENRICHMENT_OUTPUT_SCHEMA,
             timeoutMs: TICKET_ENRICHMENT_TIMEOUT_MS,
-            tooling: { portableMcp: { servers: [] } },
+            tooling: { servers: [] },
             executionProfile: "isolated-one-shot",
-            autonomous: true,
+            structuredOutputTurns: "single",
           },
-          { getRunner: (backend) => deps.getTaskRunner(backend) },
+          {
+            taskExecution: {
+              workingDirectory: input.projectPath,
+              autonomous: true,
+            },
+            getTaskRunner: (backend) => deps.getTaskRunner(backend),
+          },
         );
       } catch (error) {
-        if (error instanceof BackendAdmissionError)
-          logger.warn("tickets.enrichment_unavailable", {
-            ticketId: input.ticketId,
-            phase: "execution",
-            ...error.refusal,
-          });
         return failure(input, "execution", {
           failureKind: "thrown",
           errorType: errorType(error),
         });
       }
 
-      if (result.timedOut || result.error !== null || result.failure !== null) {
-        return failure(input, "execution", {
-          failureKind: result.timedOut ? "timeout" : "backend",
-          backendFailureKind: result.failure?.kind ?? null,
+      if (result.outcome.kind !== "completed") {
+        const failureKind =
+          result.outcome.kind === "failed"
+            ? result.outcome.error.failureKind
+            : "paused";
+        return failure(
+          input,
+          failureKind === "schema_validation"
+            ? "structured_output"
+            : "execution",
+          { failureKind },
+        );
+      }
+
+      const structured = ticketEnrichmentOutputSchema.safeParse(
+        result.outcome.structuredOutput,
+      );
+      if (!structured.success) {
+        return failure(input, "structured_output", {
+          validationStage: "schema_validation",
         });
       }
 
-      let structured;
-      try {
-        structured = validateStructuredOutput(ticketEnrichmentOutputSchema, {
-          ...(result.structuredOutput !== undefined
-            ? { native: result.structuredOutput }
-            : {}),
-          text: result.text,
-        });
-      } catch (error) {
-        return failure(input, "structured_output", {
-          failureKind: "thrown",
-          errorType: errorType(error),
-        });
-      }
-      if (!structured.ok) {
-        return failure(input, "structured_output", {
-          validationStage: structured.stage,
-        });
-      }
-
-      const markdown = structured.value.markdown;
+      const markdown = structured.data.markdown;
       const outputBytes = Buffer.byteLength(markdown, "utf8");
       if (outputBytes > TICKET_ENRICHMENT_MAX_MARKDOWN_BYTES) {
         return failure(input, "output_size", {
@@ -310,7 +302,7 @@ export function createTicketEnrichmentService(
         backend: input.backend,
         attachmentId,
         outputBytes,
-        structuredOutputSource: structured.source,
+        structuredOutputSource: result.outcome.parse?.source,
       });
       return { status: "appended", attachmentId };
     },

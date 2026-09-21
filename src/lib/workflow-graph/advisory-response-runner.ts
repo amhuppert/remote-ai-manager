@@ -47,22 +47,13 @@ import type {
   GraphWorkflowValidationAdvisory,
 } from "@/lib/workflow-graph/schemas";
 import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
+import type { ConversationTurnSpec } from "@/lib/workflows/conversation/turn-spec";
 import {
   toTaskRunResult,
   type TaskRunResult,
 } from "@/lib/workflows/conversation/turn-result";
 
 const logger = createLogger("graph-workflow-advisory-response");
-
-/**
- * Dispatches of the response turn per round.
- *
- * Two, not more: the first ask states the contract, and the second names the
- * exact identities the reply missed, invented, or answered twice. A third would
- * repeat the second word for word, so it would buy a retry of the model's mood
- * rather than of anything the engine can say differently.
- */
-export const ADVISORY_RESPONSE_ATTEMPTS = 2;
 
 export interface GraphWorkflowAdvisoryResponseInput {
   projectPath: string;
@@ -114,6 +105,7 @@ export function createGraphWorkflowAdvisoryResponseRunner(
       );
     }
 
+    const agent = context.implementer.agent;
     const outputFormat = {
       type: "json_schema" as const,
       schema: buildAdvisoryDispositionsOutputSchema(input.advisories),
@@ -143,30 +135,30 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         executionId: input.execution.id,
         contextId: input.contextId,
         conversationId: input.conversationId,
-        backend: context.implementer.agent.backend,
+        backend: agent.backend,
         worktreePath: writeEnvelopeResolution.worktreePath,
         error: writeEnvelopeResolution.error,
       });
       throw new AgentTurnFailedError(message, {
         contextId: input.contextId,
-        engine: context.implementer.agent.backend,
+        engine: agent.backend,
         cause: "unknown",
         originalMessage: message,
       });
     }
     const writeEnvelope = writeEnvelopeResolution.envelope;
-    let prompt = buildAdvisoryResponsePrompt({
-      contextTitle: context.title,
-      advisories: input.advisories,
-    });
-    let lastReason = "The advisory-response turn produced no dispositions.";
-
-    for (let attempt = 1; attempt <= ADVISORY_RESPONSE_ATTEMPTS; attempt += 1) {
+    async function dispatch(
+      prompt: string,
+      attempt: number,
+      structuredOutputTurns: NonNullable<
+        ConversationTurnSpec["structuredOutputTurns"]
+      >,
+    ) {
       logger.info("graph-workflow.advisory_response.turn_started", {
         executionId: input.execution.id,
         contextId: input.contextId,
         conversationId: input.conversationId,
-        backend: context.implementer.agent.backend,
+        backend: agent.backend,
         advisoryCount: input.advisories.length,
         attempt,
         fsWriteRestricted: writeEnvelope !== null,
@@ -192,9 +184,10 @@ export function createGraphWorkflowAdvisoryResponseRunner(
           promptText: prompt,
           autonomous: true,
           askUserQuestionsEnabled: false,
-          backend: context.implementer.agent.backend,
+          backend: agent.backend,
           outputFormat,
-          modelSelection: context.implementer.agent.modelSelection,
+          structuredOutputTurns,
+          modelSelection: agent.modelSelection,
           ...(writeEnvelope !== null
             ? { fsWritePolicy: writeEnvelope.policy }
             : {}),
@@ -219,10 +212,7 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         outputFormat,
       );
 
-      if (
-        result.kind === "error" &&
-        result.structuredOutputIssues === undefined
-      ) {
+      if (result.kind === "error") {
         // The turn itself failed. Not the advisory channel's business: this is
         // the same infrastructure failure any engine-dispatched turn can suffer,
         // and swallowing it would let an aborted turn read as a context that
@@ -236,7 +226,7 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         });
         throw new AgentTurnFailedError(result.error, {
           contextId: input.contextId,
-          engine: context.implementer.agent.backend,
+          engine: agent.backend,
           cause: result.aborted ? "abort" : "sdk_error",
           originalMessage: result.error,
         });
@@ -250,37 +240,56 @@ export function createGraphWorkflowAdvisoryResponseRunner(
           attempt,
           dispositionCount: issues.dispositions.length,
         });
-        return { dispositions: issues.dispositions };
+      } else {
+        logger.warn("graph-workflow.advisory_response.rejected", {
+          executionId: input.execution.id,
+          contextId: input.contextId,
+          attempt,
+          issueCount: issues.issues.length,
+        });
       }
+      return issues;
+    }
 
-      lastReason = issues.issues.join(" ");
-      logger.warn("graph-workflow.advisory_response.rejected", {
-        executionId: input.execution.id,
-        contextId: input.contextId,
-        attempt,
-        issueCount: issues.issues.length,
-      });
-      prompt = buildAdvisoryResponseRetryPrompt({
+    let attempts = 1;
+    let response = await dispatch(
+      buildAdvisoryResponsePrompt({
         contextTitle: context.title,
         advisories: input.advisories,
-        issues: issues.issues,
-      });
+      }),
+      1,
+      "work_then_format",
+    );
+    if (response.kind === "rejected") {
+      attempts += 1;
+      response = await dispatch(
+        buildAdvisoryResponseRetryPrompt({
+          contextTitle: context.title,
+          advisories: input.advisories,
+          issues: response.issues,
+        }),
+        attempts,
+        "single",
+      );
     }
+    if (response.kind === "disposed")
+      return { dispositions: response.dispositions };
+    const lastReason = response.issues.join(" ");
 
     // Out of attempts with nothing the gate accepted. The advisories are not
     // delivered — the caller stamps delivery and disposition in one write, and
     // this failure is what stops it reaching either.
-    const message = `The advisory-response turn returned no valid disposition set in ${ADVISORY_RESPONSE_ATTEMPTS} attempts: ${lastReason}`;
+    const message = `The advisory-response turn returned no valid disposition set in ${attempts} attempts: ${lastReason}`;
     logger.error("graph-workflow.advisory_response.exhausted", {
       executionId: input.execution.id,
       contextId: input.contextId,
       conversationId: input.conversationId,
       advisoryCount: input.advisories.length,
-      attempts: ADVISORY_RESPONSE_ATTEMPTS,
+      attempts,
     });
     throw new AgentTurnFailedError(message, {
       contextId: input.contextId,
-      engine: context.implementer.agent.backend,
+      engine: agent.backend,
       cause: "sdk_error",
       originalMessage: message,
     });
@@ -290,24 +299,16 @@ export function createGraphWorkflowAdvisoryResponseRunner(
 }
 
 function evaluate(
-  result: TaskRunResult,
+  result: Exclude<TaskRunResult, { kind: "error" }>,
   advisories: readonly GraphWorkflowValidationAdvisory[],
 ):
   | { kind: "disposed"; dispositions: RecordedAdvisoryDisposition[] }
-  | { kind: "rejected"; issues: string[] } {
-  if (result.kind === "error") {
-    return {
-      kind: "rejected",
-      issues: result.structuredOutputIssues ?? [
-        "The advisory-response turn returned no dispositions.",
-      ],
-    };
-  }
+  | { kind: "rejected" | "schema"; issues: string[] } {
   if (result.kind === "text") {
     // `outputFormat` was set, so a text result means the gate accepted no
     // candidate and the actor still reported success.
     return {
-      kind: "rejected",
+      kind: "schema",
       issues: [
         "The advisory-response turn returned no JSON payload for the dispositions schema.",
       ],
@@ -320,5 +321,8 @@ function evaluate(
   });
   return parsed.ok
     ? { kind: "disposed", dispositions: parsed.dispositions }
-    : { kind: "rejected", issues: parsed.issues };
+    : {
+        kind: parsed.kind === "schema" ? "schema" : "rejected",
+        issues: parsed.issues,
+      };
 }

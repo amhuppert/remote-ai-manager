@@ -293,9 +293,6 @@ export class CodexConversationRuntime
     input: ConversationQueuedUserInput,
   ) => Promise<void>;
   readonly modelSelection: BackendModelSelection;
-  readonly outputFormat:
-    | { type: "json_schema"; schema: Record<string, unknown> }
-    | undefined;
 
   /** The write envelope this runtime's turns execute under; undefined when unrestricted. */
   readonly fsWritePolicy: FsWritePolicy | undefined;
@@ -370,7 +367,6 @@ export class CodexConversationRuntime
       input.modelSelection,
     );
     this.modelSelection = this.resolvedModelSelection.modelSelection;
-    this.outputFormat = input.outputFormat;
 
     this.fsWritePolicy = input.fsWritePolicy;
     this.deps = { ...defaultDeps, ...deps };
@@ -1596,7 +1592,7 @@ export class CodexConversationRuntime
       .filter(Boolean)
       .join("\n\n");
     const schema =
-      this.captureAttempt?.input.outputSchema ?? this.outputFormat?.schema;
+      this.captureAttempt?.input.outputSchema ?? input.outputFormat?.schema;
     const prompt = schema
       ? appendStructuredOutputInstruction(text, schema)
       : text;

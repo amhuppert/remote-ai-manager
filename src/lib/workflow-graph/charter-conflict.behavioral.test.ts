@@ -214,14 +214,16 @@ const DEFERRAL_SUMMARY =
   "(4.5 -> 5); the lower-ranked acceptance criterion is flagged as wrong and not enforced. Context passes.";
 
 function deferralTurn() {
+  const structuredOutput = {
+    summary: DEFERRAL_SUMMARY,
+    issues: [],
+    advisories: [],
+  };
   return settledConversationTurn({
     outcome: {
       kind: "completed",
-      text: JSON.stringify({
-        summary: DEFERRAL_SUMMARY,
-        issues: [],
-        advisories: [],
-      }),
+      text: JSON.stringify(structuredOutput),
+      structuredOutput,
     },
   });
 }

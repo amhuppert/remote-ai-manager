@@ -1970,16 +1970,15 @@ describe("CodexConversationRuntime", () => {
         agentMessageCompleted('{"version": 2}', "msg-2"),
         turnCompleted(),
       ]);
-      const runtime = new CodexConversationRuntime(
-        makeCreateInput({
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(
+        makeTurnInput({
           outputFormat: {
             type: "json_schema",
             schema: { type: "object" },
           },
         }),
-        deps,
       );
-      const result = await runtime.sendTurn(makeTurnInput());
 
       expect(result.finalText).toBe('{"version": 2}');
       expect(result.structuredOutput).toBeUndefined();
@@ -1991,16 +1990,15 @@ describe("CodexConversationRuntime", () => {
         agentMessageCompleted("This is not JSON"),
         turnCompleted(),
       ]);
-      const runtime = new CodexConversationRuntime(
-        makeCreateInput({
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(
+        makeTurnInput({
           outputFormat: {
             type: "json_schema",
             schema: { type: "object" },
           },
         }),
-        deps,
       );
-      const result = await runtime.sendTurn(makeTurnInput());
 
       expect(result.structuredOutput).toBeUndefined();
     });
@@ -2011,8 +2009,9 @@ describe("CodexConversationRuntime", () => {
         agentMessageCompleted('{"summary": "clean", "planDefects": null}'),
         turnCompleted(),
       ]);
-      const runtime = new CodexConversationRuntime(
-        makeCreateInput({
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const result = await runtime.sendTurn(
+        makeTurnInput({
           outputFormat: {
             type: "json_schema",
             schema: {
@@ -2026,9 +2025,7 @@ describe("CodexConversationRuntime", () => {
             },
           },
         }),
-        deps,
       );
-      const result = await runtime.sendTurn(makeTurnInput());
 
       expect(result.finalText).toBe(
         '{"summary": "clean", "planDefects": null}',
@@ -2048,7 +2045,7 @@ describe("CodexConversationRuntime", () => {
       expect(result.structuredOutput).toBeUndefined();
     });
 
-    it("carries the authored optional fields in the prompt on initial and resumed turns", async () => {
+    it("renders the schema only on the requested format turn and clears it afterward", async () => {
       const schema = {
         type: "object",
         properties: {
@@ -2060,23 +2057,27 @@ describe("CodexConversationRuntime", () => {
       const thread = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread);
 
-      const runtime = new CodexConversationRuntime(
-        makeCreateInput({ outputFormat: { type: "json_schema", schema } }),
-        deps,
-      );
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       await runtime.sendTurn(makeTurnInput());
 
       expect(thread.capturedTurnOptions).toBeDefined();
       expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
-      expect(capturedText(thread)).toContain(
+      expect(capturedText(thread)).not.toContain(
         renderStructuredOutputInstruction(schema),
       );
       resumeThreadFn.mockReturnValue(thread);
       await runtime.sendTurn(
-        makeTurnInput({ promptText: "Correct the response" }),
+        makeTurnInput({
+          promptText: "Format the response",
+          outputFormat: { type: "json_schema", schema },
+        }),
       );
       expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
       expect(capturedText(thread)).toContain(
+        renderStructuredOutputInstruction(schema),
+      );
+      await runtime.sendTurn(makeTurnInput({ promptText: "Continue working" }));
+      expect(capturedText(thread)).not.toContain(
         renderStructuredOutputInstruction(schema),
       );
       expect(schema.required).toEqual(["x"]);
@@ -2091,12 +2092,12 @@ describe("CodexConversationRuntime", () => {
       ]);
       startThreadFn.mockReturnValue(thread);
 
-      const runtime = new CodexConversationRuntime(
-        makeCreateInput({ outputFormat: { type: "json_schema", schema } }),
-        deps,
-      );
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(
-        makeTurnInput({ promptText: "Describe it" }),
+        makeTurnInput({
+          promptText: "Describe it",
+          outputFormat: { type: "json_schema", schema },
+        }),
       );
 
       expect(thread.capturedTurnOptions?.outputSchema).toBeUndefined();
@@ -2123,12 +2124,10 @@ describe("CodexConversationRuntime", () => {
       const thread = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread);
 
-      const runtime = new CodexConversationRuntime(
-        makeCreateInput({ outputFormat }),
-        deps,
-      );
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       await runtime.sendTurn(
         makeTurnInput({
+          outputFormat,
           imageRefs: [
             {
               index: 1,
@@ -2140,7 +2139,6 @@ describe("CodexConversationRuntime", () => {
         }),
       );
 
-      expect(runtime.outputFormat).toBe(outputFormat);
       expect(thread.capturedTurnOptions).not.toHaveProperty("outputSchema");
       expect(thread.capturedInput).toEqual([
         {

@@ -803,7 +803,10 @@ export const conversationMachine = setup({
                 );
 
               return {
-                turn: { ...activeTurn, outputFormat },
+                turn: {
+                  ...activeTurn,
+                  outputFormat,
+                },
                 executionAttemptId: activeTurn.executionAttemptId,
                 persistence: context.transient ? "ephemeral" : "durable",
                 target: context.target,

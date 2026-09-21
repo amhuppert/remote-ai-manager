@@ -68,12 +68,24 @@ interface TaskRunResultOverrides {
   continuationDisposition?: "retain" | "clear";
 }
 
+function fixturePayload(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 function textTaskRun(
   text: string,
   overrides: TaskRunResultOverrides = {},
 ): ConversationTurnExecution {
   return settledConversationTurn({
-    outcome: { kind: "completed", text },
+    outcome: {
+      kind: "completed",
+      text,
+      structuredOutput: fixturePayload(text),
+    },
     backendRef: overrides.backendRef ?? null,
     continuationDisposition: overrides.continuationDisposition ?? "retain",
   });
@@ -508,20 +520,16 @@ describe("buildValidatorOutputSchema", () => {
   });
 });
 
-describe("parseValidatorResponse fenced-block parsing", () => {
+describe("parseValidatorResponse domain validation", () => {
   it("returns kind=pass with empty reopenTaskIds when issues is empty", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "All checks passed",
-        issues: [],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "All checks passed",
+      issues: [],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -534,24 +542,20 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("returns kind=fail with reopenTaskIds derived from issue taskIds", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "Tests are incomplete.",
-        issues: [
-          {
-            taskId: "task-2",
-            title: "Coverage gap",
-            description: "Add missing tests.",
-          },
-        ],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "Tests are incomplete.",
+      issues: [
+        {
+          taskId: "task-2",
+          title: "Coverage gap",
+          description: "Add missing tests.",
+        },
+      ],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -563,34 +567,30 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("dedupes reopenTaskIds when multiple issues target the same task", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "Two problems in one task.",
-        issues: [
-          {
-            taskId: "task-2",
-            title: "Coverage gap",
-            description: "Add missing tests.",
-          },
-          {
-            taskId: "task-2",
-            title: "Edge cases",
-            description: "Handle empty input.",
-          },
-          {
-            taskId: "task-1",
-            title: "Doc drift",
-            description: "README is stale.",
-          },
-        ],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "Two problems in one task.",
+      issues: [
+        {
+          taskId: "task-2",
+          title: "Coverage gap",
+          description: "Add missing tests.",
+        },
+        {
+          taskId: "task-2",
+          title: "Edge cases",
+          description: "Handle empty input.",
+        },
+        {
+          taskId: "task-1",
+          title: "Doc drift",
+          description: "README is stale.",
+        },
+      ],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -602,24 +602,20 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("returns infra_error when an issue references a task outside the context", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "Wrong issue task",
-        issues: [
-          {
-            taskId: "task-missing",
-            title: "Wrong task",
-            description: "Issue points outside the context.",
-          },
-        ],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "Wrong issue task",
+      issues: [
+        {
+          taskId: "task-missing",
+          title: "Wrong task",
+          description: "Issue points outside the context.",
+        },
+      ],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -631,25 +627,21 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("carries a cited criterionId through to the fail outcome's issues", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "The plan document was never updated.",
-        issues: [
-          {
-            taskId: "task-2",
-            criterionId: "plan-updated",
-            title: "Stale plan document",
-            description: "The final plan document still shows the draft.",
-          },
-        ],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "The plan document was never updated.",
+      issues: [
+        {
+          taskId: "task-2",
+          criterionId: "plan-updated",
+          title: "Stale plan document",
+          description: "The final plan document still shows the draft.",
+        },
+      ],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -663,24 +655,20 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("returns infra_error schema_mismatch when the acceptance seat omits the required criterionId", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "The plan document was never updated.",
-        issues: [
-          {
-            taskId: "task-2",
-            title: "Stale plan document",
-            description: "The final plan document still shows the draft.",
-          },
-        ],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "The plan document was never updated.",
+      issues: [
+        {
+          taskId: "task-2",
+          title: "Stale plan document",
+          description: "The final plan document still shows the draft.",
+        },
+      ],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -694,25 +682,21 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("returns infra_error when an issue cites a criterion outside the context", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "Wrong criterion cited.",
-        issues: [
-          {
-            taskId: "task-2",
-            criterionId: "criterion-missing",
-            title: "Stale plan document",
-            description: "The final plan document still shows the draft.",
-          },
-        ],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "Wrong criterion cited.",
+      issues: [
+        {
+          taskId: "task-2",
+          criterionId: "criterion-missing",
+          title: "Stale plan document",
+          description: "The final plan document still shows the draft.",
+        },
+      ],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -726,24 +710,20 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("accepts a specialist issue without criterionId when citation is optional", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "Mandate finding.",
-        issues: [
-          {
-            taskId: "task-1",
-            title: "Unparameterized query",
-            description: "The lookup concatenates user input into SQL.",
-          },
-        ],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "Mandate finding.",
+      issues: [
+        {
+          taskId: "task-1",
+          title: "Unparameterized query",
+          description: "The lookup concatenates user input into SQL.",
+        },
+      ],
+      advisories: [],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -757,22 +737,18 @@ describe("parseValidatorResponse fenced-block parsing", () => {
   });
 
   it("returns infra_error schema_mismatch when an issue omits taskId", () => {
-    const text = [
-      "```json",
-      JSON.stringify({
-        summary: "Coverage gap",
-        issues: [
-          {
-            title: "Coverage gap",
-            description: "Add missing tests.",
-          },
-        ],
-      }),
-      "```",
-    ].join("\n");
+    const payload = {
+      summary: "Coverage gap",
+      issues: [
+        {
+          title: "Coverage gap",
+          description: "Add missing tests.",
+        },
+      ],
+    };
 
     const outcome = parseValidatorResponse({
-      text,
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -1245,7 +1221,6 @@ describe("validator question availability", () => {
 describe("parseValidatorResponse", () => {
   it("prefers structuredOutput and derives reopenTaskIds from issue taskIds", () => {
     const result = parseValidatorResponse({
-      text: "ignored",
       engine: "claude",
       authority: "blocking",
       structuredOutput: {
@@ -1263,39 +1238,21 @@ describe("parseValidatorResponse", () => {
     expect(result.parsePath).toBe("structured_output");
   });
 
-  // Pins the deliberate shared-chain widening for this consumer (Phase 3
-  // review F5, approved in the 2026-07-13 addendum to the Phase 1 slice
-  // designs): an INVALID native candidate does not hard-fail the turn — the
-  // chain falls through to a schema-valid fenced-JSON candidate in the same
-  // turn's text. Guards against a consumer-level "stop after invalid native"
-  // regression.
-  it("falls through an invalid native candidate to a valid fenced-JSON text candidate", () => {
-    const validFencedText = [
-      "Here is my verdict:",
-      "```json",
-      JSON.stringify({
-        summary: "Recovered via fenced JSON.",
-        issues: [{ taskId: "task-1", title: "Bug", description: "Fix" }],
-        advisories: [],
-      }),
-      "```",
-    ].join("\n");
-
+  it("refuses an invalid facade payload as a schema mismatch", () => {
     // Native payload omits the required `summary` field — invalid against the
     // validator schema.
     const result = parseValidatorResponse({
-      text: validFencedText,
       engine: "claude",
       authority: "blocking",
       structuredOutput: { issues: [] },
       allowedTaskIds: ["task-1", "task-2"],
     });
 
-    expect(result.result.kind).toBe("fail");
-    if (result.result.kind === "fail") {
-      expect(result.result.reopenTaskIds).toEqual(["task-1"]);
-    }
-    expect(result.parsePath).toBe("fenced_json_block");
+    expect(result.result).toMatchObject({
+      kind: "infra_error",
+      reason: "schema_mismatch",
+      message: expect.stringContaining("summary"),
+    });
   });
 });
 
@@ -1306,17 +1263,13 @@ describe("parseValidatorResponse advisories", () => {
     description: "Both lanes hand-roll the same backoff.",
   };
 
-  function fenced(payload: unknown): string {
-    return ["```json", JSON.stringify(payload), "```"].join("\n");
-  }
-
   it("carries a blocking validator's advisories through a passing verdict", () => {
     const outcome = parseValidatorResponse({
-      text: fenced({
+      structuredOutput: {
         summary: "Criteria met.",
         issues: [],
         advisories: [ADVISORY],
-      }),
+      },
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -1329,7 +1282,7 @@ describe("parseValidatorResponse advisories", () => {
 
   it("carries advisories through a rejecting verdict alongside its issues", () => {
     const outcome = parseValidatorResponse({
-      text: fenced({
+      structuredOutput: {
         summary: "One blocker, one suggestion.",
         issues: [
           {
@@ -1339,7 +1292,7 @@ describe("parseValidatorResponse advisories", () => {
           },
         ],
         advisories: [ADVISORY],
-      }),
+      },
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -1353,7 +1306,10 @@ describe("parseValidatorResponse advisories", () => {
 
   it("parses an advisory validator's verdict, which carries no issues field", () => {
     const outcome = parseValidatorResponse({
-      text: fenced({ summary: "Two observations.", advisories: [ADVISORY] }),
+      structuredOutput: {
+        summary: "Two observations.",
+        advisories: [ADVISORY],
+      },
       engine: "claude",
       authority: "advisory",
       allowedTaskIds: ["task-1", "task-2"],
@@ -1369,13 +1325,13 @@ describe("parseValidatorResponse advisories", () => {
 
   it("refuses issues from an advisory validator, taking the structured-output retry path", () => {
     const outcome = parseValidatorResponse({
-      text: fenced({
+      structuredOutput: {
         summary: "Trying to block.",
         advisories: [],
         issues: [
           { taskId: "task-1", title: "Blocker", description: "Reopen this." },
         ],
-      }),
+      },
       engine: "claude",
       authority: "advisory",
       allowedTaskIds: ["task-1", "task-2"],
@@ -1397,11 +1353,11 @@ describe("parseValidatorResponse advisories", () => {
 
     for (const authority of ["blocking", "advisory"] as const) {
       const outcome = parseValidatorResponse({
-        text: fenced({
+        structuredOutput: {
           summary: "Nothing blocking here.",
           ...(authority === "blocking" ? { issues: [] } : {}),
           advisories: [outOfContext],
-        }),
+        },
         engine: "claude",
         authority,
         allowedTaskIds: ["task-1", "task-2"],
@@ -1418,15 +1374,7 @@ describe("parseValidatorResponse advisories", () => {
   });
 });
 
-/**
- * The fallback parse paths (raw JSON, fenced block) are not a laxer contract
- * than the dispatched schema — they are the SAME contract read back. A backend
- * with no native structured output reaches the engine through here, so anything
- * these twins accept is a verdict shape that authority never gated. Each case
- * below is a payload the dispatched schema refuses (`required`, or
- * `additionalProperties: false`) and therefore one the parser must also refuse,
- * turning it into the retry that the structured-output gate would have run.
- */
+/** The domain schema remains authoritative after transport validation. */
 describe("parseValidatorResponse verdict shape is the dispatched schema", () => {
   const ADVISORY = {
     kind: "implementation" as const,
@@ -1448,16 +1396,12 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
       "Acceptance criterion 3 vs. the `wire-routes` boundary",
   };
 
-  function fenced(payload: unknown): string {
-    return ["```json", JSON.stringify(payload), "```"].join("\n");
-  }
-
-  function parseFenced(
+  function parsePayload(
     authority: "blocking" | "advisory",
     payload: unknown,
   ): ValidatorOutcome {
     return parseValidatorResponse({
-      text: fenced(payload),
+      structuredOutput: payload,
       engine: "claude",
       authority,
       allowedTaskIds: ["task-1", "task-2"],
@@ -1592,64 +1536,18 @@ describe("parseValidatorResponse verdict shape is the dispatched schema", () => 
   ];
 
   it.each(REFUSED)(
-    "refuses a $label on the fenced-JSON path",
+    "refuses a $label in the accepted payload",
     ({ label, authority, payload }) => {
-      expectSchemaMismatch(parseFenced(authority, payload), label);
+      expectSchemaMismatch(parsePayload(authority, payload), label);
     },
   );
 
-  it.each([REFUSED[0]!])(
-    "refuses a $label on the raw-JSON path",
-    ({ label, authority, payload }) => {
-      const outcome = parseValidatorResponse({
-        text: JSON.stringify(payload),
-        engine: "claude",
-        authority,
-        allowedTaskIds: ["task-1", "task-2"],
-      }).result;
-
-      expectSchemaMismatch(outcome, label);
-    },
-  );
-
-  it.each([REFUSED[0]!])(
-    "refuses a $label on the native structured-output path",
-    ({ label, authority, payload }) => {
-      const outcome = parseValidatorResponse({
-        text: "The verdict is above.",
-        engine: "claude",
-        authority,
-        structuredOutput: payload,
-        allowedTaskIds: ["task-1", "task-2"],
-      }).result;
-
-      expectSchemaMismatch(outcome, label);
-    },
-  );
-
-  it("accepts the exact dispatched shape on every parse path", () => {
+  it("accepts the exact dispatched shape for both validator authorities", () => {
     const blocking = { summary: "Criteria met.", issues: [], advisories: [] };
     const advisory = { summary: "Observation.", advisories: [ADVISORY] };
 
-    expect(parseFenced("blocking", blocking).kind).toBe("pass");
-    expect(parseFenced("advisory", advisory).kind).toBe("pass");
-    expect(
-      parseValidatorResponse({
-        text: JSON.stringify(blocking),
-        engine: "claude",
-        authority: "blocking",
-        allowedTaskIds: ["task-1", "task-2"],
-      }).result.kind,
-    ).toBe("pass");
-    expect(
-      parseValidatorResponse({
-        text: "The verdict is above.",
-        engine: "claude",
-        authority: "advisory",
-        structuredOutput: advisory,
-        allowedTaskIds: ["task-1", "task-2"],
-      }).result.kind,
-    ).toBe("pass");
+    expect(parsePayload("blocking", blocking).kind).toBe("pass");
+    expect(parsePayload("advisory", advisory).kind).toBe("pass");
   });
 });
 
@@ -1676,7 +1574,7 @@ describe("parseValidatorResponse plan defects", () => {
 
   function parseBlocking(payload: unknown): ValidatorOutcome {
     return parseValidatorResponse({
-      text: ["```json", JSON.stringify(payload), "```"].join("\n"),
+      structuredOutput: payload,
       engine: "claude",
       authority: "blocking",
       allowedTaskIds: ["task-1", "task-2"],
@@ -2212,7 +2110,7 @@ describe("createValidatorRunner", () => {
     expect(input.turn.promptText).not.toContain("Spec ownership");
   });
 
-  it("runContextValidator returns infra_error unparseable when the agent produces no JSON", async () => {
+  it("runContextValidator refuses a settled turn without an accepted payload", async () => {
     const executeConversationTurn = vi.fn(async () =>
       textTaskRun("I could not find anything to review."),
     );
@@ -2240,7 +2138,7 @@ describe("createValidatorRunner", () => {
 
     expect(result.result.kind).toBe("infra_error");
     if (result.result.kind === "infra_error") {
-      expect(result.result.reason).toBe("unparseable");
+      expect(result.result.reason).toBe("schema_mismatch");
       expect(result.result.engine).toBe("claude");
     }
   });

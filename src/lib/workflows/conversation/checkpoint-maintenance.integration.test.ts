@@ -136,15 +136,28 @@ function envelopeFromPrompt(prompt: string) {
   };
 }
 
+function isOpeningPrompt(prompt: string): boolean {
+  return (
+    prompt.includes("Source metadata") ||
+    prompt.includes("checkpoint working state")
+  );
+}
+
 /** The generation lane's model: envelope for the compaction pass, working state for the seed pass. */
 function cannedRunner(calls: AgentTaskRequest[]) {
+  let opening: AgentTaskRequest | null = null;
   return {
     backend: "claude" as const,
     async run(request: AgentTaskRequest): Promise<AgentTaskResult> {
       calls.push(request);
-      const output = request.prompt.includes("checkpoint working state")
+      // A format or correction turn resumes the session, so it answers from
+      // the domain prompt that opened it. The lane carries a persisted ref, so
+      // the opening turn is recognized by its prompt rather than by resumeRef.
+      if (isOpeningPrompt(request.prompt)) opening = request;
+      const prompt = (opening ?? request).prompt;
+      const output = prompt.includes("checkpoint working state")
         ? WORKING_STATE
-        : envelopeFromPrompt(request.prompt);
+        : envelopeFromPrompt(prompt);
       return {
         text: JSON.stringify(output),
         structuredOutput: output,
@@ -152,6 +165,7 @@ function cannedRunner(calls: AgentTaskRequest[]) {
         error: null,
         timedOut: false,
         failure: null,
+        backendRef: { backend: "claude", ref: `lane-${calls.length}` },
         continuationDisposition: "retain",
       };
     },

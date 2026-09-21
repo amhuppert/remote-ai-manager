@@ -21,7 +21,6 @@ import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission"
 import {
   namingExecutionRequirements,
   compactionExecutionRequirements,
-  compactionRepairRequirements,
 } from "./task-admission";
 import { resolveCompactionConfig } from "./cascade";
 import { resolveConversationNamingConfig } from "./schemas";
@@ -138,10 +137,6 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
         await assertBackendExecution(
           compaction.backend,
           compactionExecutionRequirements,
-        );
-        await assertBackendExecution(
-          compaction.backend,
-          compactionRepairRequirements,
         );
       }
     } catch (error) {

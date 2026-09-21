@@ -100,9 +100,11 @@ function makeRunner(result: TaskRunResult) {
 }
 
 describe("plan-repair agent runner", () => {
-  it("decodes Cursor's prompt-delivered repair JSON without changing backend or dropping write limits", async () => {
+  it("decodes the facade-accepted Cursor repair payload without changing backend or dropping write limits", async () => {
     const { runner, calls } = makeRunner({
-      kind: "text",
+      kind: "structured",
+      structuredOutput: AGENT_OUTPUT,
+      parse: { source: "raw_json" },
       text: JSON.stringify(AGENT_OUTPUT),
       usage: { ...USAGE, costUsd: null },
       backendRef: { backend: "cursor", ref: "opaque-cursor-repair" },
@@ -155,6 +157,7 @@ describe("plan-repair agent runner", () => {
     });
     expect(call.timeoutMs).toBe(900_000);
     expect(call.outputFormat?.type).toBe("json_schema");
+    expect(call.structuredOutputTurns).toBe("work_then_format");
     const schema = call.outputFormat?.schema as {
       properties?: Record<string, unknown>;
     };
@@ -220,9 +223,11 @@ describe("plan-repair agent runner", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("recovers the verdict from text output when no native structured payload exists", async () => {
+  it("accepts the facade payload extracted from text output", async () => {
     const { runner } = makeRunner({
-      kind: "text",
+      kind: "structured",
+      structuredOutput: AGENT_OUTPUT,
+      parse: { source: "raw_json" },
       text: JSON.stringify(AGENT_OUTPUT),
       usage: USAGE,
       backendRef: null,

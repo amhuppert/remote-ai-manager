@@ -10,18 +10,34 @@ import {
 import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 
-function renderWithQuery(ui: React.ReactElement, taskless = false) {
+function renderWithQuery(
+  ui: React.ReactElement,
+  options: { taskless?: boolean; standardOnly?: boolean } = {},
+) {
   const client = createTestQueryClient();
   client.setQueryData(
     backendCatalogKeys.catalog(),
     listBackendCatalogEntries().map((entry) =>
-      taskless && entry.id === "cursor"
+      options.taskless && entry.id === "cursor"
         ? {
             ...entry,
             facets: { ...entry.facets, tasks: false },
             execution: { ...entry.execution, tasks: null },
           }
-        : entry,
+        : options.standardOnly && entry.id === "cursor" && entry.execution.tasks
+          ? {
+              ...entry,
+              execution: {
+                ...entry.execution,
+                tasks: {
+                  ...entry.execution.tasks,
+                  profiles: entry.execution.tasks.profiles.filter(
+                    (profile) => profile === "standard",
+                  ),
+                },
+              },
+            }
+          : entry,
     ),
   );
   return renderQuery(ui, client);
@@ -94,13 +110,26 @@ describe("CompactionSection", () => {
 
   it("refuses a backend with no task facet", () => {
     const { controller, getState } = makeController();
-    renderWithQuery(<CompactionSection controller={controller} />, true);
+    renderWithQuery(<CompactionSection controller={controller} />, {
+      taskless: true,
+    });
 
     const cursor = pillIn("compaction.backend", "cursor");
     expect(cursor).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(cursor);
 
     expect(getState().compaction?.backend).toBeUndefined();
+  });
+
+  it("allows a standard-only backend for compaction", () => {
+    const { controller, getState } = makeController();
+    renderWithQuery(<CompactionSection controller={controller} />, {
+      standardOnly: true,
+    });
+    const cursor = pillIn("compaction.backend", "cursor");
+    expect(cursor).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(cursor);
+    expect(getState().compaction?.backend).toBe("cursor");
   });
 
   it("switches the backend and both complete selections atomically", () => {

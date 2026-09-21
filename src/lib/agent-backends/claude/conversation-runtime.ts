@@ -201,9 +201,6 @@ class ClaudeConversationRuntime
 {
   readonly backend: AgentBackendId = "claude";
   readonly modelSelection: BackendModelSelection;
-  readonly outputFormat:
-    | { type: "json_schema"; schema: Record<string, unknown> }
-    | undefined;
 
   /** The write envelope this session was established under; undefined when unrestricted. */
   readonly fsWritePolicy: FsWritePolicy | undefined;
@@ -229,7 +226,6 @@ class ClaudeConversationRuntime
     opts: {
       sessionOptions: QuerySessionOptions;
       resolvedModelSelection: ResolvedClaudeModelSelection;
-      outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
 
       fsWritePolicy?: FsWritePolicy;
       onPortableMcpApplied?: (config: PortableMcpConfig | null) => void;
@@ -248,7 +244,6 @@ class ClaudeConversationRuntime
     this.querySession = querySession;
     this.sessionOptions = opts.sessionOptions;
     this.modelSelection = opts.resolvedModelSelection.modelSelection;
-    this.outputFormat = opts.outputFormat;
 
     this.fsWritePolicy = opts.fsWritePolicy;
     this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
@@ -343,7 +338,7 @@ class ClaudeConversationRuntime
     logger.info("claude-runtime.turn_start", {
       conversationId: this.querySession.conversationId,
       autonomous: input.autonomous,
-      hasOutputSchema: this.outputFormat !== undefined,
+      hasOutputSchema: input.outputFormat !== undefined,
     });
 
     const startTime = Date.now();
@@ -357,8 +352,8 @@ class ClaudeConversationRuntime
       ? [
           input.syntheticForkSeed,
           input.promptContext,
-          this.outputFormat?.schema
-            ? renderStructuredOutputInstruction(this.outputFormat.schema)
+          input.outputFormat?.schema
+            ? renderStructuredOutputInstruction(input.outputFormat.schema)
             : undefined,
         ]
           .filter(Boolean)
@@ -376,7 +371,7 @@ class ClaudeConversationRuntime
           ? null
           : (input.syntheticForkSeed ?? null),
       }),
-      isNativeCommand ? undefined : this.outputFormat?.schema,
+      isNativeCommand ? undefined : input.outputFormat?.schema,
     );
 
     const prompt: string | MessageContentBlock[] =
@@ -1120,7 +1115,6 @@ const claudeConversationBackendFactory = {
     const runtime = new ClaudeConversationRuntime(querySession, {
       sessionOptions,
       resolvedModelSelection,
-      outputFormat: input.outputFormat,
 
       ...(input.fsWritePolicy !== undefined
         ? { fsWritePolicy: input.fsWritePolicy }

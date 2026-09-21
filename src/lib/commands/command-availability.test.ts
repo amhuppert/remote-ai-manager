@@ -60,18 +60,13 @@ describe("built-in command execution availability", () => {
       ],
     });
   });
-  it("discloses unavailable isolated repair before offering message generation", () => {
+  it("offers ticket and message generation when only the standard task profile is available", () => {
     const entry = structuredClone(getBackendCatalogEntry("claude"));
-    entry.execution.tasks!.profiles = ["standard"];
-    for (const command of ["/commit", "/merge"]) {
-      expect(commandAvailability(entry, command)).toMatchObject({
-        status: "degraded",
-        stages: [
-          {
-            stage: "message-generation",
-            refusal: { code: "backend-task-profile-unsupported" },
-          },
-        ],
+    if (!entry.execution.tasks) throw new Error("Expected a task backend");
+    entry.execution.tasks.profiles = ["standard"];
+    for (const command of ["/ticket", "/commit", "/merge"]) {
+      expect(commandAvailability(entry, command)).toEqual({
+        status: "available",
       });
     }
   });

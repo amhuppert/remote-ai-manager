@@ -1,3 +1,4 @@
+import { withTaskProfiles } from "@/lib/agent-backends/testing/task-profiles-backend";
 import { withTasklessBackend } from "@/lib/agent-backends/testing/taskless-backend";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -493,6 +494,45 @@ describe("PUT /api/config", () => {
       expect(deps.writeRawConfig).toHaveBeenCalledWith({ [field]: block });
     },
   );
+
+  it("saves compaction for a standard-only task backend", async () => {
+    await withTaskProfiles("cursor", ["standard"], async () => {
+      const selection = {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      };
+      const compaction = {
+        backend: "cursor",
+        conversationModelSelection: selection,
+        messageModelSelection: selection,
+      };
+      const response = await handlers.PUT(makePutRequest({ compaction }));
+      expect(response.status).toBe(200);
+      expect(deps.writeRawConfig).toHaveBeenCalledWith({ compaction });
+    });
+  });
+
+  it("still requires isolated tasks for conversation naming", async () => {
+    await withTaskProfiles("cursor", ["standard"], async () => {
+      const response = await handlers.PUT(
+        makePutRequest({
+          conversationNaming: {
+            backend: "cursor",
+            enabled: true,
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+          },
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "backend-task-profile-unsupported",
+      });
+      expect(deps.writeRawConfig).not.toHaveBeenCalled();
+    });
+  });
 
   it.each(["conversationNaming", "compaction"])(
     "refuses an unsupported %s selection before saving",

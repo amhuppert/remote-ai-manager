@@ -17,7 +17,6 @@
 
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
 import {
   composeImplementerLaneWriteEnvelope,
   type ImplementerLaneWriteEnvelope,
@@ -120,6 +119,7 @@ export function createPlanRepairAgentRunner(
       executionClass: "governed-execution",
       executionProfile: "standard",
       prompt: invocation.prompt,
+      structuredOutputTurns: "work_then_format",
       outputFormat: {
         type: "json_schema",
         schema: PLAN_REPAIR_VERDICT_JSON_SCHEMA,
@@ -145,27 +145,24 @@ export function createPlanRepairAgentRunner(
       };
     }
 
-    const validated = validateStructuredOutput(planRepairAgentOutputSchema, {
-      ...(result.kind === "structured"
-        ? { native: result.structuredOutput }
-        : {}),
-      text: result.text.length > 0 ? result.text : null,
-    });
-    if (!validated.ok) {
+    const validated = planRepairAgentOutputSchema.safeParse(
+      result.kind === "structured" ? result.structuredOutput : undefined,
+    );
+    if (!validated.success) {
       logger.warn("plan_repair.verdict_unparseable", {
         executionId: invocation.executionId,
         contextId: invocation.contextId,
-        stage: validated.stage,
-        error: validated.error,
+        stage: "schema",
+        error: validated.error.message,
       });
       return {
         kind: "error",
-        message: `repair verdict did not validate: ${validated.error}`,
+        message: `repair verdict did not validate: ${validated.error.message}`,
         conversationId: invocation.conversationId,
       };
     }
 
-    const decoded = decodePlanRepairAgentOutput(validated.value);
+    const decoded = decodePlanRepairAgentOutput(validated.data);
     if (!decoded.ok) {
       logger.warn("plan_repair.verdict_unparseable", {
         executionId: invocation.executionId,

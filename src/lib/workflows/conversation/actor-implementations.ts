@@ -282,6 +282,7 @@ interface DispatchTurnViaAgentCallInput {
   autonomous: boolean;
   waitForBackgroundTasks: boolean;
   outputFormat: ConversationBackendTurnInput["outputFormat"];
+  structuredOutputTurns: AgentCallRequest["structuredOutputTurns"];
   onEvent: ConversationBackendTurnInput["onEvent"];
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
   /** Neutral send/failure facts for a checkpoint delivery; see the retry policy. */
@@ -328,6 +329,7 @@ async function dispatchTurnViaAgentCall(
     prompt: input.promptText,
     backend: input.backend,
     writeCapability: input.writeCapability,
+    structuredOutputTurns: input.structuredOutputTurns,
     ...(input.outputFormat?.type === "json_schema"
       ? { outputSchema: input.outputFormat.schema }
       : {}),
@@ -919,7 +921,6 @@ async function executePromptForMachine(
   const desiredConfiguration = {
     backend: input.agentBackend,
     modelSelection: effectiveModelSelection,
-    outputFormat: input.turn.outputFormat,
     fsWritePolicy: input.turn.fsWritePolicy,
     alignmentVersion: instructions.alignmentVersion,
     repeatableInstructions: instructions.repeatableInstructions,
@@ -974,6 +975,7 @@ async function executePromptForMachine(
     );
   }
   const resumeRef = deliversCheckpoint ? null : input.backendRef;
+  let completedBackendRef: ExecutePromptInput["backendRef"] | undefined;
   // A checkpoint delivery's receipt belongs to the attempt from here, before
   // any runtime exists: whatever fails between the fresh runtime's install
   // and the provider call — a state write, context preparation, the
@@ -1188,9 +1190,9 @@ async function executePromptForMachine(
         ? { workflowCallerConversationId }
         : {}),
       worktreePath: input.worktreePath,
-      persistedRef: resumeRef,
+      persistedRef:
+        completedBackendRef === undefined ? resumeRef : completedBackendRef,
       modelSelection: effectiveModelSelection,
-      outputFormat: input.turn.outputFormat,
       sessionInstructions,
       tooling: {
         portableMcp,
@@ -1460,6 +1462,12 @@ async function executePromptForMachine(
     // Shared by the pre-turn readiness gate and the dispatch retry loop.
     const recreateRuntimeForTurn =
       async (): Promise<ConversationBackendRuntime> => {
+        // A format or repair turn must resume the work completed in this call.
+        if (completedBackendRef === null) {
+          throw new Error(
+            "Cannot replace the runtime: the completed turn has no usable continuation",
+          );
+        }
         if (attempt) await attempt.closeBackend();
         else await runtimeState.managed.close();
         signal?.throwIfAborted();
@@ -1572,12 +1580,14 @@ async function executePromptForMachine(
       autonomous: input.turn.autonomous ?? false,
       waitForBackgroundTasks: input.turn.waitForBackgroundTasks ?? false,
       outputFormat: input.turn.outputFormat,
+      structuredOutputTurns: input.turn.structuredOutputTurns,
       onEvent,
       syntheticForkSeed,
       observe: {
         sending: () => checkpoint?.markDispatched(),
         failed: (error) => checkpoint?.markDispatchFailure(error),
         completed: (result) => {
+          completedBackendRef = result.backendRef;
           if (
             !result.cleanupFailure ||
             !runtimeState.managed.recordCleanupFailure(result.cleanupFailure)
@@ -2068,6 +2078,7 @@ async function runTaskRunTurnForMachine(
       ? { fsWritePolicy: input.turn.fsWritePolicy }
       : {}),
     modelSelection: effectiveModelSelection,
+    structuredOutputTurns: input.turn.structuredOutputTurns,
     ...(input.turn.outputFormat?.type === "json_schema"
       ? { outputSchema: input.turn.outputFormat.schema }
       : {}),

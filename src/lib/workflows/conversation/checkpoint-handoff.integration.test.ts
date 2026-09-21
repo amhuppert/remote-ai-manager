@@ -972,7 +972,8 @@ describe.each(["session", "project"] as const)(
           Buffer.byteLength(payload?.seedText ?? ""),
         );
         expect(capture).toHaveBeenCalledTimes(1);
-        expect(h.state.laneCalls).toHaveLength(2);
+        // Envelope and working-state passes each run a work turn and a format turn.
+        expect(h.state.laneCalls).toHaveLength(4);
       } finally {
         await h.close();
       }
@@ -1249,7 +1250,8 @@ describe.each(["session", "project"] as const)(
           },
         });
         expect(capture).toHaveBeenCalledTimes(1);
-        expect(h.state.laneCalls).toHaveLength(2);
+        // Envelope and working-state passes each run a work turn and a format turn.
+        expect(h.state.laneCalls).toHaveLength(4);
       } finally {
         await h.close();
       }
@@ -1303,7 +1305,8 @@ describe.each(["session", "project"] as const)(
             handoff: { stage: "omitted", omissionReason: reason },
           });
           expect(capture).toHaveBeenCalledTimes(1);
-          expect(h.state.laneCalls).toHaveLength(2);
+          // Envelope and working-state passes each run a work turn and a format turn.
+          expect(h.state.laneCalls).toHaveLength(4);
         } finally {
           await h.close();
         }

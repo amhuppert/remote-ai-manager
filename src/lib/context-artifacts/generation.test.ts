@@ -282,8 +282,8 @@ const sourceMeta: CompactionSourceMeta = {
 };
 
 describe("PROMPT_VERSION", () => {
-  it("is the v3 prompt contract", () => {
-    expect(PROMPT_VERSION).toBe("4");
+  it("is the prose-first prompt contract", () => {
+    expect(PROMPT_VERSION).toBe("5");
   });
 });
 

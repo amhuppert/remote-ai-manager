@@ -2,21 +2,21 @@ import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/e
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import type {
+  ConversationBackendRuntime,
+  ConversationBackendTurnInput,
+} from "@/lib/agent-backends/conversation";
+import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import {
   createValidatorRunner,
   parseValidatorResponse,
-  type ValidatorOutcome,
 } from "./validator-runner";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
-import type {
-  AgentCallRequest,
-  AgentCallResult,
-} from "@/lib/workflows/primitives/agent-call-vocabulary";
-import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
-import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
+import { createValidatorConversationHarness } from "./testing/validator-conversation-harness";
+import type { GraphWorkflowExecution } from "./schemas";
+import type { ValidatorAssignment } from "./config-schemas";
+import type { GraphWorkflowResolvedContext } from "./definition-schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -25,107 +25,16 @@ import {
 } from "./test-fixtures";
 
 const VALIDATOR_ENGINE = "claude" as const;
-
-// The validator-runner's allowed-task-id check is scoped to the active
-// context's tasks. `context-plan` is seeded with task-plan-1 and task-plan-2
-// by buildExecution(); these are the IDs the live runner will pass into
-// parseValidatorResponse, so the legacy harness uses the same set to keep the
-// two paths comparing the exact same parser inputs.
 const allowedTaskIds = ["task-plan-1", "task-plan-2"];
-
-const emptyAgentCallUsage = {};
-
 const validatorConfig: ValidatorAssignment = {
   id: "general",
-  profile: { tier: "builtin" as const, id: "general-reviewer" },
+  profile: { tier: "builtin", id: "general-reviewer" },
   authority: "blocking",
   agent: {
-    backend: "claude",
+    backend: VALIDATOR_ENGINE,
     modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
   },
 };
-
-/**
- * Inline restoration of the legacy `agentCallResultToTaskResult` adapter that
- * previously lived inside validator-runner.ts (between the `executeAgentCall`
- * boundary and `parseValidatorResponse`). Kept verbatim here — not exported
- * from production code — so the parity test exercises the real legacy
- * boundary against the same fixture inputs the new path consumes.
- */
-interface LegacyValidatorTaskResult {
-  text: string | null;
-  structuredOutput?: unknown;
-  error: string | null;
-  timedOut: boolean;
-}
-
-function agentCallResultToLegacyTaskResult(
-  result: AgentCallResult,
-): LegacyValidatorTaskResult {
-  if (result.outcome.kind === "completed") {
-    const completed: LegacyValidatorTaskResult = {
-      text: result.outcome.text,
-      error: null,
-      timedOut: false,
-    };
-    if (result.outcome.structuredOutput !== undefined) {
-      completed.structuredOutput = result.outcome.structuredOutput;
-    }
-    return completed;
-  }
-  if (result.outcome.kind === "failed") {
-    return {
-      text: null,
-      error: result.outcome.error.message,
-      timedOut: result.outcome.error.failureKind === "timeout",
-    };
-  }
-  return {
-    text: null,
-    error: `validator paused unexpectedly (pauseKind=${result.outcome.pauseKind})`,
-    timedOut: false,
-  };
-}
-
-/**
- * Legacy dispatch loop, reduced to the parser-relevant slice. Mirrors the
- * pre-migration validator-runner: stub `executeAgentCall`, run the result
- * through the legacy adapter, then through `parseValidatorResponse` exactly
- * the way the legacy runner did (including the runner-error short-circuit).
- */
-async function runLegacyValidatorPath(
-  stubExecuteAgentCall: (request: AgentCallRequest) => Promise<AgentCallResult>,
-): Promise<ValidatorOutcome> {
-  const request: AgentCallRequest = {
-    executionClass: "governed-execution" as const,
-    kind: "task_run",
-    backend: VALIDATOR_ENGINE,
-    prompt: "validator prompt (parity fixture)",
-    writeCapability: "write_capable",
-    outputSchema: { type: "object" } as Record<string, unknown>,
-    laneRef: { workflowId: "exec-parity", laneId: "context_validator" },
-  };
-
-  const result = await stubExecuteAgentCall(request);
-  const taskResult = agentCallResultToLegacyTaskResult(result);
-
-  if (taskResult.error) {
-    return {
-      kind: "infra_error",
-      reason: "exception",
-      message: taskResult.error,
-      engine: VALIDATOR_ENGINE,
-    };
-  }
-
-  return parseValidatorResponse({
-    text: taskResult.text ?? "",
-    engine: VALIDATOR_ENGINE,
-    authority: "blocking",
-    structuredOutput: taskResult.structuredOutput,
-    allowedTaskIds,
-  }).result;
-}
 
 function buildExecutionForNewPath(): {
   execution: GraphWorkflowExecution;
@@ -209,53 +118,101 @@ function buildExecutionForNewPath(): {
   return { execution, contextDef };
 }
 
-// A real directory: the new path composes its lane write envelope before
-// dispatch, and that composition canonicalizes the candidate worktree and fails
-// closed when it cannot resolve.
+// The write envelope canonicalizes the candidate directory before dispatch.
 const stubWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-validator-wt-"));
 
-async function runNewValidatorPath(
-  agentResult: AgentCallResult,
-): Promise<ValidatorOutcome> {
-  const executeConversationTurn = vi.fn(async () =>
-    settledConversationTurn(agentResult),
-  );
+interface ProviderOutput {
+  text: string | null;
+  structuredOutput?: unknown;
+}
+
+function refusalIssues(result: AgentCallResult): string[] {
+  if (result.outcome.kind !== "failed")
+    throw new Error("Expected facade schema refusal");
+  return z
+    .object({ errors: z.array(z.string()).min(1) })
+    .parse(result.outcome.error.backendDetails).errors;
+}
+
+/** Production actor, facade, and validator parser; only the backend is scripted. */
+async function runValidatorPath(providerOutput: ProviderOutput) {
+  const turns: ConversationBackendTurnInput[] = [];
+  const runtime: ConversationBackendRuntime = {
+    backend: VALIDATOR_ENGINE,
+    status: "alive",
+    modelSelection: validatorConfig.agent.modelSelection,
+    async sendTurn(input) {
+      turns.push(input);
+      const output: ProviderOutput = input.outputFormat
+        ? providerOutput
+        : {
+            text: "Reviewed the completed tasks against the acceptance criteria.",
+          };
+      return {
+        backendRef: {
+          backend: VALIDATOR_ENGINE,
+          ref: "validator-parity-thread",
+        },
+        costUsd: null,
+        durationMs: 1,
+        numTurns: 1,
+        contextTokens: null,
+        contextWindowMax: null,
+        contentBlocks:
+          output.text === null ? [] : [{ type: "text", text: output.text }],
+        structuredOutput: output.structuredOutput,
+        aborted: false,
+        compacted: false,
+        failure: null,
+        continuationDisposition: "retain",
+      };
+    },
+    async close() {},
+  };
+  const { execution, contextDef } = buildExecutionForNewPath();
+  const validator = contextDef.contextValidator.assignments[0];
+  if (!validator) throw new Error("Missing validator fixture assignment");
+  const harness = createValidatorConversationHarness({
+    backendFactory: {
+      backend: VALIDATOR_ENGINE,
+      validateModelSelection() {},
+      async createRuntime() {
+        return runtime;
+      },
+    },
+    execution,
+    context: contextDef,
+    validator,
+    worktreePath: stubWorktreeDir,
+  });
+  const facadeResults: AgentCallResult[] = [];
   const runner = createValidatorRunner({
     continuityService: makeStubValidatorContinuityService(),
     executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => stubWorktreeDir,
-    executeConversationTurn,
-    stopConversationActor: async () => {},
+    ...harness,
+    async executeConversationTurn(input) {
+      const result = await harness.executeConversationTurn(input);
+      if (
+        result.kind === "settled" &&
+        result.turn.outcome.kind === "call_result"
+      )
+        facadeResults.push(result.turn.outcome.result);
+      return result;
+    },
     getProjectDisplayName: () => "test-project",
   });
-
-  const { execution, contextDef } = buildExecutionForNewPath();
   const { result } = await runner.runContextValidator({
     projectPath: "/repo",
     sessionName: "session-1",
     execution,
     context: contextDef,
-    validator: contextDef.contextValidator.assignments[0]!,
+    validator,
   });
-  return result;
-}
-
-function completedAgentCallResult(
-  text: string | null,
-  structuredOutput?: unknown,
-): AgentCallResult {
-  const completed: AgentCallResult["outcome"] =
-    structuredOutput !== undefined
-      ? { kind: "completed", text, structuredOutput }
-      : { kind: "completed", text };
-  return {
-    backend: VALIDATOR_ENGINE,
-    backendRef: null,
-    capabilities: capabilityViewForBackend(VALIDATOR_ENGINE),
-    usage: emptyAgentCallUsage,
-    artifacts: [],
-    outcome: completed,
-  };
+  const facadeResult = facadeResults.at(-1);
+  if (!facadeResult)
+    throw new Error("Validator did not return a facade result");
+  return { result, facadeResult, turns };
 }
 
 const passPayload = {
@@ -299,97 +256,96 @@ const mismatchPayload = {
 const fencedJsonText = (payload: unknown): string =>
   ["Here is my review:", "```json", JSON.stringify(payload), "```"].join("\n");
 
-/**
- * The parity test guards the boundary contract between the migrated
- * `executeConversationTurn` dispatch path and the original `executeAgentCall`
- * dispatch path. Each fixture defines a single model output and feeds it
- * through both paths — the legacy path stubs at the `executeAgentCall`
- * boundary and runs the original adapter inline, the new path stubs at the
- * `executeConversationTurn` boundary and runs through `createValidatorRunner`.
- * Both paths converge on `parseValidatorResponse` and the resulting
- * `ValidatorOutcome` is asserted deep-equal.
- *
- * If the new adapter ever drops, rewrites, or reorders the parser inputs the
- * legacy boundary produced, this test fails before any production validator
- * turn surfaces the divergence.
- */
-describe("validator parity: executeAgentCall (legacy) vs executeConversationTurn (new)", () => {
-  it("native SDK structured output produces identical pass outcomes on both paths", async () => {
-    const legacy = await runLegacyValidatorPath(async () =>
-      completedAgentCallResult(null, passPayload),
-    );
-    const next = await runNewValidatorPath(
-      completedAgentCallResult(null, passPayload),
-    );
-
-    expect(next).toEqual(legacy);
-    expect(next.kind).toBe("pass");
-    if (next.kind === "pass") {
-      expect(next.summary).toBe(passPayload.summary);
-      expect(next.issues).toEqual([]);
-      expect(next.reopenTaskIds).toEqual([]);
+describe("validator parity across facade extraction sources", () => {
+  describe.each(["native", "raw_json", "fenced"] as const)("%s", (source) => {
+    function providerOutput(payload: unknown): ProviderOutput {
+      if (source === "native") return { text: null, structuredOutput: payload };
+      return {
+        text:
+          source === "raw_json"
+            ? JSON.stringify(payload)
+            : fencedJsonText(payload),
+      };
     }
+
+    it.each([
+      { label: "pass", payload: passPayload, reopenTaskIds: [] },
+      { label: "fail", payload: failPayload, reopenTaskIds: ["task-plan-2"] },
+    ])(
+      "preserves the $label verdict through the production conversation path",
+      async ({ label, payload, reopenTaskIds }) => {
+        const { result, facadeResult, turns } = await runValidatorPath(
+          providerOutput(payload),
+        );
+        const parsed = parseValidatorResponse({
+          structuredOutput: payload,
+          engine: VALIDATOR_ENGINE,
+          authority: "blocking",
+          allowedTaskIds,
+        }).result;
+
+        expect(result).toEqual(parsed);
+        expect(result).toMatchObject({
+          kind: label,
+          summary: payload.summary,
+          issues: payload.issues,
+          reopenTaskIds,
+        });
+        expect(facadeResult.outcome).toMatchObject({
+          kind: "completed",
+          structuredOutput: payload,
+          parse: { source },
+        });
+        expect(turns).toHaveLength(2);
+        expect(turns[0]?.outputFormat).toBeUndefined();
+        expect(turns[1]?.outputFormat?.type).toBe("json_schema");
+      },
+    );
   });
 
-  it("raw JSON in text body produces identical fail outcomes on both paths", async () => {
-    const rawJson = JSON.stringify(failPayload);
-    const legacy = await runLegacyValidatorPath(async () =>
-      completedAgentCallResult(rawJson),
-    );
-    const next = await runNewValidatorPath(completedAgentCallResult(rawJson));
+  it("refuses malformed output only after the facade's bounded format repair", async () => {
+    const { result, facadeResult, turns } = await runValidatorPath({
+      text: "I could not produce structured output.",
+    });
 
-    expect(next).toEqual(legacy);
-    expect(next.kind).toBe("fail");
-    if (next.kind === "fail") {
-      expect(next.summary).toBe(failPayload.summary);
-      expect(next.issues).toEqual(failPayload.issues);
-      expect(next.reopenTaskIds).toEqual(["task-plan-2"]);
-    }
+    expect(result).toMatchObject({
+      kind: "infra_error",
+      engine: VALIDATOR_ENGINE,
+      failure: { kind: "schema_validation" },
+      structuredOutputRepair: { attempts: 1, maxAttempts: 1 },
+    });
+    expect(facadeResult.outcome).toMatchObject({
+      kind: "failed",
+      error: {
+        failureKind: "schema_validation",
+        backendDetails: { repairAttempts: 1, repairMaxAttempts: 1 },
+      },
+    });
+    expect(turns).toHaveLength(3);
+    expect(turns[0]?.outputFormat).toBeUndefined();
+    expect(turns[2]?.outputFormat).toEqual(turns[1]?.outputFormat);
+    const issues = refusalIssues(facadeResult);
+    expect(result).toMatchObject({ structuredOutputIssues: issues });
+    expect(turns[2]?.promptText).toContain(issues[0]);
   });
 
-  it("fenced ```json block produces identical pass outcomes on both paths", async () => {
-    const text = fencedJsonText(passPayload);
-    const legacy = await runLegacyValidatorPath(async () =>
-      completedAgentCallResult(text),
-    );
-    const next = await runNewValidatorPath(completedAgentCallResult(text));
+  it("rejects a foreign task id at the facade gate and retains the named issue", async () => {
+    const { result, facadeResult, turns } = await runValidatorPath({
+      text: null,
+      structuredOutput: mismatchPayload,
+    });
 
-    expect(next).toEqual(legacy);
-    expect(next.kind).toBe("pass");
-    if (next.kind === "pass") {
-      expect(next.summary).toBe(passPayload.summary);
-    }
-  });
-
-  it("malformed output produces identical infra_error unparseable outcomes on both paths", async () => {
-    const text = "I could not produce structured output.";
-    const legacy = await runLegacyValidatorPath(async () =>
-      completedAgentCallResult(text),
-    );
-    const next = await runNewValidatorPath(completedAgentCallResult(text));
-
-    expect(next).toEqual(legacy);
-    expect(next.kind).toBe("infra_error");
-    if (next.kind === "infra_error") {
-      expect(next.reason).toBe("unparseable");
-      expect(next.engine).toBe(VALIDATOR_ENGINE);
-    }
-  });
-
-  it("allowed-task-id mismatch produces identical schema_mismatch infra_error on both paths", async () => {
-    const legacy = await runLegacyValidatorPath(async () =>
-      completedAgentCallResult(null, mismatchPayload),
-    );
-    const next = await runNewValidatorPath(
-      completedAgentCallResult(null, mismatchPayload),
-    );
-
-    expect(next).toEqual(legacy);
-    expect(next.kind).toBe("infra_error");
-    if (next.kind === "infra_error") {
-      expect(next.reason).toBe("schema_mismatch");
-      expect(next.engine).toBe(VALIDATOR_ENGINE);
-      expect(next.message).toContain("task-from-other-context");
-    }
+    expect(result).toMatchObject({
+      kind: "infra_error",
+      engine: VALIDATOR_ENGINE,
+      failure: { kind: "schema_validation" },
+      structuredOutputRepair: { attempts: 1, maxAttempts: 1 },
+    });
+    expect(facadeResult.outcome.kind).toBe("failed");
+    expect(turns).toHaveLength(3);
+    const issues = refusalIssues(facadeResult);
+    expect(result).toMatchObject({ structuredOutputIssues: issues });
+    expect(issues.join("\n")).toContain("taskId");
+    expect(turns[2]?.promptText).toContain("taskId");
   });
 });

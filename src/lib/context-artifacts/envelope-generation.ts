@@ -4,7 +4,7 @@
  *
  * The artifact service still owns freshness, single-flight, and the rolling
  * row; this module owns one run over ONE immutable transcript snapshot —
- * render, redact, prompt, execute, schema/guard retry, and the sequential
+ * render, redact, prompt, execute, guard re-prompt, and the sequential
  * delta fold. Checkpoint generation reuses it against a captured archive
  * boundary, which is why the source arrives as a value rather than as a
  * transcript path this module could re-read between passes, and why the lane
@@ -25,6 +25,7 @@ import {
   type RenderedTranscript,
   type TranscriptSegment,
 } from "@/lib/conversations/transcript-render";
+import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
 import type {
@@ -135,13 +136,9 @@ export interface EnvelopeGenerationRequest {
   timeoutMs: number;
 }
 
-export type EnvelopePassKind =
-  | "initial"
-  | "schema_repair"
-  | "guard_repair"
-  | "full_fallback";
+export type EnvelopePassKind = "initial" | "guard_repair" | "full_fallback";
 
-/** One model call. Repairs and fold steps are passes in their own right. */
+/** One facade call. Usage includes its format and schema-repair turns. */
 export interface EnvelopeGenerationPass {
   /** 1-based across the whole run, including folds and repairs. */
   index: number;
@@ -157,7 +154,7 @@ export interface EnvelopeGenerationPass {
 
 export interface EnvelopeGenerationDeps {
   executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
-  /** Observes every model call, including folds and repairs. */
+  /** Observes every facade call, including folds and guard re-prompts. */
   onPass?(pass: EnvelopeGenerationPass): void;
   /** Cancels the run; checked before each pass and handed to the runner. */
   signal?: AbortSignal;
@@ -256,7 +253,11 @@ interface PreparedRun {
 type ModelPassResult =
   | { status: "ok"; envelope: CompactionEnvelope }
   | { status: "schema"; detail: string; paths: string[] }
-  | { status: "guard"; violations: CompactionGuardViolation[] }
+  | {
+      status: "guard";
+      violations: CompactionGuardViolation[];
+      resumeRef: AgentSessionRef | null;
+    }
   | { status: "model"; error: string; failureKind: string | null };
 
 type PassOutcome =
@@ -408,23 +409,9 @@ function specFor(
   };
 }
 
-/** Append rejection feedback to a prompt for a retry attempt. */
-function withFeedback(prompt: string, feedback: string | null): string {
-  if (feedback === null) return prompt;
-  return `${prompt}\n\n## Previous attempt rejected\n${feedback}\nRespond again with a single corrected JSON envelope.`;
-}
-
-const schemaFeedback = (detail: string): string =>
-  `Your previous response violated the output JSON schema: ${detail}`;
-
-const guardFeedback = (violations: CompactionGuardViolation[]): string =>
-  `Your previous response violated deterministic envelope guards:\n- ${violations
-    .map((violation) => violation.message)
-    .join("\n- ")}`;
-
 /**
  * Mutable per-run accounting. Pass count is the operation's measured cost, so
- * it counts every model call — fold steps and repairs included — and survives
+ * it counts every facade call — fold steps and guard re-prompts included — and survives
  * a failure so the caller can record what was spent.
  */
 interface RunState {
@@ -442,7 +429,7 @@ export async function generateCompactionEnvelope(
     if (deps.signal?.aborted === true) throw new CancelledGenerationError();
   }
 
-  /** One model call: execute → schema-parse → deterministic guards. No retry. */
+  /** One facade call: execute → schema-parse → deterministic guards. */
   async function attemptModelPass(
     prompt: string,
     mode: CompactionRunMode,
@@ -453,12 +440,17 @@ export async function generateCompactionEnvelope(
       segment: { index: number; total: number } | null;
       inputBytes: number;
     },
+    resumeRef?: AgentSessionRef,
   ): Promise<ModelPassResult> {
     throwIfCancelled();
     const result = await deps.executeTaskRun({
       kind: "task_run",
       executionClass: "nongoverned-task",
       executionProfile: "standard",
+      // The work turn summarizes in prose; the guard correction resumes that
+      // session and is already a format request.
+      structuredOutputTurns: resumeRef ? "single" : "work_then_format",
+      ...(resumeRef ? { resumeRef } : {}),
       prompt,
       outputFormat: { type: "json_schema", schema: COMPACTION_JSON_SCHEMA },
       timeoutMs: request.timeoutMs,
@@ -491,6 +483,17 @@ export async function generateCompactionEnvelope(
       });
     };
 
+    if (
+      result.kind === "error" &&
+      result.structuredOutputIssues !== undefined
+    ) {
+      observed("schema");
+      return {
+        status: "schema",
+        detail: result.structuredOutputIssues.join("; "),
+        paths: ["(structured output refused)"],
+      };
+    }
     if (result.kind === "error") {
       observed("model");
       return {
@@ -530,110 +533,129 @@ export async function generateCompactionEnvelope(
     });
     if (!guard.ok) {
       observed("guard");
-      return { status: "guard", violations: guard.violations };
+      return {
+        status: "guard",
+        violations: guard.violations,
+        resumeRef:
+          result.continuationDisposition === "retain"
+            ? result.backendRef
+            : null,
+      };
     }
     observed("ok");
     return { status: "ok", envelope: parsed.data };
   }
 
-  /**
-   * Single-pass generation: one render of the whole planned window, with the
-   * schema/guard retry loop and the delta→full guard fallback (§7.3). Throws
-   * `OversizeRenderError` when the render exceeds the model budget so the
-   * caller can decide between the fold path and a hard failure.
-   */
-  async function runSinglePass(): Promise<PassOutcome> {
-    const preparedByMode = new Map<CompactionRunMode, PreparedRun>();
-    const prepared = (mode: CompactionRunMode): PreparedRun => {
-      const cached = preparedByMode.get(mode);
-      if (cached) return cached;
-      const fresh = prepareRun(request, specFor(request, mode));
-      preparedByMode.set(mode, fresh);
-      return fresh;
-    };
-
-    let mode = request.plan.mode;
-    let passKind: EnvelopePassKind = "initial";
-    let schemaRetryUsed = false;
-    let guardRetryUsed = false;
-    let feedback: string | null = null;
-
-    for (;;) {
-      const run = prepared(mode);
-      const attempt = await attemptModelPass(
-        withFeedback(run.prompt, feedback),
-        mode,
-        run.expected,
-        mode === "delta" ? request.plan.previousEnvelope : null,
-        { kind: passKind, segment: null, inputBytes: run.inputBytes },
-      );
-
-      if (attempt.status === "model")
-        return {
-          ok: false,
-          error: attempt.error,
-          failure: {
-            ...plainFailure("model_error"),
-            failureKind: attempt.failureKind,
-          },
-        };
-
-      if (attempt.status === "schema") {
-        if (!schemaRetryUsed) {
-          schemaRetryUsed = true;
-          passKind = "schema_repair";
-          feedback = schemaFeedback(attempt.detail);
-          continue;
-        }
-        return {
-          ok: false,
-          error: `envelope failed schema validation after retry: ${attempt.detail}`,
-          failure: { ...plainFailure("schema_invalid"), at: attempt.paths },
-        };
-      }
-
-      if (attempt.status === "guard") {
-        log.warn("artifact.delta.guard_failed", {
+  /** The facade owns schema repair; guards may request one contextual correction. */
+  async function runPass(
+    prepared: PreparedRun,
+    mode: CompactionRunMode,
+    previousEnvelope: CompactionEnvelope | null,
+    segment: { index: number; total: number } | null,
+    kind: EnvelopePassKind = "initial",
+  ): Promise<PassOutcome> {
+    const observeGuard = (
+      attempt: Extract<ModelPassResult, { status: "guard" }>,
+    ): void => {
+      log.warn(
+        segment ? "artifact.fold.guard_failed" : "artifact.delta.guard_failed",
+        {
           runId: request.runId,
           conversationId: request.source.conversationId,
           kind: request.kind,
+          ...(segment ? { segment: segment.index, of: segment.total } : {}),
           mode,
           violations: attempt.violations.map(guardCoordinate),
-        });
-        if (!guardRetryUsed) {
-          guardRetryUsed = true;
-          passKind = "guard_repair";
-          feedback = guardFeedback(attempt.violations);
-          continue;
-        }
-        if (mode === "delta") {
-          // Second delta guard failure → ONE full non-delta fallback run
-          // (§7.3); retries stay consumed so the fallback is single-shot.
-          mode = "full";
-          passKind = "full_fallback";
-          feedback = null;
-          continue;
-        }
-        return {
-          ok: false,
-          error: `envelope failed deterministic guards: ${attempt.violations
-            .map((violation) => violation.message)
-            .join("; ")}`,
-          failure: {
-            ...plainFailure("guard_violations"),
-            at: attempt.violations.map(guardCoordinate),
+        },
+      );
+    };
+    let attempt = await attemptModelPass(
+      prepared.prompt,
+      mode,
+      prepared.expected,
+      previousEnvelope,
+      { kind, segment, inputBytes: prepared.inputBytes },
+    );
+    if (attempt.status === "guard") {
+      observeGuard(attempt);
+      if (attempt.resumeRef !== null) {
+        // The resumed session already holds the rendered transcript and the
+        // envelope contract; only the feedback is new.
+        const prompt = `Your previous envelope violated deterministic guards:\n- ${attempt.violations.map((violation) => violation.message).join("\n- ")}\nCorrect the envelope using the same captured evidence and respond with the complete corrected envelope.`;
+        attempt = await attemptModelPass(
+          prompt,
+          mode,
+          prepared.expected,
+          previousEnvelope,
+          {
+            kind: "guard_repair",
+            segment,
+            inputBytes: Buffer.byteLength(prompt, "utf-8"),
           },
-        };
+          attempt.resumeRef,
+        );
+        if (attempt.status === "guard") observeGuard(attempt);
       }
-
+    }
+    if (attempt.status === "model") {
       return {
-        ok: true,
-        envelope: attempt.envelope,
-        sourceHash: run.sourceHash,
-        inputBytes: run.inputBytes,
-        mode,
+        ok: false,
+        error: attempt.error,
+        failure: {
+          ...plainFailure("model_error"),
+          failureKind: attempt.failureKind,
+        },
       };
     }
+    if (attempt.status === "schema") {
+      return {
+        ok: false,
+        error: `envelope failed schema validation: ${attempt.detail}`,
+        failure: { ...plainFailure("schema_invalid"), at: attempt.paths },
+      };
+    }
+    if (attempt.status === "guard") {
+      return {
+        ok: false,
+        error: `envelope failed deterministic guards: ${attempt.violations.map((violation) => violation.message).join("; ")}`,
+        failure: {
+          ...plainFailure("guard_violations"),
+          at: attempt.violations.map(guardCoordinate),
+        },
+      };
+    }
+    return {
+      ok: true,
+      envelope: attempt.envelope,
+      sourceHash: prepared.sourceHash,
+      inputBytes: prepared.inputBytes,
+      mode,
+    };
+  }
+
+  /** A delta guard refusal may start one independent full-mode call. */
+  async function runSinglePass(): Promise<PassOutcome> {
+    const mode = request.plan.mode;
+    const outcome = await runPass(
+      prepareRun(request, specFor(request, mode)),
+      mode,
+      mode === "delta" ? request.plan.previousEnvelope : null,
+      null,
+    );
+    if (
+      !outcome.ok &&
+      outcome.failure.code === "guard_violations" &&
+      mode === "delta"
+    ) {
+      return runPass(
+        prepareRun(request, specFor(request, "full")),
+        "full",
+        null,
+        null,
+        "full_fallback",
+      );
+    }
+    return outcome;
   }
 
   /**
@@ -667,87 +689,6 @@ export async function generateCompactionEnvelope(
       SEGMENT_WINDOW_BUDGET_BYTES,
     );
     return segments.length >= 2 ? segments : null;
-  }
-
-  /** Retry loop for one fold step — schema + guard retries, no full fallback. */
-  async function runFoldStep(
-    prepared: PreparedRun,
-    mode: CompactionRunMode,
-    previousEnvelope: CompactionEnvelope | null,
-    segIndex: number,
-    segTotal: number,
-  ): Promise<
-    | { ok: true; envelope: CompactionEnvelope }
-    | { ok: false; error: string; failure: EnvelopeGenerationFailure }
-  > {
-    let schemaRetryUsed = false;
-    let guardRetryUsed = false;
-    let passKind: EnvelopePassKind = "initial";
-    let feedback: string | null = null;
-    const segment = { index: segIndex + 1, total: segTotal };
-
-    for (;;) {
-      const attempt = await attemptModelPass(
-        withFeedback(prepared.prompt, feedback),
-        mode,
-        prepared.expected,
-        previousEnvelope,
-        { kind: passKind, segment, inputBytes: prepared.inputBytes },
-      );
-
-      if (attempt.status === "model")
-        return {
-          ok: false,
-          error: attempt.error,
-          failure: {
-            ...plainFailure("model_error"),
-            failureKind: attempt.failureKind,
-          },
-        };
-
-      if (attempt.status === "schema") {
-        if (!schemaRetryUsed) {
-          schemaRetryUsed = true;
-          passKind = "schema_repair";
-          feedback = schemaFeedback(attempt.detail);
-          continue;
-        }
-        return {
-          ok: false,
-          error: `envelope failed schema validation after retry: ${attempt.detail}`,
-          failure: { ...plainFailure("schema_invalid"), at: attempt.paths },
-        };
-      }
-
-      if (attempt.status === "guard") {
-        log.warn("artifact.fold.guard_failed", {
-          runId: request.runId,
-          conversationId: request.source.conversationId,
-          segment: segIndex + 1,
-          of: segTotal,
-          mode,
-          violations: attempt.violations.map(guardCoordinate),
-        });
-        if (!guardRetryUsed) {
-          guardRetryUsed = true;
-          passKind = "guard_repair";
-          feedback = guardFeedback(attempt.violations);
-          continue;
-        }
-        return {
-          ok: false,
-          error: `envelope failed deterministic guards: ${attempt.violations
-            .map((violation) => violation.message)
-            .join("; ")}`,
-          failure: {
-            ...plainFailure("guard_violations"),
-            at: attempt.violations.map(guardCoordinate),
-          },
-        };
-      }
-
-      return { ok: true, envelope: attempt.envelope };
-    }
   }
 
   /**
@@ -795,13 +736,10 @@ export async function generateCompactionEnvelope(
         expected: { startSeq: coverageStart, endSeq },
         allowTruncation: true,
       });
-      const step = await runFoldStep(
-        prepared,
-        stepMode,
-        previous,
-        i,
-        segments.length,
-      );
+      const step = await runPass(prepared, stepMode, previous, {
+        index: i + 1,
+        total: segments.length,
+      });
       if (!step.ok) {
         return {
           ok: false,

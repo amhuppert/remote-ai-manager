@@ -202,12 +202,12 @@ describe("section 7.1 — structured-output enforcement always flows through the
         backend: "codex",
         prompt: "anything",
         outputSchema: { type: "object", required: ["summary"] },
-        structuredOutputRepair: { maxAttempts: 0 },
+        structuredOutputTurns: "single",
       },
       deps,
     );
 
-    expect(validate).toHaveBeenCalledTimes(1);
+    expect(validate).toHaveBeenCalledTimes(2);
     expect(requests[0]?.modelSelection).toEqual(CODEX_MODEL_SELECTION);
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
@@ -221,7 +221,6 @@ describe("section 7.1 — structured-output enforcement always flows through the
       backend: "claude",
       status: "alive",
       modelSelection: CLAUDE_MODEL_SELECTION,
-      outputFormat: undefined,
 
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
@@ -263,11 +262,11 @@ describe("section 7.1 — structured-output enforcement always flows through the
         backend: "claude",
         prompt: "hi",
         outputSchema: { type: "object" },
-        structuredOutputRepair: { maxAttempts: 0 },
+        structuredOutputTurns: "single",
       },
       deps,
     );
-    expect(validate).toHaveBeenCalledTimes(1);
+    expect(validate).toHaveBeenCalledTimes(2);
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("schema_validation");
@@ -280,7 +279,6 @@ describe("section 7.1 — structured-output enforcement always flows through the
       backend: "claude",
       status: "alive",
       modelSelection: CLAUDE_MODEL_SELECTION,
-      outputFormat: undefined,
 
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
@@ -348,7 +346,6 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
       backend: "codex",
       status: "alive",
       modelSelection: CODEX_MODEL_SELECTION,
-      outputFormat: undefined,
 
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
@@ -399,7 +396,6 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
       backend: "claude",
       status: "alive",
       modelSelection: CLAUDE_MODEL_SELECTION,
-      outputFormat: undefined,
 
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
@@ -525,7 +521,6 @@ describe("section 7.1 — capability view is attached to every dispatched result
       backend: "claude",
       status: "alive",
       modelSelection: CLAUDE_MODEL_SELECTION,
-      outputFormat: undefined,
 
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {

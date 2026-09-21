@@ -111,7 +111,6 @@ function fakeRuntime(input: {
       modelId: "gpt-5.4",
       parameters: { reasoning: "high", fast: "false" },
     },
-    outputFormat: undefined,
 
     appliedConfigs,
     async sendTurn() {

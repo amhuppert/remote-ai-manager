@@ -216,15 +216,9 @@ describe("readNextTurnContextLoss", () => {
     expect(loss.runtimeCreatedWithoutResume).toBe(false);
   });
 
-  it("reports no loss for a lane runtime carrying a schema and a write envelope", async () => {
-    // The mirror-image defect. A dispatch-supplied dimension is invisible to
-    // this reader in BOTH directions: comparing a lane's baked schema and
-    // envelope against "nothing desired" would find drift on every structured
-    // -output lane and preview a full block for all of them. Reading the
-    // runtime's own values is what keeps a conversation at rest reading as at
-    // rest. The opposite direction — a next dispatch supplying something
-    // different — is the intended divergence pinned in "the dispatch-supplied
-    // boundary" below.
+  it("reports no loss for a lane runtime carrying a write envelope", async () => {
+    // A lane's dispatch-supplied write envelope is invisible to this reader.
+    // Reading the runtime's own envelope preserves the at-rest projection.
     const loss = await readNextTurnContextLoss(
       makeDeps({
         runtime: {
@@ -232,10 +226,6 @@ describe("readNextTurnContextLoss", () => {
           status: "alive",
           modelSelection: MODEL,
           alignmentVersion: 4,
-          outputFormat: {
-            type: "json_schema",
-            schema: { type: "object", properties: {} },
-          },
           fsWritePolicy: {
             mode: "allowlist",
             allowWrite: ["src/lib/memory"],
@@ -302,19 +292,6 @@ const DISPATCH_SUPPLIED_DRIFT: readonly {
     },
   },
   {
-    dimension: "a structured-output schema the next request carries",
-    runtime: aliveRuntime(4),
-    nextDispatch: {
-      ...aliveRuntime(4),
-      modelSelection: MODEL,
-      alignmentVersion: 4,
-      outputFormat: {
-        type: "json_schema",
-        schema: { type: "object", properties: {} },
-      },
-    },
-  },
-  {
     dimension: "a write envelope the next dispatch composes from placement",
     runtime: {
       ...aliveRuntime(4),
@@ -354,8 +331,8 @@ describe("the dispatch-supplied boundary", () => {
 
       // What the turn does with the configuration its dispatcher hands it. The
       // predicate is called in the argument shape the turn itself uses
-      // (`executePromptForMachine`, which passes `input.outputFormat` and
-      // `input.fsWritePolicy` straight from the submission) so this is the
+      // (`executePromptForMachine`, which passes model selection and the
+      // write policy from the submission) so this is the
       // production rule and not a restatement of it: the same runtime is now
       // drifted, so it is closed and rebuilt, and with no resume handle that
       // rebuild is a context loss.
@@ -364,7 +341,6 @@ describe("the dispatch-supplied boundary", () => {
           current: { ...runtimeConfigurationFixture(), ...runtime },
           desired: runtimeConfigurationFixture({
             modelSelection: nextDispatch.modelSelection,
-            outputFormat: nextDispatch.outputFormat,
             alignmentVersion: nextDispatch.alignmentVersion,
             fsWritePolicy: nextDispatch.fsWritePolicy,
           }),

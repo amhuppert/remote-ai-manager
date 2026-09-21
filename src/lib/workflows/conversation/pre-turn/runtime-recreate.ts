@@ -18,7 +18,6 @@ import { stableStringify } from "@/lib/state-store/serialization";
 export interface DesiredRuntimeConfiguration {
   backend: AgentBackendId;
   modelSelection: BackendModelSelection;
-  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   alignmentVersion: number | null;
   /** The write envelope is established at session start; even newly adding confinement requires recreation. */
   fsWritePolicy?: FsWritePolicy;
@@ -43,7 +42,6 @@ export function runtimeConfigurationChanges(input: {
   const dimensions = [
     "backend",
     "modelSelection",
-    "outputFormat",
     "alignmentVersion",
     "fsWritePolicy",
     "repeatableInstructions",

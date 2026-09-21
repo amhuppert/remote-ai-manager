@@ -3,7 +3,10 @@ import {
   recordServerBaseUrl,
   _resetServerBaseUrlForTesting,
 } from "@/lib/agent-gateway/server-url";
-import type { ConversationBackendFactory } from "../conversation";
+import type {
+  ConversationBackendFactory,
+  ConversationBackendTurnInput,
+} from "../conversation";
 import { claudeConversationBackendFactory } from "../claude/conversation-runtime";
 import { _setSdkQueryForTesting } from "../claude/query-session";
 import { CodexConversationRuntime } from "../codex/conversation-runtime";
@@ -26,7 +29,8 @@ export function createScriptedConversationBackend(input: {
     structuredOutput: JSON.parse(input.responseText),
   });
   let threadRequest: Record<string, unknown> | undefined;
-  const factory: ConversationBackendFactory =
+  let codexThreadInstructions = "";
+  const adapterFactory: ConversationBackendFactory =
     input.backend === "claude"
       ? {
           backend: "claude",
@@ -61,6 +65,10 @@ export function createScriptedConversationBackend(input: {
                     threadRequest = z
                       .record(z.string(), z.unknown())
                       .parse(params);
+                    if (method === "thread/start")
+                      codexThreadInstructions = String(
+                        threadRequest.developerInstructions ?? "",
+                      );
                     const response = z
                       .record(z.string(), z.unknown())
                       .parse(await provider.request(method, params));
@@ -91,8 +99,35 @@ export function createScriptedConversationBackend(input: {
             });
           },
         };
+  const turns: Array<{
+    prompt: string;
+    outputFormat: ConversationBackendTurnInput["outputFormat"];
+  }> = [];
+  const userPrompt = (): string =>
+    input.backend === "claude"
+      ? (claude.lastPromptText ?? "")
+      : codex.lastPrompt;
+  const factory: ConversationBackendFactory = {
+    ...adapterFactory,
+    async createRuntime(createInput) {
+      const runtime = await adapterFactory.createRuntime(createInput);
+      const sendTurn = runtime.sendTurn.bind(runtime);
+      runtime.sendTurn = async (turnInput) => {
+        const result = await sendTurn(turnInput);
+        turns.push({
+          prompt: userPrompt(),
+          outputFormat: turnInput.outputFormat,
+        });
+        return result;
+      };
+      return runtime;
+    },
+  };
   return {
     factory,
+    get turns(): ReadonlyArray<(typeof turns)[number]> {
+      return turns;
+    },
     get claudeOptions() {
       return claude.lastOptions;
     },
@@ -105,8 +140,7 @@ export function createScriptedConversationBackend(input: {
         .parse(threadRequest?.config ?? {});
     },
     get privilegedInstructions(): string {
-      if (input.backend === "codex")
-        return String(threadRequest?.developerInstructions ?? "");
+      if (input.backend === "codex") return codexThreadInstructions;
       const systemPrompt = claude.lastOptions?.systemPrompt;
       if (typeof systemPrompt === "string") return systemPrompt;
       return systemPrompt && "append" in systemPrompt
@@ -114,9 +148,7 @@ export function createScriptedConversationBackend(input: {
         : "";
     },
     get userPrompt(): string {
-      return input.backend === "claude"
-        ? (claude.lastPromptText ?? "")
-        : codex.lastPrompt;
+      return userPrompt();
     },
     close() {
       if (input.backend === "claude") _setSdkQueryForTesting(null);

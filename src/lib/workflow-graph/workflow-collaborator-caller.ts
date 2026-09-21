@@ -90,48 +90,42 @@ const logger = createLogger("workflow-graph.workflow-collaborator-caller");
 
 const AGENT_ONE_INITIAL_DRAFT_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration run.",
-  "Write the full draft into the required generated artifact file before returning structured output.",
-  "Produce a single CollaborationInitialDraftOutput JSON object containing only short bounded manifest fields and generated artifact references.",
+  "Write the full draft into the required generated artifact file before summarizing your work.",
 ].join("\n");
 
 const AGENT_TWO_INITIAL_DRAFT_SYSTEM_INSTRUCTIONS = [
   "You are agent_two in a workflow-scoped collaboration run.",
-  "Write the full draft into the required generated artifact file before returning structured output.",
-  "Produce a single CollaborationInitialDraftOutput JSON object containing only short bounded manifest fields and generated artifact references.",
+  "Write the full draft into the required generated artifact file before summarizing your work.",
 ].join("\n");
 
 const AGENT_TWO_CROSS_REVIEW_SYSTEM_INSTRUCTIONS = [
   "You are agent_two in a workflow-scoped collaboration run.",
-  "Read both initial drafts and write the full review into the required generated artifact file before returning structured output.",
-  "Emit a single CollaborationCrossReviewOutput JSON object containing only short bounded manifest fields and generated artifact references.",
+  "Read both initial drafts and write the full review into the required generated artifact file before summarizing your work.",
   "Classify each disagreement as objective or implementation, and assign minor|major|blocking severity.",
 ].join("\n");
 
 const AGENT_ONE_PROPOSED_CHANGES_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration round.",
-  "Write the full proposed-changes analysis into the required generated artifact file before returning structured output.",
-  "Emit a single CollaborationProposedChangesOutput JSON object containing only short bounded manifest fields, concrete ids, and generated artifact references.",
+  "Write the full proposed-changes analysis into the required generated artifact file before summarizing your work.",
 ].join("\n");
 
 const AGENT_TWO_COUNTER_PROPOSAL_SYSTEM_INSTRUCTIONS = [
   "You are agent_two in a workflow-scoped collaboration round.",
-  "Write the full counter-proposal into the required generated artifact file before returning structured output.",
-  "Emit a single CollaborationCounterProposalOutput JSON object containing only short bounded manifest fields, concrete ids, and generated artifact references.",
+  "Write the full counter-proposal into the required generated artifact file before summarizing your work.",
   "Accept or reject every proposed change id, offer alternatives when warranted, and fold your prior cross-review points into agree/disagree as needed.",
 ].join("\n");
 
 const AGENT_ONE_RESOLUTION_DECISION_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration round.",
-  "You are the authoritative resolver. Write the full resolution analysis into the required generated artifact file before returning structured output.",
-  "Emit a single CollaborationResolutionDecisionOutput JSON object based on the LATEST counter-proposal for this round.",
+  "Base your decision on the LATEST counter-proposal for this round.",
+  "You are the authoritative resolver. Write the full resolution analysis into the required generated artifact file before summarizing your work.",
   'Choose next_action="final" only when the brief is resolved. Use "continue_negotiation" when implementation disagreements remain and rounds remain; "ask_user" when objective disagreements remain or implementation disagreements exceed the autonomous threshold; "fail" only when the run cannot proceed.',
   "Every remaining_disagreement MUST include category (objective|implementation) and severity (minor|major|blocking).",
 ].join("\n");
 
 const AGENT_ONE_FINAL_ANSWER_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration run.",
-  "Write the user-facing final answer into answer.md and the audit into audit.md before returning structured output.",
-  "Synthesize a single CollaborationFinalAnswerOutput JSON object containing only short bounded manifest fields and generated artifact references.",
+  "Write the user-facing final answer into answer.md and the audit into audit.md before summarizing your work.",
   'Set answer_artifact_id="answer" and audit_artifact_id="audit".',
 ].join("\n");
 
@@ -226,6 +220,7 @@ export function createWorkflowCollaboratorCaller(
       prompt: args.built.prompt,
       systemInstructions: args.systemInstructions,
       outputSchema: args.built.outputSchema,
+      structuredOutputTurns: "work_then_format",
       laneRef,
       ...(isAgentTwoCall ? { modelSelection: agentTwoModelSelection } : {}),
     };

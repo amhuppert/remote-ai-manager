@@ -7,7 +7,7 @@ import { getProjectDisplayName as getConversationProjectName } from "@/lib/proje
  * dispatched onto the context's EXISTING implementer lane conversation so the
  * payload is restated from the work the lane already did. Validation is not
  * re-implemented here: `executeWorkflowTaskRun` routes the turn through the
- * conversation actor into `executeAgentCall`, whose `applyStructuredOutputGate`
+ * conversation actor into `executeAgentCall`, whose structured-output protocol
  * performs candidate extraction fall-through plus bounded repair. This module
  * only translates that single verdict into the engine's capture vocabulary —
  * the same composition `validator-runner.ts` uses for its schema-validated turn.
@@ -158,6 +158,7 @@ export function createGraphWorkflowOutputCaptureRunner(
       // The declared contract, verbatim: the gate validates against this exact
       // document, so anything less than the whole schema would validate a
       // different contract than the author wrote.
+      structuredOutputTurns: "single",
       outputFormat: { type: "json_schema", schema: input.outputSchema },
       modelSelection: context.implementer.agent.modelSelection,
       ...(writeEnvelope !== null

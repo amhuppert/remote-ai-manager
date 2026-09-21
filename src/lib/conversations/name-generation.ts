@@ -1,7 +1,6 @@
-import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
+import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import { z } from "zod";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
-import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import { readConfig } from "@/lib/config/loader";
 import {
@@ -129,14 +128,6 @@ export function sanitizeGeneratedName(raw: string): string | null {
   return value.length > 0 ? value : null;
 }
 
-function firstNonEmptyLine(text: string | null): string | null {
-  if (text === null) return null;
-  for (const line of text.split("\n")) {
-    if (line.trim().length > 0) return line;
-  }
-  return null;
-}
-
 function errorType(error: unknown): string {
   if (error instanceof Error) return error.name;
   return typeof error;
@@ -166,43 +157,50 @@ async function runGeneration(
   });
 
   try {
-    const result = await runAdmittedTask(
-      config.backend,
+    const result = await executeAgentCall(
       {
+        kind: "task_run",
+        backend: config.backend,
         executionClass: "nongoverned-task",
-        workingDirectory: input.projectPath,
         prompt: buildNamingPrompt("Conversation naming basis", input.content),
         modelSelection,
         outputSchema: CONVERSATION_NAME_OUTPUT_SCHEMA,
         timeoutMs: config.timeoutMs ?? DEFAULT_NAMING_TIMEOUT_MS,
         executionProfile: "isolated-one-shot",
-        autonomous: true,
+        structuredOutputTurns: "single",
       },
-      { getRunner: (backend) => deps.getTaskRunner(backend) },
+      {
+        taskExecution: {
+          workingDirectory: input.projectPath,
+          autonomous: true,
+        },
+        getTaskRunner: (backend) => deps.getTaskRunner(backend),
+      },
     );
 
-    if (result.timedOut || result.error !== null || result.failure !== null) {
-      failureKind = result.timedOut
-        ? "timeout"
-        : (result.failure?.kind ?? "backend_error");
+    if (result.outcome.kind !== "completed") {
+      failureKind =
+        result.outcome.kind === "failed"
+          ? result.outcome.error.failureKind
+          : "paused";
       throw new Error(
-        result.error ??
-          result.failure?.message ??
-          "Conversation name generation failed",
+        result.outcome.kind === "failed"
+          ? result.outcome.error.message
+          : "Conversation name generation paused unexpectedly",
       );
     }
 
     stage = "output";
-    const structured = validateStructuredOutput(conversationNameOutputSchema, {
-      ...(result.structuredOutput !== undefined
-        ? { native: result.structuredOutput }
-        : {}),
-      text: result.text,
-    });
-    const rawName = structured.ok
-      ? structured.value.name
-      : firstNonEmptyLine(result.text);
-    const name = rawName === null ? null : sanitizeGeneratedName(rawName);
+    const structured = conversationNameOutputSchema.safeParse(
+      result.outcome.structuredOutput,
+    );
+    if (!structured.success) {
+      failureKind = "schema_validation";
+      throw new Error(
+        "Conversation name generation returned an invalid name envelope",
+      );
+    }
+    const name = sanitizeGeneratedName(structured.data.name);
     if (name === null) {
       failureKind = "empty_output";
       throw new Error("Conversation name generation returned an empty name");

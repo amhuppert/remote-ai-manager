@@ -19,10 +19,6 @@ export function workflowBackendRefusal(
     (
       backendExecutionRefusal(entry, taskRequirements) ??
       backendExecutionRefusal(entry, {
-        ...taskRequirements,
-        executionProfile: "isolated-one-shot",
-      }) ??
-      backendExecutionRefusal(entry, {
         facet: "conversation",
         operation: "workflow-assignment",
         executionClass: "governed-execution",

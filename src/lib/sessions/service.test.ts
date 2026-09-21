@@ -1444,7 +1444,6 @@ describe("deleteSession", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      outputFormat: undefined,
 
       sendTurn: async () => {
         throw new Error("sendTurn is not exercised by session deletion");
@@ -1488,7 +1487,6 @@ describe("deleteSession", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      outputFormat: undefined,
 
       sendTurn: async () => {
         throw new Error("sendTurn is not exercised by session deletion");

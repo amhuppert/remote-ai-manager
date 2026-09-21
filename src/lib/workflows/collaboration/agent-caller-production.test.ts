@@ -6,10 +6,9 @@ import {
   type CollaborationLaneAgentsInput,
 } from "./agent-caller-production";
 import {
-  COLLABORATION_FORMAT_TURN_INSTRUCTION,
-  COLLABORATION_PROSE_TURN_INSTRUCTION,
-  COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
-} from "./prompt-builders";
+  renderFormatTurnPrompt,
+  STRUCTURED_OUTPUT_WORK_INSTRUCTION,
+} from "@/lib/agent-backends/structured-output-prompt";
 import {
   COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA,
   type CollaborationInitialDraftContent,
@@ -109,7 +108,6 @@ function makeRecordingClaudeFactory(
         backend: "claude",
         status: "alive",
         modelSelection: input.modelSelection,
-        outputFormat: input.outputFormat,
 
         applyPortableMcpConfig: async () => ({
           disposition: "applied_now",
@@ -165,7 +163,6 @@ describe("createCollaborationProductionCallAgent", () => {
           backend: "claude",
           status: "alive",
           modelSelection: input.modelSelection,
-          outputFormat: undefined,
 
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
@@ -257,7 +254,6 @@ describe("createCollaborationProductionCallAgent", () => {
           backend: "claude",
           status: "alive",
           modelSelection: input.modelSelection,
-          outputFormat: undefined,
 
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
@@ -327,7 +323,7 @@ describe("createCollaborationProductionCallAgent", () => {
     expect(persistedRefs[0]).toBeNull();
     expect(persistedRefs[1]).toEqual({
       backend: "claude",
-      ref: "real-session-1",
+      ref: "real-session-2",
     });
   });
 
@@ -348,12 +344,10 @@ describe("createCollaborationProductionCallAgent", () => {
     const factory: ConversationBackendFactory = {
       backend: "claude",
       async createRuntime(input): Promise<ConversationBackendRuntime> {
-        outputFormats.push(input.outputFormat);
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
           modelSelection: input.modelSelection,
-          outputFormat: input.outputFormat,
 
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
@@ -361,7 +355,8 @@ describe("createCollaborationProductionCallAgent", () => {
             droppedFields: [],
             errors: {},
           }),
-          async sendTurn(): Promise<ConversationBackendTurnResult> {
+          async sendTurn(turn): Promise<ConversationBackendTurnResult> {
+            outputFormats.push(turn.outputFormat);
             const structuredOutput: CollaborationInitialDraftContent =
               draftOutput(1);
             return {
@@ -425,7 +420,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
   });
 
-  it("opts every Claude lane turn into waiting for in-flight background tasks so a work turn that yields on background subagents is held open instead of closed", async () => {
+  it("waits for background work before formatting the completed Claude response", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-background-wait",
@@ -446,7 +441,6 @@ describe("createCollaborationProductionCallAgent", () => {
           backend: "claude",
           status: "alive",
           modelSelection: input.modelSelection,
-          outputFormat: input.outputFormat,
 
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
@@ -493,7 +487,7 @@ describe("createCollaborationProductionCallAgent", () => {
       executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
-      prompt: `round 1\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
+      prompt: "round 1",
       laneRef: { workflowId: "wf-claude-background-wait", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema:
@@ -509,7 +503,7 @@ describe("createCollaborationProductionCallAgent", () => {
     // starves the format turn of an answer to restate.
     expect(turnInputs).toHaveLength(2);
     expect(turnInputs[0]?.waitForBackgroundTasks).toBe(true);
-    expect(turnInputs[1]?.waitForBackgroundTasks).toBe(true);
+    expect(turnInputs[1]?.waitForBackgroundTasks).toBeUndefined();
   });
 
   it("starts a fresh Codex thread on the first lane call and resumes the SDK-returned thread later when the lane has continuity enabled (collaboration mode default)", async () => {
@@ -584,19 +578,25 @@ describe("createCollaborationProductionCallAgent", () => {
     expect(taskRequests).toHaveLength(4);
     // Round 1 work turn starts a fresh thread.
     expect(taskRequests[0]?.resumeRef).toBeUndefined();
-    expect(taskRequests[0]?.prompt).toBe("round 1");
+    expect(taskRequests[0]?.prompt).toBe(
+      `round 1\n\n${STRUCTURED_OUTPUT_WORK_INSTRUCTION}`,
+    );
     // Round 1 format turn resumes the work turn's thread.
     expect(taskRequests[1]?.resumeRef).toEqual({
       backend: "codex",
       ref: "real-thread-1",
     });
-    expect(taskRequests[1]?.prompt).toBe(COLLABORATION_FORMAT_TURN_INSTRUCTION);
+    expect(taskRequests[1]?.prompt).toBe(
+      renderFormatTurnPrompt(COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA),
+    );
     // Round 2 work turn resumes the latest recorded thread.
     expect(taskRequests[2]?.resumeRef).toEqual({
       backend: "codex",
       ref: "real-thread-2",
     });
-    expect(taskRequests[2]?.prompt).toBe("round 2");
+    expect(taskRequests[2]?.prompt).toBe(
+      `round 2\n\n${STRUCTURED_OUTPUT_WORK_INSTRUCTION}`,
+    );
   });
 
   it("starts a fresh Cursor task on the first lane call and resumes the runner-returned Cursor ref later, under the autonomous lane settings", async () => {
@@ -677,7 +677,9 @@ describe("createCollaborationProductionCallAgent", () => {
     expect(taskRequests).toHaveLength(4);
     // Round 1 work turn starts a fresh Cursor task.
     expect(taskRequests[0]?.resumeRef).toBeUndefined();
-    expect(taskRequests[0]?.prompt).toBe("round 1");
+    expect(taskRequests[0]?.prompt).toBe(
+      `round 1\n\n${STRUCTURED_OUTPUT_WORK_INSTRUCTION}`,
+    );
     // Round 1 format turn resumes the work turn's task ref.
     expect(taskRequests[1]?.resumeRef).toEqual({
       backend: "cursor",
@@ -715,7 +717,7 @@ describe("createCollaborationProductionCallAgent", () => {
     expect(lane?.metrics.lastTurnUsage?.inputTokens).toBeGreaterThan(0);
   });
 
-  it("does NOT pass a Codex resumeRef when the lane policy disables continuity, even if a prior threadId is recorded", async () => {
+  it("starts work fresh when lane continuity is disabled, then resumes that work for formatting", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-no-continuity",
@@ -782,7 +784,10 @@ describe("createCollaborationProductionCallAgent", () => {
     await callAgent(request(2));
 
     expect(taskRequests[0]?.resumeRef).toBeUndefined();
-    expect(taskRequests[1]?.resumeRef).toBeUndefined();
+    expect(taskRequests[1]?.resumeRef).toEqual({
+      backend: "codex",
+      ref: "real-thread-1",
+    });
   });
 
   it("retries a stale Claude resume once with a fresh runtime", async () => {
@@ -808,7 +813,6 @@ describe("createCollaborationProductionCallAgent", () => {
           backend: "claude",
           status: "alive",
           modelSelection: input.modelSelection,
-          outputFormat: undefined,
 
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
@@ -818,7 +822,7 @@ describe("createCollaborationProductionCallAgent", () => {
           }),
           async sendTurn(): Promise<ConversationBackendTurnResult> {
             sendTurnCount += 1;
-            if (sendTurnCount === 2) {
+            if (sendTurnCount === 3) {
               return {
                 backendRef: { backend: "claude", ref: "stale-session" },
                 costUsd: null,
@@ -842,7 +846,7 @@ describe("createCollaborationProductionCallAgent", () => {
             return {
               backendRef: {
                 backend: "claude",
-                ref: sendTurnCount === 1 ? "stale-session" : "fresh-session",
+                ref: sendTurnCount <= 2 ? "stale-session" : "fresh-session",
               },
               costUsd: null,
               durationMs: 10,
@@ -896,16 +900,12 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       ref: "fresh-session",
     });
-    // Round 1 work turn creates fresh (null); the format turn resumes that
-    // session (stale-session), the resume fails as stale, and the caller
-    // recovers once with a fresh runtime (null) → fresh-session. Round 2
-    // resumes the recovered session for both of its turns.
+    // The next phase resumes the prior phase's final ref. A stale ref restarts
+    // that phase once, including its work, on one fresh runtime.
     expect(persistedRefs).toEqual([
       null,
       { backend: "claude", ref: "stale-session" },
       null,
-      { backend: "claude", ref: "fresh-session" },
-      { backend: "claude", ref: "fresh-session" },
     ]);
   });
 
@@ -1236,7 +1236,6 @@ describe("createCollaborationProductionCallAgent", () => {
             backend: "claude",
             status: "alive",
             modelSelection: input.modelSelection,
-            outputFormat: undefined,
 
             async sendTurn(
               input: ConversationBackendTurnInput,
@@ -1488,26 +1487,24 @@ describe("createCollaborationProductionCallAgent", () => {
       executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
-      prompt: `${workBody}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
+      prompt: workBody,
       laneRef: { workflowId: "wf-two-step", laneId: "agent_two" },
       writeCapability: "write_capable",
       outputSchema: schema,
     });
 
     expect(taskRequests).toHaveLength(2);
-    // Work turn: keeps the semantic body but swaps the JSON reminder for the
-    // prose directive, runs with no schema enforcement on a fresh thread.
+    // The facade appends its prose directive without altering the work body.
     expect(taskRequests[0]?.prompt).toBe(
-      `${workBody}\n\n${COLLABORATION_PROSE_TURN_INSTRUCTION}`,
-    );
-    expect(taskRequests[0]?.prompt).not.toContain(
-      COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
+      `${workBody}\n\n${STRUCTURED_OUTPUT_WORK_INSTRUCTION}`,
     );
     expect(taskRequests[0]?.outputSchema).toBeUndefined();
     expect(taskRequests[0]?.resumeRef).toBeUndefined();
     // Format turn: restate-as-JSON prompt, schema enforced, resuming the work
     // turn's thread.
-    expect(taskRequests[1]?.prompt).toBe(COLLABORATION_FORMAT_TURN_INSTRUCTION);
+    expect(taskRequests[1]?.prompt).toBe(
+      renderFormatTurnPrompt(COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA),
+    );
     expect(taskRequests[1]?.outputSchema).toEqual(schema);
     expect(taskRequests[1]?.resumeRef).toEqual({
       backend: "codex",
@@ -1670,7 +1667,6 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
           backend: "claude",
           status: "alive",
           modelSelection: input.modelSelection,
-          outputFormat: input.outputFormat,
 
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
@@ -1754,10 +1750,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
-      prompt: prefixPromptWithTicketBlock(
-        SESSION_CONTEXT,
-        `${WORK_BODY}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
-      ),
+      prompt: prefixPromptWithTicketBlock(SESSION_CONTEXT, WORK_BODY),
       systemInstructions: CHARTER_INSTRUCTION,
       laneRef: { workflowId, laneId: "agent_one" },
       writeCapability: "write_capable",
@@ -1765,7 +1758,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
     };
   }
 
-  it("maps systemInstructions onto the Claude runtime's session instructions at creation and on every dispatched turn", async () => {
+  it("keeps systemInstructions on the shared Claude runtime through the formatting turn", async () => {
     const workflowId = "wf-session-instructions";
     const laneService = await claudeLaneService(workflowId, null);
     const recorder = makeClaudeRecorder();
@@ -1789,9 +1782,10 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       expect(created.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
     }
     expect(recorder.turnInputs.length).toBeGreaterThan(0);
-    for (const turn of recorder.turnInputs) {
-      expect(turn.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
-    }
+    expect(recorder.turnInputs[0]?.sessionInstructions).toEqual([
+      CHARTER_INSTRUCTION,
+    ]);
+    expect(recorder.turnInputs[1]?.sessionInstructions).toEqual([]);
   });
 
   it("passes empty session instructions when the request carries none", async () => {
@@ -1874,30 +1868,30 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
 
     expect(recorder.turnInputs).toHaveLength(2);
     const [workTurn, formatTurn] = recorder.turnInputs;
-    // Work turn: ticket block prefixed once, prose directive swapped in.
+    // Work turn: ticket block prefixed once, then the facade prose directive.
     expect(workTurn?.promptText).toBe(
-      `${TICKET_BLOCK}\n\n${WORK_BODY}\n\n${COLLABORATION_PROSE_TURN_INSTRUCTION}`,
+      `${TICKET_BLOCK}\n\n${WORK_BODY}\n\n${STRUCTURED_OUTPUT_WORK_INSTRUCTION}`,
     );
     expect(workTurn?.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
     // Format turn: same governance, restate-as-JSON prompt only — the ticket
     // block is task context for producing the answer, not for reformatting it.
-    expect(formatTurn?.promptText).toBe(COLLABORATION_FORMAT_TURN_INSTRUCTION);
+    expect(formatTurn?.promptText).toBe(
+      renderFormatTurnPrompt(COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA),
+    );
     expect(formatTurn?.promptText).not.toContain(TICKET_BLOCK);
-    expect(formatTurn?.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+    expect(formatTurn?.sessionInstructions).toEqual([]);
   });
 
-  it("swaps only the builder's trailing reminder, leaving a ticket block that happens to quote it byte-identical", async () => {
+  it("preserves ticket text byte-for-byte when it quotes a structured-output instruction", async () => {
     const workflowId = "wf-ticket-bytes-preserved";
     const laneService = await claudeLaneService(workflowId, null);
     const recorder = makeClaudeRecorder();
 
-    // Ticket titles and descriptions are unrestricted user text: a ticket about
-    // this very reminder carries its exact bytes. The canonical block must
-    // survive the prose-turn rewrite unchanged — only the builder-owned
-    // terminal reminder is the caller's to swap.
+    // Unrestricted ticket text remains intact when the facade adds its work
+    // directive, even when the ticket happens to quote that directive.
     const adversarialTicketBlock = [
       "<active-ticket>",
-      `CC-99: "${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}" leaks into drafts`,
+      `CC-99: "${STRUCTURED_OUTPUT_WORK_INSTRUCTION}" leaks into drafts`,
       "</active-ticket>",
     ].join("\n");
     const adversarialContext: CollaborationSessionContext = {
@@ -1921,10 +1915,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
       executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
-      prompt: prefixPromptWithTicketBlock(
-        adversarialContext,
-        `${WORK_BODY}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
-      ),
+      prompt: prefixPromptWithTicketBlock(adversarialContext, WORK_BODY),
       systemInstructions: CHARTER_INSTRUCTION,
       laneRef: { workflowId, laneId: "agent_one" },
       writeCapability: "write_capable",
@@ -1933,26 +1924,24 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
 
     const workTurn = recorder.turnInputs[0];
     expect(workTurn?.promptText).toBe(
-      `${adversarialTicketBlock}\n\n${WORK_BODY}\n\n${COLLABORATION_PROSE_TURN_INSTRUCTION}`,
+      `${adversarialTicketBlock}\n\n${WORK_BODY}\n\n${STRUCTURED_OUTPUT_WORK_INSTRUCTION}`,
     );
     // The captured block is reproduced verbatim…
     expect(workTurn?.promptText.startsWith(adversarialTicketBlock)).toBe(true);
-    // …including the reminder bytes inside it, while the builder's own trailing
-    // reminder is the one that got swapped.
+    // The quoted directive and appended directive each appear once.
     expect(
-      workTurn?.promptText.split(COLLABORATION_STRUCTURED_OUTPUT_REMINDER),
-    ).toHaveLength(2);
+      workTurn?.promptText.split(STRUCTURED_OUTPUT_WORK_INSTRUCTION),
+    ).toHaveLength(3);
     expect(
-      workTurn?.promptText.endsWith(COLLABORATION_PROSE_TURN_INSTRUCTION),
+      workTurn?.promptText.endsWith(STRUCTURED_OUTPUT_WORK_INSTRUCTION),
     ).toBe(true);
   });
 
   it("re-issues a stale-ref fresh retry with the same session instructions and prompt", async () => {
     const workflowId = "wf-stale-governance";
-    const laneService = await claudeLaneService(workflowId, null);
-    // Turn 2 is the format follow-up resuming the work turn's session; it fails
-    // stale, and the caller recovers once with a fresh runtime.
-    const recorder = makeClaudeRecorder({ staleOnTurn: 2 });
+    const laneService = await claudeLaneService(workflowId, "stale-session");
+    // A stale phase-start ref reruns the work with the same governance.
+    const recorder = makeClaudeRecorder({ staleOnTurn: 1 });
 
     const callAgent = createCollaborationProductionCallAgent({
       workflowId,
@@ -1969,8 +1958,8 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
     await callAgent(governedRequest(workflowId));
 
     expect(recorder.turnInputs.length).toBeGreaterThan(2);
-    const staleTurn = recorder.turnInputs[1]!;
-    const retryTurn = recorder.turnInputs[2]!;
+    const staleTurn = recorder.turnInputs[0]!;
+    const retryTurn = recorder.turnInputs[1]!;
     expect(retryTurn.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
     expect(retryTurn.promptText).toBe(staleTurn.promptText);
     for (const created of recorder.createRuntimeInputs) {
@@ -2012,9 +2001,12 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
     // …and every call in that resumed lane carries the captured charter with
     // its supersedes clause, so the newer version governs.
     expect(recorder.turnInputs.length).toBeGreaterThan(1);
-    for (const turn of recorder.turnInputs) {
-      expect(turn.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
-      expect(turn.sessionInstructions[0]).toContain(CHARTER_SUPERSEDES_NOTICE);
+    expect(recorder.createRuntimeInputs).toHaveLength(2);
+    for (const created of recorder.createRuntimeInputs) {
+      expect(created.sessionInstructions).toEqual([CHARTER_INSTRUCTION]);
+      expect(created.sessionInstructions?.[0]).toContain(
+        CHARTER_SUPERSEDES_NOTICE,
+      );
     }
   });
 

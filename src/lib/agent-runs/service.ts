@@ -1,4 +1,4 @@
-import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
+import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 /**
  * Agent run job service: a one-shot backend task run as a job.
  *
@@ -14,8 +14,7 @@ import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
  * at start and updated to its terminal state with results when it settles.
  * The only thing that cannot serialize — the live AbortController — lives in
  * the shared abort registry under `agent-run:<runId>`. Structured results flow
- * through the neutral `outputSchema` request and shared extraction fallback
- * (`@/lib/agent-backends/structured-output`) — no bespoke parser. Execution,
+ * through the AgentCall work/format protocol and its structured-output gate. Execution,
  * filesystem, and artifact-registry side effects are injected so the
  * bookkeeping is exercised without running a real backend.
  */
@@ -26,7 +25,6 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { backendLabel } from "@/lib/agent-backends/catalog";
-import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
 import {
   getAbortHandle,
   registerAbortHandle,
@@ -59,9 +57,7 @@ const AGENT_RUN_OUTPUT_DIR = "memory-bank/agent-runs";
  */
 const AGENT_RUN_PROMPT_PREAMBLE = `You MUST write all detailed output as files in the \`${AGENT_RUN_OUTPUT_DIR}/\` directory (relative to the workspace root). Use markdown files primarily, but other formats are acceptable when appropriate.
 
-Your final response must be a JSON object with two fields:
-- "summary": A concise summary of what you did and the results. Maximum 1000 characters. This is the only text the caller sees directly, so make it informative.
-- "referenceDocuments": An array of documents you created, each with "filePath" (path relative to workspace root) and "description" (what the file contains and when it should be read).
+Conclude with a concise prose summary of what you did and the results (maximum 1000 characters), followed by the paths of the documents you created relative to the workspace root and a description of what each contains and when it should be read.
 
 Write detailed analysis, code examples, plans, and explanations to files — do NOT put them in the summary.`;
 
@@ -244,14 +240,9 @@ async function executeRun(
       return;
     }
 
-    const structured = validateStructuredOutput(agentRunOutputSchema, {
-      ...(result.structuredOutput !== undefined
-        ? { native: result.structuredOutput }
-        : {}),
-      text: result.response,
-    });
+    const structured = agentRunOutputSchema.safeParse(result.structuredOutput);
 
-    if (structured.ok) {
+    if (structured.success) {
       // The agent writes to <workingDirectory>/memory-bank/agent-runs/… and
       // reports filePaths relative to workingDirectory. Everything the caller
       // (and CC's document index) sees must be relative to the session
@@ -259,7 +250,7 @@ async function executeRun(
       const documents = toWorktreeRelativeDocuments(
         input.worktreePath,
         input.workingDirectory,
-        structured.value.referenceDocuments,
+        structured.data.referenceDocuments,
       );
       await registerReferenceDocuments(
         deps.artifactRegistry,
@@ -269,26 +260,15 @@ async function executeRun(
       );
       terminal({
         status: "completed",
-        summary: structured.value.summary,
+        summary: structured.data.summary,
         referenceDocuments: documents,
       });
       return;
     }
 
-    if (!result.response) {
-      terminal({
-        status: "failed",
-        error: "Agent completed without emitting a final response.",
-      });
-      return;
-    }
-
-    // Unstructured text fallback: surface the raw response as the summary so the
-    // result shape stays uniform (summary + empty referenceDocuments).
     terminal({
-      status: "completed",
-      summary: result.response,
-      referenceDocuments: [],
+      status: "failed",
+      error: `Agent returned invalid structured output: ${structured.error.message}`,
     });
   } catch (err) {
     const error = getErrorMessage(err);
@@ -391,28 +371,50 @@ export async function runAgentTaskDefault(
   input: AgentRunExecInput,
 ): Promise<AgentRunExecResult> {
   try {
-    const result = await runAdmittedTask(input.backend, {
-      executionClass: "nongoverned-task",
-      workingDirectory: input.workingDirectory,
-      prompt: input.prompt,
-      modelSelection: input.modelSelection,
-      outputSchema: input.outputSchema,
-      autonomous: true,
-      timeoutMs: input.timeoutMs,
-      sandboxMode: "danger-full-access",
-      approvalPolicy: "never",
-      skipGitRepoCheck: true,
-      networkAccessEnabled: true,
-      webSearchMode: "disabled",
-      signal: input.signal,
-    });
-    if (result.timedOut) return { response: null, error: null, timedOut: true };
-    if (result.error) {
-      return { response: null, error: result.error, timedOut: false };
+    const result = await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: input.backend,
+        executionClass: "nongoverned-task",
+        prompt: input.prompt,
+        modelSelection: input.modelSelection,
+        outputSchema: input.outputSchema,
+        structuredOutputTurns: "work_then_format",
+        timeoutMs: input.timeoutMs,
+      },
+      {
+        taskExecution: {
+          workingDirectory: input.workingDirectory,
+          autonomous: true,
+          sandboxMode: "danger-full-access",
+          approvalPolicy: "never",
+          skipGitRepoCheck: true,
+          networkAccessEnabled: true,
+          webSearchMode: "disabled",
+          signal: input.signal,
+        },
+      },
+    );
+    if (result.outcome.kind === "failed") {
+      const timedOut =
+        result.outcome.error.failureKind === "timeout" ||
+        result.outcome.error.failureKind === "aborted";
+      return {
+        response: null,
+        error: timedOut ? null : result.outcome.error.message,
+        timedOut,
+      };
+    }
+    if (result.outcome.kind !== "completed") {
+      return {
+        response: null,
+        error: "Agent run paused before producing structured output.",
+        timedOut: false,
+      };
     }
     return {
-      response: result.text,
-      structuredOutput: result.structuredOutput,
+      response: result.outcome.text,
+      structuredOutput: result.outcome.structuredOutput,
       error: null,
       timedOut: false,
     };

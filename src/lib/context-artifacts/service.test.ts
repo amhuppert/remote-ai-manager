@@ -1,3 +1,4 @@
+import { withTaskProfiles } from "@/lib/agent-backends/testing/task-profiles-backend";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const logSpies = vi.hoisted(() => ({
@@ -61,7 +62,7 @@ function structuredResult(output: unknown): TaskRunResult {
     structuredOutput: output,
     text: "",
     usage: USAGE,
-    backendRef: null,
+    backendRef: { backend: "claude", ref: "compaction-session" },
     continuationDisposition: "retain",
   };
 }
@@ -252,6 +253,7 @@ let fixture: PersistenceFixture;
 let repo: ContextArtifactsRepo;
 let events: SSEEvent[];
 let prompts: string[];
+let inputs: ExecuteWorkflowTaskRunInput[];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -259,11 +261,22 @@ beforeEach(() => {
   repo = createContextArtifactsRepo(fixture.db);
   events = [];
   prompts = [];
+  inputs = [];
 });
 
 afterEach(() => {
   fixture.close();
 });
+
+/** A resumed call answers from the prompt its session already holds. */
+function sessionPrompt(input: ExecuteWorkflowTaskRunInput): string {
+  if (input.resumeRef === undefined) return input.prompt;
+  const opened = [...inputs]
+    .reverse()
+    .find((call) => call.resumeRef === undefined);
+  if (!opened) throw new Error("resumed call without an opening call");
+  return opened.prompt;
+}
 
 function makeService(
   executeTaskRun: (
@@ -275,6 +288,7 @@ function makeService(
   return createCompactionService({
     executeTaskRun: async (input) => {
       prompts.push(input.prompt);
+      inputs.push(input);
       return executeTaskRun(input);
     },
     readEntries: async () => entries,
@@ -291,12 +305,36 @@ function echoService(
   entries: TranscriptEntriesResult = ENTRIES,
 ): CompactionService {
   return makeService(
-    async (input) => structuredResult(envelopeFromPrompt(input.prompt)),
+    async (input) => structuredResult(envelopeFromPrompt(sessionPrompt(input))),
     entries,
   );
 }
 
 describe("createCompactionService — full run", () => {
+  it("generates compaction with a backend that supports only standard tasks", async () => {
+    await withTaskProfiles("cursor", ["standard"], async () => {
+      const selection = {
+        modelId: "composer-2.5",
+        parameters: { fast: "false" },
+      };
+      const service = makeService(
+        async (input) =>
+          structuredResult(envelopeFromPrompt(sessionPrompt(input))),
+        ENTRIES,
+        compactionConfigSchema.parse({
+          backend: "cursor",
+          conversationModelSelection: selection,
+          messageModelSelection: selection,
+        }),
+      );
+      const result = await service.trigger(makeTriggerInput());
+      expect(result.outcome).toBe("started");
+      if (result.outcome !== "started") return;
+      expect((await result.completion).status).toBe("complete");
+      expect(repo.findById(result.artifactId)?.status).toBe("complete");
+    });
+  });
+
   it.each(["claude", "cursor"] as const)(
     "persists a complete %s artifact with coverage, versions, and provenance",
     async (backend) => {
@@ -310,7 +348,7 @@ describe("createCompactionService — full run", () => {
           if (input.binding.kind !== "ephemeral")
             throw new Error("expected ephemeral");
           expect(input.binding.backend).toBe(backend);
-          return structuredResult(envelopeFromPrompt(input.prompt));
+          return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
         },
         ENTRIES,
         compactionConfigSchema.parse({
@@ -348,7 +386,7 @@ describe("createCompactionService — full run", () => {
     const captured: ExecuteWorkflowTaskRunInput[] = [];
     const service = makeService(async (input) => {
       captured.push(input);
-      return structuredResult(envelopeFromPrompt(input.prompt));
+      return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
     });
 
     const result = await service.trigger(makeTriggerInput());
@@ -381,7 +419,7 @@ describe("createCompactionService — full run", () => {
     const service = makeService(
       async (input) => {
         captured.push(input);
-        return structuredResult(envelopeFromPrompt(input.prompt));
+        return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
       },
       ENTRIES,
       { ...compactionConfigSchema.parse({}), timeoutMs: 120_000 },
@@ -400,7 +438,7 @@ describe("createCompactionService — full run", () => {
     const service = makeService(
       async (input) => {
         captured.push(input);
-        return structuredResult(envelopeFromPrompt(input.prompt));
+        return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
       },
       ENTRIES,
       { ...compactionConfigSchema.parse({}), timeoutMs: null },
@@ -461,7 +499,7 @@ describe("createCompactionService — full run", () => {
     const service = makeService(
       async (input) =>
         structuredResult(
-          envelopeFromPrompt(input.prompt, {
+          envelopeFromPrompt(sessionPrompt(input), {
             agentBrief: `user leaked ${secret} in the transcript`,
           }),
         ),
@@ -486,7 +524,7 @@ describe("createCompactionService — delta run", () => {
     repo.upsert(makeCompleteRow());
     const service = makeService(async (input) =>
       structuredResult(
-        envelopeFromPrompt(input.prompt, {
+        envelopeFromPrompt(sessionPrompt(input), {
           decisions: [
             {
               statement: "use sqlite",
@@ -532,7 +570,7 @@ describe("createCompactionService — delta run", () => {
     const service = makeService(async (input) =>
       // Delta prompts get an envelope that drops the previous decision
       // (guard violation); the full fallback gets a valid one.
-      structuredResult(envelopeFromPrompt(input.prompt)),
+      structuredResult(envelopeFromPrompt(sessionPrompt(input))),
     );
 
     const result = await service.trigger(makeTriggerInput());
@@ -541,8 +579,11 @@ describe("createCompactionService — delta run", () => {
 
     expect(prompts).toHaveLength(3);
     expect(prompts[0]).toContain("Delta update rules");
-    expect(prompts[1]).toContain("Delta update rules");
-    expect(prompts[1]).toContain("## Previous attempt rejected");
+    // The correction resumes the delta session, so it carries only feedback.
+    expect(prompts[1]).not.toContain("Delta update rules");
+    expect(prompts[1]).toContain(
+      "previous envelope violated deterministic guards",
+    );
     expect(prompts[1]).toContain("previous decision was dropped");
     expect(prompts[2]).not.toContain("Delta update rules");
 
@@ -571,15 +612,14 @@ describe("createCompactionService — delta run", () => {
 });
 
 describe("createCompactionService — retries and failures", () => {
-  it("retries once on schema failure naming the violations, then fails", async () => {
+  it("records a schema refusal without another domain retry", async () => {
     const service = makeService(async () => structuredResult({ bogus: true }));
 
     const result = await service.trigger(makeTriggerInput());
     if (result.outcome !== "started") throw new Error("expected started");
     const row = await result.completion;
 
-    expect(prompts).toHaveLength(2);
-    expect(prompts[1]).toContain("## Previous attempt rejected");
+    expect(prompts).toHaveLength(1);
     expect(row.status).toBe("failed");
     expect(row.error).toContain("schema");
 
@@ -639,7 +679,7 @@ describe("createCompactionService — coalescing and freshness", () => {
     const service = makeService(async (input) => {
       calls += 1;
       await gate;
-      return structuredResult(envelopeFromPrompt(input.prompt));
+      return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
     });
 
     const first = await service.trigger(makeTriggerInput());
@@ -677,7 +717,7 @@ describe("createCompactionService — coalescing and freshness", () => {
       executeTaskRun: async (input) => {
         modelCalls += 1;
         await modelGate;
-        return structuredResult(envelopeFromPrompt(input.prompt));
+        return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
       },
       readEntries: async () => {
         readCalls += 1;
@@ -773,7 +813,7 @@ describe("createCompactionService — coalescing and freshness", () => {
     });
     const service = makeService(async (input) => {
       await modelGate;
-      return structuredResult(envelopeFromPrompt(input.prompt));
+      return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
     });
 
     const result = await service.trigger(makeTriggerInput());
@@ -1007,17 +1047,23 @@ describe("createCompactionService — delta-fold (large conversations)", () => {
     };
     let deltaAttempts = 0;
     const service = makeService(async (input) => {
-      const isDelta = input.prompt.includes("## Previous compaction envelope");
+      const isDelta = sessionPrompt(input).includes(
+        "## Previous compaction envelope",
+      );
       if (!isDelta) {
-        return structuredResult(envelopeFromPrompt(input.prompt, withDecision));
+        return structuredResult(
+          envelopeFromPrompt(sessionPrompt(input), withDecision),
+        );
       }
       deltaAttempts += 1;
       // First delta attempt drops the prior decision (guard violation); the
       // retry carries it forward.
       if (deltaAttempts === 1) {
-        return structuredResult(envelopeFromPrompt(input.prompt));
+        return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
       }
-      return structuredResult(envelopeFromPrompt(input.prompt, withDecision));
+      return structuredResult(
+        envelopeFromPrompt(sessionPrompt(input), withDecision),
+      );
     }, oversizeEntries());
 
     const result = await service.trigger(makeTriggerInput());
@@ -1026,7 +1072,9 @@ describe("createCompactionService — delta-fold (large conversations)", () => {
 
     // full + delta-attempt-1 (dropped) + delta-attempt-2 (corrected).
     expect(prompts).toHaveLength(3);
-    expect(prompts[2]).toContain("## Previous attempt rejected");
+    expect(prompts[2]).toContain(
+      "previous envelope violated deterministic guards",
+    );
     expect(prompts[2]).toContain("previous decision was dropped");
 
     expect(row.status).toBe("complete");
@@ -1045,7 +1093,7 @@ describe("createCompactionService — delta-fold (large conversations)", () => {
 
   it("fails naming the segment when a fold step errors, leaving prior coverage intact", async () => {
     const service = makeService(async (input) => {
-      if (input.prompt.includes("## Previous compaction envelope")) {
+      if (sessionPrompt(input).includes("## Previous compaction envelope")) {
         return {
           kind: "error",
           error: "segment backend exploded",
@@ -1055,7 +1103,7 @@ describe("createCompactionService — delta-fold (large conversations)", () => {
           continuationDisposition: "retain",
         };
       }
-      return structuredResult(envelopeFromPrompt(input.prompt));
+      return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
     }, oversizeEntries());
 
     const result = await service.trigger(makeTriggerInput());
@@ -1087,8 +1135,8 @@ describe("createCompactionService — delta-fold (large conversations)", () => {
     const service = makeService(
       async (input) =>
         structuredResult(
-          envelopeFromPrompt(input.prompt, {
-            decisions: previousDecisions(input.prompt),
+          envelopeFromPrompt(sessionPrompt(input), {
+            decisions: previousDecisions(sessionPrompt(input)),
           }),
         ),
       entries,

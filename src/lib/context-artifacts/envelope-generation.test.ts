@@ -45,7 +45,7 @@ function structuredResult(output: unknown): TaskRunResult {
     structuredOutput: output,
     text: "",
     usage: USAGE,
-    backendRef: null,
+    backendRef: { backend: "claude", ref: "latest-envelope-session" },
     continuationDisposition: "retain",
   };
 }
@@ -182,8 +182,18 @@ function deps(
   };
 }
 
+/** A resumed call answers from the prompt its session already holds. */
+function sessionPrompt(input: ExecuteWorkflowTaskRunInput): string {
+  if (input.resumeRef === undefined) return input.prompt;
+  const opened = [...calls]
+    .reverse()
+    .find((call) => call.resumeRef === undefined);
+  if (!opened) throw new Error("resumed call without an opening call");
+  return opened.prompt;
+}
+
 const echo = async (input: ExecuteWorkflowTaskRunInput) =>
-  structuredResult(envelopeFromPrompt(input.prompt));
+  structuredResult(envelopeFromPrompt(sessionPrompt(input)));
 
 const CANCELLED_FAILURE = {
   code: "cancelled",
@@ -247,24 +257,97 @@ describe("generateCompactionEnvelope — captured source", () => {
 });
 
 describe("generateCompactionEnvelope — pass accounting", () => {
-  it("counts a schema repair as its own observed pass", async () => {
+  it("does not retry a facade result rejected by the domain schema", async () => {
     let attempt = 0;
     const outcome = await generateCompactionEnvelope(
       makeRequest(),
       deps(async (input) => {
         attempt += 1;
         if (attempt === 1) return structuredResult({ nonsense: true });
-        return structuredResult(envelopeFromPrompt(input.prompt));
+        return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
+      }),
+    );
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      passCount: 1,
+      failure: { code: "schema_invalid" },
+    });
+    expect(calls).toHaveLength(1);
+    expect(passes.map((pass) => [pass.kind, pass.outcome])).toEqual([
+      ["initial", "schema"],
+    ]);
+  });
+
+  it("resumes the latest facade session for one guard re-prompt", async () => {
+    const outcome = await generateCompactionEnvelope(
+      makeRequest(),
+      deps(async (input) => {
+        const envelope = envelopeFromPrompt(sessionPrompt(input));
+        return structuredResult(
+          calls.length === 1
+            ? {
+                ...envelope,
+                source: { ...envelope.source, coveredEndSeq: 2 },
+              }
+            : envelope,
+        );
       }),
     );
 
     expect(outcome.ok).toBe(true);
-    expect(outcome.passCount).toBe(2);
-    expect(passes.map((pass) => [pass.kind, pass.outcome])).toEqual([
-      ["initial", "schema"],
-      ["schema_repair", "ok"],
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.resumeRef).toEqual({
+      backend: "claude",
+      ref: "latest-envelope-session",
+    });
+    expect(calls.map((call) => call.structuredOutputTurns)).toEqual([
+      "work_then_format",
+      "single",
     ]);
+    expect(passes.map((pass) => pass.kind)).toEqual([
+      "initial",
+      "guard_repair",
+    ]);
+    // The session already holds the rendered transcript, so the correction
+    // carries only the feedback and is measured as such.
+    expect(calls[1]?.prompt).not.toContain("## Source metadata");
+    expect(calls[1]?.prompt).toContain("violated deterministic guards");
+    expect(passes[1]?.inputBytes).toBe(
+      Buffer.byteLength(calls[1]?.prompt ?? "", "utf-8"),
+    );
+    expect(passes[1]?.inputBytes).toBeLessThan(passes[0]?.inputBytes ?? 0);
   });
+
+  it.each(["missing", "cleared"] as const)(
+    "does not restart a %s session to repair a guard failure",
+    async (continuity) => {
+      const outcome = await generateCompactionEnvelope(
+        makeRequest(),
+        deps(async (input) => {
+          const envelope = envelopeFromPrompt(sessionPrompt(input));
+          return {
+            ...structuredResult({
+              ...envelope,
+              source: { ...envelope.source, coveredEndSeq: 2 },
+            }),
+            backendRef:
+              continuity === "missing"
+                ? null
+                : { backend: "claude", ref: "unusable" },
+            continuationDisposition:
+              continuity === "cleared" ? "clear" : "retain",
+          };
+        }),
+      );
+      expect(outcome).toMatchObject({
+        ok: false,
+        passCount: 1,
+        failure: { code: "guard_violations" },
+      });
+      expect(calls).toHaveLength(1);
+    },
+  );
 
   it("counts every fold segment as its own observed pass", async () => {
     const body = "a".repeat(200_000);
@@ -425,7 +508,7 @@ describe("generateCompactionEnvelope — cancellation", () => {
       makeRequest({ source }),
       deps(async (input) => {
         controller.abort();
-        return structuredResult(envelopeFromPrompt(input.prompt));
+        return structuredResult(envelopeFromPrompt(sessionPrompt(input)));
       }, controller.signal),
     );
 
@@ -495,9 +578,58 @@ describe("generateCompactionEnvelope — failure diagnostics", () => {
     }
   });
 
+  it("gives the separate full fallback its own guard re-prompt and latest continuity", async () => {
+    const previous = await previousEnvelopeWithDecision();
+    calls = [];
+    passes = [];
+    const outcome = await generateCompactionEnvelope(
+      makeRequest({
+        plan: {
+          mode: "delta",
+          previousEnvelope: previous,
+          expected: { startSeq: 0, endSeq: 3 },
+        },
+      }),
+      deps(async (input) => {
+        const envelope = envelopeFromPrompt(sessionPrompt(input));
+        return {
+          ...structuredResult(
+            calls.length === 3
+              ? {
+                  ...envelope,
+                  source: { ...envelope.source, coveredEndSeq: 2 },
+                }
+              : envelope,
+          ),
+          backendRef: { backend: "claude", ref: `pass-${calls.length}` },
+        };
+      }),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, mode: "full", passCount: 4 });
+    expect(calls.map((call) => call.resumeRef)).toEqual([
+      undefined,
+      { backend: "claude", ref: "pass-1" },
+      undefined,
+      { backend: "claude", ref: "pass-3" },
+    ]);
+    expect(calls.map((call) => call.structuredOutputTurns)).toEqual([
+      "work_then_format",
+      "single",
+      "work_then_format",
+      "single",
+    ]);
+    expect(passes.map((pass) => pass.kind)).toEqual([
+      "initial",
+      "guard_repair",
+      "full_fallback",
+      "guard_repair",
+    ]);
+  });
+
   /** A guard the full fallback cannot rescue, so the run reports its failure. */
   const shortCoverage = async (input: ExecuteWorkflowTaskRunInput) => {
-    const envelope = envelopeFromPrompt(input.prompt);
+    const envelope = envelopeFromPrompt(sessionPrompt(input));
     return structuredResult({
       ...envelope,
       source: {

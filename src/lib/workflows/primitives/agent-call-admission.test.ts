@@ -39,6 +39,7 @@ function harness() {
           events.push("run");
           return {
             text: "{}",
+            backendRef: { backend: "cursor", ref: "valid-ref" },
             usage: null,
             error: null,
             timedOut: false,
@@ -81,7 +82,7 @@ describe("AgentCall admission", () => {
     expect(h.events).toEqual([]);
   });
 
-  it("preflights the isolated repair profile before spending the primary turn", async () => {
+  it("formats a standard call without requiring an isolated repair profile", async () => {
     const h = harness();
     const result = await executeAgentCall(
       {
@@ -95,9 +96,9 @@ describe("AgentCall admission", () => {
       h.deps,
     );
     expect(result.outcome).toMatchObject({
-      kind: "failed",
-      error: { code: "backend-task-profile-unsupported" },
+      kind: "completed",
+      structuredOutput: {},
     });
-    expect(h.events).toEqual([]);
+    expect(h.events).toEqual(["resolve-runner", "mcp", "run", "run"]);
   });
 });

@@ -54,7 +54,6 @@ function makeRuntime(
       modelId: "opus",
       parameters: { effort: "high" },
     },
-    outputFormat: undefined,
 
     async sendTurn() {
       return makeTurnResult();

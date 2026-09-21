@@ -1309,7 +1309,6 @@ describe("createConversationMcpConfigHandlers", () => {
         getRuntime: () => ({
           backend: "cursor",
           modelSelection: { modelId: "default", parameters: {} },
-          outputFormat: undefined,
           status: "alive",
           isTurnActive,
           async sendTurn() {

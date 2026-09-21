@@ -2,44 +2,6 @@ import { runtimeConfigurationFixture } from "../testing/runtime-configuration-fi
 import { describe, expect, it } from "vitest";
 import { shouldRecreateRuntime } from "./runtime-recreate";
 
-describe("runtime configuration semantics", () => {
-  it("reuses independently allocated schemas with reordered object keys", () => {
-    const modelSelection = { modelId: "opus", parameters: {} };
-    expect(
-      shouldRecreateRuntime({
-        current: {
-          ...runtimeConfigurationFixture(),
-          ...{
-            status: "alive",
-            modelSelection,
-            outputFormat: {
-              type: "json_schema",
-              schema: {
-                type: "object",
-                properties: {
-                  answer: { type: "string", description: "Answer" },
-                },
-              },
-            },
-          },
-        },
-        desired: runtimeConfigurationFixture({
-          modelSelection: modelSelection,
-          outputFormat: {
-            type: "json_schema",
-            schema: {
-              properties: { answer: { description: "Answer", type: "string" } },
-              type: "object",
-            },
-          },
-          alignmentVersion: null,
-          fsWritePolicy: undefined,
-        }),
-      }),
-    ).toBe(false);
-  });
-});
-
 describe("shouldRecreateRuntime", () => {
   const lowA = { modelId: "a", parameters: { effort: "low" } };
   const highA = { modelId: "a", parameters: { effort: "high" } };
@@ -51,7 +13,6 @@ describe("shouldRecreateRuntime", () => {
         current: undefined,
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -68,7 +29,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: highA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -85,7 +45,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -102,7 +61,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowB,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -119,7 +77,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: highA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -136,7 +93,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: { modelId: "a", parameters: {} },
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -156,120 +112,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: { modelId: "a", parameters: {} },
-          outputFormat: undefined,
-          alignmentVersion: null,
-          fsWritePolicy: undefined,
-        }),
-      }),
-    ).toBe(false);
-  });
-
-  it("returns true when outputFormat changes from undefined to defined", () => {
-    const schema = { type: "object", properties: { name: { type: "string" } } };
-    expect(
-      shouldRecreateRuntime({
-        current: {
-          ...runtimeConfigurationFixture(),
-          ...{
-            status: "alive",
-            modelSelection: lowA,
-            outputFormat: undefined,
-          },
-        },
-        desired: runtimeConfigurationFixture({
-          modelSelection: lowA,
-          outputFormat: { type: "json_schema", schema },
-          alignmentVersion: null,
-          fsWritePolicy: undefined,
-        }),
-      }),
-    ).toBe(true);
-  });
-
-  it("returns true when outputFormat changes from defined to undefined", () => {
-    const schema = { type: "object", properties: { name: { type: "string" } } };
-    expect(
-      shouldRecreateRuntime({
-        current: {
-          ...runtimeConfigurationFixture(),
-          ...{
-            status: "alive",
-            modelSelection: lowA,
-            outputFormat: { type: "json_schema", schema },
-          },
-        },
-        desired: runtimeConfigurationFixture({
-          modelSelection: lowA,
-          outputFormat: undefined,
-          alignmentVersion: null,
-          fsWritePolicy: undefined,
-        }),
-      }),
-    ).toBe(true);
-  });
-
-  it("returns true when outputFormat schema changes", () => {
-    const schema1 = { type: "object", properties: { a: { type: "string" } } };
-    const schema2 = { type: "object", properties: { b: { type: "number" } } };
-    expect(
-      shouldRecreateRuntime({
-        current: {
-          ...runtimeConfigurationFixture(),
-          ...{
-            status: "alive",
-            modelSelection: lowA,
-            outputFormat: { type: "json_schema", schema: schema1 },
-          },
-        },
-        desired: runtimeConfigurationFixture({
-          modelSelection: lowA,
-          outputFormat: { type: "json_schema", schema: schema2 },
-          alignmentVersion: null,
-          fsWritePolicy: undefined,
-        }),
-      }),
-    ).toBe(true);
-  });
-
-  it("returns false when outputFormat is the same object reference", () => {
-    const format = {
-      type: "json_schema" as const,
-      schema: { type: "object", properties: { a: { type: "string" } } },
-    };
-    expect(
-      shouldRecreateRuntime({
-        current: {
-          ...runtimeConfigurationFixture(),
-          ...{
-            status: "alive",
-            modelSelection: lowA,
-            outputFormat: format,
-          },
-        },
-        desired: runtimeConfigurationFixture({
-          modelSelection: lowA,
-          outputFormat: format,
-          alignmentVersion: null,
-          fsWritePolicy: undefined,
-        }),
-      }),
-    ).toBe(false);
-  });
-
-  it("returns false when both outputFormats are undefined", () => {
-    expect(
-      shouldRecreateRuntime({
-        current: {
-          ...runtimeConfigurationFixture(),
-          ...{
-            status: "alive",
-            modelSelection: lowA,
-            outputFormat: undefined,
-          },
-        },
-        desired: runtimeConfigurationFixture({
-          modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -290,7 +132,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: 4,
           fsWritePolicy: undefined,
         }),
@@ -311,7 +152,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: 3,
           fsWritePolicy: undefined,
         }),
@@ -332,7 +172,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -353,7 +192,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),
@@ -374,7 +212,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: 3,
           fsWritePolicy: undefined,
         }),
@@ -391,7 +228,6 @@ describe("shouldRecreateRuntime", () => {
         },
         desired: runtimeConfigurationFixture({
           modelSelection: lowA,
-          outputFormat: undefined,
           alignmentVersion: null,
           fsWritePolicy: undefined,
         }),

@@ -101,7 +101,7 @@ async function runValidator(backend: "claude" | "codex") {
     expect(result.result.kind, JSON.stringify(result.result)).toBe("pass");
     return {
       instructions: provider.privilegedInstructions,
-      prompt: provider.userPrompt,
+      turns: provider.turns,
     };
   } finally {
     provider.close();
@@ -124,11 +124,17 @@ describe.each(["claude", "codex"] as const)(
     });
 
     it("keeps role and profile instructions out of the provider's user input", async () => {
-      const { prompt } = await runValidator(backend);
-      expect(prompt).not.toContain(WORKFLOW_ROLE_CONTRACT_HEADING);
-      expect(prompt).not.toContain(PROFILE_SENTINEL);
-      expect(prompt).not.toContain("## System Instructions");
-      expect(prompt).toContain("Context Validation");
+      const { turns } = await runValidator(backend);
+      expect(turns).toHaveLength(2);
+      const [work, format] = turns;
+      expect(work?.prompt).toContain("Context Validation");
+      expect(work?.outputFormat).toBeUndefined();
+      expect(format?.outputFormat?.type).toBe("json_schema");
+      for (const turn of turns) {
+        expect(turn.prompt).not.toContain(WORKFLOW_ROLE_CONTRACT_HEADING);
+        expect(turn.prompt).not.toContain(PROFILE_SENTINEL);
+        expect(turn.prompt).not.toContain("## System Instructions");
+      }
     });
   },
 );

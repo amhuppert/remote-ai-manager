@@ -88,6 +88,22 @@ afterEach(() => {
 });
 
 describe("startAgentRun", () => {
+  it("fails a malformed structured result instead of accepting raw text as a summary", async () => {
+    const { runId } = startAgentRun(
+      makeInput(),
+      makeDeps({
+        runTask: async () => ({
+          response: "I forgot the manifest",
+          error: null,
+          timedOut: false,
+        }),
+      }),
+    );
+    const run = await waitForTerminal(runId);
+    expect(run?.status).toBe("failed");
+    expect(run?.error).toContain("structured output");
+  });
+
   it("returns a runId synchronously and reaches a terminal result after the caller returns", async () => {
     // The run resolves on a later tick; startAgentRun must not await it. The
     // deferred is created up front so resolving it never races the executor.
@@ -249,14 +265,14 @@ describe("startAgentRun", () => {
     );
   });
 
-  it("accepts a JSON-string text payload through the shared extraction fallback", async () => {
+  it("accepts the facade payload accompanying JSON response text", async () => {
     const runTask = vi.fn(
       async (): Promise<AgentRunExecResult> => ({
         response: JSON.stringify({
           summary: "from-text",
           referenceDocuments: [],
         }),
-        structuredOutput: undefined,
+        structuredOutput: { summary: "from-text", referenceDocuments: [] },
         error: null,
         timedOut: false,
       }),
@@ -267,12 +283,12 @@ describe("startAgentRun", () => {
     expect(run?.summary).toBe("from-text");
   });
 
-  it("accepts a fenced JSON payload through the shared extraction fallback", async () => {
+  it("uses the facade payload without re-extracting response text", async () => {
     const runTask = vi.fn(
       async (): Promise<AgentRunExecResult> => ({
         response:
           'Here is the result:\n```json\n{"summary": "from-fence", "referenceDocuments": []}\n```',
-        structuredOutput: undefined,
+        structuredOutput: { summary: "from-facade", referenceDocuments: [] },
         error: null,
         timedOut: false,
       }),
@@ -280,7 +296,7 @@ describe("startAgentRun", () => {
     const { runId } = startAgentRun(makeInput(), makeDeps({ runTask }));
     const run = await waitForTerminal(runId);
     expect(run?.status).toBe("completed");
-    expect(run?.summary).toBe("from-fence");
+    expect(run?.summary).toBe("from-facade");
   });
 
   it("marks the run failed with a timeout error when the executor reports a timeout", async () => {

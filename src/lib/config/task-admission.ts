@@ -12,8 +12,3 @@ export const compactionExecutionRequirements = {
   executionProfile: "standard",
   operation: "compaction",
 } as const satisfies ExecutionRequirements;
-export const compactionRepairRequirements = {
-  ...compactionExecutionRequirements,
-  executionProfile: "isolated-one-shot",
-  operation: "compaction-repair",
-} as const satisfies ExecutionRequirements;
