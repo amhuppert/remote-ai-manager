@@ -141,7 +141,9 @@ const CODE_LINE = CODE_CONTENT.split("\n")[2] ?? "";
  * The two blocks whose canonical text carries a newline the reader can select
  * across: a paragraph with a soft line break, and a fenced block whose body
  * contains a blank line — which does NOT end the block, though it does end an
- * ordinary one.
+ * ordinary one. Leave the fence unlabelled: syntax highlighting asynchronously
+ * replaces its text nodes, invalidating a selection made during that transition.
+ * Highlighting is covered by Markdown.test.tsx; this fixture tests anchoring.
  */
 const MULTILINE_CONTENT = [
   "## Release plan", // 1
@@ -149,7 +151,7 @@ const MULTILINE_CONTENT = [
   "The backfill finishes tonight", // 3
   "and the queue drains by morning.", // 4
   "", // 5
-  "```js", // 6
+  "```", // 6
   "const alpha = 1;", // 7
   "", // 8
   "const beta = 2;", // 9

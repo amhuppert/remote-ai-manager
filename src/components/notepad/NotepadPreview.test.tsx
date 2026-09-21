@@ -153,11 +153,11 @@ describe("NotepadPreview reference chips", () => {
     ].join("\n");
     const { container, findByText, queryByTestId } = renderPreview(content);
 
-    await findByText("inline", { exact: false });
+    // The raw-markdown loading placeholder also contains the XML. Wait for
+    // actual code elements before checking that the renderer kept it literal.
+    await findByText(TICKET_XML, { selector: "p code" });
     expect(queryByTestId("notepad-preview-chip")).toBeNull();
-    expect(container.querySelector("pre")?.textContent).toContain(
-      "<ticket-ref",
-    );
+    expect(container.querySelector("pre code")?.textContent).toBe(TICKET_XML);
   });
 });
 
