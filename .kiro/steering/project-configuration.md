@@ -49,12 +49,13 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 - Liveness polling every 5s once the server is listening
 - Remote URL via Tailscale Serve or LAN IP (`dev-server/registry.ts`)
 
-### `agentBackends.cursor.supportedModels` — Cursor model list
+### `agentBackends.cursor.disabledModels` — Cursor opt-out model list
 
-- Optional `string[]`; omitted (or `"cursor": {}`) means `["composer-2.5"]`. Strict block: only `supportedModels` is accepted, and `model`/`reasoningEffort`/`apiKey` are rejected by name.
-- The Cursor adapter's model policy (`agent-backends/cursor/model-policy.ts`) is the validation authority. It reads this list through `createCursorSupportedModelsReader(readRepoConfig)` using `ConversationBackendCreateInput.projectPath`, and refuses a resolved model outside it before any worker spawns — never substitutes.
+- Optional `string[]`; omitted (or `"cursor": {}`) means nothing is disabled and the whole generated catalog is offered. Strict block: only `disabledModels` is accepted, and `supportedModels`/`model`/`reasoningEffort`/`apiKey` are rejected by name, `supportedModels` naming its replacement.
+- The generated catalog (`agent-backends/cursor/generated-model-catalog.json`) is the source of what exists; `bun run build` refreshes it from `Cursor.models.list()` through `cursor-models:sync`, falling back to `--check` without a credential or network.
+- The Cursor adapter's model policy (`agent-backends/cursor/model-policy.ts`) is the validation authority. It reads this list through `createCursorDisabledModelsReader(readRepoConfig)` using `ConversationBackendCreateInput.projectPath`, and refuses a disabled model before any worker spawns — never substitutes.
 - Route-level refusal goes through the backend-neutral model-catalog and complete-selection validation facets; no caller reconstructs model/parameter compatibility.
-- A declared-empty list permits nothing; a malformed list is a bounded refusal, not a thrown error.
+- An id absent from the generated catalog is inert, so a vendor retirement never makes a project's config unreadable. A list naming every catalog model permits nothing; a malformed list is a bounded refusal, not a thrown error.
 - `GET /api/projects/[name]/model-options` (`agent-backends/project-model-options-route-handlers.ts`) projects the project-effective catalog, atomic default, provenance, and diagnostics for creation surfaces. Surfaces render a value outside the projection as an explicit invalid selection.
 
 ## Env var differences

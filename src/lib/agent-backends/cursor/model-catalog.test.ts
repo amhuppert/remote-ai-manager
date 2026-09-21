@@ -43,65 +43,93 @@ describe("parseGeneratedCursorModelCatalog", () => {
 });
 
 describe("filterCursorModelCatalog", () => {
-  it("uses the documented default allowlist when project config is omitted", () => {
-    const result = filterCursorModelCatalog(catalog, null);
+  it("offers every generated model when the project configures no opt-outs", () => {
+    for (const disabledModels of [null, undefined, []]) {
+      const result = filterCursorModelCatalog(catalog, disabledModels);
 
-    expect(result.defaultModelId).toBe("composer-2.5");
-    expect(result.models.map((model) => model.id)).toEqual(["composer-2.5"]);
+      expect(result.defaultModelId).toBe("composer-2.5");
+      expect(result.models.map((model) => model.id)).toEqual([
+        "composer-2.5",
+        "claude-opus-5",
+        "gpt-5.4",
+      ]);
+    }
   });
 
-  it("keeps only project-allowlisted models and accepts catalog aliases", () => {
-    const result = filterCursorModelCatalog(catalog, [
-      "composer-2.5",
-      "opus-5",
-    ]);
+  it("removes only the opted-out models and accepts catalog aliases", () => {
+    const result = filterCursorModelCatalog(catalog, ["opus-5"]);
 
+    expect(result.models.map((model) => model.id)).toEqual([
+      "composer-2.5",
+      "gpt-5.4",
+    ]);
+  });
+
+  it("ignores an opt-out id the generated snapshot no longer contains", () => {
+    // Cursor retires models; a stale exclusion must not break the project.
+    const result = filterCursorModelCatalog(catalog, ["retired-model"]);
+
+    expect(result.models.map((model) => model.id)).toEqual([
+      "composer-2.5",
+      "claude-opus-5",
+      "gpt-5.4",
+    ]);
+  });
+
+  it("refuses an opt-out list that disables the catalog default", () => {
+    expect(() =>
+      filterCursorModelCatalog(catalog, ["composer-2.5"]),
+    ).toThrowError(
+      expect.objectContaining({
+        name: CursorModelCatalogError.name,
+        code: "default_model_disabled",
+        modelId: "composer-2.5",
+      }),
+    );
+  });
+
+  it("fails closed when the project disables every generated model", () => {
+    expect(() =>
+      filterCursorModelCatalog(catalog, [
+        "composer-2.5",
+        "claude-opus-5",
+        "gpt-5.4",
+      ]),
+    ).toThrowError(expect.objectContaining({ code: "all_models_disabled" }));
+  });
+
+  it("uses a validated configured selection as the effective default", () => {
+    const result = filterCursorModelCatalog(catalog, ["gpt-5.4"], {
+      modelId: "opus-5",
+      parameters: {},
+    });
+
+    expect(result.defaultModelId).toBe("claude-opus-5");
     expect(result.models.map((model) => model.id)).toEqual([
       "composer-2.5",
       "claude-opus-5",
     ]);
   });
 
-  it("refuses configured model ids absent from the generated snapshot", () => {
-    expect(() =>
-      filterCursorModelCatalog(catalog, ["composer-2.5", "not-in-catalog"]),
-    ).toThrowError(
-      expect.objectContaining({
-        name: CursorModelCatalogError.name,
-        code: "model_not_in_generated_catalog",
-        modelId: "not-in-catalog",
-      }),
-    );
-  });
-
-  it("refuses an allowlist that excludes the catalog default", () => {
-    expect(() => filterCursorModelCatalog(catalog, ["opus-5"])).toThrowError(
-      expect.objectContaining({ code: "default_model_not_allowed" }),
-    );
-  });
-
-  it("fails closed when the project explicitly configures an empty allowlist", () => {
-    expect(() => filterCursorModelCatalog(catalog, [])).toThrowError(
-      expect.objectContaining({ code: "no_models_allowed" }),
-    );
-  });
-
-  it("uses a validated configured selection as the effective allowlisted default", () => {
+  it("recovers the catalog default when the configured selection is opted out", () => {
     const result = filterCursorModelCatalog(catalog, ["opus-5"], {
-      modelId: "opus-5",
+      modelId: "claude-opus-5",
       parameters: {},
     });
 
-    expect(result.defaultModelId).toBe("claude-opus-5");
-    expect(result.models.map((model) => model.id)).toEqual(["claude-opus-5"]);
+    expect(result.defaultModelId).toBe("composer-2.5");
+    expect(result.models.map((model) => model.id)).toEqual([
+      "composer-2.5",
+      "gpt-5.4",
+    ]);
   });
 });
 
 describe("createCursorModelCatalogFacet", () => {
-  it("uses the default allowlist when the project omits Cursor configuration", async () => {
+  it("offers the whole generated catalog when the project omits Cursor configuration", async () => {
     const facet = createCursorModelCatalogFacet({
       loadCatalog: () => catalog,
-      async supportedModels() {
+      async disabledModels() {
         return null;
       },
     });
@@ -111,13 +139,17 @@ describe("createCursorModelCatalogFacet", () => {
       configuredSelection: { modelId: "composer-2.5", parameters: {} },
     });
 
-    expect(effective.models.map((model) => model.id)).toEqual(["composer-2.5"]);
+    expect(effective.models.map((model) => model.id)).toEqual([
+      "composer-2.5",
+      "claude-opus-5",
+      "gpt-5.4",
+    ]);
   });
 
   it("leaves the generated catalog complete outside a project boundary", async () => {
     const facet = createCursorModelCatalogFacet({
       loadCatalog: () => catalog,
-      async supportedModels() {
+      async disabledModels() {
         throw new Error("unscoped catalog reads have no project config");
       },
     });
@@ -131,13 +163,13 @@ describe("createCursorModelCatalogFacet", () => {
     ]);
   });
 
-  it("applies the project allowlist and configured default atomically", async () => {
+  it("applies the project opt-outs and configured default atomically", async () => {
     const requestedPaths: string[] = [];
     const facet = createCursorModelCatalogFacet({
       loadCatalog: () => catalog,
-      async supportedModels(projectPath) {
+      async disabledModels(projectPath) {
         requestedPaths.push(projectPath);
-        return ["opus-5"];
+        return ["gpt-5.4"];
       },
     });
 
@@ -149,15 +181,16 @@ describe("createCursorModelCatalogFacet", () => {
     expect(requestedPaths).toEqual(["/repo"]);
     expect(effective.defaultModelId).toBe("claude-opus-5");
     expect(effective.models.map((model) => model.id)).toEqual([
+      "composer-2.5",
       "claude-opus-5",
     ]);
   });
 
-  it("keeps an allowed explicit model available when the configured default is excluded", async () => {
+  it("keeps an available explicit model selectable when the configured default is opted out", async () => {
     const facet = createCursorModelCatalogFacet({
       loadCatalog: () => catalog,
-      async supportedModels() {
-        return ["opus-5"];
+      async disabledModels() {
+        return ["gpt-5.4"];
       },
     });
 
@@ -170,8 +203,9 @@ describe("createCursorModelCatalogFacet", () => {
       parameters: {},
     });
 
-    expect(effective.defaultModelId).toBe("claude-opus-5");
+    expect(effective.defaultModelId).toBe("composer-2.5");
     expect(effective.models.map((model) => model.id)).toEqual([
+      "composer-2.5",
       "claude-opus-5",
     ]);
     expect(explicitSelection).toMatchObject({

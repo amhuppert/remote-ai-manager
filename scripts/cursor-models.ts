@@ -94,6 +94,38 @@ export async function refreshCursorModelCatalog(
   return catalog;
 }
 
+/**
+ * What a build does: take the latest models Cursor serves for the pinned SDK
+ * when that is possible, and otherwise stand on the checked-in artifact.
+ *
+ * A build must not depend on a credential or on Cursor's availability — the
+ * artifact in the repository is already a valid catalog — so an absent key or
+ * an unreachable API degrades to the `--check` verdict rather than failing.
+ * What still fails the build is an artifact that does not parse or was
+ * generated for a different SDK version, because that one is Command Center's
+ * own mistake and shipping past it would serve models the adapter cannot run.
+ */
+export async function syncCursorModelCatalog(
+  apiKey: string | null | undefined,
+  deps: CursorModelsCommandDeps,
+): Promise<BackendModelCatalog> {
+  if (apiKey === null || apiKey === undefined || apiKey.length === 0) {
+    deps.writeOutput(
+      "CURSOR_API_KEY is not set, so the Cursor model catalog was not refreshed; validating the checked-in artifact instead.",
+    );
+    return checkCursorModelCatalog(deps);
+  }
+
+  try {
+    return await refreshCursorModelCatalog(apiKey, deps);
+  } catch (error) {
+    deps.writeOutput(
+      `Cursor model discovery failed, so the catalog was not refreshed; validating the checked-in artifact instead: ${safeErrorMessage(error, apiKey)}`,
+    );
+    return checkCursorModelCatalog(deps);
+  }
+}
+
 function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -252,12 +284,21 @@ function safeErrorMessage(error: unknown, secret: string | undefined): string {
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
-  if (rest.length > 0 || (command !== "--check" && command !== "--refresh")) {
-    throw new Error("Usage: bun scripts/cursor-models.ts --check|--refresh");
+  if (
+    rest.length > 0 ||
+    (command !== "--check" && command !== "--refresh" && command !== "--sync")
+  ) {
+    throw new Error(
+      "Usage: bun scripts/cursor-models.ts --check|--refresh|--sync",
+    );
   }
   const deps = await productionDeps();
   if (command === "--check") {
     await checkCursorModelCatalog(deps);
+    return;
+  }
+  if (command === "--sync") {
+    await syncCursorModelCatalog(process.env.CURSOR_API_KEY, deps);
     return;
   }
   await refreshCursorModelCatalog(process.env.CURSOR_API_KEY, deps);

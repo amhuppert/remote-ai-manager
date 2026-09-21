@@ -4,6 +4,7 @@ import { buildCursorModelCatalog } from "../src/lib/agent-backends/cursor/model-
 import {
   checkCursorModelCatalog,
   refreshCursorModelCatalog,
+  syncCursorModelCatalog,
   type CursorModelsCommandDeps,
 } from "./cursor-models";
 
@@ -144,6 +145,73 @@ describe("refreshCursorModelCatalog", () => {
 
     expect(commandDeps.writeOutput).toHaveBeenCalledWith(
       "Cursor model catalog diff: models +model-new, -model-old, ~composer-2.5; parameters composer-2.5(+thinking).",
+    );
+  });
+});
+
+describe("syncCursorModelCatalog", () => {
+  it("refreshes from Cursor when a credential is available", async () => {
+    const commandDeps = deps({
+      listModels: vi.fn(async () => [
+        { id: "composer-2.5", displayName: "Composer 2.5" },
+        { id: "composer-3", displayName: "Composer 3" },
+      ]),
+    });
+
+    const synced = await syncCursorModelCatalog(
+      "cursor-test-credential",
+      commandDeps,
+    );
+
+    expect(synced.models.map(({ id }) => id)).toEqual([
+      "composer-2.5",
+      "composer-3",
+    ]);
+    expect(commandDeps.writeArtifact).toHaveBeenCalledWith(synced);
+  });
+
+  it("validates the checked-in artifact instead of failing when no credential is set", async () => {
+    // A build must not depend on a credential; the artifact in the repository
+    // is already a valid catalog.
+    for (const apiKey of [null, undefined, ""]) {
+      const commandDeps = deps();
+
+      await expect(
+        syncCursorModelCatalog(apiKey, commandDeps),
+      ).resolves.toEqual(catalog);
+      expect(commandDeps.listModels).not.toHaveBeenCalled();
+      expect(commandDeps.writeArtifact).not.toHaveBeenCalled();
+      expect(vi.mocked(commandDeps.writeOutput).mock.calls.flat()).toContain(
+        "CURSOR_API_KEY is not set, so the Cursor model catalog was not refreshed; validating the checked-in artifact instead.",
+      );
+    }
+  });
+
+  it("falls back to the checked-in artifact when discovery fails, without echoing the credential", async () => {
+    const commandDeps = deps({
+      listModels: vi.fn(async () => {
+        throw new Error("cursor unreachable for cursor-test-credential");
+      }),
+    });
+
+    await expect(
+      syncCursorModelCatalog("cursor-test-credential", commandDeps),
+    ).resolves.toEqual(catalog);
+    expect(commandDeps.writeArtifact).not.toHaveBeenCalled();
+    const output = JSON.stringify(
+      vi.mocked(commandDeps.writeOutput).mock.calls,
+    );
+    expect(output).toContain("cursor unreachable");
+    expect(output).not.toContain("cursor-test-credential");
+  });
+
+  it("still fails when the checked-in artifact was generated for another SDK version", async () => {
+    // Refusing here is the point: shipping past it would serve models the
+    // pinned adapter cannot run.
+    const commandDeps = deps({ sdkVersion: "1.0.31" });
+
+    await expect(syncCursorModelCatalog(null, commandDeps)).rejects.toThrow(
+      /SDK version/i,
     );
   });
 });

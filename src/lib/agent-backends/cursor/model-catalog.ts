@@ -12,16 +12,14 @@ import type { BackendModelSelection } from "../schemas";
 import type { BackendModelCatalogFacet } from "../descriptor";
 
 import { readGeneratedCursorModelCatalog } from "./generated-model-catalog-artifact";
-import { CURSOR_DEFAULT_SUPPORTED_MODELS } from "./model-policy";
 
 export { parseGeneratedCursorModelCatalog } from "./generated-model-catalog-artifact";
 
 const logger = createLogger("cursor:model-catalog");
 
 export type CursorModelCatalogErrorCode =
-  | "model_not_in_generated_catalog"
-  | "default_model_not_allowed"
-  | "no_models_allowed";
+  | "default_model_disabled"
+  | "all_models_disabled";
 
 export class CursorModelCatalogError extends Error {
   readonly code: CursorModelCatalogErrorCode;
@@ -41,7 +39,8 @@ export class CursorModelCatalogError extends Error {
 
 export interface CursorModelCatalogFacetDeps {
   loadCatalog(): BackendModelCatalog;
-  supportedModels(projectPath: string): Promise<readonly string[] | null>;
+  /** The project's opted-out model ids, or null when it configures none. */
+  disabledModels(projectPath: string): Promise<readonly string[] | null>;
 }
 
 export function createCursorModelCatalogFacet(
@@ -51,13 +50,13 @@ export function createCursorModelCatalogFacet(
     async getCatalog(input) {
       const catalog = deps.loadCatalog();
       try {
-        const supportedModels =
+        const disabledModels =
           input.projectPath === undefined
-            ? undefined
-            : await deps.supportedModels(input.projectPath);
+            ? null
+            : await deps.disabledModels(input.projectPath);
         return filterCursorModelCatalog(
           catalog,
-          supportedModels,
+          disabledModels,
           input.configuredSelection,
         );
       } catch (error) {
@@ -98,9 +97,19 @@ export function loadGeneratedCursorModelCatalog(): BackendModelCatalog {
   }
 }
 
+/**
+ * Apply a project's opt-out list to the generated catalog.
+ *
+ * Every generated model is offered unless the project names it in
+ * `disabledModels`, so a project that configures nothing gets everything
+ * Cursor serves. An id the generated catalog does not contain is inert rather
+ * than an error: the build refreshes this catalog from Cursor, so a model the
+ * vendor retires would otherwise turn every project that had disabled it into
+ * an unreadable configuration.
+ */
 export function filterCursorModelCatalog(
   catalog: BackendModelCatalog,
-  supportedModels: readonly string[] | null | undefined,
+  disabledModels: readonly string[] | null | undefined,
   configuredSelection?: BackendModelSelection,
 ): BackendModelCatalog {
   let effectiveDefaultModelId = catalog.defaultModelId;
@@ -112,21 +121,6 @@ export function filterCursorModelCatalog(
     effectiveDefaultModelId = validation.selection.modelId;
   }
 
-  if (supportedModels === undefined) {
-    return backendModelCatalogSchema.parse({
-      ...catalog,
-      defaultModelId: effectiveDefaultModelId,
-    });
-  }
-  const effectiveSupportedModels =
-    supportedModels ?? CURSOR_DEFAULT_SUPPORTED_MODELS;
-  if (effectiveSupportedModels.length === 0) {
-    throw new CursorModelCatalogError(
-      "no_models_allowed",
-      "This project's Cursor supported-model list is empty.",
-    );
-  }
-
   const canonicalByIdentifier = new Map<string, string>();
   for (const model of catalog.models) {
     canonicalByIdentifier.set(model.id, model.id);
@@ -134,33 +128,34 @@ export function filterCursorModelCatalog(
       canonicalByIdentifier.set(alias, model.id);
   }
 
-  const allowedIds = new Set<string>();
-  for (const configuredId of effectiveSupportedModels) {
+  const disabledIds = new Set<string>();
+  for (const configuredId of disabledModels ?? []) {
     const canonicalId = canonicalByIdentifier.get(configuredId);
-    if (canonicalId === undefined) {
-      throw new CursorModelCatalogError(
-        "model_not_in_generated_catalog",
-        `Cursor model "${configuredId}" is not present in the generated model catalog.`,
-        configuredId,
-      );
-    }
-    allowedIds.add(canonicalId);
+    if (canonicalId !== undefined) disabledIds.add(canonicalId);
   }
 
-  const allowedModels = catalog.models.filter((model) =>
-    allowedIds.has(model.id),
+  const allowedModels = catalog.models.filter(
+    (model) => !disabledIds.has(model.id),
   );
-  if (!allowedIds.has(effectiveDefaultModelId)) {
+  const [firstAllowedModel] = allowedModels;
+  if (firstAllowedModel === undefined) {
+    throw new CursorModelCatalogError(
+      "all_models_disabled",
+      "This project disables every Cursor model in the generated catalog.",
+    );
+  }
+
+  if (disabledIds.has(effectiveDefaultModelId)) {
     if (configuredSelection === undefined) {
       throw new CursorModelCatalogError(
-        "default_model_not_allowed",
-        `The Cursor supported-model list does not include the effective default "${effectiveDefaultModelId}".`,
+        "default_model_disabled",
+        `This project disables the effective default Cursor model "${effectiveDefaultModelId}".`,
         effectiveDefaultModelId,
       );
     }
-    effectiveDefaultModelId = allowedIds.has(catalog.defaultModelId)
-      ? catalog.defaultModelId
-      : allowedModels[0]!.id;
+    effectiveDefaultModelId = disabledIds.has(catalog.defaultModelId)
+      ? firstAllowedModel.id
+      : catalog.defaultModelId;
   }
 
   return backendModelCatalogSchema.parse({

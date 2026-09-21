@@ -7,7 +7,6 @@ import {
   codexPricingTableSchema,
   cursorBackendConfigSchema,
 } from "@/lib/agent-backends/schemas";
-import { CURSOR_DEFAULT_SUPPORTED_MODELS } from "@/lib/agent-backends/cursor/model-policy";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   pushNotificationConfigSchema,
@@ -404,35 +403,42 @@ export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 // ============================================================
 
 /**
- * The project's Cursor block (spec D10): the statically declared supported-model
+ * The project's Cursor block (spec D10): the statically declared opt-out model
  * list, and nothing else.
  *
- * The list is a project/team property — which models this repo's operators may
- * run — so it lives here rather than in CC code or the global profile. It is the
- * adapter model policy's authority: a resolved model outside it is refused
- * before a worker starts, never substituted.
+ * Every model in the generated catalog is available to every project. What is
+ * a project/team property is which of them this repo's operators should NOT
+ * reach for, so the block names the exclusions and the catalog — refreshed from
+ * Cursor at build time — supplies everything else. A project that adopts a
+ * model Cursor has just shipped needs no configuration change at all.
  *
- * A declared-empty list is kept as written rather than rejected here. It is a
- * well-formed statement that permits nothing, and it fails closed at the one
- * place that knows a model was actually requested; refusing it at parse time
- * would make the whole project's configuration unreadable over a Cursor-only
- * mistake.
+ * An id the generated catalog does not contain is kept as written rather than
+ * rejected here: Cursor retires models, and a vendor retirement must not turn a
+ * project's whole configuration file unreadable. A list that names every
+ * catalog model permits nothing and fails closed at the one place that knows a
+ * model was actually requested.
  *
  * `.strict()` for the same reason the global Cursor profile is strict: a key
  * this block does not declare is one Command Center will never read, and
  * stripping it silently tells an operator their setting took effect. The
  * `z.never()` arms answer the fields most likely to be reached for here —
- * per-project model/effort/credential overrides do not exist.
+ * per-project model/effort/credential overrides do not exist, and the former
+ * allowlist is named so an existing config fails with its replacement rather
+ * than with "unrecognized key".
  */
 const perRepoCursorConfigSchema = z
   .object({
+    disabledModels: z.array(z.string().trim().min(1)).default([]),
     supportedModels: z
-      .array(z.string().trim().min(1))
-      .default([...CURSOR_DEFAULT_SUPPORTED_MODELS]),
+      .never({
+        error:
+          "Cursor models are now enabled by default; replace agentBackends.cursor.supportedModels with agentBackends.cursor.disabledModels naming only the models this project should not run.",
+      })
+      .optional(),
     model: z
       .never({
         error:
-          "The per-repo Cursor block declares supportedModels only; set the model in the global agentBackends.cursor profile or select one per conversation.",
+          "The per-repo Cursor block declares disabledModels only; set the model in the global agentBackends.cursor profile or select one per conversation.",
       })
       .optional(),
     reasoningEffort: z

@@ -18,7 +18,6 @@ import {
 } from "./conversation-runtime";
 import { CURSOR_BACKEND_ID } from "./backend-id";
 import { translatePortableMcpToCursor } from "./mcp-translation";
-import { CURSOR_DEFAULT_MODEL } from "./model-policy";
 import {
   createScriptedTransport,
   type ScriptedTransport,
@@ -746,9 +745,7 @@ describe("turn configuration", () => {
       deps: {
         resolveModel: async () => ({
           ok: false,
-          code: "model_not_supported",
-          message: 'Cursor model "nope" is not in this project\'s list.',
-          supportedModels: [CURSOR_DEFAULT_MODEL],
+          message: 'Cursor model "nope" is disabled for this project.',
         }),
       },
     });

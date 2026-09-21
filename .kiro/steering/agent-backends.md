@@ -92,7 +92,7 @@ capabilities rather than provider identity.
 Every backend descriptor exposes a model-catalog facet, and conversation factories validate complete atomic selections against the project-effective catalog:
 
 - `modelCatalog.getCatalog({ projectPath, configuredSelection })` returns complete model definitions, parameter definitions, exact valid variants, provenance, and one atomic default.
-- `validateModelSelection` accepts a whole `{ modelId, parameters }` value and returns the canonical complete selection. Cursor applies `CommandCenter.json`'s `agentBackends.cursor.supportedModels` while resolving its effective catalog. A configured default outside the project's list remains an invalid applied selection and is never substituted, but the filtered catalog stays available so an explicit complete allowed selection can recover.
+- `validateModelSelection` accepts a whole `{ modelId, parameters }` value and returns the canonical complete selection. Cursor applies `CommandCenter.json`'s `agentBackends.cursor.disabledModels` — an opt-out, so every generated model is available unless the project names it — while resolving its effective catalog. A configured default the project disabled remains an invalid applied selection and is never substituted, but the filtered catalog stays available so an explicit complete available selection can recover.
 
 `GET /api/projects/[name]/model-options` projects every descriptor's effective catalog, atomic default, provenance, and diagnostics. Conversation-creation surfaces render those definitions directly. A selection outside the projection remains visible with a diagnostic and blocks submission; it is never substituted.
 

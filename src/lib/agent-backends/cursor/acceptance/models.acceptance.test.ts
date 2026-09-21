@@ -39,18 +39,18 @@ import {
 /** A second real Cursor model, standing in for a project-configured list.
  *  Hard-coded rather than discovered: no path here may call live catalog
  *  discovery, which the spec keeps out of production entirely (D10). */
-const LISTED_CUSTOM_MODEL = "composer-2";
-const PROJECT_SUPPORTED_MODELS = [CURSOR_DEFAULT_MODEL, LISTED_CUSTOM_MODEL];
+const AVAILABLE_CUSTOM_MODEL = "composer-2";
+const PROJECT_DISABLED_MODELS = ["gpt-5.6-sol"];
 
 const REJECTED_MODEL_ID = "composer-does-not-exist-9x7";
 const GENERATED_MODEL_CATALOG = loadGeneratedCursorModelCatalog();
-const LISTED_CUSTOM_MODEL_SELECTION = defaultSelectionForModel(
+const AVAILABLE_CUSTOM_MODEL_SELECTION = defaultSelectionForModel(
   GENERATED_MODEL_CATALOG,
-  LISTED_CUSTOM_MODEL,
+  AVAILABLE_CUSTOM_MODEL,
 );
-const UNLISTED_MODEL_SELECTION = defaultSelectionForModel(
+const DISABLED_MODEL_SELECTION = defaultSelectionForModel(
   GENERATED_MODEL_CATALOG,
-  "gpt-5.6-sol",
+  PROJECT_DISABLED_MODELS[0] ?? "gpt-5.6-sol",
 );
 const REJECTED_MODEL_SELECTION = {
   modelId: REJECTED_MODEL_ID,
@@ -58,7 +58,7 @@ const REJECTED_MODEL_SELECTION = {
 } satisfies BackendModelSelection;
 const projectModelCatalog = createCursorModelCatalogFacet({
   loadCatalog: () => GENERATED_MODEL_CATALOG,
-  supportedModels: async () => PROJECT_SUPPORTED_MODELS,
+  disabledModels: async () => PROJECT_DISABLED_MODELS,
 });
 
 let store: AcceptanceEvidenceStore;
@@ -110,16 +110,16 @@ describe("live Cursor model selection", () => {
     });
   });
 
-  it("refuses a complete selection absent from the project's list before any worker starts", async () => {
-    const resolution = await resolveModelSelection(UNLISTED_MODEL_SELECTION);
+  it("refuses a complete selection the project opted out of before any worker starts", async () => {
+    const resolution = await resolveModelSelection(DISABLED_MODEL_SELECTION);
     expect(resolution.ok).toBe(false);
     if (resolution.ok) throw new Error("unreachable");
     expect(resolution.code).toBe("unknown_model");
   });
 
-  it("runs a live turn on a listed custom model", async () => {
+  it("runs a live turn on an available custom model", async () => {
     const resolution = await resolveModelSelection(
-      LISTED_CUSTOM_MODEL_SELECTION,
+      AVAILABLE_CUSTOM_MODEL_SELECTION,
     );
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) throw new Error("unreachable");
@@ -166,7 +166,7 @@ describe("live Cursor model selection", () => {
 
     await live.close();
     await store.publish({
-      caseId: "model-listed-custom",
+      caseId: "model-available-custom",
       outcome: "pass",
       metrics: { modelSelection: JSON.stringify(resolution.selection) },
       artifacts: [],

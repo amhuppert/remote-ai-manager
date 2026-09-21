@@ -624,58 +624,60 @@ describe("compactionConfigSchema", () => {
   });
 });
 
-describe("per-repo Cursor supported-model list", () => {
-  it("accepts a declared list and preserves its order", () => {
+describe("per-repo Cursor opt-out model list", () => {
+  it("accepts a declared opt-out list and preserves its order", () => {
     const parsed = perRepoConfigSchema.parse({
       agentBackends: {
-        cursor: { supportedModels: ["composer-1", "composer-2.5"] },
+        cursor: { disabledModels: ["composer-1", "composer-2.5"] },
       },
     });
 
-    expect(parsed.agentBackends?.cursor?.supportedModels).toEqual([
+    expect(parsed.agentBackends?.cursor?.disabledModels).toEqual([
       "composer-1",
       "composer-2.5",
     ]);
   });
 
   it("leaves the block undefined when a project declares none", () => {
-    // Undefined is "this project configures no list", which the adapter's model
-    // policy reads as the descriptor default — distinct from a declared list.
+    // Undefined is "this project configures nothing", which leaves every
+    // generated model available.
     const parsed = perRepoConfigSchema.parse({ initScriptPath: null });
 
     expect(parsed.agentBackends).toBeUndefined();
   });
 
-  it("defaults an empty cursor block to composer-2.5 only", () => {
+  it("defaults an empty cursor block to no opt-outs at all", () => {
     const parsed = perRepoConfigSchema.parse({
       agentBackends: { cursor: {} },
     });
 
-    expect(parsed.agentBackends?.cursor?.supportedModels).toEqual([
-      "composer-2.5",
-    ]);
+    expect(parsed.agentBackends?.cursor?.disabledModels).toEqual([]);
   });
 
-  it("accepts a declared-empty list, which permits nothing at use time", () => {
-    const parsed = perRepoConfigSchema.parse({
-      agentBackends: { cursor: { supportedModels: [] } },
-    });
-
-    expect(parsed.agentBackends?.cursor?.supportedModels).toEqual([]);
-  });
-
-  it("rejects a malformed list with a bounded config error", () => {
-    for (const supportedModels of ["composer-2.5", [1], [""], ["  "], [null]]) {
+  it("rejects a malformed opt-out list with a bounded config error", () => {
+    for (const disabledModels of ["composer-2.5", [1], [""], ["  "], [null]]) {
       const result = perRepoConfigSchema.safeParse({
-        agentBackends: { cursor: { supportedModels } },
+        agentBackends: { cursor: { disabledModels } },
       });
 
       expect(result.success).toBe(false);
       if (result.success) continue;
       expect(result.error.issues[0]?.path).toEqual(
-        expect.arrayContaining(["agentBackends", "cursor", "supportedModels"]),
+        expect.arrayContaining(["agentBackends", "cursor", "disabledModels"]),
       );
     }
+  });
+
+  it("names the replacement when a project still declares the former allowlist", () => {
+    // Silently ignoring it would leave an operator believing models are
+    // restricted when every model is in fact available.
+    const result = perRepoConfigSchema.safeParse({
+      agentBackends: { cursor: { supportedModels: ["composer-2.5"] } },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.message).toContain("disabledModels");
   });
 
   it("rejects an unknown key under the cursor block by name", () => {
@@ -687,8 +689,8 @@ describe("per-repo Cursor supported-model list", () => {
   });
 
   it("rejects a per-repo profile field that belongs to global configuration", () => {
-    // The per-repo block declares the list only; model/effort/credential live
-    // in (or are refused by) the global Cursor profile.
+    // The per-repo block declares the opt-out list only; model/effort/credential
+    // live in (or are refused by) the global Cursor profile.
     for (const cursor of [
       { model: "composer-1" },
       { apiKey: "secret" },
@@ -703,7 +705,7 @@ describe("per-repo Cursor supported-model list", () => {
   it("rejects an unknown backend key under the per-repo agentBackends block", () => {
     expect(
       perRepoConfigSchema.safeParse({
-        agentBackends: { curser: { supportedModels: ["composer-2.5"] } },
+        agentBackends: { curser: { disabledModels: ["composer-2.5"] } },
       }).success,
     ).toBe(false);
   });

@@ -65,26 +65,26 @@ Deployments that ship Command Center must package these dependencies rather than
 
 The default model is **`composer-2.5`**, chosen explicitly on every run. Command Center never relies on Cursor's own auto-selection, and it never substitutes a different model for one you asked for.
 
-Which models a project's Cursor conversations may run is a **per-project setting** in that project's `CommandCenter.json`:
+Every model in the generated catalog is available to every project. A project turns models **off** in its `CommandCenter.json`:
 
 ```json
 {
   "agentBackends": {
-    "cursor": { "supportedModels": ["composer-2.5"] }
+    "cursor": { "disabledModels": ["gpt-5.4"] }
   }
 }
 ```
 
-Omit the block and the effective list is `["composer-2.5"]`. The complete selection for a turn resolves atomically: the selection chosen for the conversation → the global `agentBackends.cursor.modelSelection` → the generated catalog's default variant for `composer-2.5`. Its model must be a member of the project's list, or the turn is refused with a client error **before any Cursor process starts**. A declared-empty list permits nothing. See [Project Configuration → `agentBackends.cursor`](./project-configuration.md#agentbackendscursor--cursor-supported-models) for the full rules.
+Omit the block and every generated model is offered. The complete selection for a turn resolves atomically: the selection chosen for the conversation → the global `agentBackends.cursor.modelSelection` → the generated catalog's default variant for `composer-2.5`. Its model must not be on the project's opt-out list, or the turn is refused with a client error **before any Cursor process starts**. A list naming every catalog model permits nothing. See [Project Configuration → `agentBackends.cursor`](./project-configuration.md#agentbackendscursor--cursor-disabled-models) for the full rules.
 
 Command Center renders every user-selectable parameter advertised for the chosen model. Effort or reasoning appears beside the model picker; thinking, context size, fast mode, and future multi-value parameters appear under Model Options. Fixed parameters remain hidden in the UI but stay in the exact selection sent to Cursor.
 
 Two consequences worth knowing:
 
-- **The parameter catalog is generated, not discovered per request.** `bun run cursor-models:refresh` calls the authenticated `Cursor.models.list()` API and writes a checked-in catalog. Normal builds run `cursor-models:check` without a credential or network call. `CommandCenter.json` still controls the project's model-ID allowlist.
-- **A model the SDK itself rejects** (an id in your list that Cursor does not actually serve) fails the turn with a bounded model-configuration error. It never falls back to `composer-2.5`, so a stale entry surfaces as an error rather than as an answer from a model you did not ask for.
+- **The parameter catalog is generated, not discovered per request.** `bun run build` runs `cursor-models:sync`, which calls the authenticated `Cursor.models.list()` API and rewrites the checked-in catalog, so a build picks up whatever Cursor serves for the pinned SDK. Without `CURSOR_API_KEY`, or when the API is unreachable, the sync falls back to validating the checked-in artifact and the build continues — it never depends on a credential. `bun run cursor-models:refresh` forces the refresh on its own, and `cursor-models:check` validates without any network call. What still fails a build is an artifact that does not parse or was generated for a different SDK version.
+- **A model the SDK itself rejects** (an id in the catalog that Cursor does not actually serve for your account) fails the turn with a bounded model-configuration error. It never falls back to `composer-2.5`, so the refusal surfaces as an error rather than as an answer from a model you did not ask for.
 
-The composers offer exactly the project's list. A globally configured model outside it is shown as an explicit invalid selection, in red, waiting for you to choose — not quietly replaced.
+The composers offer exactly the models that survive the project's opt-out list. A globally configured model that does not is shown as an explicit invalid selection, in red, waiting for you to choose — not quietly replaced.
 
 ---
 
@@ -208,7 +208,7 @@ The observed results and the explicit limits of that evidence are recorded in [`
 | --- | --- |
 | Every Cursor turn fails immediately with a credential error | `CURSOR_API_KEY` is absent, empty, or rejected in the **server's** environment. A logged-in Cursor CLI does not count. Restart the server after setting it. |
 | Cursor turns fail with a runtime/platform error | The worker's Node is below 22.13, or `@cursor/sdk` / the derived `@cursor/sdk-${platform}-${arch}` package at 1.0.28 is missing, mismatched, or incompletely extracted. |
-| The model selector shows a model in red | The configured model is not in this project's `agentBackends.cursor.supportedModels`. Pick a listed one or add it to `CommandCenter.json`. |
+| The model selector shows a model in red | This project's `agentBackends.cursor.disabledModels` turns that model off. Pick an available one, or remove the entry from `CommandCenter.json`. |
 | A turn is refused before it starts, naming a model | Same cause, arriving from the API — the model was validated before any worker or billable turn. |
 | Cursor is greyed out in a picker | That surface needs a facet Cursor's catalog entry does not register; hover the option for the reason. |
 | The slash-command popup is empty | Expected: Cursor has no command or skill surface. |

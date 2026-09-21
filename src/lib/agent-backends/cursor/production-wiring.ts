@@ -47,7 +47,7 @@ import {
   loadGeneratedCursorModelCatalog,
 } from "./model-catalog";
 import {
-  createCursorSupportedModelsReader,
+  createCursorDisabledModelsReader,
   validateCursorModelSelectionForProject,
   type CursorModelSelectionResolution,
 } from "./model-policy";
@@ -78,20 +78,18 @@ async function globalProfileSelection(): Promise<BackendModelSelection> {
 }
 
 /**
- * The project's configured supported-model list (D10), read per resolution from
- * the project's `CommandCenter.json` — an operator editing the list must not
- * have to restart the server for the next turn to honour it.
+ * The project's opted-out model list (D10), read per resolution from the
+ * project's `CommandCenter.json` — an operator editing the list must not have
+ * to restart the server for the next turn to honour it.
  *
- * Null means "this project configures none", which the model policy reads as
- * the descriptor default list — the documented unconfigured behavior, not a
- * substitution.
+ * Null means "this project configures none", which leaves every generated model
+ * available — the documented unconfigured behavior.
  */
-const projectSupportedModels =
-  createCursorSupportedModelsReader(readRepoConfig);
+const projectDisabledModels = createCursorDisabledModelsReader(readRepoConfig);
 
 export const cursorModelCatalog = createCursorModelCatalogFacet({
   loadCatalog: loadGeneratedCursorModelCatalog,
-  supportedModels: projectSupportedModels,
+  disabledModels: projectDisabledModels,
 });
 
 export function resolveCursorModelForProduction(

@@ -43,7 +43,7 @@ my-project/
     }
   ],
   "agentBackends": {
-    "cursor": { "supportedModels": ["composer-2.5"] }
+    "cursor": { "disabledModels": ["gpt-5.4"] }
   }
 }
 ```
@@ -53,30 +53,32 @@ my-project/
 | `initScriptPath` | `string \| null` | No | Script to run after a session worktree is created |
 | `validation` | `ValidationConfig` | No | Named validation commands and merge-workflow selections |
 | `devServers` | `Array<DevServer>` | No | Dev servers that can be launched from the session UI (see [`devServers`](#devservers--dev-server-configuration)) |
-| `agentBackends` | `{ cursor?: { supportedModels?: string[] } }` | No | Per-project agent backend configuration (see [`agentBackends.cursor`](#agentbackendscursor--cursor-supported-models)) |
+| `agentBackends` | `{ cursor?: { disabledModels?: string[] } }` | No | Per-project agent backend configuration (see [`agentBackends.cursor`](#agentbackendscursor--cursor-disabled-models)) |
 
 ---
 
-## `agentBackends.cursor` — Cursor supported models
+## `agentBackends.cursor` — Cursor disabled models
 
-Which Cursor models this project's conversations may run. The list is a project/team property — it changes when your team adopts a model, not when Command Center ships a release — so it lives here rather than in Command Center's code.
+Every Cursor model Command Center knows about is available to every project. The build refreshes that list from Cursor itself, so a model Cursor ships becomes selectable without any configuration change. This block is the **opt-out**: name the models this project's conversations should *not* run.
 
 ```json
 {
   "agentBackends": {
-    "cursor": { "supportedModels": ["composer-2.5", "composer-1"] }
+    "cursor": { "disabledModels": ["gpt-5.4", "composer-2"] }
   }
 }
 ```
 
-- **Omit the block** and the effective list is `["composer-2.5"]`, the Command Center default.
-- Writing `"cursor": {}` means the same thing: `supportedModels` defaults to `["composer-2.5"]`.
+- **Omit the block** (or write `"cursor": {}`, or `"disabledModels": []`) and every generated model is offered.
+- An id the generated catalog does not contain is **ignored**, not rejected. Cursor retires models, and a vendor retirement must not make a project's configuration file unreadable.
+- Aliases work: disabling `opus-5` disables the model it names.
 - The **first** applicable complete selection wins for a turn: the selection explicitly chosen for the conversation, then the global `agentBackends.cursor.modelSelection`, then the generated catalog's default variant for `composer-2.5`.
-- Whatever that resolves to must be a member of this list. A model outside it is **refused** with a client error before any Cursor process starts or any billable turn runs — Command Center never quietly substitutes a different model. That includes the case where the list omits `composer-2.5` and nothing is explicitly selected.
-- A declared-empty list (`"supportedModels": []`) permits nothing, and every Cursor turn in the project is refused.
-- Only `supportedModels` is accepted here. A per-project model, model parameter, or credential override is rejected: the complete default belongs in global `agentBackends.cursor.modelSelection`, while the credential comes from the server's `CURSOR_API_KEY` environment variable and is never stored in a settings file.
+- Whatever that resolves to must not be on this list. A disabled model is **refused** with a client error before any Cursor process starts or any billable turn runs — Command Center never quietly substitutes a different model.
+- Disabling `composer-2.5` with nothing else configured is refused too: there would be no default left. Set a global `agentBackends.cursor.modelSelection` to another model first, and Command Center uses that as the project's default instead.
+- A list naming every catalog model permits nothing, and every Cursor turn in the project is refused.
+- Only `disabledModels` is accepted here. A per-project model, model parameter, or credential override is rejected: the complete default belongs in global `agentBackends.cursor.modelSelection`, while the credential comes from the server's `CURSOR_API_KEY` environment variable and is never stored in a settings file. The former `supportedModels` allowlist is rejected by name, with the replacement in the error.
 
-Command Center's conversation-creation surfaces (the project composer, the session composer, ticket start, quick ticket) offer exactly this list. If the model configured in global settings is not on it, they show an explicit invalid-selection state and wait for you to choose — they do not pick one for you.
+Command Center's conversation-creation surfaces (the project composer, the session composer, ticket start, quick ticket) offer exactly the models that survive this list. If the model configured in global settings is not among them, they show an explicit invalid-selection state and wait for you to choose — they do not pick one for you.
 
 For everything else about running Cursor — the `CURSOR_API_KEY` requirement, runtime pinning, image and token behavior, the tool policy, and what Cursor does not support — see [Cursor Backend](./cursor-backend.md).
 

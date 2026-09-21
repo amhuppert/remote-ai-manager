@@ -352,7 +352,7 @@ const cursorDescriptor = createCursorBackendDescriptor({
   }),
   modelCatalog: createCursorModelCatalogFacet({
     loadCatalog: loadGeneratedCursorModelCatalog,
-    supportedModels: async () => null,
+    disabledModels: async () => null,
   }),
   conversationFactory: {
     backend: "cursor",

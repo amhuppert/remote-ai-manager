@@ -19,8 +19,262 @@
       ]
     },
     {
+      "id": "grok-4.7",
+      "label": "Grok 4.7",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "256k",
+              "label": "256K"
+            },
+            {
+              "value": "500k",
+              "label": "500K"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning_effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast​​"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "false",
+              "reasoning_effort": "low"
+            }
+          },
+          "label": "Grok 4.7  Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "true",
+              "reasoning_effort": "low"
+            }
+          },
+          "label": "Grok 4.7  Low Fast​​",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "false",
+              "reasoning_effort": "medium"
+            }
+          },
+          "label": "Grok 4.7  Medium",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "true",
+              "reasoning_effort": "medium"
+            }
+          },
+          "label": "Grok 4.7  Medium Fast​​",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "false",
+              "reasoning_effort": "high"
+            }
+          },
+          "label": "Grok 4.7  High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "true",
+              "reasoning_effort": "high"
+            }
+          },
+          "label": "Grok 4.7  High Fast​​",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "false",
+              "reasoning_effort": "xhigh"
+            }
+          },
+          "label": "Grok 4.7  Extra High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "256k",
+              "fast": "true",
+              "reasoning_effort": "xhigh"
+            }
+          },
+          "label": "Grok 4.7  Extra High Fast​​",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "false",
+              "reasoning_effort": "low"
+            }
+          },
+          "label": "Grok 4.7  Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "true",
+              "reasoning_effort": "low"
+            }
+          },
+          "label": "Grok 4.7  Low Fast​​",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "false",
+              "reasoning_effort": "medium"
+            }
+          },
+          "label": "Grok 4.7  Medium",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "true",
+              "reasoning_effort": "medium"
+            }
+          },
+          "label": "Grok 4.7  Medium Fast​​",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "false",
+              "reasoning_effort": "high"
+            }
+          },
+          "label": "Grok 4.7  High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "true",
+              "reasoning_effort": "high"
+            }
+          },
+          "label": "Grok 4.7  High Fast​​",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "false",
+              "reasoning_effort": "xhigh"
+            }
+          },
+          "label": "Grok 4.7  Extra High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.7",
+            "parameters": {
+              "context": "500k",
+              "fast": "true",
+              "reasoning_effort": "xhigh"
+            }
+          },
+          "label": "Grok 4.7  Extra High Fast​​",
+          "isDefault": false
+        }
+      ]
+    },
+    {
       "id": "grok-4.6",
-      "label": "Cursor Grok 4.6",
+      "label": "Grok 4.6",
       "aliases": [],
       "parameters": [
         {
@@ -72,7 +326,7 @@
               "fast": "false"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": false
         },
         {
@@ -83,7 +337,7 @@
               "fast": "true"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": false
         },
         {
@@ -94,7 +348,7 @@
               "fast": "false"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": false
         },
         {
@@ -105,7 +359,7 @@
               "fast": "true"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": false
         },
         {
@@ -116,7 +370,7 @@
               "fast": "false"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": false
         },
         {
@@ -127,7 +381,7 @@
               "fast": "true"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": true
         },
         {
@@ -138,7 +392,7 @@
               "fast": "false"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": false
         },
         {
@@ -149,7 +403,7 @@
               "fast": "true"
             }
           },
-          "label": "Cursor Grok 4.6",
+          "label": "Grok 4.6",
           "isDefault": false
         }
       ]
@@ -2619,7 +2873,7 @@
     },
     {
       "id": "grok-4.5",
-      "label": "Cursor Grok 4.5",
+      "label": "Grok 4.5",
       "aliases": [],
       "parameters": [
         {
@@ -2666,7 +2920,7 @@
               "fast": "false"
             }
           },
-          "label": "Cursor Grok 4.5",
+          "label": "Grok 4.5",
           "isDefault": false
         },
         {
@@ -2677,7 +2931,7 @@
               "fast": "true"
             }
           },
-          "label": "Cursor Grok 4.5",
+          "label": "Grok 4.5",
           "isDefault": false
         },
         {
@@ -2688,7 +2942,7 @@
               "fast": "false"
             }
           },
-          "label": "Cursor Grok 4.5",
+          "label": "Grok 4.5",
           "isDefault": false
         },
         {
@@ -2699,7 +2953,7 @@
               "fast": "true"
             }
           },
-          "label": "Cursor Grok 4.5",
+          "label": "Grok 4.5",
           "isDefault": false
         },
         {
@@ -2710,7 +2964,7 @@
               "fast": "false"
             }
           },
-          "label": "Cursor Grok 4.5",
+          "label": "Grok 4.5",
           "isDefault": false
         },
         {
@@ -2721,7 +2975,7 @@
               "fast": "true"
             }
           },
-          "label": "Cursor Grok 4.5",
+          "label": "Grok 4.5",
           "isDefault": true
         }
       ]
@@ -6495,7 +6749,7 @@
   ],
   "provenance": {
     "source": "Cursor.models.list",
-    "generatedAt": "2026-09-15T04:19:44.966Z",
+    "generatedAt": "2026-09-21T20:37:11.403Z",
     "sdkVersion": "1.0.31"
   }
 }

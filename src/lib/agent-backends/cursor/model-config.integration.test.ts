@@ -16,7 +16,7 @@ import {
 } from "./model-catalog";
 import {
   CURSOR_DEFAULT_MODEL,
-  createCursorSupportedModelsReader,
+  createCursorDisabledModelsReader,
   validateCursorModelSelectionForProject,
 } from "./model-policy";
 import { cursorConversationBackendFactory } from "./production-wiring";
@@ -26,7 +26,7 @@ import {
 } from "./testing/scripted-worker";
 
 /**
- * The per-repo supported-model list end to end (spec D10): a real
+ * The per-repo opt-out model list end to end (spec D10): a real
  * `CommandCenter.json` on disk, the real repo-config reader and per-repo
  * schema, the real model policy, and the real conversation runtime. The only
  * scripted seam is the worker transport, so "no worker spawned" is an
@@ -50,9 +50,6 @@ const CUSTOM_MODEL_SELECTION = defaultSelectionForModel(
 const UNLISTED_MODEL_SELECTION = defaultSelectionForModel(
   GENERATED_MODEL_CATALOG,
   "gpt-5.6-sol",
-);
-const ALL_GENERATED_MODEL_IDS = GENERATED_MODEL_CATALOG.models.map(
-  ({ id }) => id,
 );
 
 let projectPath: string;
@@ -95,9 +92,9 @@ function createInput(): ConversationBackendCreateInput {
 
 /**
  * The runtime wired to the production model-resolution chain — the project's
- * configured list read through `ConversationBackendCreateInput.projectPath` —
- * with the configured global selection injected, so the test does not depend
- * on the server's own configuration file.
+ * opt-out list read through `ConversationBackendCreateInput.projectPath` — with
+ * the configured global selection injected, so the test does not depend on the
+ * server's own configuration file.
  */
 function createRuntimeOverRepoConfig(
   configuredSelection: BackendModelSelection = DEFAULT_MODEL_SELECTION,
@@ -110,7 +107,7 @@ function createRuntimeOverRepoConfig(
   const input = { ...createInput(), ...options.create };
   const modelCatalog = createCursorModelCatalogFacet({
     loadCatalog: () => GENERATED_MODEL_CATALOG,
-    supportedModels: createCursorSupportedModelsReader(readRepoConfig),
+    disabledModels: createCursorDisabledModelsReader(readRepoConfig),
   });
   const runtime = new CursorConversationRuntime(input, {
     transport,
@@ -142,10 +139,12 @@ function createRuntimeOverRepoConfig(
   };
 }
 
-describe("per-repo supported-model list enforced before a worker starts", () => {
-  it("refuses a complete selection the project does not list", async () => {
+describe("per-repo opt-out list enforced before a worker starts", () => {
+  it("refuses a complete selection the project has opted out of", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: [CURSOR_DEFAULT_MODEL] } },
+      agentBackends: {
+        cursor: { disabledModels: [UNLISTED_MODEL_SELECTION.modelId] },
+      },
     });
     const harness = createRuntimeOverRepoConfig();
 
@@ -156,15 +155,10 @@ describe("per-repo supported-model list enforced before a worker starts", () => 
     expect(harness.transport.startInputs).toHaveLength(0);
   });
 
-  it("runs a complete variant the project lists", async () => {
+  it("runs a complete variant the project has not opted out of", async () => {
     await writeRepoConfig({
       agentBackends: {
-        cursor: {
-          supportedModels: [
-            CURSOR_DEFAULT_MODEL,
-            CUSTOM_MODEL_SELECTION.modelId,
-          ],
-        },
+        cursor: { disabledModels: [UNLISTED_MODEL_SELECTION.modelId] },
       },
     });
     const harness = createRuntimeOverRepoConfig();
@@ -183,11 +177,9 @@ describe("per-repo supported-model list enforced before a worker starts", () => 
     ).toEqual(CUSTOM_MODEL_SELECTION);
   });
 
-  it("runs an explicitly allowed selection when the configured default is excluded", async () => {
+  it("runs an explicitly available selection when the configured default is opted out", async () => {
     await writeRepoConfig({
-      agentBackends: {
-        cursor: { supportedModels: [CUSTOM_MODEL_SELECTION.modelId] },
-      },
+      agentBackends: { cursor: { disabledModels: [CURSOR_DEFAULT_MODEL] } },
     });
     const harness = createRuntimeOverRepoConfig();
 
@@ -199,9 +191,11 @@ describe("per-repo supported-model list enforced before a worker starts", () => 
     );
   });
 
-  it("refuses an applied configured selection outside the project's list", async () => {
+  it("refuses an applied configured selection the project has opted out of", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: [CURSOR_DEFAULT_MODEL] } },
+      agentBackends: {
+        cursor: { disabledModels: [CUSTOM_MODEL_SELECTION.modelId] },
+      },
     });
     const harness = createRuntimeOverRepoConfig(CUSTOM_MODEL_SELECTION, {
       create: { modelSelection: CUSTOM_MODEL_SELECTION },
@@ -212,6 +206,17 @@ describe("per-repo supported-model list enforced before a worker starts", () => 
     expect(result.failure?.kind).toBe("backend_error");
     expect(result.failure?.message).toContain(CUSTOM_MODEL_SELECTION.modelId);
     expect(harness.transport.startInputs).toHaveLength(0);
+  });
+
+  it("offers every generated model when the project declares nothing", async () => {
+    const harness = createRuntimeOverRepoConfig();
+
+    const result = await harness.send(UNLISTED_MODEL_SELECTION);
+
+    expect(result.failure).toBeNull();
+    expect(
+      harness.transport.workers[0]?.turns[0]?.input.modelSelection,
+    ).toEqual(UNLISTED_MODEL_SELECTION);
   });
 
   it("uses the complete generated default when the project declares no list", async () => {
@@ -255,9 +260,7 @@ if (
 describe("cursor factory project-scoped model validation", () => {
   it("refuses a shaped bundle absent from the generated catalog", async () => {
     await writeRepoConfig({
-      agentBackends: {
-        cursor: { supportedModels: ALL_GENERATED_MODEL_IDS },
-      },
+      agentBackends: { cursor: { disabledModels: [] } },
     });
 
     const validation = await validateProjectModelSelection({
@@ -273,11 +276,9 @@ describe("cursor factory project-scoped model validation", () => {
     expect(validation.message).toContain("not-in-generated-catalog");
   });
 
-  it("accepts a complete generated selection the project lists", async () => {
+  it("accepts a complete generated selection the project has not opted out of", async () => {
     await writeRepoConfig({
-      agentBackends: {
-        cursor: { supportedModels: ALL_GENERATED_MODEL_IDS },
-      },
+      agentBackends: { cursor: { disabledModels: [] } },
     });
 
     expect(
@@ -293,9 +294,7 @@ describe("cursor factory project-scoped model validation", () => {
 
   it("returns the canonical complete selection when it accepts an alias", async () => {
     await writeRepoConfig({
-      agentBackends: {
-        cursor: { supportedModels: ALL_GENERATED_MODEL_IDS },
-      },
+      agentBackends: { cursor: { disabledModels: [] } },
     });
 
     expect(
@@ -323,7 +322,27 @@ describe("cursor factory project-scoped model validation", () => {
 
   it("refuses rather than throwing when the project's configuration is malformed", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: "composer-1" } },
+      agentBackends: { cursor: { disabledModels: "composer-1" } },
+    });
+
+    const validation = await validateProjectModelSelection({
+      projectPath,
+      modelSelection: DEFAULT_MODEL_SELECTION,
+    });
+
+    expect(validation.ok).toBe(false);
+    if (validation.ok) return;
+    expect(validation.message).toContain("disabledModels");
+    expect(validation.message).toContain("expected array");
+  });
+
+  it("refuses a project still declaring the former allowlist, naming the stale key", async () => {
+    // The key is gone, so honouring it is impossible; silently ignoring it
+    // would leave the operator believing a restriction is still in force. The
+    // refusal is bounded, so it names the offending key and the schema error
+    // carries the full replacement instruction.
+    await writeRepoConfig({
+      agentBackends: { cursor: { supportedModels: [CURSOR_DEFAULT_MODEL] } },
     });
 
     const validation = await validateProjectModelSelection({
@@ -334,7 +353,6 @@ describe("cursor factory project-scoped model validation", () => {
     expect(validation.ok).toBe(false);
     if (validation.ok) return;
     expect(validation.message).toContain("supportedModels");
-    expect(validation.message).toContain("expected array");
   });
 });
 
@@ -360,18 +378,12 @@ describe("cursor factory shape validation", () => {
 
 describe("SDK rejection of a configured model", () => {
   it("surfaces a bounded model-configuration error without falling back to another model", async () => {
-    // The project lists the ID, so Command Center's own validation passes and
-    // the SDK is the one that refuses it. Retrying on a different model would
-    // be the substitution D10 forbids — the refusal has to reach the operator.
+    // The project has not opted the ID out, so Command Center's own validation
+    // passes and the SDK is the one that refuses it. Retrying on a different
+    // model would be the substitution D10 forbids — the refusal has to reach
+    // the operator.
     await writeRepoConfig({
-      agentBackends: {
-        cursor: {
-          supportedModels: [
-            CURSOR_DEFAULT_MODEL,
-            CUSTOM_MODEL_SELECTION.modelId,
-          ],
-        },
-      },
+      agentBackends: { cursor: { disabledModels: [] } },
     });
     const harness = createRuntimeOverRepoConfig(DEFAULT_MODEL_SELECTION, {
       worker: {
@@ -401,14 +413,7 @@ describe("SDK rejection of a configured model", () => {
 
   it("reapplies the whole declared selection when resuming a persisted ref", async () => {
     await writeRepoConfig({
-      agentBackends: {
-        cursor: {
-          supportedModels: [
-            CURSOR_DEFAULT_MODEL,
-            CUSTOM_MODEL_SELECTION.modelId,
-          ],
-        },
-      },
+      agentBackends: { cursor: { disabledModels: [] } },
     });
     const harness = createRuntimeOverRepoConfig(DEFAULT_MODEL_SELECTION, {
       create: {
