@@ -632,6 +632,25 @@ const startTurnFrameSchema = z
      * supervisor's registry proves no live local worker owns the ref (D12).
      */
     forceExpirePersistedRun: z.boolean(),
+    /**
+     * Whether the worker should fetch billed usage once this turn settles.
+     * Policy lives with the parent: it turns the query off after the provider
+     * reported billing unavailable for the account, so a known-refused call is
+     * not repeated on every turn, and re-arms it once per attach.
+     */
+    queryBilling: z.boolean().optional(),
+  })
+  .strict();
+
+/**
+ * An on-demand billed-usage fetch outside a turn: reconciliation of pending
+ * settlements after a resume, and the bounded late-settlement re-polls. The
+ * worker answers with one `billing` frame carrying the same `queryId`.
+ */
+const usageQueryFrameSchema = z
+  .object({
+    type: z.literal("usageQuery"),
+    queryId: z.string().min(1),
   })
   .strict();
 
@@ -671,6 +690,7 @@ export const cursorParentFrameSchema = z.union([
   steerFrameSchema,
   questionReplyFrameSchema,
   cancelFrameSchema,
+  usageQueryFrameSchema,
   shutdownFrameSchema,
 ]);
 
@@ -790,6 +810,81 @@ const usageFrameSchema = z.object({
   reasoningTokens: z.number().int().nonnegative().optional(),
 });
 
+const billingTokenUsageSchema = z.object({
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+  cacheReadTokens: z.number().nonnegative(),
+  cacheWriteTokens: z.number().nonnegative(),
+  totalTokens: z.number().nonnegative(),
+  reasoningTokens: z.number().nonnegative().optional(),
+});
+
+/** The SDK's `UsageCost`: float cents, server-derived, eventually consistent. */
+const billingCostSchema = z.object({
+  rawCostCents: z.number().nonnegative(),
+  chargedCents: z.number().nonnegative(),
+});
+
+/** Bound on per-agent usage entries carried in one frame. */
+export const MAX_BILLING_SNAPSHOT_RUNS = 2_000;
+
+/**
+ * The SDK's `AgentUsage` as the worker read it: agent totals plus one entry per
+ * usage UUID. `cost` is null (not absent) wherever the backend has not
+ * reported it yet, so a missing figure is an explicit wire value rather than
+ * a key a reader could overlook.
+ */
+export const billingSnapshotSchema = z
+  .object({
+    usage: billingTokenUsageSchema,
+    cost: billingCostSchema.nullable(),
+    runs: z
+      .array(
+        z
+          .object({
+            runId: z.string().min(1),
+            usage: billingTokenUsageSchema,
+            cost: billingCostSchema.nullable(),
+          })
+          .strict(),
+      )
+      .max(MAX_BILLING_SNAPSHOT_RUNS),
+  })
+  .strict();
+export type CursorBillingSnapshot = z.infer<typeof billingSnapshotSchema>;
+
+/**
+ * Billed usage as fetched from the provider after a turn (`runId` set) or on
+ * demand (`queryId` set). `unavailable` is the provider refusing the feature
+ * for this account (HTTP 403 `feature_unavailable`), which the parent treats
+ * as a durable state rather than a transient failure; `failed` is everything
+ * else and stays retryable within the parent's bounds. Neither variant carries
+ * a payload beyond the SDK error's stable seams.
+ */
+const billingFrameSchema = z.discriminatedUnion("outcome", [
+  z
+    .object({
+      type: z.literal("billing"),
+      runId: z.string().min(1).nullable(),
+      queryId: z.string().min(1).nullable(),
+      outcome: z.literal("reported"),
+      snapshot: billingSnapshotSchema,
+      error: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("billing"),
+      runId: z.string().min(1).nullable(),
+      queryId: z.string().min(1).nullable(),
+      outcome: z.enum(["unavailable", "failed"]),
+      snapshot: z.null(),
+      error: sdkErrorSchema,
+    })
+    .strict(),
+]);
+export type CursorBillingFrame = z.infer<typeof billingFrameSchema>;
+
 const turnSettledFrameSchema = z.object({
   type: z.literal("turnSettled"),
   runId: z.string().min(1),
@@ -837,6 +932,7 @@ export const cursorWorkerFrameSchema = z.union([
   nativeEventFrameSchema,
   nativeEventRejectedFrameSchema,
   usageFrameSchema,
+  billingFrameSchema,
   turnSettledFrameSchema,
   cancelResultFrameSchema,
   steerResultFrameSchema,
@@ -861,6 +957,7 @@ const PARENT_FRAME_TYPES = new Set([
   "steer",
   "questionReply",
   "cancel",
+  "usageQuery",
   "shutdown",
 ]);
 
@@ -873,6 +970,7 @@ const WORKER_FRAME_TYPES = new Set([
   "nativeEvent",
   "nativeEventRejected",
   "usage",
+  "billing",
   "turnSettled",
   "cancelResult",
   "steerResult",

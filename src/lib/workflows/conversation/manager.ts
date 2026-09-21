@@ -48,7 +48,10 @@ import {
 
 import { type ConversationActorRef } from "./machine";
 import type { ConversationEvent } from "./types";
-import { conversationRuntimeKey } from "./runtime-state";
+import {
+  conversationRuntimeKey,
+  registerHostedCostSettlementApplier,
+} from "./runtime-state";
 import {
   type ConversationPersistenceAdapter,
   forgetConversationPersistence,
@@ -446,6 +449,27 @@ export function createConversationManager(
   function restorePersistedConversations(): Promise<number> {
     return deps.rehydrate(host);
   }
+
+  /**
+   * Fold a late cost settlement into a HOSTED actor's totals. The actor's own
+   * derived-field sync then writes the new total, so a direct row write could
+   * not be overwritten by a stale in-memory figure. `applied: false` when no
+   * usable actor is hosted for the key; the caller writes the row itself.
+   */
+  function applyCostSettlementToHostedActor(
+    key: string,
+    costUsdDelta: number,
+  ): { applied: true; totalCostUsd: number | null } | { applied: false } {
+    const actor = host.get(key);
+    if (actor === undefined || readUsableSnapshot(actor) === null)
+      return { applied: false };
+    actor.send({ type: "COST_SETTLED", costUsdDelta });
+    return {
+      applied: true,
+      totalCostUsd: actor.getSnapshot().context.totals.totalCostUsd,
+    };
+  }
+  registerHostedCostSettlementApplier(applyCostSettlementToHostedActor);
 
   function checkpointAcceptsQueuedInput(
     projectPath: string,
@@ -4018,6 +4042,7 @@ export function createConversationManager(
       );
   }
   return {
+    applyCostSettlementToHostedActor,
     getConversationRuntimeConfiguration,
     checkpointAcceptsQueuedInput,
     readDesiredConversationRuntimeConfiguration,
@@ -4056,6 +4081,13 @@ export function describeActiveTurn(
   address: ConversationAddress,
 ): ActiveConversationTurnDescription | null {
   return defaultManager().describeActiveTurn(address);
+}
+
+export function applyCostSettlementToHostedActor(
+  key: string,
+  costUsdDelta: number,
+): { applied: true; totalCostUsd: number | null } | { applied: false } {
+  return defaultManager().applyCostSettlementToHostedActor(key, costUsdDelta);
 }
 
 export function checkpointAcceptsQueuedInput(

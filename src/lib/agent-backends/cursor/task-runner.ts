@@ -37,6 +37,10 @@ import {
 } from "./descriptor";
 import { cursorTaskPolicyInstructions } from "./runtime-policy";
 import { loadCursorTaskImages } from "./task-images";
+import {
+  CURSOR_TASK_BILLING_SETTLE_DELAYS_MS,
+  CURSOR_TASK_BILLING_SETTLE_TIMEOUT_MS,
+} from "./worker/bounds";
 
 const logger = createLogger("cursor:task-runner");
 const classifier = createCursorFailureClassifier();
@@ -54,6 +58,9 @@ export interface CursorTaskRunnerDeps extends Omit<
     input: AgentTaskRequest,
     storePath: string,
   ): Promise<CursorCapabilityDelivery>;
+  /** Task-path settlement window; defaults are the adapter bounds. */
+  billingSettleTimeoutMs?: number;
+  billingSettleDelaysMs?: readonly number[];
 }
 
 export function createCursorTaskRunner(
@@ -276,6 +283,25 @@ export function createCursorTaskRunner(
           },
         });
         if (!result.backendRef || isolated) backendRef = null;
+        // A task closes its runtime next, so a cost the provider has not
+        // priced yet is waited for here, within the bound, or stays unknown.
+        let costUsd = result.costUsd;
+        if (
+          costUsd === null &&
+          result.failure === null &&
+          !controller.signal.aborted
+        ) {
+          costUsd = (
+            await runtime.settleBilling({
+              timeoutMs:
+                deps.billingSettleTimeoutMs ??
+                CURSOR_TASK_BILLING_SETTLE_TIMEOUT_MS,
+              delaysMs:
+                deps.billingSettleDelaysMs ??
+                CURSOR_TASK_BILLING_SETTLE_DELAYS_MS,
+            })
+          ).costUsd;
+        }
         const timedOut =
           controller.signal.aborted ||
           result.aborted ||
@@ -293,13 +319,20 @@ export function createCursorTaskRunner(
         outcome = {
           backendRef,
           text: result.finalText ?? null,
-          usage: result.tokenUsage
-            ? {
-                inputTokens: result.tokenUsage.inputTokens,
-                outputTokens: result.tokenUsage.outputTokens,
-                cachedInputTokens: result.tokenUsage.cacheReadTokens,
-              }
-            : null,
+          usage:
+            result.tokenUsage || costUsd !== null
+              ? {
+                  ...(result.tokenUsage
+                    ? {
+                        inputTokens: result.tokenUsage.inputTokens,
+                        outputTokens: result.tokenUsage.outputTokens,
+                        cachedInputTokens: result.tokenUsage.cacheReadTokens,
+                      }
+                    : {}),
+                  // Billed by the provider, never derived from token prices.
+                  ...(costUsd !== null ? { costUsd } : {}),
+                }
+              : null,
           error,
           timedOut,
           failure:

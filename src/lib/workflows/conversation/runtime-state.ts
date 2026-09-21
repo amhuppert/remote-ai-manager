@@ -201,6 +201,33 @@ export function registerConversationRuntime(
   );
 }
 
+export type HostedCostSettlementOutcome =
+  | { applied: true; totalCostUsd: number | null }
+  | { applied: false };
+
+let hostedCostSettlementApplier:
+  | ((key: string, costUsdDelta: number) => HostedCostSettlementOutcome)
+  | null = null;
+
+/**
+ * The conversation manager registers how a late cost settlement reaches a
+ * hosted actor. Registered rather than imported because production wiring is
+ * a dependency of the manager and cannot import it back.
+ */
+export function registerHostedCostSettlementApplier(
+  applier: (key: string, costUsdDelta: number) => HostedCostSettlementOutcome,
+): void {
+  hostedCostSettlementApplier = applier;
+}
+
+/** No manager registered means nothing is hosted; the caller writes the row. */
+export function applyHostedCostSettlement(
+  key: string,
+  costUsdDelta: number,
+): HostedCostSettlementOutcome {
+  return hostedCostSettlementApplier?.(key, costUsdDelta) ?? { applied: false };
+}
+
 /** Retrieve runtime state for a conversation. */
 export function getConversationRuntime(
   key: string,

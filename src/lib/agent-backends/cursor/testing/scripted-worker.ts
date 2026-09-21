@@ -1,5 +1,7 @@
 import {
   encodeNativePayload,
+  type CursorBillingFrame,
+  type CursorBillingSnapshot,
   type CursorSdkErrorFrameDetail,
   type CursorWorkerFrame,
   type NativeCodecViolation,
@@ -47,6 +49,8 @@ export interface ScriptedWorkerOptions {
   onTurn?: ScriptedTurnScript;
   /** Attach outcome; defaults to attaching and issuing `ref`. */
   onAttach?: (input: CursorAttachInput, worker: ScriptedWorker) => void;
+  /** Reply to an on-demand usage query; defaults to leaving it unanswered. */
+  onUsageQuery?: (queryId: string, worker: ScriptedWorker) => void;
   /** The ref a default attach issues. */
   ref?: string;
   /** Start outcome; defaults to a ready worker. */
@@ -75,6 +79,7 @@ export class ScriptedWorker implements CursorWorkerSession {
   readonly attachments: CursorAttachInput[] = [];
   readonly turns: ScriptedTurn[] = [];
   readonly cancelledRunIds: string[] = [];
+  readonly usageQueries: string[] = [];
   readonly steers: Array<{ runId: string; requestId: string; text: string }> =
     [];
   readonly questionReplies: Array<{
@@ -194,6 +199,38 @@ export class ScriptedWorker implements CursorWorkerSession {
     });
   }
 
+  /** The worker's post-turn or on-demand billed-usage report. */
+  sendBilling(
+    runId: string | null,
+    queryId: string | null,
+    snapshot: CursorBillingSnapshot,
+  ): void {
+    this.send({
+      type: "billing",
+      runId,
+      queryId,
+      outcome: "reported",
+      snapshot,
+      error: null,
+    });
+  }
+
+  sendBillingFailure(
+    runId: string | null,
+    queryId: string | null,
+    outcome: Exclude<CursorBillingFrame["outcome"], "reported">,
+    error: CursorSdkErrorFrameDetail,
+  ): void {
+    this.send({
+      type: "billing",
+      runId,
+      queryId,
+      outcome,
+      snapshot: null,
+      error,
+    });
+  }
+
   settle(
     runId: string,
     outcome: "completed" | "aborted" | "failed",
@@ -249,6 +286,11 @@ export class ScriptedWorker implements CursorWorkerSession {
         worker.settle(played.runId, "completed");
       });
     void Promise.resolve(script(turn, this));
+  }
+
+  queryUsage(queryId: string): void {
+    this.usageQueries.push(queryId);
+    this.options.onUsageQuery?.(queryId, this);
   }
 
   cancel(runId: string): void {

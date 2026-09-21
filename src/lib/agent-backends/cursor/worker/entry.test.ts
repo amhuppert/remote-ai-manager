@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CURSOR_BILLING_QUERY_TIMEOUT_MS,
   CURSOR_CREDENTIAL_PREFLIGHT_TIMEOUT_MS,
   CURSOR_WORKER_HANDSHAKE_TIMEOUT_MS,
 } from "./bounds";
@@ -9,6 +10,7 @@ import {
   CURSOR_WORKER_EXIT_PREFLIGHT_FAILED,
   startCursorWorker,
   type CursorWorkerAgent,
+  type CursorWorkerAgentUsage,
   type CursorWorkerAttachOptions,
   type CursorWorkerDeps,
   type CursorWorkerHandle,
@@ -46,6 +48,26 @@ const OPUS_MODEL_SELECTION = {
 
 const WORKER_PID = 4242;
 const PARENT_PID = 1111;
+
+const BILLED_TOKENS = {
+  inputTokens: 11687,
+  outputTokens: 49,
+  cacheReadTokens: 7232,
+  cacheWriteTokens: 0,
+  totalTokens: 18968,
+};
+/** The SDK's `AgentUsage` for a local agent: entries keyed by usage UUID. */
+const BILLED_USAGE: CursorWorkerAgentUsage = {
+  usage: BILLED_TOKENS,
+  cost: { rawCostCents: 3.5, chargedCents: 0 },
+  runs: [
+    {
+      runId: "usage-uuid-1",
+      usage: BILLED_TOKENS,
+      cost: { rawCostCents: 3.5, chargedCents: 0 },
+    },
+  ],
+};
 
 class FakeChannel {
   readonly sent: CursorWorkerFrame[] = [];
@@ -172,8 +194,19 @@ class FakeAgent implements CursorWorkerAgent {
   disposeCalls = 0;
   disposeBlocks = false;
   run: FakeRun = new FakeRun([], { status: "finished" });
+  usage: CursorWorkerAgentUsage = BILLED_USAGE;
+  usageError: unknown = null;
+  usageHangs = false;
+  getUsageCalls = 0;
 
   constructor(readonly agentId: string) {}
+
+  async getUsage(): Promise<CursorWorkerAgentUsage> {
+    this.getUsageCalls += 1;
+    if (this.usageHangs) await new Promise<void>(() => {});
+    if (this.usageError !== null) throw this.usageError;
+    return this.usage;
+  }
 
   async send(
     message: CursorWorkerSendMessage,
@@ -1217,4 +1250,178 @@ it("forwards task deltas with unique transcript sequence numbers and one input r
   ]);
   expect(events.map((event) => event.eventIndex)).toEqual([0, 1]);
   expect(harness.channel.ofType("inputAccepted")).toHaveLength(1);
+});
+
+describe("cursor worker billed usage", () => {
+  function featureUnavailable(): Error {
+    const error = new Error(
+      "[feature_unavailable] This feature is not available for your account",
+    );
+    Object.assign(error, {
+      name: "UnknownAgentError",
+      code: "feature_unavailable",
+      status: 403,
+    });
+    return error;
+  }
+
+  it("fetches billed usage after a settled turn and reports it before the settlement", async () => {
+    const harness = createHarness();
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+
+    expect(harness.sdk.agent.getUsageCalls).toBe(1);
+    const billing = harness.channel.ofType("billing");
+    expect(billing).toStrictEqual([
+      {
+        type: "billing",
+        runId: "run-1",
+        queryId: null,
+        outcome: "reported",
+        snapshot: {
+          usage: BILLED_TOKENS,
+          cost: { rawCostCents: 3.5, chargedCents: 0 },
+          runs: [
+            {
+              runId: "usage-uuid-1",
+              usage: BILLED_TOKENS,
+              cost: { rawCostCents: 3.5, chargedCents: 0 },
+            },
+          ],
+        },
+        error: null,
+      },
+    ]);
+    const types = harness.channel.sent.map((frame) => frame.type);
+    expect(types.indexOf("billing")).toBeLessThan(types.indexOf("turnSettled"));
+    expect(harness.channel.ofType("turnSettled")[0]?.outcome).toBe("completed");
+  });
+
+  it("reports an absent entry cost as an explicit null rather than dropping the key", async () => {
+    const harness = createHarness();
+    harness.sdk.agent.usage = {
+      usage: BILLED_TOKENS,
+      runs: [{ runId: "usage-uuid-1", usage: BILLED_TOKENS }],
+    };
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+
+    const billing = harness.channel.ofType("billing")[0];
+    expect(billing?.outcome).toBe("reported");
+    if (billing?.outcome !== "reported") return;
+    expect(billing.snapshot.cost).toBeNull();
+    expect(billing.snapshot.runs[0]?.cost).toBeNull();
+  });
+
+  it("reports the provider refusing the feature as unavailable and still settles the turn", async () => {
+    const harness = createHarness();
+    harness.sdk.agent.usageError = featureUnavailable();
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+
+    expect(harness.channel.ofType("billing")).toStrictEqual([
+      {
+        type: "billing",
+        runId: "run-1",
+        queryId: null,
+        outcome: "unavailable",
+        snapshot: null,
+        error: {
+          name: "UnknownAgentError",
+          code: "feature_unavailable",
+          status: 403,
+          message:
+            "[feature_unavailable] This feature is not available for your account",
+        },
+      },
+    ]);
+    expect(harness.channel.ofType("turnSettled")[0]?.outcome).toBe("completed");
+  });
+
+  it("reports any other fetch failure as failed, leaving retries to the parent", async () => {
+    const harness = createHarness();
+    const error = new Error("socket hang up");
+    Object.assign(error, { name: "NetworkError" });
+    harness.sdk.agent.usageError = error;
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+
+    const billing = harness.channel.ofType("billing")[0];
+    expect(billing).toMatchObject({
+      outcome: "failed",
+      error: { name: "NetworkError", message: "socket hang up" },
+    });
+    expect(harness.channel.ofType("turnSettled")[0]?.outcome).toBe("completed");
+  });
+
+  it("bounds the fetch so a hung billing call cannot hold the turn open", async () => {
+    const harness = createHarness();
+    harness.sdk.agent.usageHangs = true;
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame());
+    await settle();
+    expect(harness.channel.ofType("turnSettled")).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(CURSOR_BILLING_QUERY_TIMEOUT_MS + 1);
+    await settle();
+    expect(harness.channel.ofType("billing")[0]).toMatchObject({
+      outcome: "failed",
+      runId: "run-1",
+    });
+    expect(harness.channel.ofType("turnSettled")[0]?.outcome).toBe("completed");
+  });
+
+  it("skips the fetch when the parent turned billing off for the turn", async () => {
+    const harness = createHarness();
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(startTurnFrame({ queryBilling: false }));
+    await settle();
+
+    expect(harness.sdk.agent.getUsageCalls).toBe(0);
+    expect(harness.channel.ofType("billing")).toStrictEqual([]);
+    expect(harness.channel.ofType("turnSettled")[0]?.outcome).toBe("completed");
+  });
+
+  it("answers an on-demand usage query with a billing frame carrying the query id", async () => {
+    const harness = createHarness();
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit({ type: "usageQuery", queryId: "q-1" });
+    await settle();
+
+    expect(harness.sdk.agent.getUsageCalls).toBe(1);
+    expect(harness.channel.ofType("billing")).toStrictEqual([
+      {
+        type: "billing",
+        runId: null,
+        queryId: "q-1",
+        outcome: "reported",
+        snapshot: BILLED_USAGE,
+        error: null,
+      },
+    ]);
+  });
+
+  it("answers a usage query before any agent is attached as failed", async () => {
+    const harness = createHarness();
+    await handshake(harness);
+    harness.channel.emit({ type: "usageQuery", queryId: "q-1" });
+    await settle();
+
+    expect(harness.channel.ofType("billing")[0]).toMatchObject({
+      queryId: "q-1",
+      outcome: "failed",
+      error: { code: "worker_not_attached" },
+    });
+  });
 });

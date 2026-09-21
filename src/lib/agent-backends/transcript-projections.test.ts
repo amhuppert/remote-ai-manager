@@ -216,3 +216,34 @@ describe("projectTranscriptUsage", () => {
     ).toBeNull();
   });
 });
+
+describe("cost settlement frames", () => {
+  it("projects a late settlement frame as its lineage's cumulative cost", () => {
+    expect(
+      projectTranscriptUsage({
+        raw: {
+          kind: "cost_settlement",
+          lineageId: "agent-1",
+          cumulativeCostUsd: 0.12,
+          costUsdDelta: 0.02,
+        },
+      }),
+    ).toEqual({
+      lineageId: "agent-1",
+      cumulativeCostUsd: 0.12,
+      numTurns: null,
+    });
+  });
+
+  it("declines a settlement frame without a finite cumulative figure", () => {
+    expect(
+      projectTranscriptUsage({
+        raw: {
+          kind: "cost_settlement",
+          lineageId: "agent-1",
+          cumulativeCostUsd: "x",
+        },
+      }),
+    ).toBeNull();
+  });
+});

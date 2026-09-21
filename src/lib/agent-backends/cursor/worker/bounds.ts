@@ -49,6 +49,35 @@ export const CURSOR_TURN_STALL_TIMEOUT_MS = 20 * 60 * 1000;
 export const CURSOR_CANCEL_SETTLE_TIMEOUT_MS = 10_000;
 
 /**
+ * Billed-usage fetch bound. The worker asks the provider for billed usage once
+ * after each turn settles and on the parent's demand; a fetch that has not
+ * answered inside this window is reported as failed so a slow billing service
+ * can delay a turn's settlement by at most this much and never hold it open.
+ */
+export const CURSOR_BILLING_QUERY_TIMEOUT_MS = 10_000;
+
+/**
+ * Late-settlement re-fetch schedule, parent side. After a turn whose billed
+ * cost had not landed, the runtime asks again at these delays while its worker
+ * is alive; the list's length is the bound on attempts per turn. Provider cost
+ * is documented as lagging "briefly", so the schedule front-loads.
+ */
+export const CURSOR_BILLING_RETRY_DELAYS_MS: readonly number[] = [
+  5_000, 20_000, 60_000,
+];
+
+/**
+ * Task-path settlement window. A task closes its runtime right after the turn
+ * and would never see a late settlement, so when the provider has not priced
+ * the turn yet the runner waits, polling at these delays, for at most the
+ * timeout. Past it the task's cost stays unknown — never estimated.
+ */
+export const CURSOR_TASK_BILLING_SETTLE_TIMEOUT_MS = 12_000;
+export const CURSOR_TASK_BILLING_SETTLE_DELAYS_MS: readonly number[] = [
+  2_000, 4_000, 6_000,
+];
+
+/**
  * Credential verification bound (D3 layer 2): `Cursor.me` must answer inside
  * this window or the worker reports a bounded timeout rather than hanging the
  * handshake.

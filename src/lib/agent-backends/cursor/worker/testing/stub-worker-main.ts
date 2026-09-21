@@ -63,6 +63,16 @@ const run: CursorWorkerRun = {
 const agent: CursorWorkerAgent = {
   agentId: "stub-agent",
   send: async () => run,
+  getUsage: async () => ({
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+    },
+    runs: [],
+  }),
   dispose: async () => {},
 };
 

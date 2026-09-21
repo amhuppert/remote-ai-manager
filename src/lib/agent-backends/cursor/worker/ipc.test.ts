@@ -508,3 +508,100 @@ describe("cursor IPC frames", () => {
     expect(JSON.stringify(parsed)).not.toContain(API_KEY);
   });
 });
+
+describe("cursor billing frames", () => {
+  const snapshot = {
+    usage: {
+      inputTokens: 11687,
+      outputTokens: 49,
+      cacheReadTokens: 7232,
+      cacheWriteTokens: 0,
+      totalTokens: 18968,
+    },
+    cost: { rawCostCents: 3.5, chargedCents: 0 },
+    runs: [
+      {
+        runId: "0f1e2d3c-usage-uuid",
+        usage: {
+          inputTokens: 11687,
+          outputTokens: 49,
+          cacheReadTokens: 7232,
+          cacheWriteTokens: 0,
+          totalTokens: 18968,
+        },
+        cost: null,
+      },
+    ],
+  };
+
+  it("accepts a reported billing snapshot keyed by the run it settles", () => {
+    const parsed = parseWorkerFrame({
+      type: "billing",
+      runId: "run-1",
+      queryId: null,
+      outcome: "reported",
+      snapshot,
+      error: null,
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.frame).toMatchObject({
+      type: "billing",
+      outcome: "reported",
+      snapshot: { cost: { chargedCents: 0 }, runs: [{ cost: null }] },
+    });
+  });
+
+  it("accepts an unavailable outcome carrying only the bounded SDK error seams", () => {
+    const parsed = parseWorkerFrame({
+      type: "billing",
+      runId: null,
+      queryId: "q-1",
+      outcome: "unavailable",
+      snapshot: null,
+      error: {
+        name: "UnknownAgentError",
+        code: "feature_unavailable",
+        status: 403,
+        message: "This feature is not available for your account",
+      },
+    });
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("rejects a reported outcome without a snapshot", () => {
+    const parsed = parseWorkerFrame({
+      type: "billing",
+      runId: "run-1",
+      queryId: null,
+      outcome: "reported",
+      snapshot: null,
+      error: null,
+    });
+    expect(parsed.ok).toBe(false);
+  });
+
+  it("accepts the parent's on-demand usage query and the per-turn billing switch", () => {
+    expect(parseParentFrame({ type: "usageQuery", queryId: "q-1" })).toEqual({
+      ok: true,
+      frame: { type: "usageQuery", queryId: "q-1" },
+    });
+    const turn = parseParentFrame({
+      type: "startTurn",
+      runId: "run-1",
+      promptText: "hello",
+      images: [],
+      structuredOutputInstruction: null,
+      modelSelection: { modelId: "composer-2.5", parameters: { fast: "true" } },
+      mcpServers: {},
+      forceExpirePersistedRun: false,
+      queryBilling: false,
+    });
+    expect(turn.ok).toBe(true);
+    if (!turn.ok) return;
+    expect(turn.frame).toMatchObject({
+      type: "startTurn",
+      queryBilling: false,
+    });
+  });
+});

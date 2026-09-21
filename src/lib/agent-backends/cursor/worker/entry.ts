@@ -1,5 +1,6 @@
 import type { CursorCapabilitySnapshot } from "../capability-delivery";
 import {
+  CURSOR_BILLING_QUERY_TIMEOUT_MS,
   CURSOR_CREDENTIAL_PREFLIGHT_TIMEOUT_MS,
   CURSOR_WORKER_HANDSHAKE_TIMEOUT_MS,
   CURSOR_WORKER_IDLE_TTL_MS,
@@ -7,7 +8,9 @@ import {
   CURSOR_WORKER_TERMINATION_GRACE_MS,
 } from "./bounds";
 import {
+  MAX_BILLING_SNAPSHOT_RUNS,
   encodeNativePayload,
+  type CursorBillingSnapshot,
   parseParentFrame,
   type CursorParentFrame,
   type CursorPreflightFailureReason,
@@ -120,6 +123,27 @@ export interface CursorWorkerRunResult {
   usage?: CursorWorkerRunUsage;
 }
 
+/** The SDK's `UsageCost`: float cents, server-derived, eventually consistent. */
+export interface CursorWorkerUsageCost {
+  rawCostCents: number;
+  chargedCents: number;
+}
+
+/**
+ * The SDK's `AgentUsage` for a local agent: billed totals for the whole agent
+ * plus one entry per usage UUID (`runs[].runId`). `cost` is absent wherever
+ * the backend has not reported it yet.
+ */
+export interface CursorWorkerAgentUsage {
+  usage: CursorWorkerRunUsage;
+  cost?: CursorWorkerUsageCost;
+  runs: readonly {
+    runId: string;
+    usage: CursorWorkerRunUsage;
+    cost?: CursorWorkerUsageCost;
+  }[];
+}
+
 export interface CursorWorkerRun {
   steer?(text: string): Promise<"complete_delivered" | "revert_to_followup">;
   /** Complete public SDK objects, in delivery order. */
@@ -134,6 +158,8 @@ export interface CursorWorkerAgent {
     message: CursorWorkerSendMessage,
     options: CursorWorkerSendOptions,
   ): Promise<CursorWorkerRun>;
+  /** `agent.getUsage()`: billed usage from the cloud usage endpoint. */
+  getUsage(): Promise<CursorWorkerAgentUsage>;
   dispose(): Promise<void>;
 }
 
@@ -271,6 +297,45 @@ export function describeSdkError(error: unknown): CursorSdkErrorFrameDetail {
     status:
       typeof status === "number" && Number.isInteger(status) ? status : null,
     message: message ?? "cursor worker failure with an unreadable message",
+  };
+}
+
+function toBillingTokens(usage: CursorWorkerRunUsage): CursorWorkerRunUsage {
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    totalTokens: usage.totalTokens,
+    ...(usage.reasoningTokens !== undefined
+      ? { reasoningTokens: usage.reasoningTokens }
+      : {}),
+  };
+}
+
+/**
+ * The SDK's `AgentUsage` on the wire. An absent cost becomes an explicit null
+ * so the parent reads "not reported yet" as a value rather than a missing key,
+ * and the entry list is capped at the frame bound — an agent past it would
+ * otherwise produce a frame the parent's codec refuses outright.
+ */
+export function toBillingSnapshot(
+  usage: CursorWorkerAgentUsage,
+): CursorBillingSnapshot {
+  if (usage.runs.length > MAX_BILLING_SNAPSHOT_RUNS) {
+    logger.warn("cursor-worker.billing_entries_truncated", {
+      entryCount: usage.runs.length,
+      bound: MAX_BILLING_SNAPSHOT_RUNS,
+    });
+  }
+  return {
+    usage: toBillingTokens(usage.usage),
+    cost: usage.cost ?? null,
+    runs: usage.runs.slice(0, MAX_BILLING_SNAPSHOT_RUNS).map((run) => ({
+      runId: run.runId,
+      usage: toBillingTokens(run.usage),
+      cost: run.cost ?? null,
+    })),
   };
 }
 
@@ -705,6 +770,72 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     });
   }
 
+  /**
+   * The provider's billed usage, bounded and reported as one `billing` frame.
+   *
+   * Two outcomes are distinguished on the wire because the parent treats them
+   * differently: `unavailable` is the account lacking the feature (a 403
+   * `feature_unavailable`), a durable state the parent stops re-asking about;
+   * `failed` is a transient fetch fault the parent may retry within its own
+   * bounds. The worker holds no policy here — it fetches when told and reports
+   * what it saw.
+   */
+  async function queryBilling(
+    runId: string | null,
+    queryId: string | null,
+  ): Promise<void> {
+    const current = agent;
+    if (current === null) {
+      send({
+        type: "billing",
+        runId,
+        queryId,
+        outcome: "failed",
+        snapshot: null,
+        error: {
+          name: "CursorWorkerNotAttached",
+          code: "worker_not_attached",
+          status: null,
+          message: "billed usage was requested before an agent was attached",
+        },
+      });
+      return;
+    }
+    try {
+      const usage = await withTimeout(
+        current.getUsage(),
+        CURSOR_BILLING_QUERY_TIMEOUT_MS,
+      );
+      send({
+        type: "billing",
+        runId,
+        queryId,
+        outcome: "reported",
+        snapshot: toBillingSnapshot(usage),
+        error: null,
+      });
+    } catch (error) {
+      const detail = describeSdkError(error);
+      const unavailable =
+        detail.code === "feature_unavailable" || detail.status === 403;
+      logger.info("cursor-worker.billing_query_failed", {
+        runId,
+        queryId,
+        outcome: unavailable ? "unavailable" : "failed",
+        code: detail.code,
+        status: detail.status,
+      });
+      send({
+        type: "billing",
+        runId,
+        queryId,
+        outcome: unavailable ? "unavailable" : "failed",
+        snapshot: null,
+        error: detail,
+      });
+    }
+  }
+
   async function handleStartTurn(
     frame: Extract<CursorParentFrame, { type: "startTurn" }>,
   ): Promise<void> {
@@ -839,7 +970,12 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     activeRun = null;
     armIdleTimer();
 
+    // Token usage first, then billed usage, then settlement: the parent
+    // matches billing entries against the run's token counts, and it
+    // assembles the turn result only once the settlement frame arrives. The
+    // fetch is bounded, so settlement waits at most that long.
     if (result.usage !== undefined) sendUsage(frame.runId, result.usage);
+    if (frame.queryBilling !== false) await queryBilling(frame.runId, null);
     send({
       type: "turnSettled",
       runId: frame.runId,
@@ -948,6 +1084,8 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
         return;
       case "cancel":
         return handleCancel(frame);
+      case "usageQuery":
+        return queryBilling(null, frame.queryId);
       case "shutdown":
         return stop("shutdown");
     }

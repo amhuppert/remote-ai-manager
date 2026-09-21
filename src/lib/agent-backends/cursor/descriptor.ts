@@ -57,6 +57,14 @@ export const cursorTaskExecution: TaskExecutionPolicy = {
  * This is a `none` declaration rather than an omission precisely so the two
  * disclosure surfaces can say it out loud. Revisit when the SDK grows a lever.
  */
+/**
+ * Cost disclosure (ticket #120). The provider bills per turn but never ties a
+ * billing entry to the run that produced it, so per-turn cost is inferred; an
+ * account without the usage API keeps cost unknown rather than estimated.
+ */
+export const CURSOR_BILLING_WARNING =
+  "Cost is Cursor's billed charge, fetched after each turn and settled late when billing lags. Per-turn attribution is inferred from the provider's usage entries and can stay unknown; accounts without the usage API report no cost at all.";
+
 export const cursorNativeMemory: BackendNativeMemory = {
   mechanism: "none",
   reason:
@@ -85,6 +93,7 @@ export const cursorBackendMetadata: AgentBackendMetadata = {
     ]).map(({ reason }) => reason),
     CURSOR_BACKGROUND_WARNING,
     "Network and native tool-approval limits are not enforced.",
+    CURSOR_BILLING_WARNING,
   ],
   toneToken: "amber",
   skillTriggerPrefix: "/",
@@ -148,20 +157,42 @@ export const cursorConversationCapabilities: BackendConversationCapabilities = {
 };
 
 /**
- * Cursor adds no Command Center-authored frames around a turn.
+ * Cursor adds no Command Center-authored content frames around a turn.
  *
  * Its runtime persists every complete native SDK object as a lossless envelope
  * (D7), and those envelopes are already full transcript frames: content-worthy
  * events carry their visible blocks, and the usage event carries the turn's
  * token counts. Persisting the projected `content` events again would duplicate
- * every assistant block, and a CC-authored result frame would be a second,
- * competing usage record for a turn that already has exactly one (D17).
+ * every assistant block, and a token record in a result frame would compete
+ * with the native usage record (D17).
+ *
+ * Billed COST is the one figure the native envelopes cannot carry — the
+ * provider reports it through a separate endpoint, after the turn — so a turn
+ * whose lineage has a billed figure leaves one result frame with the lineage
+ * cumulative, the same shape every cost-reporting backend persists. A turn
+ * without one (billing unavailable, or not yet settled) leaves nothing.
  */
 export const cursorConversationTranscriptProjection: BackendConversationTranscriptProjection =
   {
     persistContentEvents: false,
     projectBackendInit: () => null,
-    projectTurnResult: () => null,
+    projectTurnResult: (input) =>
+      input.cumulativeCostUsd === null
+        ? null
+        : {
+            timestamp: input.timestamp,
+            type: "result",
+            raw: {
+              backend: CURSOR_BACKEND_ID,
+              backendRef: input.backendRef,
+              costUsd: input.costUsd,
+              cumulativeCostUsd: input.cumulativeCostUsd,
+              numTurns: input.numTurns,
+              durationMs: input.durationMs,
+              aborted: input.aborted,
+              error: input.error,
+            },
+          },
   };
 
 /**

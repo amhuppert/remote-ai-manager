@@ -456,3 +456,120 @@ describe("Cursor task runner", () => {
     expect(result.backendRef).toBeNull();
   });
 });
+
+describe("Cursor task billed cost", () => {
+  const tokens = {
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadTokens: 5,
+    cacheWriteTokens: 2,
+    totalTokens: 120,
+  };
+  const priced = {
+    usage: tokens,
+    cost: { rawCostCents: 4, chargedCents: 4 },
+    runs: [
+      {
+        runId: "uuid-1",
+        usage: tokens,
+        cost: { rawCostCents: 4, chargedCents: 4 },
+      },
+    ],
+  };
+
+  it("carries a cost settled at turn end on the task result", async () => {
+    const { runner } = harness({
+      onTurn: (turn, worker) => {
+        worker.sendInputAccepted(turn.runId);
+        worker.sendUsage(turn.runId, tokens);
+        worker.sendBilling(turn.runId, null, priced);
+        worker.settle(turn.runId, "completed");
+      },
+    });
+    const result = await runner.run(request);
+    expect(result.error).toBeNull();
+    expect(result.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cachedInputTokens: 5,
+      costUsd: 0.04,
+    });
+  });
+
+  it("waits within its bound for a cost the provider prices late", async () => {
+    const { runner, transport } = harness(
+      {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          worker.sendUsage(turn.runId, tokens);
+          worker.sendBilling(turn.runId, null, {
+            ...priced,
+            cost: null,
+            runs: [{ runId: "uuid-1", usage: tokens, cost: null }],
+          });
+          worker.settle(turn.runId, "completed");
+        },
+        onUsageQuery: (queryId, worker) => {
+          worker.sendBilling(null, queryId, priced);
+        },
+      },
+      { billingSettleDelaysMs: [1, 1], billingSettleTimeoutMs: 500 },
+    );
+    const result = await runner.run(request);
+    expect(result.usage?.costUsd).toBe(0.04);
+    expect(transport.workers[0]?.usageQueries).toHaveLength(1);
+  });
+
+  it("gives up at the bound and leaves the cost unknown, never estimated", async () => {
+    const { runner } = harness(
+      {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          worker.sendUsage(turn.runId, tokens);
+          worker.sendBilling(turn.runId, null, {
+            ...priced,
+            cost: null,
+            runs: [{ runId: "uuid-1", usage: tokens, cost: null }],
+          });
+          worker.settle(turn.runId, "completed");
+        },
+        onUsageQuery: (queryId, worker) => {
+          worker.sendBilling(null, queryId, {
+            ...priced,
+            cost: null,
+            runs: [{ runId: "uuid-1", usage: tokens, cost: null }],
+          });
+        },
+      },
+      { billingSettleDelaysMs: [1, 1], billingSettleTimeoutMs: 500 },
+    );
+    const result = await runner.run(request);
+    expect(result.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cachedInputTokens: 5,
+    });
+  });
+
+  it("does not wait at all when the provider refused billing for the account", async () => {
+    const { runner, transport } = harness(
+      {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          worker.sendUsage(turn.runId, tokens);
+          worker.sendBillingFailure(turn.runId, null, "unavailable", {
+            name: "UnknownAgentError",
+            code: "feature_unavailable",
+            status: 403,
+            message: "This feature is not available for your account",
+          });
+          worker.settle(turn.runId, "completed");
+        },
+      },
+      { billingSettleDelaysMs: [1], billingSettleTimeoutMs: 500 },
+    );
+    const result = await runner.run(request);
+    expect(result.usage?.costUsd).toBeUndefined();
+    expect(transport.workers[0]?.usageQueries).toEqual([]);
+  });
+});

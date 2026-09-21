@@ -31,12 +31,20 @@ import type {
 import { deriveTaskRunPermissions } from "./task-run-permissions";
 
 import { getErrorMessage } from "@/lib/shared/errors";
+import { publishEvent } from "@/lib/events/publication";
+import { createLogger } from "@/lib/logging";
+import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
+import {
+  recordConversationCostSettlement,
+  type CostSettlementIdentity,
+} from "@/lib/conversations/cost-settlement";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type {
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendEvent,
   ProjectModelSelectionValidation,
+  ConversationCostSettlement,
 } from "@/lib/agent-backends/conversation";
 
 import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
@@ -160,6 +168,74 @@ function formatTurnStartMcpApplyFailure(
 // ============================================================
 // Shared AgentCall dispatch
 // ============================================================
+
+// The capture-runtime path has no injected logger; its settlement diagnostics
+// group with the manager's under the same module key.
+const captureCostSettlementLogger = createLogger("conversation-manager");
+
+/**
+ * Where a backend's late cost settlement lands (ticket #120). The runtime
+ * reports each settled cent once; this routes it to the hosted actor or the
+ * row, the transcript, and the SSE bus, and never lets a failure there reach
+ * the runtime that reported it.
+ */
+function createCostSettledHandler(
+  deps: Pick<ConversationActorDependencies, "execution" | "log"> &
+    Partial<Pick<ConversationActorDependencies, "effects" | "transcript">>,
+  identity: CostSettlementIdentity,
+): (settlement: ConversationCostSettlement) => void {
+  const meta = {
+    projectName: identity.projectName,
+    storeSessionName: identity.storeSessionName,
+  };
+  const scope = conversationEventScopeFields(
+    identity.projectName,
+    identity.storeSessionName,
+    identity.conversationId,
+  );
+  const effects = deps.effects;
+  const transcript = deps.transcript;
+  return (settlement) => {
+    void recordConversationCostSettlement(identity, settlement, {
+      mutateConversation: effects
+        ? effects.mutateConversation
+        : async () => {
+            // A capture runtime exists only while its actor is hosted; a
+            // settlement that still misses the actor is reported, not lost
+            // silently, so the operator can reconcile it.
+            deps.log.warn("conversation.cost_settlement_unhosted", {
+              ...scope,
+              costUsdDelta: settlement.costUsdDelta,
+            });
+          },
+      applyToHostedActor: (id, delta) =>
+        deps.execution.applyCostSettlementToHostedActor?.(
+          conversationRuntimeKey(
+            id.projectPath,
+            id.storeSessionName,
+            id.conversationId,
+          ),
+          delta,
+        ) ?? { applied: false },
+      publish: publishEvent,
+      ...(transcript
+        ? {
+            appendTranscriptEntryOnce: (conversationId, entry) =>
+              transcript.safeAppendTranscriptEntryOnce(
+                conversationId,
+                entry,
+                meta,
+              ),
+          }
+        : {}),
+    }).catch((error: unknown) => {
+      deps.log.warn("conversation.cost_settlement_failed", {
+        ...scope,
+        error: getErrorMessage(error),
+      });
+    });
+  };
+}
 
 function admissionFailure(error: BackendAdmissionError): PromptActorResult {
   return {
@@ -1146,6 +1222,12 @@ async function executePromptForMachine(
           activity,
         );
       },
+      onCostSettled: createCostSettledHandler(deps, {
+        projectPath: input.projectPath,
+        projectName,
+        storeSessionName: conversationTargetStoreSessionName(input.target),
+        conversationId: input.target.conversationId,
+      }),
     });
 
     // Register the created handle before testing cancellation so teardown owns it.
@@ -2315,6 +2397,15 @@ export async function acquireCheckpointCaptureRuntime(
         )
           getBackgroundActivityChannel().record(backgroundIdentity, activity);
       },
+      onCostSettled: createCostSettledHandler(
+        { execution: deps.execution, log: captureCostSettlementLogger },
+        {
+          projectPath: input.projectPath,
+          projectName,
+          storeSessionName: sessionName,
+          conversationId: input.target.conversationId,
+        },
+      ),
     });
   // Installation precedes cancellation checks so the existing owner retains cleanup.
   host.managed.install(

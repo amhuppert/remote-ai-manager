@@ -185,7 +185,12 @@ export type ConversationEvent =
       type: "CHECKPOINT_PHASE";
       checkpoint: CheckpointActorProjection | null;
       clearContinuation?: true;
-    };
+    }
+  // A provider cost settlement that arrived outside any turn result — late
+  // billing, a resume-time reconciliation, or agent-level cost no turn owns.
+  // The delta joins the in-memory totals so the next derived-field sync
+  // writes the new total instead of overwriting the row with a stale one.
+  | { type: "COST_SETTLED"; costUsdDelta: number };
 
 // ============================================================
 // Input / Output

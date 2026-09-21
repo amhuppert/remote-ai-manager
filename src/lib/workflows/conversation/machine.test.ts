@@ -2045,3 +2045,54 @@ describe("conversationMachine", () => {
     });
   });
 });
+
+describe("COST_SETTLED", () => {
+  it("adds a late settlement to the in-memory totals in any state, then syncs and persists", async () => {
+    const synced: Array<number | null> = [];
+    const persisted: Array<number | null> = [];
+    const actor = createActor(
+      makeTestMachine({
+        syncDerivedFields: ({ context }) =>
+          synced.push(context.totals.totalCostUsd),
+        persistSnapshot: ({ context }) =>
+          persisted.push(context.totals.totalCostUsd),
+      }),
+      { input: { ...defaultInput, totalCostUsd: 0.5 } },
+    );
+    activeActors.push(actor);
+    actor.start();
+
+    actor.send({ type: "COST_SETTLED", costUsdDelta: 0.04 });
+    actor.send({ type: "COST_SETTLED", costUsdDelta: 0.01 });
+
+    expect(actor.getSnapshot().context.totals.totalCostUsd).toBeCloseTo(
+      0.55,
+      9,
+    );
+    expect(actor.getSnapshot().value).toBe("idle");
+    expect(synced.at(-1)).toBeCloseTo(0.55, 9);
+    expect(persisted.at(-1)).toBeCloseTo(0.55, 9);
+  });
+
+  it("keeps a settled delta when the next turn accumulates its own cost", async () => {
+    const actor = createActor(
+      makeTestMachine({
+        executePrompt: makeMockExecutePrompt({ costUsd: 0.1 }),
+      }),
+      { input: { ...defaultInput, totalCostUsd: null } },
+    );
+    activeActors.push(actor);
+    actor.start();
+    actor.send({ type: "COST_SETTLED", costUsdDelta: 0.04 });
+    actor.send({
+      type: "SUBMIT_PROMPT",
+      streamId: "stream-1",
+      promptText: "hello",
+    });
+    await waitForState(actor, "idle");
+    expect(actor.getSnapshot().context.totals.totalCostUsd).toBeCloseTo(
+      0.14,
+      9,
+    );
+  });
+});

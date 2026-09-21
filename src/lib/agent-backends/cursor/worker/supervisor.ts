@@ -370,11 +370,18 @@ class SupervisedWorker implements CursorWorkerSession {
       modelSelection: input.modelSelection,
       mcpServers: input.mcpServers,
       forceExpirePersistedRun: input.forceExpirePersistedRun,
+      ...(input.queryBilling !== undefined
+        ? { queryBilling: input.queryBilling }
+        : {}),
     });
   }
 
   cancel(runId: string): void {
     this.send({ type: "cancel", runId });
+  }
+
+  queryUsage(queryId: string): void {
+    this.send({ type: "usageQuery", queryId });
   }
 
   steer(runId: string, requestId: string, text: string): void {

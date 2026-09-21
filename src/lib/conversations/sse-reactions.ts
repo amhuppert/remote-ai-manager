@@ -21,6 +21,7 @@ import {
   conversationRenamedEventSchema,
   conversationStatusEventSchema,
   conversationUnreadEventSchema,
+  conversationUsageUpdatedEventSchema,
   messageAppendedEventSchema,
   messageQueuedEventSchema,
   messageQueueUpdatedEventSchema,
@@ -174,6 +175,29 @@ function updateProjectConversationListEntry(
         c && typeof c === "object" && "id" in c && c.id === conversationId
           ? { ...(c as PublicConversationState), ...patch }
           : c,
+      );
+    },
+  );
+}
+
+function updateSessionConversationListEntry(
+  queryClient: QueryClient,
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+  patch: Partial<ConversationState>,
+): void {
+  queryClient.setQueryData(
+    conversationKeys.list(projectName, sessionName),
+    (prev: unknown) => {
+      if (!Array.isArray(prev)) return prev;
+      return prev.map((conversation) =>
+        conversation !== null &&
+        typeof conversation === "object" &&
+        "id" in conversation &&
+        conversation.id === conversationId
+          ? { ...conversation, ...patch }
+          : conversation,
       );
     },
   );
@@ -550,6 +574,36 @@ export function registerConversationSseReactions(
         { unread: d.unread },
       );
       invalidateProjectConversationActivity(queryClient, d.projectName);
+    },
+  );
+
+  // Inline data: the new total patches the cached rows, and the session
+  // detail (which also carries totals) is refetched. Repeat delivery is
+  // idempotent because the payload is the total, not a delta.
+  addSseListener(
+    es,
+    "conversation-usage-updated",
+    conversationUsageUpdatedEventSchema,
+    (d) => {
+      if (d.scope === "project") {
+        updateProjectConversationListEntry(
+          queryClient,
+          d.projectName,
+          d.conversationId,
+          { totalCostUsd: d.totalCostUsd },
+        );
+        return;
+      }
+      updateSessionConversationListEntry(
+        queryClient,
+        d.projectName,
+        d.sessionName,
+        d.conversationId,
+        { totalCostUsd: d.totalCostUsd },
+      );
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(d.projectName, d.sessionName),
+      });
     },
   );
 

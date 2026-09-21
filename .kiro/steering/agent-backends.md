@@ -41,6 +41,10 @@ Neutral callers own:
 
 Raw provider payloads may cross the seam only inside the lossless transcript envelope. Code above the seam records the envelope without reading or branching on its `raw` payload.
 
+## Provider-billed cost
+
+A turn result carries the cost attributed to THAT turn (`costUsd`) and, for providers with cumulative counters, the lineage cumulative (`cumulativeCostUsd`). Cost the provider settles outside a turn result — late billing, a pending settlement reconciled on resume, or agent-level cost no turn owns — reaches the conversation through `ConversationBackendCreateInput.onCostSettled`, which `src/lib/conversations/cost-settlement.ts` folds into the hosted actor (machine event `COST_SETTLED`) or the row, the transcript (`cost_settlement` frame) and the `conversation-usage-updated` SSE event. The adapter owns exactly-once reporting; Cursor keeps a durable per-conversation billing ledger (`cursor/billing-ledger.ts`) because its provider never ties a billing entry to the run that produced it, so per-turn attribution is an inference the ledger states honestly, and an account without the usage API keeps cost unknown rather than estimated.
+
 ## Structured output
 
 The caller supplies its authoritative JSON Schema through the neutral conversation/task request. It may be generated from Zod or authored independently; callers do not maintain provider-specific copies.

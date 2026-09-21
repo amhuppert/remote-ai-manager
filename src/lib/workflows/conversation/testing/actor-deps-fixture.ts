@@ -284,6 +284,7 @@ export function groupActorFixtureDependencies(
       executeAgentCall: deps.executeAgentCall,
       getTaskRunner: deps.getTaskRunner,
       getRuntime: getConversationRuntime,
+      applyCostSettlementToHostedActor: () => ({ applied: false }),
     },
     effects: {
       notifyRuntimeCleanup: deps.notifyRuntimeCleanup,

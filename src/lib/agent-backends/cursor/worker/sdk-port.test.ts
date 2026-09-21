@@ -166,6 +166,18 @@ describe("SDK port MCP replacement lifecycle", () => {
             onDidChangeStatus: () => () => {},
           };
         },
+        async getUsage() {
+          return {
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 0,
+            },
+            runs: [],
+          };
+        },
         async [Symbol.asyncDispose]() {},
       },
       bridge,
@@ -246,6 +258,18 @@ describe("SDK port MCP replacement lifecycle", () => {
           }
           throw received;
         },
+        async getUsage() {
+          return {
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 0,
+            },
+            runs: [],
+          };
+        },
         async [Symbol.asyncDispose]() {
           disposed = true;
         },
@@ -308,6 +332,18 @@ it("forwards public nested task deltas without duplicating parent content", asyn
         });
         await options?.onDelta?.({ update: nested });
         throw done;
+      },
+      async getUsage() {
+        return {
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 0,
+          },
+          runs: [],
+        };
       },
       async [Symbol.asyncDispose]() {},
     },

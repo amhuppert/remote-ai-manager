@@ -16,6 +16,7 @@ import {
   projectCursorNativeEvent,
   type CursorNativeEvent,
 } from "./transcript-projections";
+import { cursorConversationTranscriptProjection } from "./descriptor";
 import { decodeNativePayload, encodeNativePayload } from "./worker/ipc";
 
 const TEST_DIR = path.join("/tmp", `cc-cursor-projections-${process.pid}`);
@@ -383,6 +384,29 @@ describe("cursor decoders registered in the shared projection registries", () =>
       lineageId: "agent-lineage",
       cumulativeCostUsd: null,
       numTurns: null,
+    });
+  });
+
+  it("reads a billed result frame as the lineage's cumulative cost", async () => {
+    const frame = cursorConversationTranscriptProjection.projectTurnResult({
+      timestamp: "2026-01-01T00:00:00.000Z",
+      backendRef: { backend: "cursor", ref: "agent-lineage" },
+      durationMs: 5,
+      numTurns: 1,
+      contextTokens: null,
+      contextWindowMax: null,
+      costUsd: 0.04,
+      cumulativeCostUsd: 0.1,
+      aborted: false,
+      error: null,
+    });
+    expect(frame).not.toBeNull();
+    if (frame === null) return;
+    const line = await persistAndReload("conv-billed", frame);
+    expect(projectTranscriptUsage(line)).toEqual({
+      lineageId: "agent-lineage",
+      cumulativeCostUsd: 0.1,
+      numTurns: 1,
     });
   });
 });

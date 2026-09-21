@@ -151,7 +151,10 @@ function wrapRun(run: SdkRun): CursorWorkerRun {
 }
 
 export function wrapCursorSdkAgent(
-  agent: Pick<SdkAgent, "agentId" | "send" | typeof Symbol.asyncDispose>,
+  agent: Pick<
+    SdkAgent,
+    "agentId" | "send" | "getUsage" | typeof Symbol.asyncDispose
+  >,
   initialBridge: CursorMcpBridge,
   options: Pick<CursorWorkerAttachOptions, "mcpServers">,
 ): CursorWorkerAgent {
@@ -221,6 +224,9 @@ export function wrapCursorSdkAgent(
       );
       return wrapRun(run);
     },
+    // The cloud usage endpoint keyed by this agent's id; the SDK's own
+    // `AgentUsage` shape is the port's shape, so nothing is reinterpreted here.
+    getUsage: () => agent.getUsage(),
     // Async disposal rather than `close()`: teardown must be awaitable, since
     // the parent's close only resolves once disposal has actually finished.
     async dispose() {

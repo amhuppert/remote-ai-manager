@@ -12,6 +12,7 @@ import {
   coalesceCursorContentDeltas,
   isCursorTranscriptEntryId,
 } from "./cursor/content-deltas";
+import { COST_SETTLEMENT_FRAME_TYPE } from "@/lib/conversations/cost-settlement";
 
 /**
  * Neutral projections over persisted transcript frames. Conversation JSONL
@@ -96,7 +97,32 @@ const TOOL_RESULT_PROJECTORS: readonly ToolResultProjector[] = [
   projectCursorStoredToolResultBlocks,
 ];
 
+/**
+ * The neutral frame a late cost settlement leaves behind
+ * (`recordConversationCostSettlement`): lineage-cumulative like every backend
+ * result frame, so the same final-cumulative-per-lineage fold reads it.
+ */
+function projectCostSettlementFrame(
+  raw: unknown,
+): TranscriptUsageProjection | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return null;
+  const record = raw as Record<string, unknown>;
+  if (record.kind !== COST_SETTLEMENT_FRAME_TYPE) return null;
+  const lineageId = record.lineageId;
+  const cumulative = record.cumulativeCostUsd;
+  if (typeof lineageId !== "string" || lineageId.length === 0) return null;
+  if (
+    typeof cumulative !== "number" ||
+    !Number.isFinite(cumulative) ||
+    cumulative < 0
+  )
+    return null;
+  return { lineageId, cumulativeCostUsd: cumulative, numTurns: null };
+}
+
 const USAGE_PROJECTORS: readonly UsageProjector[] = [
+  projectCostSettlementFrame,
   projectClaudeUsageFrame,
   projectCodexUsageFrame,
   projectCursorUsageFrame,

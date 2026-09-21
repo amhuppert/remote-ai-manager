@@ -113,6 +113,12 @@ export interface CursorTurnInput {
    * active-worker registry has proven no live local worker owns the ref.
    */
   forceExpirePersistedRun: boolean;
+  /**
+   * Fetch billed usage once the turn settles. Off only after the provider
+   * refused the feature for this account; re-armed once per attach so a
+   * later-enabled account is noticed.
+   */
+  queryBilling?: boolean;
 }
 
 /**
@@ -146,6 +152,8 @@ export interface CursorWorkerSession {
     reply: InTurnQuestionReply,
   ): void;
   cancel(runId: string): void;
+  /** Fetch billed usage outside a turn; answered by one `billing` frame. */
+  queryUsage(queryId: string): void;
   /**
    * Run the verified teardown ladder. Resolves only once no supervised process
    * remains or a bounded cleanup failure has been recorded (D9, D20). Repeated

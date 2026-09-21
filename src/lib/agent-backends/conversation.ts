@@ -381,6 +381,26 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
   onBackgroundActivity?: (
     activity: ConversationBackgroundActivity | null,
   ) => void;
+  /**
+   * Optional callback invoked when provider billing settles cost for this
+   * conversation OUTSIDE the turn result that would have carried it — a
+   * charge the provider reported late, a pending settlement reconciled on
+   * resume, or agent-level cost no turn can be credited with. The caller adds
+   * `costUsdDelta` to the conversation's totals; the runtime guarantees each
+   * settled cent is reported exactly once across retries and restarts.
+   * Backends whose provider reports cost with the turn never call it.
+   */
+  onCostSettled?: (settlement: ConversationCostSettlement) => void;
+}
+
+/** A late or unattributed cost settlement, reported once per settled cent. */
+export interface ConversationCostSettlement {
+  /** Cost to add to the conversation total, in USD. Always positive. */
+  costUsdDelta: number;
+  /** Provider lineage the settlement belongs to (the Cursor agent id). */
+  lineageId: string;
+  /** The lineage's cumulative billed cost after this settlement, in USD. */
+  cumulativeCostUsd: number;
 }
 
 /**

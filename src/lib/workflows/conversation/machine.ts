@@ -401,6 +401,15 @@ export const conversationMachine = setup({
     startDebugCleanupVerification: () => {},
 
     /** The manager's checkpoint projection; `ready` retires the continuation. */
+    applyCostSettlement: assign(({ context, event }) => {
+      if (event.type !== "COST_SETTLED") return {};
+      return {
+        totals: {
+          ...context.totals,
+          totalCostUsd: (context.totals.totalCostUsd ?? 0) + event.costUsdDelta,
+        },
+      };
+    }),
     applyCheckpointPhase: assign(({ context, event }) => {
       if (event.type !== "CHECKPOINT_PHASE") return {};
       return {
@@ -476,6 +485,10 @@ export const conversationMachine = setup({
     // resting state, whose entry action drains the queue.
     CHECKPOINT_PHASE: {
       actions: ["applyCheckpointPhase", "syncDerivedFields", "persistSnapshot"],
+    },
+    // Targetless: totals change, the state does not.
+    COST_SETTLED: {
+      actions: ["applyCostSettlement", "syncDerivedFields", "persistSnapshot"],
     },
   },
 

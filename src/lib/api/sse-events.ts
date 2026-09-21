@@ -12,6 +12,7 @@ import type {
   ConversationArchivedEvent,
   ConversationDeletedEvent,
   ConversationUnreadEvent,
+  ConversationUsageUpdatedEvent,
   AskQuestionEvent,
   MessageQueuedEvent,
   ConversationOpenEvent,
@@ -236,6 +237,7 @@ export type SSEEvent =
   | ConversationArchivedEvent
   | ConversationDeletedEvent
   | ConversationUnreadEvent
+  | ConversationUsageUpdatedEvent
   | ConversationProfileChangedEvent
   | ConversationBackgroundActivityEvent
   | AskQuestionEvent

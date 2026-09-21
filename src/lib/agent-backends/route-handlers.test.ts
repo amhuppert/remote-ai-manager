@@ -56,6 +56,7 @@ describe("GET /api/agent-backends", () => {
       cursor.nativeMemory.reason,
       "Provider tasks continue within the current turn. Background completion after a turn ends is unavailable; interrupted task outcomes are unknown and are reported when the conversation next runs.",
       "Network and native tool-approval limits are not enforced.",
+      "Cost is Cursor's billed charge, fetched after each turn and settled late when billing lags. Per-turn attribution is inferred from the provider's usage entries and can stay unknown; accounts without the usage API report no cost at all.",
     ]);
     // Facet presence is what the facet-gated pickers read; the wire has to
     // carry it or they would have to guess.

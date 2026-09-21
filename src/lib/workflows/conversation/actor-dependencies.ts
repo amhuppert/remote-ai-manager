@@ -98,6 +98,17 @@ export interface TurnExecutionDependencies {
     runtime: ConversationBackendRuntime,
   ): void;
 
+  /**
+   * Fold a provider cost settlement that arrived outside a turn into the
+   * hosted actor's totals (see the machine's `COST_SETTLED`). Absent, or
+   * `applied: false`, means no actor holds the conversation in memory and the
+   * settlement is written to the row directly.
+   */
+  applyCostSettlementToHostedActor?(
+    key: string,
+    costUsdDelta: number,
+  ): { applied: true; totalCostUsd: number | null } | { applied: false };
+
   unregisterBackendRuntime(
     conversationId: string,
     expected: ConversationBackendRuntime,

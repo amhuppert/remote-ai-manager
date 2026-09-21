@@ -1107,6 +1107,35 @@ export type ConversationUnreadEvent = z.infer<
   typeof conversationUnreadEventSchema
 >;
 
+/**
+ * A conversation's billed cost total moved outside a turn result: the
+ * provider settled cost late, a resume reconciled a pending settlement, or
+ * agent-level cost no turn owns landed. Inline data — the new total — so a
+ * client patches its cached row without a refetch.
+ */
+export const conversationUsageUpdatedEventSchema = z.discriminatedUnion(
+  "scope",
+  [
+    z.object({
+      type: z.literal("conversation-usage-updated"),
+      ...sessionEventIdentity,
+      conversationId: z.string(),
+      totalCostUsd: z.number().nullable(),
+    }),
+    z
+      .object({
+        type: z.literal("conversation-usage-updated"),
+        ...projectEventIdentity,
+        conversationId: z.string(),
+        totalCostUsd: z.number().nullable(),
+      })
+      .strict(),
+  ],
+);
+export type ConversationUsageUpdatedEvent = z.infer<
+  typeof conversationUsageUpdatedEventSchema
+>;
+
 // Project-only lifecycle event: a project conversation gained or lost its open
 // tab (closed/reopened). Session conversations do not model open/closed as a
 // first-class tab state, so this event is scoped to "project" only; it can be

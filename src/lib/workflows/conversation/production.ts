@@ -7,7 +7,10 @@ import type {
   TranscriptBroadcastMeta,
 } from "@/lib/prompt/transcript";
 
-import { getConversationRuntime } from "./runtime-state";
+import {
+  getConversationRuntime,
+  applyHostedCostSettlement,
+} from "./runtime-state";
 import { createLogger } from "@/lib/logging";
 
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -132,6 +135,7 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
       executeAgentCall: defaultExecuteAgentCall,
       getTaskRunner: registryMod.getTaskRunner,
       getRuntime: getConversationRuntime,
+      applyCostSettlementToHostedActor: applyHostedCostSettlement,
     },
     transcript: {
       getTranscriptPath: transcriptMod.getTranscriptPath,

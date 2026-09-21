@@ -230,4 +230,37 @@ describe("cursor descriptor — MCP and transcript declarations", () => {
       }),
     ).toBeNull();
   });
+
+  // Billed cost is the one figure the native envelopes cannot carry, so a
+  // lineage with a billed figure leaves the lineage-cumulative result frame
+  // every cost-reporting backend persists — and only then.
+  it("persists one lineage-cumulative result frame once billing has a figure", () => {
+    expect(
+      cursorConversationTranscriptProjection.projectTurnResult({
+        timestamp: "2026-01-01T00:00:00.000Z",
+        backendRef: { backend: "cursor", ref: "agent-1" },
+        durationMs: 1,
+        numTurns: 1,
+        contextTokens: null,
+        contextWindowMax: null,
+        costUsd: 0.0425,
+        cumulativeCostUsd: 0.1,
+        aborted: false,
+        error: null,
+      }),
+    ).toEqual({
+      timestamp: "2026-01-01T00:00:00.000Z",
+      type: "result",
+      raw: {
+        backend: "cursor",
+        backendRef: { backend: "cursor", ref: "agent-1" },
+        costUsd: 0.0425,
+        cumulativeCostUsd: 0.1,
+        numTurns: 1,
+        durationMs: 1,
+        aborted: false,
+        error: null,
+      },
+    });
+  });
 });

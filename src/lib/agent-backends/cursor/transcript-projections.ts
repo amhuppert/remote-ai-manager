@@ -285,13 +285,33 @@ export function projectCursorStoredToolResultBlocks(
 }
 
 /**
- * Decode a stored Cursor `usage` frame. Cursor reports per-turn token counts
- * and no cost at all (D17), so the projection names its lineage and reports
- * cost unavailable rather than inventing a figure from tokens or rates.
+ * Decode a stored Cursor usage record. Two frames carry one: the native
+ * `usage` envelope (token counts, no cost — the provider bills elsewhere) and
+ * the CC-authored result frame the descriptor writes once a lineage has a
+ * billed figure. Both name the agent as the lineage; only the latter carries a
+ * cumulative cost, so a lineage without billing reads as unknown rather than
+ * as a figure invented from tokens or rates (D17).
  */
 export function projectCursorUsageFrame(
   raw: unknown,
 ): TranscriptUsageProjection | null {
+  const result = record(raw);
+  if (result !== null && result.backend === CURSOR_BACKEND_ID) {
+    const ref = record(result.backendRef);
+    const lineageId = ref === null ? null : readString(ref, "ref");
+    if (lineageId === null) return null;
+    const cumulative = result.cumulativeCostUsd;
+    return {
+      lineageId,
+      cumulativeCostUsd:
+        typeof cumulative === "number" &&
+        Number.isFinite(cumulative) &&
+        cumulative >= 0
+          ? cumulative
+          : null,
+      numTurns: typeof result.numTurns === "number" ? result.numTurns : null,
+    };
+  }
   const decoded = decodeTaggedPayload("usage", raw);
   if (!decoded.ok) return null;
   const source = record(decoded.value);

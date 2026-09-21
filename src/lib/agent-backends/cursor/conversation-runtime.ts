@@ -20,6 +20,19 @@ import type {
   ConversationQueuedUserInput,
 } from "../conversation";
 import {
+  applyBillingSnapshot,
+  applyBillingUnavailable,
+  billingRunsAwaitingSettlement,
+  billingTurn,
+  centsToUsd,
+  emptyCursorBillingLedger,
+  markBillingUnavailabilityDisclosed,
+  recordBillingTurnEnd,
+  recordBillingTurnStart,
+  type CursorBillingLedger,
+} from "./billing-ledger";
+import type { CursorBillingStore } from "./billing-ledger-store";
+import {
   InputDeliveryUncertainError,
   type AgentFailureClassification,
 } from "../errors";
@@ -45,12 +58,17 @@ import { translateCursorImages } from "./image-input";
 import type { PortableMcpToCursorResult } from "./mcp-translation";
 import { projectCursorNativeEvent } from "./transcript-projections";
 import {
+  CURSOR_BILLING_RETRY_DELAYS_MS,
   CURSOR_CANCEL_SETTLE_TIMEOUT_MS,
   CURSOR_ATTACH_TIMEOUT_MS,
   CURSOR_TURN_STALL_TIMEOUT_MS,
 } from "./worker/bounds";
 import type { CursorWorkerMcpServer } from "./worker/entry";
-import { decodeNativePayload, type CursorWorkerFrame } from "./worker/ipc";
+import {
+  decodeNativePayload,
+  type CursorBillingFrame,
+  type CursorWorkerFrame,
+} from "./worker/ipc";
 import type {
   CursorWorkerSession,
   CursorWorkerStartResult,
@@ -117,11 +135,27 @@ export interface CursorConversationRuntimeDeps {
   stallTimeoutMs: number;
   /** How long a cancelled run may take to settle before resolving aborted. */
   cancelSettleTimeoutMs: number;
+  /**
+   * The conversation's durable billing ledger (ticket #120). Absent means an
+   * in-memory ledger for the runtime's life — settlements still apply once,
+   * but a restart cannot reconcile what this runtime left pending.
+   */
+  billingStore?(conversationId: string): CursorBillingStore;
+  /** Late-settlement re-fetch schedule; its length bounds attempts per turn. */
+  billingRetryDelaysMs?: readonly number[];
+  newQueryId?(): string;
 }
 
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }
 
 function deferred<T>(): Deferred<T> {
@@ -161,6 +195,14 @@ interface ActiveTurn {
   /** Set when the caller aborted; the outcome is aborted regardless of how the
    *  worker reports settlement, and no failure is fabricated for it. */
   aborted: boolean;
+  /**
+   * Charged cents the post-turn billing snapshot attributed to THIS run, once
+   * the provider settled every entry of the run; null while unknown. Zero is a
+   * settled figure (plan-included usage), not an absence.
+   */
+  billedCents: number | null;
+  /** A post-turn billing frame (any outcome) reached the runtime for this run. */
+  billingReported: boolean;
 }
 
 export class CursorConversationRuntime implements ConversationBackendRuntime {
@@ -230,6 +272,32 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     | undefined;
   private taskLossInstruction: string | null = null;
   private readonly onBackgroundActivity: ConversationBackendCreateInput["onBackgroundActivity"];
+  private readonly onCostSettled: ConversationBackendCreateInput["onCostSettled"];
+  private readonly billingStore: CursorBillingStore | undefined;
+  private ledger: CursorBillingLedger | null = null;
+  private ledgerLoading: Promise<CursorBillingLedger> | null = null;
+  /** Ledger writes, serialized; awaited before a turn result is returned. */
+  private ledgerWriting: Promise<void> = Promise.resolve();
+  /** Billing frames apply in arrival order, after the ledger is loaded. */
+  private billingChain: Promise<void> = Promise.resolve();
+  /**
+   * A ledger that could not be read must not be replaced by a fresh one that
+   * would re-apply its whole history: billing is switched off for this
+   * runtime instead, and every cost stays unknown.
+   */
+  private billingDisabled = false;
+  /**
+   * One post-turn billing fetch is allowed per attach even after the provider
+   * refused the feature, so an account that gains it is noticed; the refusal
+   * itself disarms it for the rest of the worker session.
+   */
+  private billingProbeArmed = true;
+  private billingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private billingRetryIndex = 0;
+  private lastRunId: string | null = null;
+  /** Whether the last run's post-turn billing frame arrived at all. */
+  private lastRunBillingReported = false;
+  private readonly pendingBillingQueries = new Map<string, Deferred<void>>();
 
   constructor(
     input: ConversationBackendCreateInput,
@@ -263,6 +331,11 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.deps = deps;
     this.steering = new CursorSteering(deps.steerTimeoutMs);
     this.taskStore = deps.taskStore?.(input.conversationId);
+    this.onCostSettled = input.onCostSettled;
+    this.billingStore = deps.billingStore?.(input.conversationId);
+    // Started now so the first attach rarely has to wait for it; a load that
+    // fails is recorded there and disables billing rather than surfacing here.
+    void this.loadLedger();
   }
 
   get capabilitiesAtCreation() {
@@ -416,9 +489,11 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       this.loseTasks("run_ended");
     }
     await this.discarding;
+    await this.settleTurnBilling(turn.state, turn.outcome);
     // Every accepted input and event is durable before the caller sees the result.
     await this.liveInputBarrier;
     await this.emitChain;
+    await this.ledgerWriting;
     if (this.acceptedThisPrompt)
       await this.deps.capabilityDelivery?.markDelivered();
 
@@ -464,8 +539,13 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       stallTimer: null,
       cancelTimer: null,
       aborted: false,
+      billedCents: null,
+      billingReported: false,
     };
     this.activeTurn = turn;
+    this.lastRunId = turn.runId;
+    this.lastRunBillingReported = false;
+    this.recordTurnStart(turn);
 
     const onAbort = (): void => this.cancelActiveTurn();
     if (input.signal.aborted) {
@@ -483,6 +563,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
         modelSelection: dispatch.modelSelection,
         mcpServers: this.mcpServerMap(),
         forceExpirePersistedRun: dispatch.forceExpirePersistedRun,
+        queryBilling: this.shouldQueryBilling(),
       });
     }
 
@@ -503,6 +584,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this._status = "dead";
     this.activeTurn?.questionController.abort();
     this.steering.close();
+    this.releaseBillingWaiters();
     this.loseTasks("runtime_closed");
     const session = this.session;
     this.session = null;
@@ -669,6 +751,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   private async startAndAttach(
     modelSelection: BackendModelSelection,
   ): Promise<AttachOutcome> {
+    // Loaded before the worker exists so the attach-time reconciliation below
+    // can act synchronously on the attach frame, ahead of the first turn.
+    if (this.ledger === null) await this.loadLedger();
     const started = await this.deps.transport.start({
       conversationId: this.conversationId,
       target: this.conversationTarget,
@@ -835,6 +920,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
    */
   private discardSession(reason: string): void {
     this.steering.close();
+    this.releaseBillingWaiters();
     const session = this.session;
     this.session = null;
     this.attaching = null;
@@ -873,6 +959,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
   private handleExit(expected: boolean): void {
     this.steering.close();
+    this.releaseBillingWaiters();
     this.session = null;
     this.attaching = null;
 
@@ -906,6 +993,411 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
         "the Cursor worker exited before the turn settled",
       ),
     });
+  }
+
+  // ============================================================
+  // Billed usage (ticket #120)
+  // ============================================================
+
+  private loadLedger(): Promise<CursorBillingLedger> {
+    if (this.ledger !== null) return Promise.resolve(this.ledger);
+    this.ledgerLoading ??= (
+      this.billingStore?.load() ?? Promise.resolve(emptyCursorBillingLedger())
+    ).then(
+      (ledger) => {
+        this.ledger = ledger;
+        return ledger;
+      },
+      (error: unknown) => {
+        this.billingDisabled = true;
+        logger.error("cursor-runtime.billing_ledger_unreadable", {
+          conversationId: this.conversationId,
+          error: getErrorMessage(error),
+        });
+        this.ledger = emptyCursorBillingLedger();
+        return this.ledger;
+      },
+    );
+    return this.ledgerLoading;
+  }
+
+  private persistLedger(ledger: CursorBillingLedger): void {
+    this.ledger = ledger;
+    const store = this.billingStore;
+    if (store === undefined || this.billingDisabled) return;
+    this.ledgerWriting = this.ledgerWriting
+      .then(() => store.save(ledger))
+      .catch((error: unknown) => {
+        logger.error("cursor-runtime.billing_ledger_write_failed", {
+          conversationId: this.conversationId,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
+  private shouldQueryBilling(): boolean {
+    if (this.billingDisabled) return false;
+    return (
+      this.ledger?.availability.state !== "unavailable" ||
+      this.billingProbeArmed
+    );
+  }
+
+  private recordTurnStart(turn: ActiveTurn): void {
+    const ledger = this.ledger;
+    if (ledger === null) return;
+    this.persistLedger(
+      recordBillingTurnStart(ledger, {
+        runId: turn.runId,
+        agentId: this.backendRef,
+        startedAt: new Date(this.deps.now()).toISOString(),
+      }),
+    );
+  }
+
+  private cumulativeBilledUsd(): number | null {
+    const ledger = this.ledger;
+    const agentId = this.backendRef;
+    if (ledger === null || agentId === null) return null;
+    if (ledger.availability.state !== "available") return null;
+    const agent = ledger.agents[agentId];
+    return agent === undefined ? null : centsToUsd(agent.appliedCents);
+  }
+
+  /**
+   * Every billing frame applies in order, once the ledger is loaded. The run
+   * it settles is captured on arrival: the settlement frame that follows it
+   * clears the active turn before the asynchronous apply runs.
+   */
+  private handleBillingFrame(frame: CursorBillingFrame): void {
+    const turn = this.activeTurn;
+    const forTurn =
+      frame.runId !== null && turn !== null && turn.runId === frame.runId
+        ? turn
+        : null;
+    if (forTurn !== null) forTurn.billingReported = true;
+    this.billingChain = this.billingChain
+      .then(() => this.applyBillingFrame(frame, forTurn))
+      .catch((error: unknown) => {
+        logger.error("cursor-runtime.billing_apply_failed", {
+          conversationId: this.conversationId,
+          runId: frame.runId,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
+  private async applyBillingFrame(
+    frame: CursorBillingFrame,
+    forTurn: ActiveTurn | null,
+  ): Promise<void> {
+    const waiter =
+      frame.queryId === null
+        ? undefined
+        : this.pendingBillingQueries.get(frame.queryId);
+    if (frame.queryId !== null)
+      this.pendingBillingQueries.delete(frame.queryId);
+    try {
+      const agentId = this.backendRef;
+      if (agentId === null || this.billingDisabled) return;
+      let ledger = await this.loadLedger();
+      const at = new Date(this.deps.now()).toISOString();
+      // The run's own token counts are what a late entry is matched against,
+      // so they reach the ledger before the snapshot does.
+      if (forTurn !== null && forTurn.usage !== null) {
+        ledger = recordBillingTurnEnd(ledger, {
+          runId: forTurn.runId,
+          agentId,
+          tokens: forTurn.usage,
+          outcome: "running",
+          at,
+        });
+      }
+
+      if (frame.outcome === "reported") {
+        const applied = applyBillingSnapshot(ledger, {
+          agentId,
+          forRunId: frame.runId,
+          snapshot: frame.snapshot,
+          at,
+        });
+        this.persistLedger(applied.ledger);
+        const turnDelta =
+          frame.runId === null
+            ? 0
+            : (applied.deltaCentsByRun[frame.runId] ?? 0);
+        if (forTurn !== null) {
+          const status = billingTurn(applied.ledger, forTurn.runId)?.status;
+          forTurn.billedCents =
+            status === "settled"
+              ? (forTurn.billedCents ?? 0) + turnDelta
+              : null;
+          this.billingRetryIndex = 0;
+        }
+        const settledElsewhere = applied.deltaCents - turnDelta;
+        if (applied.deltaCents > 0) {
+          logger.info("cursor-runtime.billing_applied", {
+            conversationId: this.conversationId,
+            runId: frame.runId,
+            queryId: frame.queryId,
+            deltaCents: applied.deltaCents,
+            attributedRunCount: Object.keys(applied.deltaCentsByRun).length,
+            remainderDeltaCents: applied.remainderDeltaCents,
+            cumulativeAppliedCents: applied.cumulativeAppliedCents,
+          });
+        }
+        // Whatever this run's own result will not carry is reported now: late
+        // cost of earlier turns and agent-level cost no turn owns.
+        if (
+          settledElsewhere > 0 ||
+          (forTurn === null && applied.deltaCents > 0)
+        ) {
+          this.reportCostSettled(
+            forTurn === null ? applied.deltaCents : settledElsewhere,
+            applied.cumulativeAppliedCents,
+            agentId,
+          );
+        }
+        this.scheduleBillingRetry();
+        return;
+      }
+
+      if (frame.outcome === "unavailable") {
+        this.persistLedger(
+          applyBillingUnavailable(ledger, {
+            agentId,
+            code: frame.error.code,
+            at,
+          }),
+        );
+        this.billingProbeArmed = false;
+        this.clearBillingRetry();
+        logger.warn("cursor-runtime.billing_unavailable", {
+          conversationId: this.conversationId,
+          runId: frame.runId,
+          code: frame.error.code,
+          status: frame.error.status,
+        });
+        return;
+      }
+
+      logger.warn("cursor-runtime.billing_query_failed", {
+        conversationId: this.conversationId,
+        runId: frame.runId,
+        queryId: frame.queryId,
+        name: frame.error.name,
+        code: frame.error.code,
+        status: frame.error.status,
+      });
+      if (forTurn !== null) this.billingRetryIndex = 0;
+      this.scheduleBillingRetry();
+    } finally {
+      waiter?.resolve();
+    }
+  }
+
+  private reportCostSettled(
+    deltaCents: number,
+    cumulativeCents: number,
+    agentId: string,
+  ): void {
+    const handler = this.onCostSettled;
+    if (handler === undefined) return;
+    try {
+      handler({
+        costUsdDelta: centsToUsd(deltaCents),
+        lineageId: agentId,
+        cumulativeCostUsd: centsToUsd(cumulativeCents),
+      });
+    } catch (error) {
+      logger.error("cursor-runtime.cost_settled_handler_failed", {
+        conversationId: this.conversationId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
+   * After the turn settles: the ledger records its outcome and token counts,
+   * a failed turn's settled cost (which no result will carry) is reported
+   * through the callback, and a provider refusal is disclosed once per
+   * conversation as a transcript notice.
+   */
+  private async settleTurnBilling(
+    turn: ActiveTurn,
+    outcome: TurnOutcome,
+  ): Promise<void> {
+    await this.billingChain;
+    this.lastRunBillingReported = turn.billingReported;
+    const ledger = this.ledger;
+    if (ledger === null) return;
+    const at = new Date(this.deps.now()).toISOString();
+    let next = recordBillingTurnEnd(ledger, {
+      runId: turn.runId,
+      agentId: this.backendRef,
+      tokens: turn.usage,
+      outcome:
+        outcome.kind === "completed"
+          ? "completed"
+          : outcome.kind === "aborted"
+            ? "aborted"
+            : "failed",
+      at,
+    });
+    if (
+      outcome.kind === "failed" &&
+      turn.billedCents !== null &&
+      turn.billedCents > 0
+    ) {
+      const agentId = this.backendRef;
+      if (agentId !== null) {
+        this.reportCostSettled(
+          turn.billedCents,
+          next.agents[agentId]?.appliedCents ?? turn.billedCents,
+          agentId,
+        );
+      }
+      turn.billedCents = null;
+    }
+    if (
+      next.availability.state === "unavailable" &&
+      next.availability.disclosedAt === null
+    ) {
+      this.emit({
+        type: "transcript_entry",
+        entry: {
+          backend: "cursor",
+          seq: 0,
+          type: "notice",
+          raw: {
+            id: `cursor-billing-unavailable:${this.conversationId}`,
+            timestamp: at,
+            type: "notice",
+            role: "notice",
+            content: [
+              {
+                type: "text",
+                text: `Cursor billed cost is unavailable for this account (${next.availability.code ?? "refused"}): the provider declined the usage endpoint, so token usage is recorded but dollar cost stays unknown for this conversation.`,
+              },
+            ],
+          },
+        },
+      });
+      next = markBillingUnavailabilityDisclosed(next, at);
+    }
+    this.persistLedger(next);
+  }
+
+  /** On resume: one fetch for anything the last runtime left unsettled. */
+  private reconcileBillingOnAttach(): void {
+    this.billingProbeArmed = true;
+    const ledger = this.ledger;
+    const agentId = this.backendRef;
+    if (ledger === null || agentId === null || this.billingDisabled) return;
+    if (billingRunsAwaitingSettlement(ledger, agentId).length === 0) return;
+    this.billingRetryIndex = 0;
+    void this.sendUsageQuery();
+  }
+
+  private sendUsageQuery(): Promise<void> {
+    const session = this.session;
+    if (session === null || this._status === "dead") return Promise.resolve();
+    const queryId = (this.deps.newQueryId ?? this.deps.newRunId)();
+    const waiter = deferred<void>();
+    this.pendingBillingQueries.set(queryId, waiter);
+    session.queryUsage(queryId);
+    return waiter.promise;
+  }
+
+  private scheduleBillingRetry(): void {
+    this.clearBillingRetry();
+    const ledger = this.ledger;
+    const agentId = this.backendRef;
+    if (ledger === null || agentId === null || this.session === null) return;
+    if (this._status === "dead" || this.billingDisabled) return;
+    if (billingRunsAwaitingSettlement(ledger, agentId).length === 0) return;
+    const delays =
+      this.deps.billingRetryDelaysMs ?? CURSOR_BILLING_RETRY_DELAYS_MS;
+    const delay = delays[this.billingRetryIndex];
+    if (delay === undefined) return;
+    this.billingRetryTimer = setTimeout(() => {
+      this.billingRetryTimer = null;
+      this.billingRetryIndex += 1;
+      void this.sendUsageQuery();
+    }, delay);
+    this.billingRetryTimer.unref?.();
+  }
+
+  private clearBillingRetry(): void {
+    if (this.billingRetryTimer !== null) clearTimeout(this.billingRetryTimer);
+    this.billingRetryTimer = null;
+  }
+
+  private releaseBillingWaiters(): void {
+    this.clearBillingRetry();
+    for (const waiter of this.pendingBillingQueries.values()) waiter.resolve();
+    this.pendingBillingQueries.clear();
+  }
+
+  /**
+   * Wait, within a bound, for billing to settle everything this runtime still
+   * has pending — the task path, which closes its runtime right after the
+   * turn and would otherwise never see a late settlement. Each poll is one
+   * fetch; the schedule and the bound are the caller's.
+   */
+  async settleBilling(options: {
+    timeoutMs: number;
+    delaysMs: readonly number[];
+  }): Promise<{ costUsd: number | null }> {
+    await this.billingChain;
+    const deadline = this.deps.now() + options.timeoutMs;
+    // A worker that never reported billing for the run (the fetch was off, or
+    // it predates the frame) has nothing a wait could settle.
+    const worthWaiting = this.lastRunBillingReported;
+    for (const delay of options.delaysMs) {
+      if (!worthWaiting) break;
+      const ledger = this.ledger;
+      const agentId = this.backendRef;
+      if (ledger === null || agentId === null || this.session === null) break;
+      if (billingRunsAwaitingSettlement(ledger, agentId).length === 0) break;
+      const remaining = deadline - this.deps.now();
+      if (remaining <= 0) break;
+      this.clearBillingRetry();
+      await sleep(Math.min(delay, remaining));
+      // The worker's own fetch is bounded; this bound covers a worker that
+      // never answers at all.
+      await Promise.race([
+        this.sendUsageQuery(),
+        sleep(Math.max(0, deadline - this.deps.now())),
+      ]);
+      await this.billingChain;
+    }
+    return {
+      costUsd:
+        this.lastRunId === null ? null : this.billedCostUsd(this.lastRunId),
+    };
+  }
+
+  /** The billed cost of one run as the ledger holds it; null until settled. */
+  billedCostUsd(runId: string): number | null {
+    const ledger = this.ledger;
+    if (ledger === null) return null;
+    const turn = billingTurn(ledger, runId);
+    if (
+      turn === undefined ||
+      turn.status !== "settled" ||
+      turn.agentId === null
+    )
+      return null;
+    const agent = ledger.agents[turn.agentId];
+    if (agent === undefined) return null;
+    let cents = 0;
+    for (const usageId of turn.usageIds) {
+      const cost = agent.entries[usageId]?.cost;
+      if (!cost) return null;
+      cents += cost.chargedCents;
+    }
+    return centsToUsd(cents);
   }
 
   // ============================================================
@@ -954,9 +1446,13 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
           );
         });
         return;
+      case "billing":
+        this.handleBillingFrame(frame);
+        return;
       case "attachResult": {
         const settlement = this.pendingAttach;
         this.pendingAttach = null;
+        if (frame.outcome === "attached") this.reconcileBillingOnAttach();
         settlement?.resolve(
           frame.outcome === "attached"
             ? { ok: true }
@@ -1311,7 +1807,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     const aborted = outcome.kind === "aborted";
     return {
       backendRef: this.currentRef(),
-      costUsd: null,
+      // Billed by the provider and attributed to this run by the ledger; a
+      // settled zero is reported as zero, an unsettled cost as null.
+      costUsd: turn.billedCents === null ? null : centsToUsd(turn.billedCents),
+      cumulativeCostUsd: this.cumulativeBilledUsd(),
       durationMs: this.deps.now() - startedAt,
       numTurns: 1,
       contextTokens: null,

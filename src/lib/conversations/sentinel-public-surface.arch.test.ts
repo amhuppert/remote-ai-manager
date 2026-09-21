@@ -138,6 +138,17 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // event — is built from `conversationEventScopeFields`, so the project
   // variant carries no `sessionName` field at all.
   ["lib/conversations/name-generation.ts", "scope-derivation"],
+  // The late cost-settlement seam takes the session-keyed store name only to
+  // address the state-store write and the injected hosted-actor applier; the
+  // `conversation-usage-updated` event it publishes and both of its
+  // diagnostics are built from `conversationEventScopeFields`, so a project
+  // conversation's settlement carries no `sessionName` field at all.
+  ["lib/conversations/cost-settlement.ts", "scope-derivation"],
+  // Reaches the sentinel for one reason: the `onCostSettled` handler it wires
+  // derives the scope variant for its own two warnings. The store key it also
+  // carries stays on named carriers — `conversationRuntimeKey` and the
+  // transcript meta's `storeSessionName` — rather than any emitted field.
+  ["lib/workflows/conversation/actor-implementations.ts", "scope-derivation"],
 
   ["lib/shared/route-resolution.ts", "refusal-guard"],
   // Rejects the sentinel as a session NAME. Classified a refusal guard rather
