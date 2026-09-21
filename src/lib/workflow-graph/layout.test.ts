@@ -21,6 +21,10 @@ import type {
   GraphWorkflowContextEdge,
   WorkflowSemanticDefinition,
 } from "./definition-schemas";
+import {
+  LOOP_GROUP_HEADER_HEIGHT,
+  LOOP_GROUP_PADDING,
+} from "./loop-group-geometry";
 
 /** The `plan` → `implement` → `verify` fixture, re-laned as the test needs. */
 function definitionWithLanes(
@@ -61,6 +65,45 @@ function bandContentTop(index: number): number {
 const COLUMN_PITCH = DEFAULT_NODE_WIDTH + LAYOUT_COLUMN_GAP;
 
 describe("workflow-graph layout", () => {
+  it("reserves room for loop headers and boundaries beside ordinary contexts", () => {
+    const definition = definitionWithLanes(
+      {
+        "context-plan": "delivery",
+        "context-implement": "delivery",
+        "context-verify": "delivery",
+      },
+      [],
+    );
+    definition.loopGroups = [
+      {
+        id: "revision",
+        bodyContextIds: ["context-plan", "context-implement"],
+        entryContextId: "context-plan",
+        exitContextId: "context-implement",
+        until: { schema: {} },
+        maxPasses: 3,
+      },
+    ];
+    const layout = generateWorkflowLayout(definition);
+    const plan = layout.contextPositions["context-plan"];
+    const implement = layout.contextPositions["context-implement"];
+    const verify = layout.contextPositions["context-verify"];
+    if (!plan || !implement || !verify)
+      throw new Error("missing layout positions");
+    expect(plan.y - LOOP_GROUP_HEADER_HEIGHT).toBeGreaterThanOrEqual(
+      LANE_BAND_PADDING_Y,
+    );
+    expect(plan.x - LOOP_GROUP_PADDING).toBeGreaterThanOrEqual(
+      LANE_BAND_CONTENT_OFFSET_X,
+    );
+    expect(implement.y - LOOP_GROUP_HEADER_HEIGHT).toBeGreaterThan(
+      plan.y + DEFAULT_NODE_HEIGHT + LOOP_GROUP_PADDING,
+    );
+    expect(verify.y).toBeGreaterThan(
+      implement.y + DEFAULT_NODE_HEIGHT + LOOP_GROUP_PADDING,
+    );
+  });
+
   it("steps each band's chain right of its cross-band dependency", () => {
     const layout = generateWorkflowLayout(createWorkflowDefinition());
 

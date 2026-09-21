@@ -113,6 +113,13 @@ export type ExecutionContextNodeData = {
   skip?: ContextSkipDisplay;
   /** Present only on a materialized loop pass instance (D4 R9). */
   loop?: ContextLoopDisplay;
+  /** Authored membership stays visible before a loop has any runtime passes. */
+  authoredLoop?: {
+    id: string;
+    title: string;
+    role: "Entry" | "Exit" | "Entry / exit" | "Body";
+    maxPasses: number;
+  };
   /** Present only on a context a runtime expansion created (D4 R8). */
   provenance?: ContextProvenanceDisplay;
   /**
@@ -574,6 +581,31 @@ export function deriveNodes(
       ),
     };
 
+    if (!execution) {
+      const loop = definition.loopGroups?.find(
+        (group) =>
+          "bodyContextIds" in group &&
+          group.bodyContextIds.includes(context.id),
+      );
+      if (loop) {
+        const entry = loop.entryContextId === context.id;
+        const exit = loop.exitContextId === context.id;
+        data.authoredLoop = {
+          id: loop.id,
+          title: loop.title ?? loop.id,
+          role:
+            entry && exit
+              ? "Entry / exit"
+              : entry
+                ? "Entry"
+                : exit
+                  ? "Exit"
+                  : "Body",
+          maxPasses: loop.maxPasses,
+        };
+      }
+    }
+
     if (runtimeLanes.has(displayContext.placement.lane)) {
       data.laneCreatedAtRuntime = true;
     }
@@ -645,7 +677,7 @@ export function deriveNodes(
 export function contextNodeAccessibleName(
   data: ExecutionContextNodeData,
 ): string {
-  return contextNodeAriaLabel({
+  const name = contextNodeAriaLabel({
     title: data.context.title,
     status: contextNodeStatus(data.mode, data.waitState),
     laneName: data.context.placement.lane,
@@ -656,6 +688,9 @@ export function contextNodeAccessibleName(
     crew: contextNodeCrew(data.context),
     configOverrides: data.configOverrides,
   });
+  return data.authoredLoop
+    ? `${name}, loop ${data.authoredLoop.title}, ${data.authoredLoop.role.toLowerCase()}, max ${data.authoredLoop.maxPasses} passes`
+    : name;
 }
 
 export function deriveEdges(

@@ -667,7 +667,109 @@ async function measureCards(flow: ReactFlowInstance) {
   });
 }
 
+function createLoopRecord() {
+  const record = createWorkflowDefinitionRecord();
+  const [entry, exit] = record.definition.executionContexts;
+  if (!entry || !exit) throw new Error("fixture needs two contexts");
+  record.definition.executionContexts = [entry, exit];
+  record.definition.tasks = record.definition.tasks.filter((task) =>
+    [entry.id, exit.id].includes(task.contextId),
+  );
+  record.definition.edges = [
+    {
+      id: "loop-body-edge",
+      sourceContextId: entry.id,
+      targetContextId: exit.id,
+    },
+  ];
+  record.definition.loopGroups = [
+    {
+      id: "revision",
+      title: "Implement and review",
+      bodyContextIds: [entry.id, exit.id],
+      entryContextId: entry.id,
+      exitContextId: exit.id,
+      until: { schema: {} },
+      maxPasses: 3,
+    },
+  ];
+  record.layout.contextPositions = {};
+  return record;
+}
+
 describe("WorkflowBuilderCanvas read-only layout", () => {
+  it("places an unpositioned loop before React Flow measures or fits the cards", () => {
+    const record = createLoopRecord();
+    _useGraphWorkflowBuilderStore.getState().loadPersistedDraft(record);
+    let instance: ReactFlowInstance | undefined;
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas />
+        <NodesProbe
+          onReady={(flow) => {
+            instance = flow;
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+    if (!instance) throw new Error("React Flow did not mount");
+    const [entry, exit] = instance.getNodes();
+    if (!entry || !exit) throw new Error("loop cards are missing");
+    expect(entry.position).not.toEqual(exit.position);
+    expect(_useGraphWorkflowBuilderStore.getState().draftLayout).toEqual(
+      record.layout,
+    );
+  });
+
+  it("keeps loop body cards on their authored positions and dependencies", async () => {
+    const record = createLoopRecord();
+    const [entry, exit] = record.definition.executionContexts;
+    if (!entry || !exit) throw new Error("fixture needs two contexts");
+    record.layout.contextPositions = {
+      [entry.id]: { x: 220, y: 100 },
+      [exit.id]: { x: 620, y: 100 },
+    };
+    _useGraphWorkflowBuilderStore.getState().loadPersistedDraft(record);
+    let instance: ReactFlowInstance | undefined;
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas />
+        <NodesProbe
+          onReady={(flow) => {
+            instance = flow;
+          }}
+        />
+      </ReactFlowProvider>,
+    );
+    if (!instance) throw new Error("React Flow did not mount");
+    const flow = instance;
+    await waitFor(() => {
+      expect(flow.getNodes().map((node) => node.id)).toEqual([
+        entry.id,
+        exit.id,
+      ]);
+      expect(flow.getNode(entry.id)?.position).toEqual({ x: 220, y: 100 });
+      expect(flow.getNode(exit.id)?.position).toEqual({ x: 620, y: 100 });
+      expect(flow.getEdges()).toEqual([
+        expect.objectContaining({ source: entry.id, target: exit.id }),
+      ]);
+    });
+    // The body spans two lanes; each segment must identify the same loop.
+    expect(screen.getAllByTestId("loop-group")).toHaveLength(2);
+    for (const group of screen.getAllByTestId("loop-group")) {
+      expect(group).toHaveTextContent("Implement and review");
+      expect(group).toHaveTextContent("max 3 passes");
+    }
+    const [entryCard, exitCard] = screen.getAllByTestId("context-node");
+    if (!entryCard || !exitCard) throw new Error("loop cards are missing");
+    expect(
+      within(entryCard).getByTestId("node-loop-membership"),
+    ).toHaveTextContent("Implement and review · Entry");
+    expect(
+      within(exitCard).getByTestId("node-loop-membership"),
+    ).toHaveTextContent("Implement and review · Exit");
+  });
+
   it("separates unpositioned cards using measured sizes without editing the draft", async () => {
     const record = createWorkflowDefinitionRecord();
     record.layout.contextPositions = {};

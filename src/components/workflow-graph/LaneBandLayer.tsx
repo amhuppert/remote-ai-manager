@@ -30,6 +30,12 @@ import {
 import EphemeralLaneBand from "./EphemeralLaneBand";
 import LaneJoinConflictCard from "./LaneJoinConflictCard";
 import type { JoinConflictSummary } from "./join-conflict-summary";
+import type { GraphWorkflowLoopGroup } from "@/lib/workflow-graph/definition-schemas";
+import {
+  computeLoopGroupBoxes,
+  expandLoopNodeBoxes,
+} from "@/lib/workflow-graph/loop-group-geometry";
+import LoopGroupSurface from "./LoopGroupSurface";
 
 /**
  * The lane band layer (design bundle, `Workflow Builder.dc.html` B1 and
@@ -362,6 +368,7 @@ function PublicationPill({
 export interface LaneBandLayerProps {
   readonly bands: readonly LaneBand[];
   readonly mode: LaneBandMode;
+  readonly loopGroups?: readonly GraphWorkflowLoopGroup[];
   /** The run's final publish; absent in the builder, which has no runtime. */
   readonly publication?: LaneBandPublication | null;
   /**
@@ -383,6 +390,7 @@ export interface LaneBandLayerProps {
 export default function LaneBandLayer({
   bands,
   mode,
+  loopGroups,
   publication = null,
   joinConflict = null,
   onOpenLaneWorktree,
@@ -396,14 +404,20 @@ export default function LaneBandLayer({
 }: LaneBandLayerProps): React.JSX.Element | null {
   const nodes = useNodes();
   const lanes = useMemo(() => ephemeralLanes ?? [], [ephemeralLanes]);
-  const boxes = useMemo(
-    () =>
-      computeLaneBandBoxes(
-        withEphemeralLaneBands(bands, lanes),
-        toNodeBoxes(nodes, pinnedNode),
-      ),
-    [bands, lanes, nodes, pinnedNode],
+  const nodeBoxes = useMemo(
+    () => toNodeBoxes(nodes, pinnedNode),
+    [nodes, pinnedNode],
   );
+  const loopBoxes = useMemo(
+    () => computeLoopGroupBoxes(loopGroups ?? [], bands, nodeBoxes),
+    [loopGroups, bands, nodeBoxes],
+  );
+  const boxes = useMemo(() => {
+    return computeLaneBandBoxes(
+      withEphemeralLaneBands(bands, lanes),
+      expandLoopNodeBoxes(nodeBoxes, loopGroups ?? []),
+    );
+  }, [bands, lanes, nodeBoxes, loopGroups]);
 
   if (boxes.length === 0) return null;
 
@@ -454,6 +468,9 @@ export default function LaneBandLayer({
         {publicationBox !== null && publication !== null && (
           <PublicationPill publication={publication} box={publicationBox} />
         )}
+        {loopBoxes.map((box) => (
+          <LoopGroupSurface key={box.key} box={box} />
+        ))}
       </div>
       {/* The join card carries real controls, so like the ephemeral band it
           sits in a layer a pointer and Tab can reach rather than behind the

@@ -393,9 +393,24 @@ function SkipReasonChip({ skip }: { skip: ContextSkipDisplay }) {
 }
 
 function D4ChipRow({ data }: { data: ExecutionContextNodeData }) {
-  if (!data.loop && !data.provenance && !data.skip) return null;
+  if (!data.loop && !data.authoredLoop && !data.provenance && !data.skip)
+    return null;
   return (
     <div className="mb-[9px] flex flex-wrap gap-[4px]">
+      {data.authoredLoop && (
+        <span
+          data-testid="node-loop-membership"
+          className="flex min-w-0 items-start gap-xs text-[0.7rem] leading-snug text-text-secondary"
+          title={`Loop ${data.authoredLoop.title} · max ${data.authoredLoop.maxPasses} passes`}
+        >
+          <span className="shrink-0">
+            <LoopIcon />
+          </span>
+          <span className="min-w-0 break-words">
+            {data.authoredLoop.title} · {data.authoredLoop.role}
+          </span>
+        </span>
+      )}
       {data.loop && <LoopPassChip loop={data.loop} />}
       {data.provenance && <ProvenanceChip provenance={data.provenance} />}
       {data.skip && <SkipReasonChip skip={data.skip} />}

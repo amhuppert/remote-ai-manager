@@ -11,6 +11,10 @@ import {
   LANE_BAND_PADDING_Y,
 } from "./lane-band-geometry";
 import { deriveDefinitionLaneBands } from "./lane-bands";
+import {
+  LOOP_GROUP_HEADER_HEIGHT,
+  LOOP_GROUP_PADDING,
+} from "./loop-group-geometry";
 
 type LayoutInputDefinition =
   | WorkflowSemanticDefinition
@@ -61,11 +65,22 @@ export function generateWorkflowLayout(
   const existingPositions = existingLayout?.contextPositions ?? {};
   const depths = computeContextDepths(definition);
   const bands = deriveDefinitionLaneBands(definition);
+  const loopMembers = new Set(
+    definition.loopGroups?.flatMap((loop) =>
+      "bodyContextIds" in loop ? loop.bodyContextIds : [],
+    ),
+  );
+  const insetX = (id: string) => (loopMembers.has(id) ? LOOP_GROUP_PADDING : 0);
+  const insetY = (id: string) =>
+    loopMembers.has(id) ? LOOP_GROUP_HEADER_HEIGHT : 0;
 
   const nodeWidth = (contextId: string): number =>
-    nodeDimensions?.get(contextId)?.width ?? DEFAULT_NODE_WIDTH;
+    (nodeDimensions?.get(contextId)?.width ?? DEFAULT_NODE_WIDTH) +
+    insetX(contextId) * 2;
   const nodeHeight = (contextId: string): number =>
-    nodeDimensions?.get(contextId)?.height ?? DEFAULT_NODE_HEIGHT;
+    (nodeDimensions?.get(contextId)?.height ?? DEFAULT_NODE_HEIGHT) +
+    insetY(contextId) +
+    insetX(contextId);
 
   // Column index per context: its global dependency depth. Depth is the
   // longest path from a root, so an edge's target is always at least one
@@ -122,10 +137,12 @@ export function generateWorkflowLayout(
       if (!position) continue;
       contextPositions[contextId] = position;
       const column = columnOfContext.get(contextId) ?? 0;
-      const bottom = position.y + nodeHeight(contextId);
+      const x = position.x - insetX(contextId);
+      const y = position.y - insetY(contextId);
+      const bottom = y + nodeHeight(contextId);
       occupied.push({
-        x: position.x,
-        y: position.y,
+        x,
+        y,
         width: nodeWidth(contextId),
         height: nodeHeight(contextId),
       });
@@ -158,7 +175,10 @@ export function generateWorkflowLayout(
         y = collision.y + collision.height + LAYOUT_ROW_GAP;
       }
 
-      contextPositions[contextId] = { x, y };
+      contextPositions[contextId] = {
+        x: x + insetX(contextId),
+        y: y + insetY(contextId),
+      };
       occupied.push({ x, y, width, height });
       const bottom = y + nodeHeight(contextId);
       columnCursorY.set(column, bottom + LAYOUT_ROW_GAP);

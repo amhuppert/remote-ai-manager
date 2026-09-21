@@ -1,7 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn, waitFor, within, userEvent } from "storybook/test";
 import { z } from "zod";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
+import {
+  createWorkflowDefinitionRecord,
+  makeValidatorCohort,
+} from "@/lib/workflow-graph/test-fixtures";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import type { GraphWorkflowExecutionContextDefinition } from "@/lib/workflow-graph/definition-schemas";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
@@ -220,6 +223,134 @@ export const ReadOnlyLayout = {
     ...RepresentativeLayout.args,
     readOnly: true,
   },
+} satisfies Story;
+
+function loopLayoutRecord(withSurroundingWork: boolean) {
+  const source = createWorkflowDefinitionRecord();
+  const firstContext = source.definition.executionContexts[0];
+  if (!firstContext) throw new Error("fixture has no execution context");
+  // Each card inherits its crew, exercising the same authored IDs the layout
+  // and edges use even when the crew cascade resolves loop templates.
+  const { implementer, ...base } = firstContext;
+  const outputSchema = {
+    ...z.toJSONSchema(z.object({ approved: z.boolean(), summary: z.string() })),
+  };
+  delete outputSchema.$schema;
+  const untilSchema = {
+    ...z.toJSONSchema(z.object({ approved: z.boolean(), summary: z.string() })),
+  };
+  delete untilSchema.$schema;
+  if (untilSchema.properties) untilSchema.properties.approved = { const: true };
+
+  const context = (
+    id: string,
+    title: string,
+    lane: string,
+    readOnly = false,
+  ): GraphWorkflowExecutionContextDefinition => ({
+    ...base,
+    id,
+    title,
+    description: `${title} against the agreed acceptance criteria.`,
+    acceptanceCriteria: `${title} is complete and the result is recorded.`,
+    placement: { lane, mode: readOnly ? "readOnly" : "full" },
+    outputSchema,
+  });
+  const loop = (id: string, title: string) => ({
+    id,
+    title,
+    bodyContextIds: [`${id}-implement`, `${id}-review`],
+    entryContextId: `${id}-implement`,
+    exitContextId: `${id}-review`,
+    until: { schema: untilSchema },
+    maxPasses: 3,
+  });
+  const loops = withSurroundingWork
+    ? [loop("api", "Refine API"), loop("ui", "Refine interface")]
+    : [loop("delivery", "Implement and review")];
+  const contexts = loops.flatMap((group) => [
+    context(
+      group.entryContextId,
+      withSurroundingWork ? `Implement ${group.id.toUpperCase()}` : "Implement",
+      group.id,
+    ),
+    context(
+      group.exitContextId,
+      withSurroundingWork ? `Review ${group.id.toUpperCase()}` : "Review",
+      group.id,
+      true,
+    ),
+  ]);
+  if (withSurroundingWork) {
+    contexts.unshift(context("brief", "Agree the brief", "session", true));
+    contexts.push(context("publish", "Publish the result", "session", true));
+  }
+  const edge = (sourceContextId: string, targetContextId: string) => ({
+    id: `edge-${sourceContextId}-${targetContextId}`,
+    sourceContextId,
+    targetContextId,
+  });
+  return createWorkflowDefinitionRecord({
+    name: withSurroundingWork
+      ? "Parallel refinement loops"
+      : "Implement and review",
+    definition: {
+      ...source.definition,
+      workflowConfig: {
+        ...source.definition.workflowConfig,
+        ...(implementer ? { implementer } : {}),
+        contextValidator: makeValidatorCohort(),
+      },
+      executionContexts: contexts,
+      tasks: contexts.map((member) => ({
+        id: `task-${member.id}`,
+        contextId: member.id,
+        order: 1,
+        title: member.title,
+        instructions: `Carry out: ${member.title.toLowerCase()}.`,
+        source: "user" as const,
+      })),
+      edges: loops.flatMap((group) => [
+        ...(withSurroundingWork ? [edge("brief", group.entryContextId)] : []),
+        edge(group.entryContextId, group.exitContextId),
+        ...(withSurroundingWork ? [edge(group.exitContextId, "publish")] : []),
+      ]),
+      loopGroups: loops,
+    },
+    layout: {
+      workflowId: withSurroundingWork ? "parallel-loops" : "two-context-loop",
+      contextPositions: {},
+      viewport: { x: 0, y: 0, zoom: 1 },
+    },
+  });
+}
+
+export const TwoContextLoop = {
+  args: (() => {
+    const record = loopLayoutRecord(false);
+    return {
+      record,
+      workflowName: record.name,
+      revision: record.revision,
+    };
+  })(),
+} satisfies Story;
+
+export const TwoContextLoopMobile = {
+  args: { ...TwoContextLoop.args, isMobile: true },
+  parameters: Mobile.parameters,
+  decorators: Mobile.decorators,
+} satisfies Story;
+
+export const ParallelLoops = {
+  args: (() => {
+    const record = loopLayoutRecord(true);
+    return {
+      record,
+      workflowName: record.name,
+      revision: record.revision,
+    };
+  })(),
 } satisfies Story;
 
 export const EmptyWorkflow = {

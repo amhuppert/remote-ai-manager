@@ -42,9 +42,11 @@ import EphemeralLaneBand from "@/components/workflow-graph/EphemeralLaneBand";
 import { deriveDefinitionLaneBands } from "@/lib/workflow-graph/lane-bands";
 import { withEphemeralLaneBands } from "@/lib/workflow-graph/ephemeral-lanes";
 import {
+  CANVAS_FIT_VIEW_PADDING,
   computeLaneBandBoxes,
   type LaneBandBox,
 } from "@/lib/workflow-graph/lane-band-geometry";
+import { expandLoopNodeBoxes } from "@/lib/workflow-graph/loop-group-geometry";
 import {
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
@@ -67,9 +69,12 @@ import {
   updateContextPosition,
   updateExecutionContext,
 } from "@/lib/workflow-graph/builder-draft";
-import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
+import {
+  resolveContext,
+  SEEDED_WORKFLOW_DEFAULTS,
+} from "@/lib/workflow-graph/resolve-config";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
-import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import type { WorkflowDefaults } from "@/lib/config/schemas";
 import CanvasContextMenu, {
   type CanvasContextMenuTarget,
 } from "./CanvasContextMenu";
@@ -149,7 +154,7 @@ function nodeSize(node: {
 
 export default function WorkflowBuilderCanvas({
   onSelectContext,
-  globalDefaults,
+  globalDefaults = SEEDED_WORKFLOW_DEFAULTS,
   isMobile = false,
   readOnly = false,
 }: WorkflowBuilderCanvasProps) {
@@ -213,8 +218,9 @@ export default function WorkflowBuilderCanvas({
     layout: GraphWorkflowVisualLayout;
   } | null>(null);
   const displayLayout = useMemo(() => {
-    if (!readOnly || !draftDefinition || !draftLayout) return draftLayout;
+    if (!draftDefinition || !draftLayout) return draftLayout;
     if (
+      readOnly &&
       previewLayout?.definition === draftDefinition &&
       previewLayout.authoredLayout === draftLayout
     ) {
@@ -247,14 +253,15 @@ export default function WorkflowBuilderCanvas({
       if (readOnly) return;
       const current = _useGraphWorkflowBuilderStore.getState().draftDefinition;
       if (!current) return;
-      const resolved = resolveWorkflowDefinition(
-        { workflowDefaults: globalDefaults } as GlobalConfig,
-        current,
-      );
-      const context = resolved.executionContexts.find(
+      const authored = current.executionContexts.find(
         (entry) => entry.id === contextId,
       );
-      if (!context) return;
+      if (!authored) return;
+      const context = resolveContext(
+        globalDefaults,
+        current.workflowConfig ?? {},
+        authored,
+      );
       const patch = nodeAgentPatch(context, target, agent);
       if (Object.keys(patch).length === 0) return;
       updateDefinition(updateExecutionContext(current, contextId, patch));
@@ -270,16 +277,12 @@ export default function WorkflowBuilderCanvas({
 
   const derivedNodes = useMemo(() => {
     if (!draftDefinition || !displayLayout) return [];
-    const resolved = resolveWorkflowDefinition(
-      { workflowDefaults: globalDefaults } as GlobalConfig,
-      draftDefinition,
-    );
-    // The authored draft is what says which fields were set on the context
-    // itself, so the set-here marker is exact here rather than inferred from
-    // the resolved definition's per-field provenance.
+    // Resolve crew per context while keeping authored IDs. Resolving the whole
+    // workflow materializes loop passes whose IDs do not match draft geometry.
     const highlighted = new Set(highlightedContextIds);
-    return deriveNodes(resolved, displayLayout, null, {
+    return deriveNodes(draftDefinition, displayLayout, null, {
       authoredDefinition: draftDefinition,
+      workflowDefaults: globalDefaults,
     }).map((node) => ({
       ...node,
       data: {
@@ -376,12 +379,15 @@ export default function WorkflowBuilderCanvas({
         },
         boxes: computeLaneBandBoxes(
           dragBands,
-          nodes.map((entry) => ({
-            id: entry.id,
-            x: entry.position.x,
-            y: entry.position.y,
-            ...nodeSize(entry),
-          })),
+          expandLoopNodeBoxes(
+            nodes.map((entry) => ({
+              id: entry.id,
+              x: entry.position.x,
+              y: entry.position.y,
+              ...nodeSize(entry),
+            })),
+            draftDefinition?.loopGroups ?? [],
+          ),
         ),
         position: node.position,
         targetLane: null,
@@ -884,7 +890,7 @@ export default function WorkflowBuilderCanvas({
         connectionMode={ConnectionMode.Loose}
         connectionRadius={120}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding: CANVAS_FIT_VIEW_PADDING }}
         minZoom={0.3}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
@@ -902,6 +908,7 @@ export default function WorkflowBuilderCanvas({
         <LaneBandLayer
           bands={bands}
           mode="builder"
+          loopGroups={draftDefinition.loopGroups}
           dropTarget={
             laneDrag?.targetLane
               ? { laneName: laneDrag.targetLane, accepted: laneDrag.accepted }

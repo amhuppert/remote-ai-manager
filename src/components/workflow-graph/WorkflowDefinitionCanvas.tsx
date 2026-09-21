@@ -128,7 +128,11 @@ function WorkflowDefinitionCanvasInner({
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        <LaneBandLayer bands={bands} mode="builder" />
+        <LaneBandLayer
+          bands={bands}
+          mode="builder"
+          loopGroups={definition.loopGroups}
+        />
         <Background
           variant={BackgroundVariant.Dots}
           color="var(--border-default)"
