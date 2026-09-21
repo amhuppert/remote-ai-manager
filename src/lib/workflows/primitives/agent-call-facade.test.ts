@@ -967,38 +967,6 @@ describe("executeAgentCall — semantic task execution intent", () => {
     expect(getTaskRunner).not.toHaveBeenCalled();
   });
 
-  it("grants no CC session scope from the intent path — every graph-workflow and generic task run stays neutralized", async () => {
-    const capture = { value: null as AgentTaskRequest | null };
-    const runner = makeTaskRunner("codex", { capture });
-
-    // Every graph-workflow task run (validator, planner, implementer) and every
-    // generic conversation task run dispatches through this intent path, which
-    // has no way to name a session; only a resolver-callback caller that owns
-    // the originating session can grant identity.
-    await executeAgentCall(
-      {
-        executionClass: "nongoverned-task" as const,
-        kind: "task_run",
-        backend: "codex",
-        prompt: "go",
-        modelSelection: CODEX_SELECTION,
-      },
-      {
-        taskExecution: {
-          workingDirectory: "/tmp/wt-graph",
-          autonomous: true,
-          sandboxMode: "danger-full-access",
-          approvalPolicy: "never",
-          skipGitRepoCheck: true,
-          networkAccessEnabled: true,
-        },
-        getTaskRunner: () => runner,
-      },
-    );
-
-    expect(capture.value?.ccSessionScope).toBeUndefined();
-  });
-
   it("carries a request-borne write policy through task resolution onto the runner request", async () => {
     const capture = { value: null as AgentTaskRequest | null };
     const runner = makeTaskRunner("codex", { capture });

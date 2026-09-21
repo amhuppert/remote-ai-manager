@@ -1761,7 +1761,7 @@ export function createConversationManager(
     }
     const snapshot = readUsableSnapshot(actor);
     if (
-      reason === "server_shutdown" &&
+      (reason === "server_shutdown" || reason === "workflow_turn_completed") &&
       snapshot &&
       isActorSettled(actor) &&
       ownedRuntime &&

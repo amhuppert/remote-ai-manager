@@ -178,6 +178,7 @@ export function createActorDependenciesFixture(
     releaseWorkflowResults: vi.fn(async () => 0),
     createReferenceDocument: vi.fn(async () => ({})),
     getReferenceDocuments: vi.fn(async () => []),
+    getWorkflowLaneInstructions: vi.fn(async () => null),
     readConversationMessages: vi.fn(async () => []),
     fileExists: vi.fn(() => false),
     applyMcpAtTurnStart: vi.fn(
@@ -311,6 +312,7 @@ export function groupActorFixtureDependencies(
       readNotepadForInjection: deps.readNotepadForInjection,
       prepareNotepadChangeNotice: deps.prepareNotepadChangeNotice,
       getReferenceDocuments: deps.getReferenceDocuments,
+      getWorkflowLaneInstructions: deps.getWorkflowLaneInstructions,
     },
     transcript: {
       getTranscriptPath: deps.getTranscriptPath,

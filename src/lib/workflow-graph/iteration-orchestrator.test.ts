@@ -5889,7 +5889,6 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
-      writeValidatorTranscript() {},
       decision() {},
     };
     return { logger, iterationCalls };
@@ -7829,7 +7828,6 @@ describe("conversation telemetry emission", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
-      writeValidatorTranscript() {},
       decision() {},
     };
     return { logger, iterationCalls };
@@ -7990,7 +7988,6 @@ describe("per-turn billing on agent_turn_completed", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
-      writeValidatorTranscript() {},
       decision() {},
     };
     return { logger, iterationCalls };

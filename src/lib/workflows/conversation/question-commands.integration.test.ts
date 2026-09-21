@@ -36,56 +36,32 @@ afterEach(async () => {
 
 it.each<{
   persistence: "durable" | "ephemeral";
-  role: "validator" | null;
-  canAsk: boolean;
   hasSessionScope: boolean;
   executionClass?: AgentTaskRequest["executionClass"];
   executionProfile?: AgentTaskRequest["executionProfile"];
 }>([
   {
     persistence: "durable",
-    role: "validator",
-    canAsk: true,
-    hasSessionScope: true,
-  },
-  {
-    persistence: "durable",
-    role: null,
-    canAsk: false,
     hasSessionScope: true,
   },
   {
     persistence: "ephemeral",
-    role: "validator",
-    canAsk: false,
-    hasSessionScope: false,
-  },
-  {
-    persistence: "ephemeral",
-    role: null,
-    canAsk: false,
     hasSessionScope: false,
   },
   {
     persistence: "durable",
-    role: null,
-    canAsk: false,
     hasSessionScope: false,
     executionClass: "nongoverned-task",
   },
   {
     persistence: "durable",
-    role: null,
-    canAsk: false,
     hasSessionScope: false,
     executionProfile: "isolated-one-shot",
   },
 ])(
-  "supplies task session scope independently of question permission: %j",
+  "supplies session scope to durable governed tasks outside isolation: %j",
   async ({
     persistence,
-    role,
-    canAsk,
     hasSessionScope,
     executionClass = "governed-execution",
     executionProfile = "standard",
@@ -93,7 +69,6 @@ it.each<{
     const started = Promise.withResolvers<AgentTaskRequest>();
     const release = Promise.withResolvers<void>();
     fixture = await createLifecycleFixture({
-      conversation: { role },
       ...(persistence === "ephemeral"
         ? {
             binding: {
@@ -108,7 +83,7 @@ it.each<{
                 },
               },
               backend: "claude",
-              role,
+              role: null,
               worktreePath: "/lifecycle-fixture/.worktrees/s",
             },
           }
@@ -158,7 +133,7 @@ it.each<{
           "s",
           "c",
           {
-            questionId: "validator-batch",
+            questionId: "task-question",
             questions: [
               askQuestionItemSchema.parse({
                 id: "choice",
@@ -168,7 +143,7 @@ it.each<{
             ],
           },
         ),
-      ).toBe(canAsk);
+      ).toBe(false);
     } finally {
       release.resolve();
       await admission.turn.completed;
@@ -181,9 +156,9 @@ it.each<{
       return;
     }
     expect(stored).toMatchObject({
-      role,
-      status: canAsk ? "waiting_for_input" : "awaiting",
-      pendingQuestionId: canAsk ? "validator-batch" : null,
+      role: null,
+      status: "awaiting",
+      pendingQuestionId: null,
       promptCount: 1,
     });
   },

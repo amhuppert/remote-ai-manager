@@ -554,6 +554,7 @@ function makeFakeBackendActorDeps(
       ),
     createReferenceDocument: fixture.store.createReferenceDocument,
     getReferenceDocuments: async () => [],
+    getWorkflowLaneInstructions: async () => null,
     readConversationMessages: async () => [],
     fileExists: () => false,
     composePortableMcpForConversation: async () => ({ servers: [] }),

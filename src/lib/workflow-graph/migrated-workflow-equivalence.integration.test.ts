@@ -74,7 +74,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { generalizedModelSelection } from "@/lib/state-store/migrations/0035-generalized-model-selection";
 import { createValidatorCohortRunner } from "@/lib/workflow-graph/validator-cohort-runner";
@@ -647,22 +647,23 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
   }
 
   /** The reviewer's turn: a well-formed verdict, and nothing else. */
-  function passTurn(): TaskRunResult {
-    return {
-      kind: "text",
-      text: JSON.stringify({ summary: "All good", issues: [], advisories: [] }),
-      backendRef: null,
-      continuationDisposition: "retain",
+  function passTurn() {
+    return settledConversationTurn({
+      outcome: {
+        kind: "completed",
+        text: JSON.stringify({
+          summary: "All good",
+          issues: [],
+          advisories: [],
+        }),
+      },
       usage: {
         inputTokens: 10,
         outputTokens: 5,
         cachedInputTokens: 0,
-        costUsd: null,
-        contextTokens: null,
-        contextWindowMax: null,
         durationMs: 1,
       },
-    };
+    });
   }
 
   async function buildLiveStack(
@@ -708,13 +709,11 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
       async resolveWorktreePath() {
         return "/repo/worktree";
       },
-      async resolveTimeoutMs() {
-        return 60_000;
-      },
+      async stopConversationActor() {},
       continuityService,
       executionRepository,
       // The external agent boundary — the ONE thing stubbed.
-      async executeWorkflowTaskRun(input) {
+      async executeConversationTurn(input) {
         dispatchedConversationIds.push(
           input.binding.address.target.conversationId,
         );

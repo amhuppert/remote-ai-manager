@@ -1,5 +1,3 @@
-import type { AgentBackendId } from "@/lib/shared/schemas";
-
 import { type GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 import {
@@ -17,21 +15,9 @@ import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validat
 
 import type { GraphWorkflowIterationInput } from "./context-outcome";
 import type { IterationOrchestratorValidationRoundService } from "./context-validation-coordinator";
-import {
-  resolveConfiguredAgentBackendDefaults,
-  type ConversationTurnConfig,
-} from "@/lib/agent-backends/conversation-policy";
-
 import type { SessionState } from "@/lib/sessions/schemas";
 import { type ScriptValidatorInput } from "./script-validator-runner";
 import { type IterationOrchestratorScriptValidatorInput } from "@/lib/workflow-graph/context-validation-coordinator";
-
-export function resolveGraphValidatorTimeoutMs(
-  config: ConversationTurnConfig,
-  backend: AgentBackendId,
-): number {
-  return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;
-}
 
 export interface GraphWorkflowValidationRoundServiceDeps {
   getSession(

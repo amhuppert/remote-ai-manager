@@ -1108,7 +1108,6 @@ describe("execution loop", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
-      writeValidatorTranscript() {},
       decision() {},
     };
     registerExecutionLogger(executionLogger);
@@ -4851,7 +4850,6 @@ describe("execution loop", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
-      writeValidatorTranscript() {},
       decision() {},
     };
     registerExecutionLogger(executionLogger);

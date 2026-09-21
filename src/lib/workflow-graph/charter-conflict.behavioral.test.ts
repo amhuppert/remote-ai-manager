@@ -11,8 +11,15 @@ import {
   seedAssignment,
   makeStubValidatorContinuityService,
 } from "./test-fixtures";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { prepareRuntimeInstructions } from "@/lib/workflows/conversation/runtime-instructions";
+import {
+  createActorDependenciesFixture,
+  groupActorFixtureDependencies,
+} from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { createValidatorRuntimeInstructionReader } from "./validator-runtime-instructions";
+import { laneStateKey } from "./lane-identity";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
@@ -34,11 +41,11 @@ import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
  * planning, so the validator prompt carries the context's ranked references
  * WITHOUT the retired precedence/deferral rule. This fixture pins two REAL
  * production paths and simulates ONLY the LLM's judgment via the existing
- * `executeWorkflowTaskRun` dependency-injection seam on
+ * `executeConversationTurn` dependency-injection seam on
  * `createValidatorRunner`:
  *
- *   1. The REAL validator prompt built by `runContextValidator` for this
- *      floor/round conflict carries the charter digest at the top and ranks
+ *   1. The REAL actor instruction composition for this
+ *      floor/round conflict carries the charter digest before the profile and ranks
  *      the code prototype ABOVE the contradicting acceptance-criterion source
  *      — and carries none of the retired runtime-governance text (deferral
  *      rule, access policy, amendment log).
@@ -109,7 +116,6 @@ const validatorConfig: ValidatorAssignment = {
 // candidate worktree and fails closed when it cannot resolve.
 const stubWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-validator-wt-"));
 const stubWorktreePath = async () => stubWorktreeDir;
-const stubTimeoutMs = async () => 300_000;
 const stubProjectDisplayName = () => "test-project";
 
 /**
@@ -125,6 +131,7 @@ function buildFloorRoundExecution(): GraphWorkflowExecution {
         ? {
             ...ctx,
             title: "Implement scoring",
+            charter: floorRoundCharter,
             acceptanceCriteria: WRONG_ACCEPTANCE_CRITERION,
             contextValidator: {
               enabled: true,
@@ -157,6 +164,19 @@ function buildFloorRoundExecution(): GraphWorkflowExecution {
 
   return {
     ...base,
+    laneStates: {
+      "context-plan": {
+        [laneStateKey("context_validator", validatorConfig.id)]: {
+          lane: "context_validator",
+          contextId: "context-plan",
+          assignmentId: validatorConfig.id,
+          backend: "claude",
+          workflowConversationId: "validator-conversation",
+          metrics: {},
+          lastUsedAt: "2026-09-20T00:00:00.000Z",
+        },
+      },
+    },
     contextStates: {
       ...base.contextStates,
       "context-plan": {
@@ -193,39 +213,59 @@ const DEFERRAL_SUMMARY =
   "which rounds half-up. Resolution: the implementation correctly follows the higher-ranked prototype " +
   "(4.5 -> 5); the lower-ranked acceptance criterion is flagged as wrong and not enforced. Context passes.";
 
-function deferralTaskRun(): TaskRunResult {
-  return {
-    kind: "text",
-    text: [
-      "```json",
-      JSON.stringify({
+function deferralTurn() {
+  return settledConversationTurn({
+    outcome: {
+      kind: "completed",
+      text: JSON.stringify({
         summary: DEFERRAL_SUMMARY,
         issues: [],
         advisories: [],
       }),
-      "```",
-    ].join("\n"),
-    usage: {
-      costUsd: null,
-      durationMs: null,
-      contextTokens: null,
-      contextWindowMax: null,
-      inputTokens: null,
-      outputTokens: null,
-      cachedInputTokens: null,
     },
-    backendRef: null,
-    continuationDisposition: "retain",
-  };
+  });
 }
 
 describe("charter floor/round conflict behavioral fixture", () => {
-  it("builds a validator prompt that opens with the charter and ranks the prototype above the contradicting AC, without the retired deferral rule", async () => {
-    let capturedPrompt: string | undefined;
-    const executeWorkflowTaskRun = vi.fn(
-      async (input: ExecuteWorkflowTaskRunInput) => {
-        capturedPrompt = input.prompt;
-        return deferralTaskRun();
+  it("composes validator runtime instructions with ranked charter references and no retired deferral rule", async () => {
+    const execution = buildFloorRoundExecution();
+    let capturedInstructions = "";
+    let capturedPrompt = "";
+    const executeConversationTurn = vi.fn(
+      async (input: ConversationTurnSubmission) => {
+        if (input.turn.kind === "task_run")
+          throw new Error("Expected conversation turn");
+        capturedPrompt = input.turn.promptText;
+        const assignment = seedAssignment(validatorConfig);
+        const deps = groupActorFixtureDependencies(
+          createActorDependenciesFixture({
+            getWorkflowLaneInstructions:
+              createValidatorRuntimeInstructionReader({
+                getActiveExecution: async () => execution,
+                readValidationConfig: async () => undefined,
+              }),
+          }),
+        );
+        const prepared = await prepareRuntimeInstructions(
+          deps,
+          {
+            projectPath: input.binding.address.projectPath,
+            target: input.binding.address.target,
+            worktreePath: stubWorktreeDir,
+            turn: {
+              autonomous: input.turn.autonomous ?? false,
+              askUserQuestionsEnabled: input.turn.askUserQuestionsEnabled,
+            },
+          },
+          {
+            instructionBlock:
+              assignment.profileSnapshot.renderedInstructionBlock,
+            snapshot: assignment.profileSnapshot,
+            lockedAt: null,
+          },
+        );
+        capturedInstructions = prepared.sessionInstructions.join("\n\n");
+        return deferralTurn();
       },
     );
 
@@ -233,12 +273,11 @@ describe("charter floor/round conflict behavioral fixture", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      executeConversationTurn,
+      stopConversationActor: async () => {},
       getProjectDisplayName: stubProjectDisplayName,
     });
 
-    const execution = buildFloorRoundExecution();
     const contextDef = execution.workingDefinition.executionContexts.find(
       (c) => c.id === "context-plan",
     )!;
@@ -255,15 +294,13 @@ describe("charter floor/round conflict behavioral fixture", () => {
       validator: seedAssignment(validatorConfig),
     });
 
-    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    const prompt = capturedPrompt!;
+    expect(executeConversationTurn).toHaveBeenCalledTimes(1);
+    const prompt = capturedInstructions;
+    expect(capturedPrompt).not.toContain("# Workflow Charter");
 
-    // The charter digest opens the builder's section, ahead of the validation
-    // header. The composer's acceptance-criteria deferral cohort precedes it on
-    // every dispatched validator prompt.
     expect(prompt.indexOf("# Workflow Charter")).toBeGreaterThan(-1);
     expect(prompt.indexOf("# Workflow Charter")).toBeLessThan(
-      prompt.indexOf("# Context Validation"),
+      prompt.indexOf("# Agent profile"),
     );
 
     // The higher-ranked code prototype is presented ABOVE the contradicting
@@ -288,16 +325,16 @@ describe("charter floor/round conflict behavioral fixture", () => {
   });
 
   it("passes the context and carries the validator's conflict-recording summary through the outcome derivation", async () => {
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) => deferralTaskRun(),
+    const executeConversationTurn = vi.fn(
+      async (_input: ConversationTurnSubmission) => deferralTurn(),
     );
 
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      executeConversationTurn,
+      stopConversationActor: async () => {},
       getProjectDisplayName: stubProjectDisplayName,
     });
 

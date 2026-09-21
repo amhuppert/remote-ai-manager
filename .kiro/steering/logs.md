@@ -434,7 +434,7 @@ Background entrypoints (jobs, workflow execution, backend turns, SSE publication
 
 ## Workflow Execution Logs (`workflow-logs/{executionId}/`)
 
-Per-execution structured logs for graph workflow forensics. Separate from `logs/global.log`, they capture orchestration decisions and provider-exposed transcript items. Reasoning items contain only what the provider exposes; they do not prove access to hidden reasoning.
+Per-execution structured logs for graph workflow forensics. Separate from `logs/global.log`, they capture orchestration decisions. Validator progress streams into `transcripts/{conversationId}.jsonl`; the validation review artifact links that lane conversation.
 
 ```
 workflow-logs/<executionId>/
@@ -445,8 +445,8 @@ workflow-logs/<executionId>/
     ├── iterations.jsonl                  # Iteration lifecycle
     ├── tasks.jsonl                       # Task events (completion, reopening, agent-added, validation)
     ├── validation.jsonl                  # Validator invocations, results, remediation
-    ├── validation-transcript.jsonl       # Provider-exposed validator items (summaries, tools, messages)
-    └── prompts/                          # iteration-<n>.md, *.md / *.json validator prompts/responses
+    ├── validators/<assignmentId>/        # Validator prompt (.md) and parsed response (.json)
+    └── prompts/                          # Implementer iteration-<n>.md prompts
 ```
 
 ### Investigation order
@@ -465,15 +465,13 @@ workflow-logs/<executionId>/
 | `iterations.jsonl` | `iteration.started`/`prompt_sent`/`agent_turn_completed`/`follow_up_sent`/`follow_up_skipped`/`completed` |
 | `tasks.jsonl` | `task.completion_attempted`/`validation_passed`/`validation_failed`/`added_by_agent`/`reopened` |
 | `validation.jsonl` | `task_validator.started`, `context_validator.started`, `validator.invoked`/`result_parsed`/`remediation_applied` |
-| `validation-transcript.jsonl` | `validator.transcript_begin` (lane, engine, attempt, entryCount) + one `validator.transcript_item` (seq, backend, itemType, raw) per backend-native item/message; appended per validator invocation |
 
 Shared schema: `{ timestamp, event, executionId, ...data }`.
 
 ### jq queries
 
 ```bash
-jq 'select(.event == "validator.result_parsed" and .pass == false)' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/validation.jsonl'
-jq 'select(.itemType == "reasoning") | .raw' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/validation-transcript.jsonl'
+jq 'select(.event == "validator.result_parsed" and .kind == "fail")' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/validation.jsonl'
 jq 'select(.event | test("circuit_breaker|retry"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
 jq 'select(.event == "task.reopened")' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/tasks.jsonl'
 jq 'select(.event | test("retry|implementer"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'

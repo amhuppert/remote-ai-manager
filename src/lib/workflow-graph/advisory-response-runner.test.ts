@@ -16,17 +16,8 @@ import {
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
-
-const USAGE = {
-  costUsd: null,
-  durationMs: null,
-  contextTokens: null,
-  contextWindowMax: null,
-  inputTokens: null,
-  outputTokens: null,
-  cachedInputTokens: null,
-};
+import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 
 const EXECUTION = createWorkflowExecution({ status: "running" });
 const CONTEXT_ID = EXECUTION.workingDefinition.executionContexts[0]?.id ?? "";
@@ -42,27 +33,26 @@ const ADVISORIES = stampAdvisoryIdentities({
 const IDENTITY_ONE = { roundSeq: 2, assignmentId: "security", ordinal: 1 };
 const IDENTITY_TWO = { roundSeq: 2, assignmentId: "security", ordinal: 2 };
 
-function structured(dispositions: unknown[]): TaskRunResult {
-  return {
-    kind: "structured",
-    structuredOutput: { dispositions },
-    text: "",
-    usage: USAGE,
-    backendRef: null,
-    continuationDisposition: "retain",
-  };
+function structured(dispositions: unknown[]): ConversationTurnExecution {
+  return settledConversationTurn({
+    outcome: {
+      kind: "completed",
+      structuredOutput: { dispositions },
+      text: "",
+    },
+  });
 }
 
 function run(
-  results: TaskRunResult[],
+  results: ConversationTurnExecution[],
   deps: NonNullable<
     Parameters<typeof createGraphWorkflowAdvisoryResponseRunner>[0]
   > = {},
 ): ReturnType<typeof createGraphWorkflowAdvisoryResponseRunner> & {
-  executeWorkflowTaskRun: ReturnType<typeof vi.fn>;
+  executeConversationTurn: ReturnType<typeof vi.fn>;
 } {
   let call = 0;
-  const executeWorkflowTaskRun = vi.fn(async () => {
+  const executeConversationTurn = vi.fn(async () => {
     const result = results[Math.min(call, results.length - 1)];
     call += 1;
     if (!result) throw new Error("no scripted result");
@@ -70,9 +60,9 @@ function run(
   });
   const runner = createGraphWorkflowAdvisoryResponseRunner({
     ...deps,
-    executeWorkflowTaskRun,
+    executeConversationTurn,
   });
-  return { ...runner, executeWorkflowTaskRun };
+  return { ...runner, executeConversationTurn };
 }
 
 function input() {
@@ -87,7 +77,7 @@ function input() {
 }
 
 describe("advisory-response turn", () => {
-  it("dispatches with the dispositions schema as the turn's output contract", async () => {
+  it("continues the implementer conversation with the dispositions schema as its output contract", async () => {
     const runner = run([
       structured([
         { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
@@ -97,19 +87,28 @@ describe("advisory-response turn", () => {
 
     await runner.runAdvisoryResponse(input());
 
-    expect(runner.executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    const dispatched = runner.executeWorkflowTaskRun.mock.calls[0]?.[0];
-    expect(dispatched.outputFormat).toEqual({
+    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(1);
+    const dispatched = runner.executeConversationTurn.mock.calls[0]?.[0];
+    expect(dispatched.turn.kind).toBe("conversation_turn");
+    expect(dispatched.turn.autonomous).toBe(true);
+    expect(dispatched.turn.askUserQuestionsEnabled).toBe(false);
+    expect(dispatched.turn.backend).toBe("claude");
+    expect(dispatched.turn.outputFormat).toEqual({
       type: "json_schema",
       schema: buildAdvisoryDispositionsOutputSchema(ADVISORIES),
     });
     expect(dispatched.binding.address.target.conversationId).toBe(
       "conversation-impl",
     );
-    expect(dispatched.modelSelection).toEqual({
+    expect(dispatched.turn.modelSelection).toEqual({
       modelId: "opus",
       parameters: { effort: "high" },
     });
+    expect(dispatched.executionContext.workflowContext).toEqual({
+      executionId: EXECUTION.id,
+      contextId: CONTEXT_ID,
+    });
+    expect(dispatched.waitUntilReady).toBe(true);
   });
 
   it("retains a confined implementer's write envelope on the response turn", async () => {
@@ -145,7 +144,7 @@ describe("advisory-response turn", () => {
       payloadLocation: "scratch",
     }).policy;
     expect(
-      runner.executeWorkflowTaskRun.mock.calls[0]?.[0].fsWritePolicy,
+      runner.executeConversationTurn.mock.calls[0]?.[0].turn.fsWritePolicy,
     ).toEqual(expectedPolicy);
   });
 
@@ -180,7 +179,7 @@ describe("advisory-response turn", () => {
       payloadLocation: "scratch",
     }).policy;
     expect(
-      runner.executeWorkflowTaskRun.mock.calls[0]?.[0].fsWritePolicy,
+      runner.executeConversationTurn.mock.calls[0]?.[0].turn.fsWritePolicy,
     ).toEqual(expectedPolicy);
   });
 
@@ -221,7 +220,7 @@ describe("advisory-response turn", () => {
       payloadLocation: "worktree",
     }).policy;
     expect(
-      runner.executeWorkflowTaskRun.mock.calls[0]?.[0].fsWritePolicy,
+      runner.executeConversationTurn.mock.calls[0]?.[0].turn.fsWritePolicy,
     ).toEqual(expectedPolicy);
   });
 
@@ -248,7 +247,7 @@ describe("advisory-response turn", () => {
         contextId: context.id,
       }),
     ).rejects.toBeInstanceOf(AgentTurnFailedError);
-    expect(runner.executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(runner.executeConversationTurn).not.toHaveBeenCalled();
   });
 
   it("returns one disposition per delivered advisory", async () => {
@@ -291,10 +290,10 @@ describe("advisory-response turn", () => {
     const outcome = await runner.runAdvisoryResponse(input());
 
     expect(outcome.dispositions).toHaveLength(2);
-    expect(runner.executeWorkflowTaskRun).toHaveBeenCalledTimes(2);
-    expect(runner.executeWorkflowTaskRun.mock.calls[1]?.[0].prompt).toContain(
-      "2:security:2",
-    );
+    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(2);
+    expect(
+      runner.executeConversationTurn.mock.calls[1]?.[0].turn.promptText,
+    ).toContain("2:security:2");
   });
 
   it("re-asks when the reply declines without a reason", async () => {
@@ -312,21 +311,24 @@ describe("advisory-response turn", () => {
     const outcome = await runner.runAdvisoryResponse(input());
 
     expect(outcome.dispositions).toHaveLength(2);
-    expect(runner.executeWorkflowTaskRun).toHaveBeenCalledTimes(2);
+    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(2);
   });
 
   it("re-asks when the gate itself refused the payload", async () => {
     const runner = run([
-      {
-        kind: "error",
-        error: "structured output did not validate",
-        aborted: false,
-        structuredOutputIssues: ["$.dispositions[0].reason is required"],
-        text: "",
-        usage: USAGE,
-        backendRef: null,
-        continuationDisposition: "retain",
-      },
+      settledConversationTurn({
+        outcome: {
+          kind: "failed",
+          error: {
+            backend: "claude",
+            failureKind: "schema_validation",
+            message: "structured output did not validate",
+            backendDetails: {
+              errors: ["$.dispositions[0].reason is required"],
+            },
+          },
+        },
+      }),
       structured([
         { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
         { identity: IDENTITY_TWO, disposition: "addressed", reason: null },
@@ -336,7 +338,10 @@ describe("advisory-response turn", () => {
     const outcome = await runner.runAdvisoryResponse(input());
 
     expect(outcome.dispositions).toHaveLength(2);
-    expect(runner.executeWorkflowTaskRun).toHaveBeenCalledTimes(2);
+    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(2);
+    expect(
+      runner.executeConversationTurn.mock.calls[1]?.[0].turn.promptText,
+    ).toContain("$.dispositions[0].reason is required");
   });
 
   it("fails the turn once its attempts are spent rather than returning a set the gate never validated", async () => {
@@ -349,7 +354,7 @@ describe("advisory-response turn", () => {
     await expect(runner.runAdvisoryResponse(input())).rejects.toBeInstanceOf(
       AgentTurnFailedError,
     );
-    expect(runner.executeWorkflowTaskRun).toHaveBeenCalledTimes(
+    expect(runner.executeConversationTurn).toHaveBeenCalledTimes(
       ADVISORY_RESPONSE_ATTEMPTS,
     );
   });
@@ -368,15 +373,16 @@ describe("advisory-response turn", () => {
 
   it("propagates an infrastructure failure of the turn itself", async () => {
     const runner = run([
-      {
-        kind: "error",
-        error: "the session died mid-turn",
-        aborted: false,
-        text: "",
-        usage: USAGE,
-        backendRef: null,
-        continuationDisposition: "retain",
-      },
+      settledConversationTurn({
+        outcome: {
+          kind: "failed",
+          error: {
+            backend: "claude",
+            failureKind: "backend_error",
+            message: "the session died mid-turn",
+          },
+        },
+      }),
     ]);
 
     await expect(runner.runAdvisoryResponse(input())).rejects.toBeInstanceOf(

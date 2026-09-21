@@ -18,9 +18,17 @@ import {
 } from "@/lib/workflow-graph/iteration-prompt";
 import {
   buildContextValidationPrompt,
+  type BuildContextValidationPromptInput,
   buildValidatorOutputSchema,
   issueCriterionCitationFor,
 } from "@/lib/workflow-graph/validator-runner";
+import { createValidatorRuntimeInstructionReader } from "./validator-runtime-instructions";
+import {
+  createResolvedWorkflowDefinition,
+  createWorkflowExecution,
+  seedAssignment,
+} from "./test-fixtures";
+import { laneStateKey } from "./lane-identity";
 import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { ValidationPromptSelections } from "@/lib/workflow-graph/validation-prompt-section";
 
@@ -28,16 +36,58 @@ import type { ValidationPromptSelections } from "@/lib/workflow-graph/validation
  * Cross-builder integration test for charter prompt injection (task 5.2).
  *
  * Unlike the per-builder unit tests in iteration-prompt / validator-runner,
- * this exercises the REAL passthrough chain end-to-end: one charter-bearing
+ * this exercises the REAL charter passthrough chain: one charter-bearing
  * WorkflowSemanticDefinition is resolved through `resolveWorkflowDefinition`
  * (task 4.1), and the SAME resolved context's `charter` snapshot is fed to
- * BOTH prompt builders. The load-bearing guarantee here — invisible to the
+ * the implementer prompt and validator runtime reader. The load-bearing guarantee here — invisible to the
  * per-builder unit tests — is that the implementer and validator of one
  * context embed byte-identical charter content (4.5).
  *
- * Pure, deterministic, no LLM, no mocks: the production builders are pure
- * functions and the resolver is pure config plumbing.
+ * Deterministic, with no LLM: the runtime reader consumes a seeded execution
+ * and the prompt builders and resolver use the same charter snapshot.
  */
+
+async function composeValidatorReviewContext(
+  input: BuildContextValidationPromptInput,
+): Promise<string> {
+  const assignment = seedAssignment(input.validator);
+  const context = {
+    ...input.context,
+    implementer: seedAssignment(input.context.implementer),
+    contextValidator: {
+      ...input.context.contextValidator,
+      assignments: [assignment],
+    },
+  };
+  const execution = createWorkflowExecution({
+    workingDefinition: createResolvedWorkflowDefinition({
+      executionContexts: [context],
+      tasks: input.tasks,
+    }),
+    laneStates: {
+      [context.id]: {
+        [laneStateKey("context_validator", assignment.id)]: {
+          lane: "context_validator",
+          contextId: context.id,
+          assignmentId: assignment.id,
+          backend: assignment.agent.backend,
+          workflowConversationId: "validator-conversation",
+          metrics: {},
+          lastUsedAt: "2026-09-20T00:00:00.000Z",
+        },
+      },
+    },
+  });
+  const instructions = await createValidatorRuntimeInstructionReader({
+    getActiveExecution: async () => execution,
+    readValidationConfig: async () => undefined,
+  })({
+    projectPath: "/project",
+    sessionName: "session",
+    conversationId: "validator-conversation",
+  });
+  return [instructions, buildContextValidationPrompt(input)].join("\n\n");
+}
 
 const GLOBAL_DEFAULTS: WorkflowDefaults = {
   implementer: {
@@ -283,16 +333,15 @@ describe("charter prompt injection (cross-builder integration)", () => {
     expect(sharedDocsSection).not.toContain(CHARTER_DOC_ENTRY.relativePath);
   });
 
-  it("places the charter digest at the top of the validator prompt (4.2)", () => {
+  it("places the charter digest before the validator role contract (4.2)", async () => {
     const context = resolveSharedContext();
 
-    const prompt = buildContextValidationPrompt({
+    const prompt = await composeValidatorReviewContext({
       context,
       charter: context.charter,
       tasks: TASKS,
       taskStates: TASK_STATES,
       validator: VALIDATOR,
-      validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
 
     expect(prompt.startsWith("# Workflow Charter")).toBe(true);
@@ -317,7 +366,7 @@ describe("charter prompt injection (cross-builder integration)", () => {
     expect(prompt.startsWith("# Workflow Charter")).toBe(false);
   });
 
-  it("embeds byte-identical charter content in the implementer and validator prompts of the same context (4.5)", () => {
+  it("embeds byte-identical charter content in implementer prompts and validator instructions of the same context (4.5)", async () => {
     const context = resolveSharedContext();
     if (!context.charter) {
       throw new Error("resolved context must carry a charter");
@@ -332,13 +381,12 @@ describe("charter prompt injection (cross-builder integration)", () => {
       allowAgentTaskAdd: false,
       validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
-    const validatorPrompt = buildContextValidationPrompt({
+    const validatorPrompt = await composeValidatorReviewContext({
       context,
       charter: context.charter,
       tasks: TASKS,
       taskStates: TASK_STATES,
       validator: VALIDATOR,
-      validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
 
     // The shared digest both roles embed, computed from the SAME snapshot for
@@ -361,7 +409,7 @@ describe("charter prompt injection (cross-builder integration)", () => {
     expect(implementerDigestRegion).toBe(digest);
   });
 
-  it("renders a scoped source only in the prompts of its own context, for both roles", () => {
+  it("renders a scoped source only in the review context of its own context, for both roles", async () => {
     // Two-context definition with one source scoped to ctx-1: the resolver
     // passes the charter through to both contexts, and each role's production
     // builder renders the charter section for ITS context id — so ctx-2's
@@ -418,31 +466,32 @@ describe("charter prompt injection (cross-builder integration)", () => {
     const byId = new Map(
       resolved.executionContexts.map((ctx) => [ctx.id, ctx]),
     );
-    const prompts = ["ctx-1", "ctx-2"].map((id) => {
-      const ctx = byId.get(id);
-      if (!ctx?.charter) {
-        throw new Error(`resolved context ${id} must carry a charter`);
-      }
-      return {
-        implementer: buildIterationPrompt({
-          context: ctx,
-          charter: ctx.charter,
-          sharedDocuments: [],
-          tasks: TASKS,
-          taskStates: TASK_STATES,
-          allowAgentTaskAdd: false,
-          validationSelections: EMPTY_VALIDATION_SELECTIONS,
-        }),
-        validator: buildContextValidationPrompt({
-          context: ctx,
-          charter: ctx.charter,
-          tasks: TASKS,
-          taskStates: TASK_STATES,
-          validator: VALIDATOR,
-          validationSelections: EMPTY_VALIDATION_SELECTIONS,
-        }),
-      };
-    });
+    const prompts = await Promise.all(
+      ["ctx-1", "ctx-2"].map(async (id) => {
+        const ctx = byId.get(id);
+        if (!ctx?.charter) {
+          throw new Error(`resolved context ${id} must carry a charter`);
+        }
+        return {
+          implementer: buildIterationPrompt({
+            context: ctx,
+            charter: ctx.charter,
+            sharedDocuments: [],
+            tasks: TASKS,
+            taskStates: TASK_STATES,
+            allowAgentTaskAdd: false,
+            validationSelections: EMPTY_VALIDATION_SELECTIONS,
+          }),
+          validator: await composeValidatorReviewContext({
+            context: ctx,
+            charter: ctx.charter,
+            tasks: TASKS,
+            taskStates: TASK_STATES,
+            validator: VALIDATOR,
+          }),
+        };
+      }),
+    );
     const [inScope, outOfScope] = prompts as [
       (typeof prompts)[number],
       (typeof prompts)[number],
@@ -541,10 +590,10 @@ describe("charter prompt injection (cross-builder integration)", () => {
       };
     }
 
-    function promptPairFor(contextId: string): {
+    async function promptPairFor(contextId: string): Promise<{
       implementer: string;
       validator: string;
-    } {
+    }> {
       const resolved = resolveWorkflowDefinition(
         GLOBAL_CONFIG,
         makeScopedDefinition(),
@@ -571,21 +620,20 @@ describe("charter prompt injection (cross-builder integration)", () => {
             ? context.acceptanceCriteria
             : undefined,
         }),
-        validator: buildContextValidationPrompt({
+        validator: await composeValidatorReviewContext({
           context,
           charter: context.charter,
           tasks: SCOPED_TASKS,
           taskStates: TASK_STATES,
           validator: VALIDATOR,
-          validationSelections: EMPTY_VALIDATION_SELECTIONS,
         }),
       };
     }
 
     it.each(["implementer", "validator"] as const)(
       "gives the %s only its own sources, numbered criterion records, and none of the retired governance text",
-      (role) => {
-        const prompt = promptPairFor(IN_SCOPE_ID)[role];
+      async (role) => {
+        const prompt = (await promptPairFor(IN_SCOPE_ID))[role];
 
         expect(prompt).toContain(GLOBAL_SOURCE_LABEL);
         expect(prompt).toContain(SCOPED_SOURCE_LABEL);
@@ -610,8 +658,8 @@ describe("charter prompt injection (cross-builder integration)", () => {
 
     it.each(["implementer", "validator"] as const)(
       "withholds another context's scoped source from the %s while keeping the global one",
-      (role) => {
-        const prompt = promptPairFor(OUT_OF_SCOPE_ID)[role];
+      async (role) => {
+        const prompt = (await promptPairFor(OUT_OF_SCOPE_ID))[role];
 
         expect(prompt).not.toContain(SCOPED_SOURCE_LABEL);
         expect(prompt).toContain(GLOBAL_SOURCE_LABEL);

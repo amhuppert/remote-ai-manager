@@ -4,11 +4,9 @@ import {
 } from "./review-origin";
 import { changed, unchanged } from "./execution-mutation";
 import type { GraphWorkflowExecutionRepository } from "./execution-repository";
-import { z } from "zod";
 import {
   workflowAdvisoryValidatorResultSchema,
   workflowBlockingValidatorResultSchema,
-  workflowValidatorOutputPlanDefectSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
@@ -16,11 +14,7 @@ import {
   criterionRecordsOf,
 } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
-import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
-import {
-  resolveLogicalAuthoredContextId,
-  resolveScopedCharterForContext,
-} from "@/lib/workflow-graph/charter/invariant-scope";
+import { resolveScopedCharterForContext } from "@/lib/workflow-graph/charter/invariant-scope";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
@@ -36,7 +30,6 @@ import {
   type GraphWorkflowValidationSessionRef,
 } from "@/lib/workflow-graph/schemas";
 import {
-  isAcceptanceCriteriaValidatorProfile,
   type ValidatorAssignment,
   type ValidatorAuthority,
 } from "@/lib/workflow-graph/config-schemas";
@@ -45,11 +38,6 @@ import {
   assignmentFingerprint,
   laneStateKey,
 } from "@/lib/workflow-graph/lane-identity";
-import {
-  buildValidatorRoleContract,
-  composeWorkflowRoleInstructions,
-} from "@/lib/workflow-graph/role-instructions";
-import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import type {
   GraphWorkflowCascadeContext,
   GraphWorkflowTaskDefinition,
@@ -63,17 +51,8 @@ import {
 } from "./conversation-turn-result";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
-import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
 import { type GraphExecutionContract } from "./execution-contract-port";
 import { composeGraphRolePrompt } from "./prompt-composer";
-import {
-  buildValidationCommandsSection,
-  buildValidatorDeterministicChecksGuidance,
-  loadValidationPromptRegistry,
-  resolveValidationPromptSelections,
-  type ValidationPromptSelections,
-} from "./validation-prompt-section";
-import { readRepoConfig } from "@/lib/projects/repo-config";
 import type {
   AskQuestionAnswer,
   AskQuestionItem,
@@ -89,15 +68,14 @@ import type {
   ValidationRoundToken,
 } from "./validator-cohort-runner";
 import type {
-  ResolveValidatorCallInput,
-  ResolvedValidatorCall,
-  RecordLaneTurnOutcomeInput,
+  EnsureValidatorConversationInput,
+  EnsuredValidatorConversation,
 } from "@/lib/workflow-graph/lane-continuity";
 import {
-  executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
-  type ExecuteWorkflowTaskRunInput,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+  executeConversationTurn as defaultExecuteConversationTurn,
+  stopConversationActor as defaultStopConversationActor,
+} from "@/lib/workflows/conversation/manager";
+import { toTaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import {
   composeValidatorLaneWriteEnvelope as defaultComposeValidatorLaneWriteEnvelope,
   type ComposeValidatorLaneWriteEnvelopeInput,
@@ -120,146 +98,16 @@ import {
   type StructuredOutputSource,
 } from "@/lib/agent-backends/structured-output";
 
-/**
- * The advisory item both authorities emit, closed to anything else. No
- * `taskId`: an advisory is addressed to the implementer rather than to a task
- * the engine must reopen.
- */
-const ADVISORY_ITEMS_OUTPUT_SCHEMA = {
-  type: "array",
-  items: {
-    type: "object",
-    properties: {
-      kind: {
-        type: "string",
-        enum: ["implementation", "plan", "out_of_scope"],
-      },
-      title: { type: "string" },
-      description: { type: "string" },
-    },
-    required: ["kind", "title", "description"],
-    additionalProperties: false,
-  },
-} as const;
-
-/**
- * The plan-defect item only a blocking seat may emit: the contract itself is
- * unsatisfiable here, so there is nothing to reopen.
- *
- * Projected from the Zod contract rather than hand-written, so the gate the
- * provider enforces and the twin the runner parses cannot drift: the four
- * fields, their non-emptiness, and the closed object all have one source. The
- * absence of a `taskId` property is what makes this response structurally
- * distinct from an issue rather than a differently-worded one.
- *
- * `$schema` is dropped because this is embedded as a SUBSCHEMA of the dispatched
- * validator schema, where a nested dialect declaration is a keyword the
- * provider's schema validator never asked for.
- */
-const { $schema: _planDefectDialect, ...PLAN_DEFECT_ITEMS_OUTPUT_SCHEMA } =
-  z.toJSONSchema(z.array(workflowValidatorOutputPlanDefectSchema));
-
-/**
- * The structured-output schema for one validator dispatch, selected by the
- * seat's authority and bound to the context it is reviewing.
- *
- * Two properties are load-bearing. Authority is STRUCTURAL: neither `issues`
- * nor `planDefects` appears in the advisory schema, so a validator with no
- * blocking authority can neither fail a context nor route one to plan repair —
- * the attempt fails the output gate and retries rather than reaching the engine
- * as a verdict. And `taskId` is an enum of this context's task ids, so an id the
- * validator invented is caught at the same gate, where a retry can fix it,
- * instead of arriving as a well-formed verdict the runner can only reject as an
- * infrastructure failure.
- *
- * `planDefects` is the one optional field on the verdict: `issues` and
- * `advisories` stay required because their empty arrays carry meaning (a
- * pass, and a considered absence of observations), while requiring the rare
- * third response would make every clean verdict declare it.
- *
- * `criterionId` is bound to the context's criterion-record ids exactly as
- * `taskId` is bound to its task ids, and the citation rule decides whether an
- * issue must carry it (#69 change 4 seat table): the acceptance seat judges
- * the criteria themselves, so its issues cite one; a specialist's blocking
- * basis is its assigned mandate, so a criterion id appears only when a
- * mandate finding also contradicts a specific criterion.
- */
-export function buildValidatorOutputSchema(input: {
-  authority: ValidatorAuthority;
-  taskIds: readonly string[];
-  criterionIds: readonly string[];
-  issueCriterionCitation: IssueCriterionCitation;
-}): Record<string, unknown> {
-  if (input.authority === "advisory") {
-    return {
-      type: "object",
-      properties: {
-        summary: { type: "string" },
-        advisories: ADVISORY_ITEMS_OUTPUT_SCHEMA,
-      },
-      required: ["summary", "advisories"],
-      additionalProperties: false,
-    };
-  }
-
-  return {
-    type: "object",
-    properties: {
-      summary: { type: "string" },
-      issues: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            // An empty enum matches nothing and providers refuse it outright,
-            // so a context with no ids to name falls back to a free-form
-            // field rather than dispatching an unsatisfiable schema.
-            taskId: {
-              type: "string",
-              ...(input.taskIds.length > 0 ? { enum: [...input.taskIds] } : {}),
-            },
-            criterionId: {
-              type: "string",
-              ...(input.criterionIds.length > 0
-                ? { enum: [...input.criterionIds] }
-                : {}),
-            },
-            title: { type: "string" },
-            description: { type: "string" },
-          },
-          required:
-            input.issueCriterionCitation === "required"
-              ? ["taskId", "criterionId", "title", "description"]
-              : ["taskId", "title", "description"],
-          additionalProperties: false,
-        },
-      },
-      advisories: ADVISORY_ITEMS_OUTPUT_SCHEMA,
-      planDefects: PLAN_DEFECT_ITEMS_OUTPUT_SCHEMA,
-    },
-    required: ["summary", "issues", "advisories"],
-    additionalProperties: false,
-  };
-}
-
-/**
- * Whether a seat's blocking issues must each cite a criterion id, derived
- * from what the seat is assigned to judge: the default blocking
- * general-reviewer (the acceptance seat) judges the criteria themselves, so
- * its citation is required; every other seat cites its own mandate and
- * carries a criterion id only incidentally. Advisory seats emit no issues at
- * all, so the value is inert for them.
- */
-export type IssueCriterionCitation = "required" | "optional";
-
-export function issueCriterionCitationFor(
-  validator: Pick<ValidatorAssignment, "authority" | "profile">,
-): IssueCriterionCitation {
-  return validator.authority === "blocking" &&
-    isAcceptanceCriteriaValidatorProfile(validator.profile)
-    ? "required"
-    : "optional";
-}
+import {
+  buildValidatorOutputSchema,
+  issueCriterionCitationFor,
+  type IssueCriterionCitation,
+} from "./validator-output-schema";
+export {
+  buildValidatorOutputSchema,
+  issueCriterionCitationFor,
+} from "./validator-output-schema";
+export type { IssueCriterionCitation } from "./validator-output-schema";
 
 export interface BuildContextValidationPromptInput {
   context: GraphWorkflowCascadeContext;
@@ -267,16 +115,8 @@ export interface BuildContextValidationPromptInput {
   taskStates: GraphWorkflowExecution["taskStates"];
   outputCandidate?: GraphWorkflowExecution["contextOutputs"][string];
   validator: ValidatorAssignment;
-  // Optional because the resolved context carries an optional charter; when
-  // present the digest is prepended so the prompt opens with it (4.2).
+  // The scoped charter decides whether invariant-check guidance is applicable.
   charter?: WorkflowCharter;
-  /**
-   * The LOGICAL authored context id the charter section renders for — scoped
-   * sources bind authored ids, so a loop-instance validation (context id like
-   * `group__p2__ctx`) passes its authored template id here. Defaults to
-   * `context.id`, which is correct for every non-expanded context.
-   */
-  charterContextId?: string;
   // Pre-rendered "Changes under review" section anchoring the validator on the
   // context's diff. Inserted after the acceptance criteria. Omitted when scope
   // computation is disabled or fails to produce a section.
@@ -289,43 +129,6 @@ export interface BuildContextValidationPromptInput {
     questionBatchId: string;
     answers: Record<string, AskQuestionAnswer>;
   };
-  /**
-   * Effective ask-user-questions availability for this validator turn. It is
-   * enabled only when the backend declares native mid-turn asking (see
-   * `resolveValidatorAskUserQuestionsEnabled`). When true
-   * a short ask-protocol reminder section is added; otherwise none (Req
-   * 8.1-8.4).
-   */
-  askUserQuestionsEnabled?: boolean;
-  /**
-   * This context's effective command selections (validation-concurrency §7/§8):
-   * drives the `## Validation Commands` section and makes the deterministic-
-   * checks guidance name the actual script-gate selection.
-   */
-  validationSelections: ValidationPromptSelections;
-}
-
-/**
- * The effective ask-user-questions flag for a context validator turn: the
- * context's resolved toggle AND a backend that supports native mid-turn asking
- * (Req 8.1). Pure so the suppression rule is unit-testable in isolation.
- */
-export function resolveValidatorAskUserQuestionsEnabled(
-  validator: ValidatorAssignment,
-  context: GraphWorkflowCascadeContext,
-): boolean {
-  return (
-    context.askUserQuestions.enabled &&
-    getBackendDescriptor(validator.agent.backend).conversation?.capabilities
-      .nativeMidTurnAskUser === true
-  );
-}
-
-function buildCharterSection(
-  charter: WorkflowCharter,
-  contextId: string,
-): string {
-  return renderCharterPromptSection(charter, contextId);
 }
 
 function formatTaskBlock(
@@ -397,13 +200,6 @@ export function buildContextValidationPrompt(
     .map((task) => formatTaskBlock(task, input.taskStates))
     .join("\n");
 
-  const charterSection = input.charter
-    ? `${buildCharterSection(
-        input.charter,
-        input.charterContextId ?? input.context.id,
-      )}\n\n`
-    : "";
-
   // A validator resume opens with the answers so the re-run validator reads them
   // before its verdict; framed identically to the implementer variant (5.1, 5.3).
   const resumeUserInputLines = input.resumeUserInput
@@ -419,15 +215,6 @@ export function buildContextValidationPrompt(
       ]
     : [];
 
-  const askUserQuestionsLines = input.askUserQuestionsEnabled
-    ? [buildAskUserQuestionsReminderSection(), ""]
-    : [];
-
-  const validationSectionLines = [
-    buildValidationCommandsSection(input.validationSelections),
-    "",
-  ];
-
   // Active checking, not preamble: rendered only when the scoped charter
   // declares invariants so the guidance never references a section that isn't there.
   const invariantGuidanceLines =
@@ -438,10 +225,9 @@ export function buildContextValidationPrompt(
       : [];
 
   return [
-    charterSection + "# Context Validation",
+    "# Context Validation",
     "",
     ...resumeUserInputLines,
-    ...askUserQuestionsLines,
     "You are a validation agent reviewing a completed execution context in a graph workflow.",
     "You must inspect files and verify the agent's claims.",
     "Your job is to judge the *intent* of the acceptance criteria and decide whether the completed tasks satisfy that intent closely enough for the purposes of the overall objective.",
@@ -452,9 +238,7 @@ export function buildContextValidationPrompt(
     "- **Respect context scope boundaries.** This execution context is one step in a larger graph workflow. Work that is explicitly out of scope for this context — for example, type updates or cleanup handled by a downstream context, or integration work reserved for another context — must not cause this context to fail. If the current context produced the intermediate state it is responsible for, treat that as success even if the wider codebase is not yet fully consistent.",
     "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. Deferral is valid only to a graph-downstream owner, and only when this context's acceptance criteria explicitly name that downstream owner for the obligation, or the downstream owner's acceptance criteria contain the matching obligation. A graph relationship or ownership claim alone cannot invent the handoff. With valid deferral evidence, record it in your `summary` instead of failing; without it, raise an issue.",
     ...invariantGuidanceLines,
-    buildValidatorDeterministicChecksGuidance(input.validationSelections),
     "",
-    ...validationSectionLines,
     "## Acceptance Criteria",
     "",
     acceptanceCriteriaRecordListText(input.context.acceptanceCriteria),
@@ -840,13 +624,10 @@ interface InspectionWorktree {
   resolveError: string | null;
 }
 
-interface ValidatorContinuityService {
-  resolveValidatorCall(
-    input: ResolveValidatorCallInput,
-  ): Promise<ResolvedValidatorCall>;
-  recordLaneTurnOutcome(
-    input: RecordLaneTurnOutcomeInput,
-  ): Promise<GraphWorkflowExecution>;
+interface ValidatorConversationService {
+  ensureValidatorConversation(
+    input: EnsureValidatorConversationInput,
+  ): Promise<EnsuredValidatorConversation>;
 }
 
 type ValidatorContinuityRepository = Pick<
@@ -859,28 +640,17 @@ export interface ValidatorRunnerDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string>;
-  resolveTimeoutMs(backend: AgentBackendId): Promise<number>;
   /**
    * Reads `CommandCenter.json` so the validator prompt can list the context's
    * effective command selections with costs (validation-concurrency §8).
    * Degraded-not-fatal: a read failure renders the section with an explicit
    * unavailable-registry notice.
    */
-  readRepoConfig?: typeof readRepoConfig;
   /** Resolves each assignment's durable lane conversation before a turn. */
-  continuityService: ValidatorContinuityService;
+  continuityService: ValidatorConversationService;
   executionRepository?: ValidatorContinuityRepository;
-  /**
-   * Optional override for the conversation entrypoint that the validator
-   * uses to drive each `task_run` turn. Every validator turn flows through
-   * the conversation actor — there is no direct AgentCall facade call in
-   * this module — so the actor handles transcript persistence, backend-native
-   * continuity (via the conversation row), and structured-output dispatch in
-   * one place.
-   */
-  executeWorkflowTaskRun?: (
-    input: ExecuteWorkflowTaskRunInput,
-  ) => Promise<TaskRunResult>;
+  executeConversationTurn?: typeof defaultExecuteConversationTurn;
+  stopConversationActor?: typeof defaultStopConversationActor;
   /**
    * Optional override for project-display-name resolution, used to address
    * the lane conversation the turn dispatches against.
@@ -949,30 +719,21 @@ function getContextTaskIds(index: ExecutionIndex, contextId: string): string[] {
 }
 
 /**
- * Internal validator task result. Mirrors the legacy `AgentTaskResult` shape
- * that `parseValidatorResponse` consumes — kept here so the parser remains
- * backend-agnostic and is the single place that maps raw text plus optional
- * structured output into a `ValidatorOutcome`.
+ * Presentation of the settled conversation result for domain verdict parsing.
+ * Lifecycle failures retain their structured evidence through the shared adapter.
  */
-type ValidatorTaskResult = ReturnType<typeof adaptValidatorTaskResult>;
+type ValidatorTurnResult = ReturnType<typeof adaptValidatorTaskResult>;
 
-interface ValidatorTaskInvocation {
+interface ValidatorTurnInvocation {
   prompt: string;
   backend: AgentBackendId;
   workingDirectory: string;
   modelSelection: BackendModelSelection;
-  timeoutMs: number;
-  laneRef: { workflowId: string; laneId: GraphWorkflowLaneKind };
+  laneRef: { workflowId: string; contextId: string };
+  askUserQuestionsEnabled: boolean;
   projectPath: string;
   sessionName: string;
   conversationId: string;
-  /**
-   * The turn's authoritative instruction payload: role contract first, the
-   * assignment's seeded profile block after it. Delivered through the strongest
-   * privileged channel each backend offers rather than folded into the prompt
-   * (R10), which is what keeps user-authored profile text subordinate.
-   */
-  systemInstructions: string;
   /**
    * The lane's filesystem-write envelope. Always present on a validator turn —
    * a validator reviews a frozen candidate, so "no policy" is never a legal
@@ -989,7 +750,7 @@ interface ValidatorTaskInvocation {
 
 /** The lane's durable conversation, addressed against the session worktree. */
 function buildValidatorBinding(
-  invocation: ValidatorTaskInvocation,
+  invocation: ValidatorTurnInvocation,
   projectName: string,
 ): ConversationBinding {
   return {
@@ -1017,7 +778,7 @@ interface RunValidatorTurnInput {
   assignmentFingerprint: string;
   backend: AgentBackendId;
   prompt: string;
-  systemInstructions: string;
+  askUserQuestionsEnabled: boolean;
   profileSnapshot: AgentProfileSnapshot;
   modelSelection: BackendModelSelection;
   allowedTaskIds: string[];
@@ -1033,8 +794,10 @@ interface RunValidatorTurnInput {
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
   const executionContract = deps.executionContract;
-  const executeWorkflowTaskRun =
-    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const executeConversationTurn =
+    deps.executeConversationTurn ?? defaultExecuteConversationTurn;
+  const stopConversationActor =
+    deps.stopConversationActor ?? defaultStopConversationActor;
   const getProjectDisplayName =
     deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
   const readValidatorConversationTelemetry =
@@ -1092,36 +855,80 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     });
 
   async function dispatchValidatorTurn(
-    invocation: ValidatorTaskInvocation,
-  ): Promise<ValidatorTaskResult> {
+    invocation: ValidatorTurnInvocation,
+  ): Promise<ValidatorTurnResult> {
     const projectName = getProjectDisplayName(invocation.projectPath);
     const binding = buildValidatorBinding(invocation, projectName);
 
-    const result = await executeWorkflowTaskRun({
-      binding,
-      kind: "task_run",
-      executionClass: "governed-execution",
-      executionProfile: "standard",
-      prompt: invocation.prompt,
-      systemInstructions: invocation.systemInstructions,
-      fsWritePolicy: invocation.fsWritePolicy,
-      outputFormat: {
-        type: "json_schema",
-        schema: invocation.outputSchema,
-      },
-      timeoutMs: invocation.timeoutMs,
-      modelSelection: invocation.modelSelection,
-      origin: {
-        source: "workflow",
-        workflow: {
-          executionId: invocation.laneRef.workflowId,
-          nodeId: invocation.laneRef.laneId,
-          iterationIndex: 0,
+    const outputFormat = {
+      type: "json_schema" as const,
+      schema: invocation.outputSchema,
+    };
+    let result: ValidatorTurnResult;
+    let cleanupError: string | null = null;
+    try {
+      const execution = await executeConversationTurn({
+        binding,
+        turn: {
+          kind: "conversation_turn",
+          promptText: invocation.prompt,
+          backend: invocation.backend,
+          autonomous: true,
+          askUserQuestionsEnabled: invocation.askUserQuestionsEnabled,
+          fsWritePolicy: invocation.fsWritePolicy,
+          outputFormat,
+          modelSelection: invocation.modelSelection,
         },
-      },
-    });
-
-    return adaptValidatorTaskResult(result);
+        executionContext: {
+          workflowContext: {
+            executionId: invocation.laneRef.workflowId,
+            contextId: invocation.laneRef.contextId,
+          },
+        },
+        waitUntilReady: true,
+      });
+      result = adaptValidatorTaskResult(
+        toTaskRunResult(
+          execution.kind === "settled"
+            ? execution.turn.outcome
+            : {
+                kind: "not_started",
+                reason:
+                  execution.code === "cancelled"
+                    ? "cancelled"
+                    : "configuration",
+                message: execution.message,
+              },
+          outputFormat,
+        ),
+      );
+    } finally {
+      // Cohorts run concurrently; each lane relinquishes its hosted runtime
+      // after settlement, retaining its durable conversation for the next round.
+      try {
+        await stopConversationActor(
+          invocation.projectPath,
+          invocation.sessionName,
+          invocation.conversationId,
+          "workflow_turn_completed",
+        );
+      } catch (error) {
+        cleanupError = getErrorMessage(error);
+        validatorLogger.error(
+          "graph-workflow.validator.runtime_cleanup_failed",
+          {
+            executionId: invocation.laneRef.workflowId,
+            contextId: invocation.laneRef.contextId,
+            conversationId: invocation.conversationId,
+            backend: invocation.backend,
+            error: cleanupError,
+          },
+        );
+      }
+    }
+    return cleanupError === null
+      ? result
+      : { ...result, error: result.error ?? cleanupError };
   }
 
   /**
@@ -1193,7 +1000,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       assignmentFingerprint,
       backend,
       prompt,
-      systemInstructions,
+      askUserQuestionsEnabled,
       profileSnapshot,
       modelSelection,
       allowedTaskIds,
@@ -1211,7 +1018,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const worktreePath =
       overrideWorktreePath ??
       (await deps.resolveWorktreePath(projectPath, sessionName));
-    const timeoutMs = await deps.resolveTimeoutMs(backend);
     // Established BEFORE any dispatch decision: a lane whose envelope cannot be
     // composed throws here, and the caller's catch turns that into an
     // infrastructure outcome rather than a turn that ran unrestricted.
@@ -1257,7 +1063,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         laneStates: current.execution.laneStates,
       };
     }
-    const resolved = await deps.continuityService.resolveValidatorCall({
+    const resolved = await deps.continuityService.ensureValidatorConversation({
       execution: continuityExecution,
       projectPath,
       sessionName,
@@ -1273,22 +1079,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const laneKey = laneStateKey(lane, assignmentId);
     const resolvedLaneState =
       resolved.execution.laneStates[contextId]?.[laneKey] ?? null;
-
-    function applyResolvedLaneState(
-      target: GraphWorkflowExecution,
-    ): GraphWorkflowExecution {
-      if (!resolvedLaneState) return target;
-      return {
-        ...target,
-        laneStates: {
-          ...target.laneStates,
-          [contextId]: {
-            ...target.laneStates[contextId],
-            [laneKey]: resolvedLaneState,
-          },
-        },
-      };
-    }
 
     // Persist the lane binding BEFORE dispatch. Active cancellation
     // (pause/abort/halt/resume) collects abortable conversations from
@@ -1309,26 +1099,17 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     }
     const taskResult = await dispatchValidatorTurn({
       prompt,
-      systemInstructions,
+      askUserQuestionsEnabled,
       backend,
       workingDirectory: worktreePath,
       modelSelection,
-      timeoutMs,
-      laneRef: { workflowId: execution.id, laneId: lane },
+      laneRef: { workflowId: execution.id, contextId },
       projectPath,
       sessionName,
       conversationId,
       fsWritePolicy,
       outputSchema,
     });
-
-    if (taskResult.transcript) {
-      execLogger?.writeValidatorTranscript(
-        artifactScope,
-        { lane, engine: backend },
-        taskResult.transcript,
-      );
-    }
 
     const sessionRef = buildConversationValidationSessionRef(
       backend,
@@ -1338,7 +1119,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     );
 
     // Pre-verdict park check: a pending question short-circuits before parsing
-    // and before the continuity turn bookkeeping, so the asking turn never
+    // so the asking turn never
     // reaches the inline validation-failure accounting (Req 3.2, 3.3).
     const askedUser = await checkValidatorPendingQuestion(
       projectPath,
@@ -1371,19 +1152,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           allowedCriterionIds,
           requireIssueCriterionId,
         });
-
-    await deps.continuityService.recordLaneTurnOutcome({
-      execution: applyResolvedLaneState(execution),
-      projectPath,
-      sessionName,
-      contextId,
-      lane,
-      assignmentId,
-      outcome: {
-        backend,
-        continuationDisposition: taskResult.continuationDisposition,
-      },
-    });
 
     const backendSessionId = Object.is(taskResult.backendRef?.backend, backend)
       ? (taskResult.backendRef?.ref ?? null)
@@ -1617,20 +1385,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         })
       ).section;
 
-    // The frozen seed-time snapshot decides the enabled set; the registry
-    // read feeds only cost annotation and the disabled list, and a failed
-    // read renders an explicit "registry unavailable" notice instead of
-    // silently dropping the section.
-    const validationSelections = resolveValidationPromptSelections({
-      role: "contextValidator",
-      context: input.context,
-      registry: await loadValidationPromptRegistry(async () => {
-        const repoConfig = await (deps.readRepoConfig ?? readRepoConfig)(
-          input.projectPath,
-        );
-        return repoConfig?.validation;
-      }),
-    });
     const scopedCharter = input.context.charter
       ? resolveScopedCharterForContext({
           execution: input.execution,
@@ -1646,20 +1400,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         input.execution.contextStates[input.context.id]?.validationRound
           ?.outputCandidate,
       validator: input.validator,
-      validationSelections,
       ...(scopedCharter ? { charter: scopedCharter } : {}),
-      // Scoped sources bind authored ids: a loop-instance context renders the
-      // charter section under its authored template id, same as invariants.
-      charterContextId:
-        resolveLogicalAuthoredContextId({
-          execution: input.execution,
-          contextId: input.context.id,
-        }) ?? input.context.id,
       diffScopeSection,
-      askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
-        input.validator,
-        input.context,
-      ),
       ...(input.resumeUserInput
         ? {
             resumeUserInput: {
@@ -1684,30 +1426,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       taskIds: allowedTaskIds,
       criterionIds: allowedCriterionIds,
       issueCriterionCitation,
-    });
-
-    // Role contract first, the assignment's seeded lens after it. Composed here
-    // — above both adapters — because the ORDER is the security property and a
-    // per-adapter decision could invert it (R10).
-    //
-    // A blocking seat's authored instructions ride in the contract as its
-    // mandate; seeding leaves them out of that seat's profile block, so the
-    // text is delivered exactly once, at the one authority level it is meant to
-    // carry (D4). An advisory seat's instructions stay inside the block, where
-    // the snapshot already put them.
-    const systemInstructions = composeWorkflowRoleInstructions({
-      roleContract: buildValidatorRoleContract(
-        input.validator.authority === "advisory"
-          ? { authority: "advisory", verdictSchema: outputSchema }
-          : {
-              authority: "blocking",
-              verdictSchema: outputSchema,
-              ...(input.validator.focus === undefined
-                ? {}
-                : { mandate: input.validator.focus }),
-            },
-      ),
-      profileBlock: input.validator.profileSnapshot.renderedInstructionBlock,
     });
 
     const artifactScope = {
@@ -1738,7 +1456,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         assignmentFingerprint: assignmentFingerprint(input.validator),
         backend: validatorPlan.backend,
         prompt,
-        systemInstructions,
+        askUserQuestionsEnabled: input.context.askUserQuestions.enabled,
         profileSnapshot: input.validator.profileSnapshot,
         modelSelection: validatorPlan.modelSelection,
         allowedTaskIds,

@@ -64,7 +64,7 @@ import {
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
 } from "@/lib/conversations/message-queue-drain";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -124,7 +124,6 @@ import {
   _resetForTesting as resetConversationRuntimeState,
 } from "@/lib/workflows/conversation/runtime-state";
 
-import { createExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { createMcpRuntimeApplyService } from "@/lib/mcp/runtime-apply";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
@@ -318,6 +317,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     getActiveAlignmentVersion: async () => null,
     createReferenceDocument: async () => ({}),
     getReferenceDocuments: async () => [],
+    getWorkflowLaneInstructions: async () => null,
     fileExists: () => false,
     readConversationMessages: async () => [],
     composePortableMcpForConversation: async () => ({ servers: [] }),
@@ -619,45 +619,6 @@ describe("E2: executePromptForMachine drives a testfake turn end-to-end", () => 
 // ---------------------------------------------------------------------------
 
 describe("E4: transcript consumers pass testfake envelopes through untouched", () => {
-  it("execution-logger writes validator transcript items with raw deep-equal", async () => {
-    const configDir = await mkdtemp(path.join(tmpdir(), "cc-locality-e4-"));
-    const logger = createExecutionLogger("exec-e4", { configDir });
-
-    logger.writeValidatorTranscript(
-      { contextId: "ctx-1", assignmentId: "general" },
-      { lane: "context_validator", engine: TESTFAKE_BACKEND_ID },
-      [...fake.taskTranscriptEntries],
-    );
-
-    const written = await readFile(
-      path.join(
-        logger.logDir,
-        "contexts",
-        "ctx-1",
-        "validators",
-        "general",
-        "validation-transcript.jsonl",
-      ),
-      "utf8",
-    );
-    const events = written
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-
-    const begin = events[0]!;
-    expect(begin["event"]).toBe("validator.transcript_begin");
-    expect(begin["engine"]).toBe("testfake");
-
-    const items = events.filter(
-      (e) => e["event"] === "validator.transcript_item",
-    );
-    expect(items.map((e) => e["backend"])).toEqual(["testfake", "testfake"]);
-    expect(items.map((e) => e["raw"])).toEqual(
-      fake.taskTranscriptEntries.map((e) => e.raw),
-    );
-  });
-
   describe("executeWorkflowTaskRun read path", () => {
     beforeEach(() => {
       setConversationQueueDeps({

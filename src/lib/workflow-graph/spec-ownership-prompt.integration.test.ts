@@ -237,7 +237,6 @@ describe("native SDD ownership prompt projection", () => {
         tasks,
         taskStates: execution.taskStates,
         validator,
-        validationSelections: EMPTY_VALIDATION_SELECTIONS,
       }),
     });
 

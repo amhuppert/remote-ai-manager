@@ -121,7 +121,6 @@ import { createLaneCommitter } from "./lane-committer";
 import { createJoinRunner } from "./join-runner";
 
 import {
-  resolveGraphValidatorTimeoutMs,
   createGraphWorkflowValidationRoundService,
   createGraphWorkflowScriptValidatorService,
 } from "./validation-services";
@@ -334,10 +333,6 @@ function createProductionGraphWorkflowRuntime(
           if (!session) throw new Error("Session not found");
           return session.worktreePath;
         },
-        async resolveTimeoutMs(validatorType) {
-          const config = await readConfig();
-          return resolveGraphValidatorTimeoutMs(config, validatorType);
-        },
         continuityService,
         executionRepository: executionRepository,
       });
@@ -359,11 +354,6 @@ function createProductionGraphWorkflowRuntime(
           const session = await defaultGetSession(projectPath, sessionName);
           if (!session) throw new Error("Session not found");
           return session.worktreePath;
-        },
-        async resolveTimeoutMs(backend) {
-          const config = await readConfig();
-          return resolveConfiguredAgentBackendDefaults(config, backend)
-            .timeoutMs;
         },
       });
 

@@ -37,7 +37,10 @@ import {
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { SeededValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+import { createMockBackendRuntime } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import type { ConversationBackendCreateInput } from "@/lib/agent-backends/conversation";
 import {
   createExecutionLogger,
   registerExecutionLogger,
@@ -63,6 +66,7 @@ const LANE_A = laneStateKey("context_validator", "reviewer-a");
 const LANE_B = laneStateKey("context_validator", "reviewer-b");
 
 let fixture: PersistenceFixture;
+const lifecycles: Awaited<ReturnType<typeof createLifecycleFixture>>[] = [];
 let db: Db;
 let repo: GraphWorkflowExecutionsRepo;
 let logDirRoot: string;
@@ -136,36 +140,91 @@ const executionRepository = {
   },
 };
 
-function passTurn(): TaskRunResult {
-  return {
-    kind: "text",
-    text: JSON.stringify({ summary: "All good", issues: [], advisories: [] }),
-    backendRef: null,
-    continuationDisposition: "retain",
-    usage: {
-      inputTokens: 10,
-      outputTokens: 5,
-      cachedInputTokens: 0,
-      costUsd: null,
-      contextTokens: null,
-      contextWindowMax: null,
-      durationMs: 1,
-    },
-  };
-}
-
 interface Harness {
   runRound(): Promise<void>;
   createdConversationIds: string[];
   dispatchedConversationIds: string[];
   laneConversationIdsAtDispatch: string[][];
+  liveRuntimes: Set<string>;
+  runtimeInputs: ConversationBackendCreateInput[];
+  streamedConversationIds: string[];
+  peakLiveRuntimes(): number;
 }
 
-function buildHarness(): Harness {
+async function buildHarness(): Promise<Harness> {
   let conversationCounter = 0;
   const createdConversationIds: string[] = [];
   const dispatchedConversationIds: string[] = [];
   const laneConversationIdsAtDispatch: string[][] = [];
+
+  const liveRuntimes = new Set<string>();
+  const runtimeInputs: ConversationBackendCreateInput[] = [];
+  const streamedConversationIds: string[] = [];
+  let peakLiveRuntimes = 0;
+  const waitingTurns: (() => void)[] = [];
+  const lifecycle = await createLifecycleFixture({
+    address: {
+      projectPath: PROJECT_PATH,
+      target: {
+        scope: "session",
+        projectName: "demo",
+        sessionName: SESSION_NAME,
+        conversationId: "fixture-anchor",
+      },
+    },
+    actorDeps: {
+      getConversationBackendFactory: () => ({
+        backend: "claude",
+        validateModelSelection() {},
+        async createRuntime(input) {
+          const id = input.conversationId;
+          runtimeInputs.push(input);
+          liveRuntimes.add(id);
+          peakLiveRuntimes = Math.max(peakLiveRuntimes, liveRuntimes.size);
+          return createMockBackendRuntime({
+            modelSelection: input.modelSelection,
+            fsWritePolicy: input.fsWritePolicy,
+            async sendTurn(turn) {
+              await turn.onEvent({ type: "input_accepted" });
+              const text = JSON.stringify({
+                summary: "All good",
+                issues: [],
+                advisories: [],
+              });
+              await turn.onEvent({
+                type: "content",
+                block: { type: "text", text },
+              });
+              expect(streamedConversationIds).toContain(id);
+              await new Promise<void>((resolve) => {
+                waitingTurns.push(resolve);
+                if (waitingTurns.length === 2) {
+                  for (const release of waitingTurns.splice(0)) release();
+                }
+              });
+              return {
+                backendRef: { backend: "claude", ref: `provider-${id}` },
+                costUsd: null,
+                durationMs: 1,
+                numTurns: 1,
+                contextTokens: 15,
+                contextWindowMax: 200000,
+                contentBlocks: [{ type: "text", text }],
+                compacted: false,
+                aborted: false,
+                failure: null,
+                continuationDisposition: "retain",
+              };
+            },
+            async close() {
+              liveRuntimes.delete(id);
+            },
+          });
+        },
+      }),
+    },
+  });
+  lifecycles.push(lifecycle);
 
   const continuityService = createGraphLaneContinuity({
     laneService: createLaneService({
@@ -178,16 +237,22 @@ function buildHarness(): Harness {
       now: () => NOW,
     }),
     executionRepository,
-    async createConversation() {
+    async createConversation(_projectPath, _sessionName, options) {
       const id = `conv-${++conversationCounter}`;
       createdConversationIds.push(id);
+      await lifecycle.persistence.seedConversation(
+        PROJECT_PATH,
+        SESSION_NAME,
+        makeConversationState({
+          id,
+          role: "validator",
+          agentBackend: "claude",
+          profileSnapshot: options.profileSnapshot,
+        }),
+      );
       return { id };
     },
-    async getConversation(_projectPath, _sessionName, id) {
-      return createdConversationIds.includes(id)
-        ? { id, promptCount: 0, backendRef: null }
-        : null;
-    },
+    getConversation: lifecycle.persistence.store.getConversation,
     now: () => NOW,
   });
 
@@ -196,12 +261,9 @@ function buildHarness(): Harness {
     async resolveWorktreePath() {
       return worktreeDir;
     },
-    async resolveTimeoutMs() {
-      return 60_000;
-    },
     continuityService,
     executionRepository,
-    async executeWorkflowTaskRun(input) {
+    async executeConversationTurn(input) {
       dispatchedConversationIds.push(
         input.binding.address.target.conversationId,
       );
@@ -212,8 +274,20 @@ function buildHarness(): Harness {
           .map((lane) => lane.workflowConversationId)
           .filter((id): id is string => id !== undefined),
       );
-      return passTurn();
+      return lifecycle.manager.executeConversationTurn({
+        ...input,
+        transport: {
+          streamId: input.binding.address.target.conversationId,
+          emit(event) {
+            if (event === "content")
+              streamedConversationIds.push(
+                input.binding.address.target.conversationId,
+              );
+          },
+        },
+      });
     },
+    stopConversationActor: lifecycle.manager.stopConversationActor,
     getProjectDisplayName: () => "demo",
     async computeValidationDiffScope() {
       return {
@@ -238,6 +312,10 @@ function buildHarness(): Harness {
     createdConversationIds,
     dispatchedConversationIds,
     laneConversationIdsAtDispatch,
+    liveRuntimes,
+    runtimeInputs,
+    streamedConversationIds,
+    peakLiveRuntimes: () => peakLiveRuntimes,
     async runRound() {
       const outcome = await validation.validateContextCompletion({
         projectPath: PROJECT_PATH,
@@ -266,7 +344,8 @@ beforeEach(() => {
   seedExecution();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const lifecycle of lifecycles.splice(0)) await lifecycle.close();
   unregisterExecutionLogger(EXECUTION_ID);
   rmSync(logDirRoot, { recursive: true, force: true });
   fixture.close();
@@ -275,7 +354,7 @@ afterEach(() => {
 
 describe("two assignments of one profile in one context (R8.1)", () => {
   it("keeps lane state, continuity, artifacts, and events distinct across two semantic rounds", async () => {
-    const harness = buildHarness();
+    const harness = await buildHarness();
 
     await harness.runRound();
 
@@ -308,6 +387,12 @@ describe("two assignments of one profile in one context (R8.1)", () => {
     expect(afterRound2[LANE_A]?.workflowConversationId).toBe(conversationA);
     expect(afterRound2[LANE_B]?.workflowConversationId).toBe(conversationB);
     expect(harness.createdConversationIds).toHaveLength(2);
+    expect(
+      harness.runtimeInputs.slice(2).map((input) => input.persistedRef),
+    ).toEqual([
+      { backend: "claude", ref: `provider-${conversationA}` },
+      { backend: "claude", ref: `provider-${conversationB}` },
+    ]);
     expect(harness.dispatchedConversationIds).toEqual([
       conversationA,
       conversationB,
@@ -365,8 +450,19 @@ describe("two assignments of one profile in one context (R8.1)", () => {
     ]);
   });
 
+  it("streams both concurrent validator lanes and closes every runtime after the cohort verdict", async () => {
+    const harness = await buildHarness();
+    await harness.runRound();
+
+    expect(harness.peakLiveRuntimes()).toBe(2);
+    expect(harness.streamedConversationIds).toEqual(
+      expect.arrayContaining(harness.createdConversationIds),
+    );
+    expect(harness.liveRuntimes.size).toBe(0);
+  });
+
   it("exposes both assignments' lane conversations to cancellation while a turn is in flight", async () => {
-    const harness = buildHarness();
+    const harness = await buildHarness();
     await harness.runRound();
 
     // The second dispatch happens with BOTH lanes bound, so an abort pass

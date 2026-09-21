@@ -1,493 +1,284 @@
-import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
-import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+/** The real validator, conversation actor, facade and provider adapters carry one write envelope. */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { z } from "zod";
 
-import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
-
-/**
- * R7.2 — the write envelope at the backend-neutral boundary and at the runner.
- *
- * Every hop between the validator runner and the backend task runner is
- * production code: the real `createValidatorRunner`, the real task-run actor
- * implementation, the real AgentCall facade, and the real Claude and Codex task
- * runners. Two observation points are recorded per run:
- *
- *  - the NEUTRAL boundary — the `AgentCallRequest` and the task-execution intent
- *    the actor hands the facade. This is where the write-capable implementer
- *    configuration lives (`sandboxMode: "danger-full-access"`,
- *    `writeCapability: "write_capable"`), so it is the only place its ABSENCE
- *    from a validator lane can be proven for both execution strategies.
- *  - the runner's `AgentTaskRequest`, proving the policy survives the facade's
- *    task resolution and dispatch rather than being dropped one hop short.
- *
- * The provider ports are substituted because no turn needs to reach a model;
- * OS-level enforcement of the delivered policy is proven separately against the
- * real installed runners.
- */
-import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
-
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-
-const claudeQueryMock = vi.hoisted(() => vi.fn());
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: claudeQueryMock,
-  // The Claude launch path refuses to start unless it can confirm no managed
-  // policy re-enables native auto-memory; an ordinary host's policy tier is
-  // silent on it.
-  resolveSettings: async () => ({ effective: {}, provenance: {}, sources: [] }),
+  query: vi.fn(),
+  resolveSettings: async () => ({
+    effective: {},
+    provenance: {},
+    sources: [],
+  }),
 }));
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
-/**
- * What the fake Codex thread does for the current test. `sandbox_unavailable`
- * is the provider reporting it could not start the sandbox — the failure an
- * envelope must never fall through, and the Codex counterpart of the Claude
- * `error_during_execution` case below.
- */
-const codexTurn = vi.hoisted(() => ({
-  behavior: "success" as "success" | "sandbox_unavailable",
-  sandboxUnavailableMessage:
-    "sandbox setup failed: seatbelt sandbox is unavailable on this host",
-}));
-
-/** Scripted Codex client, streamed like the real SDK. */
-function fakeCodexClient() {
-  const thread = {
-    id: "thread-1" as string | null,
-    // Streamed, like the real SDK: a sandbox that never came up reaches the
-    // adapter as a `turn.failed` event, not as a thrown error.
-    runStreamed: () =>
-      Promise.resolve({
-        events: (async function* () {
-          if (codexTurn.behavior === "sandbox_unavailable") {
-            yield {
-              type: "turn.failed",
-              error: { message: codexTurn.sandboxUnavailableMessage },
-            };
-            return;
-          }
-          yield {
-            type: "item.completed",
-            item: {
-              id: "item-1",
-              type: "agent_message",
-              text: JSON.stringify({
-                summary: "ok",
-                issues: [],
-                advisories: [],
-              }),
-            },
-          };
-          yield {
-            type: "turn.completed",
-            usage: {
-              input_tokens: 1,
-              cached_input_tokens: 0,
-              output_tokens: 1,
-            },
-          };
-        })(),
-      }),
-  };
-  return { startThread: () => thread, resumeThread: () => thread };
-}
-
+import type { ConversationBackendCreateInput } from "@/lib/agent-backends/conversation";
+import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
 import {
-  createScriptedClaudeTaskRunner,
-  createScriptedCodexTaskRunner,
-} from "@/lib/agent-backends/testing/scripted-task-runners";
-import type {
-  AgentTaskRequest,
-  AgentTaskRunner,
-} from "@/lib/agent-backends/task";
-import type { AgentBackendId } from "@/lib/shared/schemas";
-import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
-import { computeContentHash } from "@/lib/agent-profiles/hashing";
-import {
-  executeAgentCall,
-  type AgentCallFacadeDeps,
-} from "@/lib/workflows/primitives/agent-call-facade";
+  recordServerBaseUrl,
+  _resetServerBaseUrlForTesting,
+} from "@/lib/agent-gateway/server-url";
+import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
-
-import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { createTestGraphExecutionContract } from "./testing/execution-contract";
+import { createValidatorRunner } from "./validator-runner";
 import {
-  createValidatorRunner,
-  type ValidatorRunResult,
-} from "./validator-runner";
-import { createWorkflowExecution } from "./test-fixtures";
-import type { GraphWorkflowExecution } from "./schemas";
-import type {
-  GraphWorkflowAgentConfig,
-  SeededValidatorAssignment,
-} from "./config-schemas";
-import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import type { GraphWorkflowResolvedContext } from "./definition-schemas";
+  createWorkflowExecution,
+  makeSeededValidatorAssignment,
+} from "./test-fixtures";
 
-const PROJECT_PATH = "/repo-write-envelope";
-const SESSION_NAME = "envelope-session";
-const WORKTREE_PATH = "/private/volumes/repo/worktree";
-const LANE_SCRATCH_DIR = "/private/tmp/cc-lane-scratch/exec/ctx/reviewer";
-const LANE_TMP_DIR = `${LANE_SCRATCH_DIR}/tmp`;
-const TRUSTED_SERVER_URL = "http://127.0.0.1:3000";
-
-const EXPECTED_POLICY = {
-  mode: "allowlist" as const,
-  allowWrite: [LANE_SCRATCH_DIR, LANE_TMP_DIR],
-  denyWrite: [WORKTREE_PATH],
-};
-
+const PROJECT = "/repo-write-envelope";
+const SESSION = "envelope-session";
 const VERDICT_TEXT = JSON.stringify({
   summary: "ok",
   issues: [],
   advisories: [],
 });
-
-interface NeutralCall {
-  request: AgentCallRequest;
-  taskExecution: AgentCallFacadeDeps["taskExecution"];
-}
-
-let neutralCalls: NeutralCall[] = [];
-let runnerRequests: AgentTaskRequest[] = [];
-
-function claudeStream(): AsyncGenerator<unknown, void, unknown> {
-  return (async function* () {
-    yield {
-      type: "assistant",
-      message: { content: [{ type: "text", text: VERDICT_TEXT }] },
-    };
-    yield {
-      type: "result",
-      subtype: "success",
-      session_id: "session-envelope",
-      total_cost_usd: 0.01,
-      num_turns: 1,
-      duration_ms: 10,
-      usage: {
-        input_tokens: 10,
-        cache_read_input_tokens: 0,
-        output_tokens: 5,
-        cache_creation_input_tokens: 0,
-      },
-      structured_output: undefined,
-      errors: [],
-    };
-  })();
-}
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  neutralCalls = [];
-  runnerRequests = [];
-  codexTurn.behavior = "success";
-  claudeQueryMock.mockImplementation(() => claudeStream());
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+  _resetServerBaseUrlForTesting();
 });
 
-afterEach(() => {});
-
-function realTaskRunner(backend: AgentBackendId): AgentTaskRunner {
-  if (backend === "claude") {
-    return createScriptedClaudeTaskRunner({
-      getServerUrl: () => TRUSTED_SERVER_URL,
-      runQuery: (args) => claudeQueryMock(args) as AsyncIterable<never>,
-    });
-  }
-  return createScriptedCodexTaskRunner({
-    createCodex: () => fakeCodexClient() as never,
-  });
-}
-
-/** The real runner, with the request it is handed recorded first. */
-function recordingRunner(backend: AgentBackendId): AgentTaskRunner {
-  const runner = realTaskRunner(backend);
-  return {
-    backend: runner.backend,
-    run: (input) => {
-      runnerRequests.push(input);
-      return runner.run(input);
-    },
+async function runValidator(
+  backend: "claude" | "codex",
+  sandboxUnavailable = false,
+  unrestricted = false,
+) {
+  const root = mkdtempSync(path.join(tmpdir(), "cc-validator-envelope-"));
+  roots.push(root);
+  const worktreePath = path.join(root, "worktree");
+  const scratch = path.join(root, "scratch");
+  const temporary = path.join(scratch, "tmp");
+  mkdirSync(worktreePath, { recursive: true });
+  mkdirSync(temporary, { recursive: true });
+  const policy = {
+    mode: "allowlist" as const,
+    allowWrite: [scratch, temporary],
+    denyWrite: [worktreePath],
   };
-}
-
-/**
- * The production task-run path with the provider substituted and the neutral
- * boundary recorded. The machine's event fold is covered by the entrypoint's
- * own tests; this harness starts at the actor input so the facade, the task
- * resolution, and the runner are all the real ones.
- */
-function productionTaskRun(
-  backend: AgentBackendId,
-): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  const actorDependencies = createActorDependenciesFixture({
-    getTaskRunner: vi.fn(() => recordingRunner(backend)),
-    executeAgentCall: async (request, facadeDeps) => {
-      neutralCalls.push({
-        request,
-        taskExecution: facadeDeps.taskExecution,
-      });
-      return executeAgentCall(request, facadeDeps);
-    },
+  const provider = createScriptedConversationBackend({
+    backend,
+    responseText: VERDICT_TEXT,
+    sandboxUnavailable,
   });
-
-  return async (input) => {
-    const fixture = await createLifecycleFixture({
-      binding: input.binding,
-      conversation: { agentBackend: backend, backendRef: null },
-      actorDeps: actorDependencies,
-    });
-    try {
-      return await fixture.executeWorkflowTaskRun({
-        ...input,
-        binding: { ...input.binding, worktreePath: WORKTREE_PATH },
-        resumeRef: input.resumeRef ?? null,
-      });
-    } finally {
-      await fixture.close();
-    }
-  };
-}
-
-function seededValidator(
-  backend: AgentBackendId,
-): SeededValidatorAssignment {
-  if (backend === "cursor") {
-    throw new Error("Cursor has no task facet for validator lanes");
-  }
-  const modelSelection: BackendModelSelection =
-    backend === "claude"
-      ? {
-          modelId: "sonnet",
-          parameters: { effort: "medium" },
-        }
-      : {
-          modelId: "gpt-5.4",
-          parameters: { reasoning: "medium", fast: "false" },
-        };
-  const agent: GraphWorkflowAgentConfig = { backend, modelSelection };
-  return {
+  recordServerBaseUrl({ CC_SERVER_URL: "http://127.0.0.1:3000" });
+  const runtimeInputs: ConversationBackendCreateInput[] = [];
+  const neutralCalls: AgentCallRequest[] = [];
+  const validator = makeSeededValidatorAssignment({
     id: "reviewer",
-    profile: { tier: "builtin", id: "general-reviewer" },
-    profileSnapshot: buildAgentProfileSnapshot({
-      tier: "builtin",
-      id: "general-reviewer",
-      name: "General Reviewer",
-      revision: 1,
-      sourceContentHash: computeContentHash("Review carefully."),
-      instructions: "Review carefully.",
-    }),
     authority: "blocking",
-    agent,
-  };
-}
-
-function contextFor(
-  validator: SeededValidatorAssignment,
-  execution: GraphWorkflowExecution,
-): GraphWorkflowResolvedContext {
-  const context = execution.workingDefinition.executionContexts[0]!;
-  return {
-    ...context,
-    contextValidator: { enabled: true, assignments: [validator] },
-  };
-}
-
-async function runValidatorRaw(
-  backend: AgentBackendId,
-): Promise<ValidatorRunResult> {
-  const validator = seededValidator(backend);
-  const execution = createWorkflowExecution();
-  const context = contextFor(validator, execution);
-
-  const runner = createValidatorRunner({
-    executionContract: createTestGraphExecutionContract(),
-    resolveWorktreePath: async () => WORKTREE_PATH,
-    resolveTimeoutMs: async () => 30_000,
-    executeWorkflowTaskRun: productionTaskRun(backend),
-    computeValidationDiffScope: async () => ({
-      kind: "unavailable",
-      candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
-      reason: "test",
-    }),
-    readLaneConversation: async () => null,
-    composeLaneWriteEnvelope: () => ({
-      policy: EXPECTED_POLICY,
-      laneScratchDir: LANE_SCRATCH_DIR,
-      laneTmpDir: LANE_TMP_DIR,
-    }),
-    continuityService: {
-      resolveValidatorCall: async () => ({
-        execution,
-        sessionAction: "create",
-        backend,
-        conversationId: "lane-conversation-1",
-      }),
-      recordLaneTurnOutcome: async () => execution,
+    agent: {
+      backend,
+      modelSelection:
+        backend === "claude"
+          ? { modelId: "sonnet", parameters: { effort: "medium" } }
+          : {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
     },
   });
-
-  return runner.runContextValidator({
-    projectPath: PROJECT_PATH,
-    sessionName: SESSION_NAME,
-    execution,
-    context,
-    validator,
-  });
-}
-
-async function runValidator(backend: AgentBackendId): Promise<void> {
-  const result = await runValidatorRaw(backend);
-
-  // A run that never reached the runner would surface here as an infra error,
-  // which would make every assertion below vacuous.
-  expect(result.result.kind).toBe("pass");
-}
-
-function neutralRequest(): Extract<AgentCallRequest, { kind: "task_run" }> {
-  const call = neutralCalls[0];
-  expect(call).toBeDefined();
-  const request = call!.request;
-  expect(request.kind).toBe("task_run");
-  return request as Extract<AgentCallRequest, { kind: "task_run" }>;
-}
-
-describe.each(["claude", "codex"] as const)(
-  "validator write envelope — %s",
-  (backend) => {
-    it("carries the server-derived write policy to the neutral boundary and the runner", async () => {
-      await runValidator(backend);
-
-      expect(neutralRequest().fsWritePolicy).toEqual(EXPECTED_POLICY);
-      expect(runnerRequests).toHaveLength(1);
-      expect(runnerRequests[0]?.fsWritePolicy).toEqual(EXPECTED_POLICY);
-    });
-
-    it("never carries the write-capable implementer configuration", async () => {
-      await runValidator(backend);
-
-      expect(neutralCalls[0]?.taskExecution?.sandboxMode).not.toBe(
-        "danger-full-access",
-      );
-      expect(runnerRequests[0]?.sandboxMode).not.toBe("danger-full-access");
-      expect(neutralRequest().writeCapability).toBe("read_only");
-      // The implementer's write-capable tool set is its workflow task tooling
-      // (the `cctl workflow …` server that completes tasks and edits the run).
-      // A validator lane is handed none of it.
-      expect(neutralRequest().tooling).toBeUndefined();
-      expect(runnerRequests[0]?.tooling).toBeUndefined();
-    });
-
-    it("never lists the candidate worktree as writable", async () => {
-      await runValidator(backend);
-
-      const policy = runnerRequests[0]?.fsWritePolicy;
-      expect(policy?.allowWrite).not.toContain(WORKTREE_PATH);
-      expect(policy?.denyWrite).toContain(WORKTREE_PATH);
-    });
-  },
-);
-
-describe("implementer task runs", () => {
-  it("keep the write-capable configuration and carry no write policy", async () => {
-    // The same dispatch site serves both roles; the derivation must leave the
-    // unrestricted lane exactly as it was.
-    const dispatch = productionTaskRun("claude");
-
-    await dispatch({
-      executionClass: "governed-execution" as const,
-      binding: {
-        kind: "durable",
-        address: {
-          projectPath: PROJECT_PATH,
-          target: {
-            scope: "session",
-            projectName: "test-project",
-            sessionName: SESSION_NAME,
-            conversationId: "implementer-conversation",
-          },
+  const lifecycle = await createLifecycleFixture({
+    address: {
+      projectPath: PROJECT,
+      target: {
+        scope: "session",
+        projectName: "test-project",
+        sessionName: SESSION,
+        conversationId: "lane-conversation-1",
+      },
+    },
+    conversation: {
+      agentBackend: backend,
+      backendRef: null,
+      role: unrestricted ? "iteration" : "validator",
+      profileSnapshot: validator.profileSnapshot,
+    },
+    actorDeps: {
+      getProjectDisplayName: () => "test-project",
+      composePortableMcpForConversation: async () => ({ servers: [] }),
+      getConversationBackendFactory: () => ({
+        ...provider.factory,
+        async createRuntime(input) {
+          runtimeInputs.push(input);
+          return provider.factory.createRuntime(input);
         },
+      }),
+      async executeAgentCall(request, deps) {
+        neutralCalls.push(request);
+        return executeAgentCall(request, deps);
       },
-      kind: "task_run",
-      prompt: "implement the task",
-      modelSelection: {
-        modelId: "sonnet",
-        parameters: { effort: "medium" },
-      },
-      timeoutMs: 30_000,
-    });
-
-    expect(neutralCalls[0]?.taskExecution?.sandboxMode).toBe(
-      "danger-full-access",
-    );
-    expect(neutralRequest().writeCapability).toBe("write_capable");
-    expect(neutralRequest().fsWritePolicy).toBeUndefined();
-    expect(runnerRequests[0]?.fsWritePolicy).toBeUndefined();
-    expect(runnerRequests[0]?.sandboxMode).toBe("danger-full-access");
+    },
   });
-});
-
-/**
- * R7.1 — a lane that cannot establish enforcement fails CLOSED.
- *
- * The two ways establishment can fail are covered at the two layers that can
- * detect them: the adapter refuses a policy it cannot translate before it
- * reaches a provider, and a sandbox that the provider could not start comes
- * back as a failed turn. Both have to land on the cohort as an INFRASTRUCTURE
- * outcome — anything else spends a specialist's review budget on a lane that
- * never reviewed anything, and a lane that fell through to a verdict would have
- * reviewed unsandboxed.
- */
-/**
- * Each backend's way of saying "the sandbox did not come up". They differ in
- * shape — Claude reports a failed result message, Codex a failed turn — so the
- * parity has to be asserted per backend rather than assumed from one of them.
- */
-// Partial over the registered backends: only a backend whose adapter can
-// enforce a write allowlist is validator-eligible, so only those have a
-// sandbox to fail to start.
-const induceSandboxUnavailable: Partial<Record<AgentBackendId, () => void>> = {
-  claude: () =>
-    claudeQueryMock.mockImplementation(() =>
-      (async function* () {
-        yield {
-          type: "result",
-          subtype: "error_during_execution",
-          session_id: "session-sandbox-unavailable",
-          total_cost_usd: 0,
-          num_turns: 0,
-          duration_ms: 5,
-          usage: {
-            input_tokens: 0,
-            cache_read_input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: 0,
-          },
-          errors: ["sandbox dependencies are unavailable"],
-        };
-      })(),
-    ),
-  codex: () => {
-    codexTurn.behavior = "sandbox_unavailable";
-  },
-};
-
-describe.each(["claude", "codex"] as const)(
-  "fail-closed envelope establishment — %s",
-  (backend) => {
-    it("classifies a sandbox that could not start as an infrastructure outcome", async () => {
-      const induce = induceSandboxUnavailable[backend];
-      if (!induce) throw new Error(`no sandbox inducer for ${backend}`);
-      induce();
-
-      const result = await runValidatorRaw(backend);
-
-      expect(result.result.kind).toBe("infra_error");
-      // Never a verdict: an unsandboxed review is not a review this cohort
-      // is allowed to count.
-      expect(result.result.kind).not.toBe("pass");
-      expect(result.result.kind).not.toBe("fail");
+  try {
+    const execution = createWorkflowExecution();
+    const context = execution.workingDefinition.executionContexts[0];
+    if (!context) throw new Error("fixture context missing");
+    context.contextValidator = { enabled: true, assignments: [validator] };
+    const runner = createValidatorRunner({
+      executionContract: createTestGraphExecutionContract(),
+      resolveWorktreePath: async () => worktreePath,
+      getProjectDisplayName: () => "test-project",
+      executeConversationTurn: lifecycle.manager.executeConversationTurn,
+      stopConversationActor: lifecycle.manager.stopConversationActor,
+      computeValidationDiffScope: async () => ({
+        kind: "unavailable",
+        candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
+        reason: "test",
+      }),
+      readLaneConversation: async () => null,
+      readValidatorConversationTelemetry: async () => null,
+      composeLaneWriteEnvelope: () => ({
+        policy,
+        laneScratchDir: scratch,
+        laneTmpDir: temporary,
+      }),
+      continuityService: {
+        ensureValidatorConversation: async () => ({
+          execution,
+          sessionAction: "create",
+          backend,
+          conversationId: "lane-conversation-1",
+        }),
+      },
     });
-  },
-);
+    const result = unrestricted
+      ? await lifecycle.manager.executeConversationTurn({
+          binding: { ...lifecycle.binding, worktreePath },
+          turn: {
+            kind: "conversation_turn",
+            backend,
+            promptText: "implement the task",
+            modelSelection: validator.agent.modelSelection,
+            autonomous: true,
+          },
+          executionContext: {
+            workflowContext: {
+              executionId: execution.id,
+              contextId: context.id,
+            },
+          },
+        })
+      : await runner.runContextValidator({
+          projectPath: PROJECT,
+          sessionName: SESSION,
+          execution,
+          context,
+          validator,
+        });
+    return {
+      result,
+      neutralCalls,
+      runtimeInputs,
+      policy,
+      worktreePath,
+      claudeOptions: provider.claudeOptions,
+      codexThreadRequest: provider.codexThreadRequest,
+    };
+  } finally {
+    await lifecycle.close();
+    provider.close();
+  }
+}
 
-afterEach(() => resetTaskRuntime());
+function conversationRequest(calls: AgentCallRequest[]) {
+  const request = calls[0];
+  if (!request || request.kind !== "conversation_turn")
+    throw new Error("expected a conversation turn at the facade boundary");
+  return request;
+}
+
+for (const backend of ["claude", "codex"] as const) {
+  describe(`validator write envelope — ${backend}`, () => {
+    it("carries the server-derived write policy through the neutral boundary into the provider runtime", async () => {
+      const run = await runValidator(backend);
+      expect(run.result, JSON.stringify(run.result)).toMatchObject({
+        result: { kind: "pass" },
+      });
+      expect(conversationRequest(run.neutralCalls).fsWritePolicy).toEqual(
+        run.policy,
+      );
+      expect(run.runtimeInputs).toHaveLength(1);
+      expect(run.runtimeInputs[0]?.fsWritePolicy).toEqual(run.policy);
+      expect(run.runtimeInputs[0]?.executionClass).toBe("governed-execution");
+      if (backend === "claude") {
+        expect(run.claudeOptions?.sandbox?.filesystem?.allowWrite).toEqual(
+          run.policy.allowWrite,
+        );
+        expect(run.claudeOptions?.sandbox?.filesystem?.denyWrite).toEqual(
+          run.policy.denyWrite,
+        );
+        expect(run.claudeOptions?.sandbox?.failIfUnavailable).toBe(true);
+      } else {
+        const thread = run.codexThreadRequest;
+        expect(thread?.sandbox).toBe("workspace-write");
+        const config = z.record(z.string(), z.unknown()).parse(thread?.config);
+        expect(config.sandbox_workspace_write).toMatchObject({
+          writable_roots: run.policy.allowWrite,
+          exclude_slash_tmp: true,
+          exclude_tmpdir_env_var: true,
+        });
+      }
+    });
+
+    it("never carries the unrestricted implementer configuration or makes the candidate worktree writable", async () => {
+      const run = await runValidator(backend);
+      expect(run.result, JSON.stringify(run.result)).toMatchObject({
+        result: { kind: "pass" },
+      });
+      expect(conversationRequest(run.neutralCalls).writeCapability).toBe(
+        "read_only",
+      );
+      expect(run.runtimeInputs[0]?.fsWritePolicy?.allowWrite).not.toContain(
+        run.worktreePath,
+      );
+      expect(run.runtimeInputs[0]?.fsWritePolicy?.denyWrite).toContain(
+        run.worktreePath,
+      );
+      if (backend === "claude") {
+        expect(run.claudeOptions?.permissionMode).toBe("dontAsk");
+        expect(run.claudeOptions?.allowDangerouslySkipPermissions).not.toBe(
+          true,
+        );
+        expect(run.claudeOptions?.cwd).not.toBe(run.worktreePath);
+      } else {
+        const thread = run.codexThreadRequest;
+        expect(thread?.sandbox).not.toBe("danger-full-access");
+        expect(thread?.cwd).not.toBe(run.worktreePath);
+      }
+    });
+
+    it("classifies a sandbox that could not start as an infrastructure outcome", async () => {
+      const run = await runValidator(backend, true);
+      expect(run.result, JSON.stringify(run.result)).toMatchObject({
+        result: { kind: "infra_error" },
+      });
+      expect(run.runtimeInputs).toHaveLength(1);
+    });
+  });
+}
+
+it("keeps unrestricted implementer conversations write-capable without a write policy", async () => {
+  const run = await runValidator("claude", false, true);
+  expect(run.result, JSON.stringify(run.result)).toMatchObject({
+    kind: "settled",
+    turn: {
+      outcome: {
+        kind: "call_result",
+        result: { outcome: { kind: "completed" } },
+      },
+    },
+  });
+  expect(conversationRequest(run.neutralCalls).writeCapability).toBe(
+    "write_capable",
+  );
+  expect(run.runtimeInputs[0]?.fsWritePolicy).toBeUndefined();
+  expect(run.claudeOptions?.permissionMode).toBe("bypassPermissions");
+});

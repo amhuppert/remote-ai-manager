@@ -179,7 +179,7 @@ interface FakePortState {
  * forwarding.
  */
 export function createFakeClaudeSdkController(
-  config: { structuredOutput?: unknown } = {},
+  config: { structuredOutput?: unknown; responseText?: string } = {},
 ): FakeClaudeSdkController {
   let lastOptions: Options | null = null;
   let lastPromptText: string | undefined;
@@ -204,8 +204,9 @@ export function createFakeClaudeSdkController(
     };
 
     const completeTurn = (): void => {
-      emit(buildAssistantMessage(FAKE_CLAUDE_TURN_TEXT));
-      emit(buildResultSuccess(structuredOutput));
+      const text = config.responseText ?? FAKE_CLAUDE_TURN_TEXT;
+      emit(buildAssistantMessage(text));
+      emit({ ...buildResultSuccess(structuredOutput), result: text });
     };
 
     const handleUserMessage = (msg: SDKUserMessage): void => {

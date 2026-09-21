@@ -204,6 +204,13 @@ export interface TranscriptDependencies {
 }
 
 export interface TurnContextDependencies {
+  /** Governing role instructions resolved from the durable graph lane, if any. */
+  getWorkflowLaneInstructions(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): Promise<string | null>;
+
   // Active-charter governing injection for the per-turn prompt seam (R7).
   // Returns null when the session has no active charter. Gated by the actor to
   // attended normal sessions only (R12.1) before being called.

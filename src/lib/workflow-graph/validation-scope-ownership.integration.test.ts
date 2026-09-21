@@ -152,7 +152,6 @@ describe("scoped candidate identity and rendering over a shared lane worktree", 
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: async () => worktreePath,
-      resolveTimeoutMs: async () => 30_000,
       getProjectDisplayName: () => "repo",
     });
     const context = execution.workingDefinition.executionContexts.find(

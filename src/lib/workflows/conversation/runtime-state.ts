@@ -132,6 +132,9 @@ export interface ConversationRuntimeState {
   /** Callback to send intermediate events to the conversation machine. Registered by the manager before invoking actors. */
   sendToMachine?(event: ConversationEvent): void;
 
+  /** Live actor context; never inferred from backend text or durable-row timing. */
+  hasPendingQuestion?(): boolean;
+
   /** Per-conversation tooling overrides injected by callers (e.g., graph workflow execution tools). Applied to backend runtime on creation. */
   tooling?: ConversationToolingOverrides;
 

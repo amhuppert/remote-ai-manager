@@ -8,11 +8,7 @@ import {
   parseValidatorResponse,
   type ValidatorOutcome,
 } from "./validator-runner";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type {
-  TaskRunResult,
-  TaskRunUsage,
-} from "@/lib/workflows/conversation/turn-result";
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import type {
   AgentCallRequest,
   AgentCallResult,
@@ -36,16 +32,6 @@ const VALIDATOR_ENGINE = "claude" as const;
 // parseValidatorResponse, so the legacy harness uses the same set to keep the
 // two paths comparing the exact same parser inputs.
 const allowedTaskIds = ["task-plan-1", "task-plan-2"];
-
-const emptyTaskRunUsage: TaskRunUsage = {
-  costUsd: null,
-  durationMs: null,
-  contextTokens: null,
-  contextWindowMax: null,
-  inputTokens: null,
-  outputTokens: null,
-  cachedInputTokens: null,
-};
 
 const emptyAgentCallUsage = {};
 
@@ -229,17 +215,17 @@ function buildExecutionForNewPath(): {
 const stubWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-validator-wt-"));
 
 async function runNewValidatorPath(
-  taskRunResult: TaskRunResult,
+  agentResult: AgentCallResult,
 ): Promise<ValidatorOutcome> {
-  const executeWorkflowTaskRun = vi.fn(
-    async (_input: ExecuteWorkflowTaskRunInput) => taskRunResult,
+  const executeConversationTurn = vi.fn(async () =>
+    settledConversationTurn(agentResult),
   );
   const runner = createValidatorRunner({
     continuityService: makeStubValidatorContinuityService(),
     executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => stubWorktreeDir,
-    resolveTimeoutMs: async () => 300_000,
-    executeWorkflowTaskRun,
+    executeConversationTurn,
+    stopConversationActor: async () => {},
     getProjectDisplayName: () => "test-project",
   });
 
@@ -315,11 +301,11 @@ const fencedJsonText = (payload: unknown): string =>
 
 /**
  * The parity test guards the boundary contract between the migrated
- * `executeWorkflowTaskRun` dispatch path and the original `executeAgentCall`
+ * `executeConversationTurn` dispatch path and the original `executeAgentCall`
  * dispatch path. Each fixture defines a single model output and feeds it
  * through both paths — the legacy path stubs at the `executeAgentCall`
  * boundary and runs the original adapter inline, the new path stubs at the
- * `executeWorkflowTaskRun` boundary and runs through `createValidatorRunner`.
+ * `executeConversationTurn` boundary and runs through `createValidatorRunner`.
  * Both paths converge on `parseValidatorResponse` and the resulting
  * `ValidatorOutcome` is asserted deep-equal.
  *
@@ -327,19 +313,14 @@ const fencedJsonText = (payload: unknown): string =>
  * legacy boundary produced, this test fails before any production validator
  * turn surfaces the divergence.
  */
-describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun (new)", () => {
+describe("validator parity: executeAgentCall (legacy) vs executeConversationTurn (new)", () => {
   it("native SDK structured output produces identical pass outcomes on both paths", async () => {
     const legacy = await runLegacyValidatorPath(async () =>
       completedAgentCallResult(null, passPayload),
     );
-    const next = await runNewValidatorPath({
-      kind: "structured",
-      structuredOutput: passPayload,
-      text: "",
-      usage: emptyTaskRunUsage,
-      backendRef: null,
-      continuationDisposition: "retain",
-    });
+    const next = await runNewValidatorPath(
+      completedAgentCallResult(null, passPayload),
+    );
 
     expect(next).toEqual(legacy);
     expect(next.kind).toBe("pass");
@@ -355,13 +336,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
     const legacy = await runLegacyValidatorPath(async () =>
       completedAgentCallResult(rawJson),
     );
-    const next = await runNewValidatorPath({
-      kind: "text",
-      text: rawJson,
-      usage: emptyTaskRunUsage,
-      backendRef: null,
-      continuationDisposition: "retain",
-    });
+    const next = await runNewValidatorPath(completedAgentCallResult(rawJson));
 
     expect(next).toEqual(legacy);
     expect(next.kind).toBe("fail");
@@ -377,13 +352,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
     const legacy = await runLegacyValidatorPath(async () =>
       completedAgentCallResult(text),
     );
-    const next = await runNewValidatorPath({
-      kind: "text",
-      text,
-      usage: emptyTaskRunUsage,
-      backendRef: null,
-      continuationDisposition: "retain",
-    });
+    const next = await runNewValidatorPath(completedAgentCallResult(text));
 
     expect(next).toEqual(legacy);
     expect(next.kind).toBe("pass");
@@ -397,13 +366,7 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
     const legacy = await runLegacyValidatorPath(async () =>
       completedAgentCallResult(text),
     );
-    const next = await runNewValidatorPath({
-      kind: "text",
-      text,
-      usage: emptyTaskRunUsage,
-      backendRef: null,
-      continuationDisposition: "retain",
-    });
+    const next = await runNewValidatorPath(completedAgentCallResult(text));
 
     expect(next).toEqual(legacy);
     expect(next.kind).toBe("infra_error");
@@ -417,14 +380,9 @@ describe("validator parity: executeAgentCall (legacy) vs executeWorkflowTaskRun 
     const legacy = await runLegacyValidatorPath(async () =>
       completedAgentCallResult(null, mismatchPayload),
     );
-    const next = await runNewValidatorPath({
-      kind: "structured",
-      structuredOutput: mismatchPayload,
-      text: "",
-      usage: emptyTaskRunUsage,
-      backendRef: null,
-      continuationDisposition: "retain",
-    });
+    const next = await runNewValidatorPath(
+      completedAgentCallResult(null, mismatchPayload),
+    );
 
     expect(next).toEqual(legacy);
     expect(next.kind).toBe("infra_error");

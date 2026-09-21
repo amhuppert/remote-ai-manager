@@ -87,6 +87,8 @@ const defaultLogger = createLogger("workflows.primitives.agent-call.facade");
 
 export interface ConversationRuntimeResolution {
   onUserQuestion?: ConversationBackendTurnInput["onUserQuestion"];
+  /** Read the actor's current question fact after the work turn settles. */
+  hasPendingQuestion?(): boolean;
   runtime: ConversationBackendRuntime;
   capabilityView: BackendCapabilityView;
   signal: AbortSignal;
@@ -533,6 +535,10 @@ async function executeConversationTurn(
     effectiveRequest,
     dispatchDeps,
   );
+
+  // A question-ending turn is complete as work, but has no verdict to format.
+  // Its actor owns parking and resumption once the answer arrives.
+  if (resolution.hasPendingQuestion?.()) return dispatchResult;
 
   return applyStructuredOutputGate(
     effectiveRequest,

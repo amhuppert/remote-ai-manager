@@ -54,6 +54,8 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     notepadServiceFactoryMod,
     modelSelectionAdmissionMod,
     memoryServiceFactoryMod,
+    validatorInstructionsMod,
+    repoConfigMod,
   ] = await Promise.all([
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -78,6 +80,8 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     import("@/lib/notepads/service-factory"),
     import("@/lib/agent-backends/model-selection-admission"),
     import("@/lib/memory/service-factory"),
+    import("@/lib/workflow-graph/validator-runtime-instructions"),
+    import("@/lib/projects/repo-config"),
   ]);
 
   // The alignment service holds a repo bound to the live DB; construct it once
@@ -245,6 +249,12 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
       markQueuedUncertain: messageQueueMod.messageQueueService.markUncertain,
     },
     context: {
+      getWorkflowLaneInstructions:
+        validatorInstructionsMod.createValidatorRuntimeInstructionReader({
+          getActiveExecution: stateMod.getActiveGraphWorkflowExecution,
+          readValidationConfig: async (projectPath) =>
+            (await repoConfigMod.readRepoConfig(projectPath))?.validation,
+        }),
       getActiveAlignmentInjection: (projectPath: string, sessionName: string) =>
         alignmentService.getActiveInjection(projectPath, sessionName),
       getActiveAlignmentVersion: (projectPath: string, sessionName: string) =>

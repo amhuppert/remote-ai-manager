@@ -445,16 +445,51 @@ describe("resolveImplementerCall (codex)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveValidatorCall
+// ensureValidatorConversation
 // ---------------------------------------------------------------------------
 
-describe("resolveValidatorCall", () => {
+describe("ensureValidatorConversation", () => {
+  it.each([false, true])(
+    "leaves backend continuation admission to the actor with staleSession=%s",
+    async (staleSession) => {
+      const harness = makeHarness({
+        getConversation: vi.fn().mockResolvedValue({
+          id: "conv-val",
+          promptCount: 1,
+          backendRef: null,
+        }),
+      });
+      const execution = makeExecution({
+        laneStates: laneStatesByContext({
+          ...makeClaudeSessionState({
+            lane: "context_validator",
+            conversationId: "conv-val",
+          }),
+          staleSession,
+        }),
+      });
+      const resolved = await createGraphLaneContinuity(
+        harness.deps,
+      ).ensureValidatorConversation({
+        execution,
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+        lane: "context_validator",
+        assignmentId: "general",
+        backend: "claude",
+      });
+      expect(resolved.conversationId).toBe("conv-val");
+      expect(harness.deps.createConversation).not.toHaveBeenCalled();
+    },
+  );
+
   it("creates fresh claude validator session when none exists", async () => {
     const harness = makeHarness();
     const svc = createGraphLaneContinuity(harness.deps);
     const execution = makeExecution();
 
-    const result = await svc.resolveValidatorCall({
+    const result = await svc.ensureValidatorConversation({
       execution,
       projectPath: "/proj",
       sessionName: "sess",
@@ -490,7 +525,7 @@ describe("resolveValidatorCall", () => {
       laneStates: laneStatesByContext(existingLane),
     });
 
-    const result = await svc.resolveValidatorCall({
+    const result = await svc.ensureValidatorConversation({
       execution,
       projectPath: "/proj",
       sessionName: "sess",
@@ -513,7 +548,7 @@ describe("resolveValidatorCall", () => {
     const svc = createGraphLaneContinuity(harness.deps);
     const execution = makeExecution();
 
-    const result = await svc.resolveValidatorCall({
+    const result = await svc.ensureValidatorConversation({
       execution,
       projectPath: "/proj",
       sessionName: "sess",
@@ -553,7 +588,7 @@ describe("resolveValidatorCall", () => {
       contextId: "ctx-1",
     });
 
-    const valResult = await svc.resolveValidatorCall({
+    const valResult = await svc.ensureValidatorConversation({
       execution: implResult.execution,
       projectPath: "/proj",
       sessionName: "sess",
@@ -733,7 +768,7 @@ describe("recovery behaviors", () => {
       JSON.parse(JSON.stringify(execution)),
     );
 
-    const result = await svc.resolveValidatorCall({
+    const result = await svc.ensureValidatorConversation({
       execution: deserialized,
       projectPath: "/proj",
       sessionName: "sess",
@@ -912,7 +947,7 @@ describe("continuous lane failures", () => {
       ),
     });
     await expect(
-      createGraphLaneContinuity(harness.deps).resolveValidatorCall({
+      createGraphLaneContinuity(harness.deps).ensureValidatorConversation({
         execution,
         projectPath: "/proj",
         sessionName: "sess",
@@ -925,31 +960,27 @@ describe("continuous lane failures", () => {
     expect(harness.deps.createConversation).not.toHaveBeenCalled();
   });
 
-  it("preserves a cleared backend handle as unusable across restart", async () => {
+  it("preserves a cleared implementer backend handle as unusable across restart", async () => {
     const harness = makeHarness();
     const execution = makeExecution({
       laneStates: laneStatesByContext(
-        makeCodexSessionState({ lane: "context_validator" }),
+        makeCodexSessionState({ lane: "implementer" }),
       ),
     });
-    const recorded = await record(harness, execution, "context_validator", {
+    const recorded = await record(harness, execution, "implementer", {
       backend: "codex",
       continuationDisposition: "clear",
     });
     const restored = graphWorkflowExecutionSchema.parse(
       JSON.parse(JSON.stringify(recorded)),
     );
-    expect(
-      restored.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]?.staleSession,
-    ).toBe(true);
+    expect(restored.laneStates["ctx-1"]?.implementer?.staleSession).toBe(true);
     await expect(
-      createGraphLaneContinuity(harness.deps).resolveValidatorCall({
+      createGraphLaneContinuity(harness.deps).resolveImplementerCall({
         execution: restored,
         projectPath: "/proj",
         sessionName: "sess",
         contextId: "ctx-1",
-        lane: "context_validator",
-        assignmentId: "general",
         backend: "codex",
       }),
     ).rejects.toThrow(/cannot continue/i);

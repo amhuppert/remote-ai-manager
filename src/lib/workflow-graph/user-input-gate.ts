@@ -48,9 +48,8 @@ const logger = createLogger("workflow-graph.user-input-gate");
 
 /**
  * The two lane roles that can hold a real CC conversation and therefore ask.
- * Mirrors `GraphWorkflowLaneKind` — a lane whose `workflowConversationId` is set
- * (Claude implementer/validator, Codex implementer) qualifies; a Codex validator
- * lane never sets it and is denied by default.
+ * Mirrors `GraphWorkflowLaneKind`: every implementer and validator has a durable
+ * conversation, and the resolved context toggle controls its question access.
  */
 export type LaneRole = GraphWorkflowLaneKind;
 

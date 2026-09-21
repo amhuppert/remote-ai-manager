@@ -1,8 +1,4 @@
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
-import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
-
-import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
-
 /**
  * R10.2 — the adversarial prompt-authority suite, mechanical half.
  *
@@ -22,9 +18,9 @@ import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversati
  *
  * Every hop below the runner is production code: the real `createValidatorRunner`,
  * the real actor implementation, the real AgentCall facade with its real
- * structured-output gate, and the real Claude and Codex task runners. Only the
- * provider port is substituted, because that port is the assertion surface — a
- * test that stopped at `executeWorkflowTaskRun` would pass even if an adapter
+ * structured-output gate, and the real Claude and Codex conversation adapters.
+ * Only the provider port is substituted, because it is the assertion surface — a
+ * test that stopped at `executeConversationTurn` would pass even if an adapter
  * had demoted the role contract to user-prompt text.
  *
  * These runs start from a seeded snapshot built by the real
@@ -46,11 +42,8 @@ vi.mock("@/lib/shared/sdk-env", () => ({}));
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  createScriptedClaudeTaskRunner,
-  createScriptedCodexTaskRunner,
-} from "@/lib/agent-backends/testing/scripted-task-runners";
-import type { AgentTaskRunner } from "@/lib/agent-backends/task";
+import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
+import { createValidatorConversationHarness } from "./testing/validator-conversation-harness";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   AgentProfileInstructionCollisionError,
@@ -60,10 +53,7 @@ import {
 } from "@/lib/agent-profiles/composer";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import type { ResolvedAgentProfile } from "@/lib/agent-profiles/schemas";
-import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 
-import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import {
   assignmentProfileBlockOptions,
   VALIDATOR_MANDATE_HEADING,
@@ -96,7 +86,6 @@ import {
 
 const PROJECT_PATH = "/repo-prompt-authority";
 const SESSION_NAME = "prompt-authority-session";
-const TRUSTED_SERVER_URL = "http://127.0.0.1:3000";
 
 /** The context under review, and the criterion the harness owns. */
 const CONTEXT_ID = "context-plan";
@@ -130,119 +119,11 @@ const CONFORMING_VERDICT = JSON.stringify({
   advisories: [],
 });
 
-/** ---------------------------------------------------------------- provider */
+let provider: ReturnType<typeof createScriptedConversationBackend> | undefined;
 
-interface ProviderCapture {
-  /** Everything Claude's SDK `query` was called with. */
-  claudeCalls: Array<{ prompt?: unknown; options?: ClaudeOptionsCapture }>;
-  /** Every Codex client construction, with its config overrides. */
-  codexClientOptions: Array<{
-    config?: Record<string, unknown>;
-    workingDirectory?: string;
-  }>;
-  /** Every Codex thread construction. */
-  codexThreadOptions: unknown[];
-  /** Every Codex turn: the user-input prompt and the turn options. */
-  codexTurns: Array<{ prompt: unknown; options: unknown }>;
-}
-
-interface ClaudeOptionsCapture {
-  systemPrompt?: { type?: string; preset?: string; append?: string };
-  sandbox?: {
-    enabled?: boolean;
-    failIfUnavailable?: boolean;
-    allowUnsandboxedCommands?: boolean;
-    filesystem?: { allowWrite?: string[]; denyWrite?: string[] };
-  };
-  settingSources?: string[];
-  permissionMode?: string;
-  agents?: Record<string, { permissions?: Record<string, unknown> }>;
-}
-
-const capture: ProviderCapture = {
-  claudeCalls: [],
-  codexClientOptions: [],
-  codexThreadOptions: [],
-  codexTurns: [],
-};
-
-function resetCapture(): void {
-  capture.claudeCalls = [];
-  capture.codexClientOptions = [];
-  capture.codexThreadOptions = [];
-  capture.codexTurns = [];
-}
-
-/** The text every scripted provider turn returns, including repair turns. */
-let scriptedVerdictText = CONFORMING_VERDICT;
-
-function claudeStream(): AsyncGenerator<unknown, void, unknown> {
-  return (async function* () {
-    yield {
-      type: "assistant",
-      message: { content: [{ type: "text", text: scriptedVerdictText }] },
-    };
-    yield {
-      type: "result",
-      subtype: "success",
-      session_id: "session-prompt-authority",
-      total_cost_usd: 0.01,
-      num_turns: 1,
-      duration_ms: 10,
-      usage: {
-        input_tokens: 10,
-        cache_read_input_tokens: 0,
-        output_tokens: 5,
-        cache_creation_input_tokens: 0,
-      },
-      structured_output: undefined,
-      errors: [],
-    };
-  })();
-}
-
-function taskRunnerFor(backend: AgentBackendId): AgentTaskRunner {
-  if (backend === "claude") {
-    return createScriptedClaudeTaskRunner({
-      getServerUrl: () => TRUSTED_SERVER_URL,
-      runQuery: (args) => {
-        capture.claudeCalls.push(args as (typeof capture.claudeCalls)[number]);
-        return claudeStream() as AsyncIterable<never>;
-      },
-    });
-  }
-  return createScriptedCodexTaskRunner({
-    createCodex: (options) => {
-      capture.codexClientOptions.push(
-        options as (typeof capture.codexClientOptions)[number],
-      );
-      const thread = {
-        id: "thread-prompt-authority" as string | null,
-        run: (prompt: unknown, turnOptions: unknown) => {
-          capture.codexTurns.push({ prompt, options: turnOptions });
-          return Promise.resolve({
-            finalResponse: scriptedVerdictText,
-            usage: {
-              input_tokens: 1,
-              cached_input_tokens: 0,
-              output_tokens: 1,
-            },
-            items: [],
-          });
-        },
-      };
-      return {
-        startThread: (threadOptions: unknown) => {
-          capture.codexThreadOptions.push(threadOptions);
-          return thread;
-        },
-        resumeThread: (_ref: string, threadOptions: unknown) => {
-          capture.codexThreadOptions.push(threadOptions);
-          return thread;
-        },
-      } as never;
-    },
-  });
+function currentProvider() {
+  if (!provider) throw new Error("Provider fixture has not run");
+  return provider;
 }
 
 /** ------------------------------------------------------------- the harness */
@@ -311,36 +192,6 @@ function contextFor(
   };
 }
 
-/**
- * The production task-run path with only the provider substituted: the real
- * actor implementation (which runs the real AgentCall gate and the real task
- * runner) followed by the real result projection.
- */
-function productionTaskRun(
-  backend: AgentBackendId,
-): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  const actorDependencies = createActorDependenciesFixture({
-    getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
-  });
-
-  return async (input) => {
-    const fixture = await createLifecycleFixture({
-      binding: input.binding,
-      conversation: { agentBackend: backend, backendRef: null },
-      actorDeps: actorDependencies,
-    });
-    try {
-      return await fixture.executeWorkflowTaskRun({
-        ...input,
-        binding: { ...input.binding, worktreePath: WORKTREE_PATH },
-        resumeRef: input.resumeRef ?? null,
-      });
-    } finally {
-      await fixture.close();
-    }
-  };
-}
-
 interface RunOptions {
   backend: AgentBackendId;
   instructions: string;
@@ -352,8 +203,13 @@ interface RunOptions {
 }
 
 async function runValidator(options: RunOptions): Promise<ValidatorRunResult> {
-  resetCapture();
-  scriptedVerdictText = options.verdictText ?? CONFORMING_VERDICT;
+  provider?.close();
+  if (options.backend === "cursor")
+    throw new Error("This fixture covers Claude and Codex provider ports");
+  provider = createScriptedConversationBackend({
+    backend: options.backend,
+    responseText: options.verdictText ?? CONFORMING_VERDICT,
+  });
 
   const validator = seededValidator(
     options.backend,
@@ -370,8 +226,13 @@ async function runValidator(options: RunOptions): Promise<ValidatorRunResult> {
     continuityService: makeStubValidatorContinuityService(),
     executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => WORKTREE_PATH,
-    resolveTimeoutMs: async () => 30_000,
-    executeWorkflowTaskRun: productionTaskRun(options.backend),
+    ...createValidatorConversationHarness({
+      backendFactory: provider.factory,
+      execution,
+      context,
+      validator,
+      worktreePath: WORKTREE_PATH,
+    }),
     computeValidationDiffScope: async () => ({
       kind: "unavailable",
       candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
@@ -389,25 +250,13 @@ async function runValidator(options: RunOptions): Promise<ValidatorRunResult> {
   });
 }
 
-/** The privileged instruction payload the backend's SDK was actually handed. */
-function privilegedPayload(backend: AgentBackendId): string {
-  if (backend === "claude") {
-    const systemPrompt = capture.claudeCalls[0]?.options?.systemPrompt;
-    expect(systemPrompt).toMatchObject({
-      type: "preset",
-      preset: "claude_code",
-    });
-    return String(systemPrompt?.append ?? "");
-  }
-  const config = capture.codexClientOptions[0]?.config ?? {};
-  return String(config.developer_instructions ?? "");
+/** Captured at the provider's final instruction and user-input boundaries. */
+function privilegedPayload(): string {
+  return currentProvider().privilegedInstructions;
 }
 
-/** The user-input prompt the backend's SDK was actually handed. */
-function userPrompt(backend: AgentBackendId): string {
-  return backend === "claude"
-    ? String(capture.claudeCalls[0]?.prompt ?? "")
-    : JSON.stringify(capture.codexTurns[0]?.prompt ?? "");
+function userPrompt(): string {
+  return currentProvider().userPrompt;
 }
 
 function occurrences(haystack: string, needle: string): number {
@@ -416,11 +265,12 @@ function occurrences(haystack: string, needle: string): number {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resetCapture();
-  scriptedVerdictText = CONFORMING_VERDICT;
 });
 
-afterEach(() => {});
+afterEach(() => {
+  provider?.close();
+  provider = undefined;
+});
 
 describe.each(["claude", "codex"] as const)(
   "validator prompt authority under adversarial input — %s (R10.2)",
@@ -444,7 +294,7 @@ describe.each(["claude", "codex"] as const)(
           kind: "pass",
         });
 
-        const payload = privilegedPayload(backend);
+        const payload = privilegedPayload();
         const contractAt = payload.indexOf(WORKFLOW_ROLE_CONTRACT_HEADING);
         const beginAt = payload.indexOf(PROFILE_BLOCK_BEGIN);
         const marker = payload.indexOf(ADVERSARY_MARKER);
@@ -486,13 +336,13 @@ describe.each(["claude", "codex"] as const)(
             : payload.slice(payload.indexOf(PROFILE_BLOCK_BEGIN));
 
         await runAdversary();
-        const hostileRegion = untouchedRegion(privilegedPayload(backend));
+        const hostileRegion = untouchedRegion(privilegedPayload());
 
         await runValidator({
           backend,
           instructions: BENIGN_PROFILE_INSTRUCTIONS,
         });
-        const benignRegion = untouchedRegion(privilegedPayload(backend));
+        const benignRegion = untouchedRegion(privilegedPayload());
 
         expect(hostileRegion).toBe(benignRegion);
       });
@@ -504,7 +354,7 @@ describe.each(["claude", "codex"] as const)(
         // the user prompt. The demands cannot reach that prompt at all, so
         // "ignore the acceptance criteria" has nothing to edit: it can only
         // ask, from inside a block the frame above it has already subordinated.
-        const prompt = userPrompt(backend);
+        const prompt = userPrompt();
         expect(prompt).toContain(ACCEPTANCE_CRITERIA);
         expect(prompt).not.toContain(ADVERSARY_MARKER);
         expect(prompt).not.toContain(WORKFLOW_ROLE_CONTRACT_HEADING);
@@ -514,7 +364,7 @@ describe.each(["claude", "codex"] as const)(
         await runAdversary();
 
         if (backend === "claude") {
-          const options = capture.claudeCalls[0]?.options;
+          const options = currentProvider().claudeOptions;
           expect(options?.sandbox?.enabled).toBe(true);
           expect(options?.sandbox?.failIfUnavailable).toBe(true);
           expect(options?.sandbox?.allowUnsandboxedCommands).toBe(false);
@@ -531,7 +381,7 @@ describe.each(["claude", "codex"] as const)(
           return;
         }
 
-        const config = capture.codexClientOptions[0]?.config ?? {};
+        const config = currentProvider().codexConfig;
         const workspaceWrite = config.sandbox_workspace_write as
           | { writable_roots?: string[] }
           | undefined;
@@ -541,7 +391,7 @@ describe.each(["claude", "codex"] as const)(
         );
         // workspace-write makes the CWD writable by construction, so the run
         // must not be sitting in the candidate.
-        expect(capture.codexClientOptions[0]?.workingDirectory).not.toBe(
+        expect(currentProvider().codexThreadRequest?.cwd).not.toBe(
           WORKTREE_PATH,
         );
       });
@@ -661,7 +511,7 @@ describe.each(["claude", "codex"] as const)(
         }),
       });
 
-      const payload = privilegedPayload(backend);
+      const payload = privilegedPayload();
       const marker = payload.indexOf(ADVERSARY_MARKER);
 
       expect(marker).toBeGreaterThan(payload.indexOf(PROFILE_BLOCK_BEGIN));
@@ -679,7 +529,7 @@ describe.each(["claude", "codex"] as const)(
         focus: `${MANDATE_A}\n${DEMANDS}`,
       });
 
-      const payload = privilegedPayload(backend);
+      const payload = privilegedPayload();
       expect(payload.indexOf(MANDATE_A)).toBeGreaterThan(
         payload.indexOf(VALIDATOR_MANDATE_HEADING),
       );
@@ -690,7 +540,7 @@ describe.each(["claude", "codex"] as const)(
       // The mandate is per-seat and the turn prompt is shared, so the mandate
       // has no route into it — which is what keeps the divergence confined to
       // one channel.
-      const prompt = userPrompt(backend);
+      const prompt = userPrompt();
       expect(prompt).not.toContain(MANDATE_A);
       expect(prompt).not.toContain(ADVERSARY_MARKER);
 
@@ -714,8 +564,8 @@ describe.each(["claude", "codex"] as const)(
         focus: MANDATE_A,
       });
       const first = {
-        payload: privilegedPayload(backend),
-        evidence: sharedEvidence(userPrompt(backend)),
+        payload: privilegedPayload(),
+        evidence: sharedEvidence(userPrompt()),
       };
 
       await runValidator({
@@ -724,8 +574,8 @@ describe.each(["claude", "codex"] as const)(
         focus: MANDATE_B,
       });
       const second = {
-        payload: privilegedPayload(backend),
-        evidence: sharedEvidence(userPrompt(backend)),
+        payload: privilegedPayload(),
+        evidence: sharedEvidence(userPrompt()),
       };
 
       // Two seats of one round: what they were shown of the candidate — the
@@ -773,5 +623,3 @@ describe("prompt-authority containment refusals (R10.2)", () => {
     expect(DEMANDS).toContain(JSON.stringify(ADVERSARY_REPLACEMENT_VERDICT)); // verdict-schema replacement
   });
 });
-
-afterEach(() => resetTaskRuntime());

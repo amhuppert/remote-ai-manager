@@ -6,7 +6,6 @@ import {
   makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
 import { buildContextValidationPrompt } from "@/lib/workflow-graph/validator-runner";
-import type { ValidationPromptSelections } from "@/lib/workflow-graph/validation-prompt-section";
 
 import type { SpecExecutionBindingReader } from "./execution-binding";
 import {
@@ -33,12 +32,6 @@ import type { SpecRevisionSnapshot } from "./schemas";
 
 const NOW = "2026-08-15T12:00:00.000Z";
 const WORKFLOW_EXECUTION_ID = "workflow-execution-parity";
-const EMPTY_VALIDATION_SELECTIONS = {
-  registry: "none",
-  enabled: { kind: "commands", commands: [] },
-  disabled: [],
-  scriptGate: { kind: "off" },
-} satisfies ValidationPromptSelections;
 
 function pinnedRevision(): SpecRevisionSnapshot {
   return {
@@ -178,7 +171,6 @@ async function specBoundValidatorPrompt(
       ),
       taskStates: execution.taskStates,
       validator,
-      validationSelections: EMPTY_VALIDATION_SELECTIONS,
     }),
   });
 }

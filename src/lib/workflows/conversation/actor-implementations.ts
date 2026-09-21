@@ -255,6 +255,8 @@ function admissionFailure(error: BackendAdmissionError): PromptActorResult {
 
 interface DispatchTurnViaAgentCallInput {
   onUserQuestion?: ConversationBackendTurnInput["onUserQuestion"];
+  hasPendingQuestion?: ConversationRuntimeResolution["hasPendingQuestion"];
+  writeCapability: AgentCallRequest["writeCapability"];
   executionClass: ExecutionClass;
   executeAgentCall: ConversationActorDependencies["execution"]["executeAgentCall"];
   getRuntime: () => ConversationBackendRuntime;
@@ -325,7 +327,7 @@ async function dispatchTurnViaAgentCall(
     executionClass: input.executionClass,
     prompt: input.promptText,
     backend: input.backend,
-    writeCapability: "write_capable",
+    writeCapability: input.writeCapability,
     ...(input.outputFormat?.type === "json_schema"
       ? { outputSchema: input.outputFormat.schema }
       : {}),
@@ -338,6 +340,7 @@ async function dispatchTurnViaAgentCall(
     resolveConversationRuntime: () => {
       const resolution: ConversationRuntimeResolution = {
         onUserQuestion: input.onUserQuestion,
+        hasPendingQuestion: input.hasPendingQuestion,
         runtime: wrappedRuntime,
         capabilityView: capabilityViewForBackend(input.backend),
         signal: input.signal,
@@ -1532,6 +1535,9 @@ async function executePromptForMachine(
     // normalizes every failure through the backend's failure classifier, so
     // the actor consumes only the widened `AgentCallResult`.
     agentCallResult = await dispatchTurnViaAgentCall({
+      hasPendingQuestion: runtimeState.hasPendingQuestion,
+      writeCapability:
+        input.role === "validator" ? "read_only" : "write_capable",
       onUserQuestion:
         (input.turn.askUserQuestionsEnabled ?? !input.turn.autonomous)
           ? async (questions, signal) => {
@@ -2095,8 +2101,7 @@ async function runTaskRunTurnForMachine(
       ...(input.persistence === "durable" &&
       input.target.scope === "session" &&
       input.turn.executionProfile !== "isolated-one-shot" &&
-      (input.role === "validator" ||
-        input.turn.executionClass === "governed-execution")
+      input.turn.executionClass === "governed-execution"
         ? {
             ccSessionScope: {
               project: input.target.projectName,

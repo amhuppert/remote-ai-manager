@@ -8,32 +8,26 @@ import {
   WHOLE_TREE_CANDIDATE_SCOPE,
   type CandidateScope,
 } from "@/lib/git/diff";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
-  buildContextValidationPrompt as buildContextValidationPromptWithValidation,
+  buildContextValidationPrompt,
   createValidatorRunner,
   parseValidatorResponse,
-  resolveValidatorAskUserQuestionsEnabled,
-  type BuildContextValidationPromptInput,
   type ValidatorOutcome,
   buildValidatorOutputSchema,
 } from "./validator-runner";
-import {
-  createExecutionLogger,
-  registerExecutionLogger,
-  unregisterExecutionLogger,
-} from "./execution-logger";
 import type { ValidationDiffScope } from "./validation-diff-scope";
 import {
   formatQuestionAnswersBlock,
   splitQuestionAnswersBlock,
 } from "@/lib/conversations/question-answers-block";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -69,42 +63,6 @@ import {
   createTestFakeBackend,
   TESTFAKE_BACKEND_ID,
 } from "@/lib/agent-backends/testing/testfake-backend";
-import type { ValidationPromptSelections } from "./validation-prompt-section";
-
-const EMPTY_VALIDATION_SELECTIONS = {
-  registry: "none",
-  enabled: { kind: "commands", commands: [] },
-  disabled: [],
-  scriptGate: { kind: "off" },
-} satisfies ValidationPromptSelections;
-
-type TestBuildContextValidationPromptInput = Omit<
-  BuildContextValidationPromptInput,
-  "validationSelections"
-> & {
-  validationSelections?: ValidationPromptSelections;
-};
-
-function buildContextValidationPrompt(
-  input: TestBuildContextValidationPromptInput,
-): string {
-  return buildContextValidationPromptWithValidation({
-    ...input,
-    validationSelections:
-      input.validationSelections ?? EMPTY_VALIDATION_SELECTIONS,
-  });
-}
-
-const emptyUsage = {
-  costUsd: null,
-  durationMs: null,
-  contextTokens: null,
-  contextWindowMax: null,
-  inputTokens: null,
-  outputTokens: null,
-  cachedInputTokens: null,
-};
-
 interface TaskRunResultOverrides {
   backendRef?: AgentSessionRef | null;
   continuationDisposition?: "retain" | "clear";
@@ -113,14 +71,12 @@ interface TaskRunResultOverrides {
 function textTaskRun(
   text: string,
   overrides: TaskRunResultOverrides = {},
-): TaskRunResult {
-  return {
-    kind: "text",
-    text,
-    usage: emptyUsage,
+): ConversationTurnExecution {
+  return settledConversationTurn({
+    outcome: { kind: "completed", text },
     backendRef: overrides.backendRef ?? null,
     continuationDisposition: overrides.continuationDisposition ?? "retain",
-  };
+  });
 }
 
 /**
@@ -136,15 +92,19 @@ function verdictJson(summary: string): string {
 function errorTaskRun(
   error: string,
   overrides: TaskRunResultOverrides = {},
-): TaskRunResult {
-  return {
-    kind: "error",
-    error,
-    aborted: false,
-    usage: emptyUsage,
+): ConversationTurnExecution {
+  return settledConversationTurn({
+    outcome: {
+      kind: "failed",
+      error: {
+        backend: "claude",
+        failureKind: "backend_error",
+        message: error,
+      },
+    },
     backendRef: overrides.backendRef ?? null,
     continuationDisposition: overrides.continuationDisposition ?? "retain",
-  };
+  });
 }
 
 // A real directory, not a name: the runner composes its lane write envelope
@@ -157,7 +117,7 @@ const stubWorktreePath = async () => stubWorktreeDir;
 const sessionWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-session-wt-"));
 /** A lane worktree supplied as an `executionTarget` override. */
 const laneWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-lane-wt-"));
-const stubTimeoutMs = async () => 300_000;
+
 const stubProjectDisplayName = () => "test-project";
 
 const validatorConfig: ValidatorAssignment = {
@@ -865,12 +825,6 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).toContain("issue IDs");
   });
 
-  it("requires resolved validation selections", () => {
-    expectTypeOf<
-      BuildContextValidationPromptInput["validationSelections"]
-    >().toEqualTypeOf<ValidationPromptSelections>();
-  });
-
   it("includes the exact acceptance criteria and ordered task summaries", () => {
     const prompt = buildContextValidationPrompt({
       context,
@@ -1049,95 +1003,6 @@ describe("buildContextValidationPrompt", () => {
     expect(lowered).not.toContain("literal");
   });
 
-  it("instructs the validator to skip deterministic checks (tests, types, lint, build)", () => {
-    const prompt = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-    });
-
-    const lowered = prompt.toLowerCase();
-    expect(lowered).toMatch(/do not|don't|must not/);
-    expect(lowered).toContain("tests");
-    expect(lowered).toMatch(/type (errors|checks|checking)/);
-    expect(lowered).toMatch(/lint|build|compile/);
-  });
-
-  it("names the actual script-gate selection when selections are provided", () => {
-    const prompt = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: validatorConfig,
-      validationSelections: {
-        registry: "loaded",
-        enabled: { kind: "commands", commands: [{ name: "test", cost: 4 }] },
-        disabled: ["typecheck", "format"],
-        scriptGate: { kind: "commands", commands: ["typecheck", "test"] },
-      },
-    });
-
-    expect(prompt).toContain(
-      "The script gate for this context runs `typecheck`, `test` separately",
-    );
-    expect(prompt).not.toContain("pre-merge validation script");
-    // The generated section lists the validator's own effective commands.
-    expect(prompt).toContain("## Validation Commands");
-    expect(prompt).toContain("Enabled for you in this context: test (cost 4).");
-    expect(prompt).toContain(
-      "Disabled for you in this context: typecheck, format.",
-    );
-    expect(prompt).toContain(
-      "If a run is refused for capacity, continue other work and retry later, or re-run with `--queue-if-busy` to join the FIFO queue.",
-    );
-  });
-
-  it("attributes an absent script gate to workflow policy", () => {
-    const prompt = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: validatorConfig,
-      validationSelections: {
-        registry: "none",
-        enabled: { kind: "commands", commands: [] },
-        disabled: [],
-        scriptGate: { kind: "off" },
-      },
-    });
-
-    expect(prompt).toContain("## Validation Commands");
-    expect(prompt).toContain(
-      "No validation commands are enabled for you in this context.",
-    );
-    expect(prompt).toContain(
-      "No validation commands are disabled by policy in this context.",
-    );
-    expect(prompt).toContain("No script gate is selected for this context.");
-    expect(prompt).toContain("workflow policy disables it");
-    expect(prompt).not.toContain("pre-merge validation script");
-  });
-
-  it("uses selection-aware guidance for an explicit empty policy", () => {
-    const prompt = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: validatorConfig,
-      validationSelections: {
-        registry: "none",
-        enabled: { kind: "commands", commands: [] },
-        disabled: [],
-        scriptGate: { kind: "off" },
-      },
-    });
-
-    expect(prompt).toContain("## Validation Commands");
-    expect(prompt).toContain("workflow policy disables it");
-    expect(prompt).not.toContain("pre-merge validation script");
-  });
-
   it("instructs the validator to respect context scope boundaries with downstream contexts", () => {
     const prompt = buildContextValidationPrompt({
       context,
@@ -1196,8 +1061,8 @@ describe("buildContextValidationPrompt", () => {
     const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
     expect(guidance.toLowerCase()).toContain("invariant");
     expect(guidance).toContain("cite the invariant id");
-    // The digest above the guidance carries the declared invariant itself.
-    expect(prompt).toContain("server-side-enforcement");
+    // The actor carries the scoped charter in its governing instructions.
+    expect(prompt).not.toContain("# Workflow Charter");
   });
 
   it("tells the validator a process-shaped invariant is satisfied by its outcome, never by proof of process", () => {
@@ -1224,65 +1089,6 @@ describe("buildContextValidationPrompt", () => {
     );
   });
 
-  it("renders no amendment log or access-policy text in the charter section", () => {
-    // The prompt diet (change 3): the validator reads the current rules from
-    // its prompt; amendment history and access bookkeeping live only in
-    // charter.md and the durable record.
-    const prompt = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-      charter,
-    });
-
-    expect(prompt).not.toContain("Amendment log");
-    expect(prompt).not.toContain("Access:");
-    expect(prompt).not.toContain("permission-gated");
-  });
-
-  it("renders only global sources plus sources scoped to the validated context", () => {
-    const scopedCharter: WorkflowCharter = {
-      ...charter,
-      sourcesOfTruth: [
-        ...charter.sourcesOfTruth,
-        {
-          rank: 3,
-          id: "verify-notes",
-          label: "Verification Notes",
-          type: "document",
-          locator: "docs/verify-notes.md",
-          description: "Notes that only concern the verification context.",
-          appliesTo: { contextIds: ["context-verify"] },
-        },
-      ],
-    };
-
-    const outOfScope = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-      charter: scopedCharter,
-    });
-    const inScope = buildContextValidationPrompt({
-      context,
-      charterContextId: "context-verify",
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-      charter: scopedCharter,
-    });
-
-    // The validated context is `context-implement`; the rank-3 source is scoped
-    // to `context-verify`, so it renders only when that id is the rendering
-    // context (charterContextId overrides context.id for loop instances).
-    expect(outOfScope).not.toContain("Verification Notes");
-    expect(inScope).toContain("Verification Notes");
-    expect(outOfScope).toContain("Published API Contract");
-    expect(inScope).toContain("Published API Contract");
-  });
-
   it("omits the invariant-check instruction when the charter declares no invariants", () => {
     const withoutInvariants = buildContextValidationPrompt({
       context,
@@ -1302,26 +1108,6 @@ describe("buildContextValidationPrompt", () => {
       const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
       expect(guidance.toLowerCase()).not.toContain("invariant");
     }
-  });
-
-  it("begins with the charter digest and a pointer to charter.md when a charter is supplied", () => {
-    const prompt = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-      charter,
-    });
-
-    expect(prompt.startsWith("# Workflow Charter")).toBe(true);
-    expect(prompt).toContain(
-      "Ship the widget that adheres to the published API contract.",
-    );
-    expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
-    // The charter digest must precede the validation header.
-    expect(prompt.indexOf("# Workflow Charter")).toBeLessThan(
-      prompt.indexOf("# Context Validation"),
-    );
   });
 
   it("begins with the context validation header when no charter is supplied", () => {
@@ -1396,111 +1182,63 @@ describe("buildContextValidationPrompt", () => {
     expect(splitQuestionAnswersBlock(prompt)).toBeNull();
     expect(prompt).not.toContain("## Your Question Was Answered");
   });
-
-  it("adds the ask-protocol reminder when askUserQuestionsEnabled is true", () => {
-    const prompt = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-      askUserQuestionsEnabled: true,
-    });
-
-    expect(prompt).toContain("## Asking the User");
-    expect(prompt).toContain("cctl ask");
-    expect(prompt).toMatch(/end your turn/i);
-    expect(prompt).toMatch(/pause/i);
-    expect(prompt).toMatch(/best judgment/i);
-  });
-
-  it("omits the ask-protocol reminder when askUserQuestionsEnabled is false or undefined", () => {
-    const disabled = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-      askUserQuestionsEnabled: false,
-    });
-    const unset = buildContextValidationPrompt({
-      context,
-      tasks,
-      taskStates,
-      validator: seedAssignment(validatorConfig),
-    });
-
-    expect(disabled).not.toContain("## Asking the User");
-    expect(unset).not.toContain("## Asking the User");
-  });
 });
 
-describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)", () => {
-  const claudeValidator: ValidatorAssignment = {
-    id: "general",
-    profile: { tier: "builtin", id: "general-reviewer" },
-    authority: "blocking",
-    agent: {
-      backend: "claude",
-      modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+describe("validator question availability", () => {
+  it.each(
+    (["claude", "codex", "cursor"] as const).flatMap((backend) =>
+      [true, false].map((enabled) => ({ backend, enabled })),
+    ),
+  )(
+    "sets cctl questions to $enabled for the $backend conversation from context policy",
+    async ({ backend, enabled }) => {
+      const assignment = seedAssignment({
+        ...validatorConfig,
+        agent: { ...validatorConfig.agent, backend },
+      });
+      const execution = buildExecutionWithContextValidation(assignment);
+      const context = execution.workingDefinition.executionContexts.find(
+        (context) => context.id === "context-plan",
+      );
+      if (!context) throw new Error("Missing context fixture");
+      context.askUserQuestions.enabled = enabled;
+      const executeConversationTurn = vi.fn(
+        async (_input: ConversationTurnSubmission) =>
+          textTaskRun(verdictJson("Verified")),
+      );
+      const runner = createValidatorRunner({
+        executionContract: createTestGraphExecutionContract(),
+        continuityService: makeStubValidatorContinuityService(),
+        resolveWorktreePath: stubWorktreePath,
+        executeConversationTurn,
+        stopConversationActor: async () => {},
+        getProjectDisplayName: stubProjectDisplayName,
+      });
+      await runner.runContextValidator({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        execution,
+        context,
+        validator: assignment,
+      });
+      const turn = executeConversationTurn.mock.calls[0]?.[0].turn;
+      if (!turn || turn.kind === "task_run")
+        throw new Error("Expected conversation turn");
+      expect(turn.askUserQuestionsEnabled).toBe(enabled);
     },
-  };
-  const codexValidator: ValidatorAssignment = {
-    id: "general",
-    profile: { tier: "builtin", id: "general-reviewer" },
-    authority: "blocking",
-    agent: {
-      backend: "codex",
-      modelSelection: {
-        modelId: "gpt-5.4",
-        parameters: { reasoning: "medium", fast: "false" },
-      },
-    },
-  };
+  );
 
-  it("is true only for a claude validator when the toggle is enabled", () => {
-    const enabledContext: GraphWorkflowResolvedContext = {
-      ...context,
-      askUserQuestions: { enabled: true },
-    };
-    expect(
-      resolveValidatorAskUserQuestionsEnabled(claudeValidator, enabledContext),
-    ).toBe(true);
-  });
-
-  it("is false for a codex validator even when the toggle is enabled (suppressed)", () => {
-    const enabledContext: GraphWorkflowResolvedContext = {
-      ...context,
-      askUserQuestions: { enabled: true },
-    };
-    expect(
-      resolveValidatorAskUserQuestionsEnabled(codexValidator, enabledContext),
-    ).toBe(false);
-  });
-
-  it("is false for a claude validator when the toggle is disabled", () => {
-    expect(
-      resolveValidatorAskUserQuestionsEnabled(claudeValidator, context),
-    ).toBe(false);
-  });
-
-  it("a codex-validator prompt built with the derived flag carries no reminder", () => {
-    const enabledContext: GraphWorkflowResolvedContext = {
-      ...context,
-      askUserQuestions: { enabled: true },
-    };
-    const derived = resolveValidatorAskUserQuestionsEnabled(
-      codexValidator,
-      enabledContext,
-    );
+  it("leaves governing instruction sections to the actor", () => {
     const prompt = buildContextValidationPrompt({
-      context: enabledContext,
+      context,
       tasks,
       taskStates,
-      validator: seedAssignment(codexValidator),
-      askUserQuestionsEnabled: derived,
+      validator: seedAssignment(validatorConfig),
+      charter,
     });
-
-    expect(derived).toBe(false);
     expect(prompt).not.toContain("## Asking the User");
+    expect(prompt).not.toContain("# Workflow Charter");
+    expect(prompt).not.toContain("## Validation Commands");
   });
 });
 
@@ -2019,16 +1757,122 @@ describe("parseValidatorResponse plan defects", () => {
 });
 
 describe("createValidatorRunner", () => {
+  it.each([
+    "completed",
+    "failed",
+    "not_started",
+    "settlement_failed",
+    "thrown",
+  ] as const)(
+    "preserves %s dispatch evidence when runtime cleanup also fails",
+    async (outcome) => {
+      const executeConversationTurn =
+        async (): Promise<ConversationTurnExecution> => {
+          if (outcome === "thrown") throw new Error("dispatch failed");
+          if (outcome === "completed")
+            return textTaskRun(verdictJson("All good"));
+          if (outcome === "failed") return errorTaskRun("provider failed");
+          return {
+            kind: "settled",
+            turn: {
+              attemptId: "attempt-cleanup",
+              status: "awaiting",
+              pendingQuestion: null,
+              outcome:
+                outcome === "not_started"
+                  ? {
+                      kind: "not_started",
+                      reason: "configuration",
+                      message: "admission failed",
+                    }
+                  : {
+                      kind: "settlement_failed",
+                      code: "persistence",
+                      message: "settlement failed",
+                      result: null,
+                    },
+            },
+          };
+        };
+      const runner = createValidatorRunner({
+        continuityService: makeStubValidatorContinuityService(),
+        executionContract: createTestGraphExecutionContract(),
+        resolveWorktreePath: stubWorktreePath,
+        executeConversationTurn,
+        stopConversationActor: async () => {
+          throw new Error("cleanup failed");
+        },
+        getProjectDisplayName: stubProjectDisplayName,
+        readLaneConversation: async () => null,
+        readValidatorConversationTelemetry: async () => null,
+      });
+      const execution = buildExecutionWithContextValidation();
+      const context = execution.workingDefinition.executionContexts.find(
+        (candidate) => candidate.id === "context-plan",
+      );
+      if (!context) throw new Error("Missing validation fixture context");
+      const result = await runner.runContextValidator({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        execution,
+        context,
+        validator: soleAssignment(context),
+      });
+
+      expect(result.result).toMatchObject({
+        kind: "infra_error",
+        message:
+          outcome === "completed"
+            ? "cleanup failed"
+            : outcome === "failed"
+              ? "provider failed"
+              : outcome === "not_started"
+                ? "admission failed"
+                : outcome === "settlement_failed"
+                  ? "settlement failed"
+                  : "dispatch failed",
+      });
+      if (outcome === "thrown") return;
+      expect(result.metadata.sessionRef).toMatchObject({
+        workflowConversationId: "validator-conversation",
+      });
+      expect(result.metadata.reviewArtifact).toMatchObject({
+        kind: "conversation",
+        ref: "validator-conversation",
+      });
+      if (outcome === "failed")
+        expect(result.result).toMatchObject({
+          failure: { kind: "backend_error", message: "provider failed" },
+        });
+      if (outcome === "not_started")
+        expect(result.result).toMatchObject({
+          notStarted: { reason: "configuration", message: "admission failed" },
+        });
+      if (outcome === "settlement_failed")
+        expect(result.result).toMatchObject({
+          settlementFailure: {
+            code: "persistence",
+            message: "settlement failed",
+          },
+        });
+      if (outcome === "completed")
+        expect(result.result).not.toHaveProperty(
+          "settlementFailure",
+          expect.anything(),
+        );
+    },
+  );
+
   it("dispatches an agent validator through its configured backend instead of its legacy validator-type label", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
     const execution = buildExecutionWithContextValidation();
@@ -2056,13 +1900,15 @@ describe("createValidatorRunner", () => {
       validator: seedAssignment(validator),
     });
 
-    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({ kind: "durable" }),
-        modelSelection: {
-          modelId: "gpt-5.4",
-          parameters: { reasoning: "high", fast: "false" },
-        },
+        turn: expect.objectContaining({
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        }),
       }),
     );
   });
@@ -2071,7 +1917,7 @@ describe("createValidatorRunner", () => {
     const fake = createTestFakeBackend();
     _registerBackendForTesting(fake.descriptor);
     try {
-      const executeWorkflowTaskRun = vi.fn(async () =>
+      const executeConversationTurn = vi.fn(async () =>
         textTaskRun(verdictJson("All good"), {
           backendRef: {
             backend: TESTFAKE_BACKEND_ID,
@@ -2082,20 +1928,17 @@ describe("createValidatorRunner", () => {
       const runner = createValidatorRunner({
         executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: stubWorktreePath,
-        resolveTimeoutMs: stubTimeoutMs,
-        executeWorkflowTaskRun,
+        stopConversationActor: vi.fn(async () => {}),
+        executeConversationTurn,
         getProjectDisplayName: stubProjectDisplayName,
         continuityService: {
-          async resolveValidatorCall(input) {
+          async ensureValidatorConversation(input) {
             return {
               execution: input.execution,
               sessionAction: "create",
               backend: input.backend,
               conversationId: "testfake-conversation",
             };
-          },
-          async recordLaneTurnOutcome(input) {
-            return input.execution;
           },
         },
       });
@@ -2127,7 +1970,7 @@ describe("createValidatorRunner", () => {
         validator: seedAssignment(validator),
       });
 
-      expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+      expect(executeConversationTurn).toHaveBeenCalledWith(
         expect.objectContaining({
           binding: expect.objectContaining({
             kind: "durable",
@@ -2159,7 +2002,7 @@ describe("createValidatorRunner", () => {
   });
 
   it("attaches transcript-derived usage to conversation-strategy review artifacts", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun(verdictJson("All good")),
     );
     const readValidatorConversationTelemetry = vi.fn(async () => ({
@@ -2169,21 +2012,18 @@ describe("createValidatorRunner", () => {
     const runner = createValidatorRunner({
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
       readValidatorConversationTelemetry,
       continuityService: {
-        async resolveValidatorCall(input) {
+        async ensureValidatorConversation(input) {
           return {
             execution: input.execution,
             sessionAction: "create",
             backend: input.backend,
             conversationId: "conv-val-9",
           };
-        },
-        async recordLaneTurnOutcome(input) {
-          return input.execution;
         },
       },
     });
@@ -2212,27 +2052,24 @@ describe("createValidatorRunner", () => {
   });
 
   it("records a null-usage conversation artifact when telemetry is unreadable", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
       readValidatorConversationTelemetry: async () => null,
       continuityService: {
-        async resolveValidatorCall(input) {
+        async ensureValidatorConversation(input) {
           return {
             execution: input.execution,
             sessionAction: "create",
             backend: input.backend,
             conversationId: "conv-val-10",
           };
-        },
-        async recordLaneTurnOutcome(input) {
-          return input.execution;
         },
       },
     });
@@ -2257,22 +2094,22 @@ describe("createValidatorRunner", () => {
     });
   });
 
-  it("runContextValidator forwards the prompt and schema to executeWorkflowTaskRun and returns the parsed result", async () => {
+  it("runContextValidator forwards the prompt and schema to executeConversationTurn and returns the parsed result", async () => {
     const agentResponse = JSON.stringify({
       summary: "Context completed correctly",
       issues: [],
       advisories: [],
     });
 
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) => textTaskRun(agentResponse),
+    const executeConversationTurn = vi.fn(
+      async (_input: ConversationTurnSubmission) => textTaskRun(agentResponse),
     );
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2289,10 +2126,10 @@ describe("createValidatorRunner", () => {
       validator: soleAssignment(contextDef),
     });
 
-    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input).toMatchObject({
-      kind: "task_run",
+    expect(executeConversationTurn).toHaveBeenCalledTimes(1);
+    const [input] = executeConversationTurn.mock.calls[0]!;
+    expect(input.turn).toMatchObject({
+      kind: "conversation_turn",
       modelSelection: {
         modelId: "sonnet",
         parameters: { effort: "medium" },
@@ -2311,277 +2148,10 @@ describe("createValidatorRunner", () => {
         }),
       },
     });
-    expect(input.prompt).toContain(
+    expect(input.turn.promptText).toContain(
       "Every task summary is complete and the final plan document is updated.",
     );
     expect(result.result.kind).toBe("pass");
-  });
-
-  it("filters scoped charter invariants from the dispatched validator prompt", async () => {
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) =>
-        textTaskRun(verdictJson("Context completed correctly")),
-    );
-    const runner = createValidatorRunner({
-      continuityService: makeStubValidatorContinuityService(),
-      executionContract: createTestGraphExecutionContract(),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
-      getProjectDisplayName: stubProjectDisplayName,
-    });
-    const execution = buildExecutionWithContextValidation();
-    const charter: WorkflowCharter = {
-      mission: "Apply invariants only to their declared graph contexts.",
-      invariants: [
-        { id: "global", statement: "Global-validator-sentinel" },
-        {
-          id: "verify-only",
-          statement: "Out-of-scope-validator-sentinel",
-          appliesTo: { contextIds: ["context-verify"] },
-        },
-      ],
-      sourcesOfTruth: [],
-    };
-    execution.charter = charter;
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (candidate) => candidate.id === "context-plan",
-    )!;
-    contextDef.charter = charter;
-
-    await runner.runContextValidator({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      execution,
-      context: contextDef,
-      validator: soleAssignment(contextDef),
-    });
-
-    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.prompt).toContain("Global-validator-sentinel");
-    expect(input.prompt).not.toContain("Out-of-scope-validator-sentinel");
-  });
-
-  it("runContextValidator persists the agent transcript alongside validation.jsonl", async () => {
-    const TEST_DIR = path.join(__dirname, "__test-logs-validator-transcript__");
-    const transcript = [
-      {
-        seq: 0,
-        backend: "claude" as const,
-        type: "reasoning",
-        raw: { type: "reasoning", text: "weigh AC vs prototype" },
-      },
-      {
-        seq: 1,
-        backend: "claude" as const,
-        type: "agent_message",
-        raw: { type: "agent_message", text: "GO" },
-      },
-    ];
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult> => ({
-        kind: "text",
-        text: verdictJson("ok"),
-        transcript,
-        usage: emptyUsage,
-        backendRef: null,
-        continuationDisposition: "retain",
-      }),
-    );
-    const runner = createValidatorRunner({
-      continuityService: makeStubValidatorContinuityService(),
-      executionContract: createTestGraphExecutionContract(),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
-      getProjectDisplayName: stubProjectDisplayName,
-    });
-
-    const execution = buildExecutionWithContextValidation();
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    )!;
-    const logger = createExecutionLogger(execution.id, { configDir: TEST_DIR });
-    registerExecutionLogger(logger);
-
-    try {
-      await runner.runContextValidator({
-        projectPath: "/repo",
-        sessionName: "session-1",
-        execution,
-        context: contextDef,
-        validator: soleAssignment(contextDef),
-      });
-
-      const transcriptPath = path.join(
-        logger.logDir,
-        "contexts",
-        "context-plan",
-        "validators",
-        soleAssignment(contextDef).id,
-        "validation-transcript.jsonl",
-      );
-      const entries = readFileSync(transcriptPath, "utf-8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-
-      expect(entries[0]).toMatchObject({
-        event: "validator.transcript_begin",
-        lane: "context_validator",
-        engine: soleAssignment(contextDef).agent.backend,
-        attempt: 0,
-        entryCount: 2,
-      });
-      expect(
-        entries
-          .filter((e) => e.event === "validator.transcript_item")
-          .map((e) => e.itemType),
-      ).toEqual(["reasoning", "agent_message"]);
-    } finally {
-      unregisterExecutionLogger(execution.id);
-      try {
-        rmSync(TEST_DIR, { recursive: true, force: true });
-      } catch {
-        // ignore
-      }
-    }
-  });
-
-  it("runContextValidator persists a captured transcript when the task run returns an infra error", async () => {
-    const TEST_DIR = path.join(
-      __dirname,
-      "__test-logs-validator-error-transcript__",
-    );
-    const transcript = [
-      {
-        seq: 0,
-        backend: "claude" as const,
-        type: "assistant",
-        raw: { type: "assistant", text: "partial validation" },
-      },
-    ];
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult> => ({
-        kind: "error",
-        error: "validator backend failed",
-        aborted: false,
-        transcript,
-        usage: emptyUsage,
-        backendRef: null,
-        continuationDisposition: "retain",
-      }),
-    );
-    const runner = createValidatorRunner({
-      continuityService: makeStubValidatorContinuityService(),
-      executionContract: createTestGraphExecutionContract(),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
-      getProjectDisplayName: stubProjectDisplayName,
-    });
-
-    const execution = buildExecutionWithContextValidation();
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    )!;
-    const logger = createExecutionLogger(execution.id, { configDir: TEST_DIR });
-    registerExecutionLogger(logger);
-
-    try {
-      const result = await runner.runContextValidator({
-        projectPath: "/repo",
-        sessionName: "session-1",
-        execution,
-        context: contextDef,
-        validator: soleAssignment(contextDef),
-      });
-
-      expect(result.result.kind).toBe("infra_error");
-      const entries = readFileSync(
-        path.join(
-          logger.logDir,
-          "contexts",
-          "context-plan",
-          "validators",
-          soleAssignment(contextDef).id,
-          "validation-transcript.jsonl",
-        ),
-        "utf-8",
-      )
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-
-      expect(entries[0]).toMatchObject({
-        event: "validator.transcript_begin",
-        entryCount: 1,
-      });
-      expect(entries[1]).toMatchObject({
-        event: "validator.transcript_item",
-        itemType: "assistant",
-        raw: { type: "assistant", text: "partial validation" },
-      });
-    } finally {
-      unregisterExecutionLogger(execution.id);
-      try {
-        rmSync(TEST_DIR, { recursive: true, force: true });
-      } catch {
-        // ignore
-      }
-    }
-  });
-
-  it("runContextValidator passes the context charter into the prompt ahead of the validation header", async () => {
-    const agentResponse = JSON.stringify({
-      summary: "Context completed correctly",
-      issues: [],
-      advisories: [],
-    });
-
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) => textTaskRun(agentResponse),
-    );
-    const runner = createValidatorRunner({
-      continuityService: makeStubValidatorContinuityService(),
-      executionContract: createTestGraphExecutionContract(),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
-      getProjectDisplayName: stubProjectDisplayName,
-    });
-
-    const execution = buildExecutionWithContextValidation();
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    )!;
-    const contextWithCharter: GraphWorkflowResolvedContext = {
-      ...contextDef,
-      charter,
-    };
-
-    await runner.runContextValidator({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      execution,
-      context: contextWithCharter,
-      validator: soleAssignment(contextWithCharter),
-    });
-
-    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    // The composer prepends the acceptance-criteria deferral cohort to every
-    // dispatched validator prompt, so the charter digest opens the builder's
-    // section rather than the whole prompt — it still precedes the validation
-    // header, which is the ordering the charter contract asserts.
-    expect(input.prompt.indexOf("# Workflow Charter")).toBeGreaterThan(-1);
-    expect(input.prompt.indexOf("# Workflow Charter")).toBeLessThan(
-      input.prompt.indexOf("# Context Validation"),
-    );
-    expect(input.prompt).toContain(
-      "Ship the widget that adheres to the published API contract.",
-    );
-    expect(input.prompt).toContain(".cc/graph-workflow-docs/charter.md");
   });
 
   /**
@@ -2593,16 +2163,16 @@ describe("createValidatorRunner", () => {
    * owner's criteria carry the obligation) is uncheckable without the cohort.
    */
   it("runContextValidator renders the deferral cohort on a non-spec run with no prompt projection", async () => {
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) =>
+    const executeConversationTurn = vi.fn(
+      async (_input: ConversationTurnSubmission) =>
         textTaskRun(verdictJson("Context completed correctly")),
     );
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2619,37 +2189,39 @@ describe("createValidatorRunner", () => {
       validator: soleAssignment(contextDef),
     });
 
-    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.prompt).toContain(
+    expect(executeConversationTurn).toHaveBeenCalledTimes(1);
+    const [input] = executeConversationTurn.mock.calls[0]!;
+    expect(input.turn.promptText).toContain(
       "## Acceptance-criteria cohort for deferral checks",
     );
-    expect(input.prompt).toContain(
+    expect(input.turn.promptText).toContain(
       "### `context-plan` — Plan (current context)",
     );
     // Both graph-downstream contexts, verbatim — the route-2 evidence.
-    expect(input.prompt).toContain("### `context-implement` — Implement");
-    expect(input.prompt).toContain("Feature implemented");
-    expect(input.prompt).toContain("### `context-verify` — Verify");
-    expect(input.prompt).toContain("Verification passes");
-    expect(input.prompt).toContain(
+    expect(input.turn.promptText).toContain(
+      "### `context-implement` — Implement",
+    );
+    expect(input.turn.promptText).toContain("Feature implemented");
+    expect(input.turn.promptText).toContain("### `context-verify` — Verify");
+    expect(input.turn.promptText).toContain("Verification passes");
+    expect(input.turn.promptText).toContain(
       "Ownership alone never authorizes a production-capability deferral",
     );
     // No projection on a plain run, so nothing may point at a section the
     // validator was never given.
-    expect(input.prompt).not.toContain("Spec ownership");
+    expect(input.turn.promptText).not.toContain("Spec ownership");
   });
 
   it("runContextValidator returns infra_error unparseable when the agent produces no JSON", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun("I could not find anything to review."),
     );
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2677,20 +2249,27 @@ describe("createValidatorRunner", () => {
     // The specialist never started: the global query semaphore never admitted
     // it. Reporting that as `infra_error` would make the cohort spend one of the
     // specialist's three attempts on a dispatch that never reached a provider.
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      ...errorTaskRun("Capacity was unavailable"),
-      notStarted: {
-        kind: "not_started" as const,
-        reason: "query_slot_timeout" as const,
-        message: "Capacity was unavailable",
-      },
-    }));
+    const executeConversationTurn = vi.fn(
+      async (): Promise<ConversationTurnExecution> => ({
+        kind: "settled",
+        turn: {
+          attemptId: "not-started",
+          status: "awaiting",
+          pendingQuestion: null,
+          outcome: {
+            kind: "not_started",
+            reason: "query_slot_timeout",
+            message: "Capacity was unavailable",
+          },
+        },
+      }),
+    );
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2711,15 +2290,15 @@ describe("createValidatorRunner", () => {
   });
 
   it("runContextValidator still reports a real dispatch failure as an infra error", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       errorTaskRun("provider returned 500"),
     );
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2744,7 +2323,7 @@ describe("createValidatorRunner", () => {
     // Because the lane conversation has a pending question batch, the runner must
     // short-circuit to asked_user before the verdict parser is ever consulted
     // (design "Park detection → Validator"; Req 3.2).
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun("Let me ask the operator before I decide."),
     );
     const pendingQuestions = [
@@ -2768,8 +2347,8 @@ describe("createValidatorRunner", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
       readLaneConversation,
     });
@@ -2802,7 +2381,7 @@ describe("createValidatorRunner", () => {
   it("runContextValidator parses the verdict normally when the lane conversation has no pending question", async () => {
     // The reader returns null (Codex validator lanes, or no question asked) →
     // the runner falls through to normal verdict parsing (deny-by-default).
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun(verdictJson("Looks good")),
     );
     const readLaneConversation = vi.fn(async () => null);
@@ -2810,8 +2389,8 @@ describe("createValidatorRunner", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
       readLaneConversation,
     });
@@ -2832,16 +2411,16 @@ describe("createValidatorRunner", () => {
     expect(result.result.kind).toBe("pass");
   });
 
-  it("runContextValidator returns infra_error exception with engine=codex when executeWorkflowTaskRun throws", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => {
+  it("runContextValidator returns infra_error exception with engine=codex when executeConversationTurn throws", async () => {
+    const executeConversationTurn = vi.fn(async () => {
       throw new Error("Codex rate limit exceeded");
     });
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2878,7 +2457,7 @@ describe("createValidatorRunner", () => {
   });
 
   it("runContextValidator returns infra_error exception when codex returns an error result", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       errorTaskRun(
         "thread/resume failed: no rollout found for thread id phantom-123",
       ),
@@ -2887,8 +2466,8 @@ describe("createValidatorRunner", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2925,7 +2504,7 @@ describe("createValidatorRunner", () => {
     }
   });
 
-  it("runContextValidator forwards the complete codex selection to executeWorkflowTaskRun", async () => {
+  it("runContextValidator forwards the complete codex selection to executeConversationTurn", async () => {
     const codexResponse = JSON.stringify({
       summary: "Reopen one task.",
       issues: [
@@ -2941,15 +2520,15 @@ describe("createValidatorRunner", () => {
       advisories: [],
     });
 
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun(codexResponse),
     );
     const runner = createValidatorRunner({
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -2978,12 +2557,14 @@ describe("createValidatorRunner", () => {
       validator: seedAssignment(codexValidator),
     });
 
-    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelSelection: {
-          modelId: "gpt-5.4",
-          parameters: { reasoning: "high", fast: "false" },
-        },
+        turn: expect.objectContaining({
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        }),
       }),
     );
     expect(result.result.kind).toBe("fail");
@@ -3066,8 +2647,8 @@ describe("context validator continuity runtime integration", () => {
     });
 
     let sdkSessionCounter = 0;
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) =>
+    const executeConversationTurn = vi.fn(
+      async (_input: ConversationTurnSubmission) =>
         textTaskRun(passResponseJson, {
           backendRef: {
             backend: "claude",
@@ -3079,10 +2660,10 @@ describe("context validator continuity runtime integration", () => {
     const runner = createValidatorRunner({
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
+      stopConversationActor: vi.fn(async () => {}),
       continuityService,
       executionRepository: repo,
-      executeWorkflowTaskRun,
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -3135,9 +2716,9 @@ describe("context validator continuity runtime integration", () => {
       usage: null,
     });
     // Conversation actor handles resumeRef threading internally; the validator
-    // routes through executeWorkflowTaskRun with the same conversationId across
+    // routes through executeConversationTurn with the same conversationId across
     // calls so the actor can persist backendRef and resume the session.
-    const conversationIds = executeWorkflowTaskRun.mock.calls.map(
+    const conversationIds = executeConversationTurn.mock.calls.map(
       ([input]) => input.binding.address.target.conversationId,
     );
     expect(conversationIds[0]).toBeDefined();
@@ -3167,8 +2748,8 @@ describe("context validator continuity runtime integration", () => {
 
     let laneAtDispatch: unknown = null;
     let dispatchedConversationId: string | null = null;
-    const executeWorkflowTaskRun = vi.fn(
-      async (input: ExecuteWorkflowTaskRunInput) => {
+    const executeConversationTurn = vi.fn(
+      async (input: ConversationTurnSubmission) => {
         laneAtDispatch =
           repo.read().laneStates["context-plan"]?.[VALIDATOR_LANE_KEY] ?? null;
         dispatchedConversationId = input.binding.address.target.conversationId;
@@ -3181,10 +2762,10 @@ describe("context validator continuity runtime integration", () => {
     const runner = createValidatorRunner({
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
+      stopConversationActor: vi.fn(async () => {}),
       continuityService,
       executionRepository: repo,
-      executeWorkflowTaskRun,
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -3233,10 +2814,9 @@ describe("context validator continuity runtime integration", () => {
     });
 
     let laneAtDispatch: unknown = null;
-    let dispatchedBinding: ExecuteWorkflowTaskRunInput["binding"] | null =
-      null;
-    const executeWorkflowTaskRun = vi.fn(
-      async (input: ExecuteWorkflowTaskRunInput) => {
+    let dispatchedBinding: ConversationTurnSubmission["binding"] | null = null;
+    const executeConversationTurn = vi.fn(
+      async (input: ConversationTurnSubmission) => {
         laneAtDispatch =
           repo.read().laneStates["context-plan"]?.[VALIDATOR_LANE_KEY] ?? null;
         dispatchedBinding = input.binding;
@@ -3249,10 +2829,10 @@ describe("context validator continuity runtime integration", () => {
     const runner = createValidatorRunner({
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
+      stopConversationActor: vi.fn(async () => {}),
       continuityService,
       executionRepository: repo,
-      executeWorkflowTaskRun,
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -3296,115 +2876,6 @@ describe("context validator continuity runtime integration", () => {
       repo.read().laneStates["context-plan"]?.[VALIDATOR_LANE_KEY],
     ).not.toHaveProperty("sessionRef");
   });
-
-  it("persists the Codex validator transcript on the continuity path", async () => {
-    const TEST_DIR = path.join(
-      __dirname,
-      "__test-logs-codex-validator-transcript__",
-    );
-    const codexValidator: ValidatorAssignment = {
-      id: "general",
-      profile: { tier: "builtin", id: "general-reviewer" },
-      authority: "blocking",
-      agent: {
-        backend: "codex",
-        modelSelection: {
-          modelId: "gpt-5.4",
-          parameters: { reasoning: "medium", fast: "false" },
-        },
-      },
-    };
-    const execution = buildExecutionWithContextValidation(codexValidator);
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    )!;
-    const repo = createInMemoryRepo(execution);
-
-    const continuityService = makeLaneContinuityService(repo, {
-      createConversation: vi.fn().mockResolvedValue({ id: "conv-codex-val" }),
-    });
-
-    const transcript = [
-      {
-        seq: 0,
-        backend: "codex" as const,
-        type: "reasoning",
-        raw: { type: "reasoning", text: "compare against ~/.aerospace.toml" },
-      },
-      {
-        seq: 1,
-        backend: "codex" as const,
-        type: "command_execution",
-        raw: { type: "command_execution", command: "npm run verify" },
-      },
-    ];
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult> => ({
-        kind: "text",
-        text: passResponseJson,
-        transcript,
-        usage: emptyUsage,
-        backendRef: { backend: "codex", ref: "thread-real-1" },
-        continuationDisposition: "retain",
-      }),
-    );
-
-    const runner = createValidatorRunner({
-      executionContract: createTestGraphExecutionContract(),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      continuityService,
-      executionRepository: repo,
-      executeWorkflowTaskRun,
-      getProjectDisplayName: stubProjectDisplayName,
-    });
-
-    const logger = createExecutionLogger(execution.id, { configDir: TEST_DIR });
-    registerExecutionLogger(logger);
-
-    try {
-      await runner.runContextValidator({
-        projectPath: "/repo",
-        sessionName: "session-1",
-        execution,
-        context: contextDef,
-        validator: seedAssignment(codexValidator),
-      });
-
-      const entries = readFileSync(
-        path.join(
-          logger.logDir,
-          "contexts",
-          "context-plan",
-          "validators",
-          soleAssignment(contextDef).id,
-          "validation-transcript.jsonl",
-        ),
-        "utf-8",
-      )
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-
-      expect(entries[0]).toMatchObject({
-        event: "validator.transcript_begin",
-        engine: "codex",
-        entryCount: 2,
-      });
-      expect(
-        entries
-          .filter((e) => e.event === "validator.transcript_item")
-          .map((e) => e.itemType),
-      ).toEqual(["reasoning", "command_execution"]);
-    } finally {
-      unregisterExecutionLogger(execution.id);
-      try {
-        rmSync(TEST_DIR, { recursive: true, force: true });
-      } catch {
-        // ignore
-      }
-    }
-  });
 });
 
 describe("validator-runner executionTarget override", () => {
@@ -3415,7 +2886,7 @@ describe("validator-runner executionTarget override", () => {
       advisories: [],
     });
 
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun(agentResponse),
     );
     const resolveWorktreePath = vi.fn(async () => sessionWorktreeDir);
@@ -3423,8 +2894,8 @@ describe("validator-runner executionTarget override", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -3448,7 +2919,7 @@ describe("validator-runner executionTarget override", () => {
     });
 
     // worktreePath flows through to the actor input that drives the runner.
-    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
           worktreePath: laneWorktreeDir,
@@ -3466,7 +2937,7 @@ describe("validator-runner executionTarget override", () => {
       advisories: [],
     });
 
-    const executeWorkflowTaskRun = vi.fn(async () =>
+    const executeConversationTurn = vi.fn(async () =>
       textTaskRun(agentResponse),
     );
     const resolveWorktreePath = vi.fn(async () => sessionWorktreeDir);
@@ -3474,8 +2945,8 @@ describe("validator-runner executionTarget override", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
     });
 
@@ -3493,7 +2964,7 @@ describe("validator-runner executionTarget override", () => {
     });
 
     expect(resolveWorktreePath).toHaveBeenCalledWith("/repo", "session-1");
-    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
           worktreePath: sessionWorktreeDir,
@@ -3570,8 +3041,8 @@ describe("createValidatorRunner diff scope", () => {
   }
 
   it("computes diff scope from the resolved session worktree and injects it into the prompt", async () => {
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) =>
+    const executeConversationTurn = vi.fn(
+      async (_input: ConversationTurnSubmission) =>
         textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
@@ -3582,8 +3053,8 @@ describe("createValidatorRunner diff scope", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
       computeValidationDiffScope,
     });
@@ -3610,15 +3081,15 @@ describe("createValidatorRunner diff scope", () => {
       WHOLE_TREE_CANDIDATE_SCOPE,
       "retained-work-base",
     );
-    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.prompt).toContain("## Changes Under Review");
-    expect(input.prompt).toContain("src/widget.ts");
-    expect(input.prompt).toContain("+export const widget = true;");
+    const [input] = executeConversationTurn.mock.calls[0]!;
+    expect(input.turn.promptText).toContain("## Changes Under Review");
+    expect(input.turn.promptText).toContain("src/widget.ts");
+    expect(input.turn.promptText).toContain("+export const widget = true;");
   });
 
   it("computes diff scope from executionTarget.worktreePath when supplied", async () => {
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) =>
+    const executeConversationTurn = vi.fn(
+      async (_input: ConversationTurnSubmission) =>
         textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
@@ -3628,8 +3099,8 @@ describe("createValidatorRunner diff scope", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
       computeValidationDiffScope,
     });
@@ -3665,8 +3136,8 @@ describe("createValidatorRunner diff scope", () => {
   });
 
   it("still dispatches the validator turn when diff scope is unavailable", async () => {
-    const executeWorkflowTaskRun = vi.fn(
-      async (_input: ExecuteWorkflowTaskRunInput) =>
+    const executeConversationTurn = vi.fn(
+      async (_input: ConversationTurnSubmission) =>
         textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
@@ -3680,8 +3151,8 @@ describe("createValidatorRunner diff scope", () => {
       continuityService: makeStubValidatorContinuityService(),
       executionContract: createTestGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeWorkflowTaskRun,
+      stopConversationActor: vi.fn(async () => {}),
+      executeConversationTurn,
       getProjectDisplayName: stubProjectDisplayName,
       computeValidationDiffScope,
     });
@@ -3703,9 +3174,11 @@ describe("createValidatorRunner diff scope", () => {
       validator: soleAssignment(contextDef),
     });
 
-    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.prompt).toContain("Diff scope unavailable (git boom)");
+    expect(executeConversationTurn).toHaveBeenCalledTimes(1);
+    const [input] = executeConversationTurn.mock.calls[0]!;
+    expect(input.turn.promptText).toContain(
+      "Diff scope unavailable (git boom)",
+    );
     expect(result.result.kind).toBe("pass");
   });
 });

@@ -7,14 +7,6 @@ import {
   createWorkflowExecution,
 } from "./test-fixtures";
 import { buildContextValidationPrompt } from "./validator-runner";
-import type { ValidationPromptSelections } from "./validation-prompt-section";
-
-const EMPTY_VALIDATION_SELECTIONS = {
-  registry: "none",
-  enabled: { kind: "commands", commands: [] },
-  disabled: [],
-  scriptGate: { kind: "off" },
-} satisfies ValidationPromptSelections;
 
 const ownershipProjection = {
   heading: "Spec ownership",
@@ -136,7 +128,6 @@ async function validatorPrompt(input: {
     tasks,
     taskStates: execution.taskStates,
     validator,
-    validationSelections: EMPTY_VALIDATION_SELECTIONS,
   });
 
   return composeGraphRolePrompt({

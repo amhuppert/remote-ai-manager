@@ -157,7 +157,6 @@ These rows distinguish persisted decoding from valid current absence. The named 
 | `lane-collaboration-resolver.ts`, `validation-prompt-section.ts`, validation singleton | Pre-snapshot executions resolve collaboration from saved/global config and validation selectors from the registry; frozen snapshots take precedence | `lane-collaboration-resolver.test.ts`, `validation-prompt-section.test.ts` | No resumable execution lacks the respective snapshot; retire each fallback separately |
 | `memory/delivery-policy.ts` | Pre-snapshot graph lanes use the global role policy; ordinary conversations without graph context also use global policy | `memory/delivery-policy.test.ts` | Remove only the graph fallback once all resumable graph contexts carry frozen policy; ordinary conversation fallback remains supported |
 | `live-outline-schemas.ts` | Empty routes/loops/expansion ledgers, zero counters, optional or null snapshot data and additive fields remain accepted; assignment provenance is required | `workflow-live.test.ts`, `live-outline.test.ts`, `compat/parse-floor.test.ts` | Change decoding only after all supported producers supply the fields and wire tests change deliberately; empty current state remains valid |
-| Conversation task dispatch and `agent-call-facade.ts` | Only a durable session validator receives its own CC identity through trusted task execution dependencies; ordinary and ephemeral task runs stay unscoped, and formatting repairs stay hermetic | `question-commands.integration.test.ts`, `agent-call-facade.test.ts`, both backend `task-runner.test.ts` suites | Supported ownership distinction; change only with an explicit task identity contract and retained isolation evidence |
 
 
 ## Testing
@@ -590,6 +589,22 @@ supervisor's diagnosis in `haltReason.summary`. With `planRepair` disabled the
 trigger refuses before any round is appended, so no agent runs and `summary`
 stays null — the halt stands for the operator (see "Plan repair" above).
 
+### Validator conversation turns
+
+Validators and advisory responses dispatch `conversation_turn` on durable lane
+conversations. The actor composes validator charter, validation policy, role
+mandate, asking instructions, and the stored profile; the runner supplies the
+review work and authority-selected verdict schema. The actor owns backend
+continuity and streams into the lane transcript, which is the review artifact.
+Every validator dispatch closes its runtime after settlement, including a
+question-ending turn; the durable conversation and pending question remain.
+AgentCall skips structured-output enforcement when the actor reports a pending
+question, and the graph iteration orchestrator owns parking the context.
+
+D2 output capture and plan repair retain explicit `task_run` dispatch: they are
+bounded format/repair protocols with separate output and instruction contracts.
+Changing their dispatch belongs with a change to those contracts.
+
 ### The advisory loop
 
 Every advisory reaches the implementer lane, which may act on it or decline it
@@ -691,7 +706,7 @@ Consequences when touching engine code:
 - `activeLoops` is instance-tokened: an exiting stale loop cannot unregister the live loop; do not revert it to a bare per-session Set.
 - `StaleLoopFenceError` must stay excluded from halt conversion (`runContextTask`'s catch and the loop's outer catch) — converting it to a halt re-creates the incident-622782a0 failure mode (a zombie loop halting the successor execution).
 
-Active cancellation complements the fence: user-initiated pause/abort/halt and `resume()` abort every cancellable conversation via `collectCancellableConversationIds` (running-task conversations ∪ `laneStates` lane conversations, so validator task-runs stop spending too). It iterates `laneStates` values, never a fixed set of lane keys — a context reviewed by a validator cohort holds one lane per assignment (`context_validator:<assignmentId>`), and keying the sweep by lane KIND would leave every specialist but one burning to completion. Task-run turns register an `AbortController` in the conversations abort-registry (`runTaskRunTurnForMachine`) and the signal threads facade → `dispatchTaskRun` → runner (both codex and claude runners fold it into their teardown path). The loop's own drain-and-halt intentionally does NOT cancel — engine halts drain so completed sibling work lands. Fence = correctness (a superseded loop cannot write); cancellation = economy (a cancelled turn stops burning tokens); keep both.
+Active cancellation complements the fence: user-initiated pause/abort/halt and `resume()` abort every cancellable conversation via `collectCancellableConversationIds` (running-task conversations ∪ `laneStates` lane conversations, so validator turns stop spending too). It iterates `laneStates` values, never a fixed set of lane keys — a context reviewed by a validator cohort holds one lane per assignment (`context_validator:<assignmentId>`), and keying the sweep by lane KIND would leave every specialist but one burning to completion. The conversation lifecycle owns each admitted turn's cancellation and runtime teardown. The loop's own drain-and-halt intentionally does NOT cancel — engine halts drain so completed sibling work lands. Fence = correctness (a superseded loop cannot write); cancellation = economy (a cancelled turn stops burning tokens); keep both.
 
 ## Conversation lifetime
 

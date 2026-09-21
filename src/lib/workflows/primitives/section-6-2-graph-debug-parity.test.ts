@@ -1,3 +1,4 @@
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
@@ -1017,31 +1018,25 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         await import("@/lib/workflow-graph/validator-runner");
       const fixtures = await import("@/lib/workflow-graph/test-fixtures");
 
-      const executeWorkflowTaskRunSpy = vi.fn().mockResolvedValue({
-        kind: "text",
-        text: JSON.stringify({
-          summary: "All good",
-          issues: [],
-          advisories: [],
+      const executeConversationTurnSpy = vi.fn().mockResolvedValue(
+        settledConversationTurn({
+          outcome: {
+            kind: "completed",
+            text: JSON.stringify({
+              summary: "All good",
+              issues: [],
+              advisories: [],
+            }),
+          },
         }),
-        usage: {
-          costUsd: null,
-          durationMs: null,
-          contextTokens: null,
-          contextWindowMax: null,
-          inputTokens: null,
-          outputTokens: null,
-          cachedInputTokens: null,
-        },
-        backendRef: null,
-      });
+      );
 
       const runner = createValidatorRunner({
         continuityService: makeStubValidatorContinuityService(),
         executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: async () => workingDir,
-        resolveTimeoutMs: async () => 60_000,
-        executeWorkflowTaskRun: executeWorkflowTaskRunSpy,
+        stopConversationActor: async () => {},
+        executeConversationTurn: executeConversationTurnSpy,
         getProjectDisplayName: () => "test-project",
       });
 
@@ -1092,10 +1087,10 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         validator: contextDef.contextValidator.assignments[0]!,
       });
 
-      expect(executeWorkflowTaskRunSpy).toHaveBeenCalledTimes(1);
-      const [input] = executeWorkflowTaskRunSpy.mock.calls[0]!;
-      expect(input).toMatchObject({
-        kind: "task_run",
+      expect(executeConversationTurnSpy).toHaveBeenCalledTimes(1);
+      const [input] = executeConversationTurnSpy.mock.calls[0]!;
+      expect(input.turn).toMatchObject({
+        kind: "conversation_turn",
         outputFormat: {
           type: "json_schema",
           schema: buildValidatorOutputSchema({

@@ -123,7 +123,6 @@ describe("retained-work review origin", () => {
         continuityService: makeStubValidatorContinuityService(),
         executionContract: createTestGraphExecutionContract(),
         resolveWorktreePath: async () => repo,
-        resolveTimeoutMs: async () => 30_000,
         getProjectDisplayName: () => "test",
       });
       const rendered = await runner.renderRoundCommonSections({

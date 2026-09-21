@@ -328,7 +328,11 @@ export function createConversationActorHost(
       );
       deps.registry.set(key, actor);
       const runtime = deps.getRuntime(key);
-      if (runtime) runtime.sendToMachine = (event) => actor.send(event);
+      if (runtime) {
+        runtime.sendToMachine = (event) => actor.send(event);
+        runtime.hasPendingQuestion = () =>
+          actor.getSnapshot().context.pendingQuestion !== null;
+      }
       return actor;
     } catch (error) {
       deps.removeRuntime(key);

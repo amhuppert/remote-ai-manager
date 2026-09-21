@@ -19,22 +19,11 @@ import path from "node:path";
  * or a transcript path — so JSONL re-parsers that never import the envelope
  * (the gap that previously hid `conversation-telemetry.ts` and
  * `prompt/transcript.ts`) are still in scope. Within the corpus, any `raw`
- * property access is an offender. Existing offenders are burned down via
- * ALLOWLIST — entries may only ever be REMOVED, and only exact lossless
- * pass-through qualifies. New code that needs the payload belongs below the
- * seam.
+ * property access is an offender. Code that needs the payload belongs below
+ * the seam.
  */
 
 const REPO_SRC = path.resolve(__dirname, "..", "..");
-
-/** file (repo-relative from src/) → justification. Remove entries as their
- *  owning phase migrates them; never add one to admit new code. */
-const ALLOWLIST: ReadonlyMap<string, string> = new Map([
-  [
-    "lib/workflow-graph/execution-logger.ts",
-    "Lossless forensic write: copies entry.raw verbatim into the validator transcript JSONL (no shape branching).",
-  ],
-]);
 
 function listSourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -77,7 +66,7 @@ function handlesTranscriptShapedValues(source: string): boolean {
 const RAW_ACCESS = /\.raw\b|\[["']raw["']\]/;
 
 describe("transcript raw-payload boundary", () => {
-  it("no transcript-shaped module outside agent-backends/ reads into raw payloads (beyond the allowlist)", () => {
+  it("no transcript-shaped module outside agent-backends/ reads into raw payloads", () => {
     const offenders: string[] = [];
 
     for (const file of listSourceFiles(REPO_SRC)) {
@@ -85,24 +74,10 @@ describe("transcript raw-payload boundary", () => {
       const source = readFileSync(file, "utf8");
       if (!handlesTranscriptShapedValues(source)) continue;
       if (!RAW_ACCESS.test(source)) continue;
-      if (ALLOWLIST.has(rel)) continue;
       offenders.push(rel);
     }
 
     expect(offenders, offenders.join("\n")).toEqual([]);
-  });
-
-  it("allowlist entries still exist and still offend (stale entries must be deleted)", () => {
-    for (const [rel] of ALLOWLIST) {
-      const source = readFileSync(path.join(REPO_SRC, rel), "utf8");
-      expect(
-        handlesTranscriptShapedValues(source),
-        `${rel} no longer handles transcript-shaped values`,
-      ).toBe(true);
-      expect(RAW_ACCESS.test(source), `${rel} no longer accesses raw`).toBe(
-        true,
-      );
-    }
   });
 
   it("the conversation actor and external-turn handler never touch a raw payload", () => {

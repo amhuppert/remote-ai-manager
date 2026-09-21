@@ -100,8 +100,8 @@ export const ASK_QUESTION_INSTRUCTIONS_ENABLED =
 /**
  * Chooses the asking-questions session-instruction block for a turn. Workflow
  * lanes whose effective toggle is on (resolved toggle AND lane-can-ask) get the
- * enabled variant; every other turn (non-workflow conversations, disabled
- * lanes, Codex validator lanes) keeps the default autonomous-denied guidance.
+ * enabled variant; every other turn (non-workflow conversations and disabled
+ * lanes) keeps the default autonomous-denied guidance.
  */
 export function selectAskQuestionInstructions(
   askUserQuestionsEnabled: boolean | undefined,

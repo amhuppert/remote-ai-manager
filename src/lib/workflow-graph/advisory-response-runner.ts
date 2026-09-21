@@ -7,7 +7,7 @@ import { getProjectDisplayName as getConversationProjectName } from "@/lib/proje
  * The turn is an AgentCall on the context's implementer lane conversation, so
  * the advisories are answered by the lane that did the work rather than by a
  * stranger re-reading the diff. Schema validation is not re-implemented here:
- * `executeWorkflowTaskRun` routes the turn through the conversation actor into
+ * `executeConversationTurn` routes the turn through the conversation actor into
  * the shared structured-output gate, which extracts and repairs on its own. This
  * module adds exactly one thing the gate cannot express — that the returned set
  * covers the delivered advisories exactly — and answers a violation the same way
@@ -29,7 +29,6 @@ import { getProjectDisplayName as getConversationProjectName } from "@/lib/proje
  */
 
 import { createLogger } from "@/lib/logging";
-import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   buildAdvisoryDispositionsOutputSchema,
   buildAdvisoryResponsePrompt,
@@ -47,11 +46,11 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationAdvisory,
 } from "@/lib/workflow-graph/schemas";
+import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
 import {
-  executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
-  type ExecuteWorkflowTaskRunInput,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+  toTaskRunResult,
+  type TaskRunResult,
+} from "@/lib/workflows/conversation/turn-result";
 
 const logger = createLogger("graph-workflow-advisory-response");
 
@@ -86,27 +85,20 @@ export interface GraphWorkflowAdvisoryResponseOutcome {
   dispositions: RecordedAdvisoryDisposition[];
 }
 
-interface ExecuteWorkflowTaskRunFn {
-  (input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
-}
-
 export interface GraphWorkflowAdvisoryResponseRunnerDeps {
-  executeWorkflowTaskRun?: ExecuteWorkflowTaskRunFn;
+  executeConversationTurn?: typeof defaultExecuteConversationTurn;
   composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
   resolveWorktreePath?(
     projectPath: string,
     sessionName: string,
   ): Promise<string>;
-  /** Per-turn wall-clock bound, resolved from the same backend defaults the
-   *  validator and capture turns use. Omitted leaves the actor's default. */
-  resolveTimeoutMs?(backend: AgentBackendId): Promise<number | undefined>;
 }
 
 export function createGraphWorkflowAdvisoryResponseRunner(
   deps: GraphWorkflowAdvisoryResponseRunnerDeps = {},
 ) {
-  const executeWorkflowTaskRun =
-    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const executeConversationTurn =
+    deps.executeConversationTurn ?? defaultExecuteConversationTurn;
   const composeWriteEnvelope =
     deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
 
@@ -122,12 +114,10 @@ export function createGraphWorkflowAdvisoryResponseRunner(
       );
     }
 
-    const outputSchema = buildAdvisoryDispositionsOutputSchema(
-      input.advisories,
-    );
-    const timeoutMs = await deps.resolveTimeoutMs?.(
-      context.implementer.agent.backend,
-    );
+    const outputFormat = {
+      type: "json_schema" as const,
+      schema: buildAdvisoryDispositionsOutputSchema(input.advisories),
+    };
     const writeEnvelopeResolution =
       await resolveImplementerContinuationWriteEnvelope(
         {
@@ -182,7 +172,7 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         fsWriteRestricted: writeEnvelope !== null,
       });
 
-      const result = await executeWorkflowTaskRun({
+      const execution = await executeConversationTurn({
         binding: {
           kind: "durable",
           address: {
@@ -197,27 +187,37 @@ export function createGraphWorkflowAdvisoryResponseRunner(
             ? { worktreePath: input.executionTarget.worktreePath }
             : {}),
         },
-        kind: "task_run",
-        executionClass: "governed-execution",
-        executionProfile: "standard",
-        prompt,
-        outputFormat: { type: "json_schema", schema: outputSchema },
-        modelSelection: context.implementer.agent.modelSelection,
-        ...(writeEnvelope !== null
-          ? { fsWritePolicy: writeEnvelope.policy }
-          : {}),
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        origin: {
-          source: "workflow",
-          workflow: {
+        turn: {
+          kind: "conversation_turn",
+          promptText: prompt,
+          autonomous: true,
+          askUserQuestionsEnabled: false,
+          backend: context.implementer.agent.backend,
+          outputFormat,
+          modelSelection: context.implementer.agent.modelSelection,
+          ...(writeEnvelope !== null
+            ? { fsWritePolicy: writeEnvelope.policy }
+            : {}),
+        },
+        executionContext: {
+          workflowContext: {
             executionId: input.execution.id,
-            nodeId: input.contextId,
-            iterationIndex:
-              input.execution.contextStates[input.contextId]?.iterationCount ??
-              0,
+            contextId: input.contextId,
           },
         },
+        waitUntilReady: true,
       });
+      const result = toTaskRunResult(
+        execution.kind === "settled"
+          ? execution.turn.outcome
+          : {
+              kind: "not_started",
+              reason:
+                execution.code === "cancelled" ? "cancelled" : "configuration",
+              message: execution.message,
+            },
+        outputFormat,
+      );
 
       if (
         result.kind === "error" &&

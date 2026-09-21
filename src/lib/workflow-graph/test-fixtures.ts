@@ -1,7 +1,6 @@
 import type {
-  RecordLaneTurnOutcomeInput,
-  ResolveValidatorCallInput,
-  ResolvedValidatorCall,
+  EnsureValidatorConversationInput,
+  EnsuredValidatorConversation,
 } from "./lane-continuity";
 import type {
   ValidationCandidateTree,
@@ -92,24 +91,18 @@ export function makeImplementerAssignment(
 export function makeStubValidatorContinuityService(
   conversationId = "validator-conversation",
 ): {
-  resolveValidatorCall(
-    input: ResolveValidatorCallInput,
-  ): Promise<ResolvedValidatorCall>;
-  recordLaneTurnOutcome(
-    input: RecordLaneTurnOutcomeInput,
-  ): Promise<GraphWorkflowExecution>;
+  ensureValidatorConversation(
+    input: EnsureValidatorConversationInput,
+  ): Promise<EnsuredValidatorConversation>;
 } {
   return {
-    async resolveValidatorCall(input) {
+    async ensureValidatorConversation(input) {
       return {
         execution: input.execution,
         sessionAction: "create",
         backend: input.backend,
         conversationId,
       };
-    },
-    async recordLaneTurnOutcome(input) {
-      return input.execution;
     },
   };
 }

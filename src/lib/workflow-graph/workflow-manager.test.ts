@@ -9533,7 +9533,6 @@ describe("halt/resume lifecycle attribution", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
-      writeValidatorTranscript() {},
       decision() {},
     };
     registerExecutionLogger(capturingLogger);
@@ -9613,7 +9612,6 @@ describe("halt/resume lifecycle attribution", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
-      writeValidatorTranscript() {},
       decision() {},
     };
     registerExecutionLogger(capturingLogger);

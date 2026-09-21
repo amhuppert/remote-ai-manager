@@ -32,7 +32,9 @@ type RuntimeInstructionDependencies = {
   >;
   context: Pick<
     ConversationActorDependencies["context"],
-    "getReferenceDocuments" | "getActiveAlignmentInjection"
+    | "getReferenceDocuments"
+    | "getActiveAlignmentInjection"
+    | "getWorkflowLaneInstructions"
   >;
   effects: Pick<
     ConversationActorDependencies["effects"],
@@ -100,6 +102,14 @@ export async function readRuntimeInstructions(
       conversationId: input.target.conversationId,
     }));
 
+  const workflowLaneInstructions = isProjectConversation
+    ? null
+    : await deps.context.getWorkflowLaneInstructions({
+        projectPath: input.projectPath,
+        sessionName: conversationTargetStoreSessionName(input.target),
+        conversationId: input.target.conversationId,
+      });
+
   // Build session instructions (baked into the runtime once). Project
   // conversations run in the main worktree, so they use a CC context that
   // omits the per-session dev-server promise.
@@ -127,6 +137,7 @@ export async function readRuntimeInstructions(
     sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
     deps.execution.getCodexToolPromptHint(),
     referenceDocsPrompt,
+    workflowLaneInstructions,
   ].filter((s): s is string => s != null && s.length > 0);
 
   function renderSessionInstructions(notices?: string | null): string[] {

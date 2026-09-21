@@ -93,7 +93,7 @@ export interface ResolvedImplementerCall {
   promptMode: "iteration_seed" | "follow_up";
 }
 
-export interface ResolvedValidatorCall {
+export interface EnsuredValidatorConversation {
   execution: GraphWorkflowExecution;
   sessionAction: "reuse" | "create";
   backend: AgentBackendId;
@@ -120,7 +120,7 @@ export interface ResolveImplementerCallInput {
   profileSnapshot?: AgentProfileSnapshot;
 }
 
-export interface ResolveValidatorCallInput {
+export interface EnsureValidatorConversationInput {
   execution: GraphWorkflowExecution;
   projectPath: string;
   sessionName: string;
@@ -138,8 +138,7 @@ export interface ResolveValidatorCallInput {
   /**
    * The calling assignment's execution-seeded snapshot. The validator lane
    * persists it so the lane's record names the profile the assignment actually
-   * runs under; the block itself reaches a validator turn through the per-turn
-   * instruction channel, not this record (D9).
+   * runs under. The actor injects this stored block when it opens the runtime.
    */
   profileSnapshot?: AgentProfileSnapshot;
 }
@@ -208,7 +207,7 @@ function requireReusableLane(
   if (
     state.contextId !== contextId ||
     state.backend !== backend ||
-    state.staleSession ||
+    (state.lane === "implementer" && state.staleSession) ||
     (fingerprint !== undefined &&
       state.assignmentFingerprint !== undefined &&
       state.assignmentFingerprint !== fingerprint)
@@ -242,7 +241,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
   }
 
   async function resolveConversation(
-    input: ResolveImplementerCallInput | ResolveValidatorCallInput,
+    input: ResolveImplementerCallInput | EnsureValidatorConversationInput,
     identity: LaneIdentity,
     backend: AgentBackendId,
   ): Promise<{
@@ -270,7 +269,11 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           `Cannot continue ${identity.lane} conversation in context "${contextId}": saved conversation is missing.`,
         );
       }
-      if (conversation.promptCount > 0 && conversation.backendRef === null) {
+      if (
+        identity.lane === "implementer" &&
+        conversation.promptCount > 0 &&
+        conversation.backendRef === null
+      ) {
         throw new Error(
           `Cannot continue ${identity.lane} conversation in context "${contextId}": its backend continuation was lost.`,
         );
@@ -338,9 +341,9 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     };
   }
 
-  async function resolveValidatorCall(
-    input: ResolveValidatorCallInput,
-  ): Promise<ResolvedValidatorCall> {
+  async function ensureValidatorConversation(
+    input: EnsureValidatorConversationInput,
+  ): Promise<EnsuredValidatorConversation> {
     const { lane, backend } = input;
     const identity: LaneIdentity = { lane, assignmentId: input.assignmentId };
     return {
@@ -390,7 +393,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
 
   return {
     resolveImplementerCall,
-    resolveValidatorCall,
+    ensureValidatorConversation,
     recordLaneTurnOutcome,
   };
 }

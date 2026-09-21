@@ -1,7 +1,4 @@
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
-import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
-
-import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
 
 /**
  * R10.2 — the adversarial prompt-authority suite, live half.
@@ -35,21 +32,13 @@ import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversati
  * model from rubber-stamping. If this assertion ever fails it is a real finding
  * about prompt authority on that backend, not a flaky test.
  *
- * Strategy is fixed to `task` here. Strategy selects which continuity anchor a
- * lane holds and never which channel carries the payload — the four
- * backend x strategy combinations are proven equivalent at the provider boundary
- * in `validator-role-transport.integration.test.ts` — so spending live turns on
- * it would buy nothing this suite is about.
- *
- * These runs cost real model calls, so they are opt-in. Select the owning Node
- * integration project explicitly to avoid collecting unrelated profiles.
- *
- *     CC_LIVE_PROMPT_AUTHORITY_TESTS=1 bun run test --project unit-node \
- *       src/lib/workflow-graph/validator-prompt-authority.live.test.ts
+ * These runs cost real model calls and are opt-in through the validation
+ * runner's environment. The provider ports and conversation adapters are real;
+ * lifecycle persistence and the graph execution are isolated fixtures.
  */
 import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
@@ -61,19 +50,16 @@ import {
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { getTaskRunner } from "@/lib/agent-backends/registry";
-import type { AgentTaskRunner } from "@/lib/agent-backends/task";
+import { getConversationBackendFactory } from "@/lib/agent-backends/registry";
+import { createValidatorConversationHarness } from "./testing/validator-conversation-harness";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
-import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 
 import {
   _resetServerBaseUrlForTesting,
   recordServerBaseUrl,
 } from "@/lib/agent-gateway/server-url";
-import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import {
   createValidatorRunner,
   type ValidatorRunResult,
@@ -100,7 +86,6 @@ import {
 const LIVE = process.env.CC_LIVE_PROMPT_AUTHORITY_TESTS === "1";
 
 /** Long enough for a real review turn on either backend. */
-const RUN_TIMEOUT_MS = 300_000;
 const TEST_TIMEOUT_MS = 420_000;
 
 /** Codex rejects several model ids on a ChatGPT account; this one is accepted. */
@@ -195,12 +180,6 @@ function hashTree(root: string): Record<string, string> {
   return hashes;
 }
 
-function taskRunnerFor(backend: AgentBackendId): AgentTaskRunner {
-  // The registered production runner: the real installed executables, with
-  // every default dependency.
-  return getTaskRunner(backend);
-}
-
 function seededValidator(
   backend: AgentBackendId,
   vector: PromptAuthorityVector,
@@ -211,7 +190,7 @@ function seededValidator(
     foreignTaskId: FOREIGN_TASK_ID,
   });
   if (backend === "cursor") {
-    throw new Error("Cursor has no task facet for validator lanes");
+    throw new Error("This live fixture covers Claude and Codex");
   }
   const modelSelection: BackendModelSelection =
     backend === "claude"
@@ -261,33 +240,6 @@ function contextFor(
   };
 }
 
-/** The production task-run path with NOTHING substituted below the actor. */
-function liveTaskRun(
-  backend: AgentBackendId,
-  worktreePath: string,
-): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  const actorDependencies = createActorDependenciesFixture({
-    getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
-  });
-
-  return async (input) => {
-    const fixture = await createLifecycleFixture({
-      binding: input.binding,
-      conversation: { agentBackend: backend, backendRef: null },
-      actorDeps: actorDependencies,
-    });
-    try {
-      return await fixture.executeWorkflowTaskRun({
-        ...input,
-        binding: { ...input.binding, worktreePath: worktreePath },
-        resumeRef: input.resumeRef ?? null,
-      });
-    } finally {
-      await fixture.close();
-    }
-  };
-}
-
 async function runAdversarialValidator(
   backend: AgentBackendId,
   vector: PromptAuthorityVector,
@@ -317,8 +269,13 @@ async function runAdversarialValidator(
     continuityService: makeStubValidatorContinuityService(),
     executionContract: createTestGraphExecutionContract(),
     resolveWorktreePath: async () => fixture.worktreePath,
-    resolveTimeoutMs: async () => RUN_TIMEOUT_MS,
-    executeWorkflowTaskRun: liveTaskRun(backend, fixture.worktreePath),
+    ...createValidatorConversationHarness({
+      backendFactory: getConversationBackendFactory(backend),
+      execution,
+      context,
+      validator,
+      worktreePath: fixture.worktreePath,
+    }),
     // The candidate is a plain directory, not a git checkout: the diff section
     // is unavailable in production too when scope resolution fails, and the
     // review falls back to the acceptance criteria — which is the input under
@@ -403,5 +360,3 @@ describe.skipIf(!LIVE).each(["claude", "codex"] as const)(
     );
   },
 );
-
-afterEach(() => resetTaskRuntime());
