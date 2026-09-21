@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -15,20 +16,22 @@ import type {
   CheckpointActionState,
   CheckpointChipState,
 } from "@/components/conversation/checkpoint-action-state";
+import {
+  ArrowUpIcon,
+  BranchIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  DocumentIcon,
+  LayoutIcon,
+  RefreshIcon,
+  TrashIcon,
+} from "@/components/icons";
+import { MenuItemIcon, MenuItemText } from "@/components/ui/MenuItemContent";
 import { cn } from "@/lib/ui/cn";
 import type { LayoutMode } from "@/lib/sessions/schemas";
 import { LAYOUT_OPTIONS } from "./LayoutSwitcher";
 import type { CompactionChipState } from "@/components/conversation/compaction-chip-state";
-
-// Rich item content (colored glyph square + label + description) rendered inside
-// the canonical DropdownMenu items; the menu behaviour/appearance is the
-// primitive's. The glyphs are spans (not svg), so the item recipe's `[&_svg]`
-// rules don't touch them.
-const GLYPH_CLASS =
-  "inline-flex size-[22px] shrink-0 items-center justify-center rounded-sm font-mono text-[0.8rem]";
-const BODY_CLASS = "flex min-w-0 flex-1 flex-col gap-px";
-const LABEL_CLASS = "text-[0.82rem] font-medium";
-const DESC_CLASS = "font-mono text-[0.64rem] text-text-tertiary";
 
 // Trigger appearance preserved from the legacy "Actions" button; open state is
 // read off Radix's `data-state` (Radix also injects aria-haspopup/aria-expanded).
@@ -92,6 +95,7 @@ export default function SessionActionsMenu({
   onPrepareHandoff,
   onViewCheckpoint,
 }: SessionActionsMenuProps): React.JSX.Element {
+  const [layoutExpanded, setLayoutExpanded] = useState(false);
   const showCompact =
     compaction?.kind === "none" || compaction?.kind === "failed";
   const showView = compaction !== undefined && compaction.kind !== "none";
@@ -104,115 +108,126 @@ export default function SessionActionsMenu({
   };
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (!open) setLayoutExpanded(false);
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button type="button" className={TRIGGER_CLASS} title="Session actions">
           <span className="leading-none">Actions</span>
-          <span
-            className="text-[8px] text-text-tertiary transition-transform duration-150 ease-[ease] group-data-[state=open]:rotate-180 group-data-[state=open]:text-cyan"
-            aria-hidden="true"
-          >
-            {"▼"}
-          </span>
+          <ChevronDownIcon
+            size={14}
+            className="transition-transform duration-150 group-data-[state=open]:rotate-180"
+          />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" layoutClassName="w-[280px]">
+      <DropdownMenuContent align="end" layoutClassName="w-[352px]">
+        <DropdownMenuLabel>Session</DropdownMenuLabel>
         {onToggleMerged && (
           <>
             <DropdownMenuItem
               onSelect={onToggleMerged}
               disabled={mergeStatusPending}
             >
-              {merged ? "Unmark as merged" : "Mark as merged"}
+              <MenuItemIcon>
+                <CheckIcon />
+              </MenuItemIcon>
+              <MenuItemText>
+                {merged ? "Unmark as merged" : "Mark as merged"}
+              </MenuItemText>
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
           </>
         )}
-        <DropdownMenuLabel>Layout</DropdownMenuLabel>
-        <DropdownMenuRadioGroup
-          aria-label="Layout"
-          value={activeLayout}
-          onValueChange={handleLayoutChange}
-        >
-          {LAYOUT_OPTIONS.map(({ mode, tooltip }) => (
-            <DropdownMenuRadioItem key={mode} value={mode}>
-              {tooltip}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+        <>
+          <DropdownMenuItem
+            aria-expanded={layoutExpanded}
+            onSelect={(event) => {
+              event.preventDefault();
+              setLayoutExpanded(!layoutExpanded);
+            }}
+          >
+            <MenuItemIcon>
+              <LayoutIcon />
+            </MenuItemIcon>
+            <MenuItemText>Layout</MenuItemText>
+            <span className="text-[0.7rem] text-text-secondary">
+              {
+                LAYOUT_OPTIONS.find(({ mode }) => mode === activeLayout)
+                  ?.tooltip
+              }
+            </span>
+            <ChevronDownIcon size={18} />
+          </DropdownMenuItem>
+          {layoutExpanded && (
+            <DropdownMenuRadioGroup
+              aria-label="Layout"
+              value={activeLayout}
+              onValueChange={handleLayoutChange}
+            >
+              {LAYOUT_OPTIONS.map(({ mode, tooltip }) => (
+                <DropdownMenuRadioItem key={mode} value={mode}>
+                  {tooltip}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          )}
+        </>
         <DropdownMenuSeparator />
+        <DropdownMenuLabel>Branch</DropdownMenuLabel>
         <DropdownMenuItem
           onSelect={onPush}
           disabled={!onPush}
           title={onPush ? undefined : "Push not available yet"}
         >
-          <span
-            className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-            aria-hidden="true"
-          >
-            {"↑"}
-          </span>
-          <span className={BODY_CLASS}>
-            <span className={LABEL_CLASS}>Push branch</span>
-            <span className={DESC_CLASS}>Push to remote</span>
-          </span>
+          <MenuItemIcon>
+            <ArrowUpIcon />
+          </MenuItemIcon>
+          <MenuItemText description="Push to remote">Push branch</MenuItemText>
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={onRebase}
           disabled={!onRebase}
           title={onRebase ? undefined : "Rebase not available yet"}
         >
-          <span
-            className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-            aria-hidden="true"
-          >
-            {"⤴"}
-          </span>
-          <span className={BODY_CLASS}>
-            <span className={LABEL_CLASS}>Rebase on {targetBranch}</span>
-            <span className={DESC_CLASS}>Replay commits onto target</span>
-          </span>
+          <MenuItemIcon>
+            <BranchIcon />
+          </MenuItemIcon>
+          <MenuItemText description="Replay commits onto target">
+            Rebase on {targetBranch}
+          </MenuItemText>
         </DropdownMenuItem>
         {compaction !== undefined && (
           <>
             <DropdownMenuSeparator />
+            <DropdownMenuLabel>Compaction artifact</DropdownMenuLabel>
             {showCompact && (
               <DropdownMenuItem
                 onSelect={onCompactConversation}
                 disabled={!onCompactConversation}
               >
-                <span
-                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-                  aria-hidden="true"
-                >
-                  {"⇊"}
-                </span>
-                <span className={BODY_CLASS}>
-                  <span className={LABEL_CLASS}>
-                    Generate compaction artifact
-                  </span>
-                  <span className={DESC_CLASS}>
-                    {compaction.kind === "failed"
+                <MenuItemIcon>
+                  <DocumentIcon />
+                </MenuItemIcon>
+                <MenuItemText
+                  description={
+                    compaction.kind === "failed"
                       ? "Previous run failed — run again"
-                      : "Write a reading artifact; continuity is unchanged"}
-                  </span>
-                </span>
+                      : "Write a summary; keep the current context"
+                  }
+                >
+                  Generate compaction artifact
+                </MenuItemText>
               </DropdownMenuItem>
             )}
             {compaction.kind === "pending" && (
               <DropdownMenuItem disabled>
-                <span
-                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-                  aria-hidden="true"
-                >
-                  {"⇊"}
-                </span>
-                <span className={BODY_CLASS}>
-                  <span className={LABEL_CLASS}>Compacting…</span>
-                  <span className={DESC_CLASS}>
-                    Context artifact is generating
-                  </span>
-                </span>
+                <MenuItemIcon>
+                  <DocumentIcon />
+                </MenuItemIcon>
+                <MenuItemText description="Context artifact is generating">
+                  Compacting…
+                </MenuItemText>
               </DropdownMenuItem>
             )}
             {showView && (
@@ -220,16 +235,12 @@ export default function SessionActionsMenu({
                 onSelect={onViewArtifact}
                 disabled={!onViewArtifact}
               >
-                <span
-                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-                  aria-hidden="true"
-                >
-                  {"▤"}
-                </span>
-                <span className={BODY_CLASS}>
-                  <span className={LABEL_CLASS}>View context artifact</span>
-                  <span className={DESC_CLASS}>Open the artifact panel</span>
-                </span>
+                <MenuItemIcon>
+                  <DocumentIcon />
+                </MenuItemIcon>
+                <MenuItemText description="Open the artifact panel">
+                  View context artifact
+                </MenuItemText>
               </DropdownMenuItem>
             )}
             {showRefresh && (
@@ -237,25 +248,24 @@ export default function SessionActionsMenu({
                 onSelect={onRefreshArtifact}
                 disabled={!onRefreshArtifact}
               >
-                <span
-                  className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-                  aria-hidden="true"
-                >
-                  {"↻"}
-                </span>
-                <span className={BODY_CLASS}>
-                  <span className={LABEL_CLASS}>Refresh context artifact</span>
-                  <span className={DESC_CLASS}>
-                    {compaction.kind === "stale"
+                <MenuItemIcon>
+                  <RefreshIcon />
+                </MenuItemIcon>
+                <MenuItemText
+                  description={
+                    compaction.kind === "stale"
                       ? `Behind ${compaction.behind} messages`
-                      : "Format outdated — full regeneration"}
-                  </span>
-                </span>
+                      : "Format outdated — full regeneration"
+                  }
+                >
+                  Refresh context artifact
+                </MenuItemText>
               </DropdownMenuItem>
             )}
             {checkpointChip !== undefined && checkpointAction !== undefined && (
               <>
                 <DropdownMenuSeparator />
+                <DropdownMenuLabel>Context checkpoint</DropdownMenuLabel>
                 <CheckpointMenuItems
                   chip={checkpointChip}
                   action={checkpointAction}
@@ -270,35 +280,23 @@ export default function SessionActionsMenu({
               onSelect={onCopyReference}
               disabled={!onCopyReference}
             >
-              <span
-                className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-                aria-hidden="true"
-              >
-                {"#"}
-              </span>
-              <span className={BODY_CLASS}>
-                <span className={LABEL_CLASS}>Copy reference</span>
-                <span className={DESC_CLASS}>
-                  Copy the # mention for this conversation
-                </span>
-              </span>
+              <MenuItemIcon>
+                <CopyIcon />
+              </MenuItemIcon>
+              <MenuItemText description="Copy this conversation’s # mention">
+                Copy reference
+              </MenuItemText>
             </DropdownMenuItem>
           </>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem danger onSelect={onDelete}>
-          <span
-            className={cn(GLYPH_CLASS, "bg-[var(--cc-red-soft-a08)] text-red")}
-            aria-hidden="true"
-          >
-            {"✕"}
-          </span>
-          <span className={BODY_CLASS}>
-            <span className={LABEL_CLASS}>Delete session…</span>
-            <span className={DESC_CLASS}>
-              Delete worktree and session state
-            </span>
-          </span>
+          <MenuItemIcon>
+            <TrashIcon />
+          </MenuItemIcon>
+          <MenuItemText description="Delete worktree and session state">
+            Delete session…
+          </MenuItemText>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

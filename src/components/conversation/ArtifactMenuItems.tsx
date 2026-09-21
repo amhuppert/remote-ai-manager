@@ -1,18 +1,13 @@
 "use client";
 
 import { DropdownMenuItem } from "@/components/ui/DropdownMenu";
-import { cn } from "@/lib/ui/cn";
+import { DocumentIcon } from "@/components/icons";
+import { MenuItemIcon, MenuItemText } from "@/components/ui/MenuItemContent";
 
 import {
   compactionChipLabel,
   type CompactionChipState,
 } from "./compaction-chip-state";
-
-const GLYPH_CLASS =
-  "inline-flex size-[22px] shrink-0 items-center justify-center rounded-sm font-mono text-[0.8rem]";
-const BODY_CLASS = "flex min-w-0 flex-1 flex-col gap-px";
-const LABEL_CLASS = "text-[0.82rem] font-medium";
-const DESC_CLASS = "font-mono text-[0.64rem] text-text-tertiary";
 
 export interface ArtifactMenuItemsProps {
   compaction: CompactionChipState;
@@ -47,41 +42,33 @@ export default function ArtifactMenuItems({
         disabled={running || onGenerateArtifact === undefined}
         data-artifact-action={compaction.kind}
       >
-        <span
-          className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-          aria-hidden="true"
-        >
-          {"⇊"}
-        </span>
-        <span className={BODY_CLASS}>
-          <span className={LABEL_CLASS}>
-            {exists
-              ? "Refresh compaction artifact"
-              : "Generate compaction artifact"}
-          </span>
-          <span className={DESC_CLASS}>
-            {running
+        <MenuItemIcon>
+          <DocumentIcon />
+        </MenuItemIcon>
+        <MenuItemText
+          description={
+            running
               ? "A compaction run is already in flight"
               : compaction.kind === "failed"
                 ? "Previous run failed — run again"
-                : "Write a reading artifact; continuity is unchanged"}
-          </span>
-        </span>
+                : "Write a summary; keep the current context"
+          }
+        >
+          {exists
+            ? "Refresh compaction artifact"
+            : "Generate compaction artifact"}
+        </MenuItemText>
       </DropdownMenuItem>
       {onViewArtifact !== undefined && exists && (
         <DropdownMenuItem onSelect={onViewArtifact} data-artifact-view="">
-          <span
-            className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-            aria-hidden="true"
+          <MenuItemIcon>
+            <DocumentIcon />
+          </MenuItemIcon>
+          <MenuItemText
+            description={`${compactionChipLabel(compaction)} — the rolling reading document`}
           >
-            {"▤"}
-          </span>
-          <span className={BODY_CLASS}>
-            <span className={LABEL_CLASS}>View compaction artifact</span>
-            <span className={DESC_CLASS}>
-              {`${compactionChipLabel(compaction)} — the rolling reading document`}
-            </span>
-          </span>
+            View compaction artifact
+          </MenuItemText>
         </DropdownMenuItem>
       )}
     </>

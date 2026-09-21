@@ -1,22 +1,21 @@
 // @vitest-inputs src/**/*.{ts,tsx}
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const SRC_ROOT = path.resolve(__dirname, "..", "..");
 const MODULE_EXTENSIONS = [".ts", ".tsx"];
 const NON_PRODUCTION_SOURCE = /\.(?:test|stories)\.[cm]?[jt]sx?$/;
 
-function listSourceFiles(directory: string): string[] {
+function listTypeScriptFiles(directory: string): string[] {
   const files: string[] = [];
-  for (const entry of readdirSync(directory)) {
-    const filePath = path.join(directory, entry);
-    if (statSync(filePath).isDirectory()) {
-      files.push(...listSourceFiles(filePath));
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const filePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listTypeScriptFiles(filePath));
       continue;
     }
-    if (/\.(?:ts|tsx)$/.test(entry) && !NON_PRODUCTION_SOURCE.test(entry)) {
+    if (entry.isFile() && /\.(?:ts|tsx)$/.test(entry.name)) {
       files.push(filePath);
     }
   }
@@ -27,42 +26,31 @@ function isClientModule(source: string): boolean {
   return /^\s*["']use client["'];/m.test(source);
 }
 
-function runtimeImportSpecifiers(sourceFile: ts.SourceFile): string[] {
+function runtimeImportSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
-  function visit(node: ts.Node): void {
-    if (ts.isImportDeclaration(node)) {
-      if (
-        !node.importClause?.isTypeOnly &&
-        ts.isStringLiteralLike(node.moduleSpecifier)
-      ) {
-        specifiers.push(node.moduleSpecifier.text);
-      }
-    } else if (ts.isExportDeclaration(node)) {
-      if (
-        !node.isTypeOnly &&
-        node.moduleSpecifier &&
-        ts.isStringLiteralLike(node.moduleSpecifier)
-      ) {
-        specifiers.push(node.moduleSpecifier.text);
-      }
-    } else if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword
-    ) {
-      const specifier = node.arguments[0];
-      if (specifier && ts.isStringLiteralLike(specifier)) {
-        specifiers.push(specifier.text);
-      }
-    }
-    ts.forEachChild(node, visit);
+  const staticRe =
+    /\b(?:import|export)\s+(type\s+)?([^;]*?)from\s+["']([^"']+)["']/g;
+  const dynamicRe = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+  const sideEffectRe = /(?:^|\n)\s*import\s+["']([^"']+)["']/g;
+
+  for (const match of source.matchAll(staticRe)) {
+    if (match[1] !== undefined) continue;
+    const specifier = match[3];
+    if (specifier !== undefined) specifiers.push(specifier);
   }
-  visit(sourceFile);
+  for (const re of [dynamicRe, sideEffectRe]) {
+    for (const match of source.matchAll(re)) {
+      const specifier = match[1];
+      if (specifier !== undefined) specifiers.push(specifier);
+    }
+  }
   return specifiers;
 }
 
 function resolveProjectModule(
   specifier: string,
   fromFile: string,
+  moduleFiles: ReadonlySet<string>,
 ): string | null {
   const base = specifier.startsWith("@/")
     ? path.join(SRC_ROOT, specifier.slice(2))
@@ -78,15 +66,7 @@ function resolveProjectModule(
       path.join(withoutExtension, `index${extension}`),
     ),
   ];
-  return (
-    candidates.find((candidate) => {
-      try {
-        return statSync(candidate).isFile();
-      } catch {
-        return false;
-      }
-    }) ?? null
-  );
+  return candidates.find((candidate) => moduleFiles.has(candidate)) ?? null;
 }
 
 function relative(filePath: string): string {
@@ -94,7 +74,11 @@ function relative(filePath: string): string {
 }
 
 function asyncHooksClientChains(): string[] {
-  const sourceFiles = listSourceFiles(SRC_ROOT);
+  const moduleFiles = listTypeScriptFiles(SRC_ROOT);
+  const moduleFileSet = new Set(moduleFiles);
+  const sourceFiles = moduleFiles.filter(
+    (filePath) => !NON_PRODUCTION_SOURCE.test(path.basename(filePath)),
+  );
   const textCache = new Map<string, string>();
   const textOf = (filePath: string): string => {
     const cached = textCache.get(filePath);
@@ -102,19 +86,6 @@ function asyncHooksClientChains(): string[] {
     const source = readFileSync(filePath, "utf8");
     textCache.set(filePath, source);
     return source;
-  };
-  const sourceCache = new Map<string, ts.SourceFile>();
-  const sourceOf = (filePath: string): ts.SourceFile => {
-    const cached = sourceCache.get(filePath);
-    if (cached !== undefined) return cached;
-    const parsed = ts.createSourceFile(
-      filePath,
-      textOf(filePath),
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    sourceCache.set(filePath, parsed);
-    return parsed;
   };
   const chainByOffender = new Map<string, string>();
   const clientFiles = sourceFiles.filter((filePath) =>
@@ -125,12 +96,10 @@ function asyncHooksClientChains(): string[] {
     (filePath) => ({ filePath, chain: [relative(filePath)] }),
   );
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current === undefined) break;
-    for (const specifier of runtimeImportSpecifiers(
-      sourceOf(current.filePath),
-    )) {
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+    const current = queue[queueIndex];
+    if (current === undefined) continue;
+    for (const specifier of runtimeImportSpecifiers(textOf(current.filePath))) {
       if (specifier === "node:async_hooks") {
         const offender = `${relative(current.filePath)} imports ${specifier}`;
         if (!chainByOffender.has(offender)) {
@@ -141,7 +110,11 @@ function asyncHooksClientChains(): string[] {
         }
         continue;
       }
-      const resolved = resolveProjectModule(specifier, current.filePath);
+      const resolved = resolveProjectModule(
+        specifier,
+        current.filePath,
+        moduleFileSet,
+      );
       if (resolved === null || visited.has(resolved)) continue;
       visited.add(resolved);
       queue.push({

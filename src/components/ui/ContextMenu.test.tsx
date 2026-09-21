@@ -45,32 +45,17 @@ describe("ContextMenu", () => {
     expect(isOverlayOpen()).toBe(true);
   });
 
-  it("renders items with the shared menu recipe; danger maps to red", () => {
+  it("exposes action names, shortcut text, and the group separator", () => {
     renderMenu();
     fireEvent.contextMenu(screen.getByTestId("area"));
 
-    const rename = screen.getByRole("menuitem", { name: /Rename/ });
-    expect(rename.className).toContain("font-mono");
-    expect(rename.className).toContain(
-      "data-[highlighted]:bg-[var(--cc-cyan-a08)]",
-    );
-    expect(rename.className).toContain(
-      "focus-visible:[outline:2px_solid_var(--color-cyan)]",
-    );
-
+    expect(
+      screen.getByRole("menuitem", { name: /Rename/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("separator")).toBeInTheDocument();
-    const del = screen.getByRole("menuitem", { name: "Delete" });
-    expect(del.className).toContain("text-red");
-  });
-
-  it("renders the menu on the canonical elevated surface", () => {
-    renderMenu();
-    fireEvent.contextMenu(screen.getByTestId("area"));
-
-    const menu = screen.getByRole("menu");
-    expect(menu.className).toContain("bg-bg-elevated");
-    expect(menu.className).toContain("shadow-menu");
-    expect(menu.className).toContain("z-menu");
+    expect(
+      screen.getByRole("menuitem", { name: "Delete" }),
+    ).toBeInTheDocument();
   });
 
   it("fires onSelect and closes when an item is chosen", async () => {

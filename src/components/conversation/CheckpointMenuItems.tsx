@@ -1,19 +1,14 @@
 "use client";
 
 import { DropdownMenuItem } from "@/components/ui/DropdownMenu";
-import { cn } from "@/lib/ui/cn";
+import { CheckpointIcon, CompactIcon, HandoffIcon } from "@/components/icons";
+import { MenuItemIcon, MenuItemText } from "@/components/ui/MenuItemContent";
 
 import {
   checkpointChipLabel,
   type CheckpointActionState,
   type CheckpointChipState,
 } from "./checkpoint-action-state";
-
-const GLYPH_CLASS =
-  "inline-flex size-[22px] shrink-0 items-center justify-center rounded-sm font-mono text-[0.8rem]";
-const BODY_CLASS = "flex min-w-0 flex-1 flex-col gap-px";
-const LABEL_CLASS = "text-[0.82rem] font-medium";
-const DESC_CLASS = "font-mono text-[0.64rem] text-text-tertiary";
 
 export interface CheckpointMenuItemsProps {
   chip: CheckpointChipState;
@@ -79,49 +74,41 @@ export default function CheckpointMenuItems({
         disabled={!startable || onCompactContextNow === undefined}
         data-checkpoint-action={action.kind}
       >
-        <span
-          className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-          aria-hidden="true"
-        >
-          {"⌁"}
-        </span>
-        <span className={BODY_CLASS}>
-          <span className={LABEL_CLASS}>Compact context now</span>
-          <span className={DESC_CLASS}>{actionDescription(action)}</span>
-        </span>
+        <MenuItemIcon>
+          <CompactIcon />
+        </MenuItemIcon>
+        <MenuItemText description={actionDescription(action)}>
+          Compact context now
+        </MenuItemText>
       </DropdownMenuItem>
       <DropdownMenuItem
         onSelect={startable ? onPrepareHandoff : undefined}
         disabled={!startable || onPrepareHandoff === undefined}
       >
-        <span className={BODY_CLASS}>
-          <span className={LABEL_CLASS}>Compact with agent handoff…</span>
-          <span className={DESC_CLASS}>
-            {startable
-              ? "Review capture mode and limits before starting"
-              : actionDescription(action)}
-          </span>
-        </span>
+        <MenuItemIcon>
+          <HandoffIcon />
+        </MenuItemIcon>
+        <MenuItemText description="Review capture mode and limits before starting">
+          Compact with agent handoff…
+        </MenuItemText>
       </DropdownMenuItem>
       <DropdownMenuItem
         onSelect={onViewCheckpoint}
         disabled={onViewCheckpoint === undefined}
         data-checkpoint-view=""
       >
-        <span
-          className={cn(GLYPH_CLASS, "bg-bg-hover text-text-tertiary")}
-          aria-hidden="true"
-        >
-          {"◆"}
-        </span>
-        <span className={BODY_CLASS}>
-          <span className={LABEL_CLASS}>View context checkpoint</span>
-          <span className={DESC_CLASS}>
-            {chip.kind === "none"
+        <MenuItemIcon>
+          <CheckpointIcon />
+        </MenuItemIcon>
+        <MenuItemText
+          description={
+            chip.kind === "none"
               ? "No checkpoint saved yet"
-              : `${checkpointChipLabel(chip)} — receipt, evidence, and recovery`}
-          </span>
-        </span>
+              : `${checkpointChipLabel(chip)} — receipt, evidence, and recovery`
+          }
+        >
+          View context checkpoint
+        </MenuItemText>
       </DropdownMenuItem>
     </>
   );

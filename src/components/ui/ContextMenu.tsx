@@ -183,7 +183,7 @@ export function ContextMenuRadioItem({
       className={cn(menuChoiceBase, menuChoiceTone, layoutClassName)}
     >
       <RadixContextMenu.ItemIndicator className={menuChoiceIndicator}>
-        <span className="size-[5px] rounded-full bg-current" />
+        <CheckIcon size={16} />
       </RadixContextMenu.ItemIndicator>
       {children}
     </RadixContextMenu.RadioItem>

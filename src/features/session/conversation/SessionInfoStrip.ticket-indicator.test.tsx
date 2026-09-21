@@ -132,6 +132,7 @@ describe("SessionInfoStrip responsive controls", () => {
     try {
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: /actions/i }));
+      await user.click(screen.getByRole("menuitem", { name: /^Layout/ }));
       await user.click(
         screen.getByRole("menuitemradio", { name: "Panes (split-screen)" }),
       );

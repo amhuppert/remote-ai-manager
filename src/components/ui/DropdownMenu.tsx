@@ -205,7 +205,7 @@ export function DropdownMenuRadioItem({
       className={cn(menuChoiceBase, menuChoiceTone, layoutClassName)}
     >
       <RadixDropdownMenu.ItemIndicator className={menuChoiceIndicator}>
-        <span className="size-[5px] rounded-full bg-current" />
+        <CheckIcon size={16} />
       </RadixDropdownMenu.ItemIndicator>
       {children}
     </RadixDropdownMenu.RadioItem>

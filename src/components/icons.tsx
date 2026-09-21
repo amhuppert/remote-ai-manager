@@ -352,3 +352,81 @@ export function AlertTriangleIcon({ size, className }: IconProps) {
     </svg>
   );
 }
+
+export function DocumentIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M14 3H5v18h14V8z" />
+      <path d="M14 3v5h5M8 12h8M8 16h6" />
+    </svg>
+  );
+}
+
+export function RefreshIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M20 7v5h-5M4 17v-5h5" />
+      <path d="M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1" />
+    </svg>
+  );
+}
+
+export function CompactIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M4 3v5h5M20 3v5h-5M4 21v-5h5M20 21v-5h-5M4 8l4-4M20 8l-4-4M4 16l4 4M20 16l-4 4" />
+    </svg>
+  );
+}
+
+export function HandoffIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M3 5h11v10H3zM8 19h13V9M10 10h10m-3-3 3 3-3 3" />
+    </svg>
+  );
+}
+
+export function CheckpointIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M6 3h12v18l-6-4-6 4z" />
+      <path d="m9 9 2 2 4-4" />
+    </svg>
+  );
+}

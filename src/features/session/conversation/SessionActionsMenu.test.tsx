@@ -10,7 +10,10 @@ Element.prototype.hasPointerCapture = () => false;
 Element.prototype.setPointerCapture = () => {};
 Element.prototype.releasePointerCapture = () => {};
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function defaultLayoutProps() {
   return {
@@ -117,16 +120,22 @@ describe("SessionActionsMenu", () => {
 describe("SessionActionsMenu — layout fallback", () => {
   it("keeps every layout mode reachable and marks the active mode", async () => {
     const user = userEvent.setup();
+    const onLayoutChange = vi.fn();
     render(
       <SessionActionsMenu
         targetBranch="main"
         onDelete={vi.fn()}
         activeLayout="conversation"
-        onLayoutChange={vi.fn()}
+        onLayoutChange={onLayoutChange}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: /actions/i }));
+
+    expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
+    await user.click(
+      screen.getByRole("menuitem", { name: /Layout.*Conversation only/ }),
+    );
 
     expect(screen.getByRole("group", { name: "Layout" })).toBeInTheDocument();
     for (const name of [
@@ -140,6 +149,10 @@ describe("SessionActionsMenu — layout fallback", () => {
     expect(
       screen.getByRole("menuitemradio", { name: "Conversation only" }),
     ).toHaveAttribute("aria-checked", "true");
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Split 50/50" }),
+    );
+    expect(onLayoutChange).toHaveBeenCalledWith("split");
   });
 });
 
@@ -254,5 +267,32 @@ describe("SessionActionsMenu — compaction actions", () => {
     expect(
       screen.getByRole("menuitem", { name: /view context artifact/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("SessionActionsMenu — narrow layout picker", () => {
+  it("expands layout choices inside the menu on narrow screens", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const user = userEvent.setup();
+    const onLayoutChange = vi.fn();
+    render(
+      <SessionActionsMenu
+        targetBranch="main"
+        activeLayout="split"
+        onLayoutChange={onLayoutChange}
+        onDelete={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /actions/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^Layout/ }));
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Conversation only" }),
+    );
+    expect(onLayoutChange).toHaveBeenCalledWith("conversation");
   });
 });

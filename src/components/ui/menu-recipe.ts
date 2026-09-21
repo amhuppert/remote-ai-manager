@@ -13,7 +13,7 @@
 // `data-state=open` plays the restrained CC fade (motion-safe); Radix unmounts on
 // close (no exit animation).
 export const menuSurface =
-  "z-menu min-w-[180px] rounded-md border border-solid border-border-default bg-bg-elevated p-[4px] shadow-menu data-[state=open]:motion-safe:animate-[fadeIn_0.12s_ease]";
+  "z-menu min-w-[180px] max-w-[calc(100vw-16px)] rounded-lg border border-solid border-border-default bg-bg-surface p-xs shadow-menu data-[state=open]:motion-safe:animate-[fadeIn_0.12s_ease]";
 
 // Item box. The UA outline is suppressed so pointer hover stays clean (just the
 // `data-highlighted` tint), but keyboard focus gets the canonical cyan outline via
@@ -22,11 +22,11 @@ export const menuSurface =
 // faint highlight tint alone is ~1.2:1 against the surface — not a sufficient focus
 // indicator on its own; the outline carries WCAG 2.4.7 / 1.4.11.)
 export const menuItemBase =
-  "flex items-center gap-[8px] w-full select-none cursor-pointer rounded-sm border-0 bg-transparent py-[7px] px-[10px] text-left font-mono text-[0.74rem] font-medium outline-none transition-[background,color] duration-[100ms] ease-[ease] [&_svg]:shrink-0 data-[disabled]:pointer-events-none data-[disabled]:opacity-40 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px]";
+  "group/menu-item flex min-h-[36px] items-center gap-sm w-full select-none cursor-pointer rounded-md border-0 bg-transparent py-sm px-md text-left font-mono text-[0.78rem] leading-[20px] font-medium outline-none transition-[background,color] duration-[100ms] ease-[ease] [&_svg]:size-[18px] [&_svg]:shrink-0 data-[disabled]:pointer-events-none data-[disabled]:opacity-60 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px]";
 export const menuItemTone =
-  "text-text-primary [&_svg]:text-text-tertiary data-[highlighted]:bg-[var(--cc-cyan-a08)] data-[highlighted]:[&_svg]:text-current";
+  "text-text-primary [&_svg]:text-text-secondary data-[highlighted]:bg-bg-raised data-[highlighted]:[&_svg]:text-current";
 export const menuItemDanger =
-  "text-red [&_svg]:text-text-tertiary data-[highlighted]:bg-[var(--cc-red-a10)] data-[highlighted]:[&_svg]:text-current";
+  "text-red [&_svg]:text-current data-[highlighted]:bg-[var(--cc-red-a10)]";
 // Opt-in row height for menus a reader reaches by thumb: the row grows to the
 // 44px touch minimum below 768px. Off by default — a pointer menu's density is
 // part of its design, and only the call site knows whether its menu is a mobile
@@ -34,23 +34,23 @@ export const menuItemDanger =
 export const menuItemTouch = "max-768:min-h-[44px]";
 
 // Checkbox / radio items reserve a left indicator column. The checked row takes the
-// cyan-glow treatment; the highlighted-but-unchecked bg and the checked bg are
+// raised-surface treatment; the highlighted-but-unchecked bg and the checked bg are
 // mutually exclusive via chained `data-state`/`data-highlighted` variants so no two
 // utilities ever target `background` on one element (no reliance on emit order).
 export const menuChoiceBase =
-  "relative flex items-center gap-[8px] w-full select-none cursor-pointer rounded-sm border-0 bg-transparent py-[7px] pr-[10px] pl-[28px] text-left font-mono text-[0.74rem] font-medium outline-none transition-[background,color] duration-[100ms] ease-[ease] data-[disabled]:pointer-events-none data-[disabled]:opacity-40 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px]";
+  "group/menu-item relative flex min-h-[36px] items-center gap-sm w-full select-none cursor-pointer rounded-md border-0 bg-transparent py-sm pr-md pl-[40px] text-left font-mono text-[0.78rem] leading-[20px] font-medium outline-none transition-[background,color] duration-[100ms] ease-[ease] data-[disabled]:pointer-events-none data-[disabled]:opacity-60 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px]";
 export const menuChoiceTone =
-  "data-[state=unchecked]:text-text-primary data-[state=unchecked]:data-[highlighted]:bg-[var(--cc-cyan-a08)] data-[state=checked]:bg-cyan-glow data-[state=checked]:text-cyan";
+  "data-[state=unchecked]:text-text-primary data-[state=unchecked]:data-[highlighted]:bg-bg-raised data-[state=checked]:bg-bg-raised data-[state=checked]:text-cyan data-[state=checked]:shadow-[inset_2px_0_0_var(--color-cyan)]";
 export const menuChoiceIndicator =
-  "absolute left-[8px] top-1/2 inline-flex -translate-y-1/2 items-center justify-center text-cyan";
+  "absolute left-[12px] top-1/2 inline-flex size-[20px] -translate-y-1/2 items-center justify-center text-cyan";
 
 // Open-submenu highlight for a SubTrigger.
-export const menuSubTriggerOpen = "data-[state=open]:bg-[var(--cc-cyan-a08)]";
+export const menuSubTriggerOpen = "data-[state=open]:bg-bg-raised";
 
 export const menuLabel =
-  "select-none px-[10px] pt-[6px] pb-[4px] font-mono text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary";
-export const menuSeparator = "mx-[2px] my-[4px] h-px bg-border-subtle";
+  "select-none px-md pt-sm pb-xs font-mono text-[0.7rem] leading-[20px] font-semibold uppercase tracking-[0.1em] text-text-secondary";
+export const menuSeparator = "mx-md my-sm h-px bg-border-default";
 
 // Right-aligned keyboard-shortcut / hotkey hint inside an item.
 export const menuShortcut =
-  "ml-auto pl-[16px] font-mono text-[0.7rem] tracking-[0.02em] text-text-tertiary";
+  "ml-auto pl-lg font-mono text-[0.7rem] tracking-[0.02em] text-text-secondary";

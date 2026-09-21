@@ -167,7 +167,7 @@ describe("session host checkpoint wiring", () => {
       });
       expect(checkpointItem).not.toBe(artifactItem);
       expect(checkpointItem).toHaveTextContent(/frozen summary/i);
-      expect(artifactItem).toHaveTextContent(/continuity is unchanged/i);
+      expect(artifactItem).toHaveTextContent(/keep the current context/i);
     } finally {
       restore();
     }

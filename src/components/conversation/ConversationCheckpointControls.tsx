@@ -1,10 +1,12 @@
 "use client";
 
+import { ChevronDownIcon } from "@/components/icons";
 import { useCallback, useState } from "react";
 
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
@@ -104,15 +106,14 @@ export default function ConversationCheckpointControls({
             title="Context checkpoint actions"
           >
             <span className="leading-none">Checkpoint</span>
-            <span
-              className="text-[8px] text-text-tertiary transition-transform duration-150 ease-[ease] group-data-[state=open]:rotate-180 group-data-[state=open]:text-cyan"
-              aria-hidden="true"
-            >
-              {"▼"}
-            </span>
+            <ChevronDownIcon
+              size={14}
+              className="transition-transform duration-150 group-data-[state=open]:rotate-180"
+            />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" layoutClassName="w-[280px]">
+        <DropdownMenuContent align="end" layoutClassName="w-[352px]">
+          <DropdownMenuLabel>Context checkpoint</DropdownMenuLabel>
           <CheckpointMenuItems
             chip={surface.chip}
             action={surface.action}
@@ -121,6 +122,7 @@ export default function ConversationCheckpointControls({
             onViewCheckpoint={openPanel}
           />
           <DropdownMenuSeparator />
+          <DropdownMenuLabel>Compaction artifact</DropdownMenuLabel>
           <ArtifactMenuItems
             compaction={compaction}
             onGenerateArtifact={generateArtifact}

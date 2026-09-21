@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import { ArchiveIcon, CopyIcon, TrashIcon } from "@/components/icons";
+import { MenuItemIcon, MenuItemText } from "./MenuItemContent";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -116,4 +117,43 @@ export const WithCheckboxes: Story = {
       </ContextMenu>
     );
   },
+};
+
+/** The same shared icon gutter and descriptive row used in dropdown menus. */
+export const Descriptions: Story = {
+  render: () => (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className={triggerArea}>Right-click for session actions</div>
+      </ContextMenuTrigger>
+      <ContextMenuContent layoutClassName="w-[300px] max-w-[calc(100vw-16px)]">
+        <ContextMenuLabel>Session</ContextMenuLabel>
+        <ContextMenuItem onSelect={fn()}>
+          <MenuItemIcon>
+            <CopyIcon />
+          </MenuItemIcon>
+          <MenuItemText description="Copy the # mention for this session">
+            Copy reference
+          </MenuItemText>
+        </ContextMenuItem>
+        <ContextMenuItem disabled>
+          <MenuItemIcon>
+            <ArchiveIcon />
+          </MenuItemIcon>
+          <MenuItemText description="Stop the running agent before archiving">
+            Archive session
+          </MenuItemText>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem danger onSelect={fn()}>
+          <MenuItemIcon>
+            <TrashIcon />
+          </MenuItemIcon>
+          <MenuItemText description="Delete worktree and session state">
+            Delete session…
+          </MenuItemText>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  ),
 };

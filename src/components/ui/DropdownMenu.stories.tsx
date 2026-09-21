@@ -11,6 +11,7 @@ import {
 } from "@/components/icons";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
+import { MenuItemIcon, MenuItemText } from "./MenuItemContent";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -108,7 +109,7 @@ const MODELS = [
 
 /**
  * Single-value selection via `RadioGroup` — the checked row takes the same
- * cyan-glow treatment `Select`'s checked option row uses.
+ * raised surface, cyan checkmark, and slim selection marker.
  */
 export const Selection: Story = {
   render: () => {
@@ -244,6 +245,62 @@ export const StaticOpen: Story = {
           <DropdownMenuItem danger onSelect={fn()}>
             <TrashIcon size={15} />
             Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  ),
+};
+
+/** Shared row anatomy with short, wrapped, unavailable, and destructive actions. */
+export const Descriptions: Story = {
+  render: () => (
+    <div className="flex h-[440px] items-start justify-center pt-xl">
+      <DropdownMenu defaultOpen>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm">
+            Actions <ChevronDownIcon size={14} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          layoutClassName="w-[320px] max-w-[calc(100vw-16px)]"
+          align="start"
+        >
+          <DropdownMenuLabel>Conversation</DropdownMenuLabel>
+          <DropdownMenuItem onSelect={fn()}>
+            <MenuItemIcon>
+              <CopyIcon />
+            </MenuItemIcon>
+            <MenuItemText description="Copy the # mention for this conversation">
+              Copy reference
+            </MenuItemText>
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled>
+            <MenuItemIcon>
+              <BranchIcon />
+            </MenuItemIcon>
+            <MenuItemText description="Available after the session has changes to push">
+              Push branch
+            </MenuItemText>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Layout</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value="split">
+            <DropdownMenuRadioItem value="split">
+              Split 50/50
+            </DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="conversation">
+              Conversation only
+            </DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem danger onSelect={fn()}>
+            <MenuItemIcon>
+              <TrashIcon />
+            </MenuItemIcon>
+            <MenuItemText description="Delete worktree and session state">
+              Delete session…
+            </MenuItemText>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

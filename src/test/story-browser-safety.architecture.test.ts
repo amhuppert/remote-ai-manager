@@ -135,34 +135,37 @@ function browserUnsafeChains(): string[] {
     return parsed;
   };
 
+  const storyFiles = collectStoryFiles(srcDir);
+  const visited = new Set(storyFiles);
+  const queue: Array<{ file: string; chain: string[] }> = storyFiles.map(
+    (file) => ({ file, chain: [relative(file)] }),
+  );
   const chainByOffender = new Map<string, string>();
-  for (const storyFile of collectStoryFiles(srcDir)) {
-    const visited = new Set([storyFile]);
-    const queue: Array<{ file: string; chain: string[] }> = [
-      { file: storyFile, chain: [relative(storyFile)] },
-    ];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (current === undefined) break;
-      for (const specifier of specifiersOf(current.file)) {
-        if (isBrowserUnsafe(specifier)) {
-          const offender = `${relative(current.file)} imports ${specifier}`;
-          if (!chainByOffender.has(offender)) {
-            chainByOffender.set(
-              offender,
-              [...current.chain, specifier].join("\n    -> "),
-            );
-          }
-          continue;
+
+  // A module reached by several stories only needs to be checked once. Seeding
+  // one breadth-first walk with every story also preserves the shortest chain
+  // from any story to each offending import.
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+    const current = queue[queueIndex];
+    if (current === undefined) continue;
+    for (const specifier of specifiersOf(current.file)) {
+      if (isBrowserUnsafe(specifier)) {
+        const offender = `${relative(current.file)} imports ${specifier}`;
+        if (!chainByOffender.has(offender)) {
+          chainByOffender.set(
+            offender,
+            [...current.chain, specifier].join("\n    -> "),
+          );
         }
-        const resolved = resolveProjectModule(specifier, current.file);
-        if (resolved === null || visited.has(resolved)) continue;
-        visited.add(resolved);
-        queue.push({
-          file: resolved,
-          chain: [...current.chain, relative(resolved)],
-        });
+        continue;
       }
+      const resolved = resolveProjectModule(specifier, current.file);
+      if (resolved === null || visited.has(resolved)) continue;
+      visited.add(resolved);
+      queue.push({
+        file: resolved,
+        chain: [...current.chain, relative(resolved)],
+      });
     }
   }
   return [...chainByOffender.values()].toSorted();
