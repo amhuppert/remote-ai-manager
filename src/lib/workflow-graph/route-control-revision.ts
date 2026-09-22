@@ -28,8 +28,6 @@ export const ROUTE_CONTROL_REVISION_BUMP_TRIGGERS = [
   "outgoing-conditional-edge-removed",
   "routing-cardinality-changed",
 ] as const;
-export type RouteControlRevisionBumpTrigger =
-  (typeof ROUTE_CONTROL_REVISION_BUMP_TRIGGERS)[number];
 
 /**
  * Read structurally: the authored and resolved definitions both satisfy this,

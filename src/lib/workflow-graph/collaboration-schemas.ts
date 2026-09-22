@@ -173,9 +173,6 @@ export const graphWorkflowPendingCollaborationSchema = z.object({
   brief: z.string().trim().min(1),
   startedAt: z.string().trim().min(1),
 });
-export type GraphWorkflowPendingCollaboration = z.infer<
-  typeof graphWorkflowPendingCollaborationSchema
->;
 
 export const graphWorkflowCollaborationContinuationSchema = z.object({
   workflowId: z.string().trim().min(1),
@@ -432,9 +429,6 @@ export const collaborationCrossReviewContentSchema = z
     artifacts: collaborationGeneratedArtifactContentsSchema,
   })
   .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
-export type CollaborationCrossReviewContent = z.infer<
-  typeof collaborationCrossReviewContentSchema
->;
 export const collaborationCrossReviewOutputSchema = z
   .object({
     kind: z.literal("cross_review"),
@@ -464,9 +458,6 @@ export const collaborationProposedChangesContentSchema = z
     artifacts: collaborationGeneratedArtifactContentsSchema,
   })
   .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
-export type CollaborationProposedChangesContent = z.infer<
-  typeof collaborationProposedChangesContentSchema
->;
 export const collaborationProposedChangesOutputSchema = z
   .object({
     kind: z.literal("proposed_changes"),
@@ -496,9 +487,6 @@ export const collaborationCounterProposalContentSchema = z
     artifacts: collaborationGeneratedArtifactContentsSchema,
   })
   .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
-export type CollaborationCounterProposalContent = z.infer<
-  typeof collaborationCounterProposalContentSchema
->;
 export const collaborationCounterProposalOutputSchema = z
   .object({
     kind: z.literal("counter_proposal"),
@@ -552,9 +540,6 @@ export const collaborationResolutionDecisionContentSchema = z
     artifacts: collaborationGeneratedArtifactContentsSchema,
   })
   .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
-export type CollaborationResolutionDecisionContent = z.infer<
-  typeof collaborationResolutionDecisionContentSchema
->;
 export const collaborationResolutionDecisionOutputSchema = z
   .object({
     kind: z.literal("resolution_decision"),
@@ -594,9 +579,6 @@ export const collaborationFinalAnswerContentSchema = z
     artifacts: collaborationGeneratedArtifactContentsSchema,
   })
   .superRefine(requireGeneratedArtifacts(FINAL_ANSWER_REQUIRED));
-export type CollaborationFinalAnswerContent = z.infer<
-  typeof collaborationFinalAnswerContentSchema
->;
 export const collaborationFinalAnswerOutputSchema = z
   .object({
     kind: z.literal("final_answer"),

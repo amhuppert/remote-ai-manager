@@ -220,20 +220,6 @@ const OWNERS: readonly OwnerSpec[] = [
       "None preserved (`.approval-gate*`; references the shared `pulse-dot` keyframe).",
   },
   {
-    path: "src/features/_root/spawn-card/spawn-card.css",
-    taxonomy: "feature-layout",
-    alsoContains: [],
-    residual:
-      "None preserved — fully migratable feature layout (`.spawn-card*`).",
-  },
-  {
-    path: "src/features/projects-index/styles/projects-index.css",
-    taxonomy: "feature-layout",
-    alsoContains: [],
-    residual:
-      "None preserved (`.project-card*`). This is the Stage-A pilot surface (ProjectCard + a leaf control).",
-  },
-  {
     path: "src/features/session-diff/styles/session-diff.css",
     taxonomy: "feature-layout",
     alsoContains: [],

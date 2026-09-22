@@ -245,12 +245,10 @@ const APPROVED_GLOBAL_CSS_AREAS = [
 // blocks any NEW global CSS file. Do NOT add to this list to make room for new
 // global CSS — migrate to utilities instead.
 const GRANDFATHERED_LEGACY_CSS = [
-  "/features/_root/spawn-card/spawn-card.css",
   "/features/config/styles/config-editor.css",
   "/features/project-detail/cockpit/styles/cockpit.css",
   "/features/project-detail/composer/styles/composer.css",
   "/features/project-detail/styles/project-detail.css",
-  "/features/projects-index/styles/projects-index.css",
   "/features/session-diff/styles/session-diff.css",
   "/features/session-workflow/styles/session-workflow.css",
   "/components/session/sidebar/styles/PeekPopover.css",

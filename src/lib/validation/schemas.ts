@@ -14,7 +14,6 @@ export const validationCommandNameSchema = z
     /^[a-z0-9]+(-[a-z0-9]+)*$/,
     "Validation command names must be kebab-case (lowercase letters, digits, single hyphens)",
   );
-export type ValidationCommandName = z.infer<typeof validationCommandNameSchema>;
 
 export const validationScopeSchema = z.enum(["changed", "full"]);
 export type ValidationScope = z.infer<typeof validationScopeSchema>;

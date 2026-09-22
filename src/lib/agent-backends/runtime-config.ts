@@ -29,7 +29,6 @@ export const capabilityOriginLayerSchema = z.enum([
   "session",
   "conversation",
 ]);
-export type CapabilityOriginLayer = z.infer<typeof capabilityOriginLayerSchema>;
 
 export const resolvedCapabilityItemSchema = z.object({
   itemId: z.string(),

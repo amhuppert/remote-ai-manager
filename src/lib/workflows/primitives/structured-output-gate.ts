@@ -30,15 +30,12 @@ import {
   type GatePassResult,
 } from "./gate-vocabulary";
 
+// The gate is the server-side entry to the browser-safe subset module; the
+// declaration validator stays reachable here for server callers (D2, R1.3).
+/** @public */
 export {
-  OUTPUT_SCHEMA_ANNOTATION_KEYWORDS,
-  OUTPUT_SCHEMA_SUPPORTED_KEYWORDS,
-  OUTPUT_SCHEMA_SUPPORTED_TYPES,
-  UNSUPPORTED_OUTPUT_SCHEMA_KEYWORDS,
-  outputSchemaKeywordGuidance,
   validateJsonSchemaSubset,
   validateOutputSchemaDeclaration,
-  type OutputSchemaDeclarationIssue,
 } from "./output-schema-subset";
 
 const logger = createLogger("workflows.primitives.structured-output-gate");

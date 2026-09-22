@@ -10,23 +10,11 @@ export {
   _resetAnnotatorBoundaryForTesting,
   _setAnnotatorBoundaryForTesting,
 } from "@/features/session/document-viewer/AnnotatedMarkdown";
+export type { AnnotatedDocumentRenderer } from "@/features/session/document-viewer/AnnotatedMarkdown";
 export type {
-  AnnotatedDocumentRenderer,
-  AnnotatedMarkdownProps,
-} from "@/features/session/document-viewer/AnnotatedMarkdown";
-export type { ResolvedComment } from "@/features/session/document-viewer/types";
-export { NOT_ANNOTATABLE_CLASS } from "./annotation-contract";
-export type {
-  ClipCaptureCapability,
-  ClipSelectionContext,
   CommentComposerCapability,
-  MarkdownAnchorState,
   MarkdownAnnotationSource,
-  MarkdownAnnotationTarget,
-  MarkdownAnnotationTone,
   PersistCommentInput,
-  ResolvedMarkdownAnnotation,
-  SpecThreadAnchorState,
 } from "./annotation-contract";
 export {
   blockAnnotatableText as _blockAnnotatableTextForTesting,

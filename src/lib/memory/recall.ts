@@ -33,11 +33,7 @@ import type { MemoryResult } from "./service";
 
 const logger = createLogger("memory.recall");
 
-export type {
-  MemoryRankedCandidate,
-  MemoryRankedProvider,
-  MemoryRankedRequest,
-} from "./recall-providers";
+export type { MemoryRankedProvider } from "./recall-providers";
 
 /**
  * How a record is carried: `full` primes with the whole body, `hook` is the

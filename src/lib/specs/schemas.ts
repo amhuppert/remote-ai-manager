@@ -24,10 +24,8 @@ export const sectionRoleSchema = z.enum([
 export type SectionRole = z.infer<typeof sectionRoleSchema>;
 
 export const requirementPrioritySchema = z.enum(["must", "should", "could"]);
-export type RequirementPriority = z.infer<typeof requirementPrioritySchema>;
 
 export const requirementRiskSchema = z.enum(["high", "medium", "low"]);
-export type RequirementRisk = z.infer<typeof requirementRiskSchema>;
 
 /**
  * Only machine-producible evidence survives in the vocabulary: the server
@@ -120,7 +118,6 @@ export const rejectedAlternativeSchema = z
     reason: z.string(),
   })
   .strict();
-export type RejectedAlternative = z.infer<typeof rejectedAlternativeSchema>;
 
 export const decisionElementPayloadSchema = z
   .object({
@@ -159,7 +156,6 @@ export const touchedPathSchema = z
       });
     }
   });
-export type TouchedPath = z.infer<typeof touchedPathSchema>;
 
 /**
  * The lane an author intends a task's work to run on. It is spec content, not
@@ -201,7 +197,6 @@ export const executionLaneSchema = z
       });
     }
   });
-export type ExecutionLane = z.infer<typeof executionLaneSchema>;
 
 export const taskElementPayloadSchema = z
   .object({
@@ -296,9 +291,6 @@ export const evidenceEvaluatedStateSchema = z
     surfaceId: z.string().optional(),
   })
   .strict();
-export type EvidenceEvaluatedState = z.infer<
-  typeof evidenceEvaluatedStateSchema
->;
 
 export const agentActorProvenanceSchema = z
   .object({
@@ -314,7 +306,6 @@ export const humanActorProvenanceSchema = z
     kind: z.literal("human"),
   })
   .strict();
-export type HumanActorProvenance = z.infer<typeof humanActorProvenanceSchema>;
 
 export const actorProvenanceSchema = z.discriminatedUnion("kind", [
   agentActorProvenanceSchema,
@@ -344,7 +335,6 @@ export const externalDeliverySchema = z
     source: z.object({ label: z.string().min(1) }).strict(),
   })
   .strict();
-export type ExternalDelivery = z.infer<typeof externalDeliverySchema>;
 
 export const refusalCodeSchema = z.enum([
   "gate_blocked",
@@ -473,7 +463,6 @@ export const specReviewEventTypeSchema = z.enum([
   "spec-review-record-mutated",
   "spec-assumption-citations-mutated",
 ]);
-export type SpecReviewEventType = z.infer<typeof specReviewEventTypeSchema>;
 
 /**
  * Durable-only event type for server enforcement interventions (refused
@@ -484,16 +473,10 @@ export type SpecReviewEventType = z.infer<typeof specReviewEventTypeSchema>;
 export const specInterventionEventTypeSchema = z.enum([
   "spec-intervention-recorded",
 ]);
-export type SpecInterventionEventType = z.infer<
-  typeof specInterventionEventTypeSchema
->;
 
 export const specAuthoringEventTypeSchema = z.enum([
   "spec-authoring-returned-to-requirements",
 ]);
-export type SpecAuthoringEventType = z.infer<
-  typeof specAuthoringEventTypeSchema
->;
 
 /**
  * Durable audit trail for `DeliveryPlanAttempt` transitions. The matching
@@ -508,9 +491,6 @@ export const specDeliveryPlanEventTypeSchema = z.enum([
   "spec-delivery-plan-reaffirmed",
   "spec-delivery-plan-candidate-migrated",
 ]);
-export type SpecDeliveryPlanEventType = z.infer<
-  typeof specDeliveryPlanEventTypeSchema
->;
 
 /**
  * Durable-only record that a spec entered the system by import rather than by
@@ -519,7 +499,6 @@ export type SpecDeliveryPlanEventType = z.infer<
  * origin of a born-approved spec is reconstructable from the event log alone.
  */
 export const specImportEventTypeSchema = z.enum(["spec_imported"]);
-export type SpecImportEventType = z.infer<typeof specImportEventTypeSchema>;
 
 /**
  * What an import counted into the spec, as it rides the durable
@@ -550,9 +529,6 @@ export const specImportedEventPayloadSchema = z.object({
   revisionId: idSchema,
   counts: specImportedCountsSchema,
 });
-export type SpecImportedEventPayload = z.infer<
-  typeof specImportedEventPayloadSchema
->;
 
 export const specEventTypeSchema = z.union([
   specSseEventTypeSchema,
@@ -585,9 +561,6 @@ export const specCitationContractVersionSchema = z.union([
   z.literal(1),
   z.literal(2),
 ]);
-export type SpecCitationContractVersion = z.infer<
-  typeof specCitationContractVersionSchema
->;
 
 export const specApprovalSubjectKindSchema = z.enum([
   "requirement",
@@ -1048,9 +1021,6 @@ export const specAttentionEditPayloadSchema = z.union([
   specQuestionEditPayloadSchema,
   specAssumptionEditPayloadSchema,
 ]);
-export type SpecAttentionEditPayload = z.infer<
-  typeof specAttentionEditPayloadSchema
->;
 
 const specSupersessionCitationsSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("clear") }).strict(),
@@ -1216,14 +1186,12 @@ export const specCommentResolutionSchema = z.enum([
   "resolved",
   "dismissed",
 ]);
-export type SpecCommentResolution = z.infer<typeof specCommentResolutionSchema>;
 
 export const specProofVerdictKindSchema = z.enum([
   "deterministic_validator",
   "agent_validator",
   "human",
 ]);
-export type SpecProofVerdictKind = z.infer<typeof specProofVerdictKindSchema>;
 
 export const specCriterionDispositionSchema = z.enum([
   "in_scope",
@@ -1236,7 +1204,6 @@ export type SpecCriterionDisposition = z.infer<
 >;
 
 export const specTaskClaimStatusSchema = z.enum(["accepted", "reopened"]);
-export type SpecTaskClaimStatus = z.infer<typeof specTaskClaimStatusSchema>;
 
 export const specExecutionStateSchema = z.enum([
   "definition_review",
@@ -1315,7 +1282,6 @@ export const specRowSchema = z.object({
   created_at: timestampSchema,
   updated_at: timestampSchema,
 });
-export type SpecRow = z.infer<typeof specRowSchema>;
 
 export const specAliasRowSchema = z.object({
   project_path: z.string().min(1),
@@ -1323,14 +1289,12 @@ export const specAliasRowSchema = z.object({
   spec_id: idSchema,
   created_at: timestampSchema,
 });
-export type SpecAliasRow = z.infer<typeof specAliasRowSchema>;
 
 export const specCounterRowSchema = z.object({
   spec_id: idSchema,
   scope_key: z.string().regex(/^(?:R|D|T|Q|A|C:.+)$/),
   last_number: z.number().int().nonnegative(),
 });
-export type SpecCounterRow = z.infer<typeof specCounterRowSchema>;
 
 export const specElementRowSchema = z.object({
   id: idSchema,
@@ -1340,7 +1304,6 @@ export const specElementRowSchema = z.object({
   parent_element_id: nullableIdSchema,
   created_at: timestampSchema,
 });
-export type SpecElementRow = z.infer<typeof specElementRowSchema>;
 
 export const specRevisionRowSchema = z.object({
   id: idSchema,
@@ -1359,7 +1322,6 @@ export const specRevisionRowSchema = z.object({
   external_delivery_json: jsonColumnSchema.nullable(),
   created_at: timestampSchema,
 });
-export type SpecRevisionRow = z.infer<typeof specRevisionRowSchema>;
 
 export const specRevisionSupersessionRowSchema = z.object({
   revision_id: idSchema,
@@ -1369,9 +1331,6 @@ export const specRevisionSupersessionRowSchema = z.object({
   actor_json: jsonColumnSchema,
   dismissed_at: timestampSchema,
 });
-export type SpecRevisionSupersessionRow = z.infer<
-  typeof specRevisionSupersessionRowSchema
->;
 
 export const specElementVersionRowSchema = z.object({
   revision_id: idSchema,
@@ -1383,7 +1342,6 @@ export const specElementVersionRowSchema = z.object({
   created_at: timestampSchema,
   updated_at: timestampSchema,
 });
-export type SpecElementVersionRow = z.infer<typeof specElementVersionRowSchema>;
 
 export const specSchema = z
   .object({
@@ -1521,9 +1479,6 @@ export const specAssumptionCitationRowSchema = z.object({
   created_at: timestampSchema,
   updated_at: timestampSchema,
 });
-export type SpecAssumptionCitationRow = z.infer<
-  typeof specAssumptionCitationRowSchema
->;
 
 export const specAssumptionCitationSchema = z
   .object({
@@ -1782,7 +1737,6 @@ export const specDeliveryBasisSchema = z.object({
   actor: actorProvenanceSchema,
   createdAt: timestampSchema,
 });
-export type SpecDeliveryBasis = z.infer<typeof specDeliveryBasisSchema>;
 
 export const specCriterionDispositionRowSchema = z.object({
   execution_id: idSchema,
@@ -2062,7 +2016,6 @@ export const importBundleCriterionSchema = z
     validationStrategy: validationStrategySchema.optional(),
   })
   .strict();
-export type ImportBundleCriterion = z.infer<typeof importBundleCriterionSchema>;
 
 export const importBundleRequirementSchema = z
   .object({
@@ -2073,9 +2026,6 @@ export const importBundleRequirementSchema = z
     criteria: z.array(importBundleCriterionSchema),
   })
   .strict();
-export type ImportBundleRequirement = z.infer<
-  typeof importBundleRequirementSchema
->;
 
 export const importBundleDecisionSchema = z
   .object({
@@ -2086,7 +2036,6 @@ export const importBundleDecisionSchema = z
     traces: z.array(bundleRefSchema),
   })
   .strict();
-export type ImportBundleDecision = z.infer<typeof importBundleDecisionSchema>;
 
 /**
  * The one document a spec import reads. It is source-agnostic on purpose: the

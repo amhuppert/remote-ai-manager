@@ -1126,5 +1126,3 @@ function sentenceCase(value: string): string {
 function textOrDash(value: string): string {
   return value.trim().length === 0 ? "—" : value;
 }
-
-export default SpecElementReader;

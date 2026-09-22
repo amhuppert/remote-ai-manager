@@ -242,14 +242,6 @@ export function gatedGenerator(options: { armed?: boolean } = {}) {
   };
 }
 
-/** A generator that throws, as a lane whose model call blew up would. */
-export function throwingGenerator(message = "lane exploded") {
-  const generate: typeof generateCheckpoint = async () => {
-    throw new Error(message);
-  };
-  return generate;
-}
-
 export interface CreatedRuntime {
   /** The reference this runtime reports on `backend_init`. */
   ref: AgentSessionRef;

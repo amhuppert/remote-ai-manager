@@ -44,10 +44,7 @@ export interface BackgroundTasksLostInfo {
  * schema in the conversations domain is the source of truth for this shape;
  * re-exported here so backend-neutral code has one vocabulary to import.
  */
-export type {
-  ConversationBackgroundActivity,
-  ConversationBackgroundTaskView,
-} from "@/lib/conversations/schemas";
+export type { ConversationBackgroundActivity } from "@/lib/conversations/schemas";
 
 /**
  * Server-side reference to an image already saved on disk under the
@@ -214,9 +211,6 @@ export interface ConversationQueuedUserInput {
   onAccepted?(): Promise<void>;
   signal?: AbortSignal;
 }
-
-/** Why `prepareForTurnStart` is being invoked. */
-export type EnsureReadyReason = "turn_start" | "stream_closed";
 
 /**
  * Outcome of a runtime's pre-turn readiness check. `ready` means the runtime

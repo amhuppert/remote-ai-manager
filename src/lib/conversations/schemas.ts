@@ -23,7 +23,6 @@ import {
 import { debugModeStateSchema } from "@/lib/debug-log/schemas";
 import {
   messageContentBlockSchema,
-  toolResultMetricsSchema,
   type MessageContentBlock,
   type ToolResultMetrics,
 } from "./message-content-schemas";
@@ -45,7 +44,6 @@ import {
 
 export {
   messageContentBlockSchema,
-  toolResultMetricsSchema,
   type MessageContentBlock,
   type ToolResultMetrics,
 };
@@ -293,7 +291,6 @@ export type ConversationScope = z.infer<typeof conversationScopeSchema>;
 // regenerate action may). Rows persisted before this field existed decode as
 // "default" — harmless, because auto-naming only fires on a first turn.
 export const nameOriginSchema = z.enum(["default", "auto", "manual"]);
-export type NameOrigin = z.infer<typeof nameOriginSchema>;
 
 /**
  * Every conversation field that is identical whether the aggregate is being
@@ -444,6 +441,7 @@ export type StoredConversationState = z.infer<
  * the stored shape. New code at a storage boundary should prefer the explicit
  * `stored` spelling so the split is legible at the call site.
  */
+/** @alias */
 export const conversationStateSchema = storedConversationStateSchema;
 export type ConversationState = StoredConversationState;
 
@@ -527,12 +525,6 @@ export const changeConversationProfileRequestSchema = z.object({
 export const createSessionConversationRequestSchema = z.object({
   profile: conversationProfileSelectionSchema.optional(),
 });
-export type CreateSessionConversationRequest = z.infer<
-  typeof createSessionConversationRequestSchema
->;
-export type ChangeConversationProfileRequest = z.infer<
-  typeof changeConversationProfileRequestSchema
->;
 
 // ============================================================
 // Cross-Project Conversation List (addressable conversations)
@@ -547,9 +539,6 @@ export const conversationCompactStatusSchema = z.enum([
   "stale",
   "none",
 ]);
-export type ConversationCompactStatus = z.infer<
-  typeof conversationCompactStatusSchema
->;
 
 /**
  * Everything a listed conversation carries regardless of scope. `sessionName`

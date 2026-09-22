@@ -22,15 +22,6 @@ export function snapshotTicketListCaches(
   });
 }
 
-export function restoreTicketListCaches(
-  queryClient: QueryClient,
-  snapshot: TicketListCacheSnapshot,
-): void {
-  for (const [queryKey, data] of snapshot) {
-    queryClient.setQueryData(queryKey, data);
-  }
-}
-
 /**
  * Remove the ticket identity from every cached list, then re-insert and
  * re-sort the item only into caches whose typed filters match.

@@ -3,7 +3,7 @@ import { sessionKeys } from "@/lib/sessions/query-keys";
 import { ApiCallError } from "@/lib/api/errors";
 import { apiFetch } from "@/lib/api/fetcher";
 import { publicSessionStateSchema } from "@/lib/sessions/schemas";
-export { useBranchPrefixQuery, useSessionsQuery } from "./list-queries";
+export { useSessionsQuery } from "./list-queries";
 
 /** A missing session is terminal — retrying a 404 only spams the API. */
 export function isSessionNotFoundError(error: unknown): boolean {

@@ -193,9 +193,6 @@ export const deletedTicketAttachmentSchema = z.object({
 // ============================================================
 
 export const ticketSessionStartModeSchema = z.enum(["agent", "prepared"]);
-export type TicketSessionStartMode = z.infer<
-  typeof ticketSessionStartModeSchema
->;
 
 export const ticketSessionEndReasonSchema = z.enum([
   "finished",
@@ -752,7 +749,6 @@ export const createTicketResponseSchema = z.object({
   ticket: ticketDetailSchema,
   warnings: z.array(quickTicketCreateWarningSchema),
 });
-export type CreateTicketResponse = z.infer<typeof createTicketResponseSchema>;
 
 export const createTicketInputSchema = z
   .object({
@@ -773,7 +769,6 @@ export const createTicketInputSchema = z
       });
     }
   });
-export type CreateTicketInput = z.infer<typeof createTicketInputSchema>;
 
 export const updateTicketFieldsSchema = z.object({
   title: z.string().min(1).optional(),

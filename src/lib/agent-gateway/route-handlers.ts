@@ -24,8 +24,6 @@ import { createAgentAuth } from "./token";
 
 const log = createLogger("agent-gateway");
 
-export { BUILD_MISMATCH_HEADER, CLI_BUILD_HEADER } from "./build-parity";
-
 export interface AgentGatewayDeps {
   /** Config dir holding the api-token file; defaults to the live config dir. */
   configDir?: string;

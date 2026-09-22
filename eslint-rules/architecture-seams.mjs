@@ -482,7 +482,6 @@ const SERVER_LOGGING_SUBMODULES = new Set([
   "context",
   "tracing",
   "timed",
-  "trace-coverage",
   "speedscope-export",
   "index",
 ]);

@@ -38,9 +38,6 @@ export const graphPlanReviewVerdictSchema = z.enum([
   "approved",
   "changes_requested",
 ]);
-export type GraphPlanReviewVerdict = z.infer<
-  typeof graphPlanReviewVerdictSchema
->;
 
 export const graphPlanReviewSchema = z
   .object({

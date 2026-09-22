@@ -60,9 +60,6 @@ export const managedDefinitionPreflightRefusalSchema = z
     rationale: z.string().min(1).optional(),
   })
   .strict();
-export type ManagedDefinitionPreflightRefusal = z.infer<
-  typeof managedDefinitionPreflightRefusalSchema
->;
 
 export const managedDefinitionPreflightSuccessSchema = z
   .object({

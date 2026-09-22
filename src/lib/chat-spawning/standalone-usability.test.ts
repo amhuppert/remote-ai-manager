@@ -177,7 +177,6 @@ describe("chat-spawning backend primitives do not depend on the cockpit/UI", () 
     "spawn-base.ts",
     "route-handlers.ts",
     "mutations.ts",
-    "query-keys.ts",
   ];
 
   for (const file of backendFiles) {

@@ -465,7 +465,6 @@ export type BackendValueMap<Value> = Readonly<{
 
 export type BackendSelectionDefaultsById =
   BackendValueMap<BackendModelSelection>;
-export type BackendSelectionDefaults = BackendModelSelection;
 
 /**
  * The per-backend profile fields that selection defaults derive from — the

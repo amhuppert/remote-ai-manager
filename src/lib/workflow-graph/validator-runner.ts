@@ -103,7 +103,6 @@ export {
   buildValidatorOutputSchema,
   issueCriterionCitationFor,
 } from "./validator-output-schema";
-export type { IssueCriterionCitation } from "./validator-output-schema";
 
 export interface BuildContextValidationPromptInput {
   context: GraphWorkflowCascadeContext;

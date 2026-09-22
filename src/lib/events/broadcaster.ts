@@ -3,9 +3,6 @@ import { createLogger } from "../logging";
 import { getGlobalSingleton, setGlobalValue } from "../shared/global-singleton";
 import { stampSseEnvelope } from "./sse-envelope";
 
-/** Function signature for broadcasting SSE events. */
-export type BroadcastFn = (event: SSEEvent) => void;
-
 const logger = createLogger("sse");
 const encoder = new TextEncoder();
 

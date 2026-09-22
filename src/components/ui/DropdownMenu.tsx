@@ -88,7 +88,9 @@ export function DropdownMenu({
 
 // Structural parts carry no appearance — re-export Radix directly.
 export const DropdownMenuTrigger = RadixDropdownMenu.Trigger;
+/** @public */
 export const DropdownMenuPortal = RadixDropdownMenu.Portal;
+/** @public */
 export const DropdownMenuGroup = RadixDropdownMenu.Group;
 export const DropdownMenuRadioGroup = RadixDropdownMenu.RadioGroup;
 export const DropdownMenuSub = RadixDropdownMenu.Sub;

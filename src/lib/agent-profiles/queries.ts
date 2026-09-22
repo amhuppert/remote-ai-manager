@@ -89,10 +89,6 @@ export const agentProfileQueries = {
     }),
 } as const;
 
-export function useGlobalAgentProfileLibrary() {
-  return useQuery(agentProfileQueries.globalLibrary());
-}
-
 export function useProjectAgentProfileLibrary(projectName: string) {
   return useQuery(agentProfileQueries.projectLibrary(projectName));
 }
@@ -127,10 +123,6 @@ export function useAgentProfileLibrary(projectName: string | null | undefined) {
         ),
     }),
   );
-}
-
-export function useGlobalAgentProfile(tier: AgentProfileTier, id: string) {
-  return useQuery(agentProfileQueries.globalProfile(tier, id));
 }
 
 /**

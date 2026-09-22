@@ -265,7 +265,6 @@ export const transcriptBoundarySchema = z
     nextSeq: z.number().int().nullable(),
   })
   .strict();
-export type TranscriptBoundary = z.infer<typeof transcriptBoundarySchema>;
 
 export const transcriptBoundariesSchema = z
   .object({

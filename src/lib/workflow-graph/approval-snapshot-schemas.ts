@@ -19,9 +19,6 @@ export const graphWorkflowApprovalSnapshotSchema = z
     diff: sessionDiffSchema,
   })
   .strict();
-export type GraphWorkflowApprovalSnapshot = z.infer<
-  typeof graphWorkflowApprovalSnapshotSchema
->;
 
 /**
  * What the approval API answers with for one parked context.

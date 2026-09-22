@@ -190,17 +190,6 @@ export function authorityLabel(authority: CohortMemberAuthority): string {
 }
 
 /**
- * What happened to a round or a seat, in words. Shared with the surfaces that
- * name an incident outside a round's own card, so one incident is never
- * described two ways.
- */
-export function incidentLabel(
-  incident: GraphWorkflowValidationIncidentEvent["incident"],
-): string {
-  return INCIDENT_LABEL[incident];
-}
-
-/**
  * A seat's authority, read from the cohort as configured NOW — the same place
  * the engine reads it, so a live authority edit moves every badge with it.
  *

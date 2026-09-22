@@ -26,7 +26,6 @@ import {
   buildAgentProfilePickerGroups,
   findAgentProfilePickerOption,
   parseAgentProfilePickerValue,
-  STANDARD_AGENT_PROFILE_VALUE,
 } from "./agent-profile-picker-state";
 
 export interface AgentProfileSelection {
@@ -165,5 +164,3 @@ export default function AgentProfilePicker({
     </div>
   );
 }
-
-export { STANDARD_AGENT_PROFILE_VALUE };

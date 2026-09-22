@@ -716,6 +716,5 @@ export const SpecSectionRefTranscriptChip =
 export {
   CopyReferenceControl,
   createCopyReferenceControl,
-  type CopyReferenceControlDeps,
   type CopyReferenceControlProps,
 } from "./CopyReferenceControl";

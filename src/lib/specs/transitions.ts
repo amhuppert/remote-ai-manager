@@ -56,8 +56,6 @@ import {
 } from "./scope-validation";
 
 export {
-  activeAuthoringStages,
-  authoringStageIndex,
   authoringStages,
   consultedAuthoringGates,
   nextAuthoringStage,

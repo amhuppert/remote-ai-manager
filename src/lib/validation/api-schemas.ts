@@ -51,7 +51,6 @@ export const validationSubmitBodySchema = z
         "workflowExecutionId and workflowContextId must be supplied together",
     },
   );
-export type ValidationSubmitBody = z.infer<typeof validationSubmitBodySchema>;
 
 // Accepted submissions answer 202 (the work is initiated, never awaited);
 // pre-admission refusals (`not_started`) answer 200 with the foundation
@@ -122,7 +121,6 @@ export const validationPollQuerySchema = z.object({
         : Math.min(Number.parseInt(raw, 10), VALIDATION_POLL_MAX_WAIT_MS),
     ),
 });
-export type ValidationPollQuery = z.infer<typeof validationPollQuerySchema>;
 
 export const validationCancelResponseSchema = z.object({
   cancelled: z.literal(true),
@@ -144,7 +142,6 @@ export const validationListCommandSchema = z.object({
   /** Whether the resolved caller (role/context) may submit this command. */
   enabled: z.boolean(),
 });
-export type ValidationListCommand = z.infer<typeof validationListCommandSchema>;
 
 export const validationCapacitySchema = z.object({
   limit: z.number().int().positive(),
@@ -152,7 +149,6 @@ export const validationCapacitySchema = z.object({
   inUse: z.number().int().nonnegative(),
   queueDepth: z.number().int().nonnegative(),
 });
-export type ValidationCapacity = z.infer<typeof validationCapacitySchema>;
 
 // Active (queued + running) runs across the whole server: the budget is
 // global, so the run blocking a caller may belong to another project.
@@ -168,7 +164,6 @@ export const validationActiveRunSchema = z.object({
   effectiveScope: validationScopeSchema.nullable(),
   position: z.number().int().nonnegative().nullable(),
 });
-export type ValidationActiveRun = z.infer<typeof validationActiveRunSchema>;
 
 export const validationListResponseSchema = z.object({
   commands: z.array(validationListCommandSchema),

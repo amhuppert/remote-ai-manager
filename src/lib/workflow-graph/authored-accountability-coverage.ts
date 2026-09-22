@@ -10,7 +10,6 @@ const logger = createLogger("workflow-graph-authored-accountability-coverage");
 export type {
   AuthoredAccountabilityCoverageGroup,
   AuthoredAccountabilityCoverageInput,
-  AuthoredAccountabilityCoverageSource,
   LocatedAuthoredAccountabilityCoverage,
 } from "./authored-accountability-coverage-core";
 

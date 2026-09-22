@@ -958,11 +958,7 @@ export const setConversationPendingPromptText =
   defaultService.setConversationPendingPromptText;
 export const renameConversation = defaultService.renameConversation;
 export const forkConversation = defaultService.forkConversation;
-export const finalizeInitialization = defaultService.finalizeInitialization;
 
 // ============================================================
 // Derived Session-Level Helpers (pure functions)
 // ============================================================
-
-// Re-export pure derive functions from client-safe module
-export { deriveSessionStatus } from "../sessions/derived";

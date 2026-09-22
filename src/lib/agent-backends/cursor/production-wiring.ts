@@ -244,8 +244,3 @@ export const cursorTaskRunner: AgentTaskRunner = {
     }).run(input);
   },
 };
-
-/** Test seam: drop the memoized supervisor so a suite starts from no workers. */
-export function _resetCursorProductionTransportForTesting(): void {
-  transport = null;
-}

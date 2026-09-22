@@ -51,21 +51,6 @@ describe("agent backend registry bootstrap", () => {
     }
   });
 
-  it("loads registered backends from the public barrel", async () => {
-    vi.resetModules();
-
-    const registry = await import("./index");
-
-    expect(registry.getConversationBackendFactory("claude").backend).toBe(
-      "claude",
-    );
-    expect(registry.getConversationBackendFactory("codex").backend).toBe(
-      "codex",
-    );
-    expect(registry.getTaskRunner("claude").backend).toBe("claude");
-    expect(registry.getTaskRunner("codex").backend).toBe("codex");
-  });
-
   it("loads registered backends when collaboration production agent caller is imported", async () => {
     vi.resetModules();
 

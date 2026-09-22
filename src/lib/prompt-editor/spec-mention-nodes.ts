@@ -8,7 +8,6 @@ import type {
 export {
   buildSpecReadCommand,
   buildSpecReferenceXml,
-  buildSpecSectionReadCommand,
   buildSpecSectionReferenceXml,
   specElementRefAttrsSchema,
   specElementRefAttrsToMentionAttrs,
@@ -21,9 +20,7 @@ export type {
   SpecElementMentionAttrs,
   SpecElementRefAttrs,
   SpecMentionAttrs,
-  SpecReferenceType,
   SpecRefAttrs,
-  SpecSectionMentionAttrs,
   SpecSectionRefAttrs,
 } from "./spec-reference-contract";
 

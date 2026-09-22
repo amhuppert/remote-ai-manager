@@ -89,6 +89,7 @@ export function Popover({
 // `Close` dismisses the panel (consumers wrap it `asChild` around their own
 // control, or use the bare element below).
 export const PopoverTrigger = RadixPopover.Trigger;
+/** @public */
 export const PopoverAnchor = RadixPopover.Anchor;
 export const PopoverClose = RadixPopover.Close;
 

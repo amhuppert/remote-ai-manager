@@ -36,10 +36,7 @@ export interface AgentBackendSettingsOverride {
 
 // Selection defaults are resolved by the client-safe catalog; the aliases keep
 // this module's existing type importers stable.
-export type {
-  BackendSelectionDefaults,
-  BackendSelectionDefaultsById,
-} from "./catalog";
+export type { BackendSelectionDefaultsById } from "./catalog";
 
 function cloneSelection(
   selection: BackendModelSelection,

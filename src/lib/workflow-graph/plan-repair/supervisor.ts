@@ -924,7 +924,3 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
 
   return { maybeRunPlanRepair };
 }
-
-export type PlanRepairSupervisor = ReturnType<
-  typeof createPlanRepairSupervisor
->;

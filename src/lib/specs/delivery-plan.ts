@@ -53,9 +53,6 @@ export const deliveryPlanBindingDispositionSchema = z
     deliveredByExecutionId: elementIdSchema.nullable(),
   })
   .strict();
-export type DeliveryPlanBindingDisposition = z.infer<
-  typeof deliveryPlanBindingDispositionSchema
->;
 
 export const deliveryPlanClaimSchema = z
   .object({
@@ -150,20 +147,10 @@ export function canonicalDeliveryPlanEnvelopeBytes(
   return stableStringify(document);
 }
 
-export function deliveryPlanEnvelopeByteLength(
-  document: DeliveryPlanDocument,
-): number {
-  return new TextEncoder().encode(canonicalDeliveryPlanEnvelopeBytes(document))
-    .byteLength;
-}
-
 export const deliveryPlanV4DocumentSchema = z
   .object({ schemaVersion: z.literal(4), binding: deliveryPlanBindingSchema })
   .strict()
   .superRefine(checkDocumentSize);
-export type DeliveryPlanV4Document = z.infer<
-  typeof deliveryPlanV4DocumentSchema
->;
 export const deliveryPlanDocumentSchema = z.discriminatedUnion(
   "schemaVersion",
   [deliveryPlanV3DocumentSchema, deliveryPlanV4DocumentSchema],

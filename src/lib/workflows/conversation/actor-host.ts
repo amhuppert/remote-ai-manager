@@ -4,7 +4,13 @@ import { ManagedConversationRuntime } from "./runtime-binding";
 
 import { createActor } from "xstate";
 import { conversationMachine, type ConversationActorRef } from "./machine";
-import type { ConversationInput } from "./types";
+import type {
+  ConversationInput,
+  ExecutePromptInput,
+  PrepareTurnInput,
+  RunTaskRunInput,
+  SettleTurnInput,
+} from "./types";
 import {
   conversationRuntimeKey,
   type ConversationRuntimeRegistration,
@@ -30,10 +36,10 @@ export interface ConversationMachineDependencies {
   verifyDebugCleanup: typeof import("@/lib/workflows/debug/cleanup-verification").runDebugCleanupVerification;
   loadActors(
     input:
-      | import("./types").PrepareTurnInput
-      | import("./types").ExecutePromptInput
-      | import("./types").RunTaskRunInput
-      | import("./types").SettleTurnInput,
+      | PrepareTurnInput
+      | ExecutePromptInput
+      | RunTaskRunInput
+      | SettleTurnInput,
   ): Promise<ConversationActorImplementations>;
   getRuntime(key: string): ConversationRuntimeState | undefined;
   drainQueue(context: ConversationContext): void;

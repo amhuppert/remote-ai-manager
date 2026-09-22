@@ -22,24 +22,13 @@ import {
 } from "./view-schemas";
 
 export { specDetailViewSchema, specStatusViewSchema };
-export {
-  specElementGetResponseSchema,
-  specElementReferenceStateSchema,
-  specElementViewSchema,
-  specInventoryViewSchema,
-  specSummaryViewSchema,
-} from "./reference-view-schemas";
+export { specSummaryViewSchema } from "./reference-view-schemas";
 export type { SpecDetailView };
 export type {
-  SpecAssumptionView,
   SpecElementGetResponse,
-  SpecElementReferenceState,
   SpecElementView,
-  SpecInventoryView,
-  SpecQuestionView,
   SpecSummaryView,
 } from "./reference-view-schemas";
-export { useSpecElementQuery, useSpecSummaryQuery } from "./reference-queries";
 
 const lintFindingSchema = z
   .object({
@@ -298,10 +287,6 @@ export function useSpecDetailQuery(projectName: string, slug: string) {
   return useQuery(specQueries.detail(projectName, slug));
 }
 
-export function useSpecStatusQuery(projectName: string, slug: string) {
-  return useQuery(specQueries.status(projectName, slug));
-}
-
 export function useTicketSpecReadThroughQuery(
   projectName: string,
   number: number,
@@ -323,49 +308,4 @@ export function useSpecDeltaQuery(
 
 export function useSpecPlanReviewQuery(projectName: string, slug: string) {
   return useQuery(specQueries.planReview(projectName, slug));
-}
-
-export function useSpecPlanPreviewQuery(
-  projectName: string,
-  slug: string,
-  stage: DeliveryPlanPreviewStage | null,
-  expectedDraftRevision: number | null = null,
-) {
-  const expected =
-    expectedDraftRevision === null ? undefined : expectedDraftRevision;
-  return useQuery({
-    ...(stage === null
-      ? specQueries.planPreview(projectName, slug, "draft", expected)
-      : specQueries.planPreview(projectName, slug, stage, expected)),
-    enabled: stage !== null,
-  });
-}
-
-export function useSpecPlanDiffQuery(
-  projectName: string,
-  slug: string,
-  fromSnapshotId: string | null,
-  toSnapshotId: string | null,
-) {
-  return useQuery({
-    ...specQueries.planDiff(
-      projectName,
-      slug,
-      fromSnapshotId ?? "",
-      toSnapshotId ?? "",
-    ),
-    enabled: fromSnapshotId !== null && toSnapshotId !== null,
-  });
-}
-
-export function useSpecIntegrityQuery(projectName: string, slug: string) {
-  return useQuery(specQueries.integrity(projectName, slug));
-}
-
-export function useSpecSearchQuery(
-  projectName: string,
-  slug: string,
-  query: string,
-) {
-  return useQuery(specQueries.search(projectName, slug, query));
 }

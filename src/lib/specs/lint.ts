@@ -22,12 +22,7 @@ import {
 } from "./handles";
 import { extractProseHandleReferences } from "./prose-references";
 
-export {
-  EVERGREEN_LINT_RULES,
-  type EvergreenLintRuleDefinition,
-  type EvergreenLintRuleId,
-  type LintSeverity,
-} from "./lint-rules";
+export { type LintSeverity } from "./lint-rules";
 
 export interface LintFinding {
   ruleId: string;

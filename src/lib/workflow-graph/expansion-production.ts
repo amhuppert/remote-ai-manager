@@ -37,7 +37,6 @@ export {
   type ExpansionRefusalNotice,
   type GraphExpansionInput,
   type GraphExpansionOutcome,
-  type GraphExpansionRequest,
 } from "./expansion-service";
 
 const eventPublisher = createGraphWorkflowExecutionEventPublisher({

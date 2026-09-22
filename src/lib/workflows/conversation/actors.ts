@@ -7,6 +7,8 @@ import type {
   ExecutePromptInput,
   PromptActorResult,
   RunTaskRunInput,
+  ConversationContext,
+  SettleTurnInput,
 } from "./types";
 import type { ConversationMachineDependencies } from "./actor-host";
 import type { ConversationPersistenceAdapter } from "./persistence-adapter";
@@ -30,7 +32,7 @@ export const runTaskRunActor = fromPromise<PromptActorResult, RunTaskRunInput>(
 );
 export const settleTurnActor = fromPromise<
   PromptActorResult | null,
-  import("./types").SettleTurnInput
+  SettleTurnInput
 >(() => {
   throw new Error("Conversation settlement actor is not configured");
 });
@@ -120,7 +122,7 @@ export function createConversationActors(
 
   const settleTurnActor = fromPromise<
     PromptActorResult | null,
-    import("./types").SettleTurnInput
+    SettleTurnInput
   >(async ({ input }) => {
     const runtime = deps.getRuntime(
       conversationRuntimeKey(
@@ -147,9 +149,7 @@ export function createConversationActors(
     return attempt.projectedResult ?? null;
   });
 
-  function completeTurnForMachine(
-    context: import("./types").ConversationContext,
-  ): void {
+  function completeTurnForMachine(context: ConversationContext): void {
     const runtime = deps.getRuntime(
       conversationRuntimeKey(
         context.projectPath,

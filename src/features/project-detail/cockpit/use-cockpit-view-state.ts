@@ -181,8 +181,6 @@ export const useRestoreCloseSnapshot = () =>
 export const useToggleRail = () => useCockpitViewStore((s) => s.toggleRail);
 export const useSetRailCollapsed = () =>
   useCockpitViewStore((s) => s.setRailCollapsed);
-export const useClearEntering = () =>
-  useCockpitViewStore((s) => s.clearEntering);
 
 /** @internal — exposed for direct state testing. */
 export { useCockpitViewStore as _useCockpitViewStore };

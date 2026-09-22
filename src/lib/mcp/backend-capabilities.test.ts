@@ -1,17 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import {
   translatePortableMcpToClaude,
   translatePortableMcpToCodex,
 } from "@/lib/agent-backends/mcp-translation";
-import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { McpServerDefinition } from "@/lib/mcp/types";
-import { createClaudeRuntimeToolSource } from "@/lib/mcp/tool-discovery-runtime";
-import type {
-  McpDiscoveredTool,
-  McpServerCompatibilityView,
-} from "@/lib/mcp/schemas";
+import type { McpServerCompatibilityView } from "@/lib/mcp/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   buildCompatibilityLookup,
@@ -417,88 +412,6 @@ describe("translatePortableMcpToClaude — capability-driven tool-filter handlin
     );
     expect(rejectedServers).toContain("srv");
     expect(rejectedFields).toContain("srv.enabledTools");
-  });
-});
-
-// ===========================================================================
-// Production delegation — tool-discovery runtime branches on capability
-// ===========================================================================
-
-function makeRuntime(
-  partial: Partial<ConversationBackendRuntime> & {
-    listMcpServerTools?: (
-      serverKey: string,
-    ) => Promise<McpDiscoveredTool[] | undefined>;
-  },
-): ConversationBackendRuntime {
-  return {
-    backend: partial.backend ?? "claude",
-    status: partial.status ?? "alive",
-    modelSelection: partial.modelSelection ?? {
-      modelId: "opus",
-      parameters: { effort: "high" },
-    },
-
-    sendTurn: partial.sendTurn ?? vi.fn(),
-    close: partial.close ?? vi.fn(),
-    ...(partial.listMcpServerTools
-      ? { listMcpServerTools: partial.listMcpServerTools }
-      : {}),
-  } as ConversationBackendRuntime;
-}
-
-describe("createClaudeRuntimeToolSource — capability-driven backend filter", () => {
-  it("returns tools for a Claude runtime (registry default — preferred='runtime-status')", async () => {
-    const tools: McpDiscoveredTool[] = [{ name: "t1" }];
-    const runtime = makeRuntime({
-      backend: "claude",
-      listMcpServerTools: async () => tools,
-    });
-    const source = createClaudeRuntimeToolSource({
-      getRuntime: () => runtime,
-    });
-    const result = await source.listToolsFromActiveRuntime({
-      conversationId: "c",
-      serverKey: "s",
-    });
-    expect(result).toEqual(tools);
-  });
-
-  it("skips a backend whose capability says preferred='probe'", async () => {
-    const runtime = makeRuntime({
-      backend: "codex",
-      listMcpServerTools: async () => [{ name: "ignored" }],
-    });
-    const source = createClaudeRuntimeToolSource({
-      getRuntime: () => runtime,
-    });
-    const result = await source.listToolsFromActiveRuntime({
-      conversationId: "c",
-      serverKey: "s",
-    });
-    expect(result).toBeUndefined();
-  });
-
-  it("uses an injected capability lookup over the default registry", async () => {
-    const runtime = makeRuntime({
-      backend: "codex",
-      listMcpServerTools: async () => [{ name: "via-codex" }],
-    });
-    const registry = createMcpCapabilityRegistry([
-      {
-        ...defaultMcpCapabilityRegistry.getCapabilities("codex"),
-        toolDiscovery: { preferred: "runtime-status", probeFallback: true },
-      },
-    ]);
-    const source = createClaudeRuntimeToolSource({
-      getRuntime: () => runtime,
-      capabilityRegistry: registry,
-    });
-    const result = await source.listToolsFromActiveRuntime({
-      conversationId: "c",
-      serverKey: "s",
-    });
-    expect(result).toEqual([{ name: "via-codex" }]);
   });
 });
 

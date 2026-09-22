@@ -53,6 +53,7 @@ export function TooltipProvider({
 // existing primitive via `asChild` (Radix merges the trigger props/ref onto it).
 export const Tooltip = RadixTooltip.Root;
 export const TooltipTrigger = RadixTooltip.Trigger;
+/** @public */
 export const TooltipPortal = RadixTooltip.Portal;
 
 // ---------------------------------------------------------------------------

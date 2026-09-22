@@ -4,10 +4,8 @@ import type {
 } from "@/lib/workflows/managed-definition-contract";
 
 export {
-  managedWorkflowDefinitionLifecycleSchema,
   nativeSddWorkflowManagementCompactSchema,
   nativeSddWorkflowManagementDetailSchema,
-  type ManagedWorkflowDefinitionLifecycle,
   type NativeSddWorkflowManagementCompact,
   type NativeSddWorkflowManagementDetail,
 } from "@/lib/workflows/managed-definition-contract";

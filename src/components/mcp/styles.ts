@@ -22,10 +22,3 @@ export const triggerBase =
 // `.mcp-config-trigger:hover:not(:disabled)` — the hover recolour, ungated.
 export const triggerHover =
   "enabled:hover:bg-bg-hover enabled:hover:text-text-primary enabled:hover:border-border-default";
-
-// `.mcp-pending-dot` — the amber "applies on next turn" pulse dot shown across
-// the server card, tool row, info chip, popover and trigger.
-export const pendingDot =
-  "inline-block size-[6px] shrink-0 rounded-full bg-amber " +
-  "shadow-[0_0_6px_var(--color-amber-glow)] " +
-  "animate-[pulse-dot_1.2s_ease-in-out_infinite]";

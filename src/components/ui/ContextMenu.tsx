@@ -72,8 +72,11 @@ export function ContextMenu({
 // Structural parts carry no appearance — re-export Radix directly. `Trigger` wraps
 // the right-clickable area; consumers provide its content.
 export const ContextMenuTrigger = RadixContextMenu.Trigger;
+/** @public */
 export const ContextMenuPortal = RadixContextMenu.Portal;
+/** @public */
 export const ContextMenuGroup = RadixContextMenu.Group;
+/** @public */
 export const ContextMenuRadioGroup = RadixContextMenu.RadioGroup;
 export const ContextMenuSub = RadixContextMenu.Sub;
 
@@ -172,6 +175,7 @@ type ContextMenuRadioItemProps = Omit<
   layoutClassName?: string;
 };
 
+/** @public */
 export function ContextMenuRadioItem({
   layoutClassName,
   children,

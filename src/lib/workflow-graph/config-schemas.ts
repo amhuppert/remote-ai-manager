@@ -583,9 +583,6 @@ export const DEFAULT_LANE_MERGE_VALIDATION_CONFIG: GraphWorkflowLaneMergeValidat
 export const graphWorkflowHumanApprovalGateConfigSchema = z.object({
   enabled: z.boolean().default(false),
 });
-export type GraphWorkflowHumanApprovalGateConfig = z.infer<
-  typeof graphWorkflowHumanApprovalGateConfigSchema
->;
 
 // One cascading toggle (global → workflow → per-context) controlling whether a
 // context's workflow agents may ask the user questions. A single value covers

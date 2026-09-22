@@ -44,9 +44,6 @@ export const startCheckpointResponseSchema = z.object({
   /** Where the operation's durable state is read; already resolvable at 202. */
   statusUrl: z.string().min(1),
 });
-export type StartCheckpointResponse = z.infer<
-  typeof startCheckpointResponseSchema
->;
 
 export const cancelCheckpointResponseSchema = z.object({
   outcome: z.enum(["cancelled", "completed"]),

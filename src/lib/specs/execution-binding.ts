@@ -20,9 +20,6 @@ export const specExecutionBindingDispositionSchema = z
     deliveredByExecutionId: bindingIdSchema.nullable(),
   })
   .strict();
-export type SpecExecutionBindingDisposition = z.infer<
-  typeof specExecutionBindingDispositionSchema
->;
 
 /**
  * A claim attaches spec delivery accountability to an opaque graph-authored
@@ -36,9 +33,6 @@ export const specExecutionBindingClaimSchema = z
     criterionElementIds: z.array(bindingIdSchema).max(500),
   })
   .strict();
-export type SpecExecutionBindingClaim = z.infer<
-  typeof specExecutionBindingClaimSchema
->;
 
 /** The spec-owned sidecar frozen with a candidate and copied to its execution. */
 export const specExecutionBindingSchema = z

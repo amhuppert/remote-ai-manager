@@ -7,7 +7,8 @@ import type {
   MessageRefAttrs,
 } from "@/lib/conversations/schemas";
 import type { TicketRefAttrs } from "@/lib/tickets/schemas";
-import MessageTextWithRefs, {
+import {
+  MessageTextWithRefs,
   createMessageTextWithRefs,
 } from "./MessageTextWithRefs";
 

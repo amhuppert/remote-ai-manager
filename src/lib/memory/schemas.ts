@@ -247,7 +247,6 @@ export const memoryArtifactKindSchema = z.enum([
   "workflow_execution",
   "workflow_context",
 ]);
-export type MemoryArtifactKind = z.infer<typeof memoryArtifactKindSchema>;
 
 /**
  * A link is a relationship and nothing more: `about` is a deterministic
@@ -301,9 +300,6 @@ export const memorySessionIncarnationSchema = z.object({
   sessionName: z.string().min(1),
   sessionCreatedAt: z.string().min(1),
 });
-export type MemorySessionIncarnation = z.infer<
-  typeof memorySessionIncarnationSchema
->;
 
 /**
  * An incarnation named from OUTSIDE its project — the session-filtered review
@@ -701,7 +697,6 @@ export const MEMORY_STATE_NOTE_LEASE_MS =
  * withheld independently.
  */
 export const memoryReviewTargetSchema = z.enum(["note", "statusNote"]);
-export type MemoryReviewTarget = z.infer<typeof memoryReviewTargetSchema>;
 
 export const markMemoryReviewedRequestSchema = z
   .object({
@@ -907,9 +902,6 @@ export const memoryDeliveryPolicyOverrideSchema = z
     contribute: memoryContributionPolicySchema.optional(),
   })
   .strict();
-export type MemoryDeliveryPolicyOverride = z.infer<
-  typeof memoryDeliveryPolicyOverrideSchema
->;
 
 /**
  * The spec's shipped defaults (R10): ordinary conversations and workflow
@@ -987,7 +979,6 @@ export type MemoryIndexBudget = z.infer<typeof memoryIndexBudgetSchema>;
  * whether the ambient block is doing the work the design claims for it.
  */
 export const memoryDeliveryChannelSchema = z.enum(["index", "expanded"]);
-export type MemoryDeliveryChannel = z.infer<typeof memoryDeliveryChannelSchema>;
 
 /**
  * Per conversation, note, and channel: the note revision last put in front of
@@ -1077,7 +1068,6 @@ export const memoryObservationKindSchema = z.enum([
   "promoted",
   "validator_rederivation",
 ]);
-export type MemoryObservationKind = z.infer<typeof memoryObservationKindSchema>;
 
 /**
  * One aggregate counter per `(kind, memoryId)`. `count` is how many times the

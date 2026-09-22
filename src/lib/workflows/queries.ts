@@ -29,7 +29,6 @@ import {
   graphWorkflowExecutionOriginSchema,
   graphWorkflowHaltReasonSchema,
 } from "@/lib/workflow-graph/schemas";
-export { useGraphWorkflowApprovalSnapshotQuery } from "./approval-snapshot-query";
 import {
   graphWorkflowSharedDocumentEntrySchema,
   graphWorkflowStatusSchema,
@@ -88,10 +87,6 @@ export function useScopedWorkflowDefinitionsQuery(
       return data.items;
     },
   });
-}
-
-export function useWorkflowDefinitionsQuery(projectName: string) {
-  return useScopedWorkflowDefinitionsQuery({ kind: "project", projectName });
 }
 
 export function useScopedWorkflowDefinitionQuery(

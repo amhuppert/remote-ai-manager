@@ -224,6 +224,7 @@ export type SignOffRevisionInput = z.infer<typeof signOffRevisionInputSchema>;
  * question two owners — the surface that renders the confirmation and the
  * transaction that writes the rows.
  */
+/** @alias */
 export const approveRemainingAndSignOffInputSchema = signOffRevisionInputSchema;
 export type ApproveRemainingAndSignOffInput = z.infer<
   typeof approveRemainingAndSignOffInputSchema

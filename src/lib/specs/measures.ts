@@ -243,16 +243,6 @@ export interface SpecMeasures {
   automaticEvidenceCapture: AutomaticEvidenceCaptureMeasure;
 }
 
-export interface ChangedCodeNavigation {
-  eventId: number;
-  commitSha: string;
-}
-
-export interface TaskNavigation {
-  taskId: string;
-  changedCode: ChangedCodeNavigation[];
-}
-
 export interface DeliveryVerdictNavigation {
   verdictId: string;
   workflowExecutionId: string;

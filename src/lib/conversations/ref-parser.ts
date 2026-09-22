@@ -16,7 +16,7 @@ import {
 } from "@/lib/prompt-editor/reference-registry";
 import { findRefTags, type FoundRef } from "./ref-tags";
 
-export { findRefTags, parseRefAttrs, type FoundRef } from "./ref-tags";
+export { parseRefAttrs, type FoundRef } from "./ref-tags";
 
 export interface FoundRegisteredRef extends FoundRef {
   type: ReferenceType;
@@ -33,22 +33,6 @@ export function findMessageRefs(text: string): FoundRef[] {
 
 export function findTicketRefs(text: string): FoundRef[] {
   return findRefTags(text, getReferenceByType("ticket").xmlTag);
-}
-
-export function findSpecRefs(text: string): FoundRef[] {
-  return findRefTags(text, getReferenceByType("spec").xmlTag);
-}
-
-export function findRequirementRefs(text: string): FoundRef[] {
-  return findRefTags(text, getReferenceByType("requirement").xmlTag);
-}
-
-export function findDecisionRefs(text: string): FoundRef[] {
-  return findRefTags(text, getReferenceByType("decision").xmlTag);
-}
-
-export function findTaskRefs(text: string): FoundRef[] {
-  return findRefTags(text, getReferenceByType("task").xmlTag);
 }
 
 export function findRegisteredRefs(text: string): FoundRegisteredRef[] {

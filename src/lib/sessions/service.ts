@@ -71,7 +71,6 @@ const logger = createLogger("sessions");
 
 const execFileAsync = promisify(execFile);
 
-export { sanitizeBranchName } from "./branch-name";
 export { generateRandomSuffix, validateSessionName } from "./repo";
 
 /**

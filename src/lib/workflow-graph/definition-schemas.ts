@@ -65,7 +65,6 @@ export const workflowOriginSchema = z.object({
   sourceUri: z.string().min(1),
   label: z.string().min(1).optional(),
 });
-export type WorkflowOrigin = z.infer<typeof workflowOriginSchema>;
 
 // Region paths may use JSON Pointer (`/tasks/task-1/instructions`) or the
 // equivalent dot/bracket form. Stable ids/names are preferred for array
@@ -119,9 +118,6 @@ export const graphWorkflowContextRoutingPolicySchema = z.object({
     .enum(["independent", "atLeastOne", "exactlyOne"])
     .default("independent"),
 });
-export type GraphWorkflowContextRoutingPolicy = z.infer<
-  typeof graphWorkflowContextRoutingPolicySchema
->;
 
 /**
  * One authored ownership entry: a normalized repo-relative POSIX path that
@@ -187,7 +183,6 @@ export const ownedPathSchema = z
       );
     }
   });
-export type OwnedPath = z.infer<typeof ownedPathSchema>;
 
 const placementLaneShape = {
   /**
@@ -313,9 +308,6 @@ export const graphWorkflowEdgeGuardSchema = z.union([
   z.object({ schema: z.record(z.string(), z.unknown()) }).strict(),
   z.object({ else: z.literal(true) }).strict(),
 ]);
-export type GraphWorkflowEdgeGuard = z.infer<
-  typeof graphWorkflowEdgeGuardSchema
->;
 
 export const graphWorkflowContextEdgeSchema = z.object({
   id: z.string().trim().min(1),
@@ -395,9 +387,6 @@ const stringParameterDeclarationSchema = z.object({
   minLength: z.number().int().min(0).optional(),
   maxLength: z.number().int().min(0).optional(),
 });
-export type StringParameterDeclaration = z.infer<
-  typeof stringParameterDeclarationSchema
->;
 
 const textParameterDeclarationSchema = z.object({
   type: z.literal("text"),
@@ -406,9 +395,6 @@ const textParameterDeclarationSchema = z.object({
   minLength: z.number().int().min(0).optional(),
   maxLength: z.number().int().min(0).optional(),
 });
-export type TextParameterDeclaration = z.infer<
-  typeof textParameterDeclarationSchema
->;
 
 const enumParameterDeclarationSchema = z.object({
   type: z.literal("enum"),
@@ -416,9 +402,6 @@ const enumParameterDeclarationSchema = z.object({
   options: z.array(z.string()),
   default: z.string().optional(),
 });
-export type EnumParameterDeclaration = z.infer<
-  typeof enumParameterDeclarationSchema
->;
 
 export const parameterDeclarationSchema = z.discriminatedUnion("type", [
   stringParameterDeclarationSchema,
@@ -585,9 +568,6 @@ const resolvedMemoryDeliveryPolicySchema = z.object({
     source: collaborationConfigSourceSchema,
   }),
 });
-export type ResolvedMemoryDeliveryPolicy = z.infer<
-  typeof resolvedMemoryDeliveryPolicySchema
->;
 
 export const resolvedMemoryPolicyConfigSchema = z.object({
   implementer: resolvedMemoryDeliveryPolicySchema,
@@ -780,17 +760,11 @@ export const graphWorkflowCascadeLoopBodyTemplateSchema =
   graphWorkflowLoopBodyTemplateSchema.extend({
     contexts: z.array(graphWorkflowCascadeContextSchema).min(1),
   });
-export type GraphWorkflowCascadeLoopBodyTemplate = z.infer<
-  typeof graphWorkflowCascadeLoopBodyTemplateSchema
->;
 
 export const graphWorkflowCascadeLoopGroupSchema =
   graphWorkflowResolvedLoopGroupSchema.extend({
     template: graphWorkflowCascadeLoopBodyTemplateSchema,
   });
-export type GraphWorkflowCascadeLoopGroup = z.infer<
-  typeof graphWorkflowCascadeLoopGroupSchema
->;
 
 export const cascadeWorkflowSemanticDefinitionSchema =
   resolvedWorkflowSemanticDefinitionSchema.extend({

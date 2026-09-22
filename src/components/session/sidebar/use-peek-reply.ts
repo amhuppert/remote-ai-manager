@@ -121,11 +121,6 @@ export const createPeekReplySubmitter =
     }
   };
 
-export const submitPeekReply = (
-  deps: PeekReplyDeps,
-  params: PeekReplyParams,
-): Promise<unknown> => createPeekReplySubmitter(deps)(params);
-
 const browserLogger: PeekReplyLogger = {
   info(message, fields) {
     console.debug("[features/session/sidebar/use-peek-reply]", message, fields);

@@ -76,7 +76,6 @@ export const checkpointSeedResponseSchema = z.object({
   /** Null while the operation has frozen no payload. */
   seed: checkpointPayloadSchema.nullable(),
 });
-export type CheckpointSeed = z.infer<typeof checkpointSeedResponseSchema>;
 
 export function checkpointsBaseUrl(target: CheckpointTarget): string {
   return `${conversationTargetApiBase(target)}/checkpoints`;

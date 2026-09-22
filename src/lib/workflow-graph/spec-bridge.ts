@@ -11,14 +11,13 @@ export {
 export {
   graphWorkflowTaskStatusEventSchema,
   type GraphWorkflowExecutionEvent,
-  type GraphWorkflowSSEEvent,
 } from "./event-schemas";
 export {
   graphWorkflowExecutionOriginSchema,
   type GraphWorkflowAbandonment,
   type GraphWorkflowExecutionOrigin,
 } from "./schemas";
-export { holdsExecutionLease, isTerminalStatus } from "./lifecycle-classifier";
+export { isTerminalStatus } from "./lifecycle-classifier";
 export type { AuthoredAccountabilityCoverageGroup } from "./authored-accountability-coverage-core";
 export type { GraphWorkflowExecution } from "./schemas";
 export type { SeededWorkflowDocument } from "./shared-documents";

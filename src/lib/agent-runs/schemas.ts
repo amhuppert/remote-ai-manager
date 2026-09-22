@@ -17,7 +17,6 @@ import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
  * `error`.
  */
 export const agentRunStatusSchema = z.enum(["running", "completed", "failed"]);
-export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 
 /**
  * POST body. `backend` selects the task runner and is required — the server
@@ -56,7 +55,6 @@ export const agentRunOutputSchema = z.object({
   summary: z.string(),
   referenceDocuments: z.array(agentRunReferenceDocumentSchema),
 });
-export type AgentRunOutput = z.infer<typeof agentRunOutputSchema>;
 
 /** Provider-neutral JSON Schema contract derived from {@link agentRunOutputSchema}. */
 export const AGENT_RUN_OUTPUT_SCHEMA = {

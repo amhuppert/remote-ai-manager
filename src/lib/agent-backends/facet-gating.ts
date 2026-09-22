@@ -42,19 +42,3 @@ export function backendFacetRefusalFor(
 ): string | null {
   return backendFacetRefusal(getBackendCatalogEntry(backend), facet);
 }
-
-/**
- * {@link backendFacetRefusal} resolved against a live catalog listing — the form
- * for pickers that render backend ids and hold `useBackendCatalogQuery()` data,
- * so the answer comes from the server's catalog rather than the build-time seed.
- */
-export function backendFacetRefusalIn(
-  entries: readonly BackendCatalogEntry[],
-  backend: AgentBackendId,
-  facet: GatedBackendFacet,
-): string | null {
-  const entry = entries.find((candidate) => candidate.id === backend);
-  return entry
-    ? backendFacetRefusal(entry, facet)
-    : backendFacetRefusalFor(backend, facet);
-}

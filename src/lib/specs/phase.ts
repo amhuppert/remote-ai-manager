@@ -9,9 +9,7 @@ import {
   specRevisionStateSchema,
 } from "./schemas";
 import {
-  authoringFacetSchema,
   deliveryDisplaySchema,
-  specPhasePrimarySchema,
   specPhaseProjectionSchema,
   type AuthoringFacet,
   type DeliveryDisplay,
@@ -19,18 +17,8 @@ import {
   type SpecPhaseProjection,
 } from "./phase-view-schemas";
 
-export {
-  authoringFacetSchema,
-  deliveryDisplaySchema,
-  specPhasePrimarySchema,
-  specPhaseProjectionSchema,
-};
-export type {
-  AuthoringFacet,
-  DeliveryDisplay,
-  SpecPhasePrimary,
-  SpecPhaseProjection,
-};
+export { deliveryDisplaySchema, specPhaseProjectionSchema };
+export type { DeliveryDisplay, SpecPhasePrimary, SpecPhaseProjection };
 
 export const deliveryCriterionStateSchema = z.enum([
   "pending",
@@ -46,9 +34,6 @@ export const deliveryCriterionStateSchema = z.enum([
   "delivered_externally",
   "waived",
 ]);
-export type DeliveryCriterionState = z.infer<
-  typeof deliveryCriterionStateSchema
->;
 
 export const deliveryCriterionSchema = z
   .object({ state: deliveryCriterionStateSchema })

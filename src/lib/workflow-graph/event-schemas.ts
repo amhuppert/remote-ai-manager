@@ -1004,6 +1004,3 @@ export const graphWorkflowExecutionEventPageResponseSchema = z.object({
 export type GraphWorkflowExecutionEventPageResponse = z.infer<
   typeof graphWorkflowExecutionEventPageResponseSchema
 >;
-export type GraphWorkflowExecutionEventsResponse = z.infer<
-  typeof graphWorkflowExecutionEventsResponseSchema
->;

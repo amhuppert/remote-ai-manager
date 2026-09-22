@@ -120,6 +120,7 @@ type _MergeHaltReasonSchemaParity = MutuallyAssignable<
   PersistedMergeHaltReason
 >;
 // Reference the guard so it is not an unused type alias.
+/** @public */
 export type { _MergeHaltReasonSchemaParity as MergeHaltReasonSchemaParity };
 
 /** Phase tracking for SSE broadcast. */

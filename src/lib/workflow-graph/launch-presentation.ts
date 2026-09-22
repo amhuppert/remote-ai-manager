@@ -4,26 +4,6 @@ import {
 } from "./definition-schemas";
 
 /**
- * The graph-owned display projection for an authored launch. Consumers keep
- * the launch opaque and render this stable value instead of graph fields.
- */
-export function graphWorkflowLaunchLabel(
-  launch: WorkflowDefinitionMutation,
-): string {
-  return [launch.name, launch.layout.workflowId, launch.description]
-    .filter(
-      (value): value is string => typeof value === "string" && value.length > 0,
-    )
-    .join(" · ");
-}
-
-export function graphWorkflowLaunchName(
-  launch: WorkflowDefinitionMutation,
-): string {
-  return launch.name;
-}
-
-/**
  * A copyable ordinary-workflow example for surfaces that document the launch
  * contract. The graph domain owns the authored fields; consumers receive the
  * complete launch as one opaque value.

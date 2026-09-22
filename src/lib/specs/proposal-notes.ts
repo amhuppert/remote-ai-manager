@@ -36,7 +36,6 @@ export const proposeEventPayloadSchema = z.object({
   revisionId: z.string().min(1),
   notes: z.string().min(1).optional(),
 });
-export type ProposeEventPayload = z.infer<typeof proposeEventPayloadSchema>;
 
 function parseJson(raw: string): unknown {
   try {

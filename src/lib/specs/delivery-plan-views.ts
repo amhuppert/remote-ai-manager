@@ -33,9 +33,6 @@ export const deliveryPlanHealthViewSchema = z
     findings: z.array(lintFindingSchema),
   })
   .strict();
-export type DeliveryPlanHealthView = z.infer<
-  typeof deliveryPlanHealthViewSchema
->;
 
 export const deliveryPlanAttemptViewSchema = z
   .object({
@@ -192,9 +189,6 @@ export const deliveryPlanEditRequestSchema = z
     binding: deliveryPlanBindingSchema,
   })
   .strict();
-export type DeliveryPlanEditRequest = z.infer<
-  typeof deliveryPlanEditRequestSchema
->;
 export const deliveryPlanOpenRequestSchema = z.object({}).strict();
 export const deliveryPlanReopenRequestSchema = z
   .object({ reason: z.string().min(1) })

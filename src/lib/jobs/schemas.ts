@@ -81,9 +81,6 @@ export const resolutionInfrastructureHaltReasonSchema = z.object({
   failure: agentFailureClassificationSchema,
   conflictFiles: z.array(z.string()),
 });
-export type ResolutionInfrastructureHaltReason = z.infer<
-  typeof resolutionInfrastructureHaltReasonSchema
->;
 
 /**
  * Every machine-readable refusal a merge-family job can terminate with. New
@@ -273,8 +270,3 @@ export type ConflictDecisionInput = z.infer<typeof conflictDecisionInputSchema>;
 export const resolveConflictsRequestSchema = z.object({
   decisions: z.array(conflictDecisionInputSchema).optional(),
 });
-
-export const jobsResponseSchema = z.object({
-  jobs: z.array(backgroundJobSchema),
-});
-export type JobsResponse = z.infer<typeof jobsResponseSchema>;

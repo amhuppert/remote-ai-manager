@@ -13,7 +13,6 @@ export const debugHypothesisSchema = z.object({
   description: z.string(),
   instrumentationPlan: z.string().optional(),
 });
-export type DebugHypothesis = z.infer<typeof debugHypothesisSchema>;
 
 export const debugModePhaseSchema = z.enum([
   "hypothesizing",

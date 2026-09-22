@@ -10,9 +10,6 @@ export const alignmentVersionStatusSchema = z.enum([
   "active",
   "superseded",
 ]);
-export type AlignmentVersionStatus = z.infer<
-  typeof alignmentVersionStatusSchema
->;
 
 /**
  * What produced a charter version. `forked` = seeded by copying a parent
@@ -142,7 +139,6 @@ export type AlignmentDiff = z.infer<typeof alignmentDiffSchema>;
 export const beginDraftRequestSchema = z.object({
   conversationId: z.string().min(1).optional(),
 });
-export type BeginDraftRequest = z.infer<typeof beginDraftRequestSchema>;
 
 const charterContentSchema = z
   .string()
@@ -155,7 +151,6 @@ const charterContentSchema = z
 export const fillDraftRequestSchema = z.object({
   content: charterContentSchema,
 });
-export type FillDraftRequest = z.infer<typeof fillDraftRequestSchema>;
 
 /** Approve a filled non-auto `/align` draft through the human charter gate. */
 export const approveDraftRequestSchema = z.object({
@@ -176,7 +171,6 @@ export const proposedDecisionSchema = z.object({
   rationale: z.string().optional(),
   context: z.string().optional(),
 });
-export type ProposedDecision = z.infer<typeof proposedDecisionSchema>;
 
 /** Propose an asynchronous bulk batch of decisions. At least one is required. */
 export const proposeDecisionsRequestSchema = z.object({
@@ -195,7 +189,6 @@ export const submitCharterRequestSchema = z.object({
   conversationId: z.string().min(1),
   content: charterContentSchema,
 });
-export type SubmitCharterRequest = z.infer<typeof submitCharterRequestSchema>;
 
 /**
  * Agent-facing decisions submission body (`cctl decisions propose`) plus the
@@ -205,9 +198,6 @@ export const submitDecisionsRequestSchema = z.object({
   conversationId: z.string().min(1),
   decisions: z.array(proposedDecisionSchema).min(1),
 });
-export type SubmitDecisionsRequest = z.infer<
-  typeof submitDecisionsRequestSchema
->;
 
 /** Per-decision resolution: approve, or reject with optional feedback. */
 export const decisionResolutionSchema = z.object({
@@ -237,7 +227,6 @@ export const diffRequestSchema = z.object({
   from: z.number().int(),
   to: z.number().int(),
 });
-export type DiffRequest = z.infer<typeof diffRequestSchema>;
 
 // ============================================================
 // SSE event contract

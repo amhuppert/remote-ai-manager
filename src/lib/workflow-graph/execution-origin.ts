@@ -1,7 +1,4 @@
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionOrigin,
-} from "./schemas";
+import type { GraphWorkflowExecutionOrigin } from "./schemas";
 
 /** The launch source supplies the authoritative origin and any saved definition. */
 export type GraphWorkflowLaunchSource =
@@ -118,13 +115,6 @@ export function deriveTemplateOriginFromSeedFields(seed: {
     definitionRevision: seed.seedDefinitionRevision,
     tier: seed.launchedTier ?? "project",
   };
-}
-
-/** Whether this run was launched from an inline plan rather than a template. */
-export function isOneOffExecution(
-  execution: Pick<GraphWorkflowExecution, "origin">,
-): boolean {
-  return execution.origin.kind === "one_off";
 }
 
 /**

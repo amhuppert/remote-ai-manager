@@ -58,4 +58,3 @@ export const sessionsResponseSchema = z.object({
 export const branchPrefixResponseSchema = z.object({
   branchPrefix: z.string(),
 });
-export type BranchPrefixResponse = z.infer<typeof branchPrefixResponseSchema>;

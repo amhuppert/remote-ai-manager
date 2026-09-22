@@ -62,9 +62,6 @@ export const checkpointHandoffClaimSchema = z
       path: ["sourceRefs"],
     },
   );
-export type CheckpointHandoffClaim = z.infer<
-  typeof checkpointHandoffClaimSchema
->;
 
 export const checkpointHandoffCandidateSchema = z
   .object({
@@ -480,9 +477,6 @@ export const checkpointTokenEstimateSchema = z
     estimator: z.string().min(1),
   })
   .strict();
-export type CheckpointTokenEstimate = z.infer<
-  typeof checkpointTokenEstimateSchema
->;
 
 /**
  * Context-window occupancy of the checkpointed conversation, as a backend
@@ -503,9 +497,6 @@ export const checkpointContextOccupancySchema = z
     reportedBy: z.string().min(1),
   })
   .strict();
-export type CheckpointContextOccupancy = z.infer<
-  typeof checkpointContextOccupancySchema
->;
 
 /**
  * The provider references CC holds for one operation. Kept in its own shape so
@@ -520,9 +511,6 @@ export const checkpointProtectedReferencesSchema = z
     acceptedBackendRef: z.string().min(1).nullable(),
   })
   .strict();
-export type CheckpointProtectedReferences = z.infer<
-  typeof checkpointProtectedReferencesSchema
->;
 
 /**
  * What binds one delivery attempt to this seed. Persisted before the provider
@@ -714,9 +702,6 @@ export const checkpointGeneratorVersionsSchema = z
     normalizerVersion: z.string().min(1),
   })
   .strict();
-export type CheckpointGeneratorVersions = z.infer<
-  typeof checkpointGeneratorVersionsSchema
->;
 
 /**
  * The three rendered sections in their structured form.
@@ -736,9 +721,6 @@ export const checkpointStructuredSectionsSchema = z
     recoveryMap: z.json(),
   })
   .strict();
-export type CheckpointStructuredSections = z.infer<
-  typeof checkpointStructuredSectionsSchema
->;
 
 /**
  * The immutable checkpoint payload. Inserted exactly once, in the same durable

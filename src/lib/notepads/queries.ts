@@ -280,17 +280,6 @@ export function useNotepadDetailQuery(
   });
 }
 
-export function useNotepadGlobalListQuery(
-  sort: NotepadSort,
-  includeArchived: boolean,
-  options?: { enabled?: boolean },
-) {
-  return useQuery({
-    ...notepadQueries.globalList(sort, includeArchived),
-    enabled: options?.enabled ?? true,
-  });
-}
-
 export function useNotepadPanelListQuery(
   projectName: string,
   sort: NotepadSort,

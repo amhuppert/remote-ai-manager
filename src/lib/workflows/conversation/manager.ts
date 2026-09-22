@@ -4083,13 +4083,6 @@ export function describeActiveTurn(
   return defaultManager().describeActiveTurn(address);
 }
 
-export function applyCostSettlementToHostedActor(
-  key: string,
-  costUsdDelta: number,
-): { applied: true; totalCostUsd: number | null } | { applied: false } {
-  return defaultManager().applyCostSettlementToHostedActor(key, costUsdDelta);
-}
-
 export function checkpointAcceptsQueuedInput(
   projectPath: string,
   sessionName: string,
@@ -4115,18 +4108,6 @@ export function executeConversationCommand(
   command: DebugCommand,
 ): Promise<ConversationCommandOutcome> {
   return defaultManager().executeConversationCommand(address, command);
-}
-
-export function hasLiveConversationActor(
-  projectPath: string,
-  sessionName: string,
-  conversationId: string,
-): boolean {
-  return defaultManager().hasLiveConversationActor(
-    projectPath,
-    sessionName,
-    conversationId,
-  );
 }
 
 export function ensureConversationLifecycle(

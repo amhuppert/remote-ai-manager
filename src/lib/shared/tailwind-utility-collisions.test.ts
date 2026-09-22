@@ -207,11 +207,6 @@ const UTILITY_FIRST_PATHS = [
   // remains as preserved-CSS). The popup consumers fall under the
   // features/session/prompt/ dir entry above.
   `${path.sep}components${path.sep}CommandAutocompleteList.tsx`,
-  `${path.sep}components${path.sep}FileAutocomplete.tsx`,
-  `${path.sep}components${path.sep}FileAutocompleteList.tsx`,
-  // The single file-autocomplete popup-body owner both file-mention surfaces
-  // render through — utility-first by design, like the two host files above.
-  `${path.sep}components${path.sep}FileAutocompleteListView.tsx`,
   `${path.sep}components${path.sep}ConversationAutocompleteList.tsx`,
   // DevServerDrawer + DevServersButton are utility-first; their only CSS is the
   // ds-panel-in/ds-sheet-in entry keyframes in globals.css (preserved-CSS).

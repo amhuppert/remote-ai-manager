@@ -32,18 +32,10 @@ import {
 
 import type {
   GraphWorkflowAbandonment,
-  GraphWorkflowExecutionOrigin,
   GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
 
 import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
-
-import {
-  type RecordDefinitionApprovalResult,
-  type ClaimDefinitionApprovalResult,
-} from "@/lib/workflow-graph/workflow-manager";
-
-import { type DefinitionApprovalGateDecision } from "@/lib/workflow-graph/execution-lifecycle-port";
 
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 
@@ -654,32 +646,6 @@ export function createProductionGraphWorkflowLifecycleDeps(
 }
 
 /**
- * Launch a graph workflow run through the production start+kickoff seam,
- * reusing the same singletons (workflow manager, execution loop) as the HTTP
- * START handler. The MCP `start_graph_workflow` tool wires `startWorkflow` to
- * this so an agent launch behaves exactly like a human launch. The `deps`
- * parameter keeps the seam unit-testable.
- */
-export async function launchGraphWorkflowExecution(
-  input: {
-    projectPath: string;
-    projectName: string;
-    sessionName: string;
-    definitionId: string;
-    expectedDefinitionRevision?: number;
-    tier?: "project" | "global";
-    parameters?: Record<string, unknown>;
-    /** Owner conversation resolved by the calling seam; `null` when it has none. */
-    ownerConversationId?: string | null;
-    /** Pre-rendered documents the launching tier seeds into every lane. */
-    seededDocuments?: readonly SeededWorkflowDocument[];
-  },
-  deps: GraphWorkflowLifecycleDeps = createProductionGraphWorkflowLifecycleDeps(),
-): Promise<GraphWorkflowExecution> {
-  return createGraphWorkflowLifecycleService(deps).launchSavedRunning(input);
-}
-
-/**
  * In-process seam for the native-SDD launch bridge: launches a signed
  * candidate's authored document as a `spec_delivery` run through the shared
  * gauntlet, committing the bridge's spec rows atomically with the reservation.
@@ -704,56 +670,6 @@ export async function launchSpecDeliveryGraphWorkflowExecution(
   deps: GraphWorkflowLifecycleDeps = createProductionGraphWorkflowLifecycleDeps(),
 ): Promise<GraphWorkflowExecution> {
   return createGraphWorkflowLifecycleService(deps).launchSpecDelivery(input);
-}
-
-/**
- * Approve the session's pending workflow definition and start the run through
- * the production seam (workflow manager + execution loop singletons) without
- * HTTP transport. Human-only server-side flows — e.g. the spec-side
- * execution-start act, which records its own human grant from inside this
- * saga's admission callback rather than ahead of it — use it so definition
- * approval always engages the same lifecycle-port report and loop kickoff as
- * the HTTP handler. Callers own the human-act enforcement.
- */
-export async function approveGraphWorkflowDefinitionForSession(input: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  workflowExecutionId: string;
-}): Promise<
-  | RecordDefinitionApprovalResult
-  | ClaimDefinitionApprovalResult
-  | { ok: false; reason: "unavailable" }
-  | {
-      ok: false;
-      reason: "gate_refused";
-      refusal: Exclude<DefinitionApprovalGateDecision, { ok: true }>;
-    }
-> {
-  return getGraphWorkflowRuntime().lifecycle.approveDefinition({
-    projectPath: input.projectPath,
-    projectName: input.projectName,
-    sessionName: input.sessionName,
-    expectedExecutionId: input.workflowExecutionId,
-  });
-}
-
-/**
- * The session's park and its recorded origin, through the production
- * singletons. Server-side callers outside this domain (the spec-side
- * execution-start act) correlate that origin to the run they mean before
- * deciding it.
- */
-export async function findSessionPendingWorkflowDefinitionApproval(input: {
-  projectPath: string;
-  sessionName: string;
-}): Promise<{
-  executionId: string;
-  origin: GraphWorkflowExecutionOrigin;
-} | null> {
-  return getGraphWorkflowRuntime().lifecycle.findPendingDefinitionApproval(
-    input,
-  );
 }
 
 /**

@@ -38,7 +38,6 @@ export const laneTurnUsageSchema = z.object({
   cachedInputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
 });
-export type LaneTurnUsage = z.infer<typeof laneTurnUsageSchema>;
 
 /**
  * Normalized per-lane metrics. Every field is optional: a backend that does not report a metric leaves it absent
@@ -52,7 +51,6 @@ export const laneMetricsSchema = z
     lastTurnUsage: laneTurnUsageSchema.nullable().optional(),
   })
   .strict();
-export type LaneMetrics = z.infer<typeof laneMetricsSchema>;
 
 export const laneStateSchema = z.object({
   workflowId: z.string().min(1),

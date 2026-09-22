@@ -22,15 +22,6 @@ export const phaseLabels: Record<SpecPhasePrimary, string> = {
   approved: "Approved",
 };
 
-export const phaseTones: Record<SpecPhasePrimary, StatusChipTone> = {
-  abandoned: "red",
-  executing: "cyan",
-  in_review: "amber",
-  draft: "neutral",
-  delivered: "green",
-  approved: "green",
-};
-
 /**
  * Reads the delivered tally, not the proof tally: a criterion an imported spec
  * reports as delivered elsewhere is delivered, and a "0/3 delivered" chip on a

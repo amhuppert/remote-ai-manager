@@ -22,8 +22,6 @@ export const commitMessageOutputSchema = z.object({
   resolutionContext: z.string().optional(),
 });
 
-export type CommitMessageOutput = z.infer<typeof commitMessageOutputSchema>;
-
 /** `outputFormat.schema` payload mirroring {@link commitMessageOutputSchema}. */
 export const COMMIT_MESSAGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",

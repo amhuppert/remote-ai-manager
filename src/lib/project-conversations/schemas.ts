@@ -11,9 +11,6 @@ export const createProjectConversationRequestSchema = z.object({
   // Standard Agent default applies when the picker sends nothing (R7).
   profile: conversationProfileSelectionSchema.optional(),
 });
-export type CreateProjectConversationRequest = z.infer<
-  typeof createProjectConversationRequestSchema
->;
 
 /**
  * Create-and-send body: a prompt request plus the token identifying the
@@ -31,13 +28,7 @@ export const projectFirstPromptRequestSchema = runPromptRequestSchema.and(
     profile: conversationProfileSelectionSchema.optional(),
   }),
 );
-export type ProjectFirstPromptRequest = z.infer<
-  typeof projectFirstPromptRequestSchema
->;
 
 export const projectConversationOpenRequestSchema = z.object({
   open: z.boolean(),
 });
-export type ProjectConversationOpenRequest = z.infer<
-  typeof projectConversationOpenRequestSchema
->;

@@ -701,13 +701,6 @@ export function incomingRoutes(
   return projection.edges.filter((edge) => edge.targetContextId === contextId);
 }
 
-export function outgoingRoutes(
-  projection: RouteProjection,
-  contextId: string,
-): ResolvedRouteEdge[] {
-  return projection.edges.filter((edge) => edge.logicalSourceId === contextId);
-}
-
 /**
  * The contexts a target actually depends on — the EFFECTIVE sources of its
  * active incoming edges, deduplicated in definition order.

@@ -1175,7 +1175,6 @@ export const stopServer = defaultRegistry.stopServer;
 export const stopAllForSession = defaultRegistry.stopAllForSession;
 export const stopAllForWorktree = defaultRegistry.stopAllForWorktree;
 export const captureStopForWorktree = defaultRegistry.captureStopForWorktree;
-export const stopAll = defaultRegistry.stopAll;
 export const getSessionServers = defaultRegistry.getSessionServers;
 export const getServer = defaultRegistry.getServer;
 export const killListeningProcessForPort =

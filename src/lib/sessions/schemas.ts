@@ -17,16 +17,12 @@ import {
 } from "./list-schemas";
 
 export {
-  branchPrefixResponseSchema,
-  derivedSessionStatusSchema,
   sessionCreationModeSchema,
   sessionListItemSchema,
-  sessionsResponseSchema,
   sessionSourceSchema,
   spawnedFromSchema,
 } from "./list-schemas";
 export type {
-  BranchPrefixResponse,
   DerivedSessionStatus,
   SessionCreationMode,
   SessionListItem,

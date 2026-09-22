@@ -890,7 +890,9 @@ describe("seam corpus predicates", () => {
 
   it("status-chip seam covers source + stories minus tests, excluding the primitive", () => {
     const seam = byId.get("status-chip-pills")!;
-    expect(seam.inCorpus("src/components/mcp/McpInfoChip.tsx")).toBe(true);
+    expect(
+      seam.inCorpus("src/features/project-detail/components/BranchChip.tsx"),
+    ).toBe(true);
     expect(seam.inCorpus("src/components/ui/StatusChip.stories.tsx")).toBe(
       true,
     );

@@ -160,9 +160,6 @@ export const createOrRefreshRequestSchema = z
       });
     }
   });
-export type CreateOrRefreshRequest = z.infer<
-  typeof createOrRefreshRequestSchema
->;
 
 interface ArtifactTarget {
   scope: ContextArtifactScope;

@@ -107,8 +107,3 @@ export interface MessagePartRange {
   start: number;
   end: number;
 }
-
-/** The single part covering a message that is not split. */
-export function wholeMessagePart(groupedCount: number): MessagePartRange {
-  return { index: 0, count: 1, start: 0, end: groupedCount };
-}

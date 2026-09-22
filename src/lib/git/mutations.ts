@@ -4,8 +4,6 @@ import { useAddOrUpdateJob } from "@/stores/notification.store";
 import { jobDispatchResponseSchema } from "@/lib/jobs/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
 
-export { ApiCallError } from "@/lib/api/errors";
-
 export interface PreparedMergeTarget {
   projectName: string;
   sessionName: string;

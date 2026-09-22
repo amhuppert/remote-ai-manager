@@ -275,38 +275,6 @@ export interface DefinitionGateRefusal {
   instruction: string;
 }
 
-/** A run parked awaiting definition approval, as this domain finds it. */
-export interface PendingDefinitionApproval {
-  executionId: string;
-  /** What the parked run records about where it came from. */
-  origin: GraphWorkflowExecutionOrigin;
-}
-
-/**
- * Whether a park found by session is the run this spec execution is waiting to
- * start.
- *
- * The session's lease says only that SOME run holds it. Approving execution A
- * while unrelated run B holds the park would start B and leave A unapproved, so
- * the two are correlated the same way the lifecycle callbacks correlate an
- * admission: by the link once one exists, and otherwise by the compiled
- * definition the execution pins against the origin the park recorded. A one-off
- * park pins no definition and therefore never belongs to a spec execution.
- */
-export function parkBelongsToExecution(
-  park: PendingDefinitionApproval,
-  execution: SpecExecutionRow,
-): boolean {
-  if (execution.workflow_execution_id !== null) {
-    return execution.workflow_execution_id === park.executionId;
-  }
-  if (park.origin.kind !== "template") return false;
-  return (
-    park.origin.definitionId === execution.workflow_definition_id &&
-    park.origin.definitionRevision === execution.workflow_definition_revision
-  );
-}
-
 export interface ExecutionStartGatePort {
   /**
    * Launch a signed candidate's graph through the production spec-delivery

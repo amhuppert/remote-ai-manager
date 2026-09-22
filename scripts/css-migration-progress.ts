@@ -218,12 +218,6 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
     note: "`.approval-gate*` — fully migratable.",
   },
   {
-    path: "src/features/_root/spawn-card/spawn-card.css",
-    preserved: false,
-    floor: 0,
-    note: "`.spawn-card*` — fully migratable feature layout.",
-  },
-  {
     path: "src/features/project-detail/styles/project-detail.css",
     preserved: false,
     floor: 0,
@@ -234,12 +228,6 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
     preserved: false,
     floor: 0,
     note: "`.plc-uc-*` unified composer — fully migratable.",
-  },
-  {
-    path: "src/features/projects-index/styles/projects-index.css",
-    preserved: false,
-    floor: 0,
-    note: "`.project-card*` — Stage-A pilot surface (already migrated; remaining selectors migrate fully).",
   },
   {
     path: "src/features/config/styles/config-editor.css",

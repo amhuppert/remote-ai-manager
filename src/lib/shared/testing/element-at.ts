@@ -18,14 +18,3 @@ export function elementAt<T>(items: readonly T[], index: number): T {
   }
   return item;
 }
-
-/**
- * The single element of a collection expected to hold exactly one, so a test
- * asserting on "the" element also pins that nothing else arrived.
- */
-export function onlyElement<T>(items: readonly T[]): T {
-  if (items.length !== 1) {
-    throw new Error(`expected exactly one element, but saw ${items.length}`);
-  }
-  return elementAt(items, 0);
-}

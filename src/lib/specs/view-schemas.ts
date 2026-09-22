@@ -14,12 +14,8 @@ import {
   taskWorkStatusSchema,
 } from "./phase";
 import {
-  specAssumptionElementViewSchema,
   specAssumptionViewSchema,
   specElementGetResponseSchema,
-  specElementReferenceStateSchema,
-  specElementViewSchema,
-  specQuestionElementViewSchema,
   specQuestionViewSchema,
   specSummaryViewSchema,
 } from "./reference-view-schemas";
@@ -58,24 +54,14 @@ import {
 } from "./schemas";
 
 export {
-  specAssumptionElementViewSchema,
   specAssumptionViewSchema,
   specElementGetResponseSchema,
-  specElementReferenceStateSchema,
-  specElementViewSchema,
-  specQuestionElementViewSchema,
   specQuestionViewSchema,
   specSummaryViewSchema,
 };
 export type {
-  SpecAssumptionElementView,
   SpecAssumptionView,
-  SpecElementGetResponse,
-  SpecElementReferenceState,
-  SpecElementView,
-  SpecQuestionElementView,
   SpecQuestionView,
-  SpecSummaryView,
 } from "./reference-view-schemas";
 
 /**
@@ -91,9 +77,6 @@ export type {
 export const specRevisionElementViewSchema = specRevisionElementSchema
   .extend({ handle: z.string().min(1).nullable().optional() })
   .strict();
-export type SpecRevisionElementView = z.infer<
-  typeof specRevisionElementViewSchema
->;
 
 export const specRevisionSnapshotViewSchema = specRevisionSnapshotSchema
   .safeExtend({ elements: z.array(specRevisionElementViewSchema) })
@@ -412,9 +395,6 @@ const remainingAuthoringStageSchema = z
     requiresHumanSignOff: z.boolean(),
   })
   .strict();
-export type RemainingAuthoringStage = z.infer<
-  typeof remainingAuthoringStageSchema
->;
 
 /**
  * What an open draft still owes under the policy in force (R25.5). A policy
@@ -471,9 +451,6 @@ export const specProposeApprovalRequestOutcomeSchema = z.enum([
   "delivery-uncertain",
   "not-filed",
 ]);
-export type SpecProposeApprovalRequestOutcome = z.infer<
-  typeof specProposeApprovalRequestOutcomeSchema
->;
 
 const specProposeApprovalRequestSchema = z
   .object({
@@ -517,7 +494,6 @@ export const specProposeResultViewSchema = z
     approvalRequests: z.array(specProposeApprovalRequestSchema),
   })
   .strict();
-export type SpecProposeResultView = z.infer<typeof specProposeResultViewSchema>;
 
 /**
  * The change-policy response (R25.5): the resulting spec plus what the open
@@ -570,7 +546,6 @@ export const specProjectSearchViewSchema = z
     results: z.array(specSearchHitSchema),
   })
   .strict();
-export type SpecProjectSearchView = z.infer<typeof specProjectSearchViewSchema>;
 
 /** The current attempt's server-computed delivery standing for one criterion. */
 export const criterionDeliveryProjectionSchema = z
@@ -1220,12 +1195,10 @@ const specSearchResultSchema = z
 export const specSearchViewSchema = z
   .object({ query: z.string(), results: z.array(specSearchResultSchema) })
   .strict();
-export type SpecSearchView = z.infer<typeof specSearchViewSchema>;
 
 export const specInventoryViewSchema = z
   .object({ specs: z.array(specSummaryViewSchema) })
   .strict();
-export type SpecInventoryView = z.infer<typeof specInventoryViewSchema>;
 
 const canonicalMarkdownFileSchema = z
   .object({ path: z.string().min(1), content: z.string() })

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ComponentProps, type RefObject } from "react";
+import { type ComponentProps } from "react";
 import ApprovalGatePanel from "@/components/ApprovalGatePanel";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import { IterationReadonlyBanner } from "@/components/conversation/ConversationBanners";
@@ -115,5 +115,3 @@ export default function PromptInputSlot({
     </>
   );
 }
-
-export type { RefObject };

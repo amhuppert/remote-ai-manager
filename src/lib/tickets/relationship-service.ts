@@ -89,6 +89,7 @@ export type UpdateTicketRelationshipServiceInput = z.input<
   typeof updateTicketRelationshipServiceInputSchema
 >;
 
+/** @alias */
 export const removeTicketRelationshipServiceInputSchema =
   getTicketRelationshipServiceInputSchema;
 export type RemoveTicketRelationshipServiceInput = z.input<

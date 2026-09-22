@@ -31,7 +31,6 @@ export const sourceTypeSchema = z.enum([
   "spec",
   "other",
 ]);
-export type SourceType = z.infer<typeof sourceTypeSchema>;
 
 // The shared applicability scope for charter entries: the authored context ids
 // the entry applies to. Absence of a scope means global. Used by invariants and
@@ -60,6 +59,7 @@ export const charterScopeSchema = z
   .strict();
 export type CharterScope = z.infer<typeof charterScopeSchema>;
 
+/** @alias */
 export const charterInvariantAppliesToSchema = charterScopeSchema;
 export type CharterInvariantAppliesTo = CharterScope;
 

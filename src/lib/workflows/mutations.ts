@@ -68,13 +68,6 @@ export function useScopedCreateWorkflowDefinitionMutation(
   });
 }
 
-export function useCreateWorkflowDefinitionMutation(projectName: string) {
-  return useScopedCreateWorkflowDefinitionMutation({
-    kind: "project",
-    projectName,
-  });
-}
-
 export function useScopedUpdateWorkflowDefinitionMutation(
   scope: WorkflowDefinitionScope,
   workflowId: string,
@@ -103,16 +96,6 @@ export function useScopedUpdateWorkflowDefinitionMutation(
   });
 }
 
-export function useUpdateWorkflowDefinitionMutation(
-  projectName: string,
-  workflowId: string,
-) {
-  return useScopedUpdateWorkflowDefinitionMutation(
-    { kind: "project", projectName },
-    workflowId,
-  );
-}
-
 export function useScopedDeleteWorkflowDefinitionMutation(
   scope: WorkflowDefinitionScope,
 ) {
@@ -127,13 +110,6 @@ export function useScopedDeleteWorkflowDefinitionMutation(
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: api.listKey });
     },
-  });
-}
-
-export function useDeleteWorkflowDefinitionMutation(projectName: string) {
-  return useScopedDeleteWorkflowDefinitionMutation({
-    kind: "project",
-    projectName,
   });
 }
 

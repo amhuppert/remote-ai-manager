@@ -8,7 +8,7 @@ import {
 } from "./stamp";
 
 export type { BuildInfo } from "./stamp";
-export { buildInfoSchema, formatBuildStamp } from "./stamp";
+export { formatBuildStamp } from "./stamp";
 export { BUILD_INFO };
 
 /**

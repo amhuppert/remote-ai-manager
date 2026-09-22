@@ -40,7 +40,6 @@ export const agentNotificationBodySchema = z.object({
   message: z.string().min(1),
   urgency: z.enum(["info", "attention"]).optional(),
 });
-export type AgentNotificationBody = z.infer<typeof agentNotificationBodySchema>;
 
 const DEFAULT_TITLE = "Agent notification";
 

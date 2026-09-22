@@ -53,9 +53,6 @@ export const criterionFreshnessGradeSchema = z.enum([
   "soft_stale",
   "hard_stale",
 ]);
-export type CriterionFreshnessGrade = z.infer<
-  typeof criterionFreshnessGradeSchema
->;
 
 export const criterionStalenessReasonSchema = z.enum([
   "criterion_text",
@@ -121,9 +118,6 @@ export const deliveryDeltaAdvisoryCodeSchema = z.enum([
   "delivered_elsewhere_refused",
   "delivered_elsewhere_requires_reaffirmation",
 ]);
-export type DeliveryDeltaAdvisoryCode = z.infer<
-  typeof deliveryDeltaAdvisoryCodeSchema
->;
 
 export const deliveryDeltaAdvisorySchema = z
   .object({

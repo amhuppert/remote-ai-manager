@@ -29,10 +29,7 @@ import {
 } from "./plan-issue-locator";
 import type { WorkflowPlanIssue } from "./plan-validation-schemas";
 
-export {
-  workflowPlanIssueSchema,
-  type WorkflowPlanIssue,
-} from "./plan-validation-schemas";
+export { type WorkflowPlanIssue } from "./plan-validation-schemas";
 
 export interface WorkflowPlanCommandIssue extends WorkflowPlanIssue {
   code: string;

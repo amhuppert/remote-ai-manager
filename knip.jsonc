@@ -1,0 +1,50 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // Entry files Knip cannot discover from package.json scripts or plugins.
+  // A trailing `!` marks a shipped artifact so `knip --production` keeps it.
+  "entry": [
+    // `bun build` targets (build:cli, build:worker); Knip does not parse `bun build`.
+    "src/cli/index.ts!",
+    "src/lib/agent-backends/cursor/worker/main.ts!",
+    // Child processes the Cursor tests spawn by file path.
+    "src/lib/agent-backends/cursor/acceptance/{orphan-parent-main,task-parent}.ts",
+    "src/lib/agent-backends/cursor/worker/testing/stub-worker-main.ts",
+    // Launchers the registered validation wrappers (scripts/validate/*.sh) run with node.
+    "scripts/validate/*.mjs",
+    // Operator-run programs started from shell wrappers or by hand (see scripts/probes/README.md).
+    "scripts/probes/checkpoint-{continuation,handoff}.ts",
+    "scripts/spikes/*.{ts,mjs}",
+    "scripts/smart-merge-live-verify.ts",
+    ".claude/skills/*/scripts/*.ts",
+  ],
+  "ignore": [
+    // Design-tool exports (claude.ai/design) that tsconfig.json also excludes.
+    ".design-sync/**",
+    "claude-design/**",
+    // Type companions of the validation launchers' `.mjs` modules. Imports
+    // resolve to the `.mjs`, so Knip would report the declarations as unused.
+    "scripts/validate/*.d.mts",
+  ],
+  "ignoreDependencies": [
+    // Cursor platform binaries; the package name is derived from
+    // process.platform/arch at runtime (docs/cursor-backend.md).
+    "@cursor/sdk-darwin-x64",
+    "@cursor/sdk-linux-x64",
+    // Pins the codex CLI the SDK spawns; asserted by app-server-version.arch.test.ts
+    // and listed in next.config.ts serverExternalPackages.
+    "@openai/codex",
+    // Resolved by path string in scripts/refresh-cli-library.ts.
+    "yalc",
+  ],
+  "ignoreBinaries": [
+    // Command Center's own CLI and the Cursor CLI, both installed on PATH.
+    "cctl",
+    "agent",
+    // OS process and socket tools.
+    "pgrep",
+    "ss",
+  ],
+  // Only report exports nothing else imports; an export that is still used in
+  // its own file is a superfluous `export` keyword, not dead code.
+  "ignoreExportsUsedInFile": true,
+}

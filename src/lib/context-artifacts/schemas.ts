@@ -94,7 +94,6 @@ export const contextArtifactStatusSchema = z.enum([
   "complete",
   "failed",
 ]);
-export type ContextArtifactStatus = z.infer<typeof contextArtifactStatusSchema>;
 
 export const createdBySchema = z.enum(["user", "agent"]);
 export type ContextArtifactCreatedBy = z.infer<typeof createdBySchema>;

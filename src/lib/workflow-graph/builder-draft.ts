@@ -427,32 +427,6 @@ export function addTaskToContext(
   };
 }
 
-export function updateTask(
-  definition: WorkflowSemanticDefinition,
-  taskId: string,
-  updates: Partial<GraphWorkflowTaskDefinition>,
-): WorkflowSemanticDefinition {
-  return {
-    ...cloneValue(definition),
-    tasks: definition.tasks.map((task) =>
-      task.id === taskId ? { ...task, ...updates } : task,
-    ),
-  };
-}
-
-export function removeTask(
-  definition: WorkflowSemanticDefinition,
-  contextId: string,
-  taskId: string,
-): WorkflowSemanticDefinition {
-  const tasksForContext = sortTasks(
-    definition.tasks.filter(
-      (task) => task.contextId === contextId && task.id !== taskId,
-    ),
-  );
-  return renumberContextTasks(definition, contextId, tasksForContext);
-}
-
 export function moveTaskWithinContext(
   definition: WorkflowSemanticDefinition,
   contextId: string,

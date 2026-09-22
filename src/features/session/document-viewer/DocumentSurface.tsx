@@ -10,10 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/ui/cn";
-import type {
-  DocumentComment,
-  DocumentRef,
-} from "@/lib/document-comments/schemas";
+import type { DocumentRef } from "@/lib/document-comments/schemas";
 import {
   useCreateDocumentCommentMutation,
   useUpdateDocumentCommentMutation,
@@ -462,6 +459,3 @@ export default function DocumentSurface({
     </div>
   );
 }
-
-/** Re-export the comment shape callers thread through this surface. */
-export type { DocumentComment };

@@ -72,7 +72,6 @@ export const attachmentIdentitySchema = z.object({
   ticketId: z.string().min(1),
   attachmentId: z.string().min(1),
 });
-export type AttachmentIdentity = z.infer<typeof attachmentIdentitySchema>;
 
 export const deleteAttachmentInputSchema = attachmentIdentitySchema.extend({
   updatedAt: z.string().min(1),

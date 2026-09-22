@@ -11,11 +11,6 @@ import { createSidebarSlice } from "./session-detail/sidebar-slice";
 import { EMPTY_IN_FLIGHT } from "./session-detail/types";
 import type { SessionDetailStore } from "./session-detail/types";
 
-export type {
-  ConversationInFlight,
-  OptimisticAgentSettings,
-  SessionDetailState,
-} from "./session-detail/types";
 export {
   EMPTY_IN_FLIGHT,
   selectInFlightFor,
@@ -131,8 +126,6 @@ export const useSwitchRightPaneTab = () =>
 export const useOpenContextArtifactPanel = () =>
   useSessionDetailStore((s) => s.openContextArtifactPanel);
 export const useOpenNotepad = () => useSessionDetailStore((s) => s.openNotepad);
-export const useOpenNotepadPanel = () =>
-  useSessionDetailStore((s) => s.openNotepadPanel);
 export const useCloseNotepad = () =>
   useSessionDetailStore((s) => s.closeNotepad);
 export const useSetNotepadSort = () =>
@@ -154,14 +147,10 @@ export const useCompletePrompt = () =>
 export const useFailPrompt = () => useSessionDetailStore((s) => s.failPrompt);
 export const useSetQueueError = () =>
   useSessionDetailStore((s) => s.setQueueError);
-export const useQueueMessage = () =>
-  useSessionDetailStore((s) => s.queueMessage);
 export const useAddOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.addOptimisticQueueEntry);
 export const useAcceptOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.acceptOptimisticQueueEntry);
-export const useFailOptimisticQueueEntry = () =>
-  useSessionDetailStore((s) => s.failOptimisticQueueEntry);
 export const useResolveOptimisticQueueEntries = () =>
   useSessionDetailStore((s) => s.resolveOptimisticQueueEntries);
 export const useCancelOptimisticQueueEntry = () =>
@@ -228,8 +217,6 @@ export const useActivateDocument = () =>
   useSessionDetailStore((s) => s.activateDocument);
 export const useCloseDocument = () =>
   useSessionDetailStore((s) => s.closeDocument);
-export const useSetPendingTrayExpanded = () =>
-  useSessionDetailStore((s) => s.setPendingTrayExpanded);
 export const useTogglePendingTray = () =>
   useSessionDetailStore((s) => s.togglePendingTray);
 export const useSetFeedbackTarget = () =>
@@ -244,5 +231,3 @@ export const useDiscardInFlight = () =>
   useSessionDetailStore((s) => s.discardInFlight);
 export const useResetConversationState = () =>
   useSessionDetailStore((s) => s.resetConversationState);
-export const useResetSessionDetailStore = () =>
-  useSessionDetailStore((s) => s.resetStore);

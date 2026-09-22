@@ -219,7 +219,6 @@ export type ActiveGraphWorkflowExecution = z.infer<
 export type ActiveCollaborationExecution = z.infer<
   typeof activeCollaborationExecutionSchema
 >;
-export type ActiveSpecExecutionItem = z.infer<typeof activeSpecExecutionSchema>;
 
 export const activeConversationsResponseSchema = z.object({
   conversations: z.array(activeConversationSchema),

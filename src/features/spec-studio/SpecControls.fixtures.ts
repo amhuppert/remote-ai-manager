@@ -15,8 +15,6 @@ import {
   type SpecRevisionSnapshotView,
 } from "@/lib/specs/view-schemas";
 
-import type { PolicyImpactDraft } from "./SpecPolicyImpact";
-
 export const SPEC_CONTROLS_FIXTURE_NOW = "2026-07-18T12:00:00.000Z";
 const EMPTY_CITATION_HASH = "0".repeat(64);
 const EMPTY_CITATION_DIFF = {
@@ -29,40 +27,6 @@ const EMPTY_CITATION_DIFF = {
 /** The dense fixture's prior delivered run predates the current run. */
 const PRIOR_RUN_CREATED_AT = "2026-07-17T09:00:00.000Z";
 const PRIOR_RUN_DELIVERED_AT = "2026-07-17T18:00:00.000Z";
-
-/**
- * An open draft pinned at `pinnedStage` that added one requirements-stage
- * element against an empty base, so the stage-scoped consultation of R10.11
- * reaches back past the pinned stage whenever the next transition is a
- * propose.
- */
-export function policyImpactDraftFixture(
-  pinnedStage: SpecAuthoringStage,
-): PolicyImpactDraft {
-  return {
-    revisionId: "revision-4",
-    revisionNumber: 4,
-    pinnedStage,
-    governanceConsultedGates: consultedAuthoringGates(
-      pinnedStage,
-      [],
-      [
-        {
-          elementId: "requirement-1",
-          parentElementId: null,
-          payloadHash: "requirement-hash",
-          payload: {
-            kind: "requirement",
-            statement: "Every execution pins scope.",
-            priority: "must",
-            risk: "high",
-          },
-        },
-      ],
-      EMPTY_CITATION_DIFF,
-    ),
-  };
-}
 
 /**
  * A policy-basis gate admission (Notify/Off dial) as the detail response

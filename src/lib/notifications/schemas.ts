@@ -106,12 +106,6 @@ export type WorkflowNotificationType = z.infer<
   typeof workflowNotificationTypeSchema
 >;
 
-export type NotificationType =
-  | JobNotificationType
-  | ProjectConversationNotificationType
-  | SpecNotificationType
-  | WorkflowNotificationType;
-
 const notificationBaseSchema = z.object({
   id: z.string(),
   title: z.string(),

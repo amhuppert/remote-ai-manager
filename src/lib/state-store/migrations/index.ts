@@ -151,4 +151,4 @@ export const migrations: readonly StateMigration[] = [
   closeWithdrawnRevisionApprovalRequests,
 ];
 
-export type { MigrationContext, StateMigration } from "./types";
+export type { StateMigration } from "./types";

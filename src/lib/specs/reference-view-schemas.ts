@@ -113,7 +113,6 @@ export type SpecSummaryView = z.infer<typeof specSummaryViewSchema>;
 export const specInventoryViewSchema = z
   .object({ specs: z.array(specSummaryViewSchema) })
   .strict();
-export type SpecInventoryView = z.infer<typeof specInventoryViewSchema>;
 
 const specPickerRevisionElementSchema = specRevisionElementSchema
   .extend({ handle: z.string().min(1).nullable().optional() })
@@ -177,9 +176,6 @@ export const specQuestionElementViewSchema = z
     question: specQuestionViewSchema,
   })
   .strict();
-export type SpecQuestionElementView = z.infer<
-  typeof specQuestionElementViewSchema
->;
 
 export const specAssumptionElementViewSchema = z
   .object({
@@ -190,9 +186,6 @@ export const specAssumptionElementViewSchema = z
     assumption: specAssumptionViewSchema,
   })
   .strict();
-export type SpecAssumptionElementView = z.infer<
-  typeof specAssumptionElementViewSchema
->;
 
 // The elements/<handle> endpoint serves R/R.x/D/T revision elements and the
 // revision-independent Q/A records through one address space, so every

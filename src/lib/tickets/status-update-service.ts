@@ -16,7 +16,6 @@ import {
   type TicketListItem,
   type TicketResult,
   type TicketStatusUpdate,
-  type TicketStatusUpdateAuthor,
   type TicketStatusUpdateCreateResponse,
   type TicketStatusUpdatePage,
 } from "./schemas";
@@ -310,5 +309,3 @@ export function createTicketStatusUpdateService(
     },
   };
 }
-
-export type ResolvedTicketStatusUpdateAuthor = TicketStatusUpdateAuthor;

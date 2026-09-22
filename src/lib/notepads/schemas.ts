@@ -31,7 +31,6 @@ export const notepadRevisionOriginSchema = z.enum([
   "append",
   "restore",
 ]);
-export type NotepadRevisionOrigin = z.infer<typeof notepadRevisionOriginSchema>;
 
 export const notepadSortSchema = z.enum(["name", "recency"]);
 export type NotepadSort = z.infer<typeof notepadSortSchema>;
@@ -346,7 +345,6 @@ export const createNotepadInputSchema = z
     author: notepadAuthorSchema.default({ kind: "user" }),
   })
   .superRefine(checkScopePairing);
-export type CreateNotepadInput = z.infer<typeof createNotepadInputSchema>;
 
 /** Organization and write-mode changes; every field is independently optional. */
 export const updateNotepadInputSchema = z
@@ -399,7 +397,6 @@ export const notepadContentWriteSchema = z
       });
     }
   });
-export type NotepadContentWrite = z.infer<typeof notepadContentWriteSchema>;
 
 export const restoreNotepadRevisionInputSchema = z
   .object({
@@ -407,9 +404,6 @@ export const restoreNotepadRevisionInputSchema = z
     author: notepadAuthorSchema.default({ kind: "user" }),
   })
   .strict();
-export type RestoreNotepadRevisionInput = z.infer<
-  typeof restoreNotepadRevisionInputSchema
->;
 
 /**
  * Creating a comment is the review surface's act. No write-mode gate applies
@@ -423,9 +417,6 @@ export const createNotepadCommentInputSchema = z
     author: notepadAuthorSchema.default({ kind: "user" }),
   })
   .strict();
-export type CreateNotepadCommentInput = z.infer<
-  typeof createNotepadCommentInputSchema
->;
 
 export const replyToNotepadCommentInputSchema = z
   .object({
@@ -433,9 +424,6 @@ export const replyToNotepadCommentInputSchema = z
     author: notepadAuthorSchema,
   })
   .strict();
-export type ReplyToNotepadCommentInput = z.infer<
-  typeof replyToNotepadCommentInputSchema
->;
 
 /**
  * Resolve and reopen are the same write in opposite directions, so they are one
@@ -448,17 +436,11 @@ export const setNotepadCommentStatusInputSchema = z
     author: notepadAuthorSchema,
   })
   .strict();
-export type SetNotepadCommentStatusInput = z.infer<
-  typeof setNotepadCommentStatusInputSchema
->;
 
 /** An absent status lists every comment; present narrows to one state. */
 export const notepadCommentListQuerySchema = z
   .object({ status: notepadCommentStatusSchema.optional() })
   .strict();
-export type NotepadCommentListQuery = z.infer<
-  typeof notepadCommentListQuerySchema
->;
 
 /**
  * `projectPath` merges a project's notepads into the global listing; `scope`
@@ -473,7 +455,6 @@ export const notepadListQuerySchema = z
     sort: notepadSortSchema.default("recency"),
   })
   .strict();
-export type NotepadListQuery = z.infer<typeof notepadListQuerySchema>;
 
 // ============================================================
 // Reference wire attributes

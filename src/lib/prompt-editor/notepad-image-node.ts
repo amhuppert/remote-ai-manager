@@ -13,17 +13,6 @@ export interface NotepadImageNodeOptions {
 }
 
 /**
- * Node attributes are all strings so they round-trip losslessly through the
- * DOM `data-*` representation. `fileName` is a display label captured at
- * upload time; the canonical token stores only the image id, so the label is
- * empty after a reload and the chip falls back to a generic one.
- */
-export interface NotepadImageAttrs {
-  imageId: string;
-  fileName: string;
-}
-
-/**
  * Atomic inline node representing an embedded notepad image. Serializes as
  * the id-addressed token `[Image: <image-id>]` in canonical notepad text;
  * deleting the chip removes the token while the uploaded bytes stay durable

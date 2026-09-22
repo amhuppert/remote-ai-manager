@@ -13,9 +13,3 @@ export const transcribeResponseSchema = z.object({
   status: z.string(),
   sessionId: z.number(),
 });
-export type TranscribeResponse = z.infer<typeof transcribeResponseSchema>;
-
-export const voiceHealthResponseSchema = z.object({
-  available: z.boolean(),
-});
-export type VoiceHealthResponse = z.infer<typeof voiceHealthResponseSchema>;

@@ -18,7 +18,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import { parseFrontmatter } from "./frontmatter";
-export { parseFrontmatter, type FrontmatterResult } from "./frontmatter";
+export { parseFrontmatter } from "./frontmatter";
 const logger = createLogger("commands");
 
 export interface CommandDiscoveryOptions {

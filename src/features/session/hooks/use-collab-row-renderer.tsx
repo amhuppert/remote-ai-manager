@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import CollabPassage, {
-  isCollabPassageTerminal,
-} from "@/features/session/conversation/collab/CollabPassage";
+import CollabPassage from "@/features/session/conversation/collab/CollabPassage";
 import type { CollaborationReference } from "@/lib/workflows/collaboration/types";
 import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
 
@@ -171,5 +169,3 @@ export function useCollabRowRenderer({
     setCollabUserAnswerDraft,
   ]);
 }
-
-export { isCollabPassageTerminal };

@@ -14,10 +14,7 @@ import {
   agentBackendIdShapeSchema,
   agentBackendSchema,
 } from "@/lib/shared/schemas";
-import {
-  laneMetricsSchema,
-  laneTurnUsageSchema,
-} from "@/lib/workflows/primitives/lane-vocabulary";
+import { laneMetricsSchema } from "@/lib/workflows/primitives/lane-vocabulary";
 import { agentCallStructuredOutputParseSchema } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import {
   charterAmendmentSchema,
@@ -58,12 +55,7 @@ export type {
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinStatus,
 } from "./join-schemas";
-export {
-  graphWorkflowApprovalSnapshotResponseSchema,
-  graphWorkflowApprovalSnapshotSchema,
-  type GraphWorkflowApprovalSnapshot,
-  type GraphWorkflowApprovalSnapshotResponse,
-} from "./approval-snapshot-schemas";
+export { type GraphWorkflowApprovalSnapshotResponse } from "./approval-snapshot-schemas";
 
 /**
  * The re-verification points a round checks its frozen candidate at.
@@ -545,9 +537,6 @@ export const graphWorkflowExecutionJoinConflictDetailSchema = z.object({
   // automatic resolution failed, not just a file list.
   analysis: z.array(conflictEntrySchema).nullable().default(null),
 });
-export type GraphWorkflowExecutionJoinConflictDetail = z.infer<
-  typeof graphWorkflowExecutionJoinConflictDetailSchema
->;
 // A conflict the merge machinery resolved WITHOUT failing the join: either a
 // smart-merge LLM sub-turn merged the conflicted files, or the runner's one
 // clean retry merged cleanly after a failed resolution attempt. Recorded so a
@@ -771,9 +760,6 @@ export const graphWorkflowUserInputAnswersSchema = z.object({
   byQuestionId: z.record(z.string(), askQuestionAnswerSchema),
   answeredAt: z.string().trim().min(1),
 });
-export type GraphWorkflowUserInputAnswers = z.infer<
-  typeof graphWorkflowUserInputAnswersSchema
->;
 
 // The parked-question record of ONE lane on a context awaiting user input.
 // `questions` is a snapshot copied from the lane conversation at park time so
@@ -860,7 +846,9 @@ export const graphWorkflowValidationReviewArtifactSchema = z.object({
   backend: agentBackendIdShapeSchema,
   kind: z.literal("conversation"),
   ref: z.string().trim().min(1),
-  usage: graphWorkflowValidationConversationUsageSchema.nullable().default(null),
+  usage: graphWorkflowValidationConversationUsageSchema
+    .nullable()
+    .default(null),
 });
 export type GraphWorkflowValidationReviewArtifact = z.infer<
   typeof graphWorkflowValidationReviewArtifactSchema
@@ -1202,9 +1190,6 @@ export const graphWorkflowRouteEdgeEvaluationSchema = z.object({
   edgeId: z.string().trim().min(1),
   verdict: z.enum(["active", "inactive", "omitted"]),
 });
-export type GraphWorkflowRouteEdgeEvaluation = z.infer<
-  typeof graphWorkflowRouteEdgeEvaluationSchema
->;
 
 /**
  * Why a context was skipped: the COMPLETE verdict set of its incoming edges at
@@ -1335,9 +1320,6 @@ export const graphWorkflowLaneReservationSchema = z.object({
     .default([]),
   createdAt: z.string(),
 });
-export type GraphWorkflowLaneReservation = z.infer<
-  typeof graphWorkflowLaneReservationSchema
->;
 
 export const graphWorkflowExecutionContextStateSchema = z.object({
   contextId: z.string().trim().min(1),
@@ -1461,29 +1443,25 @@ export type GraphWorkflowTaskState = z.infer<
 // Graph Workflow Session Refs + Agent Session State
 // ============================================================
 
-export type GraphWorkflowAgentSessionTurnUsage = z.infer<
-  typeof laneTurnUsageSchema
->;
-
 export const graphWorkflowAgentSessionStateSchema = z.object({
-    lane: graphWorkflowLaneKindSchema,
-    contextId: z.string().trim().min(1),
-    // Which use-site assignment owns this lane. Additive and optional: the
-    // implementer lane is per-context (one implementer per context stands) and
-    // rows written before cohorts existed carry no assignment. Validator lanes
-    // set it, and it agrees with the `laneStates` key by construction — the key
-    // is the addressing form, this is the record's own account of itself.
-    assignmentId: z.string().trim().min(1).optional(),
-    // Pins the assignment used to create this lane; a started lane cannot
-    // adopt a different backend, model, or instruction contract.
-    assignmentFingerprint: z.string().min(1).optional(),
-    backend: agentBackendSchema,
-    // The lane's continuity handle: every lane is anchored to one durable CC
-    // conversation, whose own row holds the backend-native continuation.
-    workflowConversationId: z.string().trim().min(1),
-    staleSession: z.boolean().optional(),
-    metrics: laneMetricsSchema,
-    lastUsedAt: z.string(),
+  lane: graphWorkflowLaneKindSchema,
+  contextId: z.string().trim().min(1),
+  // Which use-site assignment owns this lane. Additive and optional: the
+  // implementer lane is per-context (one implementer per context stands) and
+  // rows written before cohorts existed carry no assignment. Validator lanes
+  // set it, and it agrees with the `laneStates` key by construction — the key
+  // is the addressing form, this is the record's own account of itself.
+  assignmentId: z.string().trim().min(1).optional(),
+  // Pins the assignment used to create this lane; a started lane cannot
+  // adopt a different backend, model, or instruction contract.
+  assignmentFingerprint: z.string().min(1).optional(),
+  backend: agentBackendSchema,
+  // The lane's continuity handle: every lane is anchored to one durable CC
+  // conversation, whose own row holds the backend-native continuation.
+  workflowConversationId: z.string().trim().min(1),
+  staleSession: z.boolean().optional(),
+  metrics: laneMetricsSchema,
+  lastUsedAt: z.string(),
 });
 export type GraphWorkflowAgentSessionState = z.infer<
   typeof graphWorkflowAgentSessionStateSchema
@@ -1903,9 +1881,6 @@ export const graphWorkflowLaunchStatusSchema = z.enum([
   "running",
   "awaiting_definition_approval",
 ]);
-export type GraphWorkflowLaunchStatus = z.infer<
-  typeof graphWorkflowLaunchStatusSchema
->;
 
 /**
  * THE launch receipt, returned by both launch transports.
@@ -2252,9 +2227,6 @@ export const graphWorkflowResultDeliveryStateSchema = z.enum([
   "delivering",
   "delivered",
 ]);
-export type GraphWorkflowResultDeliveryState = z.infer<
-  typeof graphWorkflowResultDeliveryStateSchema
->;
 
 /**
  * One lifecycle boundary's durable result record for its origin conversation
@@ -2287,10 +2259,7 @@ export type GraphWorkflowResultDelivery = z.infer<
   typeof graphWorkflowResultDeliverySchema
 >;
 
-export {
-  seededWorkflowDocumentSchema,
-  type SeededWorkflowDocument,
-} from "./seeded-documents";
+export { type SeededWorkflowDocument } from "./seeded-documents";
 
 /**
  * The reserved-but-not-yet-materialized artifacts of one execution, recorded in
@@ -2346,10 +2315,6 @@ export type GraphWorkflowExecutionHistoryItem = z.infer<
 export const graphWorkflowExecutionFullResponseSchema = z.object({
   execution: graphWorkflowExecutionSchema.nullable(),
 });
-
-export type GraphWorkflowExecutionFullResponse = z.infer<
-  typeof graphWorkflowExecutionFullResponseSchema
->;
 
 export const resetExecutionContextRequestSchema = z.object({
   executionId: z.string().trim().min(1),

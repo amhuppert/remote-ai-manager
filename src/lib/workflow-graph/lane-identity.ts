@@ -266,18 +266,6 @@ export function allocateLaneNames(
   return lanes;
 }
 
-/** Backward-compatible alias retained while callers migrate to validateLaneId. */
-export function validateContextId(contextId: string): void {
-  try {
-    validateLaneId(contextId);
-  } catch (err) {
-    if (err instanceof Error) {
-      throw new Error(err.message.replace(/laneId/g, "contextId"));
-    }
-    throw err;
-  }
-}
-
 /** Lane kinds whose lanes are per-assignment rather than per-context. */
 const ASSIGNMENT_SCOPED_LANES: ReadonlySet<GraphWorkflowLaneKind> = new Set([
   "context_validator",

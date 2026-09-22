@@ -18,9 +18,6 @@ export const deliveryPlanReviewCriterionSchema = z
     accountabilitySourceIds: z.array(z.string().min(1)),
   })
   .strict();
-export type DeliveryPlanReviewCriterion = z.infer<
-  typeof deliveryPlanReviewCriterionSchema
->;
 
 export const deliveryPlanReviewCommentSchema = z
   .object({
@@ -34,9 +31,6 @@ export const deliveryPlanReviewCommentSchema = z
     orphaned: z.boolean(),
   })
   .strict();
-export type DeliveryPlanReviewComment = z.infer<
-  typeof deliveryPlanReviewCommentSchema
->;
 
 export const deliveryPlanReviewViewSchema = deliveryPlanViewSchema
   .extend({

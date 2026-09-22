@@ -77,7 +77,7 @@ export const Default: Story = {
 /**
  * A corner icon-only close affordance (composing `IconButton` via `asChild`) in
  * addition to the footer actions — the shape used by the longer reference
- * modals (HotkeyHelpModal, McpServersModal).
+ * modals (HotkeyHelpModal).
  */
 export const WithCornerClose: Story = {
   render: () => (

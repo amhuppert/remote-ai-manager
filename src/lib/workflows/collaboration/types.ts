@@ -43,23 +43,18 @@ export {
   type CollaborationAutonomousResolutionThreshold,
   type CollaborationChangeProposal,
   collaborationCounterProposalContentSchema,
-  type CollaborationCounterProposalContent,
   collaborationCounterProposalOutputSchema,
   type CollaborationCounterProposalOutput,
   collaborationCrossReviewContentSchema,
-  type CollaborationCrossReviewContent,
   collaborationCrossReviewOutputSchema,
   type CollaborationCrossReviewOutput,
   type CollaborationDisagreementCategory,
   type CollaborationDisagreementSeverity,
   collaborationFinalAnswerContentSchema,
-  type CollaborationFinalAnswerContent,
   collaborationFinalAnswerOutputSchema,
   type CollaborationFinalAnswerOutput,
   type CollaborationFlowAgent,
-  collaborationGeneratedArtifactSchema,
   type CollaborationGeneratedArtifact,
-  type CollaborationGeneratedArtifactType,
   collaborationInitialDraftContentSchema,
   type CollaborationInitialDraftContent,
   collaborationInitialDraftOutputSchema,
@@ -67,7 +62,6 @@ export {
   collaborationOpenConflictsOutputSchema,
   type CollaborationOpenConflictsOutput,
   collaborationProposedChangesContentSchema,
-  type CollaborationProposedChangesContent,
   collaborationProposedChangesOutputSchema,
   type CollaborationProposedChangesOutput,
   type CollaborationReference,
@@ -75,7 +69,6 @@ export {
   type CollaborationResolvedDisagreement,
   type CollaborationResolutionDecisionNextAction,
   collaborationResolutionDecisionContentSchema,
-  type CollaborationResolutionDecisionContent,
   collaborationResolutionDecisionOutputSchema,
   type CollaborationResolutionDecisionOutput,
   type CollaborationUserQuestion,
@@ -279,13 +272,6 @@ export function collaborationBackendRefusal(
   return admission.ok ? null : admission.reason;
 }
 
-/**
- * The complete model selection a collaboration lane runs with. Persisted into
- * the envelope's feature snapshot so the UI can show exactly which variant
- * produced each artifact.
- */
-export const collaborationAgentModelSettingsSchema =
-  backendModelSelectionSchema;
 export type CollaborationAgentModelSettings = BackendModelSelection;
 
 /**

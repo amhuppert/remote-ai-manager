@@ -41,9 +41,6 @@ export const backendModelParameterValueSchema = z
     emphasis: backendModelParameterValueEmphasisSchema.optional(),
   })
   .strict();
-export type BackendModelParameterValue = z.infer<
-  typeof backendModelParameterValueSchema
->;
 
 export const backendModelParameterDefinitionSchema = z
   .object({
@@ -88,9 +85,6 @@ export const backendModelCatalogProvenanceSchema = z
     sdkVersion: z.string().trim().min(1).optional(),
   })
   .strict();
-export type BackendModelCatalogProvenance = z.infer<
-  typeof backendModelCatalogProvenanceSchema
->;
 
 function addCatalogIssue(
   context: z.RefinementCtx,
@@ -367,7 +361,6 @@ export const claudeBackendConfigSchema = z
     stallTimeoutMs: backendTimeoutMsSchema.optional(),
   })
   .strict();
-export type ClaudeBackendConfig = z.infer<typeof claudeBackendConfigSchema>;
 
 // ============================================================
 // Codex Config
@@ -408,7 +401,6 @@ export const codexModelPricingSchema = z.object({
   cachedInputPerMillion: z.number().nonnegative(),
   outputPerMillion: z.number().nonnegative(),
 });
-export type CodexModelPricing = z.infer<typeof codexModelPricingSchema>;
 
 export const codexPricingTableSchema = z.record(
   z.string(),
@@ -483,7 +475,6 @@ export const cursorBackendConfigSchema = z
     timeoutMs: backendTimeoutMsSchema,
   })
   .strict();
-export type CursorBackendConfig = z.infer<typeof cursorBackendConfigSchema>;
 
 export const codexConfigSchema = z
   .object({
@@ -497,7 +488,6 @@ export const codexConfigSchema = z
     pricing: codexPricingTableSchema.optional(),
   })
   .strict();
-export type CodexConfig = z.infer<typeof codexConfigSchema>;
 
 export const captureModeSchema = z.enum(["tool-disabled", "instruction-only"]);
 export type CaptureMode = z.infer<typeof captureModeSchema>;
@@ -564,7 +554,6 @@ export const captureUsageSchema = z
     message:
       "Capture cost and its attribution basis must be available together",
   });
-export type CaptureUsage = z.infer<typeof captureUsageSchema>;
 
 export const captureActivitySchema = z
   .object({
@@ -574,7 +563,6 @@ export const captureActivitySchema = z
     inspectedBytes: z.number().int().nonnegative().nullable(),
   })
   .strict();
-export type CaptureActivity = z.infer<typeof captureActivitySchema>;
 
 export const captureHandoffResultSchema = z
   .object({

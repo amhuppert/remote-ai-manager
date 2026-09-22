@@ -557,12 +557,6 @@ export async function runPrepare(
   };
 }
 
-export function createPrepareActor(deps: PrepareActorDeps) {
-  return fromPromise<PrepareActorOutput, PrepareActorInput>(async ({ input }) =>
-    runPrepare(deps, input),
-  );
-}
-
 export interface PublishActorDeps {
   discoverTargetCheckout(
     projectPath: string,
@@ -816,12 +810,6 @@ export async function runPublish(
   }
 }
 
-export function createPublishActor(deps: PublishActorDeps) {
-  return fromPromise<PublishActorOutput, PublishActorInput>(async ({ input }) =>
-    runPublish(deps, input),
-  );
-}
-
 // ============================================================
 // discardParkedRefActor — used by the discard entry path
 // ============================================================
@@ -849,12 +837,6 @@ export async function runDiscardParkedRef(
     input.projectPath,
     input.parkedRef,
     input.preparedSha,
-  );
-}
-
-export function createDiscardParkedRefActor(deps: DiscardParkedRefDeps) {
-  return fromPromise<DiscardParkedRefOutput, DiscardParkedRefInput>(
-    async ({ input }) => runDiscardParkedRef(deps, input),
   );
 }
 

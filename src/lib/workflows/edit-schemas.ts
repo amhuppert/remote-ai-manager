@@ -393,9 +393,6 @@ export const workflowDefinitionEditRequestSchema = z.object({
   dryRun: z.boolean().optional(),
   operations: z.array(workflowDefinitionEditOperationSchema).min(1),
 });
-export type WorkflowDefinitionEditRequest = z.infer<
-  typeof workflowDefinitionEditRequestSchema
->;
 
 // ============================================================
 // Workflow Live Edits (live editing of a launched execution)

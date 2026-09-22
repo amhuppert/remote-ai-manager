@@ -170,9 +170,6 @@ export const liveOutlineImplementerSummarySchema =
   liveOutlineAgentSummarySchema.extend(
     liveOutlineAssignmentProvenanceSchema.shape,
   );
-export type LiveOutlineImplementerSummary = z.infer<
-  typeof liveOutlineImplementerSummarySchema
->;
 
 export const liveOutlineValidatorSummarySchema = z
   .object({})
@@ -201,9 +198,6 @@ export const liveOutlineScriptValidatorSummarySchema = z
     commands: z.array(z.string()),
   })
   .loose();
-export type LiveOutlineScriptValidatorSummary = z.infer<
-  typeof liveOutlineScriptValidatorSummarySchema
->;
 
 /** The concrete per-role command selections from the seed-time snapshot. */
 export const liveOutlineAgentValidationSummarySchema = z
@@ -213,9 +207,6 @@ export const liveOutlineAgentValidationSummarySchema = z
     contextValidator: graphWorkflowCommandSelectorSchema,
   })
   .loose();
-export type LiveOutlineAgentValidationSummary = z.infer<
-  typeof liveOutlineAgentValidationSummarySchema
->;
 
 export const liveOutlineContextConfigSchema = z
   .object({
@@ -296,6 +287,7 @@ export type LiveOutlineResolvedConfig = z.infer<
  * a contract exists and how wide it is, and `--config <ctx>` returns the
  * document itself.
  */
+/** @alias */
 export const liveOutlineOutputSchemaSummarySchema = outputSchemaShapeSchema;
 export type LiveOutlineOutputSchemaSummary = z.infer<
   typeof liveOutlineOutputSchemaSummarySchema
@@ -666,7 +658,6 @@ export const liveOutlineCharterSchema = z
     charterHash: z.string(),
   })
   .loose();
-export type LiveOutlineCharter = z.infer<typeof liveOutlineCharterSchema>;
 
 export const liveOutlineResultSchema = z.union([
   z

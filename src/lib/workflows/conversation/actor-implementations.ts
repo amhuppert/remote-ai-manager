@@ -27,6 +27,7 @@ import type {
   ExecutePromptInput,
   PromptActorResult,
   RunTaskRunInput,
+  FinalizeQueuedDeliveryInput,
 } from "./types";
 import { deriveTaskRunPermissions } from "./task-run-permissions";
 
@@ -2259,7 +2260,7 @@ async function runTaskRunTurnForMachine(
 /** Cancellation must finish dispatch and teardown before review can repeat work. */
 async function finalizeQueuedDeliveryForMachine(
   deps: ConversationActorDependencies,
-  input: import("./types").FinalizeQueuedDeliveryInput,
+  input: FinalizeQueuedDeliveryInput,
 ): Promise<void> {
   try {
     await deps.effects.markQueuedUncertain({
@@ -2466,9 +2467,8 @@ export function createConversationActorImplementations(
     ) => executePromptForMachine(deps, input, signal),
     runTaskRunTurnForMachine: (input: RunTaskRunInput, signal?: AbortSignal) =>
       runTaskRunTurnForMachine(deps, input, signal),
-    finalizeQueuedDeliveryForMachine: (
-      input: import("./types").FinalizeQueuedDeliveryInput,
-    ) => finalizeQueuedDeliveryForMachine(deps, input),
+    finalizeQueuedDeliveryForMachine: (input: FinalizeQueuedDeliveryInput) =>
+      finalizeQueuedDeliveryForMachine(deps, input),
   };
 }
 export type ConversationActorImplementations = ReturnType<

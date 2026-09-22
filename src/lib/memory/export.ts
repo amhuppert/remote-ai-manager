@@ -46,7 +46,6 @@ export const memoryArchiveLinkSchema = z
     artifact: z.string().min(1),
   })
   .strict();
-export type MemoryArchiveLink = z.infer<typeof memoryArchiveLinkSchema>;
 
 /**
  * One note's frontmatter. `body` is not here: it is the markdown that follows

@@ -51,8 +51,6 @@ const memoryEvalCorpusNoteSchema = z
   })
   .strict();
 
-export type MemoryEvalCorpusNote = z.infer<typeof memoryEvalCorpusNoteSchema>;
-
 const memoryEvalCorpusQuerySchema = z
   .object({
     query: z.string().min(1),
@@ -69,8 +67,6 @@ const memoryEvalCorpusQuerySchema = z
     requireBodyOnly: z.boolean().default(false),
   })
   .strict();
-
-export type MemoryEvalCorpusQuery = z.infer<typeof memoryEvalCorpusQuerySchema>;
 
 /**
  * The terms a body-only assertion compares, normalized the way the index

@@ -7,7 +7,6 @@
 import type { JsonData } from "cli-for-agents";
 import {
   approvalLedgerSentence,
-  REOPEN_CARRY_NOTE,
   type ApprovalLedger,
 } from "@/lib/specs/approval-ledger";
 import type {
@@ -143,17 +142,6 @@ export function approvalLedgerLines(
 }
 
 /**
- * The same account on a receipt that reopens a draft. Reopening is the exact
- * moment the carry is misread as a loss, so what carries is stated outright
- * rather than left to be inferred from two counts.
- */
-export function reopenedApprovalLedgerLines(
-  ledger: JsonData<ApprovalLedger>,
-): string[] {
-  return [...approvalLedgerLines(ledger), REOPEN_CARRY_NOTE];
-}
-
-/**
  * The block a transition receipt renders under its `acts next` line. Blocking
  * comment threads and sign-off lint findings block a revision as surely as an
  * outstanding subject does, so every unmet condition travels rather than one
@@ -190,9 +178,4 @@ export function pendingBlockLines(
           ...block.unmetConditions.map((condition) => `  ${condition}`),
         ]),
   ];
-}
-
-/** `2 elements`, `1 element` — pluralised where a count is read as prose. */
-export function countOf(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }

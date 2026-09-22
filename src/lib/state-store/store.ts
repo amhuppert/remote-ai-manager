@@ -36,7 +36,7 @@ import {
   type WriteQueue,
 } from "./write-queue";
 
-export type { AllRepos, StateStoreDeps } from "./schemas";
+export type { StateStoreDeps } from "./schemas";
 
 const logger = createLogger("state-store");
 

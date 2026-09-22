@@ -6,8 +6,6 @@ import type {
   SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
 
-export type SpecCommentHostSurface = "overview" | "review";
-
 export type SpecCommentFallbackReason =
   | "historical-revision"
   | "removed-element"

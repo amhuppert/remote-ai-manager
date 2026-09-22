@@ -149,9 +149,6 @@ export const specRevisionChangedEventSchema = z
     elementIds: z.array(z.string().min(1)).optional(),
   })
   .strict();
-export type SpecRevisionChangedEvent = z.infer<
-  typeof specRevisionChangedEventSchema
->;
 
 export const specApprovalChangedEventSchema = z
   .object({
@@ -161,9 +158,6 @@ export const specApprovalChangedEventSchema = z
     subjectId: z.string().min(1).optional(),
   })
   .strict();
-export type SpecApprovalChangedEvent = z.infer<
-  typeof specApprovalChangedEventSchema
->;
 
 export const specExecutionChangedEventSchema = z
   .object({
@@ -173,9 +167,6 @@ export const specExecutionChangedEventSchema = z
     executionId: z.string().min(1),
   })
   .strict();
-export type SpecExecutionChangedEvent = z.infer<
-  typeof specExecutionChangedEventSchema
->;
 
 export const specEvidenceChangedEventSchema = z
   .object({
@@ -187,9 +178,6 @@ export const specEvidenceChangedEventSchema = z
     executionId: z.string().min(1).optional(),
   })
   .strict();
-export type SpecEvidenceChangedEvent = z.infer<
-  typeof specEvidenceChangedEventSchema
->;
 
 export const specAttentionChangedEventSchema = z
   .object({
@@ -199,9 +187,6 @@ export const specAttentionChangedEventSchema = z
     active: z.boolean(),
   })
   .strict();
-export type SpecAttentionChangedEvent = z.infer<
-  typeof specAttentionChangedEventSchema
->;
 
 export const specDeliveryPlanChangedEventSchema = z
   .object({
@@ -212,9 +197,6 @@ export const specDeliveryPlanChangedEventSchema = z
     candidateId: z.string().min(1).nullable(),
   })
   .strict();
-export type SpecDeliveryPlanChangedEvent = z.infer<
-  typeof specDeliveryPlanChangedEventSchema
->;
 
 export const specSseEventSchema = z.discriminatedUnion("type", [
   specChangedEventSchema,

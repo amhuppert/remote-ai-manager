@@ -29,9 +29,6 @@ import { renderedTranscriptSchema } from "./transcript-render";
 export const historyEntryMetadataResponseSchema = z.object({
   entry: historyEntryMetadataSchema,
 });
-export type HistoryEntryMetadataResponse = z.infer<
-  typeof historyEntryMetadataResponseSchema
->;
 
 /**
  * The complete entry as the endpoint actually serves it.

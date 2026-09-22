@@ -22,12 +22,10 @@ import {
   defaultValidatorAuthority,
   PLAN_REPAIR_DEFAULT_AGENT,
   type AgentAssignment,
-  type GraphWorkflowAgentValidationConfig,
   type GraphWorkflowCircuitBreakerPolicy,
   type GraphWorkflowCommandSelector,
   type GraphWorkflowIterationPolicy,
   type GraphWorkflowLaneMergeCommandSelector,
-  type GraphWorkflowLaneMergeValidationConfig,
   type GraphWorkflowPlanRepairPolicy,
   type ValidatorAssignment,
 } from "@/lib/workflow-graph/config-schemas";
@@ -565,77 +563,6 @@ export function CommandSelectorEditor({
   );
 }
 
-export type AgentValidationRole = "implementer" | "contextValidator";
-
-const AGENT_VALIDATION_ROLES: readonly AgentValidationRole[] = [
-  "implementer",
-  "contextValidator",
-];
-
-const AGENT_VALIDATION_ROLE_LABEL: Record<AgentValidationRole, string> = {
-  implementer: "Implementer",
-  contextValidator: "Context validator",
-};
-
-const AGENT_VALIDATION_SOURCE_TESTID: Record<AgentValidationRole, string> = {
-  implementer: "agent-validation-source-implementer",
-  contextValidator: "agent-validation-source-context-validator",
-};
-
-/**
- * Per-role validation allowlists. Edits are PER LEAF: changing one role emits
- * only that role's selector, so override tiers can keep the other role absent
- * (= inherit) instead of silently snapshotting it — the whole-block-replacement
- * trap the cascade exists to prevent.
- */
-export function AgentValidationEditor({
-  value,
-  onChangeRole,
-  readOnly,
-  roleSourceLabels,
-  options,
-}: {
-  value: GraphWorkflowAgentValidationConfig;
-  onChangeRole: (
-    role: AgentValidationRole,
-    selector: GraphWorkflowCommandSelector,
-  ) => void;
-  readOnly?: boolean;
-  /** Optional per-role provenance labels (Global / Workflow / Context). */
-  roleSourceLabels?: Partial<Record<AgentValidationRole, string>>;
-  /** Registry summaries for this scope; undefined = registry unavailable. */
-  options?: readonly ValidationCommandSummary[];
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-md">
-      {AGENT_VALIDATION_ROLES.map((role) => (
-        <div key={role} className="flex flex-col gap-xs" data-role={role}>
-          <div className="flex items-center gap-sm">
-            <span className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
-              {AGENT_VALIDATION_ROLE_LABEL[role]}
-            </span>
-            {roleSourceLabels?.[role] ? (
-              <span
-                className="ml-auto font-mono text-[0.7rem] font-semibold tracking-[0.07em] whitespace-nowrap text-text-tertiary uppercase"
-                data-testid={AGENT_VALIDATION_SOURCE_TESTID[role]}
-              >
-                {roleSourceLabels[role]}
-              </span>
-            ) : null}
-          </div>
-          <CommandSelectorEditor
-            value={value[role]}
-            onChange={(selector) => onChangeRole(role, selector)}
-            readOnly={readOnly}
-            roleLabel={AGENT_VALIDATION_ROLE_LABEL[role]}
-            options={options}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function laneMergeCommandsHint(
   selector: GraphWorkflowLaneMergeCommandSelector,
 ): string {
@@ -689,72 +616,6 @@ export function LaneMergeCommandSelectorEditor({
         />
       ) : null}
       <div className={COMMAND_HINT_CLASS}>{laneMergeCommandsHint(value)}</div>
-    </div>
-  );
-}
-
-const LANE_MERGE_STRATEGY_HINT: Record<
-  GraphWorkflowLaneMergeValidationConfig["strategy"],
-  string
-> = {
-  "final-only": "Validates only the last merge of a join series.",
-  "every-merge": "Validates every lane merge in a join series.",
-};
-
-/**
- * Workflow-scope lane-merge validation. Edits are per leaf (strategy vs
- * command selection) so a workflow override can pin one leaf while the other
- * keeps inheriting the global default.
- */
-export function LaneMergeValidationEditor({
-  value,
-  onChangeStrategy,
-  onChangeCommands,
-  readOnly,
-  options,
-}: {
-  value: GraphWorkflowLaneMergeValidationConfig;
-  onChangeStrategy: (
-    next: GraphWorkflowLaneMergeValidationConfig["strategy"],
-  ) => void;
-  onChangeCommands: (next: GraphWorkflowLaneMergeCommandSelector) => void;
-  readOnly?: boolean;
-  /** Registry summaries for this scope; undefined = registry unavailable. */
-  options?: readonly ValidationCommandSummary[];
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-sm">
-      <FieldRow
-        label="Strategy"
-        hint={LANE_MERGE_STRATEGY_HINT[value.strategy]}
-      >
-        <SegmentedControl
-          aria-label="Lane-merge validation strategy"
-          value={value.strategy}
-          disabled={readOnly}
-          onValueChange={(next) => {
-            if (readOnly || next === value.strategy) return;
-            if (next === "final-only" || next === "every-merge") {
-              onChangeStrategy(next);
-            }
-          }}
-        >
-          <SegmentedControlItem value="final-only">
-            final-only
-          </SegmentedControlItem>
-          <SegmentedControlItem value="every-merge">
-            every-merge
-          </SegmentedControlItem>
-        </SegmentedControl>
-      </FieldRow>
-      <FieldRow label="Commands">
-        <LaneMergeCommandSelectorEditor
-          value={value.commands}
-          onChange={onChangeCommands}
-          readOnly={readOnly}
-          options={options}
-        />
-      </FieldRow>
     </div>
   );
 }

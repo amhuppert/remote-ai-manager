@@ -70,5 +70,3 @@ export const MessageTextWithRefs = createMessageTextWithRefs({
   MessageRefChip: DefaultMessageRefLinkChip,
   TicketRefChip: DefaultTicketRefLinkChip,
 });
-
-export default MessageTextWithRefs;

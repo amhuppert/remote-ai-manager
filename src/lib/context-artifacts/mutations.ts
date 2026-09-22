@@ -31,7 +31,6 @@ export const compactResponseSchema = z.union([
   }),
   z.object({ artifactId: z.string(), status: z.literal("pending") }),
 ]);
-export type CompactResponse = z.infer<typeof compactResponseSchema>;
 
 const deleteResponseSchema = z.object({ deleted: z.literal(true) });
 
