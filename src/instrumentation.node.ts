@@ -38,6 +38,8 @@ import {
 } from "./lib/jobs/parked-ref-gc";
 import { startEventLoopStallSentinel } from "./lib/logging/event-loop-stall-sentinel";
 import { installRuntimeShutdownHook } from "./lib/agent-backends/runtime-shutdown";
+import { installServerShutdownGuardForProcess } from "./lib/shared/server-shutdown";
+import { closeAllEventStreams } from "./lib/events/sse-route-handlers";
 
 const logger = createLogger("startup");
 
@@ -89,6 +91,12 @@ export interface StartupDeps {
    * shutdown. Optional so a test that is not about shutdown need not supply it.
    */
   installRuntimeShutdownHook?(): void;
+  /**
+   * Installs the signal guard that closes SSE streams and force-exits after a
+   * deadline, so a signalled server always exits. Optional so a test that is
+   * not about shutdown need not supply it.
+   */
+  installServerShutdownGuard?(): void;
   verifyServerBaseUrl(): void;
 }
 
@@ -102,7 +110,9 @@ const defaultStartupDeps: StartupDeps = {
     const claim = claimGraphWorkflowRuntimeOwner(db);
     if (claim.kind === "occupied") {
       throw new Error(
-        `Graph workflow runtime is already owned by process ${claim.owner.pid}; use a separate data directory for another server`,
+        `Another Command Center server (process ${claim.owner.pid}) still owns this data directory. ` +
+          `If it is a previous server that did not exit, stop it with \`kill ${claim.owner.pid}\` and start again; ` +
+          `to run a second server, give it a separate data directory.`,
       );
     }
     return runMigrations({ db, configDir });
@@ -149,6 +159,9 @@ const defaultStartupDeps: StartupDeps = {
   installRuntimeShutdownHook: () => {
     installRuntimeShutdownHook(stopAllConversationActors);
   },
+  installServerShutdownGuard: () => {
+    installServerShutdownGuardForProcess(closeAllEventStreams);
+  },
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();
   },
@@ -158,6 +171,16 @@ export function createStartupRegistrar(
   deps: StartupDeps = defaultStartupDeps,
 ): () => Promise<void> {
   return async () => {
+    // Before anything that can abort startup: a server whose startup failed
+    // still listens and serves SSE, and must still exit on a signal.
+    try {
+      deps.installServerShutdownGuard?.();
+    } catch (err) {
+      logger.error("startup.server_shutdown_guard_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
     // Apply state-store migrations before any step reads or writes the DB. The
     // synchronous schema floor runs on DB open; this applies the async,
     // ledgered migrations (see state-store/migrator.ts). A failure is FATAL:

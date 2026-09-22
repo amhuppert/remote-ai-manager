@@ -130,6 +130,27 @@ export function replayFramesSince(lastEventId: number): Uint8Array[] {
   return result;
 }
 
+/**
+ * Ends every subscriber's stream. Used at shutdown: an open SSE response keeps
+ * `next start`'s `server.close()` from ever completing, so the process would
+ * stop listening yet never exit. Clients' EventSource reconnects on its own.
+ * Returns how many streams were closed.
+ */
+export function closeAllClients(): number {
+  const clients = getClients();
+  let closed = 0;
+  for (const controller of clients) {
+    try {
+      controller.close();
+      closed += 1;
+    } catch {
+      // Already closed or errored — nothing left to end.
+    }
+  }
+  clients.clear();
+  return closed;
+}
+
 export function getClientCount(): number {
   return getClients().size;
 }

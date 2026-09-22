@@ -8,6 +8,7 @@
 
 import {
   addClient,
+  closeAllClients,
   removeClient,
   replayFramesSince,
 } from "@/lib/events/broadcaster";
@@ -70,6 +71,14 @@ function subscribeToEventsHandler(request: Request): Response {
       Connection: "keep-alive",
     },
   });
+}
+
+/**
+ * Ends every open /api/events stream; returns how many were closed. Called on
+ * a shutdown signal so `next start` can finish draining responses and exit.
+ */
+export function closeAllEventStreams(): number {
+  return closeAllClients();
 }
 
 // Wrapped so /api/events joins the tracing net like every other route. The

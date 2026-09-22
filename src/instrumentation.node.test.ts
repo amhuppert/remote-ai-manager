@@ -655,6 +655,55 @@ describe("createStartupRegistrar", () => {
     );
   });
 
+  /**
+   * A server whose startup failed still serves requests, SSE included, so it
+   * needs the guard just as much: otherwise its signal leaves a process that
+   * owns the database and refuses every later startup.
+   */
+  it("installs the server shutdown guard even when migrations fail", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => 0,
+      }),
+      runStateMigrations: async () => {
+        throw new Error("runtime owned by another process");
+      },
+      installServerShutdownGuard: () => {
+        calls.push("server-shutdown-guard");
+      },
+      initNotificationDb: () => {},
+      setConfigReader: () => {},
+      readConfig: async () => {
+        throw new Error(
+          "readConfig should not be called during startup wiring",
+        );
+      },
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await expect(register()).rejects.toThrow(
+      "runtime owned by another process",
+    );
+    expect(calls).toEqual(["server-shutdown-guard"]);
+  });
+
   it("survives a throwing event-loop sentinel start without breaking startup", async () => {
     const calls: string[] = [];
     const register = createStartupRegistrar({

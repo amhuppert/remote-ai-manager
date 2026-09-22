@@ -9,6 +9,7 @@ import {
   getClientCount,
   replayFramesSince,
   _resetForTesting,
+  closeAllClients,
 } from "./broadcaster";
 import type { ConversationStatusEvent } from "@/lib/conversations/schemas";
 import { conversationStatusEventSchema } from "@/lib/conversations/schemas";
@@ -442,5 +443,48 @@ describe("conversationStatusEventSchema", () => {
         "Fork failed: the fork point was compacted",
       );
     }
+  });
+});
+
+describe("closeAllClients", () => {
+  it("ends every subscriber's stream and forgets them", async () => {
+    const readers = [0, 1].map(() => {
+      let controller!: ReadableStreamDefaultController;
+      const stream = new ReadableStream({
+        start(c) {
+          controller = c;
+        },
+      });
+      addClient(controller);
+      return stream.getReader();
+    });
+
+    expect(closeAllClients()).toBe(2);
+
+    expect(getClientCount()).toBe(0);
+    for (const reader of readers) {
+      await expect(reader.read()).resolves.toEqual({
+        done: true,
+        value: undefined,
+      });
+    }
+  });
+
+  it("still closes the others when a subscriber's stream is already closed", async () => {
+    const { controller: gone } = makeController();
+    gone.close();
+    addClient(gone);
+    let live!: ReadableStreamDefaultController;
+    const reader = new ReadableStream({
+      start(c) {
+        live = c;
+      },
+    }).getReader();
+    addClient(live);
+
+    expect(closeAllClients()).toBe(1);
+
+    expect(getClientCount()).toBe(0);
+    await expect(reader.read()).resolves.toMatchObject({ done: true });
   });
 });
