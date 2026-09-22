@@ -417,6 +417,13 @@ export interface ConversationManagerDependencies {
   checkpoint: ConversationCheckpointDependencies;
 }
 
+/**
+ * What `releaseIdleConversationRuntime` found: `released` closed the hosted
+ * backend runtime, `not_hosted` had nothing to close, and `busy` means work was
+ * in flight so nothing was touched.
+ */
+export type IdleRuntimeRelease = "released" | "not_hosted" | "busy";
+
 export function createConversationManager(
   deps: ConversationManagerDependencies,
 ) {
@@ -1709,6 +1716,51 @@ export function createConversationManager(
       },
     );
     return { requested, settled };
+  }
+
+  /**
+   * Lets go of a settled conversation's hosted backend runtime while its actor
+   * stays; the next turn opens a fresh runtime from the persisted ref, exactly
+   * as after an idle worker expiry. This is how a conversation hands its
+   * provider agent to another owner: a collaboration's Agent One lane resumes
+   * that agent as a task, and a backend that binds an agent to one live worker
+   * under one owner (Cursor) refuses the lane while this host still holds the
+   * worker. `busy` means a turn, admission, stop or checkpoint is in flight
+   * after all, so nothing was closed and the caller must not proceed.
+   */
+  async function releaseIdleConversationRuntime(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<IdleRuntimeRelease> {
+    const key = conversationRuntimeKey(
+      projectPath,
+      sessionName,
+      conversationId,
+    );
+    const actor = host.get(key);
+    const runtime = deps.getRuntime(key);
+    if (!actor || !runtime || runtime.managed.backend === undefined)
+      return "not_hosted";
+    if (
+      !isActorSettled(actor) ||
+      runtime.admission !== undefined ||
+      runtime.attempt !== undefined ||
+      runtime.stopping !== undefined ||
+      runtime.disposing === true ||
+      runtime.managed.externalTurnActive ||
+      activeMaintenance(key) !== undefined
+    ) {
+      return "busy";
+    }
+    await runtime.command;
+    await closeHostedRuntime(key);
+    await flushRuntimeDurability(actor, runtime);
+    logger.info("conversation-manager.idle_runtime_released", {
+      conversationId,
+      ...scopeRefFromStoreSessionName(sessionName),
+    });
+    return "released";
   }
 
   /** Drain a conversation's owned execution before evicting its host. */
@@ -4061,6 +4113,7 @@ export function createConversationManager(
     clearConversationQuestion,
     requestConversationStop,
     stopConversationActor,
+    releaseIdleConversationRuntime,
     checkConversationCheckpoint,
     startConversationCheckpoint,
     skipConversationCheckpointHandoff,
@@ -4108,6 +4161,18 @@ export function executeConversationCommand(
   command: DebugCommand,
 ): Promise<ConversationCommandOutcome> {
   return defaultManager().executeConversationCommand(address, command);
+}
+
+export function releaseIdleConversationRuntime(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): Promise<IdleRuntimeRelease> {
+  return defaultManager().releaseIdleConversationRuntime(
+    projectPath,
+    sessionName,
+    conversationId,
+  );
 }
 
 export function ensureConversationLifecycle(

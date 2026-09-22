@@ -97,6 +97,8 @@ import {
   conversationRuntimeKey,
   getConversationRuntime,
 } from "./runtime-state";
+import { createMockBackendRuntime } from "./testing/actor-deps-fixture";
+import { runtimeConfigurationFixture } from "./testing/runtime-configuration-fixture";
 
 // Infrastructure mock — createLogger is called at module level
 vi.mock("@/lib/logging", () => ({
@@ -638,6 +640,105 @@ describe("conversation manager", () => {
         "nope",
         "test",
       );
+    });
+  });
+
+  describe("releaseIdleConversationRuntime", () => {
+    const sessionName = conversationTargetStoreSessionName(
+      DEFAULT_INPUT.target,
+    );
+    const conversationId = DEFAULT_INPUT.target.conversationId;
+    const key = conversationRuntimeKey(
+      DEFAULT_INPUT.projectPath,
+      sessionName,
+      conversationId,
+    );
+
+    function hostBackend() {
+      managerFixture.host.start(DEFAULT_INPUT);
+      const runtime = getConversationRuntime(key);
+      if (!runtime) throw new Error("expected a hosted runtime state");
+      const backend = createMockBackendRuntime({
+        backend: "cursor",
+        modelSelection: { modelId: "composer-2.5", parameters: {} },
+      });
+      runtime.managed.install(
+        runtime.managed.beginCreation(),
+        backend,
+        runtimeConfigurationFixture({
+          backend: "cursor",
+          modelSelection: backend.modelSelection,
+        }),
+        { register() {}, unregister() {} },
+      );
+      return { runtime, backend };
+    }
+
+    it("closes a settled conversation's hosted backend runtime and keeps its actor", async () => {
+      // A collaboration hands the conversation's provider agent to Agent One's
+      // lane. A backend whose agent is bound to one live worker (Cursor) refuses
+      // a second owner, so the host has to let go — without evicting the
+      // actor, which reopens a runtime on the conversation's next turn.
+      const { runtime, backend } = hostBackend();
+
+      const outcome =
+        await managerFixture.manager.releaseIdleConversationRuntime(
+          DEFAULT_INPUT.projectPath,
+          sessionName,
+          conversationId,
+        );
+
+      expect(outcome).toBe("released");
+      expect(backend.close).toHaveBeenCalledTimes(1);
+      expect(runtime.managed.backend).toBeUndefined();
+      expect(
+        managerFixture.actor(
+          DEFAULT_INPUT.projectPath,
+          sessionName,
+          conversationId,
+        ),
+      ).toBeDefined();
+    });
+
+    it("reports not_hosted when no backend runtime is installed", async () => {
+      expect(
+        await managerFixture.manager.releaseIdleConversationRuntime(
+          "/nope",
+          "nope",
+          "nope",
+        ),
+      ).toBe("not_hosted");
+
+      managerFixture.host.start(DEFAULT_INPUT);
+      expect(
+        await managerFixture.manager.releaseIdleConversationRuntime(
+          DEFAULT_INPUT.projectPath,
+          sessionName,
+          conversationId,
+        ),
+      ).toBe("not_hosted");
+    });
+
+    it("reports busy and leaves the runtime alone while a turn is being admitted", async () => {
+      const { runtime, backend } = hostBackend();
+      runtime.admission = {
+        token: Symbol("admission"),
+        settled: new Promise<void>(() => undefined),
+        cancelled: false,
+        cancel() {},
+        release() {},
+      };
+
+      const outcome =
+        await managerFixture.manager.releaseIdleConversationRuntime(
+          DEFAULT_INPUT.projectPath,
+          sessionName,
+          conversationId,
+        );
+
+      expect(outcome).toBe("busy");
+      expect(backend.close).not.toHaveBeenCalled();
+      expect(runtime.managed.backend).toBe(backend);
     });
   });
 

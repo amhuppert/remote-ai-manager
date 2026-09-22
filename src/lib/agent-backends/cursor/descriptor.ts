@@ -203,6 +203,17 @@ export const cursorConversationTranscriptProjection: BackendConversationTranscri
 export const cursorConversationFsWriteRestriction = "instruction-only" as const;
 export const cursorTaskFsWriteRestriction = "instruction-only" as const;
 
+/** No native schema is forwarded for tasks either; the shared contract is
+ *  rendered into the prompt and validated afterwards. */
+export const cursorTaskStructuredOutput = "post_validation" as const;
+
+/** Command Center's own skill bundle reaches both facets through the immutable
+ *  managed bundle, not through ambient provider settings. */
+export const cursorManagedSkills = {
+  conversations: "bundled",
+  tasks: "bundled",
+} as const;
+
 export interface CursorDescriptorDeps {
   taskRunner: AgentTaskRunner;
   conversationFactory: ConversationBackendFactory;
@@ -236,14 +247,14 @@ export function createCursorBackendDescriptor(
     tasks: {
       runner: deps.taskRunner,
       execution: cursorTaskExecution,
-      structuredOutput: "post_validation",
+      structuredOutput: cursorTaskStructuredOutput,
       fsWriteRestriction: cursorTaskFsWriteRestriction,
       transcript: {
         projectAssistantMetadata: (backendRef) =>
           backendRef ? { backendRef } : undefined,
       },
     },
-    managedSkills: { conversations: "bundled", tasks: "bundled" },
+    managedSkills: cursorManagedSkills,
     nativeMemory: cursorNativeMemory,
     mcp: deps.mcp,
     errors: deps.failureClassifier,

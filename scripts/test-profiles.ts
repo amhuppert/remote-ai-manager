@@ -75,6 +75,7 @@ export const ARCHITECTURE_TOOLCHAIN_TEST_FILES = [
   "src/lib/agent-backends/codex/managed-skills-bridge.test.ts",
   "src/lib/agent-backends/codex/native-sdd-authoring-packaging.test.ts",
   "src/lib/agent-backends/consumer-locality-static.test.ts",
+  "src/lib/agent-backends/cursor/acceptance/parity-matrix.test.ts",
   "src/lib/agent-backends/cursor/sdk-pin.test.ts",
   "src/lib/agent-capabilities/apply-planner.test.ts",
   "src/lib/chat-spawning/standalone-usability.test.ts",

@@ -18,6 +18,7 @@ import {
   ACCEPTANCE_BOUNDARY_ARTIFACT_PREFIX,
   openAcceptanceEvidence,
 } from "./harness";
+import { CURSOR_PARITY_MATRIX } from "./parity-matrix";
 import { ambientCredentialKeys } from "../worker/credential-env";
 import { findMarkedPids } from "./process-scan";
 
@@ -220,6 +221,34 @@ describe("final credential sweep over the live matrix", () => {
     // the value that leaked through it.
     expect(
       findings.map((finding) => `${finding.sourceLabel} (${finding.variant})`),
+    ).toEqual([]);
+  });
+
+  it("produced a passing record for every live case the parity matrix cites", async () => {
+    // The matrix names the live evidence each parity row rests on. Checking
+    // those names against the records this run actually published is what
+    // makes the matrix executable against the run rather than against the
+    // source: a case that was renamed, skipped, or quietly failed stops
+    // supporting its row here, while the suite still has a credential.
+    const published = await store.readPublished();
+    const byCaseId = new Map(
+      published.map((record) => [record.caseId, record.outcome]),
+    );
+    const cited = [
+      ...new Set(
+        CURSOR_PARITY_MATRIX.flatMap((row) =>
+          row.evidence.flatMap((entry) =>
+            entry.kind === "acceptance-case" ? [entry.caseId] : [],
+          ),
+        ),
+      ),
+    ].sort();
+    expect(cited.length, "the matrix cites no live evidence").toBeGreaterThan(
+      0,
+    );
+    expect(
+      cited.filter((caseId) => byCaseId.get(caseId) !== "pass"),
+      "a parity row cites live evidence this run did not produce as a pass",
     ).toEqual([]);
   });
 

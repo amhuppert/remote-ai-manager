@@ -65,6 +65,10 @@ import {
   type CollaborationSessionContextCapture,
 } from "./session-context";
 import { isAlignmentEligibleContext } from "@/lib/workflows/conversation/pre-turn/alignment-gate";
+import {
+  releaseIdleConversationRuntime as defaultReleaseIdleConversationRuntime,
+  type IdleRuntimeRelease,
+} from "@/lib/workflows/conversation/manager";
 import { getSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
 import type {
   CaptureActiveCharterInput,
@@ -377,6 +381,47 @@ export class CollaborationStartConflictError extends Error {
       `Conversation "${conversationId}" is no longer idle for this collaboration start`,
     );
     this.name = "CollaborationStartConflictError";
+  }
+}
+
+/** The originating conversation still had work in flight when the run went to take over its agent. */
+export class CollaborationConversationBusyError extends Error {
+  constructor(public readonly conversationId: string) {
+    super(
+      `Conversation "${conversationId}" still has a turn in flight, so the collaboration cannot take over its agent`,
+    );
+    this.name = "CollaborationConversationBusyError";
+  }
+}
+
+/**
+ * Runs inside the dispatch chain, after the claim: a `busy` outcome rejects
+ * the chain, so the run fails through the same path a thrown slice does and
+ * the conversation is handed back.
+ */
+async function releaseOriginatingRuntimeBeforeDispatch(
+  deps: Pick<CollaborationManagerDeps, "releaseOriginatingRuntime">,
+  input: {
+    projectPath: string;
+    sessionName: string;
+    workflowId: string;
+    conversationId: string;
+  },
+): Promise<void> {
+  const outcome = await deps.releaseOriginatingRuntime({
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    conversationId: input.conversationId,
+  });
+  logger.info("collaboration.manager.originating_runtime_release", {
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    workflowId: input.workflowId,
+    conversationId: input.conversationId,
+    outcome,
+  });
+  if (outcome === "busy") {
+    throw new CollaborationConversationBusyError(input.conversationId);
   }
 }
 
@@ -744,6 +789,20 @@ export interface CollaborationManagerDeps {
   stopRegistry: CollaborationStopRegistry;
 
   /**
+   * Lets the originating conversation's host release its backend runtime once
+   * the run has claimed the conversation. Agent One resumes that conversation's
+   * provider agent on its own lane, and a backend that binds an agent to one
+   * live worker under one owner (Cursor) refuses the lane while the host still
+   * holds the worker. `busy` means a turn is in flight after all; the run must
+   * not dispatch against it.
+   */
+  releaseOriginatingRuntime(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): Promise<IdleRuntimeRelease>;
+
+  /**
    * Builds the slice deps. Production wiring composes `createCollaborationDeps`
    * with a real `callAgent`; tests inject deterministic deps here. Receives
    * an optional `laneService` so the manager can share one LaneService
@@ -1094,6 +1153,12 @@ const defaultDeps: CollaborationManagerDeps = {
     now: () => new Date().toISOString(),
   }),
   stopRegistry: defaultStopRegistry,
+  releaseOriginatingRuntime: (input) =>
+    defaultReleaseIdleConversationRuntime(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    ),
   createDeps(input) {
     return createCollaborationDeps({
       projectPath: input.projectPath,
@@ -1621,6 +1686,14 @@ export function createCollaborationManager(
       });
 
       void Promise.resolve()
+        .then(() =>
+          releaseOriginatingRuntimeBeforeDispatch(deps, {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId,
+            conversationId: parsed.conversationId,
+          }),
+        )
         .then(() => deps.runSlice(sliceInput, sliceDeps))
         .then((result) => {
           logger.info("collaboration.manager.slice_finished", {
@@ -1988,8 +2061,16 @@ export function createCollaborationManager(
         agentTwoModelSelection: agents.agent_two.modelSelection,
       });
 
-      void deps
-        .runSlice(sliceInput, sliceDeps)
+      void Promise.resolve()
+        .then(() =>
+          releaseOriginatingRuntimeBeforeDispatch(deps, {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            workflowId: input.workflowId,
+            conversationId,
+          }),
+        )
+        .then(() => deps.runSlice(sliceInput, sliceDeps))
         .then((result) => {
           logger.info("collaboration.manager.resume_slice_finished", {
             projectPath: input.projectPath,

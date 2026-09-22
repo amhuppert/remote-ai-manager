@@ -10,7 +10,7 @@
  *
  * No `vi.mock`. All deps are injected via `createCollaborationManager`.
  */
-import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -293,6 +293,7 @@ interface ScriptedDepsOptions {
     stallTimeoutMs?: number;
   };
   persistStartError?: Error;
+  releaseOriginatingRuntimeResult?: "released" | "not_hosted" | "busy";
   resolveSessionContextResult?: CollaborationSessionContext | Error;
   resolveSessionContextDegraded?: CollaborationSessionContextDegradation;
   /**
@@ -340,7 +341,16 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   envelopeStore: ReturnType<typeof createInMemoryWorkflowEnvelopeStore>;
   runSliceCompletion: Promise<void>;
   stopRegistry: CollaborationStopRegistry;
+  releaseCalls: Array<
+    Parameters<CollaborationManagerDeps["releaseOriginatingRuntime"]>[0]
+  >;
+  /** The order the manager took its start steps in, by dep name. */
+  order: string[];
 } {
+  const releaseCalls: Array<
+    Parameters<CollaborationManagerDeps["releaseOriginatingRuntime"]>[0]
+  > = [];
+  const order: string[] = [];
   const runSliceCalls: Array<{
     input: AsymmetricCollaborationSliceInput;
     deps: AsymmetricCollaborationSliceDeps;
@@ -448,10 +458,16 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     },
     persistStart: async (input) => {
       persistedStarts.push(input);
+      order.push("persistStart");
       if (options.persistStartError) throw options.persistStartError;
       return { claimedTurnGeneration: input.expectedPromptCount + 1 };
     },
     stopRegistry,
+    releaseOriginatingRuntime: async (input) => {
+      releaseCalls.push(input);
+      order.push("releaseOriginatingRuntime");
+      return options.releaseOriginatingRuntimeResult ?? "not_hosted";
+    },
     createDeps: () => options.sliceDepsOverride ?? makeStubSliceDeps(),
     buildLaneService: () =>
       createLaneService({ store: createInMemoryLaneStore() }),
@@ -515,6 +531,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     },
     runSlice: async (input, sliceDeps) => {
       runSliceCalls.push({ input, deps: sliceDeps });
+      order.push("runSlice");
       try {
         if (options.runSliceError) throw options.runSliceError;
         return (
@@ -557,6 +574,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     envelopeStore,
     runSliceCompletion,
     stopRegistry,
+    releaseCalls,
+    order,
   };
 }
 
@@ -802,8 +821,13 @@ describe("createCollaborationManager.start", () => {
   });
 
   it("persists and dispatches both canonical selections returned by start admission", async () => {
-    const { deps, persistedStarts, runSliceCalls, buildCallAgentCalls } =
-      buildScriptedDeps();
+    const {
+      deps,
+      persistedStarts,
+      runSliceCalls,
+      buildCallAgentCalls,
+      runSliceCompletion,
+    } = buildScriptedDeps();
     const manager = createCollaborationManager({
       ...deps,
       admitModelSelection: async (input) => ({
@@ -843,6 +867,7 @@ describe("createCollaborationManager.start", () => {
     expect(buildCallAgentCalls[0]?.agents.agent_two.modelSelection).toEqual(
       canonicalAgentTwo,
     );
+    await runSliceCompletion;
     expect(runSliceCalls[0]?.input.agents).toMatchObject({
       agent_one: { modelSelection: canonicalAgentOne },
       agent_two: { modelSelection: canonicalAgentTwo },
@@ -980,7 +1005,7 @@ describe("createCollaborationManager.start", () => {
         pinnedProjects: [],
       });
 
-      const { deps, runSliceCalls } = buildScriptedDeps();
+      const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps();
       deps.resolveConversation = async () => {
         const conversation = await store.getConversation(
           projectPath,
@@ -1062,6 +1087,7 @@ describe("createCollaborationManager.start", () => {
       expect(accepted).toBeDefined();
       expect(rejected?.reason).toBeInstanceOf(CollaborationStartConflictError);
       expect(transcriptEntries).toHaveLength(1);
+      await runSliceCompletion;
       expect(runSliceCalls).toHaveLength(1);
 
       const acceptedWorkflowId = accepted!.value.workflowId;
@@ -1682,6 +1708,86 @@ describe("createCollaborationManager.start", () => {
     const call = runSliceCalls[0];
     if (!call) throw new Error("expected one runSlice call");
     expect(call.input.priorBackendRef).toEqual(savedRef);
+  });
+
+  it("releases the originating conversation's hosted runtime after the claim and before the slice runs", async () => {
+    // Agent One resumes the originating conversation's provider agent on its
+    // own lane. Cursor binds an agent to one live worker under one owner, so
+    // while the conversation's own host still holds that worker the lane's
+    // first turn is refused ("already active under a different runtime
+    // owner"). The claim guarantees no turn can be admitted afterwards, so the
+    // host may let go exactly then, and nothing may dispatch before it has.
+    const { deps, runSliceCalls, runSliceCompletion, releaseCalls, order } =
+      buildScriptedDeps({
+        resolveConversationResult: {
+          agentBackend: "cursor",
+          backendRef: { backend: "cursor", ref: "agent-originating" },
+        },
+        releaseOriginatingRuntimeResult: "released",
+      });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 1,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+    await runSliceCompletion;
+
+    expect(releaseCalls).toEqual([
+      { projectPath: "/p", sessionName: "s", conversationId: "conv-1" },
+    ]);
+    expect(order).toEqual([
+      "persistStart",
+      "releaseOriginatingRuntime",
+      "runSlice",
+    ]);
+    expect(runSliceCalls).toHaveLength(1);
+  });
+
+  it("fails the run instead of dispatching when the originating runtime is still busy", async () => {
+    const metadataCalls: string[] = [];
+    const { deps, runSliceCalls, envelopeStore } = buildScriptedDeps({
+      resolveConversationResult: {
+        agentBackend: "cursor",
+        backendRef: { backend: "cursor", ref: "agent-originating" },
+      },
+      releaseOriginatingRuntimeResult: "busy",
+      sliceDepsOverride: {
+        ...makeStubSliceDeps(),
+        markConversationAwaiting: async (conversationId) => {
+          metadataCalls.push(conversationId);
+        },
+      },
+    });
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-1",
+        status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1" },
+      }),
+    );
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 1,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+    await vi.waitFor(async () => {
+      expect((await repo.get("wf-1"))?.status).toBe("failed");
+      expect(metadataCalls).toEqual(["conv-1"]);
+    });
+
+    expect(runSliceCalls).toEqual([]);
+    expect((await repo.get("wf-1"))?.errorSummary).toContain("conv-1");
   });
 
   it("does not throw when the slice fails — failures are logged, not surfaced", async () => {

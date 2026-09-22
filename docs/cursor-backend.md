@@ -1,8 +1,10 @@
 # Cursor Backend
 
-Command Center runs Cursor as a third agent backend alongside Claude and Codex. Phase 1 delivers **conversations only**: you can pick Cursor in any conversation composer, and it streams, persists, resumes, and cancels the same way the other backends do.
+Command Center runs Cursor as a third agent backend alongside Claude and Codex. Cursor is usable across the application: session and project conversations, one-shot tasks, every graph workflow role, native spec managed delivery, Collaboration Mode, and the agent-assisted product features (tickets, naming, compaction, commit and merge assistance, conflict resolution).
 
-Later phases added tasks, workflow roles, and Collaboration Mode. Where a surface still cannot run Cursor, the UI says so on the option rather than hiding it. See [Unsupported in Phase 1](#unsupported-in-phase-1) and [Collaboration Mode](#collaboration-mode).
+Where Cursor offers a weaker guarantee than Claude or Codex, Command Center keeps the feature available and says so: the difference appears as an informational execution warning wherever Cursor is selected, never as a disabled option or an acknowledgement gate. Instruction-only limits are described as instructions, and figures the provider does not publish stay unknown rather than estimated.
+
+The verified capability matrix, one row per behavior with its evidence and its limits, is in [`reports/2026-09-21-cursor-parity-final-validation.md`](./reports/2026-09-21-cursor-parity-final-validation.md). The [declared capabilities](#declared-capabilities) table at the end of this page is generated from the registered backend descriptor, so it cannot drift from what the running application enforces.
 
 ---
 
@@ -40,8 +42,8 @@ The Cursor SDK is **pinned exactly**, and preflight fails closed on any other co
 | --- | --- |
 | Host | a matching `@cursor/sdk-${platform}-${arch}` package is installed |
 | Node (the process running the worker) | **>= 22.13** |
-| `@cursor/sdk` | **1.0.28** exactly — no range |
-| The host's platform package | **1.0.28**, matching the SDK version |
+| `@cursor/sdk` | **1.0.31** exactly — no range |
+| The host's platform package | **1.0.31**, matching the SDK version |
 
 Machine eligibility follows the SDK installation, not an acceptance-evidence allowlist. Command Center derives the platform package from Node's `process.platform` and `process.arch`; for example, Apple Silicon uses `@cursor/sdk-darwin-arm64`. The pinned SDK currently publishes these packages:
 
@@ -54,8 +56,6 @@ Machine eligibility follows the SDK installation, not an acceptance-evidence all
 | Windows x86_64 (`win32-x64`) | `@cursor/sdk-win32-x64` |
 
 Before a worker starts, Command Center verifies that the SDK's Node entry points, its lazily-loaded chunks, its declared dependencies, the derived platform package, and that package's executable native assets (ripgrep, the sandbox helper, the tree-sitter bindings, with their execute bits intact) are all present. A missing or mismatched artifact or a Node version below the floor produces a bounded error that names the mismatch — Cursor is simply unavailable on that machine, and nothing auto-updates or silently substitutes a different build.
-
-The SDK and platform-package version pins remain strict so their package layouts and runtime contracts stay aligned.
 
 Deployments that ship Command Center must package these dependencies rather than expect a runtime install.
 
@@ -88,6 +88,32 @@ The composers offer exactly the models that survive the project's opt-out list. 
 
 ---
 
+## Conversations
+
+Session-scoped and project-scoped conversations stream text, thinking, and tool activity from Cursor, and every native envelope is persisted to the conversation transcript. Structured output (the shared contract every backend satisfies) is rendered into the prompt and validated after the turn; no native output schema is forwarded to the provider, so a malformed answer is caught after the turn rather than prevented during it.
+
+### Continuity, restart, and forks
+
+A Cursor agent id is a real provider handle: resuming a conversation returns to that exact session rather than replaying a reconstructed thread. The reference is persisted the moment Cursor issues it, mid-turn, so a server restart or a killed worker does not lose the conversation; the next prompt reloads the backend and its reference from SQLite and resumes the same agent in a new worker with the model, tool policy, MCP configuration, and permission policy reapplied. A reference that is genuinely invalid fails closed with a clear classification and is cleared; a transient failure keeps it.
+
+Forks are **synthetic**: a fork seeds an independent agent and store with bounded transcript text from the source conversation, and the UI labels that seed as synthetic. Provider checkpoints and hidden state are not inherited, so a fork resumes from the visible transcript rather than from the source agent's internal state.
+
+Command Center checkpoint capture, checkpoint forks, and handoff summaries are declared unavailable for Cursor. Those actions are withheld rather than offered and then failing; history zoom and checkpoint-based recovery remain Claude and Codex features.
+
+### Queueing and in-turn steering
+
+A message submitted while Cursor is working is stored durably and drained exactly once, keeping its model choice and images across cancellation and server restart. **Text is steered into the running turn** through the provider's steer API, with the acknowledgement correlated to the requesting run. Attachments, an unavailable runtime, and provider refusals fall back to the next turn. An acknowledgement lost after dispatch leaves delivery uncertain and holds the message for your review rather than resending it, because the provider offers no delivery idempotency key.
+
+### Mid-turn questions
+
+Cursor can ask you a question during a turn. It does so through Command Center's own `cc_question` tool over the SDK's supported custom-tool callback, using the existing question panel. A question expires after five minutes, only one batch is pending per conversation at a time, and a restarted server cannot reconnect an outstanding callback: its marker is retired and a late reply is refused. The provider's own interactive tools (`askQuestion`, `await`) stay denied; the SDK rejects native questions in both main-loop and subagent execution, so there is no provider-held request to bind to.
+
+### Background work
+
+Native subagent calls (the `task` tool) are tracked in a durable per-conversation store and published as live background activity. Automatic continuation happens inside the turn: the agent waits for its subagents and acts on their results before the turn ends. Tracking ends with the turn — a task still running when the turn ends is marked lost and disclosed to the next turn rather than continued, because the SDK offers no completion subscription once a run has ended. Cursor never produces a turn Command Center did not start.
+
+---
+
 ## Image input
 
 Cursor conversations accept images from the composer, and the image reaches the model through the SDK's own image path. Image-bearing turns stream and persist through exactly the same transcript contracts as text turns.
@@ -105,71 +131,62 @@ Errors name the offending image's position and the bound it broke. They never ca
 
 ---
 
-## Tokens and cost
+## Tokens, cost, and context
 
-Every finished Cursor turn reports **at most one** usage record, carrying the SDK's input, output, cache-read, cache-write, and total token counts, plus reasoning tokens when Cursor reports them. Following the SDK's own convention, the total **excludes** reasoning tokens.
+Every finished Cursor turn reports **at most one** usage record, carrying the SDK's input, output, cache-read, cache-write, and total token counts, plus reasoning tokens when Cursor reports them. Following the SDK's own convention, the total **excludes** reasoning tokens. Cancelled, failed, and retried turns report no usage at all.
 
-**`costUsd` is always `null` for Cursor.** Cursor's pricing is plan-based, and its billed-usage API reports the per-turn figure as unavailable, so there is no settled charge Command Center can attribute to a turn. Nothing estimates a dollar figure from token counts, model names, or published rates — an honest null is preferred to a fabricated number. Cost columns and totals for Cursor conversations will therefore read as unavailable rather than zero.
+**Cost comes from the provider's billed-usage entries, not from token arithmetic.** A durable per-conversation ledger reconciles those entries against Command Center turns and settles late charges as they arrive. Two limits apply:
 
-Cancelled, failed, and retried turns report **no** usage at all rather than a partial or fabricated count, and usage is never carried across turns.
+- The provider never links a billing entry to the run that produced it, so the per-turn figure is an attribution Command Center inferred; when it cannot be attributed it stays unknown.
+- An account whose key cannot reach the usage endpoint (the provider answers `feature_unavailable`) records a durable unavailable state, the conversation shows a notice saying so, and cost stays unknown for that conversation. Nothing estimates a dollar figure from token counts, model names, or published rates.
+
+**Context occupancy is unknown for Cursor.** The SDK publishes neither an effective context-window maximum nor current occupancy; the transcript header shows *Context unknown*, and billing token counts are never presented as a window measurement. Occupancy-driven rotation is therefore unavailable. When the provider produces a native context summary during a turn, Command Center records it as a durable conversation notice and sets the neutral compaction signal, which a configured context-limit policy can rotate on; the signal confirms that a summary was produced, not when or how well context was replaced.
 
 ---
 
-## Tools and permissions
+## Tools, permissions, and policy
 
-Phase 1 runs a fixed, non-interactive **bypass policy**. It is Command Center code policy, not a setting: there is no user-facing tool-configuration surface for Cursor.
+Cursor runs a fixed, non-interactive **bypass policy**. It is Command Center code policy, not a setting.
 
-- **Sandboxing is off** (`sandboxOptions.enabled: false`) and **auto-review is off**.
+- **Sandboxing is off** and **auto-review is off**. Successful tool execution proves nothing about confinement.
 - **Ambient Cursor settings are not loaded.** The worker attaches with empty setting sources, so user, project, and MDM Cursor settings on the host cannot change what a Command Center run does. Command Center never reads or writes your Cursor configuration.
-- **The two interactive tools — `askQuestion` and `await` — are denied**, because Command Center has no mid-turn approval UI for Cursor. Everything else in the default toolset stays available: shell, file operations, search, subagents via `task`, and MCP tools under the usual enable/disable cascade.
-- **The interactive denial is main-loop scope only.** Per the SDK's documented semantics, a subagent launched through `task` keeps its own platform-curated toolset, and Command Center makes no claim about tool denial inside one. Subagents remain available and useful; the deny list is main-loop policy, not a complete-toolset guarantee. If a subagent surfaces an interactive request anyway, nothing waits on it — no approval handler is registered — so the turn ends as a bounded failure through the ordinary stall and timeout bounds rather than hanging.
-- Because sandboxing is off, **successful tool execution proves nothing about confinement.** Command Center claims no filesystem-write restriction and no network confinement for Cursor, which is also why Cursor is refused by the workflow validator role's write-restriction gate.
+- **`askQuestion` and `await` are denied** in the main loop; questions go through Command Center's own tool instead (see [Mid-turn questions](#mid-turn-questions)). A subagent launched through `task` keeps its own platform-curated toolset; if one surfaces an interactive request anyway, nothing waits on it and the turn ends as a bounded failure through the ordinary stall bound.
+- **Governed instructions are advisory.** The SDK exposes no system or developer instruction field, so Command Center delivers governed instructions as a fenced *System Instructions* block at the head of the first user message, on create and on resume. The block has no system priority; the model may weigh it against the rest of the conversation.
+- **Filesystem write policies are instruction-only.** A write policy supplied to Cursor is translated into explicit instructions, and both facets declare the restriction as instruction-only, so no consumer mistakes it for an enforced envelope. A Cursor agent can write outside its allowed paths; a policy that cannot be expressed at all is refused at the adapter boundary rather than silently dropped.
+- **Network access and native tool approvals are not restricted.** Treat a Cursor turn as an unsandboxed agent on the host.
+- **Provider-native memory cannot be disabled.** The SDK carries no memory field an embedder can set. Command Center delivers its shared-memory policy as an instruction — use Command Center memory, do not read or write Cursor-native memories — and cannot read the provider's memory state back to confirm compliance.
+
+Every one of these limits is stated in Cursor's **execution warnings**, shown wherever Cursor is selected. None of them disables a supported feature or demands an acknowledgement.
 
 ### MCP
 
-Inline **stdio** MCP servers work: Command Center passes the server's command, arguments, and environment explicitly to the worker, and reapplies the same configuration on resume. HTTP and SSE MCP transports are not supported for Cursor, and per-tool allow/deny filtering is not supported on any transport — a server carrying a tool filter is refused rather than passed through unfiltered.
+**stdio, streamable HTTP, and SSE** servers all reach a Cursor turn through the worker's MCP bridge, which Command Center owns. Per-tool allow and deny lists are enforced by that bridge in front of every transport, so a filtered tool is never reachable from the agent — the filter covers the tools the bridge exposes rather than being enforced inside the provider. A disabled server is omitted from the emitted configuration, and a configuration change takes effect on the next turn (there is no live apply to an idle Cursor runtime the way Claude has). Tool inventory comes from a direct probe Command Center performs, with configured startup and per-tool deadlines enforced by the bridge.
 
-Strict MCP authority is **not** claimed. The ordinary inline call path is proven; the authority questions (ambient merge, duplicate names, per-run replacement, disable/filter, permission, environment) are a separate gate that has not been run.
+Strict MCP authority is **not** claimed: the provider exposes no way to read or override account-level MCP administration, so the configuration you see is what Command Center supplied, not necessarily everything the agent can reach.
 
-### Skills and slash commands
+### Skills, plugins, agents, and slash commands
 
-**Cursor conversations run without Command Center's bundled skills.** The Cursor SDK exposes no command or skill surface, so command discovery for a Cursor conversation returns an empty result — it does not scan `.claude/` or `.codex/` directories and does not invent entries. The slash-command popup will be empty in a Cursor conversation.
+Command Center's immutable managed skill bundle reaches Cursor conversations and tasks, alongside project and user skills discovered from disk, while ambient provider settings stay suppressed. Skills are delivered as a rendered catalog in the session instructions rather than as provider-native skill objects, and the catalog is capped at 16 KiB. Skills, plugins, and agents resolve through the shared capability cascade and are applied when the next conversation starts; a change made mid-conversation is deferred rather than applied live, and plugin rules, hooks, and commands are not translated.
 
----
-
-## Conversation lifetime and cancellation
-
-Each active Cursor conversation runs in exactly one supervised Node worker process of its own, with its own working directory, process group, agent store, and identity. Two conversations never share a worker or observe each other's state.
-
-- **Stop** cancels natively, waits for the agent and worker to tear down, escalates to the worker's own (ownership-verified) process group if the wait is exceeded, and only then reports the conversation closed. Deleting a session waits for that teardown before removing the worktree the worker is using.
-- A worker whose Command Center server dies — even by `SIGKILL`, with no orderly shutdown — **terminates itself and its process group** within a bounded interval. There is no orphan sweeper to depend on.
-- An idle worker is reaped after **5 minutes** of inactivity. Resuming the conversation simply starts a fresh worker from the persisted session reference.
-- A turn that goes quiet for **20 minutes** settles as a bounded stall failure rather than holding the conversation open.
-
-Continuation is durable: the session reference is persisted the moment Cursor issues it, mid-turn, so a server restart or a killed worker does not lose the conversation. The next prompt resumes it in a new worker with the model, tool policy, MCP configuration, and permission policy all reapplied. A reference that is genuinely invalid (deleted, corrupt, or belonging to another workspace) fails closed with a clear classification and is cleared; a merely transient failure — a rate limit, a network blip, a locally killed worker — keeps the reference so the conversation stays resumable.
+The command palette lists the built-in commands Cursor can actually execute, and skill-derived commands share its `/` prefix.
 
 ---
 
-## Unsupported in Phase 1
+## One-shot tasks and agent-assisted features
 
-Command Center declares these unsupported for Cursor in the backend descriptor, the catalog the UI reads, and the UI itself. Where a surface requires one, Cursor appears as a **visibly disabled option with the reason**, and the corresponding API refuses `backend=cursor` with a bounded client error naming the unsupported facet — it never falls back to another backend or leaves partial state behind.
+Cursor runs one-shot tasks on the same supervised worker, in both the standard and the isolated profile, with full model selection, cancellation, stall handling, and a task transcript. `cctl agent run` and the agent-runs API accept Cursor through the same admitted task path as any other backend, and workflow and collaboration consumers resolve a real continuity binding (conversation identity, working directory, store, validated model).
 
-| Not supported | What that means |
-| --- | --- |
-| **Task facet** | No Cursor agent runs. Task creation, workflow role assignment (including validator roles), and the naming/compaction/workflow-agent backend pickers show Cursor disabled. |
-| **Native mid-turn ask** | No approval or question prompt is awaited or surfaced. |
-| **Filesystem write restriction** | Not claimed and not enforced; the run is unsandboxed. |
-| **Network confinement** | Not claimed and not enforced. |
-| **Strict MCP authority** | The ordinary inline stdio path works; authority does not follow from it. |
-| **Managed skills** | Command Center's bundled skills are not delivered into Cursor conversations. |
-| **Native fork** | Conversations cannot be forked. Resume and reference copying are not fork and are never presented as it. |
-| **External turns** | Cursor produces no turns Command Center did not start. |
-| **Context-window metrics** | The SDK surfaces no context-window figures, so none are shown. |
-| **Mid-turn prompt injection** | A prompt submitted during an active turn is queued and starts as the **next** turn, in order. |
-| **Cost reporting** | See [Tokens and cost](#tokens-and-cost) — `costUsd` is always null. |
-| **Claude/Codex parity** | Not claimed. Cursor is a conversation backend with the limits on this page. |
+With Cursor as the configured backend, these product features run on Cursor rather than refusing or borrowing another backend: `/ticket` from a conversation, Quick Ticket enrichment, conversation and session naming, compaction generation, the `/commit` and `/merge` message, Smart Commit and Smart Merge validation fixes, and conflict analysis and resolution.
 
-Structured output works through the same shared post-validation path every backend uses, including its single bounded repair attempt.
+---
+
+## Graph workflows and spec delivery
+
+Cursor is assignable as a graph workflow implementer, validator, plan-repair agent, and collaboration second agent, in the schema, the assignment editor, and the config cascade. Validator, advisory-response, output-capture, and plan-repair runs execute on Cursor, inheriting the assignment's backend.
+
+Path-owned and read-only placements accept Cursor: the same write envelope Claude receives is composed, delivered, and briefed in the implementer prompt. Because that envelope is delivered as instructions, a Cursor lane can write outside its owned paths; ownership violations are detected after the fact rather than prevented, and the builder shows an informational note saying so. A native spec's managed delivery workflow can be staffed with Cursor, and that staffing survives freeze, reload, and reopen.
+
+---
 
 ## Collaboration Mode
 
@@ -180,25 +197,103 @@ A Cursor lane runs as a Cursor task in the session worktree with the same autono
 | Aspect | What a Cursor lane does |
 | --- | --- |
 | **Continuity** | Agent One resumes the originating Cursor conversation's agent when the run grants it the session's CC scope (standalone `/collab`); every later phase resumes the lane's own task ref. Graph-workflow lanes start fresh. |
+| **Handoff** | A Cursor agent is bound to one live worker under one owner. Once the run has claimed the conversation, it releases the conversation's own idle worker before Agent One's first turn, so `/collab` works immediately after a Cursor turn; the conversation opens a fresh worker on its next prompt. A conversation that still has a turn in flight fails the run instead. |
 | **Sandbox, approvals, web search** | Delivered as instructions, not enforced; the run logs `cursor.task_policy_instruction_only`. The `/collab` row shows Cursor's execution warnings next to the second-agent picker. |
-| **Cost** | Token usage is attributed to the Cursor lane; `costUsd` stays unknown rather than estimated. |
+| **Cost** | Token usage is attributed to the Cursor lane; cost stays unknown unless the provider's billed usage attributes it. |
 | **Structured output** | The shared prose-then-format flow and post-validation gate, as for Codex. |
+
+---
+
+## Conversation lifetime and cancellation
+
+Each active Cursor conversation runs in exactly one supervised Node worker process of its own, with its own working directory, process group, agent store, and identity. Two conversations never share a worker or observe each other's state.
+
+- **Stop** cancels natively, waits for the agent and worker to tear down, escalates to the worker's own (ownership-verified) process group if the wait is exceeded, and only then reports the conversation closed. Cancellation also stops a running shell descendant and a blocked MCP call. Deleting a session waits for that teardown before removing the worktree the worker is using.
+- A worker whose Command Center server dies — even by `SIGKILL`, with no orderly shutdown — **terminates itself and its process group** within a bounded interval. There is no orphan sweeper to depend on.
+- An idle worker is reaped after **5 minutes** of inactivity. Resuming the conversation simply starts a fresh worker from the persisted session reference.
+- A turn that goes quiet for **20 minutes** settles as a bounded stall failure rather than holding the conversation open.
+
+---
+
+## Declared capabilities
+
+The table below is rendered from Cursor's registered backend descriptor and is checked against it by `src/lib/agent-backends/cursor/acceptance/parity-matrix.test.ts`; edit the descriptor, not this table. `instruction-only` means Command Center asks the agent to observe a limit it cannot enforce; `false` or `unavailable` means no supported mechanism exists and the value stays unknown rather than approximated.
+
+<!-- cursor-capability-disclosure:begin -->
+| Declared capability | Value |
+| --- | --- |
+| `conversation.execution.classes` | ordinary-conversation, governed-execution |
+| `conversation.execution.instructionDelivery` | user-message |
+| `conversation.capabilities.queue.acceptsWhileRunning` | true |
+| `conversation.capabilities.queue.deliveryTiming` | in_turn |
+| `conversation.capabilities.continuationStrength` | precise_session |
+| `conversation.capabilities.fork` | synthetic |
+| `conversation.capabilities.structuredOutput` | post_validation |
+| `conversation.capabilities.contextWindowMetrics` | false |
+| `conversation.capabilities.nativeMidTurnAskUser` | false |
+| `conversation.capabilities.externalTurns` | false |
+| `conversation.capabilities.checkpoint` | false |
+| `conversation.capabilities.checkpointFork` | false |
+| `conversation.capabilities.handoffCapture.available` | false |
+| `conversation.capabilities.handoffCapture.mode` | null |
+| `conversation.capabilities.handoffCapture.reason` | Capture is unavailable |
+| `conversation.capabilities.capabilityKinds` | skills:next_conversation, plugins:next_conversation, agents:next_conversation |
+| `conversation.fsWriteRestriction` | instruction-only |
+| `tasks.execution.classes` | nongoverned-task, governed-execution |
+| `tasks.execution.profiles` | standard, isolated-one-shot |
+| `tasks.execution.instructionDelivery` | user-message |
+| `tasks.fsWriteRestriction` | instruction-only |
+| `tasks.structuredOutput` | post_validation |
+| `managedSkills.conversations` | bundled |
+| `managedSkills.tasks` | bundled |
+| `nativeMemory.mechanism` | none |
+| `nativeMemory.reason` | Cursor native memory cannot be disabled or verified through the SDK. CC shared-memory policy is instruction-only; native memory may remain active. |
+| `mcp.strictAuthoritativeConfig` | false |
+| `mcp.serverDisable` | omit |
+| `mcp.betweenTurnApply` | next-turn |
+| `mcp.transports.stdio` | true |
+| `mcp.transports.streamable-http` | true |
+| `mcp.transports.sse` | true |
+| `mcp.toolFiltering.mode` | bridge |
+| `mcp.toolFiltering.byTransport.stdio` | bridge |
+| `mcp.toolFiltering.byTransport.streamable-http` | bridge |
+| `mcp.toolFiltering.byTransport.sse` | bridge |
+| `mcp.toolDiscovery.preferred` | probe |
+| `mcp.toolDiscovery.probeFallback` | true |
+<!-- cursor-capability-disclosure:end -->
+
+---
+
+## What Cursor does not do
+
+These are the rows of the parity matrix that remain unresolved: each is a provider gap Command Center discloses and works around rather than a feature it withholds. Claude/Codex parity is not claimed.
+
+| Limit | What Command Center does instead |
+| --- | --- |
+| **Native mid-turn questions** | Asks through its own `cc_question` tool over a supported callback (five-minute expiry, one batch per conversation, no survival across a server restart). |
+| **Provider-originated turns** | Instructs the agent to finish background work inside its turn; work that finishes after a turn ends cannot wake the conversation. |
+| **Authoritative MCP configuration** | Supplies servers inline with ambient sources suppressed and declares the result non-authoritative. |
+| **Exact per-turn cost** | Attributes billed-usage entries to turns from a durable ledger and leaves an unattributable figure unknown. |
+| **Context-window metrics** | Shows *Context unknown*; reports a native compaction summary as a notice and a neutral signal. |
+| **Privileged instruction delivery** | Delivers governed instructions as a fenced block in the first user message, without system priority. |
+| **Filesystem confinement** | Translates the write policy into instructions and declares the restriction instruction-only on both facets. |
+| **Disabling provider-native memory** | Delivers the shared-memory policy as an instruction and cannot read the provider's memory state back. |
 
 ---
 
 ## Verifying a deployment
 
-The authenticated live matrix runs through its wrapper, which is not part of the registered validation commands (they are pinned by `src/lib/projects/repo-config.test.ts`):
+The authenticated live matrix is the registered `cursor-acceptance` validation command:
 
 ```bash
-bash scripts/validate/cursor-acceptance.sh
+cctl validate run cursor-acceptance --queue-if-busy --json
 ```
 
-It exercises the real SDK against a real account on the machine where it runs: preflight taxonomy, two-conversation isolation, streaming and file operations, continuation and invalid-reference handling, model selection, inline MCP, generation/shell/MCP cancellation with host process scans, worker lifetime bounds, image input, usage, and a closing credential sweep. Its evidence is diagnostic and does not admit or deny machines in production.
+It exercises the real SDK against a real account on the machine where it runs: preflight taxonomy, two-conversation isolation, streaming and file operations, continuation and invalid-reference handling, model selection, MCP transports and filtering, instruction delivery on resume, native-memory fallback, billing, generation/shell/MCP cancellation with host process scans, worker lifetime bounds, image input, usage, and a closing credential sweep that also checks every live case the parity matrix cites was produced as a pass by that run. Its evidence is diagnostic and does not admit or deny machines in production.
 
 Without `CURSOR_API_KEY` it exits **78** and reports `verdict=blocked reason=credential_absent` — deliberately neither pass nor fail, so a blocked run can never be mistaken for green evidence. It is not part of any merge gate, because a merge gate must not depend on a credential.
 
-The observed results and the explicit limits of that evidence are recorded in [`docs/plans/command-center-59-cursor-backend/PHASE1_ACCEPTANCE_EVIDENCE.md`](./plans/command-center-59-cursor-backend/PHASE1_ACCEPTANCE_EVIDENCE.md).
+The most recent authenticated run, together with the application pass it accompanied, is recorded in [`reports/2026-09-21-cursor-parity-final-validation.md`](./reports/2026-09-21-cursor-parity-final-validation.md). The original Phase 1 run is preserved in [`plans/command-center-59-cursor-backend/PHASE1_ACCEPTANCE_EVIDENCE.md`](./plans/command-center-59-cursor-backend/PHASE1_ACCEPTANCE_EVIDENCE.md).
 
 ---
 
@@ -207,10 +302,12 @@ The observed results and the explicit limits of that evidence are recorded in [`
 | Symptom | Cause |
 | --- | --- |
 | Every Cursor turn fails immediately with a credential error | `CURSOR_API_KEY` is absent, empty, or rejected in the **server's** environment. A logged-in Cursor CLI does not count. Restart the server after setting it. |
-| Cursor turns fail with a runtime/platform error | The worker's Node is below 22.13, or `@cursor/sdk` / the derived `@cursor/sdk-${platform}-${arch}` package at 1.0.28 is missing, mismatched, or incompletely extracted. |
+| Cursor turns fail with a runtime/platform error | The worker's Node is below 22.13, or `@cursor/sdk` / the derived `@cursor/sdk-${platform}-${arch}` package at 1.0.31 is missing, mismatched, or incompletely extracted. |
 | The model selector shows a model in red | This project's `agentBackends.cursor.disabledModels` turns that model off. Pick an available one, or remove the entry from `CommandCenter.json`. |
 | A turn is refused before it starts, naming a model | Same cause, arriving from the API — the model was validated before any worker or billable turn. |
-| Cursor is greyed out in a picker | That surface needs a facet Cursor's catalog entry does not register; hover the option for the reason. |
-| The slash-command popup is empty | Expected: Cursor has no command or skill surface. |
+| A checkpoint, history zoom, or handoff action is missing on a Cursor conversation | Expected: checkpoint capture, checkpoint forks, and handoff are declared unavailable for Cursor. |
 | A script inside a Cursor conversation cannot find an API token | Expected: credential-shaped environment variables are stripped from Cursor workers. See [Cursor workers inherit no credentials](#cursor-workers-inherit-no-credentials-from-the-server). |
-| Cost shows as unavailable | Expected and permanent for Phase 1. Token counts are reported; cost is not. |
+| The conversation shows a "billed cost is unavailable" notice | The account's key cannot reach the provider's usage endpoint. Token counts are still recorded; cost stays unknown rather than estimated. |
+| The transcript header shows *Context unknown* | Expected and permanent: the SDK publishes no context-window figures. |
+| A queued attachment waited for the next turn | Expected: live steering accepts text only. |
+| A queued message is held for review after a cancel or restart | Its delivery acknowledgement was lost after dispatch; Command Center will not resend a message it may already have delivered. |
