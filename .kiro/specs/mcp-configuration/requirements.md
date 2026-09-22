@@ -1,5 +1,11 @@
 # Requirements Document
 
+## Approved amendment — 22 September 2026
+
+Alex approved the [revised managed-capabilities design](../../../docs/reports/2026-09-22-managed-capabilities-design-proposal.md) in conversation `3526f6a0-a0a8-4406-8539-e4275afdcd81`: **“Approved. Implement the design.”** This amendment carries that approval into this existing legacy specification; it does not assert a new Spec Studio approval or change the historical gate records in `spec.json`.
+
+The requirements below now distinguish requested selection from supported runtime control. Availability takes priority over selective disabling, whose purpose is context reduction rather than security. Requirement 12 governs the narrower first delivery and explicitly deferred availability work. Any older design, traceability row, or checked task promising identical control, idle-triggered application, permission-callback enforcement, or permanent strict MCP authority is superseded by this amendment and the revised clauses below.
+
 ## Project Description (Input)
 mcp config
 
@@ -7,7 +13,7 @@ mcp config
 
 Command Center (CC) users currently cannot control which MCP servers (or which individual tools on those servers) are exposed to their coding agents from inside CC. They must rely entirely on each backend's static configuration files (`.mcp.json`, Claude `settings.json`, Codex `config.toml`), which cannot be adjusted per-session or per-conversation and cannot filter tools within a server.
 
-This feature adds first-class, cross-backend MCP configuration to CC at **four cascading levels** — **global → project → session → conversation** — with mid-conversation changes applied automatically at the start of the next turn. Users can enable or disable entire servers and allow or deny individual tools within a server. The feature must work identically for Claude and Codex and must be structured so that adding a new backend requires only a backend-specific translator and a registry entry.
+This feature adds first-class, cross-backend MCP configuration to CC at **four cascading levels** — **global → project → session → conversation**. Project conversations resolve **global → project → conversation**. Preferences save immediately and supported changes apply at the next turn; creation-only changes retain explicit next-conversation timing. Server and individual-tool controls accurately reflect the active backend's supported effects and limitations through a backend-neutral interface.
 
 Creating, editing, and deleting MCP server **definitions** remains outside the scope of this feature. Users continue to manage server definitions by editing their existing backend config files. CC discovers servers from those files read-only and never writes back to them.
 
@@ -31,9 +37,9 @@ Creating, editing, and deleting MCP server **definitions** remains outside the s
 
 #### Acceptance Criteria
 1. When the user toggles a server to disabled at a given level, the Command Center shall persist an enabled-false override at that level.
-2. When the effective configuration has a server disabled, the Command Center shall exclude that server from the MCP set sent to the active backend on the next turn.
+2. When the effective configuration has a server disabled, the Command Center shall request its exclusion at the backend's supported application boundary and disclose any limitation that leaves a native copy available.
 3. While a server is disabled in the effective configuration, the Command Center shall continue to display the server in the UI in a visibly disabled state so the user can re-enable it.
-4. When the user re-enables a previously disabled server, the Command Center shall include that server in the MCP set sent to the active backend on the next turn.
+4. When the user re-enables a previously disabled server, the Command Center shall request its inclusion at the backend's supported application boundary.
 5. Where a server has explicit overrides in the effective configuration, the Command Center shall indicate both the current value and the level at which the override originates.
 
 ### Requirement 3: Auto-Promote on Toggle
@@ -48,16 +54,16 @@ Creating, editing, and deleting MCP server **definitions** remains outside the s
 
 ### Requirement 4: Per-Tool Filtering
 
-**Objective:** As a CC user, I want to allow or deny individual tools exposed by an MCP server while keeping the rest enabled, so that I can remove noisy or risky tools without disabling the whole server.
+**Objective:** As a CC user, I want to select individual tools exposed by an MCP server while keeping the rest enabled, so that I can reduce irrelevant tool context where the backend supports it.
 
 #### Acceptance Criteria
-1. The Command Center shall render each tool advertised by an enabled MCP server as an individually togglable row in that server's expanded view.
+1. The Command Center shall render each known tool in the expanded server view; permanently unsupported individual controls shall be read-only, with saved preferences visible and resettable.
 2. When the user disables an individual tool, the Command Center shall persist a disabled-tools override entry at the current view level.
 3. When the user switches a server into allowlist mode by enabling a subset of tools, the Command Center shall persist an enabled-tools override entry at the current view level.
-4. When an MCP tool is excluded by the effective configuration, the Command Center shall block the agent from invoking that tool on the next turn.
+4. When an MCP tool is excluded by the effective configuration, the Command Center shall apply the supported omission or call-blocking effect at its declared boundary and shall distinguish that effect from an unapplied preference.
 5. Where the active backend exposes native tool-level allow or deny fields, the Command Center shall use those native fields when emitting the effective MCP configuration.
-6. Where the active backend has no native tool-filtering mechanism, the Command Center shall enforce filtering at the backend's tool-invocation permission layer.
-7. If a tool denial is raised at the permission layer, the Command Center shall return the denial to the agent without terminating the turn.
+6. Where reliable individual filtering is unavailable, the Command Center shall retain useful server availability and disclose the limitation; it shall not add a permission-denial mechanism solely to reduce context.
+7. The Command Center shall advertise allowlist exclusion only with a complete known inventory or a verified native allowlist mechanism. A permission allowlist alone shall not imply that other tools are excluded.
 8. When a tool override references a tool that the live server no longer advertises, the Command Center shall surface the override as orphaned in the UI.
 
 ### Requirement 5: Dynamic Tool Discovery
@@ -77,13 +83,13 @@ Creating, editing, and deleting MCP server **definitions** remains outside the s
 **Objective:** As a CC user, I want to change MCP configuration while a conversation is mid-turn and have the change apply on the next turn without interruption, so that I can iterate without restarting sessions.
 
 #### Acceptance Criteria
-1. When the user changes MCP configuration while a conversation has no turn running, the Command Center shall apply the change before the next turn begins.
+1. When the user changes MCP configuration, the Command Center shall save it immediately and attempt supported application at turn start, rather than triggering application while idle.
 2. While a turn is running, the Command Center shall accept MCP configuration changes, persist them, and display a "pending — applies on next turn" indicator on the affected rows.
-3. When a running turn completes and pending configuration changes exist for the conversation, the Command Center shall emit the updated MCP set to the backend before the next turn begins.
+3. At the next turn boundary, the Command Center shall re-read pending configuration and request the supported update; creation-only changes shall remain pending for a new conversation.
 4. While a turn is running, the Command Center shall not abort or interrupt the turn as a result of any MCP configuration change.
 5. Where the active backend supports replacing the MCP server set on a live session, the Command Center shall apply configuration changes via that backend's native live-update path.
-6. Where the active backend lacks a live-update path, the Command Center shall apply configuration changes by reconstructing the per-turn runtime at the start of the next turn.
-7. When pending configuration changes have been applied at turn start, the Command Center shall clear the pending indicator for the affected rows.
+6. Where the active backend constructs configuration per turn, the Command Center shall use that path. It shall not recreate every runtime on a tooling change; creation-only changes retain their disclosed boundary without destroying active background work.
+7. The Command Center shall advance applied state only after successful runtime application or an exact-configuration input-acceptance receipt. An acknowledgment for an older configuration shall not clear a newer pending preference.
 
 ### Requirement 7: Unified Command Center Source Discovery
 
@@ -96,7 +102,7 @@ Creating, editing, and deleting MCP server **definitions** remains outside the s
 4. When a discovered server originates from a specific scope, the Command Center shall tag the scope (global or project) on the resolved row.
 5. If a `.mcp.json` file is missing, malformed, or unreadable, the Command Center shall surface a discovery error for that file and continue discovery of the other scope.
 6. When a stored override references a server that is no longer present in discovery, the Command Center shall mark that override as orphaned and omit it from the emitted MCP set.
-7. The Command Center shall not read, migrate, or fall back to backend-native MCP source files (e.g. `~/.claude/settings.json`, `.claude/.mcp.json`, `~/.codex/config.toml`) for discovery.
+7. CC-owned `.mcp.json` files shall remain the managed definition sources. Backend adapters may read native sources to establish native ownership, defaults, and limitations; shared discovery shall not parse provider formats or treat absence from CC's inventory as a permanent instruction to suppress native functionality.
 
 ### Requirement 8: Backend-Agnostic Abstraction
 
@@ -105,8 +111,8 @@ Creating, editing, and deleting MCP server **definitions** remains outside the s
 #### Acceptance Criteria
 1. The Command Center shall represent the effective MCP configuration in a single canonical portable shape that drives the UI and every storage layer.
 2. The Command Center shall resolve the four-level cascade, store overrides, and render the UI without branching on which backend is active.
-3. Where backend-specific emission is required, the Command Center shall translate the canonical portable shape through a dedicated backend translator at the emission boundary and nowhere else.
-4. When a new backend is added, the Command Center shall require only a new backend translator module and a new backend registry entry to support MCP emission for that backend.
+3. Backend adapters and their descriptors shall own native discovery, defaults, identifiers, SDK translation, control support, and application timing; shared resolution and UI shall consume neutral contracts.
+4. When a new backend is added, its native differences shall remain within its descriptor and adapter, without provider-specific branches in shared resolution or UI.
 5. The Command Center shall declare each backend's MCP capabilities (e.g. portable MCP at start, portable MCP between turns, native tool filtering) through the backend registry so callers can branch on capability rather than on backend identity.
 
 ### Requirement 9: CC-Injected Gateway Servers
@@ -139,3 +145,13 @@ Creating, editing, and deleting MCP server **definitions** remains outside the s
 1. When an MCP override is created, modified, or removed at a given level, the Command Center shall broadcast a corresponding MCP update SSE event scoped to that level.
 2. When a connected client receives an MCP update event, the Command Center shall invalidate the relevant cached queries so the UI reflects the new effective configuration.
 3. When an MCP update event affects a conversation whose turn is currently running, the Command Center shall queue the change for application on the next turn and surface the pending indicator on the affected rows.
+
+### Requirement 12: Bounded managed-capabilities correction
+
+1. Conversation-level MCP routes, query keys, SSE identities, persistence, runtime lookup, and update fanout shall use the addressed `ConversationTarget`. Project-conversation edits shall persist on that conversation and shall never alter a sibling's preference or runtime configuration. Global/project fanout shall include both conversation kinds.
+2. Applied, pending, and failed state shall reuse existing conversation runtime records. Deferral is not acceptance. A mixed MCP edit containing supported next-turn and creation-only changes shall wait in full for the later boundary; unsupported portions are disclosed limitations, not changes that remain pending forever.
+3. MCP acceptance shall remain separate from capability-kind acceptance. New MCP may be accepted while a resumed runtime retains its frozen skills, plugins, or agents. Missing delivery evidence shall be reported as unknown rather than off.
+4. The UI shall expose typed control support, actual timing, and adapter-authored explanations through one subtle information control supporting hover, keyboard focus, click, and tap. Delayed controls remain editable, ordinary success is quiet, and actionable unexpected failures remain visible.
+5. The first delivery shall correct scope isolation, receipt handling, descriptor ownership, turn-start scheduling, supported Claude MCP replacement and timeout translation, and accurate limitations. Native exact-tool exclusions require verification under the real launch mode before the UI advertises omission.
+6. Native/plugin MCP availability is a bounded follow-up. Before relaxing existing suppression, the adapter shall verify known-disable behavior, native/managed precedence, and one delivery owner per native identity. Explicit CC/project definitions retain precedence; unknown native servers are not permanently suppressed merely to make managed controls exhaustive. Until delivery is supported, the UI shall disclose undelivered plugin MCP and identify existing CC MCP configuration as a usable route.
+7. Generic plugin importing, automatic tool-list synchronization, a new Codex legacy-SSE bridge, plugin-hook emulation, elaborate suppression/recovery, and enterprise enforcement are deferred or outside this delivery. Hermetic task profiles and host-owned injected tools retain their existing treatment.

@@ -1,5 +1,26 @@
 # Design: MCP Configuration
 
+## Approved managed-capabilities amendment — 22 September 2026
+
+Alex's **“Approved. Implement the design.”** in conversation `3526f6a0-a0a8-4406-8539-e4275afdcd81` authorizes the [revised proposal](../../../docs/reports/2026-09-22-managed-capabilities-design-proposal.md). This section and the amended [requirements](requirements.md) govern the current delivery. The remaining sections record the earlier implementation baseline and apply only where consistent with this amendment; historical gate records are unchanged.
+
+| Earlier design promise | Approved replacement |
+|---|---|
+| Identical per-tool control and Claude permission-layer fallback | Prefer verified native omission. Unsupported controls preserve availability and report their actual effect; no new denial hook solely for context control. |
+| Claude idle application and `live-when-idle` scheduling | Save immediately, re-read at turn start, and use the adapter's supported native update. Retire idle-only scheduling once equivalent behavior is covered. Creation-only exclusions keep next-conversation timing. |
+| Staging or constructing options means applied | Only successful runtime application or an exact-hash input-acceptance receipt advances applied state. Older receipts cannot clear newer preferences. |
+| Strict CC authority as a permanent target | Keep managed `.mcp.json` definitions, but make native/plugin availability a bounded follow-up after known-disable, precedence, and duplicate-delivery verification. Temporary suppression is disclosed. |
+| Shared registry owns provider MCP facts | Backend descriptors own support, native policy, and timing; the MCP domain keeps a neutral compatibility projection. |
+| Session-shaped conversation MCP scope | Carry `ConversationTarget` through routes, queries, SSE, persistence, runtime lookup, and fanout. Project conversations use global → project → conversation and their own existing state. |
+
+Reuse the existing portable composer, state-store records, conversation lifecycle, and application-result contract. Keep requested, accepted, and observed state distinct. `deferred_to_next_turn` remains pending; a mixed MCP update that contains creation-only exclusions waits in full for that later boundary. Unsupported portions settle as identified limitations. Unexpected failure preserves the previous accepted state and the requested preference. Capability-kind receipts remain separate because a runtime may accept new MCP while retaining frozen skills.
+
+Claude uses supported `setMcpServers` replacement at turn start without closing its process or losing background work. Native `disallowedTools` omission is advertised only after exact-name verification under the real launch mode. Translate supported timeouts; unsupported optional tuning may be omitted with a diagnostic while retaining a valid server. Codex uses its existing native per-turn options and filtering. Cursor retains its bridge and existing next-turn MCP timing. No global runtime-recreation policy or new recovery loop is introduced.
+
+The existing drawer uses typed control support and timing, with one subtle info control for adapter-authored limitations (hover, focus, click, tap). Unsupported individual controls are read-only and resettable; delayed controls stay editable. Failures needing action remain visible; ordinary success and permanent limitations add no status noise. Missing delivery evidence is unknown, not off.
+
+The first delivery covers scope isolation, truthful receipts, ownership consolidation, turn-start scheduling, affected discovery/translation correctness, and limitation UI. Native/plugin MCP is a follow-up with one delivery owner per native identity and existing CC/project precedence. Generic plugin importing, automatic synchronization, Codex legacy SSE bridging, plugin emulation, and elaborate suppression/recovery remain deferred. Verification covers durable sibling isolation, both conversation kinds in fanout, A/B receipt ordering, failed/deferred/partial acceptance, and live checks only for control effects actually advertised.
+
 ## Overview
 
 This feature delivers first-class MCP server and tool configuration to Command Center users who run Claude and Codex conversations. Users can discover configured MCP servers, override server and tool availability at global, project, session, and conversation scopes, and have those changes apply to the agent's next turn through Command Center's own unified MCP configuration files.

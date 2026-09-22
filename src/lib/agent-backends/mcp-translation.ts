@@ -1,17 +1,8 @@
-import type {
-  McpServerConfig,
-  McpServerToolPolicy,
-} from "@anthropic-ai/claude-agent-sdk";
-import type {
-  PortableMcpConfig,
-  PortableMcpServerConfig,
-} from "./portable-mcp";
-import {
-  claudeMcpCapabilities,
-  codexMcpCapabilities,
-  type McpBackendCapabilities,
-  type McpToolFilteringMode,
-} from "@/lib/mcp/backend-capabilities";
+import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { PortableMcpConfig } from "./portable-mcp";
+import { claudeMcpCapabilities } from "@/lib/agent-backends/claude/mcp-capabilities";
+import { codexMcpCapabilities } from "@/lib/agent-backends/codex/mcp-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 
 export interface PortableMcpToCodexResult {
   mcpServers: Record<string, unknown>;
@@ -31,33 +22,6 @@ export interface TranslationOptions {
 
 function hasValue(value: unknown): boolean {
   return value !== undefined && value !== null;
-}
-
-/**
- * Build the Claude SDK's per-tool `tools` policy list from the portable entry's
- * enabled/disabled tool sets. Returns `undefined` when no policies apply, so the
- * caller can omit the field entirely.
- *
- * Only called when `filteringForTransport` is `"native"` — for `"permission-layer"`
- * transports (stdio) the canUseTool fallback enforces the filter at call time.
- */
-function buildNativeToolPolicies(
-  server: PortableMcpServerConfig,
-  filteringForTransport: McpToolFilteringMode,
-): McpServerToolPolicy[] | undefined {
-  if (filteringForTransport !== "native") return undefined;
-  const policies: McpServerToolPolicy[] = [];
-  if (server.enabledTools) {
-    for (const name of server.enabledTools) {
-      policies.push({ name, permission_policy: "always_allow" });
-    }
-  }
-  if (server.disabledTools) {
-    for (const name of server.disabledTools) {
-      policies.push({ name, permission_policy: "always_deny" });
-    }
-  }
-  return policies.length > 0 ? policies : undefined;
 }
 
 /**
@@ -134,9 +98,9 @@ export function translatePortableMcpToCodex(
 /**
  * Translate the portable MCP config into the shape Claude's SDK expects.
  *
- * All backend-specific decisions (server-disable mechanism, whether per-tool
- * allow/deny lists are natively emitted vs enforced by the permission-layer
- * fallback) are routed through the injected capability metadata.
+ * Tool exclusions are creation options owned by the Claude runtime. Settings
+ * the SDK cannot express are reported without dropping an otherwise usable
+ * server; fields needed to launch or authenticate still reject that server.
  */
 export function translatePortableMcpToClaude(
   config: PortableMcpConfig,
@@ -161,23 +125,18 @@ export function translatePortableMcpToClaude(
       unsupportedFields.push(`${server.id}.bearerTokenEnvVar`);
     }
 
-    const filteringForTransport =
-      capabilities.toolFiltering.byTransport[server.transport];
-    if (filteringForTransport === "unsupported") {
-      if (hasValue(server.enabledTools)) {
-        unsupportedFields.push(`${server.id}.enabledTools`);
-      }
-      if (hasValue(server.disabledTools)) {
-        unsupportedFields.push(`${server.id}.disabledTools`);
-      }
+    if (
+      capabilities.toolFiltering.byTransport[server.transport] ===
+        "unsupported" &&
+      hasValue(server.disabledTools)
+    ) {
+      rejectedFields.push(`${server.id}.disabledTools`);
     }
 
-    if (hasValue(server.startupTimeoutSec)) {
-      unsupportedFields.push(`${server.id}.startupTimeoutSec`);
-    }
-    if (hasValue(server.toolTimeoutSec)) {
-      unsupportedFields.push(`${server.id}.toolTimeoutSec`);
-    }
+    if (hasValue(server.startupTimeoutSec))
+      rejectedFields.push(`${server.id}.startupTimeoutSec`);
+    if (hasValue(server.enabledTools))
+      rejectedFields.push(`${server.id}.enabledTools`);
 
     if (unsupportedFields.length > 0) {
       rejectedServers.push(server.id);
@@ -193,17 +152,21 @@ export function translatePortableMcpToClaude(
         command: server.command,
         ...(server.args !== undefined ? { args: server.args } : {}),
         ...(server.env !== undefined ? { env: server.env } : {}),
+        ...(server.toolTimeoutSec !== undefined
+          ? { timeout: server.toolTimeoutSec * 1000 }
+          : {}),
       };
       continue;
     }
 
     if (server.transport === "streamable-http" || server.transport === "sse") {
-      const tools = buildNativeToolPolicies(server, filteringForTransport);
       servers[server.id] = {
         type: server.transport === "sse" ? "sse" : "http",
         url: server.url,
         ...(server.headers !== undefined ? { headers: server.headers } : {}),
-        ...(tools ? { tools } : {}),
+        ...(server.toolTimeoutSec !== undefined
+          ? { timeout: server.toolTimeoutSec * 1000 }
+          : {}),
       };
       continue;
     }

@@ -1,6 +1,9 @@
 import type { AgentCapabilityRuntimeApplicationState } from "@/lib/agent-capabilities/schemas";
 import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
-import { storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-target";
+import {
+  conversationTargetStoreSessionName,
+  storeSessionNameFromScopeRef,
+} from "@/lib/conversations/conversation-target";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { McpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 import type { ManagedConversationRuntime } from "./runtime-binding";
@@ -11,9 +14,11 @@ export interface ConversationPolicyState {
   readCapabilities(
     identity: ApplyConversationIdentity,
   ): Promise<AgentCapabilityRuntimeApplicationState | undefined>;
-  writeCapabilities(
+  updateCapabilities(
     identity: ApplyConversationIdentity,
-    state: AgentCapabilityRuntimeApplicationState,
+    updater: (
+      current: AgentCapabilityRuntimeApplicationState | undefined,
+    ) => AgentCapabilityRuntimeApplicationState,
   ): Promise<void>;
 }
 
@@ -42,8 +47,10 @@ export function createConversationPolicyState(input: {
       async readCapabilities() {
         return input.managed.capabilityApplicationState;
       },
-      async writeCapabilities(_identity, state) {
-        input.managed.capabilityApplicationState = state;
+      async updateCapabilities(_identity, updater) {
+        input.managed.capabilityApplicationState = updater(
+          input.managed.capabilityApplicationState,
+        );
       },
     } satisfies ConversationPolicyState;
   }
@@ -52,16 +59,16 @@ export function createConversationPolicyState(input: {
       async read(identity) {
         const row = await input.getConversation(
           identity.projectPath,
-          identity.sessionName,
-          identity.conversationId,
+          conversationTargetStoreSessionName(identity.target),
+          identity.target.conversationId,
         );
         return row ? { found: true, state: row.mcpRuntime } : { found: false };
       },
       async update(identity, label, updater) {
         await input.effects.mutateConversation(
           identity.projectPath,
-          identity.sessionName,
-          identity.conversationId,
+          conversationTargetStoreSessionName(identity.target),
+          identity.target.conversationId,
           label,
           (row) => {
             row.mcpRuntime = updater(row.mcpRuntime);
@@ -82,7 +89,7 @@ export function createConversationPolicyState(input: {
         )
       )?.agentCapabilitiesRuntime;
     },
-    async writeCapabilities(identity, state) {
+    async updateCapabilities(identity, updater) {
       await input.effects.mutateConversation(
         identity.projectPath,
         storeSessionNameFromScopeRef(
@@ -91,9 +98,9 @@ export function createConversationPolicyState(input: {
             : { scope: "session", sessionName: identity.sessionName },
         ),
         identity.conversationId,
-        "prompt.seedCapabilityRuntime",
+        "prompt.updateCapabilityRuntime",
         (row) => {
-          row.agentCapabilitiesRuntime = state;
+          row.agentCapabilitiesRuntime = updater(row.agentCapabilitiesRuntime);
         },
       );
     },

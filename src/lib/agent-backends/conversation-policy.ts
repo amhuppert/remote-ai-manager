@@ -89,17 +89,6 @@ export function resolveConfiguredAgentBackendDefaults(
   return resolveAgentBackendTurnDefaults({ config, backend });
 }
 
-/** Whether any declared capability can be applied to an idle live runtime. */
-export function backendHasIdleLiveCapability(backend: AgentBackendId): boolean {
-  return (
-    getBackendDescriptor(
-      backend,
-    ).conversation?.capabilities.capabilityKinds.some(
-      ({ applyTiming }) => applyTiming === "idle_live",
-    ) ?? false
-  );
-}
-
 /** Whether fork continuity is reconstructed from the copied transcript. */
 export function backendRequiresSyntheticForkSeed(
   backend: AgentBackendId,

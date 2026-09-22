@@ -87,3 +87,29 @@ describe("readClaudePluginNativeRecords", () => {
     ).rejects.toThrow();
   });
 });
+
+it("resolves user, project, and local plugin decisions per plugin", async () => {
+  const files: Record<string, unknown> = {
+    "/home/test/.claude/settings.json": {
+      enabledPlugins: { "a@m": true, "b@m": false },
+    },
+    "/repo/.claude/settings.json": {
+      enabledPlugins: { "a@m": false, "project@m": true },
+    },
+    "/repo/.claude/settings.local.json": { enabledPlugins: { "a@m": true } },
+  };
+  const records = await readClaudePluginNativeRecords(
+    {
+      homeDir: () => "/home/test",
+      readFile: async (file) => JSON.stringify(files[file]),
+    },
+    "/repo",
+  );
+  expect(
+    records.map(({ pluginId, nativeEnabled }) => [pluginId, nativeEnabled]),
+  ).toEqual([
+    ["a@m", true],
+    ["b@m", false],
+    ["project@m", true],
+  ]);
+});

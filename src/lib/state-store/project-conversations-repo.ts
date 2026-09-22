@@ -1,3 +1,4 @@
+import type { McpOverrides } from "@/lib/mcp/schemas";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
@@ -69,6 +70,11 @@ export interface ProjectConversationsRepo {
    * capability-override edit is configuration, not conversation activity, and
    * must not reorder the PLC. Returns whether a row matched.
    */
+  setMcpOverrides(
+    projectPath: string,
+    id: string,
+    overrides: McpOverrides | undefined,
+  ): boolean;
   setAgentCapabilityOverrides(
     projectPath: string,
     id: string,
@@ -467,6 +473,11 @@ export function createProjectConversationsRepo(
      SET open = ?
      WHERE project_path = ? AND id = ?`,
   );
+  const setMcpOverridesStmt = db.prepare(
+    `UPDATE project_conversations
+     SET mcp_overrides = ?
+     WHERE project_path = ? AND id = ?`,
+  );
   const setAgentCapabilityOverridesStmt = db.prepare(
     `UPDATE project_conversations
      SET agent_capability_overrides = ?
@@ -559,6 +570,18 @@ export function createProjectConversationsRepo(
     setOpen(projectPath, id, open) {
       return timed("setOpen", { id, projectPath }, () => {
         const info = setOpenStmt.run(open ? 1 : 0, projectPath, id);
+        const changed = info.changes > 0;
+        if (changed) cache.bump();
+        return changed;
+      });
+    },
+    setMcpOverrides(projectPath, id, overrides) {
+      return timed("setMcpOverrides", { id, projectPath }, () => {
+        const info = setMcpOverridesStmt.run(
+          jsonOrNull(overrides),
+          projectPath,
+          id,
+        );
         const changed = info.changes > 0;
         if (changed) cache.bump();
         return changed;

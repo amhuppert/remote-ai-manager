@@ -1,8 +1,9 @@
+import { claudeMcpToolExclusions } from "../claude/mcp-config";
 import { describe, it, expect } from "vitest";
 import {
   translatePortableMcpToCodex,
-  translatePortableMcpToAnthropic,
-} from "./mcp-translation";
+  translatePortableMcpToClaude,
+} from "../mcp-translation";
 import type { PortableMcpConfig } from "../portable-mcp";
 
 describe("translatePortableMcpToCodex", () => {
@@ -295,7 +296,7 @@ describe("translatePortableMcpToCodex", () => {
   });
 });
 
-describe("translatePortableMcpToAnthropic", () => {
+describe("translatePortableMcpToClaude", () => {
   it("maps stdio server to Anthropic process transport", () => {
     const config: PortableMcpConfig = {
       servers: [
@@ -310,7 +311,7 @@ describe("translatePortableMcpToAnthropic", () => {
     };
 
     const { servers, rejectedServers, rejectedFields } =
-      translatePortableMcpToAnthropic(config);
+      translatePortableMcpToClaude(config);
 
     expect(servers["stdio-mcp"]).toEqual({
       type: "stdio",
@@ -333,7 +334,7 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     };
 
-    const { servers } = translatePortableMcpToAnthropic(config);
+    const { servers } = translatePortableMcpToClaude(config);
 
     expect(servers["minimal-stdio"]).toEqual({
       type: "stdio",
@@ -354,7 +355,7 @@ describe("translatePortableMcpToAnthropic", () => {
     };
 
     const { servers, rejectedServers, rejectedFields } =
-      translatePortableMcpToAnthropic(config);
+      translatePortableMcpToClaude(config);
 
     expect(servers["http-mcp"]).toEqual({
       type: "http",
@@ -376,7 +377,7 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     };
 
-    const { servers } = translatePortableMcpToAnthropic(config);
+    const { servers } = translatePortableMcpToClaude(config);
 
     expect(servers["minimal-http"]).toEqual({
       type: "http",
@@ -401,16 +402,14 @@ describe("translatePortableMcpToAnthropic", () => {
     };
 
     const { servers, rejectedServers, rejectedFields, errorsByServer } =
-      translatePortableMcpToAnthropic(config);
+      translatePortableMcpToClaude(config);
 
     expect(servers).not.toHaveProperty("full-server");
     expect(rejectedServers).toEqual(["full-server"]);
     expect(rejectedFields).toContain("full-server.cwd");
     expect(rejectedFields).toContain("full-server.startupTimeoutSec");
-    expect(rejectedFields).toContain("full-server.toolTimeoutSec");
-    // stdio tool filtering is routed through the permission-layer fallback
-    // (per the capability registry), so these are no longer rejected here.
-    expect(rejectedFields).not.toContain("full-server.enabledTools");
+    expect(rejectedFields).not.toContain("full-server.toolTimeoutSec");
+    expect(rejectedFields).toContain("full-server.enabledTools");
     expect(rejectedFields).not.toContain("full-server.disabledTools");
     expect(errorsByServer["full-server"]).toContain("full-server.cwd");
   });
@@ -428,7 +427,7 @@ describe("translatePortableMcpToAnthropic", () => {
     };
 
     const { servers, rejectedServers, rejectedFields } =
-      translatePortableMcpToAnthropic(config);
+      translatePortableMcpToClaude(config);
 
     expect(servers).not.toHaveProperty("http-auth");
     expect(rejectedServers).toEqual(["http-auth"]);
@@ -450,14 +449,22 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     };
 
-    const { rejectedFields } = translatePortableMcpToAnthropic(config);
+    const { servers, rejectedServers, rejectedFields } =
+      translatePortableMcpToClaude(config);
 
-    expect(rejectedFields).toContain("http-full.startupTimeoutSec");
-    expect(rejectedFields).toContain("http-full.toolTimeoutSec");
-    // streamable-http tool filtering is supported natively by Claude (per the
-    // capability registry), so these fields are emitted, not rejected.
-    expect(rejectedFields).not.toContain("http-full.enabledTools");
-    expect(rejectedFields).not.toContain("http-full.disabledTools");
+    expect(servers["http-full"]).toEqual({
+      type: "http",
+      url: "https://example.com",
+      timeout: 30_000,
+    });
+    expect(rejectedServers).toEqual([]);
+    expect(rejectedFields).toEqual([
+      "http-full.startupTimeoutSec",
+      "http-full.enabledTools",
+    ]);
+    expect(claudeMcpToolExclusions(config)).toEqual([
+      "mcp__http-full__restricted",
+    ]);
   });
 
   it("rejects entire server for unrecognized transport, recording in rejectedServers", () => {
@@ -471,8 +478,7 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     } as unknown as PortableMcpConfig;
 
-    const { servers, rejectedServers } =
-      translatePortableMcpToAnthropic(config);
+    const { servers, rejectedServers } = translatePortableMcpToClaude(config);
 
     expect(servers).not.toHaveProperty("unknown-transport");
     expect(rejectedServers).toContain("unknown-transport");
@@ -498,13 +504,12 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     };
 
-    const { rejectedFields } = translatePortableMcpToAnthropic(config);
+    const { rejectedFields } = translatePortableMcpToClaude(config);
 
     expect(rejectedFields).toContain("server-a.cwd");
     expect(rejectedFields).toContain("server-b.cwd");
-    // enabledTools for stdio now routes through the permission-layer fallback.
-    expect(rejectedFields).not.toContain("server-a.enabledTools");
-    expect(rejectedFields).not.toContain("server-b.enabledTools");
+    expect(rejectedFields).toContain("server-a.enabledTools");
+    expect(rejectedFields).toContain("server-b.enabledTools");
   });
 
   it("skips servers with enabled=false", () => {
@@ -524,7 +529,7 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     };
 
-    const { servers } = translatePortableMcpToAnthropic(config);
+    const { servers } = translatePortableMcpToClaude(config);
 
     expect(servers).toHaveProperty("enabled-server");
     expect(servers).not.toHaveProperty("disabled-server");
@@ -532,14 +537,14 @@ describe("translatePortableMcpToAnthropic", () => {
 
   it("returns empty servers for empty config", () => {
     const { servers, rejectedServers, rejectedFields } =
-      translatePortableMcpToAnthropic({ servers: [] });
+      translatePortableMcpToClaude({ servers: [] });
 
     expect(servers).toEqual({});
     expect(rejectedServers).toEqual([]);
     expect(rejectedFields).toEqual([]);
   });
 
-  it("accepts enabledTools/disabledTools on stdio without emitting tool fields (canUseTool fallback handles enforcement)", () => {
+  it("retains stdio while identifying an unsupported allowlist and exact native exclusion", () => {
     const config: PortableMcpConfig = {
       servers: [
         {
@@ -553,10 +558,13 @@ describe("translatePortableMcpToAnthropic", () => {
     };
 
     const { servers, rejectedServers, rejectedFields } =
-      translatePortableMcpToAnthropic(config);
+      translatePortableMcpToClaude(config);
 
     expect(rejectedServers).toEqual([]);
-    expect(rejectedFields).toEqual([]);
+    expect(rejectedFields).toEqual(["stdio-filter.enabledTools"]);
+    expect(claudeMcpToolExclusions(config)).toEqual([
+      "mcp__stdio-filter__blocked",
+    ]);
     const entry = servers["stdio-filter"] as Record<string, unknown>;
     expect(entry).toEqual({ type: "stdio", command: "node" });
     expect(entry).not.toHaveProperty("tools");
@@ -564,7 +572,7 @@ describe("translatePortableMcpToAnthropic", () => {
     expect(entry).not.toHaveProperty("disabledTools");
   });
 
-  it("emits native tools policy for streamable-http disabledTools (always_deny)", () => {
+  it("supplies exact global exclusions for streamable-http without per-server permission policies", () => {
     const config: PortableMcpConfig = {
       servers: [
         {
@@ -577,22 +585,19 @@ describe("translatePortableMcpToAnthropic", () => {
     };
 
     const { servers, rejectedServers, rejectedFields } =
-      translatePortableMcpToAnthropic(config);
+      translatePortableMcpToClaude(config);
 
     expect(rejectedServers).toEqual([]);
     expect(rejectedFields).toEqual([]);
     const entry = servers["http-deny"] as Record<string, unknown>;
-    expect(entry).toMatchObject({
-      type: "http",
-      url: "https://example.com/mcp",
-      tools: [
-        { name: "dangerous", permission_policy: "always_deny" },
-        { name: "legacy", permission_policy: "always_deny" },
-      ],
-    });
+    expect(entry).toEqual({ type: "http", url: "https://example.com/mcp" });
+    expect(claudeMcpToolExclusions(config)).toEqual([
+      "mcp__http-deny__dangerous",
+      "mcp__http-deny__legacy",
+    ]);
   });
 
-  it("emits native tools policy for streamable-http enabledTools (always_allow, fallback denies the rest)", () => {
+  it("retains streamable-http and reports that its allowlist cannot be fully applied", () => {
     const config: PortableMcpConfig = {
       servers: [
         {
@@ -604,13 +609,13 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     };
 
-    const { servers } = translatePortableMcpToAnthropic(config);
+    const { servers, rejectedServers, rejectedFields } =
+      translatePortableMcpToClaude(config);
     const entry = servers["http-allow"] as Record<string, unknown>;
-    expect(entry).toMatchObject({
-      type: "http",
-      url: "https://example.com/mcp",
-      tools: [{ name: "search", permission_policy: "always_allow" }],
-    });
+    expect(entry).toEqual({ type: "http", url: "https://example.com/mcp" });
+    expect(rejectedServers).toEqual([]);
+    expect(rejectedFields).toEqual(["http-allow.enabledTools"]);
+    expect(claudeMcpToolExclusions(config)).toEqual([]);
   });
 
   it("omits tools field when no filter is set for streamable-http", () => {
@@ -624,8 +629,34 @@ describe("translatePortableMcpToAnthropic", () => {
       ],
     };
 
-    const { servers } = translatePortableMcpToAnthropic(config);
+    const { servers } = translatePortableMcpToClaude(config);
     const entry = servers["http-plain"] as Record<string, unknown>;
     expect(entry).not.toHaveProperty("tools");
   });
 });
+
+it.each(["stdio", "streamable-http", "sse"] as const)(
+  "retains %s with native timeout and exact exclusions while disclosing optional unsupported tuning",
+  (transport) => {
+    const config: PortableMcpConfig = {
+      servers: [
+        {
+          id: "timed",
+          ...(transport === "stdio"
+            ? { transport, command: "node" }
+            : { transport, url: "https://example.com/mcp" }),
+          toolTimeoutSec: 12,
+          startupTimeoutSec: 3,
+          disabledTools: ["remove"],
+        },
+      ],
+    };
+    const result = translatePortableMcpToClaude(config);
+    expect(result.rejectedServers).toEqual([]);
+    expect(result.errorsByServer).toEqual({});
+    expect(result.rejectedFields).toEqual(["timed.startupTimeoutSec"]);
+    expect(result.servers.timed).toMatchObject({ timeout: 12_000 });
+    expect(result.servers.timed).not.toHaveProperty("tools");
+    expect(claudeMcpToolExclusions(config)).toEqual(["mcp__timed__remove"]);
+  },
+);

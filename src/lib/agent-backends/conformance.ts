@@ -397,14 +397,11 @@ export async function checkCancellation(
 }
 
 /**
- * Per-kind apply-timing behavior. On an idle runtime every declared kind must
- * apply cleanly or defer until the declared next-conversation boundary.
- * While a turn is in flight the declared timing dictates the
- * disposition: `idle_live` must defer with `turn_active` (a live mutation
- * mid-turn would race the provider), `next_turn` must still report `applied`
- * (it only stages state the next turn ingests), and `next_conversation` may
- * report either (its effect lands at the next runtime regardless) but must
- * not be rejected.
+ * Configurable kinds honor their declared application boundary. An idle
+ * next-turn apply can acknowledge a native setter or stage until input is
+ * accepted; during an active turn it must defer. A creation-bound selection
+ * always waits for a new conversation. Read-only catalog kinds have no
+ * application promise and are excluded from this behavioral check.
  */
 export async function checkApplyTimingBehavior(
   descriptor: AgentBackendDescriptor,
@@ -418,18 +415,28 @@ export async function checkApplyTimingBehavior(
     kinds: [{ kind: kind.kind, items: [] }],
   });
 
+  const configurableKinds = facet.capabilities.capabilityKinds.filter(
+    (kind) => kind.catalog?.support?.configurable !== false,
+  );
+  if (configurableKinds.length === 0) return;
+
   const idleRuntime = await createRuntimeFor(facet, harness);
   try {
-    for (const kind of facet.capabilities.capabilityKinds) {
+    for (const kind of configurableKinds) {
       const result = await facet.runtimeConfig.apply({
         runtime: idleRuntime,
         resolved: cascadeFor(kind),
       });
-      if (
-        kind.applyTiming === "next_conversation" &&
-        result.status === "deferred"
-      ) {
-        expect(result.reason).toBe("next_conversation");
+      if (kind.applyTiming === "next_conversation") {
+        expect(result, `idle apply of kind '${kind.kind}'`).toEqual({
+          status: "deferred",
+          reason: "next_conversation",
+        });
+      } else if (kind.applyTiming === "next_turn") {
+        expect(
+          [{ status: "applied" }, { status: "deferred", reason: "next_turn" }],
+          `idle apply of next_turn kind '${kind.kind}'`,
+        ).toContainEqual(result);
       } else {
         expect(result, `idle apply of kind '${kind.kind}'`).toEqual({
           status: "applied",
@@ -451,7 +458,7 @@ export async function checkApplyTimingBehavior(
   );
   try {
     await sleep(10);
-    for (const kind of facet.capabilities.capabilityKinds) {
+    for (const kind of configurableKinds) {
       const result = await facet.runtimeConfig.apply({
         runtime: busyRuntime,
         resolved: cascadeFor(kind),
@@ -463,14 +470,17 @@ export async function checkApplyTimingBehavior(
         ).toEqual({ status: "deferred", reason: "turn_active" });
       } else if (kind.applyTiming === "next_turn") {
         expect(
-          result,
+          [
+            { status: "deferred", reason: "turn_active" },
+            { status: "deferred", reason: "next_turn" },
+          ],
           `mid-turn apply of next_turn kind '${kind.kind}'`,
-        ).toEqual({ status: "applied" });
+        ).toContainEqual(result);
       } else {
         expect(
-          result.status,
+          result,
           `mid-turn apply of next_conversation kind '${kind.kind}'`,
-        ).not.toBe("rejected");
+        ).toEqual({ status: "deferred", reason: "next_conversation" });
       }
     }
   } finally {

@@ -249,6 +249,7 @@ export async function installClaudeFaultFixture(input: {
       supportedCommands: () => real.supportedCommands(),
       supportedAgents: () => real.supportedAgents(),
       mcpServerStatus: () => real.mcpServerStatus(),
+      setMcpServers: (servers) => real.setMcpServers(servers),
       reloadPlugins: () => real.reloadPlugins(),
       applyFlagSettings: rejectArmedHookSuppression(
         real.applyFlagSettings.bind(real),

@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  type ConversationTarget,
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
+
 import { useMemo, useState } from "react";
 import { McpTransportCompatibility } from "@/components/mcp/McpTransportCompatibility";
 
@@ -22,6 +28,9 @@ import {
 import { Switch } from "@/components/ui/Switch";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import { backendLabel } from "@/lib/agent-backends/catalog";
+import { SupportIndicator } from "./SupportIndicator";
 
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
 
@@ -29,14 +38,6 @@ interface McpCapabilityPanelContainerProps {
   layerOptions: readonly AgentCapabilityLayerOption[];
   selectedScope: AgentCapabilityScope;
 }
-
-type McpSupportedAgentCapabilityScope = Exclude<
-  AgentCapabilityScope,
-  {
-    level: "conversation";
-    conversationScope: "project";
-  }
->;
 
 type McpFilter = "all" | "overridden" | "enabled" | "disabled";
 
@@ -60,47 +61,37 @@ const MCP_FILTERS: Array<{
 // including the inheritance chip, carries it.
 const DETAILS_SPAN = "min-w-0 [overflow-wrap:anywhere]";
 
-// Shared `.agent-capability-row__switch` toggle (sizes/knob applied per use).
-const SWITCH_BASE =
-  "relative flex-none cursor-pointer rounded-full border border-solid transition-all duration-150";
-const SWITCH_ON = "border-cyan bg-cyan shadow-[0_0_12px_var(--cyan-glow)]";
-const SWITCH_OFF = "border-border-default bg-bg-base";
-const SWITCH_KNOB =
-  "absolute left-px top-px rounded-full transition-[transform,background] duration-150";
-
 export function McpCapabilityPanelContainer({
   selectedScope,
 }: McpCapabilityPanelContainerProps): React.JSX.Element {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<McpFilter>("all");
   const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
-  const mcpScope = useMemo(
-    () => toMcpSupportedScope(selectedScope),
-    [selectedScope],
-  );
+  const mcpScope = selectedScope;
 
   const globalQuery = useGlobalMcpConfigQuery({
     enabled: mcpScope.level === "global",
   });
   const projectName = mcpScope.level === "global" ? "" : mcpScope.projectName;
   const sessionName =
-    mcpScope.level === "session" || mcpScope.level === "conversation"
+    mcpScope.level === "session" ||
+    (mcpScope.level === "conversation" &&
+      mcpScope.conversationScope === "session")
       ? mcpScope.sessionName
       : "";
-  const conversationId =
-    mcpScope.level === "conversation" ? mcpScope.conversationId : "";
+  const target =
+    mcpScope.level === "conversation"
+      ? toMcpConversationTarget(mcpScope)
+      : undefined;
   const projectQuery = useProjectMcpConfigQuery(projectName, {
     enabled: mcpScope.level === "project",
   });
   const sessionQuery = useSessionMcpConfigQuery(projectName, sessionName, {
     enabled: mcpScope.level === "session",
   });
-  const conversationQuery = useConversationMcpConfigQuery(
-    projectName,
-    sessionName,
-    conversationId,
-    { enabled: mcpScope.level === "conversation" },
-  );
+  const conversationQuery = useConversationMcpConfigQuery(target, {
+    enabled: mcpScope.level === "conversation",
+  });
 
   const activeQuery =
     mcpScope.level === "global"
@@ -186,12 +177,21 @@ export function McpCapabilityPanelContainer({
           {activeQuery.error?.message ?? "unknown error"}
         </div>
       ) : null}
+      {activeQuery.data?.runtime?.lastApplyError ? (
+        <div
+          role="alert"
+          className="rounded-sm border border-solid border-red-dim bg-red-glow p-sm font-mono text-[0.78rem] text-red"
+        >
+          MCP update failed: {activeQuery.data.runtime.lastApplyError}
+        </div>
+      ) : null}
 
       <div className="grid min-h-0 flex-auto auto-rows-auto content-start gap-xs overflow-y-auto px-xl pt-md pb-xl [[data-cap-drawer]_&]:px-lg [[data-cap-drawer]_&]:pt-sm [[data-cap-drawer]_&]:pb-lg">
         {visibleServers.map((server) => (
           <McpCapabilityRow
             key={server.id}
             server={server}
+            backend={activeQuery.data?.backend}
             scopeName={scopeLabel(mcpScope)}
             refreshing={actions.refreshingServerId === server.id}
             expanded={expandedServerId === server.id}
@@ -224,8 +224,9 @@ export function McpCapabilityPanelContainer({
   );
 }
 
-function McpCapabilityRow({
+export function McpCapabilityRow({
   server,
+  backend,
   scopeName,
   refreshing,
   expanded,
@@ -237,6 +238,7 @@ function McpCapabilityRow({
   onResetTool,
 }: {
   server: McpServerView;
+  backend?: AgentBackendId;
   scopeName: string;
   refreshing: boolean;
   expanded: boolean;
@@ -249,6 +251,27 @@ function McpCapabilityRow({
 }): React.JSX.Element {
   const explicitHere =
     server.status.kind === "overridden" || server.status.kind === "disabled";
+  const compatibility = server.compatibility?.backends.find(
+    (entry) => entry.backend === backend,
+  );
+  const configurableTools =
+    compatibility?.supported !== false &&
+    compatibility?.toolControl?.configurable !== false;
+  const notes = (server.compatibility?.backends ?? [])
+    .filter((entry) => backend === undefined || entry.backend === backend)
+    .flatMap((entry) =>
+      [
+        entry.reason,
+        ...(entry.notes ?? []),
+        ...(entry.toolControl?.notes ?? []),
+      ]
+        .filter((note): note is string => Boolean(note))
+        .map((note) =>
+          backend === undefined
+            ? `${backendLabel(entry.backend)}: ${note}`
+            : note,
+        ),
+    );
 
   return (
     <article
@@ -269,12 +292,13 @@ function McpCapabilityRow({
           expanded ? "rotate-90 text-cyan" : "text-text-tertiary",
         )}
         aria-expanded={expanded}
+        aria-label={`${expanded ? "Collapse" : "Expand"} ${server.name} tools`}
         onClick={onExpand}
       >
         <span aria-hidden="true">›</span>
       </button>
       <div className="grid min-w-0 gap-xs">
-        <div className="flex min-w-0 items-start justify-between gap-md max-768:flex-col">
+        <div className="grid min-w-0 gap-xs">
           <div className="grid min-w-0 gap-[3px]">
             <span
               className={cn(
@@ -296,7 +320,7 @@ function McpCapabilityRow({
             <span className={DETAILS_SPAN}>{toolSummary(server)}</span>
             {server.pending ? (
               <span className={cn(DETAILS_SPAN, "font-mono text-[0.7rem]")}>
-                pending
+                {server.pendingLabel ?? "Applies next turn"}
               </span>
             ) : null}
           </div>
@@ -304,6 +328,7 @@ function McpCapabilityRow({
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-sm">
+        <SupportIndicator label={server.name} notes={notes} />
         {explicitHere ? (
           <Button
             type="button"
@@ -319,6 +344,7 @@ function McpCapabilityRow({
           size="md"
           tone="cyan"
           checked={server.enabled}
+          disabled={compatibility?.supported === false}
           aria-label={`${server.enabled ? "Disable" : "Enable"} ${server.name}`}
           onCheckedChange={(next) => onToggle(next)}
         />
@@ -342,6 +368,7 @@ function McpCapabilityRow({
           </div>
           <McpToolRows
             serverEnabled={server.enabled}
+            configurable={configurableTools}
             discovery={server.toolDiscovery}
             onToggleTool={onToggleTool}
             onResetTool={onResetTool}
@@ -354,11 +381,13 @@ function McpCapabilityRow({
 
 function McpToolRows({
   serverEnabled,
+  configurable,
   discovery,
   onToggleTool,
   onResetTool,
 }: {
   serverEnabled: boolean;
+  configurable: boolean;
   discovery: McpServerView["toolDiscovery"];
   onToggleTool(toolName: string, enabled: boolean): void;
   onResetTool(toolName: string): void;
@@ -392,6 +421,7 @@ function McpToolRows({
           key={tool.name}
           tool={tool}
           serverEnabled={serverEnabled}
+          configurable={configurable}
           onToggle={() => onToggleTool(tool.name, !tool.enabled)}
           onReset={() => onResetTool(tool.name)}
         />
@@ -403,11 +433,13 @@ function McpToolRows({
 function McpToolRow({
   tool,
   serverEnabled,
+  configurable,
   onToggle,
   onReset,
 }: {
   tool: McpToolView;
   serverEnabled: boolean;
+  configurable: boolean;
   onToggle(): void;
   onReset(): void;
 }): React.JSX.Element {
@@ -416,7 +448,7 @@ function McpToolRow({
   const effectiveOn = serverEnabled && tool.enabled;
 
   return (
-    <div className="grid grid-cols-[12px_minmax(0,1fr)_auto_auto_auto] items-center gap-md border-x-0 border-t border-b-0 border-solid border-border-dim py-[6px] font-mono first:border-t-0">
+    <div className="grid grid-cols-[12px_minmax(0,1fr)_auto_auto_auto] items-center gap-md border-x-0 border-t border-b-0 border-solid border-border-dim py-[6px] font-mono first:border-t-0 max-768:gap-sm">
       <span
         className={cn(
           "ml-[3px] h-[5px] w-[5px] rounded-full",
@@ -427,7 +459,7 @@ function McpToolRow({
       />
       <span
         className={cn(
-          "overflow-hidden text-[0.76rem] text-ellipsis whitespace-nowrap",
+          "min-w-0 text-[0.76rem] [overflow-wrap:anywhere]",
           effectiveOn
             ? "text-text-primary"
             : "text-text-secondary line-through decoration-1",
@@ -436,35 +468,28 @@ function McpToolRow({
         {tool.name}
       </span>
       <span className="font-mono text-[0.7rem] text-text-tertiary">
-        {!serverEnabled ? "server off" : tool.enabled ? "" : "denied"}
+        {!serverEnabled ? "Server off" : tool.enabled ? "" : "Saved off"}
       </span>
       {explicitHere ? (
-        <Button type="button" variant="ghost" size="sm" touch onClick={onReset}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          touch
+          aria-label={`Reset ${tool.name}`}
+          onClick={onReset}
+        >
           Reset
         </Button>
       ) : null}
-      <button
-        type="button"
-        className={cn(
-          SWITCH_BASE,
-          "h-[14px] w-[26px] disabled:cursor-not-allowed disabled:opacity-45",
-          tool.enabled ? SWITCH_ON : SWITCH_OFF,
-        )}
+      <Switch
+        size="sm"
+        tone="cyan"
         aria-label={`${tool.enabled ? "Disable" : "Enable"} ${tool.name}`}
-        aria-pressed={tool.enabled}
-        disabled={!serverEnabled}
-        onClick={onToggle}
-      >
-        <span
-          className={cn(
-            SWITCH_KNOB,
-            "h-[10px] w-[10px]",
-            tool.enabled
-              ? "translate-x-[12px] bg-text-inverse"
-              : "bg-text-tertiary",
-          )}
-        />
-      </button>
+        checked={tool.enabled}
+        disabled={!serverEnabled || !configurable}
+        onCheckedChange={onToggle}
+      />
     </div>
   );
 }
@@ -504,18 +529,19 @@ function McpInheritanceChip({
   );
 }
 
-function toMcpSupportedScope(
-  scope: AgentCapabilityScope,
-): McpSupportedAgentCapabilityScope {
-  if (scope.level === "conversation" && scope.conversationScope === "project") {
-    return { level: "project", projectName: scope.projectName };
-  }
-  return scope;
+function toMcpConversationTarget(
+  scope: Extract<AgentCapabilityScope, { level: "conversation" }>,
+): ConversationTarget {
+  return scope.conversationScope === "project"
+    ? projectConversationTarget(scope.projectName, scope.conversationId)
+    : sessionConversationTarget(
+        scope.projectName,
+        scope.sessionName,
+        scope.conversationId,
+      );
 }
 
-function toMcpMutationScope(
-  scope: McpSupportedAgentCapabilityScope,
-): McpMutationScope {
+function toMcpMutationScope(scope: AgentCapabilityScope): McpMutationScope {
   if (scope.level === "global") return { level: "global" };
   if (scope.level === "project") {
     return { level: "project", projectName: scope.projectName };
@@ -529,13 +555,11 @@ function toMcpMutationScope(
   }
   return {
     level: "conversation",
-    projectName: scope.projectName,
-    sessionName: scope.sessionName,
-    conversationId: scope.conversationId,
+    target: toMcpConversationTarget(scope),
   };
 }
 
-function scopeLabel(scope: McpSupportedAgentCapabilityScope): string {
+function scopeLabel(scope: AgentCapabilityScope): string {
   if (scope.level === "global") return "Global";
   if (scope.level === "project") return "Project";
   if (scope.level === "session") return "Session";

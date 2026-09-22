@@ -45,6 +45,12 @@ import {
 const PROJECT_PATH = "/test/project";
 const SESSION_NAME = "test-session";
 const CONVERSATION_ID = "conv-1";
+const TARGET = {
+  scope: "session",
+  projectName: "project",
+  sessionName: SESSION_NAME,
+  conversationId: CONVERSATION_ID,
+} as const;
 
 const TEST_DIR = path.join("/tmp", "cc-mcp-runtime-apply-test-" + Date.now());
 
@@ -313,8 +319,7 @@ describe("applyAfterOverrideChange — no active runtime", () => {
 
     const result = await service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["s1"],
     });
@@ -337,7 +342,7 @@ describe("applyAfterOverrideChange — no active runtime", () => {
 });
 
 describe("applyAfterOverrideChange — Claude idle", () => {
-  it("applies now via runtime but still does NOT write lastAppliedConfigHash (turn-start path is the only writer)", async () => {
+  it("saves an idle change without applying it before the next turn", async () => {
     const { stateManager } = createTestHarness();
     seedWholeState(
       getStateDb(),
@@ -360,15 +365,13 @@ describe("applyAfterOverrideChange — Claude idle", () => {
 
     const result = await service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["s1"],
     });
 
-    expect(result.disposition).toBe("applied_now");
-    expect(runtime.applyCalls).toHaveLength(1);
-    expect(runtime.applyCalls[0]!.servers[0]!.id).toBe("s1");
+    expect(result.disposition).toBe("deferred_to_next_turn");
+    expect(runtime.applyCalls).toHaveLength(0);
 
     const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
@@ -380,7 +383,7 @@ describe("applyAfterOverrideChange — Claude idle", () => {
     );
     expect(conv.mcpRuntime?.pendingConfigHash).toBe(result.effectiveConfigHash);
     expect(conv.mcpRuntime?.pendingServerKeys).toEqual(["s1"]);
-    expect(conv.mcpRuntime?.lastApplyDisposition).toBe("applied_now");
+    expect(conv.mcpRuntime?.lastApplyDisposition).toBe("deferred_to_next_turn");
   });
 });
 
@@ -403,8 +406,7 @@ describe("applyAfterOverrideChange — Claude turn running", () => {
 
     const result = await service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["s1", "s2"],
     });
@@ -442,16 +444,13 @@ describe("applyAfterOverrideChange — Codex (always stage)", () => {
 
     const result = await service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "codex",
       changedServerKeys: ["s1"],
     });
 
     expect(result.disposition).toBe("deferred_to_next_turn");
-    // Codex applyPortableMcpConfig is the staging path — we DO call it so the
-    // runtime holds the latest portable for its next turn reconstruction.
-    expect(runtime.applyCalls).toHaveLength(1);
+    expect(runtime.applyCalls).toHaveLength(0);
 
     const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
@@ -485,8 +484,7 @@ describe("applyAfterOverrideChange — ordering fence for concurrent overrides",
     await expect(
       service.applyAfterOverrideChange({
         projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: "conv-does-not-exist",
+        target: { ...TARGET, conversationId: "conv-does-not-exist" },
         backend: "claude",
         changedServerKeys: ["s1"],
       }),
@@ -532,15 +530,13 @@ describe("applyAfterOverrideChange — ordering fence for concurrent overrides",
 
     const aPromise = service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["sA"],
     });
     const bPromise = service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["sB"],
     });
@@ -557,10 +553,7 @@ describe("applyAfterOverrideChange — ordering fence for concurrent overrides",
     await aPromise;
     await bPromise;
 
-    expect(runtime.applyCalls.map((c) => c.servers[0]!.id)).toEqual([
-      "sA",
-      "sB",
-    ]);
+    expect(runtime.applyCalls).toHaveLength(0);
 
     const persisted = readWholeStateForTest(getStateDb());
     const conv = persisted.projects[PROJECT_PATH]!.sessions[
@@ -607,15 +600,13 @@ describe("applyAfterOverrideChange — ordering fence for concurrent overrides",
 
     const overridePromise = service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["sA"],
     });
     const turnStartPromise = service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -669,8 +660,7 @@ describe("applyAfterOverrideChange — resolves before entering the write queue"
     const service = createMcpRuntimeApplyService(deps);
     await service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["s1"],
     });
@@ -706,8 +696,7 @@ describe("applyAfterOverrideChange — resolves before entering the write queue"
 
     const applyPromise = service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["s1"],
     });
@@ -724,8 +713,8 @@ describe("applyAfterOverrideChange — resolves before entering the write queue"
     expect(order.indexOf("unrelated:commit")).toBeLessThan(
       order.indexOf("resolve:end"),
     );
-    // Sanity: it still applied once resolution completed.
-    expect(runtime.applyCalls).toHaveLength(1);
+    // Resolution only stages the saved preference.
+    expect(runtime.applyCalls).toHaveLength(0);
   });
 });
 
@@ -760,8 +749,7 @@ describe("applyAtTurnStart — resolves before entering the write queue", () => 
 
     const applyPromise = service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -777,7 +765,7 @@ describe("applyAtTurnStart — resolves before entering the write queue", () => 
     expect(order.indexOf("unrelated:commit")).toBeLessThan(
       order.indexOf("resolve:end"),
     );
-    // Sanity: it still applied once resolution completed.
+    // Turn-start delivery runs after resolution completes.
     expect(runtime.applyCalls).toHaveLength(1);
   });
 });
@@ -807,8 +795,7 @@ describe("applyAtTurnStart — no-op when hash already applied", () => {
 
     const result = await service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -844,8 +831,7 @@ describe("applyAtTurnStart — no-op when hash already applied", () => {
 
     await service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -896,8 +882,7 @@ describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on succe
 
     const result = await service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -943,8 +928,7 @@ describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on succe
 
     await service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -992,8 +976,7 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
 
     const result = await service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -1044,8 +1027,7 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
 
     const result = await service.applyAtTurnStart({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
     });
 
@@ -1063,8 +1045,8 @@ describe("applyAtTurnStart — apply failure preserves lastAppliedConfigHash", (
   });
 });
 
-describe("applyAfterOverrideChange — apply failure preserves lastAppliedConfigHash", () => {
-  it("runtime throw in the after-override-change path preserves lastAppliedConfigHash and surfaces a sanitized error", async () => {
+describe("applyAfterOverrideChange — runtime failures wait for turn start", () => {
+  it("saves the preference then surfaces a sanitized failure when the turn applies it", async () => {
     const { stateManager } = createTestHarness();
     seedWholeState(
       getStateDb(),
@@ -1085,14 +1067,20 @@ describe("applyAfterOverrideChange — apply failure preserves lastAppliedConfig
       }),
     );
 
-    const result = await service.applyAfterOverrideChange({
+    const staged = await service.applyAfterOverrideChange({
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: TARGET,
       backend: "claude",
       changedServerKeys: ["s1"],
     });
 
+    expect(staged.disposition).toBe("deferred_to_next_turn");
+    expect(runtime.applyCalls).toHaveLength(0);
+    const result = await service.applyAtTurnStart({
+      projectPath: PROJECT_PATH,
+      target: TARGET,
+      backend: "claude",
+    });
     expect(result.disposition).toBe("rejected");
     expect(result.error).toBeDefined();
     expect(result.error).not.toContain("abc123");
@@ -1113,49 +1101,50 @@ describe("applyAfterOverrideChange — apply failure preserves lastAppliedConfig
   });
 });
 
-it("keeps Cursor configuration pending until a dispatch receipt, even at turn start", async () => {
-  const { stateManager } = createTestHarness();
-  const portable = portableWith([{ id: "s1" }]);
-  const hash = computeEffectiveConfigHash(portable);
-  seedWholeState(
-    getStateDb(),
-    stateWith({
-      agentBackend: "cursor",
-      mcpRuntime: {
-        lastAppliedConfigHash: "previous",
-        pendingConfigHash: hash,
-        pendingServerKeys: ["s1"],
-        lastApplyDisposition: "deferred_to_next_turn",
+it.each(["claude", "codex", "cursor"] as const)(
+  "keeps %s deferred configuration pending at turn start",
+  async (backend) => {
+    const { stateManager } = createTestHarness();
+    const portable = portableWith([{ id: "s1" }]);
+    const hash = computeEffectiveConfigHash(portable);
+    seedWholeState(
+      getStateDb(),
+      stateWith({
+        agentBackend: backend,
+        mcpRuntime: {
+          lastAppliedConfigHash: "previous",
+          pendingConfigHash: hash,
+          pendingServerKeys: ["s1"],
+          lastApplyDisposition: "deferred_to_next_turn",
+        },
+      }),
+    );
+    const runtime = makeFakeRuntime({
+      backend,
+      applyResult: {
+        disposition: "deferred_to_next_turn",
+        droppedServerIds: [],
+        droppedFields: [],
+        errors: {},
       },
-    }),
-  );
-  const runtime = makeFakeRuntime({
-    backend: "cursor",
-    mcpConfigDelivery: "input-accepted",
-    applyResult: {
-      disposition: "deferred_to_next_turn",
-      droppedServerIds: [],
-      droppedFields: [],
-      errors: {},
-    },
-  });
-  const service = createMcpRuntimeApplyService(
-    createDeps(stateManager, runtime, { portable }),
-  );
-  await service.applyAtTurnStart({
-    projectPath: PROJECT_PATH,
-    sessionName: SESSION_NAME,
-    conversationId: CONVERSATION_ID,
-    backend: "cursor",
-  });
-  const persisted = await stateManager.getConversation(
-    PROJECT_PATH,
-    SESSION_NAME,
-    CONVERSATION_ID,
-  );
-  expect(persisted?.mcpRuntime?.lastAppliedConfigHash).toBe("previous");
-  expect(persisted?.mcpRuntime?.pendingConfigHash).toBe(hash);
-});
+    });
+    const service = createMcpRuntimeApplyService(
+      createDeps(stateManager, runtime, { portable }),
+    );
+    await service.applyAtTurnStart({
+      projectPath: PROJECT_PATH,
+      target: TARGET,
+      backend,
+    });
+    const persisted = await stateManager.getConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    expect(persisted?.mcpRuntime?.lastAppliedConfigHash).toBe("previous");
+    expect(persisted?.mcpRuntime?.pendingConfigHash).toBe(hash);
+  },
+);
 
 it.each([false, true])(
   "persists a dispatch receipt while preserving a newer pending change=%s",
@@ -1178,19 +1167,17 @@ it.each([false, true])(
     await recordMcpConfigReceipt(
       createMcpRuntimeApplicationStore(stateManager),
       {
-        projectName: "project",
         projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: CONVERSATION_ID,
+        target: TARGET,
       },
       hash,
-      (event: unknown) => events.push(event),
+      { emit: (event: unknown) => events.push(event) },
     );
     expect(events).toEqual([
       expect.objectContaining({
         type: "mcp-config-updated",
         level: "conversation",
-        conversationId: CONVERSATION_ID,
+        target: TARGET,
         effectiveConfigHash: newer ? "next" : hash,
       }),
     ]);
@@ -1208,3 +1195,34 @@ it.each([false, true])(
     );
   },
 );
+
+it("retains partial MCP initialization errors after input acceptance", async () => {
+  const { stateManager } = createTestHarness();
+  seedWholeState(
+    getStateDb(),
+    stateWith({
+      mcpRuntime: {
+        pendingConfigHash: "requested",
+        pendingServerKeys: ["unavailable"],
+        lastApplyDisposition: "deferred_to_next_turn",
+      },
+    }),
+  );
+  await recordMcpConfigReceipt(
+    createMcpRuntimeApplicationStore(stateManager),
+    { projectPath: PROJECT_PATH, target: TARGET },
+    "partial",
+    { error: "MCP servers could not be configured: unavailable", emit() {} },
+  );
+  const saved = await stateManager.getConversation(
+    PROJECT_PATH,
+    SESSION_NAME,
+    CONVERSATION_ID,
+  );
+  expect(saved?.mcpRuntime).toMatchObject({
+    lastAppliedConfigHash: "partial",
+    pendingConfigHash: "requested",
+    lastApplyDisposition: "rejected",
+    lastApplyError: "MCP servers could not be configured: unavailable",
+  });
+});

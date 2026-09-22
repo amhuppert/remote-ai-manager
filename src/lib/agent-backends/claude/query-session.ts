@@ -135,6 +135,9 @@ export interface ClaudeSdkQueryPort extends AsyncIterable<SDKMessage> {
   supportedCommands(): ReturnType<Query["supportedCommands"]>;
   supportedAgents(): ReturnType<Query["supportedAgents"]>;
   mcpServerStatus(): ReturnType<Query["mcpServerStatus"]>;
+  setMcpServers(
+    servers: Parameters<Query["setMcpServers"]>[0],
+  ): ReturnType<Query["setMcpServers"]>;
   applyFlagSettings(
     settings: Parameters<Query["applyFlagSettings"]>[0],
   ): Promise<void>;

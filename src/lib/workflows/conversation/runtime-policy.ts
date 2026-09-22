@@ -41,7 +41,6 @@ export function createConversationRuntimePolicy(
       return {
         portable: await deps.composePortableMcp({
           ...identity,
-          projectName: input.projectName,
           worktreePath: input.worktreePath,
           transientPortableMcp: input.getTooling()?.portableMcp,
         }),
@@ -52,11 +51,9 @@ export function createConversationRuntimePolicy(
     async listAffectedConversations() {
       return [];
     },
-    isTurnActive: () => input.getRuntime()?.isTurnActive === true,
     composeForConversation: deps.composeCapabilities,
     readRuntimeState: input.state.readCapabilities,
-    writeRuntimeState: (identity) =>
-      input.state.writeCapabilities(identity, identity.state),
+    updateRuntimeState: input.state.updateCapabilities,
     applyRuntimeConfig: deps.applyRuntimeConfig,
   });
   const composeSeed = createCapabilityConfigComposer(deps.composeCapabilities);
@@ -65,7 +62,6 @@ export function createConversationRuntimePolicy(
     composePortableMcpForConversation: deps.composePortableMcp,
     applyMcpAtTurnStart: mcp.applyAtTurnStart,
     applyCapabilityAtTurnStart: capabilities.applyAtTurnStart,
-    applyCapabilityWhenIdle: capabilities.applyWhenConversationBecomesIdle,
     composeCapabilityConfigForConversation: composeSeed,
     async composeCapabilityConfigForProjectConversation(
       identity,

@@ -1,3 +1,7 @@
+import {
+  type ConversationTarget,
+  conversationTargetStoreSessionName,
+} from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
 import type { McpOverrideOperation, McpOverrides } from "@/lib/mcp/schemas";
 import { getStateStore, type StateStore } from "@/lib/state-store";
@@ -29,8 +33,7 @@ export interface ScopeOverrideStore {
   ): Promise<ScopeOverridePatchResult>;
   patchConversation(
     projectPath: string,
-    sessionName: string,
-    conversationId: string,
+    target: ConversationTarget,
     operations: readonly McpOverrideOperation[],
   ): Promise<ScopeOverridePatchResult>;
 }
@@ -87,21 +90,20 @@ export function createScopeOverrideStore(
 
   async function patchConversation(
     projectPath: string,
-    sessionName: string,
-    conversationId: string,
+    target: ConversationTarget,
     operations: readonly McpOverrideOperation[],
   ): Promise<ScopeOverridePatchResult> {
     return stateManager.mutateConversation(
       projectPath,
-      sessionName,
-      conversationId,
+      conversationTargetStoreSessionName(target),
+      target.conversationId,
       "mcp.patchConversation",
       (conversation) => {
         const result = patchAndPrune(conversation.mcpOverrides, operations);
         writeOrDelete(conversation, "mcpOverrides", result.overrides);
         logPatch(
           "conversation",
-          `${projectPath}/${sessionName}/${conversationId}`,
+          `${projectPath}/${target.scope}/${target.conversationId}`,
           result.changedServerKeys,
         );
         return result;

@@ -1,3 +1,34 @@
+import {
+  agentCapabilityCascadeKindSchema,
+  type AgentCapabilityCascadeKind,
+  agentCapabilityDiscoverySupportSchema,
+} from "@/lib/agent-backends/capability-catalog";
+export {
+  AGENT_CAPABILITY_CASCADE_KINDS,
+  agentCapabilityCascadeKindSchema,
+  type AgentCapabilityCascadeKind,
+  type AgentCapabilityDiscoverySupport,
+} from "@/lib/agent-backends/capability-catalog";
+import {
+  agentCapabilityCapabilityKindSchema,
+  agentCapabilityRuntimeVisibilitySchema,
+  agentCapabilitySourceRefSchema,
+  agentCapabilityNativeDefaultSchema,
+  agentCapabilityDiscoveredItemSchema,
+  agentCapabilityControlSupportSchema,
+} from "@/lib/agent-backends/capability-catalog";
+export {
+  agentCapabilityCapabilityKindSchema,
+  type AgentCapabilityKind,
+  agentCapabilityRuntimeVisibilitySchema,
+  type AgentCapabilityRuntimeVisibility,
+  agentCapabilitySourceRefSchema,
+  type AgentCapabilitySourceRef,
+  agentCapabilityNativeDefaultSchema,
+  type AgentCapabilityNativeDefault,
+  agentCapabilityDiscoveredItemSchema,
+  type AgentCapabilityDiscoveredItem,
+} from "@/lib/agent-backends/capability-catalog";
 import { z } from "zod";
 import { commandItemSchema } from "@/lib/commands/schemas";
 
@@ -17,24 +48,6 @@ import {
 // These schemas are the single source of truth shared by override stores,
 // resolvers, API routes, and UI hooks.
 // ============================================================
-
-export const AGENT_CAPABILITY_CASCADE_KINDS = [
-  "claude-skills",
-  "claude-plugins",
-  "claude-agents",
-  "codex-skills",
-  "codex-plugins",
-  "cursor-skills",
-  "cursor-plugins",
-  "cursor-agents",
-] as const;
-
-export const agentCapabilityCascadeKindSchema = z.enum(
-  AGENT_CAPABILITY_CASCADE_KINDS,
-);
-export type AgentCapabilityCascadeKind = z.infer<
-  typeof agentCapabilityCascadeKindSchema
->;
 
 // ============================================================
 // In-memory cascade taxonomy: { backend, kind }
@@ -194,15 +207,6 @@ function validateAgentCapabilityScopeIdentity(
   }
 }
 
-const agentCapabilityCapabilityKindSchema = z.enum([
-  "skill",
-  "plugin",
-  "agent",
-]);
-export type AgentCapabilityKind = z.infer<
-  typeof agentCapabilityCapabilityKindSchema
->;
-
 export const agentCapabilityCascadeLayerSchema = z.enum([
   "global",
   "project",
@@ -245,29 +249,11 @@ export type AgentCapabilityApplyStatus = z.infer<
   typeof agentCapabilityApplyStatusSchema
 >;
 
-export const agentCapabilityRuntimeVisibilitySchema = z.enum([
-  "runtime-visible",
-  "source-only",
-  "unavailable",
-  "stale",
-]);
-export type AgentCapabilityRuntimeVisibility = z.infer<
-  typeof agentCapabilityRuntimeVisibilitySchema
->;
-
 const agentCapabilityApplySemanticsSchema = z.enum([
   "idle-live-apply",
   "next-turn",
   "next-conversation",
 ]);
-
-const agentCapabilityDiscoverySupportSchema = z.enum([
-  "available",
-  "unavailable-pending-verification",
-]);
-export type AgentCapabilityDiscoverySupport = z.infer<
-  typeof agentCapabilityDiscoverySupportSchema
->;
 
 const agentCapabilityMetadataRuntimeVisibilitySchema = z.enum([
   "sdk-runtime",
@@ -367,43 +353,6 @@ export type AgentCapabilityScopeContext = z.infer<
   typeof agentCapabilityScopeContextSchema
 >;
 
-export const agentCapabilitySourceRefSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("global-file"),
-    path: z.string(),
-  }),
-  z.object({
-    kind: z.literal("project-file"),
-    path: z.string(),
-  }),
-  z.object({
-    kind: z.literal("user-file"),
-    path: z.string(),
-  }),
-  z.object({
-    kind: z.literal("system-file"),
-    path: z.string(),
-  }),
-  z.object({
-    kind: z.literal("plugin"),
-    pluginId: z.string(),
-  }),
-  z.object({
-    kind: z.literal("sdk-runtime"),
-  }),
-]);
-export type AgentCapabilitySourceRef = z.infer<
-  typeof agentCapabilitySourceRefSchema
->;
-
-const agentCapabilityNativeDefaultSchema = z.object({
-  enabled: z.boolean(),
-  mode: z.string().optional(),
-});
-export type AgentCapabilityNativeDefault = z.infer<
-  typeof agentCapabilityNativeDefaultSchema
->;
-
 const agentCapabilityEffectiveStateSchema = z.object({
   enabled: z.boolean(),
   originLayer: agentCapabilityOriginLayerSchema,
@@ -453,19 +402,6 @@ export type AgentCapabilityDiagnostic = z.infer<
   typeof agentCapabilityDiagnosticSchema
 >;
 
-export const agentCapabilityDiscoveredItemSchema = z.object({
-  itemId: z.string(),
-  displayName: z.string(),
-  capabilityKind: agentCapabilityCapabilityKindSchema,
-  source: agentCapabilitySourceRefSchema,
-  nativeDefault: agentCapabilityNativeDefaultSchema,
-  owningPluginId: z.string().optional(),
-  runtimeVisibility: agentCapabilityRuntimeVisibilitySchema,
-});
-export type AgentCapabilityDiscoveredItem = z.infer<
-  typeof agentCapabilityDiscoveredItemSchema
->;
-
 export const agentCapabilityViewRowSchema = z
   .object({
     itemId: z.string(),
@@ -480,6 +416,7 @@ export const agentCapabilityViewRowSchema = z
     inheritedEffectiveState: agentCapabilityEffectiveStateSchema.optional(),
     effectiveState: agentCapabilityEffectiveStateSchema,
     appliedEnabled: z.boolean().optional(),
+    support: agentCapabilityControlSupportSchema.optional(),
     originLayer: agentCapabilityOriginLayerSchema,
     conversationScope: agentCapabilityConversationScopeSchema.optional(),
     owningPluginId: z.string().optional(),
@@ -510,6 +447,7 @@ export const agentCapabilityMetadataSchema = z
     discoverySupport: agentCapabilityDiscoverySupportSchema,
     runtimeVisibility: agentCapabilityMetadataRuntimeVisibilitySchema,
     compositionSupport: agentCapabilityCompositionSupportSchema,
+    support: agentCapabilityControlSupportSchema.optional(),
   })
   .strict()
   .superRefine(requireAgentCapabilityCascadeBackendOwnership);

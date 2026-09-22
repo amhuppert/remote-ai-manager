@@ -781,7 +781,7 @@ export const SEAMS: readonly SeamDefinition[] = [
     // Claude and Codex, and the UI reads default partners from the policy.
     // Catalog-driven model controls consume neutral catalog metadata; this
     // ceiling covers the remaining product-policy identity sites below.
-    reviewedCeiling: 5,
+    reviewedCeiling: 2,
     unit: 'backend ===/!== "claude"|"codex" comparisons + case labels',
     corpus:
       "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Permanent-survivor floor (ceiling > 0, not expected to reach 0): per P3 the surviving branches are sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the collaboration pair policy (`backend-pair.ts`/`types.ts` — participation, default partners and lane dispatch are named product policy over the participant enum, not derivation from registration), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",
@@ -820,7 +820,7 @@ export const SEAMS: readonly SeamDefinition[] = [
   {
     id: "backend-deep-imports",
     title: "Deep adapter/SDK imports outside the backend seam",
-    reviewedCeiling: 1,
+    reviewedCeiling: 0,
     unit: "imports of agent-backends/{claude,codex}/** or provider SDKs",
     corpus:
       "src/**/*.{ts,tsx} INCLUDING tests and stories (the import boundary applies everywhere — adapter tests live inside the seam); excludes src/lib/agent-backends/. Shrinking-allowlist survivor floor (ceiling > 0 while any deep importer remains outside the seam; target 0): per P4 provider SDK types and adapter-subdir knowledge must point only downward into an adapter, so every deep import above the seam is debt to relocate behind agent-backends/. The Phase 1 exit criterion permits only an EXPLICIT SHRINKING ALLOWLIST of such imports (§Phase 1 exit / plan line 447): each surviving site is a not-yet-migrated caller whose provider knowledge belongs in a backend facet. Deletion condition (per site): the import drops to 0 when the caller moves its provider-specific work behind the neutral backend seam (descriptor/adapter operation or continuity adapter, Phase 1.3/1.6) so it imports only the seam's neutral surface. The floor reaches 0 when the last such caller is migrated; until then the reviewed count is the explicit shrinking allowlist, ratcheted down with each migration. Stays in the corpus (not a file-excluding allowlist) so any NEW deep adapter/SDK import outside the seam still fails the ratchet.",

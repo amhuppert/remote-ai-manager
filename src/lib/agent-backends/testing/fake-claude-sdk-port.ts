@@ -253,6 +253,9 @@ export function createFakeClaudeSdkController(
         return [];
       },
       async applyFlagSettings() {},
+      async setMcpServers() {
+        return { added: [], removed: [], errors: {} };
+      },
       async reloadPlugins() {},
       [Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
         return {

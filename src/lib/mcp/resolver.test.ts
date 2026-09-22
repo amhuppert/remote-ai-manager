@@ -925,7 +925,7 @@ it("uses authored enable and tool policy defaults in the view", () => {
   ]);
 });
 
-it("includes backend transport compatibility in server views", () => {
+it("includes backend transport compatibility and control limitations in server views", () => {
   const view = resolveView({
     level: "global",
     overrides: chain(),
@@ -944,8 +944,24 @@ it("includes backend transport compatibility in server views", () => {
   });
   expect(view.servers[0]?.compatibility?.backends).toEqual(
     expect.arrayContaining([
-      { backend: "cursor", supported: true },
-      expect.objectContaining({ backend: "codex", supported: false }),
+      expect.objectContaining({
+        backend: "cursor",
+        supported: true,
+        notes: expect.arrayContaining([expect.any(String)]),
+      }),
+      expect.objectContaining({
+        backend: "claude",
+        supported: true,
+        toolControl: expect.objectContaining({
+          configurable: true,
+          applyTiming: "next-conversation",
+        }),
+      }),
+      expect.objectContaining({
+        backend: "codex",
+        supported: false,
+        reason: expect.any(String),
+      }),
     ]),
   );
 });

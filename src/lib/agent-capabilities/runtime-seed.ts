@@ -3,7 +3,6 @@ import { encodeCascadeKind } from "./schemas";
 import { applyTimingForCascade } from "./metadata";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
-  AgentCapabilityCascadeKind,
   AgentCapabilityViewResponse,
   AgentCapabilityDiagnostic,
   AgentCapabilityRuntimeApplicationState,
@@ -22,11 +21,9 @@ export interface ComposedCapabilitySeed {
   capabilities: ResolvedCapabilityCascade;
   diagnostics?: readonly AgentCapabilityDiagnostic[];
   /**
-   * Initial capability runtime apply state for the new conversation. Kinds
-   * delivered at session creation are recorded as `applied`; next-turn kinds
-   * stay `staged-next-turn` until the turn-start apply promotes them. The
-   * actor must persist this state via `mutateConversation` so the apply
-   * service can compare subsequent mutations against this baseline.
+   * Initial intent stays pending until the backend acknowledges delivery.
+   * Persisting this baseline lets later saves and acceptance receipts retain
+   * independent state for each capability kind.
    */
   runtimeState: AgentCapabilityRuntimeApplicationState;
 }
@@ -35,35 +32,6 @@ export interface ComposedProjectConversationDiagnosticsSeed {
   kind: "diagnostics-only";
   backend: AgentBackendId;
   diagnostics: readonly AgentCapabilityDiagnostic[];
-}
-
-/**
- * Promote composer-seeded cascades whose payload the backend receives at
- * session creation from `staged-next-turn` to `applied`. Next-turn kinds
- * (per the descriptor's declared apply timing) keep the staged state until
- * the turn-start apply service pushes the config into the runtime and
- * records the promotion.
- */
-export function promoteSeededRuntimeState(
-  state: AgentCapabilityRuntimeApplicationState,
-): AgentCapabilityRuntimeApplicationState {
-  const out: AgentCapabilityRuntimeApplicationState = { cascades: {} };
-  for (const [rawKind, cascade] of Object.entries(state.cascades)) {
-    if (!cascade) continue;
-    const cascadeKind = rawKind as AgentCapabilityCascadeKind;
-    if (
-      cascade.pendingHash !== undefined &&
-      applyTimingForCascade(cascadeKind) !== "next_turn"
-    ) {
-      out.cascades[cascadeKind] = {
-        appliedHash: cascade.pendingHash,
-        lastApplyStatus: "applied",
-      };
-    } else {
-      out.cascades[cascadeKind] = cascade;
-    }
-  }
-  return out;
 }
 
 export type ComposedProjectConversationCapabilitySeed =
@@ -107,7 +75,7 @@ export function createCapabilityConfigComposer(
     return {
       capabilities: result.capabilities,
       diagnostics: result.diagnostics,
-      runtimeState: promoteSeededRuntimeState(result.runtimeState),
+      runtimeState: result.runtimeState,
     };
   };
 }
@@ -132,9 +100,13 @@ export function reconcileDeliveredCapabilityState(
     result.cascades[cascadeKind] =
       pendingHash && pendingHash !== appliedHash
         ? {
+            ...desired,
             appliedHash,
             pendingHash,
-            lastApplyStatus: "deferred-next-conversation",
+            lastApplyStatus:
+              applyTimingForCascade(cascadeKind) === "next_conversation"
+                ? "deferred-next-conversation"
+                : "staged-next-turn",
           }
         : { appliedHash, lastApplyStatus: "applied" };
   }
@@ -151,14 +123,15 @@ export function applyDeliveredCapabilityView(
       encodeCascadeKind({ backend: delivered.backend, kind: k.kind }) ===
       view.cascadeKind,
   );
-  const enabled = new Set(
-    kind?.items.filter((item) => item.enabled).map((item) => item.itemId),
+  if (!kind) return view;
+  const deliveredItems = new Map(
+    kind.items.map((item) => [item.itemId, item.enabled]),
   );
   return {
     ...view,
     items: view.items.map((item) => ({
       ...item,
-      appliedEnabled: enabled.has(item.itemId),
+      appliedEnabled: deliveredItems.get(item.itemId),
     })),
   };
 }

@@ -49,7 +49,7 @@ const claudeConversation = (
   conversationId: "conv-1",
   worktreePath: "/repo/.worktrees/session-a",
   backend: "claude",
-  isTurnActive: false,
+
   ...overrides,
 });
 
@@ -63,7 +63,7 @@ const projectConversation = (
     conversationId: "plc-1",
     worktreePath: "/repo",
     backend: "claude",
-    isTurnActive: false,
+
     ...overrides,
   }) as AffectedConversation;
 
@@ -120,7 +120,7 @@ const buildDeps = (opts: {
   }) => Promise<RuntimeConfigApplyResult>;
 }): ApplyServiceDeps => ({
   listAffectedConversations: vi.fn(async () => opts.affected ?? []),
-  isTurnActive: () => false,
+
   composeForConversation:
     opts.composeForConversation ??
     (async () =>
@@ -130,7 +130,7 @@ const buildDeps = (opts: {
         },
       })),
   readRuntimeState: opts.readRuntimeState ?? (async () => undefined),
-  writeRuntimeState: vi.fn(async () => undefined),
+  updateRuntimeState: vi.fn(async () => undefined),
   applyRuntimeConfig: opts.applyRuntimeConfig,
 });
 
@@ -168,7 +168,7 @@ describe("capability runtime apply logging", () => {
       }),
     );
 
-    await service.applyWhenConversationBecomesIdle({
+    await service.applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -180,17 +180,17 @@ describe("capability runtime apply logging", () => {
     expect(logger.info).toHaveBeenCalledWith(
       "apply.cascade_planned",
       expect.objectContaining({
-        trigger: "idle-drain",
+        trigger: "turn-start",
         cascadeKind: "claude-skills",
         conversationId: "conv-1",
         previousStatus: "rejected",
-        plannedDisposition: "try-live-apply",
+        plannedDisposition: "try-turn-start-apply",
       }),
     );
     expect(logger.info).toHaveBeenCalledWith(
       "apply.retry_recovered",
       expect.objectContaining({
-        trigger: "idle-drain",
+        trigger: "turn-start",
         cascadeKind: "claude-skills",
         conversationId: "conv-1",
         attemptedHash: stagedHash,
@@ -199,7 +199,7 @@ describe("capability runtime apply logging", () => {
     expect(logger.info).toHaveBeenCalledWith(
       "apply.cascade_outcome",
       expect.objectContaining({
-        trigger: "idle-drain",
+        trigger: "turn-start",
         cascadeKind: "claude-skills",
         disposition: "applied",
       }),
@@ -210,6 +210,12 @@ describe("capability runtime apply logging", () => {
     const service = createCapabilityRuntimeApplyService(
       buildDeps({
         affected: [claudeConversation()],
+        readRuntimeState: async () =>
+          buildClaudeComposition({
+            cascades: {
+              "claude-skills": { rows: [{ itemId: "alpha", enabled: false }] },
+            },
+          }).runtimeState,
         applyRuntimeConfig: vi.fn(async () => {
           throw new Error(
             "reload failed in /home/alex/projects/repo with token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
@@ -218,23 +224,17 @@ describe("capability runtime apply logging", () => {
       }),
     );
 
-    const result = await service.applyAfterOverrideChange({
-      scope: { level: "global" },
-      cascadeKind: "claude-skills",
-      changedItemIds: ["alpha"],
-      operationId: "cap-op-apply",
-    });
+    const result = await service.applyAtTurnStart(claudeConversation());
 
-    const message = result.conversations[0]?.diagnostics[0]?.message ?? "";
+    const message = result.diagnostics[0]?.message ?? "";
     expect(message).toContain("~/projects/repo");
     expect(message).toContain("<redacted>");
     expect(message).not.toContain("/home/alex");
     expect(message).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN");
     expect(logger.error).toHaveBeenCalledWith(
-      "apply.failed",
+      "apply.turn_start_failed",
       expect.objectContaining({
         error: expect.not.stringContaining("/home/alex"),
-        operationId: "cap-op-apply",
       }),
     );
   });
@@ -275,7 +275,7 @@ describe("capability runtime apply logging", () => {
         cascadeKind: "claude-skills",
         conversationScope: "project",
         conversationId: "plc-1",
-        disposition: "applied",
+        disposition: "staged-next-turn",
       }),
     );
   });

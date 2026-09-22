@@ -23,15 +23,6 @@ export interface ExternalTurnHandlerDeps {
   ): Promise<void>;
   /** Clear delivery state when this external turn compacted backend context. */
   onBackendCompaction?(): Promise<void>;
-  /**
-   * Drain any `staged-idle` capability cascades when an external/background
-   * turn finishes (running → idle). Optional: the actor wires it only for
-   * backends declaring an `idle_live` capability kind. The caller-initiated
-   * path drains via the conversation actor directly; external turns never run
-   * through that actor and need their own hook on the running-to-idle
-   * transition.
-   */
-  applyCapabilityWhenIdle?(): Promise<unknown>;
 }
 
 /**
@@ -77,7 +68,6 @@ export function createExternalTurnHandler(
   let activity = 0;
   let turnSettled: { promise: Promise<void>; resolve: () => void } | null =
     null;
-  const effects = new Set<Promise<unknown>>();
 
   function settleTurn(): void {
     activeTurn = false;
@@ -162,19 +152,6 @@ export function createExternalTurnHandler(
         enqueue(
           () => {
             runtime.sendToMachine({ type: "EXTERNAL_TURN_COMPLETED", result });
-            // Fire-and-forget from the chain: the drain must start only after
-            // the turn's appends settled and completion was sent, but a slow
-            // capability apply must not delay the next turn's frames.
-            if (deps.applyCapabilityWhenIdle) {
-              const effect = deps.applyCapabilityWhenIdle().catch((err) => {
-                logger.warn("external_turn.capability_idle_drain_failed", {
-                  conversationId: identity.conversationId,
-                  error: getErrorMessage(err),
-                });
-              });
-              effects.add(effect);
-              void effect.finally(() => effects.delete(effect));
-            }
           },
           "external_turn.machine_send_failed",
           { machineEvent: "EXTERNAL_TURN_COMPLETED" },
@@ -188,7 +165,6 @@ export function createExternalTurnHandler(
   };
   const drain = async () => {
     await chain;
-    await Promise.allSettled(effects);
   };
   const handler = handle as ExternalTurnHandler;
   // Defined as accessors: `Object.assign` would copy the values once.

@@ -48,6 +48,7 @@ export interface McpToolView {
   status: McpInheritanceStatus;
   /** Pending a mid-turn apply — show amber dot. */
   pending?: boolean;
+  pendingLabel?: string;
 }
 
 export interface McpServerView {
@@ -64,6 +65,7 @@ export interface McpServerView {
   status: McpInheritanceStatus;
   /** Pending a mid-turn apply — show amber dot. */
   pending?: boolean;
+  pendingLabel?: string;
   /** Optional runtime diagnostic (e.g. connection error). */
   runtimeError?: string;
   compatibility?: McpServerCompatibilityView;

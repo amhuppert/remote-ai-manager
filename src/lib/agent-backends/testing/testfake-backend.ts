@@ -64,7 +64,7 @@ import {
 } from "../errors";
 import type { AgentTranscriptEntry } from "../transcript";
 import type { McpApplyResult, PortableMcpConfig } from "../portable-mcp";
-import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 
 export const testWidenedAgentBackendSchema = z.enum([
   "claude",

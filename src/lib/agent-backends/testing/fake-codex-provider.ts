@@ -210,6 +210,7 @@ export function createFakeCodexProvider(
     getServerUrl: () => null,
     getApiToken: () => null,
     getConfigDir: () => "/conformance/config",
+    mergeNativeSkillSelectors: async (config) => config,
     ensureManagedSkillsBridge: async () =>
       ({ status: "skipped", reason: "no_bundle" }) as const,
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),

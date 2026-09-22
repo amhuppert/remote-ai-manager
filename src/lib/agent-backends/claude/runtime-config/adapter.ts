@@ -21,6 +21,7 @@ import { claudeConversationCapabilities } from "../descriptor";
 import { readClaudePluginNativeRecords } from "./plugin-native-records";
 import {
   translateClaudeRuntimeCapabilities,
+  claudeDeliveredCapabilities,
   type ClaudeRuntimeCapabilityConfig,
 } from "./translator";
 
@@ -42,8 +43,10 @@ export type ClaudeCapabilityApplyResult =
  * so provider config types stay below the seam.
  */
 export interface ClaudeCapabilityApplyTarget {
+  readonly capabilityWorkingDirectory: string;
   applyCapabilityConfig(
     config: ClaudeRuntimeCapabilityConfig,
+    resolved?: ResolvedCapabilityCascade,
   ): Promise<ClaudeCapabilityApplyResult>;
 }
 
@@ -58,12 +61,15 @@ function isClaudeCapabilityApplyTarget(
 }
 
 export interface ClaudeRuntimeConfigAdapterDeps {
-  readNativePluginRecords(): ReturnType<typeof readClaudePluginNativeRecords>;
+  readNativePluginRecords(
+    worktreePath: string,
+  ): ReturnType<typeof readClaudePluginNativeRecords>;
 }
 
 export function createClaudeRuntimeConfigAdapter(
   deps: ClaudeRuntimeConfigAdapterDeps = {
-    readNativePluginRecords: () => readClaudePluginNativeRecords(),
+    readNativePluginRecords: (worktreePath) =>
+      readClaudePluginNativeRecords(undefined, worktreePath),
   },
 ): BackendRuntimeConfigAdapter {
   const backend: AgentBackendId = "claude";
@@ -95,7 +101,9 @@ export function createClaudeRuntimeConfigAdapter(
 
       let nativePluginRecords;
       try {
-        nativePluginRecords = await deps.readNativePluginRecords();
+        nativePluginRecords = await deps.readNativePluginRecords(
+          input.runtime.capabilityWorkingDirectory,
+        );
       } catch (err) {
         const error = getErrorMessage(err);
         logger.error("apply.native_plugin_records_unreadable", { error });
@@ -119,7 +127,10 @@ export function createClaudeRuntimeConfigAdapter(
 
       let result: ClaudeCapabilityApplyResult;
       try {
-        result = await input.runtime.applyCapabilityConfig(translation.config);
+        result = await input.runtime.applyCapabilityConfig(
+          translation.config,
+          claudeDeliveredCapabilities(input.resolved),
+        );
       } catch (err) {
         return { status: "rejected", error: getErrorMessage(err) };
       }
@@ -129,7 +140,6 @@ export function createClaudeRuntimeConfigAdapter(
         pluginCount: Object.keys(translation.config.enabledPlugins).length,
         skillOverrideCount: Object.keys(translation.config.skillOverrides)
           .length,
-        disabledAgentCount: translation.config.disabledAgentNames.length,
       });
 
       if (result.status === "skipped-turn-active") {

@@ -6,6 +6,7 @@ import type {
   AgentCapabilityDiscoveredItem,
   AgentCapabilityInventory,
   AgentCapabilityOverrides,
+  AgentCapabilityRuntimeApplicationState,
   AgentCapabilityViewResponse,
 } from "./schemas";
 
@@ -89,7 +90,7 @@ describe("agent capability end-to-end acceptance", () => {
     let globalOverrides = emptyOverrides();
     const events: AgentCapabilitiesUpdatedEvent[] = [];
     const writes: AgentCapabilityOverrides[] = [];
-    const runtimeWrites: unknown[] = [];
+    const runtimeWrites: AgentCapabilityRuntimeApplicationState[] = [];
     const applyClaudeRuntime = vi.fn<
       (input: {
         conversation: ApplyConversationIdentity;
@@ -145,12 +146,11 @@ describe("agent capability end-to-end acceptance", () => {
       conversationId: "conv-1",
       worktreePath: "/repo/.worktrees/session-a",
       backend: "claude",
-      isTurnActive: false,
     };
 
     const applyService = createCapabilityRuntimeApplyService({
       listAffectedConversations: async () => [affectedConversation],
-      isTurnActive: () => false,
+
       composeForConversation: async () =>
         composeConversationStartRuntime({
           backend: "claude",
@@ -166,9 +166,9 @@ describe("agent capability end-to-end acceptance", () => {
             "claude-skills": { items: claudeSkills },
           },
         }),
-      readRuntimeState: async () => undefined,
-      writeRuntimeState: async (input) => {
-        runtimeWrites.push(input.state);
+      readRuntimeState: async () => runtimeWrites.at(-1),
+      updateRuntimeState: async (_identity, updater) => {
+        runtimeWrites.push(updater(runtimeWrites.at(-1)));
       },
       applyRuntimeConfig: applyClaudeRuntime,
     });
@@ -275,7 +275,7 @@ describe("agent capability end-to-end acceptance", () => {
       operationId: "cap-acceptance-1",
       invalidationHints: { operationId: "cap-acceptance-1" },
     });
-    expect(applyClaudeRuntime).toHaveBeenCalledTimes(1);
+    expect(applyClaudeRuntime).not.toHaveBeenCalled();
     expect(runtimeWrites).toHaveLength(1);
 
     const refreshedSkills = await handlers.GET(
@@ -387,13 +387,13 @@ describe("project-level conversation capability end-to-end acceptance", () => {
       conversationScope?: "session" | "project";
       conversationId: string;
       sessionName?: string;
-      state: unknown;
+      state: AgentCapabilityRuntimeApplicationState;
     }> = [];
     const codexRuntimeWrites: Array<{
       conversationScope?: "session" | "project";
       conversationId: string;
       sessionName?: string;
-      state: unknown;
+      state: AgentCapabilityRuntimeApplicationState;
     }> = [];
 
     const claudeSkills = [
@@ -472,7 +472,6 @@ describe("project-level conversation capability end-to-end acceptance", () => {
       conversationId: PLC_CONVERSATION_ID,
       worktreePath: PLC_PROJECT_PATH,
       backend: "claude",
-      isTurnActive: false,
     };
 
     const applyClaudeRuntime = vi.fn<
@@ -484,7 +483,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
 
     const claudeApplyService = createCapabilityRuntimeApplyService({
       listAffectedConversations: async () => [affectedPlc],
-      isTurnActive: () => false,
+
       composeForConversation: async (conversation) =>
         composeConversationStartRuntime({
           backend: "claude",
@@ -499,8 +498,12 @@ describe("project-level conversation capability end-to-end acceptance", () => {
             "claude-skills": { items: claudeSkills },
           },
         }),
-      readRuntimeState: async () => undefined,
-      writeRuntimeState: async (input) => {
+      readRuntimeState: async () => claudeRuntimeWrites.at(-1)?.state,
+      updateRuntimeState: async (identity, updater) => {
+        const input = {
+          ...identity,
+          state: updater(claudeRuntimeWrites.at(-1)?.state),
+        };
         claudeRuntimeWrites.push({
           conversationScope: input.conversationScope,
           conversationId: input.conversationId,
@@ -644,8 +647,8 @@ describe("project-level conversation capability end-to-end acceptance", () => {
       originLayer: "conversation",
     });
 
-    // Apply fanned out to the single PLC: idle Claude live-applies immediately.
-    expect(applyClaudeRuntime).toHaveBeenCalledTimes(1);
+    // Apply staging fans out to the single project conversation.
+    expect(applyClaudeRuntime).not.toHaveBeenCalled();
     expect(claudeRuntimeWrites).toHaveLength(1);
     expect(claudeRuntimeWrites[0]).toMatchObject({
       conversationScope: "project",
@@ -688,9 +691,8 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     });
 
     // ===== Step 4 — Apply semantics parity (Req 19.1, 19.3, 19.4). =====
-    // (a) Idle Claude PLC live-applies (already asserted via the set patch; here
-    // we assert the per-conversation outcome carries the PLC identity with no
-    // synthetic session identity and disposition "applied").
+    // (a) Saving Claude PLC preferences stages the next turn and carries the
+    // project-conversation identity without a synthetic session identity.
     applyClaudeRuntime.mockClear();
     claudeRuntimeWrites.length = 0;
     const claudeApplyResult = await claudeApplyService.applyAfterOverrideChange(
@@ -715,64 +717,13 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     expect(claudeOutcome.sessionName).toBeUndefined();
     expect(claudeOutcome.cascades[0]).toMatchObject({
       cascadeKind: "claude-skills",
-      disposition: "applied",
+      disposition: "staged-next-turn",
     });
+    expect(applyClaudeRuntime).not.toHaveBeenCalled();
+    await claudeApplyService.applyAtTurnStart(affectedPlc);
     expect(applyClaudeRuntime).toHaveBeenCalledTimes(1);
 
-    // (b) A turn-active Claude PLC stages for idle rather than applying mid-turn
-    // — matching session-conversation user-visible semantics.
-    const claudeTurnActivePort = vi.fn<
-      (input: {
-        conversation: ApplyConversationIdentity;
-        resolved: ResolvedCapabilityCascade;
-      }) => Promise<RuntimeConfigApplyResult>
-    >(async () => ({ status: "applied" }));
-    const claudeBusyApplyService = createCapabilityRuntimeApplyService({
-      listAffectedConversations: async () => [
-        { ...affectedPlc, isTurnActive: true },
-      ],
-      isTurnActive: () => true,
-      composeForConversation: async () =>
-        composeConversationStartRuntime({
-          backend: "claude",
-          scope: {
-            level: "conversation",
-            projectName: PLC_PROJECT_NAME,
-            conversationScope: "project",
-            conversationId: PLC_CONVERSATION_ID,
-          },
-          overrideChain: plcOverrideChain(),
-          discoveryByCascade: { "claude-skills": { items: claudeSkills } },
-        }),
-      readRuntimeState: async () => undefined,
-      writeRuntimeState: async (input) => {
-        claudeRuntimeWrites.push({
-          conversationScope: input.conversationScope,
-          conversationId: input.conversationId,
-          sessionName: "sessionName" in input ? input.sessionName : undefined,
-          state: input.state,
-        });
-      },
-      applyRuntimeConfig: claudeTurnActivePort,
-    });
-    const busyResult = await claudeBusyApplyService.applyAfterOverrideChange({
-      scope: {
-        level: "conversation",
-        projectPath: PLC_PROJECT_PATH,
-        conversationScope: "project",
-        conversationId: PLC_CONVERSATION_ID,
-      },
-      cascadeKind: "claude-skills",
-      changedItemIds: ["alpha-skill"],
-    });
-    // Mid-turn change is NOT applied; it is staged for idle (no port call).
-    expect(claudeTurnActivePort).not.toHaveBeenCalled();
-    expect(busyResult.conversations[0]?.cascades[0]).toMatchObject({
-      cascadeKind: "claude-skills",
-      disposition: "staged-idle",
-    });
-
-    // (c) Codex PLC stages for next turn rather than applying mid-turn.
+    // (b) Codex PLC stages for next turn rather than applying mid-turn.
     const codexApplyPort = vi.fn<
       (input: {
         conversation: ApplyConversationIdentity;
@@ -786,11 +737,10 @@ describe("project-level conversation capability end-to-end acceptance", () => {
       conversationId: "plc-codex",
       worktreePath: PLC_PROJECT_PATH,
       backend: "codex",
-      isTurnActive: false,
     };
     const codexApplyService = createCapabilityRuntimeApplyService({
       listAffectedConversations: async () => [codexPlc],
-      isTurnActive: () => false,
+
       composeForConversation: async () =>
         composeConversationStartRuntime({
           backend: "codex",
@@ -803,8 +753,12 @@ describe("project-level conversation capability end-to-end acceptance", () => {
           overrideChain: plcOverrideChain(),
           discoveryByCascade: { "codex-skills": { items: codexSkills } },
         }),
-      readRuntimeState: async () => undefined,
-      writeRuntimeState: async (input) => {
+      readRuntimeState: async () => codexRuntimeWrites.at(-1)?.state,
+      updateRuntimeState: async (identity, updater) => {
+        const input = {
+          ...identity,
+          state: updater(codexRuntimeWrites.at(-1)?.state),
+        };
         codexRuntimeWrites.push({
           conversationScope: input.conversationScope,
           conversationId: input.conversationId,

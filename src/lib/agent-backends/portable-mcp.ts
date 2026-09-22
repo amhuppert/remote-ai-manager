@@ -36,6 +36,7 @@ export interface McpApplyResult {
   disposition:
     | "applied_now"
     | "deferred_to_next_turn"
+    | "deferred_to_next_conversation"
     | "unsupported"
     | "rejected";
   droppedServerIds: string[];

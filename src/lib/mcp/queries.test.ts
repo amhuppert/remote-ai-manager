@@ -1,3 +1,7 @@
+import {
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -57,25 +61,19 @@ describe("MCP query keys", () => {
       "p",
       "s",
     ]);
-    expect(mcpConfigKeys.conversation("p", "s", "c")).toEqual([
-      "mcp-config",
-      "conversation",
-      "p",
-      "s",
-      "c",
-    ]);
+    expect(
+      mcpConfigKeys.conversation(sessionConversationTarget("p", "s", "c")),
+    ).toEqual(["mcp-config", "conversation", "p", "session", "s", "c"]);
   });
 
   it("builds tool inventory keys scoped by conversation and serverKey", () => {
     expect(mcpToolsKeys.all).toEqual(["mcp-tools"]);
-    expect(mcpToolsKeys.inventory("p", "s", "c", "server-1")).toEqual([
-      "mcp-tools",
-      "inventory",
-      "p",
-      "s",
-      "c",
-      "server-1",
-    ]);
+    expect(
+      mcpToolsKeys.inventory(
+        sessionConversationTarget("p", "s", "c"),
+        "server-1",
+      ),
+    ).toEqual(["mcp-tools", "inventory", "session", "p", "s", "c", "server-1"]);
   });
 });
 
@@ -125,13 +123,36 @@ describe("MCP query hooks", () => {
     fetchSpy.mockResolvedValue(
       jsonResponse({ view: emptyView("conversation") }),
     );
-    renderHook(() => useConversationMcpConfigQuery("p", "s", "c"), {
-      wrapper: wrapperFor(makeClient()),
-    });
+    renderHook(
+      () =>
+        useConversationMcpConfigQuery(sessionConversationTarget("p", "s", "c")),
+      {
+        wrapper: wrapperFor(makeClient()),
+      },
+    );
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/projects/p/sessions/s/conversations/c/mcp-config",
     );
+  });
+
+  it("reads project-conversation MCP from its own endpoint and cache slot", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ view: emptyView("conversation") }),
+    );
+    const target = projectConversationTarget("p", "c");
+    const client = makeClient();
+    const { result } = renderHook(() => useConversationMcpConfigQuery(target), {
+      wrapper: wrapperFor(client),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/conversations/c/mcp-config",
+    );
+    expect(
+      client.getQueryData(mcpConfigKeys.conversation(target)),
+    ).toBeDefined();
+    expect(client.getQueryData(mcpConfigKeys.project("p"))).toBeUndefined();
   });
 
   it("percent-encodes dynamic path segments", async () => {
@@ -153,7 +174,7 @@ describe("MCP query hooks", () => {
     };
     fetchSpy.mockResolvedValue(jsonResponse(inventory));
     const { result } = renderHook(
-      () => useMcpToolsQuery("p", "s", "c", "srv"),
+      () => useMcpToolsQuery(sessionConversationTarget("p", "s", "c"), "srv"),
       { wrapper: wrapperFor(makeClient()) },
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

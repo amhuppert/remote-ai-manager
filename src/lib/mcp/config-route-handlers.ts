@@ -1,3 +1,11 @@
+import {
+  type ConversationTarget,
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
+import { resolveSessionConversationRoute } from "@/lib/conversations/route-resolution";
+import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
+import type { RouteResolution } from "@/lib/shared/route-resolution";
 /**
  * MCP config API route handler logic — extracted for dependency injection.
  *
@@ -72,6 +80,7 @@ export type McpConfigRouteBroadcastPayload =
       projectName?: string;
       sessionName?: string;
       conversationId?: string;
+      target?: ConversationTarget;
       changedServerKeys: readonly string[];
       effectiveConfigHash: string;
     }
@@ -81,6 +90,7 @@ export type McpConfigRouteBroadcastPayload =
       projectName?: string;
       sessionName?: string;
       conversationId?: string;
+      target?: ConversationTarget;
       serverKey: string;
     };
 
@@ -167,16 +177,14 @@ async function fanOutRuntimeApply(input: {
     try {
       await input.applyAfterOverrideChange({
         projectPath: target.projectPath,
-        sessionName: target.sessionName,
-        conversationId: target.conversationId,
+        target: target.target,
         backend: target.backend,
         changedServerKeys: input.changedServerKeys,
       });
     } catch (err) {
       log.warn("runtime-apply.fanout_failed", {
         projectPath: target.projectPath,
-        sessionName: target.sessionName,
-        conversationId: target.conversationId,
+        target: target.target,
         backend: target.backend,
         changedServerKeys: input.changedServerKeys,
         error: getErrorMessage(err),
@@ -614,45 +622,86 @@ export function createSessionMcpConfigHandlers(
 // 12.4 — Conversation
 // ===========================================================================
 
-export interface ConversationMcpConfigHandlersDeps
-  extends SharedDiscoveryDeps, SharedToolInventoryReaderDeps {
-  globalStore: GlobalOverrideStore;
-  scopeStore: ScopeOverrideStore;
-  mutationService: McpConfigMutationService;
+interface McpConversationContextDeps {
   resolveProjectPath(projectName: string): Promise<string | null>;
   getSession(
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
+  getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+}
+
+interface McpConversationContext {
+  projectPath: string;
+  target: ConversationTarget;
+  worktreePath: string;
+  sessionOverrides?: McpOverrides;
+  conversation: ConversationState;
+}
+
+async function resolveMcpConversationContext(
+  deps: McpConversationContextDeps,
+  ctx: RouteContext,
+): Promise<RouteResolution<McpConversationContext>> {
+  const params = await ctx.params;
+  if (params.session !== undefined) {
+    const resolved = await resolveSessionConversationRoute(deps, ctx);
+    if (!resolved.ok) return resolved;
+    const { projectPath, session, conversation } = resolved.value;
+    return {
+      ok: true,
+      value: {
+        projectPath,
+        target: sessionConversationTarget(
+          params.name ?? "",
+          session.sessionName,
+          conversation.id,
+        ),
+        worktreePath: session.worktreePath,
+        sessionOverrides: session.mcpOverrides,
+        conversation,
+      },
+    };
+  }
+  const resolved = await resolveProjectConversationRoute(deps, ctx);
+  if (!resolved.ok) return resolved;
+  const { projectPath, conversation } = resolved.value;
+  return {
+    ok: true,
+    value: {
+      projectPath,
+      target: projectConversationTarget(params.name ?? "", conversation.id),
+      worktreePath: projectPath,
+      conversation,
+    },
+  };
+}
+
+export interface ConversationMcpConfigHandlersDeps
+  extends
+    SharedDiscoveryDeps,
+    SharedToolInventoryReaderDeps,
+    McpConversationContextDeps {
+  globalStore: GlobalOverrideStore;
+  scopeStore: ScopeOverrideStore;
+  mutationService: McpConfigMutationService;
   readProjectOverrides: ReadProjectOverrides;
   applyAfterOverrideChange(
     input: AfterOverrideChangeInput,
   ): Promise<ConversationApplyResult>;
   broadcast?: McpConfigRouteBroadcast;
-  /** Backend to use for `applyAfterOverrideChange` when the conversation has
-   * no explicit backend. Defaults to the conversation's recorded backend or
-   * "claude" as final fallback. */
   defaultBackend?: AgentBackendId;
 }
-
-type ConversationRouteParams = {
-  name: string;
-  session: string;
-  conversationId: string;
-};
 
 export function createConversationMcpConfigHandlers(
   deps: ConversationMcpConfigHandlersDeps,
 ) {
-  async function resolveCurrent(input: {
-    projectName: string;
-    sessionName: string;
-    conversationId: string;
-    projectPath: string;
-    worktreePath: string;
-    sessionOverrides: McpOverrideChain["session"];
-    conversationOverrides: McpOverrideChain["conversation"];
-  }): Promise<McpConfigViewResponse> {
+  async function resolveCurrent(
+    input: McpConversationContext,
+  ): Promise<McpConfigViewResponse> {
     const [globalOverrides, projectOverrides, discovery] = await Promise.all([
       deps.globalStore.read(),
       deps.readProjectOverrides(input.projectPath),
@@ -667,8 +716,8 @@ export function createConversationMcpConfigHandlers(
       ...(input.sessionOverrides !== undefined
         ? { session: input.sessionOverrides }
         : {}),
-      ...(input.conversationOverrides !== undefined
-        ? { conversation: input.conversationOverrides }
+      ...(input.conversation.mcpOverrides !== undefined
+        ? { conversation: input.conversation.mcpOverrides }
         : {}),
     };
     const view = resolveView({
@@ -679,54 +728,29 @@ export function createConversationMcpConfigHandlers(
       toolInventories: buildToolInventoriesFromCache(discovery.servers, deps),
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
-      pendingServerKeys: [],
-      projectName: input.projectName,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
+      pendingServerKeys: input.conversation.mcpRuntime?.pendingServerKeys ?? [],
+      projectName: input.target.projectName,
+      ...(input.target.scope === "session"
+        ? { sessionName: input.target.sessionName }
+        : {}),
+      conversationId: input.target.conversationId,
     });
-    return withHash(view, discovery.servers);
-  }
-
-  async function loadContext(params: ConversationRouteParams): Promise<
-    | {
-        ok: true;
-        projectPath: string;
-        session: SessionState;
-        conversation: ConversationState;
-      }
-    | { ok: false; response: Response }
-  > {
-    const resolved = await resolveProjectSessionOr404(
-      deps,
-      params.name,
-      params.session,
+    return withHash(
+      {
+        ...view,
+        target: input.target,
+        backend: selectBackend(input.conversation, deps.defaultBackend),
+        runtime: input.conversation.mcpRuntime,
+      },
+      discovery.servers,
     );
-    if (!resolved.ok) return resolved;
-    const { projectPath, session } = resolved.value;
-    const conversation = session.conversations.find(
-      (c) => c.id === params.conversationId,
-    );
-    if (!conversation) {
-      return { ok: false, response: notFound("Conversation not found") };
-    }
-    return { ok: true, projectPath, session, conversation };
   }
 
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
     try {
-      const params = (await ctx.params) as ConversationRouteParams;
-      const loaded = await loadContext(params);
+      const loaded = await resolveMcpConversationContext(deps, ctx);
       if (!loaded.ok) return loaded.response;
-      const view = await resolveCurrent({
-        projectName: params.name,
-        sessionName: params.session,
-        conversationId: params.conversationId,
-        projectPath: loaded.projectPath,
-        worktreePath: loaded.session.worktreePath,
-        sessionOverrides: loaded.session.mcpOverrides,
-        conversationOverrides: loaded.conversation.mcpOverrides,
-      });
-      return NextResponse.json({ view });
+      return NextResponse.json({ view: await resolveCurrent(loaded.value) });
     } catch (err) {
       return handleUnexpected("conversation.get", err);
     }
@@ -735,58 +759,37 @@ export function createConversationMcpConfigHandlers(
   async function PATCH(request: Request, ctx: RouteContext): Promise<Response> {
     const parsed = await parsePatchBody(request);
     if (!parsed.ok) return parsed.response;
-
     try {
-      const params = (await ctx.params) as ConversationRouteParams;
-      const loaded = await loadContext(params);
+      const loaded = await resolveMcpConversationContext(deps, ctx);
       if (!loaded.ok) return loaded.response;
-
+      const { target, projectPath, conversation } = loaded.value;
       const result = await deps.mutationService.patchConversation({
-        projectName: params.name,
-        sessionName: params.session,
-        conversationId: params.conversationId,
-        projectPath: loaded.projectPath,
+        target,
+        projectPath,
         operations: parsed.data.operations,
         expectedEffectiveConfigHash: parsed.data.expectedEffectiveConfigHash,
       });
-      if (!result.ok) {
+      if (!result.ok)
         return jsonError(
           "effectiveConfigHash mismatch — refresh and retry",
           409,
         );
-      }
-
-      const backend = selectBackend(loaded.conversation, deps.defaultBackend);
       const apply = await deps.applyAfterOverrideChange({
-        projectPath: loaded.projectPath,
-        sessionName: params.session,
-        conversationId: params.conversationId,
-        backend,
+        projectPath,
+        target,
+        backend: selectBackend(conversation, deps.defaultBackend),
         changedServerKeys: result.changedServerKeys,
       });
-      const refreshed = await loadContext(params);
+      const refreshed = await resolveMcpConversationContext(deps, ctx);
       if (!refreshed.ok) return refreshed.response;
-
-      const next = await resolveCurrent({
-        projectName: params.name,
-        sessionName: params.session,
-        conversationId: params.conversationId,
-        projectPath: loaded.projectPath,
-        worktreePath: refreshed.session.worktreePath,
-        sessionOverrides: refreshed.session.mcpOverrides,
-        conversationOverrides: refreshed.conversation.mcpOverrides,
-      });
-
+      const next = await resolveCurrent(refreshed.value);
       deps.broadcast?.({
         kind: "config-updated",
         level: "conversation",
-        projectName: params.name,
-        sessionName: params.session,
-        conversationId: params.conversationId,
+        target,
         changedServerKeys: [...result.changedServerKeys],
         effectiveConfigHash: next.effectiveConfigHash ?? "",
       });
-
       return NextResponse.json({
         view: next,
         effectiveConfigHash: next.effectiveConfigHash,
@@ -796,7 +799,6 @@ export function createConversationMcpConfigHandlers(
       return handleUnexpected("conversation.patch", err);
     }
   }
-
   return { GET, PATCH };
 }
 
@@ -811,116 +813,54 @@ function selectBackend(
 // 12.5 — Tool inventory (scoped)
 // ===========================================================================
 
-export interface ToolInventoryHandlersDeps extends SharedDiscoveryDeps {
-  cache: ToolInventoryCache;
-  resolveProjectPath(projectName: string): Promise<string | null>;
-  getSession(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<SessionState | null>;
-  broadcast?: McpConfigRouteBroadcast;
-  /** Called just before a cache operation so production wiring can surface
-   * the canonical config to the shared probe-key lookup map. No-op in tests. */
-  onDefinitionLoaded?(
-    key: {
-      serverKey: string;
-      configSignature: string;
-    },
-    definition: McpServerDefinition,
-  ): void;
-}
-
-type ToolInventoryRouteParams = {
-  name: string;
-  session: string;
-  conversationId: string;
-  serverKey: string;
-};
+export interface ToolInventoryHandlersDeps
+  extends
+    SharedDiscoveryDeps,
+    McpConversationContextDeps,
+    ScopedToolInventoryCore {}
 
 export function createToolInventoryHandlers(deps: ToolInventoryHandlersDeps) {
-  async function loadDefinition(
-    params: ToolInventoryRouteParams,
-  ): Promise<
-    | { ok: true; definition: McpServerDefinition }
-    | { ok: false; response: Response }
+  async function loadDefinition(ctx: RouteContext): Promise<
+    RouteResolution<{
+      definition: McpServerDefinition;
+      target: ConversationTarget;
+    }>
   > {
-    const resolved = await resolveProjectSessionOr404(
-      deps,
-      params.name,
-      params.session,
-    );
+    const resolved = await resolveMcpConversationContext(deps, ctx);
     if (!resolved.ok) return resolved;
-    const { session } = resolved.value;
-    const conversation = session.conversations.find(
-      (c) => c.id === params.conversationId,
-    );
-    if (!conversation) {
-      return { ok: false, response: notFound("Conversation not found") };
-    }
+    const params = await ctx.params;
     const discovery = await deps.discoverAllSources({
       globalConfigPath: deps.globalConfigPath(),
-      worktreePath: session.worktreePath,
+      worktreePath: resolved.value.worktreePath,
     });
     const definition = discovery.servers.find(
-      (s) => s.serverKey === params.serverKey,
+      (server) => server.serverKey === params.serverKey,
     );
-    if (!definition) {
+    if (!definition)
       return { ok: false, response: notFound("MCP server not found") };
-    }
-    return { ok: true, definition };
+    return { ok: true, value: { definition, target: resolved.value.target } };
   }
-
-  function buildCacheKey(definition: McpServerDefinition) {
-    return {
-      serverKey: definition.serverKey,
-      configSignature: definition.configSignature,
-    };
-  }
-
-  function notifyDefinitionLoaded(definition: McpServerDefinition): void {
-    deps.onDefinitionLoaded?.(
-      {
-        serverKey: definition.serverKey,
-        configSignature: definition.configSignature,
-      },
-      definition,
-    );
-  }
-
   async function GET(_request: Request, ctx: RouteContext): Promise<Response> {
     try {
-      const params = (await ctx.params) as ToolInventoryRouteParams;
-      const loaded = await loadDefinition(params);
+      const loaded = await loadDefinition(ctx);
       if (!loaded.ok) return loaded.response;
-      notifyDefinitionLoaded(loaded.definition);
-      const result = deps.cache.peek(buildCacheKey(loaded.definition));
-      return NextResponse.json(result);
+      return runScopedToolGet(deps, loaded.value.definition);
     } catch (err) {
       return handleUnexpected("tools.get", err);
     }
   }
-
   async function POST(_request: Request, ctx: RouteContext): Promise<Response> {
     try {
-      const params = (await ctx.params) as ToolInventoryRouteParams;
-      const loaded = await loadDefinition(params);
+      const loaded = await loadDefinition(ctx);
       if (!loaded.ok) return loaded.response;
-      notifyDefinitionLoaded(loaded.definition);
-      const result = await deps.cache.refresh(buildCacheKey(loaded.definition));
-      deps.broadcast?.({
-        kind: "tools-updated",
+      return runScopedToolRefresh(deps, loaded.value.definition, {
         level: "conversation",
-        projectName: params.name,
-        sessionName: params.session,
-        conversationId: params.conversationId,
-        serverKey: loaded.definition.serverKey,
+        target: loaded.value.target,
       });
-      return NextResponse.json(result);
     } catch (err) {
       return handleUnexpected("tools.refresh", err);
     }
   }
-
   return { GET, POST };
 }
 

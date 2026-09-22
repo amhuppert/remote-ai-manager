@@ -208,6 +208,7 @@ interface ActiveTurn {
 export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly backend = CURSOR_BACKEND_ID;
   readonly mcpConfigDelivery = "input-accepted" as const;
+  readonly capabilityConfigDelivery = "input-accepted" as const;
   readonly modelSelection: BackendModelSelection;
 
   readonly fsWritePolicy: FsWritePolicy | undefined;
@@ -1469,6 +1470,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
           this.emit({
             type: "input_accepted",
             mcpConfigHash: turn.mcpConfigHash,
+            capabilities: this.capabilitiesAtCreation,
           });
         });
         return;

@@ -1,3 +1,6 @@
+import { cursorCapabilityCatalog } from "./cursor/capability-discovery";
+import { codexCapabilityCatalog } from "./codex/capability-discovery";
+import { claudeCapabilityCatalog } from "./claude/capability-discovery";
 export {
   getConversationBackendFactory,
   getTaskRunner,
@@ -25,16 +28,14 @@ import {
   cursorTaskRunner,
 } from "./cursor/production-wiring";
 import { createCursorRuntimeConfigAdapter } from "./cursor/runtime-config";
-import {
-  claudeMcpCapabilities,
-  codexMcpCapabilities,
-  cursorMcpCapabilities,
-} from "@/lib/mcp/backend-capabilities";
+import { claudeMcpCapabilities } from "@/lib/agent-backends/claude/mcp-capabilities";
+import { codexMcpCapabilities } from "@/lib/agent-backends/codex/mcp-capabilities";
+import { cursorMcpCapabilities } from "@/lib/agent-backends/cursor/mcp-capabilities";
 import { createClaudeFailureClassifier } from "./claude/failure-classifier";
 import { createCodexFailureClassifier } from "./codex/failure-classifier";
 import { createCursorFailureClassifier } from "./cursor/failure-classifier";
 import { prepareCodexManagedSkillsCheckout } from "./codex/managed-skills-bridge";
-import { codexSkillCatalog } from "./codex/skill-discovery";
+import { codexSkillCatalog } from "./codex/capability-discovery";
 
 /**
  * Idempotent production registration of the supported backends. Called on
@@ -46,6 +47,7 @@ export function bootstrapBackends(): void {
   if (!hasBackendDescriptor("claude")) {
     registerBackend(
       createClaudeBackendDescriptor({
+        capabilityCatalog: claudeCapabilityCatalog,
         conversationFactory: claudeConversationBackendFactory,
         continuity: createClaudeContinuityAdapter(),
         runtimeConfig: createClaudeRuntimeConfigAdapter(),
@@ -58,6 +60,7 @@ export function bootstrapBackends(): void {
   if (!hasBackendDescriptor("codex")) {
     registerBackend(
       createCodexBackendDescriptor({
+        capabilityCatalog: codexCapabilityCatalog,
         conversationFactory: codexConversationBackendFactory,
         continuity: createCodexContinuityAdapter(),
         runtimeConfig: createCodexRuntimeConfigAdapter(),
@@ -72,6 +75,7 @@ export function bootstrapBackends(): void {
   if (!hasBackendDescriptor("cursor")) {
     registerBackend(
       createCursorBackendDescriptor({
+        capabilityCatalog: cursorCapabilityCatalog,
         taskRunner: cursorTaskRunner,
         conversationFactory: cursorConversationBackendFactory,
         modelCatalog: cursorModelCatalog,

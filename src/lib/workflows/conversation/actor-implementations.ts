@@ -1,5 +1,6 @@
 import { stableStringify } from "@/lib/state-store/serialization";
 import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
+import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
 import { toPromptActorResult } from "./turn-result";
 import {
   prepareConversationTurnContext,
@@ -140,7 +141,6 @@ import {
   resolveCapabilitySeedForNewRuntime,
   seedRuntimeCapabilityState,
   applyCapabilityCascadeAtTurnStart,
-  drainCapabilityWhenIdle,
 } from "./pre-turn/capability-cascade";
 import { recordSeenAlignmentVersion } from "./pre-turn/alignment-gate";
 import { createBackgroundTasksLostHandler } from "./pre-turn/notices-drain";
@@ -872,7 +872,7 @@ async function executePromptForMachine(
   ) {
     const hash = computeEffectiveConfigHash(portableMcp);
     await deps.policy.state.mcp.update(
-      conversationStoreIdentity(input),
+      { projectPath: input.projectPath, target: input.target },
       "prompt.seedMcpRuntime",
       (state) => {
         if (delivery === "input-accepted")
@@ -1033,9 +1033,7 @@ async function executePromptForMachine(
     const portableMcp = await deps.policy.composePortableMcpForConversation({
       backend: input.agentBackend,
       projectPath: input.projectPath,
-      projectName,
-      sessionName: conversationTargetStoreSessionName(input.target),
-      conversationId: input.target.conversationId,
+      target: input.target,
       worktreePath: input.worktreePath,
       ...(runtimeState.tooling?.portableMcp !== undefined
         ? { transientPortableMcp: runtimeState.tooling.portableMcp }
@@ -1084,15 +1082,10 @@ async function executePromptForMachine(
 
     // External (background auto-continuation) turns are a declared backend
     // capability: only backends whose descriptor claims `externalTurns` get a
-    // handler wired. The idle capability drain is likewise gated on a
-    // declared `idle_live` capability kind rather than backend identity.
+    // handler wired.
     const conversationCapabilities = deps.execution.getConversationCapabilities(
       input.agentBackend,
     );
-    const supportsIdleCapabilityDrain =
-      conversationCapabilities?.capabilityKinds.some(
-        (k) => k.applyTiming === "idle_live",
-      ) ?? false;
     if (runtimeState.managed.backend) await runtimeState.managed.close();
     const incarnation = runtimeState.managed.beginCreation();
     const externalTurnHandler = conversationCapabilities?.externalTurns
@@ -1111,12 +1104,6 @@ async function executePromptForMachine(
                 deps,
                 input.target.conversationId,
               ),
-            applyCapabilityWhenIdle: supportsIdleCapabilityDrain
-              ? () =>
-                  deps.policy.applyCapabilityWhenIdle(
-                    buildCapabilityApplyInput(capabilityCtx),
-                  )
-              : undefined,
           },
         )
       : undefined;
@@ -1260,7 +1247,9 @@ async function executePromptForMachine(
         capabilityCtx,
         reconcileDeliveredCapabilityState(
           capabilityRuntimeStateSeed,
-          newRuntime.capabilitiesAtCreation,
+          newRuntime.capabilityConfigDelivery === "input-accepted"
+            ? undefined
+            : newRuntime.capabilitiesAtCreation,
         ),
       );
     }
@@ -1317,11 +1306,21 @@ async function executePromptForMachine(
           await recordMcpConfigReceipt(
             deps.policy.state.mcp,
             {
-              ...conversationStoreIdentity(input),
-              projectName: input.target.projectName,
+              projectPath: input.projectPath,
+              target: input.target,
             },
             event.mcpConfigHash,
+            { error: event.mcpConfigError },
           );
+        if (event.capabilities) {
+          const identity = buildCapabilityApplyInput(capabilityCtx);
+          await recordCapabilityConfigReceipt(
+            input.target,
+            event.capabilities,
+            (updater) =>
+              deps.policy.state.updateCapabilities(identity, updater),
+          );
+        }
         await preparedContext?.onInputAccepted(seedBackendRef);
         break;
       }
@@ -1426,8 +1425,7 @@ async function executePromptForMachine(
           });
           const mcpApplyResult = await deps.policy.applyMcpAtTurnStart({
             projectPath: input.projectPath,
-            sessionName: conversationTargetStoreSessionName(input.target),
-            conversationId: input.target.conversationId,
+            target: input.target,
             backend: input.agentBackend,
           });
 
@@ -1689,7 +1687,6 @@ async function executePromptForMachine(
           failureKind: turnlessFailure.error.failureKind,
           error: errorMsg,
         });
-        await drainCapabilityWhenIdle(deps.policy, capabilityCtx);
         runtimeState.streamEmit?.("error", {
           message: `SDK error: ${errorMsg}`,
         });
@@ -1705,8 +1702,6 @@ async function executePromptForMachine(
         },
       );
     }
-
-    await drainCapabilityWhenIdle(deps.policy, capabilityCtx);
   } catch (err) {
     if (abortController.signal.aborted) {
       const timeoutFired = abortWiring.timeoutFired();
@@ -1740,7 +1735,6 @@ async function executePromptForMachine(
       ...scopeRef,
       error: errorMsg,
     });
-    await drainCapabilityWhenIdle(deps.policy, capabilityCtx);
     runtimeState.streamEmit?.("error", { message: `SDK error: ${errorMsg}` });
     return buildFailedTurnResult({
       contentBlocks,
@@ -2358,9 +2352,7 @@ export async function acquireCheckpointCaptureRuntime(
   const portableMcp = await deps.policy.composePortableMcpForConversation({
     backend: input.agentBackend,
     projectPath: input.projectPath,
-    projectName,
-    sessionName,
-    conversationId: input.target.conversationId,
+    target: input.target,
     worktreePath: input.worktreePath,
     ...(host.tooling?.portableMcp !== undefined
       ? { transientPortableMcp: host.tooling.portableMcp }

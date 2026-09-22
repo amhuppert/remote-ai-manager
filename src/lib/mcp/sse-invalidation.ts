@@ -1,3 +1,4 @@
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 /**
  * Pure helpers that map an incoming MCP SSE event to the TanStack Query
  * invalidations required to keep every dependent scope in sync.
@@ -15,6 +16,7 @@ export interface McpConfigEventIdentifiers {
   projectName?: string;
   sessionName?: string;
   conversationId?: string;
+  target?: ConversationTarget;
 }
 
 export interface McpQueryKeyMatcher {
@@ -66,16 +68,6 @@ export function computeMcpConfigInvalidations(
     ];
   }
 
-  if (!event.projectName || !event.sessionName || !event.conversationId) {
-    return [];
-  }
-  return [
-    {
-      queryKey: mcpConfigKeys.conversation(
-        event.projectName,
-        event.sessionName,
-        event.conversationId,
-      ),
-    },
-  ];
+  if (!event.target) return [];
+  return [{ queryKey: mcpConfigKeys.conversation(event.target) }];
 }

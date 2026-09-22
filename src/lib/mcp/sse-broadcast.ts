@@ -56,6 +56,7 @@ function toSseEvent(
       type: "mcp-config-updated",
       level: payload.level,
       ...onlyDefinedScope(payload),
+      ...(payload.target ? { target: payload.target } : {}),
       changedServerKeys: [...payload.changedServerKeys],
       effectiveConfigHash: payload.effectiveConfigHash,
     };
@@ -64,6 +65,7 @@ function toSseEvent(
     type: "mcp-tools-updated",
     level: payload.level,
     ...onlyDefinedScope(payload),
+    ...(payload.target ? { target: payload.target } : {}),
     serverKey: payload.serverKey,
   };
 }

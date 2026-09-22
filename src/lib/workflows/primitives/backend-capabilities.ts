@@ -16,7 +16,7 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentBackendDescriptor } from "@/lib/agent-backends/descriptor";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
-import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
 
 function mcpApplicationBoundaryFor(

@@ -322,13 +322,13 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     readConversationMessages: async () => [],
     composePortableMcpForConversation: async () => ({ servers: [] }),
     applyMcpAtTurnStart: async (input) => ({
-      conversationId: input.conversationId,
+      conversationId: input.target.conversationId,
       backend: input.backend,
       disposition: "applied_now" as const,
       effectiveConfigHash: "inmemory-hash",
     }),
     applyCapabilityAtTurnStart: async () => ({}),
-    applyCapabilityWhenIdle: async () => ({}),
+
     composeCapabilityConfigForConversation: composeCapabilityConfig,
     composeCapabilityConfigForProjectConversation: async () => {
       throw new Error(
@@ -691,7 +691,7 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
 // ---------------------------------------------------------------------------
 
 describe("E5: applyAfterOverrideChange stages per the descriptor's betweenTurnApply", () => {
-  it("invokes the fake runtime's staging apply even while a turn is active (descriptor: next-turn, never identity)", async () => {
+  it("stages the override without calling the backend during an active turn", async () => {
     // A backend whose descriptor declares `mcp.betweenTurnApply: "next-turn"`
     // stages regardless of turn activity — the per-turn reconstruction picks
     // the new portable up at the next turn start. An identity-driven decision
@@ -735,21 +735,24 @@ describe("E5: applyAfterOverrideChange stages per the descriptor's betweenTurnAp
 
       const result = await service.applyAfterOverrideChange({
         projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: "conv-e5-override",
+        target: {
+          scope: "session",
+          projectName: "p",
+          sessionName: SESSION_NAME,
+          conversationId: "conv-e5-override",
+        },
         backend: TESTFAKE_BACKEND_ID,
         changedServerKeys: ["gateway"],
       });
 
-      // The staging call reached the runtime — observable only through the
-      // descriptor-declared next-turn mode.
-      expect(activeTurnFake.calls.map((c) => c.op)).toContain(
+      // Saving records intent without invoking the runtime.
+      expect(activeTurnFake.calls.map((c) => c.op)).not.toContain(
         "runtime.applyPortableMcpConfig",
       );
       expect(result.disposition).toBe("deferred_to_next_turn");
 
       // Durable state records the pending change without ever advancing the
-      // applied hash — that stays owned by the turn-start writer.
+      // applied hash — that requires actual delivery at the turn boundary.
       const persisted = await fixture.deps.getConversation(
         PROJECT_PATH,
         SESSION_NAME,
@@ -770,7 +773,7 @@ describe("E5: applyAfterOverrideChange stages per the descriptor's betweenTurnAp
 });
 
 describe("E5: applyAtTurnStart derives its disposition from the fake runtime", () => {
-  it("applies via the fake's applyPortableMcpConfig with no id-branch outcome possible", async () => {
+  it("retains the fake's deferred apply outcome without claiming acceptance", async () => {
     const fixture = createPersistenceFixture();
     try {
       fixture.seedProject(PROJECT_PATH);
@@ -811,16 +814,18 @@ describe("E5: applyAtTurnStart derives its disposition from the fake runtime", (
 
       const result = await service.applyAtTurnStart({
         projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: "conv-e5",
+        target: {
+          scope: "session",
+          projectName: "p",
+          sessionName: SESSION_NAME,
+          conversationId: "conv-e5",
+        },
         backend: TESTFAKE_BACKEND_ID,
       });
 
       expect(resolvedBackend).toBe("testfake");
       expect(result.backend).toBe(TESTFAKE_BACKEND_ID);
-      // Disposition observed is what the fake runtime reported, truthful to
-      // its declared mcp.betweenTurnApply staging mode — not a Claude
-      // idle-live "applied_now" from an identity fallback.
+      // The runtime's disposition owns acceptance independently of backend ID.
       expect(result.disposition).toBe("deferred_to_next_turn");
       expect(fake.calls.map((c) => c.op)).toContain(
         "runtime.applyPortableMcpConfig",
@@ -831,8 +836,12 @@ describe("E5: applyAtTurnStart derives its disposition from the fake runtime", (
         SESSION_NAME,
         "conv-e5",
       );
-      expect(persisted?.mcpRuntime?.lastAppliedConfigHash).toBe(
+      expect(persisted?.mcpRuntime?.lastAppliedConfigHash).toBeUndefined();
+      expect(persisted?.mcpRuntime?.pendingConfigHash).toBe(
         result.effectiveConfigHash,
+      );
+      expect(persisted?.mcpRuntime?.lastApplyDisposition).toBe(
+        "deferred_to_next_turn",
       );
     } finally {
       fixture.close();

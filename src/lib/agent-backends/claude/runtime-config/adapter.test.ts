@@ -23,6 +23,7 @@ function fakeRuntime(input: {
   const appliedConfigs: ClaudeRuntimeCapabilityConfig[] = [];
   return {
     backend: "claude",
+    capabilityWorkingDirectory: "/repo",
     status: input.status ?? "alive",
     isTurnActive: input.isTurnActive ?? false,
     modelSelection: {

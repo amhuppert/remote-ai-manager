@@ -43,6 +43,34 @@ function apiView(
 }
 
 describe("adaptServerViewsForLevel", () => {
+  it("attributes project-conversation inheritance directly to project scope", () => {
+    const view = apiView("conversation", [
+      apiServer({ serverKey: "playwright" }),
+    ]);
+    view.target = {
+      scope: "project",
+      projectName: "demo",
+      conversationId: "conv",
+    };
+    expect(adaptServerViewsForLevel(view, "conversation")[0]?.status).toEqual({
+      kind: "inherited",
+      from: "project",
+    });
+  });
+
+  it("carries the supported pending boundary to affected rows", () => {
+    const view = apiView("conversation", [
+      apiServer({ serverKey: "playwright", pending: true }),
+    ]);
+    view.runtime = {
+      pendingConfigHash: "next",
+      lastApplyDisposition: "deferred_to_next_conversation",
+    };
+    expect(
+      adaptServerViewsForLevel(view, "conversation")[0]?.pendingLabel,
+    ).toBe("Applies in a new conversation");
+  });
+
   it("maps inherited status to discriminated union with parent level", () => {
     const view = apiView("conversation", [
       apiServer({ serverKey: "playwright", inheritanceStatus: "inherited" }),

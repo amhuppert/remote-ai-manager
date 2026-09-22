@@ -20,7 +20,6 @@ import {
   resolveIdleTtlMs,
 } from "./conversation-runtime";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
-import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "./runtime-config/agent-suppression";
 import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import type {
   ConversationBackendCreateInput,
@@ -134,6 +133,9 @@ function createControllableMockQuery() {
     mcpServerStatus: vi.fn().mockResolvedValue([]),
     applyFlagSettings: vi.fn().mockResolvedValue(undefined),
     reloadPlugins: vi.fn().mockResolvedValue(undefined),
+    setMcpServers: vi
+      .fn()
+      .mockResolvedValue({ added: [], removed: [], errors: {} }),
     next() {
       if (messages.length > 0) {
         return Promise.resolve({
@@ -998,29 +1000,12 @@ describe("ClaudeConversationRuntime — external turn events", () => {
 });
 
 describe("ClaudeConversationRuntime — applyPortableMcpConfig", () => {
-  function captureCanUseTool(): (
-    toolName: string,
-    toolInput: Record<string, unknown>,
-  ) => Promise<unknown> {
-    const firstCall = queryMock.mock.calls[0]!;
-    const arg = firstCall[0] as {
-      options: {
-        canUseTool: (
-          toolName: string,
-          toolInput: Record<string, unknown>,
-        ) => Promise<unknown>;
-      };
-    };
-    return arg.options.canUseTool;
-  }
-
-  it("defers the server-set change to the next runtime but applies the tool filter live", async () => {
+  async function runtimeWithServer() {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
-
     const runtime = await createRuntimeWithFakeDeps({
-      executionClass: "ordinary-conversation" as const,
-      conversationId: "conv-idle",
+      executionClass: "ordinary-conversation",
+      conversationId: "conv-mcp",
       projectPath: "/project",
       projectName: "proj",
       sessionName: "sess",
@@ -1033,34 +1018,97 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig", () => {
         },
       },
     });
-
-    const canUseTool = captureCanUseTool();
-    expect(await canUseTool("mcp__srv__tool_a", {})).toEqual({
-      behavior: "allow",
-      updatedInput: {},
+    if (!runtime.applyPortableMcpConfig)
+      throw new Error("Missing MCP apply facet");
+    expect(mock.query.setMcpServers).toHaveBeenCalledWith({
+      srv: { type: "stdio", command: "node" },
     });
+    mock.query.setMcpServers.mockClear();
+    return {
+      mock,
+      runtime,
+      apply: runtime.applyPortableMcpConfig.bind(runtime),
+    };
+  }
 
-    const result = await runtime.applyPortableMcpConfig!({
+  it("replaces the SDK server set at the turn boundary without closing the session", async () => {
+    const { mock, runtime, apply } = await runtimeWithServer();
+    const result = await apply({
+      servers: [{ id: "other", transport: "stdio", command: "python" }],
+    });
+    expect(result.disposition).toBe("applied_now");
+    expect(mock.query.setMcpServers).toHaveBeenCalledWith({
+      other: { type: "stdio", command: "python" },
+    });
+    expect(mock.query.close).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it("removes a server with existing tool exclusions without recreating the conversation", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation",
+      conversationId: "remove-filtered",
+      projectPath: "/p",
+      projectName: "p",
+      sessionName: "s",
+      worktreePath: "/p",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {
+        portableMcp: {
+          servers: [
+            {
+              id: "srv",
+              transport: "stdio",
+              command: "node",
+              disabledTools: ["hidden"],
+            },
+          ],
+        },
+      },
+    });
+    if (!runtime.applyPortableMcpConfig) throw new Error("Missing MCP facet");
+    expect(
+      (await runtime.applyPortableMcpConfig({ servers: [] })).disposition,
+    ).toBe("applied_now");
+    expect(mock.query.setMcpServers).toHaveBeenLastCalledWith({});
+    await runtime.close();
+  });
+
+  it("defers combined server and creation-only tool changes without partially applying", async () => {
+    const { mock, runtime, apply } = await runtimeWithServer();
+    const result = await apply({
       servers: [
         {
-          id: "srv",
+          id: "other",
           transport: "stdio",
-          command: "node",
+          command: "python",
           disabledTools: ["tool_a"],
         },
       ],
     });
+    expect(result.disposition).toBe("deferred_to_next_conversation");
+    expect(mock.query.setMcpServers).not.toHaveBeenCalled();
+    await runtime.close();
+  });
 
-    // The live SDK server set is fixed at creation, so a changed server list
-    // takes effect only on the next runtime; the tool-level filter is live.
-    expect(result.disposition).toBe("deferred_to_next_turn");
-    expect(await canUseTool("mcp__srv__tool_a", {})).toEqual({
-      behavior: "deny",
-      message: "Tool disabled by MCP configuration",
-      interrupt: false,
+  it("reports SDK reconfiguration errors without claiming acceptance", async () => {
+    const { mock, runtime, apply } = await runtimeWithServer();
+    mock.query.setMcpServers.mockResolvedValue({
+      added: [],
+      removed: [],
+      errors: { other: "Connection failed" },
     });
-
-    runtime.close();
+    expect(
+      (
+        await apply({
+          servers: [{ id: "other", transport: "stdio", command: "python" }],
+        })
+      ).disposition,
+    ).toBe("rejected");
+    await runtime.close();
   });
 
   it("rejects when every server in the config fails translation", async () => {
@@ -1111,7 +1159,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     return arg.options.canUseTool;
   }
 
-  it("wires the resolver-backed MCP filter into canUseTool so disabled tools are denied", async () => {
+  it("excludes exact MCP tool names through SDK creation options", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1138,19 +1186,14 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
       },
     });
 
-    const canUseTool = captureCanUseTool();
-    const result = await canUseTool("mcp__srv__forbidden", { x: 1 });
-
-    expect(result).toEqual({
-      behavior: "deny",
-      message: "Tool disabled by MCP configuration",
-      interrupt: false,
-    });
+    const options: Options = queryMock.mock.calls[0]?.[0].options;
+    expect(options.disallowedTools).toContain("mcp__srv__forbidden");
+    expect(options.permissionMode).toBe("bypassPermissions");
 
     runtime.close();
   });
 
-  it("denies disabled sub-agent Task invocations from the initial capability config", async () => {
+  it("retains native agents when individual exclusion is unsupported", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1183,14 +1226,13 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     });
 
     const canUseTool = captureCanUseTool();
-    const result = await canUseTool("Task", {
+    const result = await canUseTool("Agent", {
       subagent_type: "code-reviewer",
       prompt: "review this",
     });
 
     expect(result).toMatchObject({
-      behavior: "deny",
-      message: expect.stringContaining("code-reviewer"),
+      behavior: "allow",
     });
 
     runtime.close();
@@ -1217,12 +1259,12 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     const result = await applyTarget.applyCapabilityConfig({
       enabledPlugins: { "owner@m": false },
       skillOverrides: { "contrib-skill": "off" },
-      disabledAgentNames: [],
-      agentSuppressionStrategy: CLAUDE_AGENT_SUPPRESSION_STRATEGY,
     });
 
     expect(result).toEqual({ status: "applied" });
     expect(mock.query.applyFlagSettings).toHaveBeenCalledWith({
+      autoMemoryEnabled: false,
+      autoDreamEnabled: false,
       enabledPlugins: { "owner@m": false },
       skillOverrides: { "contrib-skill": "off" },
     });
@@ -1233,124 +1275,9 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
 
     runtime.close();
   });
-
-  it("reflects live updates to the portable config after applyPortableMcpConfig", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const runtime = await createRuntimeWithFakeDeps({
-      executionClass: "ordinary-conversation" as const,
-      conversationId: "conv-wire-3",
-      projectPath: "/project",
-      projectName: "proj",
-      sessionName: "sess",
-      worktreePath: "/project/.worktrees/sess",
-      persistedRef: null,
-      sessionInstructions: [],
-      tooling: {
-        portableMcp: {
-          servers: [{ id: "srv", transport: "stdio", command: "node" }],
-        },
-      },
-    });
-
-    const canUseTool = captureCanUseTool();
-
-    const before = await canUseTool("mcp__srv__tool_a", {});
-    expect(before).toEqual({ behavior: "allow", updatedInput: {} });
-
-    await runtime.applyPortableMcpConfig!({
-      servers: [
-        {
-          id: "srv",
-          transport: "stdio",
-          command: "node",
-          disabledTools: ["tool_a"],
-        },
-      ],
-    });
-
-    const after = await canUseTool("mcp__srv__tool_a", {});
-    expect(after).toEqual({
-      behavior: "deny",
-      message: "Tool disabled by MCP configuration",
-      interrupt: false,
-    });
-
-    runtime.close();
-  });
-
-  it("updates the tool filter live even while a turn is active (server-set deferred, filter live)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const runtime = await createRuntimeWithFakeDeps({
-      executionClass: "ordinary-conversation" as const,
-      conversationId: "conv-wire-4",
-      projectPath: "/project",
-      projectName: "proj",
-      sessionName: "sess",
-      worktreePath: "/project/.worktrees/sess",
-      persistedRef: null,
-      sessionInstructions: [],
-      tooling: {
-        portableMcp: {
-          servers: [{ id: "srv", transport: "stdio", command: "node" }],
-        },
-      },
-    });
-
-    const canUseTool = captureCanUseTool();
-
-    const turnPromise = runtime.sendTurn({
-      promptText: "hello",
-      imageRefs: [],
-      sessionInstructions: [],
-      autonomous: false,
-      signal: new AbortController().signal,
-      onEvent: () => {},
-    });
-    await Promise.resolve();
-
-    const result = await runtime.applyPortableMcpConfig!({
-      servers: [
-        {
-          id: "srv",
-          transport: "stdio",
-          command: "node",
-          disabledTools: ["tool_a"],
-        },
-      ],
-    });
-    // The server-set change lands on the next runtime, but the tool-level
-    // enable/disable filter is read live — the new deny is in effect at once.
-    expect(result.disposition).toBe("deferred_to_next_turn");
-
-    const during = await canUseTool("mcp__srv__tool_a", {});
-    expect(during).toEqual({
-      behavior: "deny",
-      message: "Tool disabled by MCP configuration",
-      interrupt: false,
-    });
-
-    mock.pushMessage({
-      type: "result",
-      subtype: "success",
-      session_id: "sess-1",
-      uuid: "u1",
-      total_cost_usd: 0,
-      duration_ms: 0,
-      num_turns: 0,
-      result: "",
-      is_error: false,
-    } as unknown as SDKMessage);
-    await turnPromise;
-
-    runtime.close();
-  });
 });
 
-describe("ClaudeConversationRuntime — static external MCP passthrough", () => {
+describe("ClaudeConversationRuntime — mutable external MCP delivery", () => {
   function captureStaticMcpServers(): Record<string, unknown> {
     const firstCall = queryMock.mock.calls[0]!;
     const arg = firstCall[0] as {
@@ -1359,7 +1286,7 @@ describe("ClaudeConversationRuntime — static external MCP passthrough", () => 
     return arg.options.mcpServers ?? {};
   }
 
-  it("passes translated external servers (with HTTP tool policies) to the SDK via the static mcpServers option at creation", async () => {
+  it("attaches external servers through the mutable API before any prompt", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -1386,20 +1313,10 @@ describe("ClaudeConversationRuntime — static external MCP passthrough", () => 
       },
     });
 
-    // External servers reach the SDK statically, at creation, with their
-    // per-tool policies already translated — no live server-set mutation.
-    const mcpServers = captureStaticMcpServers();
-    expect(mcpServers).toMatchObject({
-      context7: {
-        type: "http",
-        url: "https://mcp.context7.com/mcp",
-        tools: [
-          { name: "resolve-library-id", permission_policy: "always_deny" },
-        ],
-      },
+    expect(captureStaticMcpServers()).toEqual({});
+    expect(mock.query.setMcpServers).toHaveBeenCalledWith({
+      context7: { type: "http", url: "https://mcp.context7.com/mcp" },
     });
-    // No CC in-process server is bound; only the external server is present.
-    expect(Object.keys(mcpServers)).toEqual(["context7"]);
   });
 });
 

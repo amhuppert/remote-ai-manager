@@ -1,3 +1,4 @@
+import type { BackendCapabilityCatalogFacet } from "../capability-catalog";
 import { CODEX_IN_TURN_DELIVERY_ENABLED } from "./rollout-policy";
 import type {
   ConversationExecutionPolicy,
@@ -17,7 +18,7 @@ import type { BackendContinuityAdapter } from "../continuity";
 import type { BackendRuntimeConfigAdapter } from "../runtime-config";
 import type { AgentTaskRunner } from "../task";
 import type { AgentFailureClassifier } from "../errors";
-import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 import type { BackendNativeMemory } from "../native-memory";
 import {
   getDefaultCodexModel,
@@ -105,8 +106,31 @@ export const codexConversationCapabilities: BackendConversationCapabilities = {
     mode: "instruction-only",
   },
   capabilityKinds: [
-    { kind: "skills", applyTiming: "next_turn" },
-    { kind: "plugins", applyTiming: "next_turn" },
+    {
+      kind: "skills",
+      applyTiming: "next_turn",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "source-only",
+        compositionSupport: "translator",
+      },
+    },
+    {
+      kind: "plugins",
+      applyTiming: "next_turn",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "source-only",
+        compositionSupport: "translator",
+        support: {
+          configurable: true,
+          notes: [
+            "Plugin MCP components are not delivered automatically. Add needed servers to MCP configuration.",
+            "Native agents remain available; CC does not manage their selection.",
+          ],
+        },
+      },
+    },
   ],
 };
 
@@ -190,6 +214,7 @@ export const codexNativeMemory: BackendNativeMemory = {
 };
 
 export interface CodexDescriptorDeps {
+  capabilityCatalog?: BackendCapabilityCatalogFacet;
   conversationFactory: ConversationBackendFactory;
   /** `createCodexContinuityAdapter(...)` in production; injected so the
    * conformance suite can drive it against fake seed-builder ports. */
@@ -212,6 +237,7 @@ export function createCodexBackendDescriptor(
 ): AgentBackendDescriptor {
   return {
     id: "codex",
+    capabilityCatalog: deps.capabilityCatalog,
     metadata: codexBackendMetadata,
     skillCatalog: deps.skillCatalog,
     modelCatalog: {

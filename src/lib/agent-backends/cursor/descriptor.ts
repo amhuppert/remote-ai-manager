@@ -1,3 +1,4 @@
+import type { BackendCapabilityCatalogFacet } from "../capability-catalog";
 import { CURSOR_BACKGROUND_WARNING } from "./background-tasks";
 import type {
   ConversationExecutionPolicy,
@@ -15,7 +16,7 @@ import type { BackendContinuityAdapter } from "../continuity";
 import type { BackendRuntimeConfigAdapter } from "../runtime-config";
 import type { AgentFailureClassifier } from "../errors";
 import type { AgentTaskRunner } from "../task";
-import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 import {
   listNativeMemoryExceptions,
   type BackendNativeMemory,
@@ -150,9 +151,52 @@ export const cursorConversationCapabilities: BackendConversationCapabilities = {
     reason: "Capture is unavailable",
   },
   capabilityKinds: [
-    { kind: "skills", applyTiming: "next_conversation" },
-    { kind: "plugins", applyTiming: "next_conversation" },
-    { kind: "agents", applyTiming: "next_conversation" },
+    {
+      kind: "skills",
+      applyTiming: "next_conversation",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "source-only",
+        compositionSupport: "translator",
+        support: {
+          configurable: true,
+          notes: [
+            "Skill selection is fixed for this conversation. Changes apply in a new conversation.",
+          ],
+        },
+      },
+    },
+    {
+      kind: "plugins",
+      applyTiming: "next_conversation",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "source-only",
+        compositionSupport: "translator",
+        support: {
+          configurable: true,
+          notes: [
+            "Supported plugin skills and agents are available. Native hooks, rules, and plugin MCP are not delivered; configure needed servers in CC's MCP settings.",
+            "Plugin selection is fixed for this conversation. Changes apply in a new conversation.",
+          ],
+        },
+      },
+    },
+    {
+      kind: "agents",
+      applyTiming: "next_conversation",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "source-only",
+        compositionSupport: "translator",
+        support: {
+          configurable: true,
+          notes: [
+            "Agent definitions are fixed for this conversation. Changes apply in a new conversation.",
+          ],
+        },
+      },
+    },
   ],
 };
 
@@ -216,6 +260,7 @@ export const cursorManagedSkills = {
 
 export interface CursorDescriptorDeps {
   taskRunner: AgentTaskRunner;
+  capabilityCatalog?: BackendCapabilityCatalogFacet;
   conversationFactory: ConversationBackendFactory;
   modelCatalog: BackendModelCatalogFacet;
   /** `createCursorContinuityAdapter(...)` in production; injected so the
@@ -233,6 +278,7 @@ export function createCursorBackendDescriptor(
 ): AgentBackendDescriptor {
   return {
     id: CURSOR_BACKEND_ID,
+    capabilityCatalog: deps.capabilityCatalog,
     metadata: cursorBackendMetadata,
     modelCatalog: deps.modelCatalog,
     conversation: {

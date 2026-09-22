@@ -8,11 +8,11 @@ import {
 import type { McpServerDefinition } from "@/lib/mcp/types";
 import type { McpServerCompatibilityView } from "@/lib/mcp/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 import {
   buildCompatibilityLookup,
   createMcpCapabilityRegistry,
   defaultMcpCapabilityRegistry,
-  type McpBackendCapabilities,
 } from "./backend-capabilities";
 
 function definition(
@@ -45,13 +45,13 @@ describe("defaultMcpCapabilityRegistry — Claude capabilities", () => {
     expect(claude.serverDisable).toBe("omit");
   });
 
-  it("applies between-turn changes live when the runtime is idle", () => {
-    expect(claude.betweenTurnApply).toBe("live-when-idle");
+  it("applies saved changes at the next turn boundary", () => {
+    expect(claude.betweenTurnApply).toBe("next-turn");
   });
 
-  it("uses permission-layer filtering for stdio and native policies for HTTP/SSE", () => {
-    expect(claude.toolFiltering.mode).toBe("mixed");
-    expect(claude.toolFiltering.byTransport.stdio).toBe("permission-layer");
+  it("uses native creation-time exclusions for stdio and HTTP/SSE", () => {
+    expect(claude.toolFiltering.mode).toBe("native");
+    expect(claude.toolFiltering.byTransport.stdio).toBe("native");
     expect(claude.toolFiltering.byTransport["streamable-http"]).toBe("native");
     expect(claude.toolFiltering.byTransport.sse).toBe("native");
   });
@@ -364,7 +364,7 @@ describe("translatePortableMcpToClaude — capability-driven server disable", ()
 });
 
 describe("translatePortableMcpToClaude — capability-driven tool-filter handling", () => {
-  it("accepts enabledTools/disabledTools without rejection when capability is 'permission-layer'", () => {
+  it("keeps the server available while reporting unsupported allowlists", () => {
     const config: PortableMcpConfig = {
       servers: [
         {
@@ -379,12 +379,12 @@ describe("translatePortableMcpToClaude — capability-driven tool-filter handlin
     const { servers, rejectedServers, rejectedFields } =
       translatePortableMcpToClaude(config);
     expect(rejectedServers).not.toContain("srv");
-    expect(rejectedFields).not.toContain("srv.enabledTools");
+    expect(rejectedFields).toContain("srv.enabledTools");
     expect(rejectedFields).not.toContain("srv.disabledTools");
     expect(servers).toHaveProperty("srv");
   });
 
-  it("rejects tool filters when capability marks the transport 'unsupported'", () => {
+  it("retains availability when capability cannot apply tool filters", () => {
     const unsupportedCaps: McpBackendCapabilities = {
       ...defaultMcpCapabilityRegistry.getCapabilities("claude"),
       toolFiltering: {
@@ -410,7 +410,7 @@ describe("translatePortableMcpToClaude — capability-driven tool-filter handlin
       config,
       { capabilities: unsupportedCaps },
     );
-    expect(rejectedServers).toContain("srv");
+    expect(rejectedServers).not.toContain("srv");
     expect(rejectedFields).toContain("srv.enabledTools");
   });
 });

@@ -22,7 +22,7 @@ import {
   toRawTranscriptEntries,
   type AgentTranscriptEntry,
 } from "../transcript";
-import { translatePortableMcpToCodex } from "./mcp-translation";
+import { translatePortableMcpToCodex } from "../mcp-translation";
 import {
   buildCodexMcpServersConfig,
   listNativeCodexMcpServers,

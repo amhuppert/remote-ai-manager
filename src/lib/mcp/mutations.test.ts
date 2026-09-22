@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -98,9 +99,7 @@ describe("useToggleMcpServerMutation", () => {
       () =>
         useToggleMcpServerMutation({
           level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: sessionConversationTarget("p", "s", "c"),
         }),
       { wrapper: wrapperFor(makeClient()) },
     );
@@ -127,11 +126,11 @@ describe("useToggleMcpServerMutation", () => {
     );
     const client = makeClient();
     client.setQueryData(
-      mcpConfigKeys.conversation("p", "s", "c"),
+      mcpConfigKeys.conversation(sessionConversationTarget("p", "s", "c")),
       view("conversation", [serverRow({ serverKey: "srv" })]),
     );
     const cached = client.getQueryData<McpConfigViewResponse>(
-      mcpConfigKeys.conversation("p", "s", "c"),
+      mcpConfigKeys.conversation(sessionConversationTarget("p", "s", "c")),
     );
     if (!cached) {
       throw new Error("expected cached MCP view");
@@ -142,9 +141,7 @@ describe("useToggleMcpServerMutation", () => {
       () =>
         useToggleMcpServerMutation({
           level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: sessionConversationTarget("p", "s", "c"),
         }),
       { wrapper: wrapperFor(client) },
     );
@@ -172,9 +169,7 @@ describe("useToggleMcpServerMutation", () => {
       () =>
         useToggleMcpServerMutation({
           level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: sessionConversationTarget("p", "s", "c"),
         }),
       { wrapper: wrapperFor(makeClient()) },
     );
@@ -281,7 +276,9 @@ describe("useToggleMcpServerMutation", () => {
 
   it("optimistically flips enabled + sets pending, then invalidates on success", async () => {
     const client = makeClient();
-    const key = mcpConfigKeys.conversation("p", "s", "c");
+    const key = mcpConfigKeys.conversation(
+      sessionConversationTarget("p", "s", "c"),
+    );
     const initial = view("conversation", [
       serverRow({
         serverKey: "srv",
@@ -301,9 +298,7 @@ describe("useToggleMcpServerMutation", () => {
       () =>
         useToggleMcpServerMutation({
           level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: sessionConversationTarget("p", "s", "c"),
         }),
       { wrapper: wrapperFor(client) },
     );
@@ -411,9 +406,7 @@ describe("useToggleMcpToolMutation", () => {
       () =>
         useToggleMcpToolMutation({
           level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: sessionConversationTarget("p", "s", "c"),
         }),
       { wrapper: wrapperFor(makeClient()) },
     );
@@ -500,9 +493,7 @@ describe("useRefreshMcpToolsMutation", () => {
       () =>
         useRefreshMcpToolsMutation({
           level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: sessionConversationTarget("p", "s", "c"),
         }),
       { wrapper: wrapperFor(makeClient()) },
     );
@@ -571,7 +562,10 @@ describe("useRefreshMcpToolsMutation", () => {
 
   it("invalidates the conversation tool inventory key on success (conversation scope)", async () => {
     const client = makeClient();
-    const key = mcpToolsKeys.inventory("p", "s", "c", "srv");
+    const key = mcpToolsKeys.inventory(
+      sessionConversationTarget("p", "s", "c"),
+      "srv",
+    );
     let resolved = false;
     client.setQueryData<McpToolInventoryResult>(key, {
       state: "stale",
@@ -598,9 +592,7 @@ describe("useRefreshMcpToolsMutation", () => {
       () =>
         useRefreshMcpToolsMutation({
           level: "conversation",
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: sessionConversationTarget("p", "s", "c"),
         }),
       { wrapper: wrapperFor(client) },
     );

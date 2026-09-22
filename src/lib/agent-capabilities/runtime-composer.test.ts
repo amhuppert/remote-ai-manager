@@ -24,6 +24,12 @@ function claudeSkill(
     source: { kind: "user-file", path: `/skills/${itemId}/SKILL.md` },
     nativeDefault: { enabled: opts.nativeEnabled ?? true },
     owningPluginId: opts.owningPluginId,
+    support: opts.owningPluginId
+      ? {
+          configurable: false,
+          notes: ["Individual skills follow their plugin selection."],
+        }
+      : undefined,
     runtimeVisibility: "runtime-visible",
   };
 }
@@ -204,14 +210,20 @@ describe("composeConversationStartRuntime — Claude composition", () => {
       enabled: false,
       originLayer: "global",
     });
-    expect(kindItems(result, "skills")).toContainEqual({
-      itemId: "child-skill",
-      enabled: false,
-      originLayer: "global",
-    });
+    expect(kindItems(result, "skills")).toEqual([]);
+    expect(result.views["claude-skills"]?.items).toEqual([
+      expect.objectContaining({
+        itemId: "child-skill",
+        ownEffectiveState: { enabled: true, originLayer: "native" },
+        effectiveState: { enabled: false, originLayer: "global" },
+        inheritedDisableReason: { pluginId: "owner@m", originLayer: "global" },
+        applyStatus: "unsupported",
+        runtimeEmittable: false,
+      }),
+    ]);
   });
 
-  it("carries disabled agents with their deciding layer for adapter-side suppression", () => {
+  it("retains requested agent preferences in the view without emitting unsupported controls", () => {
     const result = composeConversationStartRuntime({
       backend: "claude",
       scope: { level: "conversation" },
@@ -229,10 +241,26 @@ describe("composeConversationStartRuntime — Claude composition", () => {
         },
       },
     });
-    expect(kindItems(result, "agents")).toEqual([
-      { itemId: "explorer", enabled: true, originLayer: "native" },
-      { itemId: "reviewer", enabled: false, originLayer: "global" },
+    expect(kindItems(result, "agents")).toEqual([]);
+    expect(result.views["claude-agents"]?.items).toEqual([
+      expect.objectContaining({
+        itemId: "explorer",
+        nativeDefault: { enabled: true },
+        effectiveState: { enabled: true, originLayer: "native" },
+        applyStatus: "unsupported",
+        runtimeEmittable: false,
+      }),
+      expect.objectContaining({
+        itemId: "reviewer",
+        nativeDefault: { enabled: true },
+        effectiveState: { enabled: false, originLayer: "global" },
+        applyStatus: "unsupported",
+        runtimeEmittable: false,
+      }),
     ]);
+    expect(
+      result.runtimeState.cascades["claude-agents"]?.pendingItemIds,
+    ).toEqual([]);
   });
 
   it("falls back to native defaults for a cascade marked as failed (no cascade entry, no seeded state for it)", () => {
@@ -377,11 +405,16 @@ describe("composeConversationStartRuntime — project conversations", () => {
       enabled: true,
       originLayer: "project",
     });
-    expect(kindItems(result, "agents")).toContainEqual({
-      itemId: "reviewer",
-      enabled: false,
-      originLayer: "conversation",
-    });
+    expect(kindItems(result, "agents")).toEqual([]);
+    expect(result.views["claude-agents"]?.items).toContainEqual(
+      expect.objectContaining({
+        itemId: "reviewer",
+        currentLayerValue: { enabled: false, originLayer: "conversation" },
+        effectiveState: { enabled: false, originLayer: "conversation" },
+        applyStatus: "unsupported",
+        runtimeEmittable: false,
+      }),
+    );
     expect(result.runtimeState.cascades["claude-skills"]?.pendingHash).toMatch(
       /^[0-9a-f]{64}$/,
     );

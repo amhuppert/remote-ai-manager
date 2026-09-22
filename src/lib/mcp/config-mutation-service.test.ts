@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -477,10 +478,8 @@ describe("createMcpConfigMutationService — conversation scope", () => {
   it("persists a conversation override through a real reload", async () => {
     const service = serviceFor(h);
     const result = await service.patchConversation({
-      projectName: "proj",
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: sessionConversationTarget("proj", SESSION_NAME, CONVERSATION_ID),
       operations: [
         { type: "set-server-enabled", serverKey: "calc", enabled: false },
       ],
@@ -500,10 +499,8 @@ describe("createMcpConfigMutationService — conversation scope", () => {
     const service = serviceFor(h);
     await expect(
       service.patchConversation({
-        projectName: "proj",
         projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: "missing",
+        target: sessionConversationTarget("proj", SESSION_NAME, "missing"),
         operations: [
           { type: "set-server-enabled", serverKey: "calc", enabled: false },
         ],
@@ -514,10 +511,8 @@ describe("createMcpConfigMutationService — conversation scope", () => {
   it("a successful override edit is a focused column write — it does not restamp conversation or session activity", async () => {
     const service = serviceFor(h);
     const result = await service.patchConversation({
-      projectName: "proj",
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: sessionConversationTarget("proj", SESSION_NAME, CONVERSATION_ID),
       operations: [
         { type: "set-server-enabled", serverKey: "calc", enabled: false },
       ],
@@ -542,10 +537,8 @@ describe("createMcpConfigMutationService — conversation scope", () => {
   it("a conflict writes no override and restamps no activity", async () => {
     const service = serviceFor(h);
     const result = await service.patchConversation({
-      projectName: "proj",
       projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
+      target: sessionConversationTarget("proj", SESSION_NAME, CONVERSATION_ID),
       operations: [
         { type: "set-server-enabled", serverKey: "calc", enabled: false },
       ],

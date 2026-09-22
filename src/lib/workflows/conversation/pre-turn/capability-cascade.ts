@@ -6,8 +6,7 @@
  * layer) with non-blocking diagnostics, session conversations compose from
  * the full cascade; a project seed composed for a different backend is
  * dropped with a warning rather than switching the conversation's backend.
- * Also owns persisting the runtime seed baseline and the turn-start /
- * idle-drain apply calls.
+ * Also owns persisting the runtime seed baseline and turn-start apply.
  */
 
 import { createLogger } from "@/lib/logging";
@@ -18,7 +17,6 @@ import type {
 import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { backendHasIdleLiveCapability } from "@/lib/agent-backends/conversation-policy";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 
 const logger = createLogger("conversation-actor");
@@ -42,7 +40,6 @@ export interface CapabilityCascadeDeps {
   applyCapabilityAtTurnStart(
     input: ApplyConversationIdentity,
   ): Promise<unknown>;
-  applyCapabilityWhenIdle(input: ApplyConversationIdentity): Promise<unknown>;
   composeCapabilityConfigForConversation(input: {
     projectPath: string;
     projectName: string;
@@ -224,7 +221,10 @@ export async function seedRuntimeCapabilityState(
   ctx: CapabilityTurnContext,
   seed: AgentCapabilityRuntimeApplicationState,
 ): Promise<void> {
-  await deps.state.writeCapabilities(buildCapabilityApplyInput(ctx), seed);
+  await deps.state.updateCapabilities(
+    buildCapabilityApplyInput(ctx),
+    () => seed,
+  );
   logger.info("prompt.capability_runtime_seeded", {
     ...scopeRefFromStoreSessionName(ctx.sessionName),
     backend: ctx.backend,
@@ -234,7 +234,7 @@ export async function seedRuntimeCapabilityState(
 }
 
 /**
- * Promote any seeded `staged-next-turn` cascades at the start of a turn.
+ * Attempt delivery of pending capability changes at the start of a turn.
  * Failures never block the turn: they are logged and the turn proceeds.
  */
 export async function applyCapabilityCascadeAtTurnStart(
@@ -254,28 +254,6 @@ export async function applyCapabilityCascadeAtTurnStart(
     logger.error("prompt.capability_turn_start_failed", {
       ...scopeRefFromStoreSessionName(ctx.sessionName),
       backend: ctx.backend,
-      conversationId: ctx.conversationId,
-      error: getErrorMessage(err),
-    });
-  }
-}
-
-/**
- * Drain any `staged-idle` capability cascades after a turn completes and the
- * conversation transitions running → idle. No-op for backends without
- * idle-live-apply semantics. Failures are logged, never rethrown.
- */
-export async function drainCapabilityWhenIdle(
-  deps: Pick<CapabilityCascadeDeps, "applyCapabilityWhenIdle">,
-  ctx: CapabilityTurnContext,
-): Promise<void> {
-  if (!backendHasIdleLiveCapability(ctx.backend)) return;
-
-  try {
-    await deps.applyCapabilityWhenIdle(buildCapabilityApplyInput(ctx));
-  } catch (err) {
-    logger.error("prompt.capability_idle_drain_failed", {
-      ...scopeRefFromStoreSessionName(ctx.sessionName),
       conversationId: ctx.conversationId,
       error: getErrorMessage(err),
     });

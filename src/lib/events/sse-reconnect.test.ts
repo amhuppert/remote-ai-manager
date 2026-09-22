@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { commandKeys } from "../commands/query-keys";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
@@ -135,7 +136,10 @@ describe("reconnectReconcile", () => {
     client.setQueryData(devServerKeys.list("proj", "sess-a"), []);
     client.setQueryData(mcpConfigKeys.project("proj"), {});
     client.setQueryData(
-      mcpToolsKeys.inventory("proj", "sess-a", "conv-a", "calc"),
+      mcpToolsKeys.inventory(
+        sessionConversationTarget("proj", "sess-a", "conv-a"),
+        "calc",
+      ),
       {},
     );
     const ticketListKey = ticketKeys.list(normalizeTicketListFilters({}));
@@ -174,7 +178,10 @@ describe("reconnectReconcile", () => {
     ).toBe(true);
     expect(
       client.getQueryState(
-        mcpToolsKeys.inventory("proj", "sess-a", "conv-a", "calc"),
+        mcpToolsKeys.inventory(
+          sessionConversationTarget("proj", "sess-a", "conv-a"),
+          "calc",
+        ),
       )?.isInvalidated,
     ).toBe(true);
     expect(client.getQueryState(ticketListKey)?.isInvalidated).toBe(true);

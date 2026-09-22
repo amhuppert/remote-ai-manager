@@ -1,3 +1,7 @@
+import {
+  type ConversationTarget,
+  conversationTargetKey,
+} from "@/lib/conversations/conversation-target";
 export const mcpConfigKeys = {
   all: ["mcp-config"] as const,
   global: () => [...mcpConfigKeys.all, "global"] as const,
@@ -13,34 +17,28 @@ export const mcpConfigKeys = {
   conversationsInProject: (projectName: string) =>
     [...mcpConfigKeys.conversations(), projectName] as const,
   conversationsInSession: (projectName: string, sessionName: string) =>
-    [...mcpConfigKeys.conversations(), projectName, sessionName] as const,
-  conversation: (
-    projectName: string,
-    sessionName: string,
-    conversationId: string,
-  ) =>
     [
       ...mcpConfigKeys.conversations(),
       projectName,
+      "session",
       sessionName,
-      conversationId,
+    ] as const,
+  conversation: (target: ConversationTarget) =>
+    [
+      ...mcpConfigKeys.conversationsInProject(target.projectName),
+      target.scope,
+      ...(target.scope === "session" ? [target.sessionName] : []),
+      target.conversationId,
     ] as const,
 };
 
 export const mcpToolsKeys = {
   all: ["mcp-tools"] as const,
   inventories: () => [...mcpToolsKeys.all, "inventory"] as const,
-  inventory: (
-    projectName: string,
-    sessionName: string,
-    conversationId: string,
-    serverKey: string,
-  ) =>
+  inventory: (target: ConversationTarget, serverKey: string) =>
     [
       ...mcpToolsKeys.inventories(),
-      projectName,
-      sessionName,
-      conversationId,
+      ...conversationTargetKey(target),
       serverKey,
     ] as const,
 };

@@ -1,3 +1,7 @@
+import {
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { describe, expect, it } from "vitest";
 
 import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
@@ -67,13 +71,15 @@ describe("computeMcpConfigInvalidations", () => {
   it("conversation event invalidates only that conversation", () => {
     const result = computeMcpConfigInvalidations({
       level: "conversation",
-      projectName: "p",
-      sessionName: "s",
-      conversationId: "c",
+      target: sessionConversationTarget("p", "s", "c"),
     });
 
     expect(result).toEqual([
-      { queryKey: mcpConfigKeys.conversation("p", "s", "c") },
+      {
+        queryKey: mcpConfigKeys.conversation(
+          sessionConversationTarget("p", "s", "c"),
+        ),
+      },
     ]);
   });
 
@@ -85,6 +91,47 @@ describe("computeMcpConfigInvalidations", () => {
         sessionName: "s",
       }),
     ).toEqual([]);
+  });
+
+  it("invalidates only a project conversation for its edit, and both conversation kinds for a project edit", () => {
+    const one = mcpConfigKeys.conversation(
+      projectConversationTarget("p", "one"),
+    );
+    const two = mcpConfigKeys.conversation(
+      projectConversationTarget("p", "two"),
+    );
+    const session = mcpConfigKeys.conversation(
+      sessionConversationTarget("p", "s", "one"),
+    );
+    const matches = (prefix: readonly unknown[], key: readonly unknown[]) =>
+      prefix.every((value, index) => key[index] === value);
+    const individual = computeMcpConfigInvalidations({
+      level: "conversation",
+      target: projectConversationTarget("p", "one"),
+    });
+    expect(individual.some(({ queryKey }) => matches(queryKey, one))).toBe(
+      true,
+    );
+    expect(individual.some(({ queryKey }) => matches(queryKey, two))).toBe(
+      false,
+    );
+    expect(individual.some(({ queryKey }) => matches(queryKey, session))).toBe(
+      false,
+    );
+    const project = computeMcpConfigInvalidations({
+      level: "project",
+      projectName: "p",
+    });
+    for (const key of [one, two, session])
+      expect(project.some(({ queryKey }) => matches(queryKey, key))).toBe(true);
+    const changedSession = computeMcpConfigInvalidations({
+      level: "session",
+      projectName: "p",
+      sessionName: "s",
+    });
+    expect(changedSession.some(({ queryKey }) => matches(queryKey, one))).toBe(
+      false,
+    );
   });
 
   it("computed keys share the mcp-config root segment with both factories", () => {

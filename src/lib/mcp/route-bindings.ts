@@ -10,7 +10,7 @@ import {
   createToolInventoryHandlers,
 } from "@/lib/mcp/config-route-handlers";
 import { resolveProjectPath } from "@/lib/projects/resolver";
-import { getSession } from "@/lib/state-store";
+import { getSession, getProjectConversation } from "@/lib/state-store";
 import {
   defaultDiscoverAllSources,
   defaultGlobalMcpDefinitionPath,
@@ -108,6 +108,7 @@ const conversationConfigHandlers = createConversationMcpConfigHandlers({
   globalConfigPath: defaultGlobalMcpDefinitionPath,
   resolveProjectPath,
   getSession,
+  getProjectConversation,
   readProjectOverrides: defaultReadProjectOverrides,
   applyAfterOverrideChange:
     defaultMcpRuntimeApplyService.applyAfterOverrideChange,
@@ -122,6 +123,7 @@ const conversationToolInventoryHandlers = createToolInventoryHandlers({
   globalConfigPath: defaultGlobalMcpDefinitionPath,
   resolveProjectPath,
   getSession,
+  getProjectConversation,
   onDefinitionLoaded: recordKnownDefinition,
   broadcast: createMcpRouteBroadcast(),
 });

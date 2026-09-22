@@ -75,71 +75,23 @@ export interface AgentCapabilityMetadataRegistry {
   listForBackend(backend: AgentBackendId): readonly AgentCapabilityMetadata[];
 }
 
-export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
-  ...(["skills", "plugins", "agents"] as const).map((kind) =>
-    agentCapabilityMetadataSchema.parse({
-      cascadeKind: `cursor-${kind}`,
-      backend: "cursor",
+export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] =
+  AGENT_CAPABILITY_CASCADE_KINDS.map((cascadeKind) => {
+    const { backend, kind } = decodeCascadeKind(cascadeKind);
+    const support = conversationCapabilitiesForBackend(
+      backend,
+    ).capabilityKinds.find((entry) => entry.kind === kind);
+    if (!support?.catalog)
+      throw new Error(`No capability catalog metadata for ${cascadeKind}`);
+    return agentCapabilityMetadataSchema.parse({
+      cascadeKind,
+      backend,
       capabilityKind:
         kind === "skills" ? "skill" : kind === "plugins" ? "plugin" : "agent",
-      applySemantics: applySemanticsForCascade(`cursor-${kind}`),
-      discoverySupport: "available",
-      runtimeVisibility: "source-only",
-      compositionSupport: "translator",
-    }),
-  ),
-  agentCapabilityMetadataSchema.parse({
-    cascadeKind: "claude-skills",
-    backend: "claude",
-    capabilityKind: "skill",
-    applySemantics: applySemanticsForCascade("claude-skills"),
-    discoverySupport: "available",
-    runtimeVisibility: "sdk-runtime",
-    compositionSupport: "translator",
-  }),
-  agentCapabilityMetadataSchema.parse({
-    cascadeKind: "claude-plugins",
-    backend: "claude",
-    capabilityKind: "plugin",
-    applySemantics: applySemanticsForCascade("claude-plugins"),
-    discoverySupport: "available",
-    runtimeVisibility: "sdk-runtime",
-    compositionSupport: "translator",
-  }),
-  // The installed Claude SDK `Settings` has no typed per-agent disable map.
-  // Verified suppression strategy is permission-layer denial of Task tool
-  // invocations on disabled agents; that callback is bound at session
-  // creation so live-flip during a turn is unsupported (descriptor timing
-  // `next_conversation`). Plugin-level disable remains the only path that
-  // drops a plugin-contributed agent mid-session via `reloadPlugins()`.
-  agentCapabilityMetadataSchema.parse({
-    cascadeKind: "claude-agents",
-    backend: "claude",
-    capabilityKind: "agent",
-    applySemantics: applySemanticsForCascade("claude-agents"),
-    discoverySupport: "available",
-    runtimeVisibility: "sdk-runtime",
-    compositionSupport: "translator",
-  }),
-  agentCapabilityMetadataSchema.parse({
-    cascadeKind: "codex-skills",
-    backend: "codex",
-    capabilityKind: "skill",
-    applySemantics: applySemanticsForCascade("codex-skills"),
-    discoverySupport: "available",
-    runtimeVisibility: "source-only",
-    compositionSupport: "translator",
-  }),
-  agentCapabilityMetadataSchema.parse({
-    cascadeKind: "codex-plugins",
-    backend: "codex",
-    capabilityKind: "plugin",
-    applySemantics: applySemanticsForCascade("codex-plugins"),
-    discoverySupport: "available",
-    runtimeVisibility: "source-only",
-    compositionSupport: "translator",
-  }),
-];
+      applySemantics: applySemanticsForCascade(cascadeKind),
+      ...support.catalog,
+    });
+  });
 
 export function createAgentCapabilityMetadataRegistry(
   entries: readonly unknown[],

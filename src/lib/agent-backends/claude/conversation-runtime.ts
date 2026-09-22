@@ -12,10 +12,8 @@ import type {
  */
 
 import type {
-  CanUseTool,
   McpServerConfig,
   SDKMessage,
-  Settings,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
@@ -31,6 +29,7 @@ import type {
   ConversationBackendFactory,
   ReadyResult,
 } from "../conversation";
+import type { ResolvedCapabilityCascade } from "../runtime-config";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
 import type { FsWritePolicy } from "../task";
 import type {
@@ -38,15 +37,13 @@ import type {
   ClaudeCapabilityApplyTarget,
 } from "./runtime-config/adapter";
 import {
+  claudeDeliveredCapabilities,
   translateClaudeRuntimeCapabilities,
   type ClaudeRuntimeCapabilityConfig,
 } from "./runtime-config/translator";
 import { readClaudePluginNativeRecords } from "./runtime-config/plugin-native-records";
 import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
-import {
-  assertClaudeNativeMemoryNeutralized,
-  CLAUDE_NATIVE_MEMORY_SETTINGS,
-} from "./native-memory";
+import { assertClaudeNativeMemoryNeutralized } from "./native-memory";
 import {
   createQuerySession,
   type BackgroundWaitOutcome,
@@ -60,7 +57,6 @@ import {
   isSessionDiedMidTurnError,
 } from "./query-session-errors";
 import { buildClaudePromptBlocks } from "./build-prompt-blocks";
-import { createCanUseTool } from "./native-tooling";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
 import { conversationTargetLogFields } from "@/lib/conversations/conversation-target";
@@ -71,8 +67,9 @@ import { createLogger } from "@/lib/logging";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { type McpDiscoveredTool } from "@/lib/mcp/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
-import { createPortableMcpFilterLookup } from "./portable-mcp-filter";
-import { composeClaudeAgentCanUseTool } from "./runtime-config/agent-suppression";
+import { claudeMcpToolExclusions } from "./mcp-config";
+import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
+import { composeClaudeCapabilitySettings } from "./runtime-config/settings";
 import {
   createClaudeMessageInterpreter,
   createClaudeExternalTurnInterpreter,
@@ -200,6 +197,13 @@ class ClaudeConversationRuntime
   implements ConversationBackendRuntime, ClaudeCapabilityApplyTarget
 {
   readonly backend: AgentBackendId = "claude";
+  readonly mcpConfigDelivery = "input-accepted" as const;
+  readonly capabilityConfigDelivery = "input-accepted" as const;
+  readonly capabilityWorkingDirectory: string;
+  private currentPortableMcp: PortableMcpConfig;
+  private readonly initialMcpToolExclusions: string[];
+  private mcpConfigError: string | undefined;
+  private acceptedCapabilities: ResolvedCapabilityCascade | undefined;
   readonly modelSelection: BackendModelSelection;
 
   /** The write envelope this session was established under; undefined when unrestricted. */
@@ -214,9 +218,6 @@ class ClaudeConversationRuntime
   private captureGraceMs = 5000;
   private readonly captureSettlement = new Set<Promise<void>>();
   private captureAttempt: Promise<CaptureHandoffResult> | null = null;
-  private readonly onPortableMcpApplied: (
-    config: PortableMcpConfig | null,
-  ) => void;
   private readonly onCapabilityConfigApplied: (
     config: ClaudeRuntimeCapabilityConfig,
   ) => Promise<void>;
@@ -228,7 +229,9 @@ class ClaudeConversationRuntime
       resolvedModelSelection: ResolvedClaudeModelSelection;
 
       fsWritePolicy?: FsWritePolicy;
-      onPortableMcpApplied?: (config: PortableMcpConfig | null) => void;
+      portableMcp: PortableMcpConfig;
+      capabilities?: ResolvedCapabilityCascade;
+      initialMcpErrors?: Record<string, string>;
       /**
        * Mid-session capability apply hook. Production wires this to
        * `query.applyFlagSettings(...)` + `query.reloadPlugins()` so cascade
@@ -246,7 +249,16 @@ class ClaudeConversationRuntime
     this.modelSelection = opts.resolvedModelSelection.modelSelection;
 
     this.fsWritePolicy = opts.fsWritePolicy;
-    this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
+    this.initialMcpToolExclusions = claudeMcpToolExclusions(opts.portableMcp);
+    this.currentPortableMcp = {
+      servers: opts.portableMcp.servers.filter(
+        (server) => !opts.initialMcpErrors?.[server.id],
+      ),
+    };
+    if (opts.initialMcpErrors && Object.keys(opts.initialMcpErrors).length)
+      this.mcpConfigError = `MCP servers could not be configured: ${Object.keys(opts.initialMcpErrors).join(", ")}`;
+    this.acceptedCapabilities = opts.capabilities;
+    this.capabilityWorkingDirectory = opts.sessionOptions.cwd;
     this.onCapabilityConfigApplied =
       opts.onCapabilityConfigApplied ?? (async () => {});
 
@@ -272,9 +284,8 @@ class ClaudeConversationRuntime
   }
 
   /**
-   * Pre-turn readiness contract. External MCP servers reach the SDK statically
-   * at runtime creation, so a reused turn has no in-process rebind to perform —
-   * the runtime is always ready.
+   * MCP configuration is applied by the pre-turn hook through the SDK control
+   * channel; no separate bridge preparation is needed.
    */
   async prepareForTurnStart(): Promise<ReadyResult> {
     return { status: "ready" };
@@ -405,7 +416,12 @@ class ClaudeConversationRuntime
       if (event === "__raw_message") {
         if (!inputAcceptedEmitted) {
           inputAcceptedEmitted = true;
-          interpreter.emitEvent({ type: "input_accepted" });
+          interpreter.emitEvent({
+            type: "input_accepted",
+            mcpConfigHash: computeEffectiveConfigHash(this.currentPortableMcp),
+            capabilities: this.acceptedCapabilities,
+            mcpConfigError: this.mcpConfigError,
+          });
           logger.debug("claude-runtime.input_accepted", {
             conversationId: this.querySession.conversationId,
           });
@@ -632,12 +648,38 @@ class ClaudeConversationRuntime
       };
     }
 
-    // The live SDK server set is fixed at runtime creation (static
-    // `mcpServers`), so a changed server list only takes effect on the next
-    // runtime. The tool-level enable/disable filter, however, is read live
-    // through `onPortableMcpApplied`, so tool policy changes apply immediately
-    // to `canUseTool`.
-    this.onPortableMcpApplied(config);
+    const activeServerPrefixes = config.servers
+      .filter((server) => server.enabled !== false)
+      .map((server) => `mcp__${server.id}__`);
+    const applicableInitialExclusions = this.initialMcpToolExclusions.filter(
+      (tool) => activeServerPrefixes.some((prefix) => tool.startsWith(prefix)),
+    );
+    if (
+      JSON.stringify(claudeMcpToolExclusions(config)) !==
+      JSON.stringify(applicableInitialExclusions)
+    ) {
+      return {
+        disposition: "deferred_to_next_conversation",
+        droppedServerIds: [],
+        droppedFields: [],
+        errors: {},
+      };
+    }
+    const result = await this.querySession.query.setMcpServers(servers);
+    const errors = { ...errorsByServer, ...result.errors };
+    this.currentPortableMcp = {
+      servers: config.servers.filter((server) => !errors[server.id]),
+    };
+    this.mcpConfigError = Object.keys(errors).length
+      ? `MCP servers could not be configured: ${Object.keys(errors).join(", ")}`
+      : undefined;
+    if (this.mcpConfigError)
+      return {
+        disposition: "rejected",
+        errors,
+        droppedServerIds: rejectedServers,
+        droppedFields: rejectedFields,
+      };
 
     logger.info("claude-runtime.mcp_applied", {
       conversationId: this.querySession.conversationId,
@@ -645,7 +687,7 @@ class ClaudeConversationRuntime
     });
 
     return {
-      disposition: "deferred_to_next_turn",
+      disposition: "applied_now",
       droppedServerIds: rejectedServers,
       droppedFields: rejectedFields,
       errors: errorsByServer,
@@ -663,6 +705,7 @@ class ClaudeConversationRuntime
    */
   async applyCapabilityConfig(
     config: ClaudeRuntimeCapabilityConfig,
+    resolved?: ResolvedCapabilityCascade,
   ): Promise<ClaudeCapabilityApplyResult> {
     const conversationId = this.querySession.conversationId;
     if (this._status === "dead" || this.querySession.status === "dead") {
@@ -680,6 +723,18 @@ class ClaudeConversationRuntime
 
     try {
       await this.onCapabilityConfigApplied(config);
+      if (resolved) {
+        const replaced = new Set(resolved.kinds.map((kind) => kind.kind));
+        this.acceptedCapabilities = {
+          backend: "claude",
+          kinds: [
+            ...(this.acceptedCapabilities?.kinds ?? []).filter(
+              (kind) => !replaced.has(kind.kind),
+            ),
+            ...resolved.kinds,
+          ],
+        };
+      }
     } catch (err) {
       const errorMsg = getErrorMessage(err);
       logger.error("claude-runtime.capability_apply_failed", {
@@ -692,7 +747,6 @@ class ClaudeConversationRuntime
       conversationId,
       pluginCount: Object.keys(config.enabledPlugins).length,
       skillOverrideCount: Object.keys(config.skillOverrides).length,
-      disabledAgentCount: config.disabledAgentNames.length,
     });
     return { status: "applied" };
   }
@@ -899,28 +953,6 @@ const claudeConversationBackendFactory = {
       modelId: resolvedModelSelection.modelId,
     });
 
-    // Mutable portable-config holder — reflects the resolver's current
-    // effective output. Updated by applyPortableMcpConfig on successful apply.
-    // The filter lookup reads from it live, so tool-policy changes take effect
-    // in canUseTool without rebuilding the callback.
-    let currentPortableConfig: PortableMcpConfig | null =
-      input.tooling.portableMcp ?? null;
-
-    const mcpCanUseTool = createCanUseTool({
-      conversationId: input.conversationId,
-      mcpFilter: createPortableMcpFilterLookup(() => currentPortableConfig),
-    });
-
-    // Adapt the 2-argument MCP filter callback to the SDK's 3-argument
-    // CanUseTool signature so the suppression layer can call it through.
-    const innerCanUseTool: CanUseTool = async (toolName, toolInput) => {
-      const result = await mcpCanUseTool(
-        toolName,
-        toolInput as Record<string, unknown>,
-      );
-      return result;
-    };
-
     // Translate the neutral capability seed into the Claude runtime payload.
     // Native plugin records are read here — below the seam — so the plugin
     // delta basis never crosses upward. An unreadable native settings file
@@ -936,7 +968,7 @@ const claudeConversationBackendFactory = {
             kind.items.some((item) => item.originLayer !== "native"),
         );
         const nativePluginRecords = hasPluginOverrides
-          ? await readClaudePluginNativeRecords()
+          ? await readClaudePluginNativeRecords(undefined, input.worktreePath)
           : [];
         const translation = translateClaudeRuntimeCapabilities({
           cascade: input.tooling.capabilities,
@@ -959,17 +991,6 @@ const claudeConversationBackendFactory = {
       }
     }
 
-    // Compose the sub-agent suppression layer. The suppression set is bound
-    // at session creation per `CLAUDE_AGENT_SUPPRESSION_STRATEGY.applyPoint`
-    // ("next-conversation"); mid-session changes require a fresh runtime.
-    const disabledAgentNames = new Set<string>(
-      capabilityConfig?.disabledAgentNames ?? [],
-    );
-    const canUseTool = composeClaudeAgentCanUseTool({
-      disabledAgentNames,
-      inner: innerCanUseTool,
-    });
-
     // Managed skill bundle attachment (host environment, outside the user
     // capability cascade): the published CC plugin loads as an SDK-local
     // plugin, and a non-equivalent user-installed copy is suppressed for the
@@ -978,41 +999,10 @@ const claudeConversationBackendFactory = {
       ? { plugins: [], enabledPluginsOverride: {} }
       : await resolveClaudeManagedSkillsForLaunch();
 
-    // Build initial SDK Settings from the translated capability config so the
-    // SDK applies plugin/skill overrides natively at session start. Without
-    // this, capability seeding for a brand-new runtime would be a no-op.
-    //
-    // The native-memory neutralization seeds the object, so these settings are
-    // never undefined: a conversation with no capability overrides at all still
-    // launches with Claude's own auto-memory off (see ./native-memory.ts).
-    const initialSettings: Settings = (() => {
-      const cfg = capabilityConfig;
-      const settings: Settings = { ...CLAUDE_NATIVE_MEMORY_SETTINGS };
-      const enabledPlugins: Record<string, boolean> = {
-        ...(cfg?.enabledPlugins ?? {}),
-      };
-      for (const [pluginId, enabled] of Object.entries(
-        managedSkills.enabledPluginsOverride,
-      )) {
-        if (
-          pluginId in enabledPlugins &&
-          enabledPlugins[pluginId] !== enabled
-        ) {
-          logger.warn("claude-factory.managed_skills_override_conflict", {
-            conversationId: input.conversationId,
-            pluginId,
-          });
-        }
-        enabledPlugins[pluginId] = enabled;
-      }
-      if (Object.keys(enabledPlugins).length > 0) {
-        settings.enabledPlugins = enabledPlugins;
-      }
-      if (cfg && Object.keys(cfg.skillOverrides).length > 0) {
-        settings.skillOverrides = cfg.skillOverrides;
-      }
-      return settings;
-    })();
+    const initialSettings = composeClaudeCapabilitySettings(
+      capabilityConfig,
+      managedSkills.enabledPluginsOverride,
+    );
 
     // Determine resume session ID from persisted ref
     const resumeSessionId =
@@ -1020,15 +1010,15 @@ const claudeConversationBackendFactory = {
         ? input.persistedRef.ref
         : undefined;
 
-    // Build the external MCP servers config from tooling overrides and pass it
-    // to the SDK statically at creation. External (non-CC) MCP servers are the
-    // only servers CC binds now — there is no in-process CC server to merge.
+    // External MCP servers share one mutable SDK set for launch and updates.
     let translatedServers: Record<string, McpServerConfig> = {};
+    let initialMcpErrors: Record<string, string> = {};
     if (input.tooling.portableMcp) {
-      const { servers } = translatePortableMcpToClaude(
+      const { servers, errorsByServer } = translatePortableMcpToClaude(
         input.tooling.portableMcp,
       );
       translatedServers = servers;
+      initialMcpErrors = errorsByServer;
     }
 
     const externalTurnHandler = input.onExternalTurnEvent
@@ -1054,8 +1044,13 @@ const claudeConversationBackendFactory = {
       },
       resume: resumeSessionId,
       forkSession: undefined,
-      mcpServers: translatedServers,
-      canUseTool: canUseTool as never,
+      // Static SDK entries cannot be removed by setMcpServers; all managed
+      // servers enter through the mutable set before the first prompt.
+      mcpServers: {},
+      canUseTool: async (_tool, toolInput) => ({
+        behavior: "allow",
+        updatedInput: toolInput,
+      }),
       env: buildSessionEnvContract({
         baseEnv: buildChildEnv(),
         serverUrl: trustedServerUrl,
@@ -1083,7 +1078,12 @@ const claudeConversationBackendFactory = {
       maxTurns: undefined,
       plugins: managedSkills.plugins,
       settingSources: ["user", "project", "local"],
-      disallowedTools: ["AskUserQuestion"],
+      disallowedTools: [
+        "AskUserQuestion",
+        ...claudeMcpToolExclusions(
+          input.tooling.portableMcp ?? { servers: [] },
+        ),
+      ],
       // The session refuses to be created when it cannot establish this, so an
       // implementer confined to its owned prefixes never degrades to an
       // unconfined session.
@@ -1111,6 +1111,17 @@ const claudeConversationBackendFactory = {
     assertClaudeNativeMemoryNeutralized();
 
     const querySession = createQuerySession(sessionOptions);
+    if (!input.initialPurpose && Object.keys(translatedServers).length) {
+      try {
+        const result =
+          await querySession.query.setMcpServers(translatedServers);
+        initialMcpErrors = { ...initialMcpErrors, ...result.errors };
+      } catch (error) {
+        querySession.close();
+        await querySession.awaitClosed();
+        throw error;
+      }
+    }
 
     const runtime = new ClaudeConversationRuntime(querySession, {
       sessionOptions,
@@ -1119,15 +1130,19 @@ const claudeConversationBackendFactory = {
       ...(input.fsWritePolicy !== undefined
         ? { fsWritePolicy: input.fsWritePolicy }
         : {}),
-      onPortableMcpApplied: (config) => {
-        currentPortableConfig = config;
-      },
+      portableMcp: input.tooling.portableMcp ?? { servers: [] },
+      initialMcpErrors,
+      capabilities:
+        capabilityConfig && input.tooling.capabilities
+          ? claudeDeliveredCapabilities(input.tooling.capabilities)
+          : undefined,
       onCapabilityConfigApplied: async (config) => {
-        const flagSettings: Settings = {
-          enabledPlugins: config.enabledPlugins,
-          skillOverrides: config.skillOverrides,
-        };
-        await querySession.query.applyFlagSettings(flagSettings);
+        const settings = composeClaudeCapabilitySettings(
+          config,
+          managedSkills.enabledPluginsOverride,
+        );
+        await querySession.query.applyFlagSettings(settings);
+        sessionOptions.settings = settings;
         await querySession.query.reloadPlugins();
         logger.info("claude-runtime.capability_sdk_mutation", {
           conversationId: input.conversationId,
@@ -1142,7 +1157,6 @@ const claudeConversationBackendFactory = {
         conversationId: input.conversationId,
         pluginCount: Object.keys(capabilityConfig.enabledPlugins).length,
         skillOverrideCount: Object.keys(capabilityConfig.skillOverrides).length,
-        disabledAgentCount: capabilityConfig.disabledAgentNames.length,
       });
     }
 

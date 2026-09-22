@@ -96,6 +96,31 @@ function baseInput(
 }
 
 describe("resolveCascadeView — four-layer inheritance (task 4.1)", () => {
+  it("preserves adapter control limitations without changing the requested selection", () => {
+    const support = {
+      configurable: false,
+      notes: ["Individual skills follow their plugin."],
+    };
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "claude-skills",
+        discoveredItems: [
+          { ...discoveredSkill("plugin-skill", true), support },
+        ],
+        overrideChain: [
+          {
+            layer: "conversation",
+            overrides: override({ "plugin-skill": false }),
+          },
+        ],
+      }),
+    );
+    expect(view.items[0]?.support).toEqual(support);
+    expect(view.items[0]?.effectiveState.enabled).toBe(false);
+    expect(view.items[0]?.runtimeEmittable).toBe(false);
+    expect(view.items[0]?.applyStatus).toBe("unsupported");
+  });
+
   it("falls back to native default when no CC override exists at any layer", () => {
     const view = resolveCascadeView(
       baseInput({
@@ -1130,7 +1155,7 @@ describe("resolveCascadeView — runtime status attachment (task 4.4)", () => {
     expect(view.items[0]!.applyStatus).toBe("none");
   });
 
-  it("Claude sub-agents report deferred-next-conversation when the change is pending", () => {
+  it("unsupported agent selection settles as a limitation despite an older pending record", () => {
     const view = resolveCascadeView(
       baseInput({
         cascadeKind: "claude-agents",
@@ -1157,7 +1182,8 @@ describe("resolveCascadeView — runtime status attachment (task 4.4)", () => {
         }),
       }),
     );
-    expect(view.items[0]!.applyStatus).toBe("deferred-next-conversation");
+    expect(view.items[0]?.applyStatus).toBe("unsupported");
+    expect(view.items[0]?.runtimeEmittable).toBe(false);
   });
 
   it("rejected status surfaces from runtime apply records when not in pending list", () => {

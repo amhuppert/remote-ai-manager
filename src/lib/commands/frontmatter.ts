@@ -32,6 +32,7 @@ export function parseFrontmatter(content: string): FrontmatterResult {
       continue;
     }
     blockKey = undefined;
+    if (/^\s*#/.test(line)) continue;
     const colonIdx = line.indexOf(":");
     if (colonIdx === -1) continue;
 

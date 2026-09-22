@@ -1,17 +1,12 @@
+import { discoverCodexSkillSelectors } from "./skill-discovery";
+import type { CodexNativeSkillSelector } from "./skill-catalog";
+import os from "node:os";
+import { codexSkillPath } from "./skill-identity";
 /**
- * Codex runtime capability translation + `BackendRuntimeConfigAdapter`.
- *
- * Emits the verified TOML override shape that `@openai/codex-sdk` accepts
- * through `CodexOptions.config` — `skills.config[]` entries with
- * `{ enabled, name }` per resolved codex-skill and `plugins."NAME".enabled`
- * per resolved codex-plugin (verified against the Codex `config.schema.json`
- * `SkillsConfig` and `PluginConfig` definitions). The SDK passes this object
- * through verbatim via `flattenConfigOverrides`, which handles nested objects
- * and `@`-bearing keys correctly.
- *
- * Codex rebuilds its `CodexOptions` per turn, so applying a config only
- * stores it on the runtime for next-turn ingestion — there is no live-apply
- * path and the adapter never returns a turn-active deferral.
+ * Codex capability selection stays below the backend seam. Durable source ids
+ * become native path selectors, and explicit CC decisions merge with the
+ * effective native selector array before launch. Staging a config does not
+ * acknowledge delivery; the next accepted turn supplies that receipt.
  */
 
 import { createLogger } from "@/lib/logging";
@@ -31,7 +26,7 @@ import { codexConversationCapabilities } from "./descriptor";
 const logger = createLogger("codex:runtime-config-adapter");
 
 export interface CodexCapabilityEmittedConfig {
-  skills?: { config: { enabled: boolean; name: string }[] };
+  skills?: { config: { enabled: boolean; name?: string; path?: string }[] };
   plugins?: Record<string, { enabled: boolean }>;
 }
 
@@ -39,24 +34,63 @@ export interface CodexRuntimeCapabilityConfig {
   /** Pass-through object merged into `CodexOptions.config` at next-turn
    * start. */
   config: CodexCapabilityEmittedConfig;
+  capabilities?: ResolvedCapabilityCascade;
+}
+
+/** A flag-layer array replaces native selectors; retain untargeted decisions. */
+export async function mergeCodexNativeSkillSelectors(
+  config: CodexCapabilityEmittedConfig,
+  worktreePath: string,
+  readSelectors: (
+    cwd: string,
+  ) => Promise<
+    readonly CodexNativeSkillSelector[]
+  > = discoverCodexSkillSelectors,
+): Promise<CodexCapabilityEmittedConfig> {
+  if (!config.skills) return config;
+  const native = await readSelectors(worktreePath);
+  const explicit = config.skills.config;
+  return {
+    ...config,
+    skills: {
+      config: [
+        ...native.filter(
+          (entry) =>
+            !explicit.some((decision) =>
+              decision.path
+                ? decision.path === entry.path
+                : decision.name === entry.name,
+            ),
+        ),
+        ...explicit,
+      ],
+    },
+  };
 }
 
 export function translateCodexRuntimeCapabilities(
   cascade: ResolvedCapabilityCascade,
+  worktreePath: string = process.cwd(),
 ): CodexRuntimeCapabilityConfig {
-  const skills = itemsForKind(cascade, "skills");
+  const skills = itemsForKind(cascade, "skills").filter(
+    (skill) => skill.originLayer !== "native",
+  );
   const plugins = itemsForKind(cascade, "plugins");
 
   const config: CodexCapabilityEmittedConfig = {};
 
   if (skills.length > 0) {
     config.skills = {
-      // Codex skill item ids double as the skill names the SDK matches on.
-      config: skills.map((skill) => ({
-        enabled: skill.enabled,
-        name: skill.itemId,
-      })),
+      config: skills.flatMap((skill) => {
+        const skillPath = codexSkillPath(
+          skill.itemId,
+          worktreePath,
+          os.homedir(),
+        );
+        return skillPath ? [{ enabled: skill.enabled, path: skillPath }] : [];
+      }),
     };
+    if (config.skills.config.length === 0) delete config.skills;
   }
 
   if (plugins.length > 0) {
@@ -67,7 +101,7 @@ export function translateCodexRuntimeCapabilities(
     config.plugins = pluginConfig;
   }
 
-  return { config };
+  return { config, capabilities: cascade };
 }
 
 function itemsForKind(
@@ -84,6 +118,7 @@ function itemsForKind(
  */
 export type CodexCapabilityApplyResult =
   | { status: "applied" }
+  | { status: "deferred"; reason: "next_turn" }
   | { status: "rejected"; error: string };
 
 /**
@@ -92,6 +127,7 @@ export type CodexCapabilityApplyResult =
  * so provider config types stay below the seam.
  */
 export interface CodexCapabilityApplyTarget {
+  readonly capabilityWorkingDirectory: string;
   applyCapabilityConfig(
     config: CodexRuntimeCapabilityConfig,
   ): Promise<CodexCapabilityApplyResult>;
@@ -135,7 +171,10 @@ export function createCodexRuntimeConfigAdapter(): BackendRuntimeConfigAdapter {
         };
       }
 
-      const translated = translateCodexRuntimeCapabilities(input.resolved);
+      const translated = translateCodexRuntimeCapabilities(
+        input.resolved,
+        input.runtime.capabilityWorkingDirectory,
+      );
 
       let result: CodexCapabilityApplyResult;
       try {

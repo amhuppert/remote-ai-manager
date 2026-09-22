@@ -1,3 +1,7 @@
+import type {
+  AgentCapabilityControlSupport,
+  BackendCapabilityCatalogFacet,
+} from "./capability-catalog";
 import { z } from "zod";
 import type {
   ConversationExecutionPolicy,
@@ -13,7 +17,7 @@ import type {
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentTaskRunner } from "./task";
 import type { AgentFailureClassifier } from "./errors";
-import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 import type {
   CaptureAvailability,
   BackendModelCatalog,
@@ -36,12 +40,11 @@ export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
 
 /**
  * When a runtime-capability config change for a kind reaches the live agent:
- * "idle_live" = live-apply when idle, staged when a turn is active;
- * "next_turn" = staged, promoted at the next turn boundary;
- * "next_conversation" = binding fixed at session creation.
- * Timing is declared per capability kind because a single backend's kinds
- * genuinely differ (Claude skills/plugins are idle-live while agents bind at
- * session creation via canUseTool).
+ * "idle_live" is retained for historical timing records;
+ * "next_turn" = staged until turn preparation or input acceptance;
+ * "next_conversation" = binding fixed at conversation creation.
+ * Timing is declared per capability kind because one runtime may accept
+ * new MCP configuration while retaining its original skill selection.
  */
 export const capabilityApplyTimingSchema = z.enum([
   "idle_live",
@@ -53,6 +56,16 @@ export type CapabilityApplyTiming = z.infer<typeof capabilityApplyTimingSchema>;
 export interface BackendCapabilityKindSupport {
   kind: CapabilityKind;
   applyTiming: CapabilityApplyTiming;
+  catalog?: {
+    discoverySupport: "available" | "unavailable-pending-verification";
+    runtimeVisibility: "sdk-runtime" | "source-only" | "unsupported";
+    compositionSupport:
+      | "native"
+      | "translator"
+      | "verification-gated"
+      | "diagnostic-only";
+    support?: AgentCapabilityControlSupport;
+  };
 }
 
 export const managedSkillsDeliverySchema = z.enum(["bundled", "hermetic"]);
@@ -265,6 +278,7 @@ export interface AgentBackendDescriptor {
   metadata: AgentBackendMetadata;
   modelCatalog: BackendModelCatalogFacet;
   skillCatalog?: BackendSkillCatalogFacet;
+  capabilityCatalog?: BackendCapabilityCatalogFacet;
   conversation?: AgentBackendConversationFacet;
   tasks?: AgentBackendTaskFacet;
   managedSkills: AgentBackendManagedSkills;

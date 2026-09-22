@@ -119,6 +119,96 @@ function baseView(
 }
 
 describe("AgentCapabilityPanel", () => {
+  it("honors row-specific control support while retaining reset and delivered availability", () => {
+    const original = baseView();
+    const onResetItem = vi.fn();
+    const view = baseView({
+      items: original.items
+        .filter((row) => row.itemId === "reviewer")
+        .map((row) => ({
+          ...row,
+          support: {
+            configurable: false,
+            notes: ["Individual skills follow this plugin."],
+          },
+          appliedEnabled: true,
+          applyStatus: "none",
+        })),
+    });
+    render(
+      <AgentCapabilityPanel
+        title="Skills"
+        view={view}
+        layerOptions={[]}
+        selectedScope={{ level: "global" }}
+        onScopeChange={vi.fn()}
+        onToggleItem={vi.fn()}
+        onResetItem={onResetItem}
+      />,
+    );
+    expect(
+      screen.getByRole("switch", { name: "Enable Reviewer" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Reset Reviewer" }));
+    expect(onResetItem).toHaveBeenCalledWith("reviewer");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Information about Reviewer" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Individual skills follow this plugin.",
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Saved off. Still available in this conversation.",
+    );
+  });
+
+  it("keeps supported delayed controls editable and explains unknown availability", () => {
+    const original = baseView();
+    const view = baseView({
+      metadata: original.metadata
+        ? {
+            ...original.metadata,
+            support: {
+              configurable: false,
+              notes: ["Group control is unavailable."],
+            },
+          }
+        : undefined,
+      items: original.items
+        .filter((row) => row.itemId === "reviewer")
+        .map((row) => ({
+          ...row,
+          support: {
+            configurable: true,
+            notes: ["Changes apply in a new conversation."],
+          },
+          applyStatus: "deferred-next-conversation",
+        })),
+    });
+    render(
+      <AgentCapabilityPanel
+        title="Skills"
+        view={view}
+        layerOptions={[]}
+        selectedScope={{ level: "global" }}
+        onScopeChange={vi.fn()}
+        onToggleItem={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("switch", { name: "Enable Reviewer" }),
+    ).toBeEnabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Information about Reviewer" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Current availability unknown.",
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Changes apply in a new conversation.",
+    );
+  });
+
   it("renders the prototype-style cascade switcher and filter pills", () => {
     render(
       <AgentCapabilityPanel
@@ -274,9 +364,15 @@ describe("AgentCapabilityPanel", () => {
     expect(
       within(planner).getByRole("switch", { name: "Disable Planner" }),
     ).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByText("Disabled by planning-pack.")).toBeNull();
+    fireEvent.click(
+      within(planner).getByRole("button", {
+        name: "Information about Planner",
+      }),
+    );
     expect(
-      within(planner).getByText("Disabled by planning-pack."),
-    ).toBeInTheDocument();
+      screen.getByRole("dialog", { name: "Information about Planner" }),
+    ).toHaveTextContent("Disabled by planning-pack.");
 
     expect(
       screen.getByText("One skill source could not be read."),
@@ -560,6 +656,7 @@ describe("AgentCapabilityPanel", () => {
 
   it("disables verification-gated Codex controls and renders diagnostics", () => {
     const onToggleItem = vi.fn();
+    const onResetItem = vi.fn();
     const codexView = baseView({
       cascadeKind: "codex-plugins",
       backend: "codex",
@@ -591,6 +688,7 @@ describe("AgentCapabilityPanel", () => {
           source: { kind: "sdk-runtime" },
           nativeDefault: { enabled: false },
           ownEffectiveState: { enabled: false, originLayer: "native" },
+          currentLayerValue: { enabled: false, originLayer: "project" },
           effectiveState: { enabled: false, originLayer: "native" },
           originLayer: "native",
           runtimeVisibility: "unavailable",
@@ -624,16 +722,21 @@ describe("AgentCapabilityPanel", () => {
         selectedScope={{ level: "project", projectName: "remote-ai-manager" }}
         onScopeChange={vi.fn()}
         onToggleItem={onToggleItem}
+        onResetItem={onResetItem}
       />,
     );
 
     const row = screen.getByTestId("capability-row-codex-plugin-a");
     expect(
-      screen.getByText("Codex plugin support is pending verification."),
-    ).toBeInTheDocument();
+      screen.queryByText("Codex plugin support is pending verification."),
+    ).toBeNull();
+    expect(screen.queryByText("Runtime emission is not verified.")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Information about Codex Plugins" }),
+    );
     expect(
-      within(row).getByText("Runtime emission is not verified."),
-    ).toBeInTheDocument();
+      screen.getByRole("dialog", { name: "Information about Codex Plugins" }),
+    ).toHaveTextContent("Codex plugin support is pending verification.");
     expect(
       within(row).getByRole("switch", { name: "Enable Codex Plugin A" }),
     ).toBeDisabled();
@@ -641,6 +744,12 @@ describe("AgentCapabilityPanel", () => {
       within(row).getByRole("switch", { name: "Enable Codex Plugin A" }),
     );
     expect(onToggleItem).not.toHaveBeenCalled();
+    const reset = within(row).getByRole("button", {
+      name: "Reset Codex Plugin A",
+    });
+    expect(reset).toBeEnabled();
+    fireEvent.click(reset);
+    expect(onResetItem).toHaveBeenCalledWith("codex-plugin-a");
   });
 
   it("renders every backend apply status from metadata-driven row state", () => {
@@ -683,9 +792,13 @@ describe("AgentCapabilityPanel", () => {
       />,
     );
 
-    for (const status of statuses.filter((status) => status !== "none")) {
-      expect(screen.getByText(status.replaceAll("-", " "))).toBeInTheDocument();
-    }
+    expect(screen.queryByText("applied")).toBeNull();
+    expect(screen.queryByText("unsupported")).toBeNull();
+    expect(screen.getByText("Applies next turn")).toBeInTheDocument();
+    expect(
+      screen.getByText("Applies in a new conversation"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Apply failed")).toBeInTheDocument();
   });
 });
 

@@ -250,7 +250,6 @@ describe("createExternalTurnHandler", () => {
 
   it("sends EXTERNAL_TURN_COMPLETED and drains capabilities only after pending frame appends settle", async () => {
     const sendToMachine = vi.fn();
-    const applyCapabilityWhenIdle = vi.fn(async () => {});
     let releaseAppend!: () => void;
     const appendGate = new Promise<void>((r) => {
       releaseAppend = r;
@@ -265,7 +264,7 @@ describe("createExternalTurnHandler", () => {
     const handler = createExternalTurnHandler(
       makeIdentity(),
       { sendToMachine },
-      { safeAppendTranscriptEntry, applyCapabilityWhenIdle },
+      { safeAppendTranscriptEntry },
     );
 
     const frame: TranscriptEntry = {
@@ -301,7 +300,6 @@ describe("createExternalTurnHandler", () => {
         (c) => c[0].type === "EXTERNAL_TURN_COMPLETED",
       ),
     ).toBe(false);
-    expect(applyCapabilityWhenIdle).not.toHaveBeenCalled();
 
     releaseAppend();
     await new Promise((r) => setTimeout(r, 10));
@@ -312,7 +310,6 @@ describe("createExternalTurnHandler", () => {
         (c) => c[0].type === "EXTERNAL_TURN_COMPLETED",
       ),
     ).toBe(true);
-    expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
   });
 
   it("does not let a following turn's EXTERNAL_TURN_STARTED overtake a completion waiting on appends", async () => {
@@ -401,75 +398,5 @@ describe("createExternalTurnHandler", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(safeAppendTranscriptEntry).toHaveBeenCalledTimes(2);
     expect(appended).toHaveLength(1);
-  });
-
-  it("invokes applyCapabilityWhenIdle on external_turn_completed", async () => {
-    const sendToMachine = vi.fn();
-    const applyCapabilityWhenIdle = vi.fn(async () => {});
-    const { deps } = makeDeps({ applyCapabilityWhenIdle });
-    const handler = createExternalTurnHandler(
-      makeIdentity({ conversationId: "conv-idle" }),
-      { sendToMachine },
-      deps,
-    );
-
-    handler({ type: "external_turn_started" });
-    handler({
-      type: "external_turn_completed",
-      result: {
-        backendRef: { backend: "claude", ref: "sess-1" },
-        costUsd: 0,
-        durationMs: 0,
-        numTurns: 1,
-        contextTokens: null,
-        contextWindowMax: null,
-        contentBlocks: [{ type: "text", text: "hi" }],
-        aborted: false,
-        compacted: false,
-        failure: null,
-        continuationDisposition: "retain",
-      },
-    });
-
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not throw when applyCapabilityWhenIdle rejects", async () => {
-    const sendToMachine = vi.fn();
-    const applyCapabilityWhenIdle = vi
-      .fn()
-      .mockRejectedValue(new Error("apply boom"));
-    const { deps } = makeDeps({ applyCapabilityWhenIdle });
-    const handler = createExternalTurnHandler(
-      makeIdentity(),
-      { sendToMachine },
-      deps,
-    );
-
-    handler({ type: "external_turn_started" });
-
-    expect(() => {
-      handler({
-        type: "external_turn_completed",
-        result: {
-          backendRef: { backend: "claude", ref: "sess-1" },
-          costUsd: 0,
-          durationMs: 0,
-          numTurns: 1,
-          contextTokens: null,
-          contextWindowMax: null,
-          contentBlocks: [],
-          aborted: false,
-          compacted: false,
-          failure: null,
-          continuationDisposition: "retain",
-        },
-      });
-    }).not.toThrow();
-
-    await new Promise((r) => setTimeout(r, 20));
-    expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
   });
 });

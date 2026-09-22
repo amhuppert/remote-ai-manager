@@ -237,7 +237,7 @@ The table below is rendered from Cursor's registered backend descriptor and is c
 | `conversation.capabilities.handoffCapture.available` | false |
 | `conversation.capabilities.handoffCapture.mode` | null |
 | `conversation.capabilities.handoffCapture.reason` | Capture is unavailable |
-| `conversation.capabilities.capabilityKinds` | skills:next_conversation, plugins:next_conversation, agents:next_conversation |
+| `conversation.capabilities.capabilityKinds` | skills:next_conversation:available:source-only:translator:true:Skill selection is fixed for this conversation. Changes apply in a new conversation., plugins:next_conversation:available:source-only:translator:true:Supported plugin skills and agents are available. Native hooks, rules, and plugin MCP are not delivered; configure needed servers in CC's MCP settings., Plugin selection is fixed for this conversation. Changes apply in a new conversation., agents:next_conversation:available:source-only:translator:true:Agent definitions are fixed for this conversation. Changes apply in a new conversation. |
 | `conversation.fsWriteRestriction` | instruction-only |
 | `tasks.execution.classes` | nongoverned-task, governed-execution |
 | `tasks.execution.profiles` | standard, isolated-one-shot |
@@ -258,6 +258,7 @@ The table below is rendered from Cursor's registered backend descriptor and is c
 | `mcp.toolFiltering.byTransport.stdio` | bridge |
 | `mcp.toolFiltering.byTransport.streamable-http` | bridge |
 | `mcp.toolFiltering.byTransport.sse` | bridge |
+| `mcp.notes` | Provider administrative settings may limit access. Plugin MCP components are not imported; add a server to MCP configuration to use it here. |
 | `mcp.toolDiscovery.preferred` | probe |
 | `mcp.toolDiscovery.probeFallback` | true |
 <!-- cursor-capability-disclosure:end -->

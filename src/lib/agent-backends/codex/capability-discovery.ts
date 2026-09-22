@@ -1,23 +1,13 @@
+import { getPublishedManagedSkillBundle } from "@/lib/managed-skills/service";
 /**
- * Codex capability discovery primitives.
- *
- * Implements the design's authoritative skill discovery sources for Codex and
- * the Codex plugin discovery sources documented by `openai/codex`:
- *   - `~/.codex/config.toml` `[plugins."NAME"]` tables
- *   - `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/plugin.json`
- *     manifests for installed plugins
- *
- * Each entry-point accepts injected `readDir`/`readFile` seams so tests can
- * exercise diagnostics paths without root-only filesystem corruption.
+ * Native skill inventory and a bounded reader for installed Codex plugins.
+ * Skill identities, native defaults, plugin ownership, and invocation remain
+ * adapter-owned; shared capability resolution receives only the catalog.
  */
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import {
-  readdir as fsReaddir,
-  readFile as fsReadFile,
-  stat as fsStat,
-} from "node:fs/promises";
+import { readdir as fsReaddir, readFile as fsReadFile } from "node:fs/promises";
 import path from "node:path";
 
 import { parse as parseToml } from "smol-toml";
@@ -25,48 +15,23 @@ import { parse as parseToml } from "smol-toml";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 
-import { parseFrontmatter } from "@/lib/commands/frontmatter";
+import {
+  discoverCodexSkillInventory,
+  discoverCodexSkillCommands,
+} from "./skill-discovery";
+import type { CodexNativeSkill } from "./skill-catalog";
+import { codexSkillIdentity } from "./skill-identity";
 
-import { redactAgentCapabilityText } from "./redaction";
+import { redactAgentCapabilityText } from "../capability-redaction";
 
 import type {
-  AgentCapabilityDiagnostic,
+  CapabilityCatalogDiagnostic as AgentCapabilityDiagnostic,
   AgentCapabilityDiscoveredItem,
   AgentCapabilityDiscoverySupport,
   AgentCapabilitySourceRef,
-} from "./schemas";
+} from "../capability-catalog";
 
 const logger = createLogger("agent-capabilities.codex-discovery");
-
-export interface CodexSkillSource {
-  /** Cascade-layer this source contributes to. */
-  layer: "project" | "user" | "system";
-  /** Path joined onto either the worktree (`project`) or home (`user`,
-   * `system`) to produce an absolute skills directory. */
-  relative: string;
-  /** Source label retained on discovered items so the UI can render it. */
-  source: "project" | "user" | "system";
-}
-
-export const CODEX_SKILL_DISCOVERY_PATHS: readonly CodexSkillSource[] = [
-  { layer: "project", relative: ".agents/skills", source: "project" },
-  { layer: "project", relative: ".codex/skills", source: "project" },
-  { layer: "user", relative: ".agents/skills", source: "user" },
-  { layer: "user", relative: ".codex/skills", source: "user" },
-  { layer: "system", relative: ".codex/skills/.system", source: "system" },
-];
-
-interface CodexDiscoveredSkill {
-  itemId: string;
-  source: "project" | "user" | "system";
-  sourcePath: string;
-  description: string;
-  argumentHint?: string;
-  /** Set when this skill was discovered under a marketplace plugin directory
-   * (`~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/skills/...`).
-   * The id matches the owning plugin's `itemId` from `discoverCodexPlugins`. */
-  owningPluginId?: string;
-}
 
 interface CodexDiscoveryDiagnostic {
   code: string;
@@ -74,12 +39,6 @@ interface CodexDiscoveryDiagnostic {
   message: string;
   sourcePath?: string;
   source?: "project" | "user" | "system";
-}
-
-export interface CodexSkillDiscoveryResult {
-  items: readonly CodexDiscoveredSkill[];
-  diagnostics: readonly CodexDiscoveryDiagnostic[];
-  sourceSignature: string;
 }
 
 interface CodexDiscoveredPlugin {
@@ -130,179 +89,7 @@ const defaultDeps: CodexDiscoveryDeps = {
 export interface CodexSkillDiscoveryInput {
   worktreePath: string;
   home: string;
-  readDir?: CodexDiscoveryDeps["readDir"];
-  readFile?: CodexDiscoveryDeps["readFile"];
-}
-
-export async function discoverCodexSkills(
-  input: CodexSkillDiscoveryInput,
-): Promise<CodexSkillDiscoveryResult> {
-  const deps: CodexDiscoveryDeps = {
-    readDir: input.readDir ?? defaultDeps.readDir,
-    readFile: input.readFile ?? defaultDeps.readFile,
-  };
-
-  const items: CodexDiscoveredSkill[] = [];
-  const diagnostics: CodexDiscoveryDiagnostic[] = [];
-  const signatureParts: string[] = [];
-
-  for (const source of CODEX_SKILL_DISCOVERY_PATHS) {
-    const base =
-      source.layer === "project"
-        ? path.join(input.worktreePath, source.relative)
-        : path.join(input.home, source.relative);
-
-    if (!existsSync(base)) {
-      signatureParts.push(`${source.source}:${base}:missing`);
-      continue;
-    }
-
-    const ignoreDirNames =
-      source.relative === ".codex/skills" && source.layer === "user"
-        ? new Set([".system"])
-        : new Set<string>();
-
-    try {
-      await walkSkills(base, source.source, ignoreDirNames, deps, items);
-      signatureParts.push(`${source.source}:${base}:ok`);
-    } catch (err) {
-      const message = redactAgentCapabilityText(getErrorMessage(err));
-      diagnostics.push({
-        code: "codex-skill-source-unreadable",
-        severity: "warning",
-        message,
-        sourcePath: base,
-        source: source.source,
-      });
-      signatureParts.push(`${source.source}:${base}:err:${message}`);
-      logger.warn("codex_discovery.scan_error", {
-        sourcePath: base,
-        error: message,
-      });
-    }
-  }
-
-  // Plugin-bundled skills: enumerate installed Codex plugins and walk each
-  // plugin's `skills/` directory, attributing discovered SKILL.md files to
-  // their owning plugin. Mirrors `claude-discovery.ts` so the cascade resolver
-  // inherits disable state from the plugin layer without extra wiring.
-  const pluginResult = await discoverCodexPlugins({
-    worktreePath: input.worktreePath,
-    home: input.home,
-    ...(input.readDir !== undefined ? { readDir: input.readDir } : {}),
-    ...(input.readFile !== undefined ? { readFile: input.readFile } : {}),
-  });
-  for (const diag of pluginResult.diagnostics) {
-    diagnostics.push(diag);
-  }
-  signatureParts.push(`plugins:${pluginResult.sourceSignature}`);
-
-  for (const plugin of pluginResult.items) {
-    if (!plugin.pluginPath) continue;
-    if (!plugin.enabled) continue;
-    const pluginSkillsDir = path.join(plugin.pluginPath, "skills");
-    if (!existsSync(pluginSkillsDir)) {
-      signatureParts.push(
-        `plugin-skills:${plugin.itemId}:${pluginSkillsDir}:missing`,
-      );
-      continue;
-    }
-    try {
-      await walkSkills(
-        pluginSkillsDir,
-        "user",
-        new Set<string>(),
-        deps,
-        items,
-        plugin.itemId,
-      );
-      signatureParts.push(
-        `plugin-skills:${plugin.itemId}:${pluginSkillsDir}:ok`,
-      );
-    } catch (err) {
-      const message = redactAgentCapabilityText(getErrorMessage(err));
-      diagnostics.push({
-        code: "codex-skill-source-unreadable",
-        severity: "warning",
-        message,
-        sourcePath: pluginSkillsDir,
-        source: "user",
-      });
-      signatureParts.push(
-        `plugin-skills:${plugin.itemId}:${pluginSkillsDir}:err:${message}`,
-      );
-      logger.warn("codex_discovery.plugin_skills_scan_error", {
-        sourcePath: pluginSkillsDir,
-        pluginId: plugin.itemId,
-        error: message,
-      });
-    }
-  }
-
-  // Content-sensitive signature: include each discovered item's id, source,
-  // sourcePath, description, argument hint, and owning plugin id. Discovered
-  // description is parsed from the SKILL.md frontmatter/body, so an in-place
-  // edit to the SKILL.md content changes the signature even when the item id
-  // is stable.
-  for (const item of items) {
-    signatureParts.push(
-      `item:${item.source}:${item.itemId}:${item.sourcePath}:${item.description}:${item.argumentHint ?? ""}:${item.owningPluginId ?? ""}`,
-    );
-  }
-
-  return {
-    items,
-    diagnostics,
-    sourceSignature: createHash("sha256")
-      .update(signatureParts.join("|"))
-      .digest("hex"),
-  };
-}
-
-async function walkSkills(
-  base: string,
-  source: "project" | "user" | "system",
-  ignoreDirNames: ReadonlySet<string>,
-  deps: CodexDiscoveryDeps,
-  items: CodexDiscoveredSkill[],
-  owningPluginId?: string,
-): Promise<void> {
-  const visit = async (dir: string): Promise<void> => {
-    const skillFile = path.join(dir, "SKILL.md");
-    if (existsSync(skillFile)) {
-      const content = await deps.readFile(skillFile);
-      const { fields, body } = parseFrontmatter(content);
-      const skillId = path.basename(dir);
-      const description =
-        fields["description"] ??
-        body
-          .split("\n")
-          .find((line) => line.trim().length > 0)
-          ?.trim() ??
-        "";
-      items.push({
-        itemId: skillId,
-        source,
-        sourcePath: skillFile,
-        description,
-        argumentHint: fields["argument-hint"],
-        ...(owningPluginId !== undefined ? { owningPluginId } : {}),
-      });
-      return;
-    }
-
-    const entries = await deps.readDir(dir);
-    for (const entry of entries) {
-      if (!entry.isDirectory) continue;
-      if (ignoreDirNames.has(entry.name)) continue;
-      await visit(path.join(dir, entry.name));
-    }
-  };
-
-  // Ensure the base directory itself is statable; otherwise propagate as an
-  // unreadable-source diagnostic above.
-  await fsStat(base);
-  await visit(base);
+  listSkills?(worktreePath: string): Promise<readonly CodexNativeSkill[]>;
 }
 
 export interface CodexPluginDiscoveryInput {
@@ -669,19 +456,6 @@ async function loadCodexPluginManifest(
 // ---------------------------------------------------------------------------
 // Canonical discovery surface
 // ---------------------------------------------------------------------------
-// The primitives above (`discoverCodexSkills` / `discoverCodexPlugins`) keep
-// their local shape. The wrappers below adapt them to the canonical
-// `AgentCapabilityDiscoveredItem` / `AgentCapabilityDiagnostic` shape used by
-// the cascade resolver, API view, runtime composer, and discovery cache.
-
-function codexSkillSourceRef(
-  layer: "project" | "user" | "system",
-  filePath: string,
-): AgentCapabilitySourceRef {
-  if (layer === "project") return { kind: "project-file", path: filePath };
-  if (layer === "user") return { kind: "user-file", path: filePath };
-  return { kind: "system-file", path: filePath };
-}
 
 function codexDiagnosticSourceRef(
   layer: "project" | "user" | "system" | undefined,
@@ -712,46 +486,45 @@ export interface CodexCanonicalPluginDiscoveryResult {
 export async function discoverCodexSkillsCanonical(
   input: CodexSkillDiscoveryInput,
 ): Promise<CodexCanonicalSkillDiscoveryResult> {
-  const result = await discoverCodexSkills(input);
-
-  const items: AgentCapabilityDiscoveredItem[] = result.items.map((skill) => {
-    const source: AgentCapabilitySourceRef =
-      skill.owningPluginId !== undefined
-        ? { kind: "plugin", pluginId: skill.owningPluginId }
-        : codexSkillSourceRef(skill.source, skill.sourcePath);
-    return {
-      itemId: skill.itemId,
-      displayName: skill.itemId,
-      capabilityKind: "skill",
-      source,
-      nativeDefault: { enabled: true },
-      ...(skill.owningPluginId !== undefined
-        ? { owningPluginId: skill.owningPluginId }
-        : {}),
-      runtimeVisibility: "source-only",
-    };
-  });
-
-  const diagnostics: AgentCapabilityDiagnostic[] = result.diagnostics.map(
-    (diag) => ({
-      severity: diag.severity,
-      code: diag.code,
-      message: diag.message,
-      cascadeKind: "codex-skills",
-      backend: "codex",
-      ...(diag.sourcePath !== undefined
-        ? {
-            sourceRef: codexDiagnosticSourceRef(diag.source, diag.sourcePath),
-          }
-        : {}),
-    }),
+  const skills = await (input.listSkills ?? discoverCodexSkillInventory)(
+    input.worktreePath,
   );
-
+  const managedRoot =
+    path.join(input.worktreePath, ".agents", "skills", "command-center") +
+    path.sep;
+  const bundleRoot = getPublishedManagedSkillBundle()?.skillsRoot;
+  const items: AgentCapabilityDiscoveredItem[] = skills
+    .filter(
+      (skill) =>
+        !skill.path.startsWith(managedRoot) &&
+        !(bundleRoot && skill.path.startsWith(bundleRoot + path.sep)),
+    )
+    .map((skill) => ({
+      itemId: codexSkillIdentity(skill.path, input.worktreePath, input.home),
+      displayName: skill.name,
+      capabilityKind: "skill",
+      source: skill.pluginId
+        ? { kind: "plugin", pluginId: skill.pluginId }
+        : {
+            kind:
+              skill.scope === "repo"
+                ? "project-file"
+                : skill.scope === "user"
+                  ? "user-file"
+                  : "system-file",
+            path: skill.path,
+          },
+      nativeDefault: { enabled: skill.enabled },
+      ...(skill.pluginId ? { owningPluginId: skill.pluginId } : {}),
+      runtimeVisibility: "source-only",
+    }));
   return {
     cascadeKind: "codex-skills",
     items,
-    diagnostics,
-    sourceSignature: result.sourceSignature,
+    diagnostics: [],
+    sourceSignature: createHash("sha256")
+      .update(JSON.stringify(items))
+      .digest("hex"),
     refreshedAt: new Date().toISOString(),
   };
 }
@@ -801,3 +574,28 @@ export async function discoverCodexPluginsCanonical(
     discoverySupport: result.discoverySupport,
   };
 }
+
+export const codexCapabilityCatalog: import("../capability-catalog").BackendCapabilityCatalogFacet =
+  {
+    discover(input) {
+      if (input.kind === "plugins") return discoverCodexPluginsCanonical(input);
+      if (input.kind === "skills") return discoverCodexSkillsCanonical(input);
+      throw new Error("Codex does not expose managed agent selection");
+    },
+  };
+import type { BackendSkillCatalogFacet } from "../descriptor";
+import {
+  translateCodexRuntimeCapabilities,
+  mergeCodexNativeSkillSelectors,
+} from "./runtime-config";
+
+export const codexSkillCatalog: BackendSkillCatalogFacet = {
+  async getCommands({ worktreePath, capabilities }) {
+    const config = capabilities
+      ? translateCodexRuntimeCapabilities(capabilities, worktreePath).config
+      : {};
+    return discoverCodexSkillCommands(worktreePath, {
+      ...(await mergeCodexNativeSkillSelectors(config, worktreePath)),
+    });
+  },
+};

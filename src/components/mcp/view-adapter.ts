@@ -22,8 +22,12 @@ import type {
 function toStatus(
   apiStatus: ApiInheritanceStatus,
   viewLevel: McpViewLevel,
+  projectConversation = false,
 ): McpInheritanceStatus {
-  const from = parentSourceLevel(viewLevel);
+  const from =
+    projectConversation && viewLevel === "conversation"
+      ? "project"
+      : parentSourceLevel(viewLevel);
   switch (apiStatus) {
     case "explicit":
       return { kind: "explicit" };
@@ -57,6 +61,7 @@ function parentSourceLevel(level: McpViewLevel): McpSourceLevel | undefined {
 function toToolDiscovery(
   tools: ApiToolListView,
   viewLevel: McpViewLevel,
+  projectConversation = false,
 ): McpToolDiscoveryState {
   switch (tools.state) {
     case "not-loaded":
@@ -74,17 +79,23 @@ function toToolDiscovery(
     case "stale":
       return {
         kind: "loaded",
-        tools: tools.tools.map((t) => toToolView(t, viewLevel)),
+        tools: tools.tools.map((t) =>
+          toToolView(t, viewLevel, projectConversation),
+        ),
       };
   }
 }
 
-function toToolView(tool: ApiToolView, viewLevel: McpViewLevel): McpToolView {
+function toToolView(
+  tool: ApiToolView,
+  viewLevel: McpViewLevel,
+  projectConversation = false,
+): McpToolView {
   return {
     name: tool.name,
     description: tool.description,
     enabled: tool.enabled,
-    status: toStatus(tool.inheritanceStatus, viewLevel),
+    status: toStatus(tool.inheritanceStatus, viewLevel, projectConversation),
     pending: tool.pending,
   };
 }
@@ -109,6 +120,7 @@ export function adaptServerViewsForLevel(
   viewLevel: McpViewLevel,
 ): McpServerView[] {
   const rows: McpServerView[] = [];
+  const projectConversation = response.target?.scope === "project";
   for (const server of response.servers) {
     if (server.reserved) continue;
     const { scope, sourceFile } = deriveSource(server);
@@ -118,10 +130,24 @@ export function adaptServerViewsForLevel(
       sourceFile,
       scope,
       enabled: server.enabled,
-      status: toStatus(server.inheritanceStatus, viewLevel),
+      status: toStatus(
+        server.inheritanceStatus,
+        viewLevel,
+        projectConversation,
+      ),
       pending: server.pending,
+      pendingLabel: server.pending
+        ? response.runtime?.lastApplyDisposition ===
+          "deferred_to_next_conversation"
+          ? "Applies in a new conversation"
+          : "Applies next turn"
+        : undefined,
       compatibility: server.compatibility,
-      toolDiscovery: toToolDiscovery(server.tools, viewLevel),
+      toolDiscovery: toToolDiscovery(
+        server.tools,
+        viewLevel,
+        projectConversation,
+      ),
     });
   }
   return rows;

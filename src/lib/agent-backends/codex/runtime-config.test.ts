@@ -4,6 +4,7 @@ import type { ConversationBackendRuntime } from "../conversation";
 import type { ResolvedCapabilityCascade } from "../runtime-config";
 import {
   createCodexRuntimeConfigAdapter,
+  mergeCodexNativeSkillSelectors,
   translateCodexRuntimeCapabilities,
   type CodexCapabilityApplyResult,
   type CodexCapabilityApplyTarget,
@@ -20,6 +21,7 @@ describe("translateCodexRuntimeCapabilities", () => {
   it("returns an empty config when the cascade carries no kinds", () => {
     expect(translateCodexRuntimeCapabilities(cascade([]))).toEqual({
       config: {},
+      capabilities: cascade([]),
     });
   });
 
@@ -28,12 +30,18 @@ describe("translateCodexRuntimeCapabilities", () => {
       cascade([
         {
           kind: "skills",
-          items: [{ itemId: "foo", enabled: true, originLayer: "global" }],
+          items: [
+            {
+              itemId: "skill:absolute:%2Fskills%2Ffoo%2FSKILL.md",
+              enabled: true,
+              originLayer: "global",
+            },
+          ],
         },
       ]),
     );
     expect(result.config).toEqual({
-      skills: { config: [{ enabled: true, name: "foo" }] },
+      skills: { config: [{ enabled: true, path: "/skills/foo/SKILL.md" }] },
     });
   });
 
@@ -42,12 +50,18 @@ describe("translateCodexRuntimeCapabilities", () => {
       cascade([
         {
           kind: "skills",
-          items: [{ itemId: "foo", enabled: false, originLayer: "session" }],
+          items: [
+            {
+              itemId: "skill:absolute:%2Fskills%2Ffoo%2FSKILL.md",
+              enabled: false,
+              originLayer: "session",
+            },
+          ],
         },
       ]),
     );
     expect(result.config).toEqual({
-      skills: { config: [{ enabled: false, name: "foo" }] },
+      skills: { config: [{ enabled: false, path: "/skills/foo/SKILL.md" }] },
     });
   });
 
@@ -57,18 +71,23 @@ describe("translateCodexRuntimeCapabilities", () => {
         {
           kind: "skills",
           items: [
-            { itemId: "spec-init", enabled: true, originLayer: "global" },
-            { itemId: "spec-tasks", enabled: false, originLayer: "native" },
+            {
+              itemId: "skill:absolute:%2Fskills%2Fspec-init%2FSKILL.md",
+              enabled: true,
+              originLayer: "global",
+            },
+            {
+              itemId: "skill:absolute:%2Fskills%2Fspec-tasks%2FSKILL.md",
+              enabled: false,
+              originLayer: "native",
+            },
           ],
         },
       ]),
     );
     expect(result.config).toEqual({
       skills: {
-        config: [
-          { enabled: true, name: "spec-init" },
-          { enabled: false, name: "spec-tasks" },
-        ],
+        config: [{ enabled: true, path: "/skills/spec-init/SKILL.md" }],
       },
     });
   });
@@ -106,6 +125,7 @@ function fakeRuntime(input: {
   const appliedConfigs: CodexRuntimeCapabilityConfig[] = [];
   return {
     backend: "codex",
+    capabilityWorkingDirectory: "/repo",
     status: input.status ?? "alive",
     modelSelection: {
       modelId: "gpt-5.4",
@@ -128,7 +148,13 @@ describe("createCodexRuntimeConfigAdapter", () => {
   const resolved = cascade([
     {
       kind: "skills",
-      items: [{ itemId: "spec-init", enabled: true, originLayer: "global" }],
+      items: [
+        {
+          itemId: "skill:absolute:%2Fskills%2Fspec-init%2FSKILL.md",
+          enabled: true,
+          originLayer: "global",
+        },
+      ],
     },
   ]);
 
@@ -141,7 +167,9 @@ describe("createCodexRuntimeConfigAdapter", () => {
     expect(result).toEqual({ status: "applied" });
     expect(runtime.appliedConfigs).toHaveLength(1);
     expect(runtime.appliedConfigs[0]?.config).toEqual({
-      skills: { config: [{ enabled: true, name: "spec-init" }] },
+      skills: {
+        config: [{ enabled: true, path: "/skills/spec-init/SKILL.md" }],
+      },
     });
   });
 
@@ -170,4 +198,17 @@ describe("createCodexRuntimeConfigAdapter", () => {
     }
     expect(runtime.appliedConfigs).toHaveLength(0);
   });
+});
+
+it("preserves native disabled selectors when changing another skill", async () => {
+  const config = { skills: { config: [{ name: "selected", enabled: true }] } };
+  const merged = await mergeCodexNativeSkillSelectors(
+    config,
+    "/repo",
+    async () => [{ name: "native-off", enabled: false }],
+  );
+  expect(merged.skills?.config).toEqual([
+    { name: "native-off", enabled: false },
+    { name: "selected", enabled: true },
+  ]);
 });

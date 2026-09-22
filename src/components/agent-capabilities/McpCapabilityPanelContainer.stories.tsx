@@ -14,7 +14,11 @@ import type {
   ToolDiscoveryState,
 } from "@/lib/mcp/schemas";
 
-import { McpCapabilityPanelContainer } from "./McpCapabilityPanelContainer";
+import {
+  McpCapabilityPanelContainer,
+  McpCapabilityRow,
+} from "./McpCapabilityPanelContainer";
+import { fn } from "storybook/test";
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
 
 // Seeded session-scope view exercising the MCP capability panel chrome that the
@@ -200,4 +204,71 @@ export const ServerRows: Story = {
 // per-tool switches, per-tool inheritance chips, and a disabled + pending tool.
 export const ExpandedTools: Story = {
   args: { layerOptions, selectedScope: sessionScope },
+};
+
+export const LimitedToolControl: Story = {
+  args: { layerOptions, selectedScope: sessionScope },
+  render: () => (
+    <div
+      data-cap-drawer
+      className="m-lg w-[900px] max-w-[calc(100vw-32px)] rounded-lg border border-solid border-border-default bg-bg-base p-lg"
+    >
+      <div className="mb-md font-mono text-sm text-text-primary">
+        MCP servers · Conversation
+      </div>
+      <McpCapabilityRow
+        backend="claude"
+        server={{
+          id: "documentation",
+          name: "Documentation",
+          sourceFile: ".mcp.json",
+          scope: "project",
+          enabled: true,
+          status: { kind: "inherited", from: "project" },
+          pending: true,
+          pendingLabel: "Applies in a new conversation",
+          compatibility: {
+            backends: [
+              {
+                backend: "claude",
+                supported: true,
+                toolControl: {
+                  configurable: false,
+                  notes: [
+                    "Individual tool selection is unavailable. The server remains available.",
+                  ],
+                  applyTiming: "next-conversation",
+                },
+              },
+            ],
+          },
+          toolDiscovery: {
+            kind: "loaded",
+            tools: [
+              {
+                name: "search_documentation",
+                enabled: true,
+                status: { kind: "inherited", from: "project" },
+              },
+              {
+                name: "read_documentation",
+                enabled: false,
+                status: { kind: "disabled" },
+                pending: true,
+              },
+            ],
+          },
+        }}
+        scopeName="Conversation"
+        refreshing={false}
+        expanded
+        onExpand={fn()}
+        onToggle={fn()}
+        onReset={fn()}
+        onRefreshTools={fn()}
+        onToggleTool={fn()}
+        onResetTool={fn()}
+      />
+    </div>
+  ),
 };

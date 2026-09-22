@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 /**
  * Factory-level tests for MCP config route handlers across all four scopes
  * and for the scoped tool-inventory endpoint pair. Each handler is built via
@@ -35,7 +36,7 @@ import type { McpConfigMutationService } from "@/lib/mcp/config-mutation-service
 import type { McpServerDefinition } from "@/lib/mcp/types";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
-import type { SessionState } from "@/lib/sessions/schemas";
+import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
 import type { McpRuntimeApplicationState } from "@/lib/mcp/schemas";
 import { createMcpRuntimeApplyService } from "./runtime-apply";
 import {
@@ -176,16 +177,11 @@ function mkScopeStore(): {
       const changed = operations.map((o) => o.serverKey);
       return { overrides: { servers: {} }, changedServerKeys: changed };
     },
-    async patchConversation(
-      projectPath,
-      sessionName,
-      conversationId,
-      operations,
-    ) {
+    async patchConversation(projectPath, target, operations) {
       calls.conversation.push({
         path: projectPath,
-        name: sessionName,
-        conversationId,
+        name: target.scope === "session" ? target.sessionName : "project",
+        conversationId: target.conversationId,
         ops: operations,
       });
       const changed = operations.map((o) => o.serverKey);
@@ -266,7 +262,7 @@ describe("createGlobalMcpConfigHandlers", () => {
       globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       listGlobalRuntimeTargets: async () => [],
       applyAfterOverrideChange: async (input: AfterOverrideChangeInput) =>
-        appliedNowResult(input.conversationId, input.backend),
+        appliedNowResult(input.target.conversationId, input.backend),
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
       ...overrides,
     };
@@ -433,7 +429,9 @@ describe("createGlobalMcpConfigHandlers", () => {
   it("fans out a global PATCH to every active runtime target", async () => {
     const applyAfterOverrideChange = vi.fn<
       (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
-    >(async (input) => appliedNowResult(input.conversationId, input.backend));
+    >(async (input) =>
+      appliedNowResult(input.target.conversationId, input.backend),
+    );
     const deps = {
       ...baseDeps({
         discoverAllSources: async () => ({
@@ -445,16 +443,12 @@ describe("createGlobalMcpConfigHandlers", () => {
       listGlobalRuntimeTargets: async () => [
         {
           projectPath: "/projects/proj",
-          projectName: "proj",
-          sessionName: "sess-a",
-          conversationId: "conv-1",
+          target: sessionConversationTarget("proj", "sess-a", "conv-1"),
           backend: "claude" as const,
         },
         {
           projectPath: "/projects/proj",
-          projectName: "proj",
-          sessionName: "sess-b",
-          conversationId: "conv-2",
+          target: sessionConversationTarget("proj", "sess-b", "conv-2"),
           backend: "codex" as const,
         },
       ],
@@ -474,15 +468,13 @@ describe("createGlobalMcpConfigHandlers", () => {
     expect(applyAfterOverrideChange).toHaveBeenCalledTimes(2);
     expect(applyAfterOverrideChange).toHaveBeenNthCalledWith(1, {
       projectPath: "/projects/proj",
-      sessionName: "sess-a",
-      conversationId: "conv-1",
+      target: sessionConversationTarget("proj", "sess-a", "conv-1"),
       backend: "claude",
       changedServerKeys: ["calc"],
     });
     expect(applyAfterOverrideChange).toHaveBeenNthCalledWith(2, {
       projectPath: "/projects/proj",
-      sessionName: "sess-b",
-      conversationId: "conv-2",
+      target: sessionConversationTarget("proj", "sess-b", "conv-2"),
       backend: "codex",
       changedServerKeys: ["calc"],
     });
@@ -506,16 +498,12 @@ describe("createGlobalMcpConfigHandlers", () => {
       listGlobalRuntimeTargets: async () => [
         {
           projectPath: "/projects/proj",
-          projectName: "proj",
-          sessionName: "sess-a",
-          conversationId: "conv-1",
+          target: sessionConversationTarget("proj", "sess-a", "conv-1"),
           backend: "claude" as const,
         },
         {
           projectPath: "/projects/proj",
-          projectName: "proj",
-          sessionName: "sess-b",
-          conversationId: "conv-2",
+          target: sessionConversationTarget("proj", "sess-b", "conv-2"),
           backend: "claude" as const,
         },
       ],
@@ -666,7 +654,7 @@ describe("createProjectMcpConfigHandlers", () => {
         undefined as McpOverrides | undefined,
       listProjectRuntimeTargets: async (_projectPath: string) => [],
       applyAfterOverrideChange: async (input: AfterOverrideChangeInput) =>
-        appliedNowResult(input.conversationId, input.backend),
+        appliedNowResult(input.target.conversationId, input.backend),
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
       ...overrides,
     };
@@ -787,15 +775,15 @@ describe("createProjectMcpConfigHandlers", () => {
   it("fans out a project PATCH to active runtimes in that project", async () => {
     const applyAfterOverrideChange = vi.fn<
       (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
-    >(async (input) => appliedNowResult(input.conversationId, input.backend));
+    >(async (input) =>
+      appliedNowResult(input.target.conversationId, input.backend),
+    );
     const deps = {
       ...baseDeps(),
       listProjectRuntimeTargets: async (_projectPath: string) => [
         {
           projectPath: "/projects/proj",
-          projectName: "proj",
-          sessionName: "sess-a",
-          conversationId: "conv-1",
+          target: sessionConversationTarget("proj", "sess-a", "conv-1"),
           backend: "claude" as const,
         },
       ],
@@ -816,8 +804,7 @@ describe("createProjectMcpConfigHandlers", () => {
     expect(applyAfterOverrideChange).toHaveBeenCalledTimes(1);
     expect(applyAfterOverrideChange).toHaveBeenCalledWith({
       projectPath: "/projects/proj",
-      sessionName: "sess-a",
-      conversationId: "conv-1",
+      target: sessionConversationTarget("proj", "sess-a", "conv-1"),
       backend: "claude",
       changedServerKeys: ["calc"],
     });
@@ -935,17 +922,14 @@ function mkSession(
   name: string,
   extras: Partial<SessionState> = {},
 ): SessionState {
-  return {
-    name,
+  return sessionStateSchema.parse({
+    sessionName: name,
     worktreePath: `/projects/proj/.worktrees/${name}`,
-    branch: `csm/${name}`,
-    status: "active",
+    branchName: `csm/${name}`,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    conversations: [],
-    activeConversationId: null,
+    lastActivityAt: new Date().toISOString(),
     ...extras,
-  } as unknown as SessionState;
+  });
 }
 
 function mkConversation(id: string): ConversationState {
@@ -1001,7 +985,7 @@ describe("createSessionMcpConfigHandlers", () => {
         _sessionName: string,
       ) => [],
       applyAfterOverrideChange: async (input: AfterOverrideChangeInput) =>
-        appliedNowResult(input.conversationId, input.backend),
+        appliedNowResult(input.target.conversationId, input.backend),
       broadcast: vi.fn<McpConfigRouteBroadcast>(),
       ...overrides,
     };
@@ -1130,7 +1114,9 @@ describe("createSessionMcpConfigHandlers", () => {
   it("fans out a session PATCH to active runtimes in that session", async () => {
     const applyAfterOverrideChange = vi.fn<
       (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
-    >(async (input) => appliedNowResult(input.conversationId, input.backend));
+    >(async (input) =>
+      appliedNowResult(input.target.conversationId, input.backend),
+    );
     const deps = {
       ...baseDeps(),
       listSessionRuntimeTargets: async (
@@ -1139,9 +1125,7 @@ describe("createSessionMcpConfigHandlers", () => {
       ) => [
         {
           projectPath: "/projects/proj",
-          projectName: "proj",
-          sessionName: "sess",
-          conversationId: "conv-1",
+          target: sessionConversationTarget("proj", "sess", "conv-1"),
           backend: "claude" as const,
         },
       ],
@@ -1162,8 +1146,7 @@ describe("createSessionMcpConfigHandlers", () => {
     expect(applyAfterOverrideChange).toHaveBeenCalledTimes(1);
     expect(applyAfterOverrideChange).toHaveBeenCalledWith({
       projectPath: "/projects/proj",
-      sessionName: "sess",
-      conversationId: "conv-1",
+      target: sessionConversationTarget("proj", "sess", "conv-1"),
       backend: "claude",
       changedServerKeys: ["calc"],
     });
@@ -1184,7 +1167,7 @@ describe("createConversationMcpConfigHandlers", () => {
     const apply = vi.fn<
       (input: AfterOverrideChangeInput) => Promise<ConversationApplyResult>
     >(async (input) => ({
-      ...appliedNowResult(input.conversationId, input.backend),
+      ...appliedNowResult(input.target.conversationId, input.backend),
       effectiveConfigHash: "fake-hash",
     }));
     const mutationService: McpConfigMutationService = {
@@ -1200,8 +1183,7 @@ describe("createConversationMcpConfigHandlers", () => {
       async patchConversation(input) {
         const result = await scope.store.patchConversation(
           "/projects/proj",
-          "sess",
-          "conv-1",
+          sessionConversationTarget("proj", "sess", "conv-1"),
           input.operations,
         );
         return {
@@ -1221,6 +1203,7 @@ describe("createConversationMcpConfigHandlers", () => {
       globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
+      getProjectConversation: async () => null,
       getSession: async (_path: string, name: string) =>
         name === "sess"
           ? mkSession("sess", {
@@ -1353,7 +1336,7 @@ describe("createConversationMcpConfigHandlers", () => {
       const body = await response.json();
       expect(body.apply.backend).toBe("cursor");
       expect(body.apply.disposition).toBe("deferred_to_next_turn");
-      expect(staged).toBe(true);
+      expect(staged).toBe(false);
       expect(state?.pendingConfigHash).toBe(body.apply.effectiveConfigHash);
       expect(state?.lastAppliedConfigHash).toBeUndefined();
     },
@@ -1467,7 +1450,7 @@ describe("GET handlers surface cached tool inventories", () => {
       globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       listGlobalRuntimeTargets: async () => [],
       applyAfterOverrideChange: async (input) =>
-        appliedNowResult(input.conversationId, input.backend),
+        appliedNowResult(input.target.conversationId, input.backend),
       toolInventoryCache: readyCache(),
       onDefinitionLoaded,
     });
@@ -1506,7 +1489,7 @@ describe("GET handlers surface cached tool inventories", () => {
       readProjectOverrides: async () => undefined,
       listProjectRuntimeTargets: async () => [],
       applyAfterOverrideChange: async (input) =>
-        appliedNowResult(input.conversationId, input.backend),
+        appliedNowResult(input.target.conversationId, input.backend),
       toolInventoryCache: readyCache(),
     });
     const res = await handlers.GET(makeRequest(), {
@@ -1536,7 +1519,7 @@ describe("GET handlers surface cached tool inventories", () => {
       readProjectOverrides: async () => undefined,
       listSessionRuntimeTargets: async () => [],
       applyAfterOverrideChange: async (input) =>
-        appliedNowResult(input.conversationId, input.backend),
+        appliedNowResult(input.target.conversationId, input.backend),
       toolInventoryCache: readyCache(),
     });
     const res = await handlers.GET(makeRequest(), {
@@ -1552,6 +1535,7 @@ describe("GET handlers surface cached tool inventories", () => {
 
   it("conversation GET attaches cached tool inventory", async () => {
     const handlers = createConversationMcpConfigHandlers({
+      getProjectConversation: async () => null,
       globalStore: mkGlobalStore(EMPTY_OVERRIDES),
       scopeStore: mkScopeStore().store,
       mutationService: noopMutationService(),
@@ -1598,7 +1582,7 @@ describe("GET handlers surface cached tool inventories", () => {
       globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       listGlobalRuntimeTargets: async () => [],
       applyAfterOverrideChange: async (input) =>
-        appliedNowResult(input.conversationId, input.backend),
+        appliedNowResult(input.target.conversationId, input.backend),
     });
     const res = await handlers.GET(makeRequest());
     const body = await res.json();
@@ -1654,6 +1638,7 @@ describe("createToolInventoryHandlers", () => {
       globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
+      getProjectConversation: async () => null,
       getSession: async (_path: string, name: string) =>
         name === "sess"
           ? mkSession("sess", {
@@ -1892,6 +1877,7 @@ describe("createSessionToolInventoryHandlers", () => {
       globalConfigPath: () => "/home/test/.config/cc/.mcp.json",
       resolveProjectPath: async (name: string) =>
         name === "proj" ? "/projects/proj" : null,
+      getProjectConversation: async () => null,
       getSession: async (_path: string, name: string) =>
         name === "sess" ? mkSession("sess") : null,
       broadcast: vi.fn<McpConfigRouteBroadcast>(),

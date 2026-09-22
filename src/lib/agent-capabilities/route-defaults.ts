@@ -1,7 +1,5 @@
-import { cursorAgentStorePath } from "@/lib/agent-backends/cursor/store-path";
-import { readCursorCapabilitySnapshot } from "@/lib/agent-backends/cursor/capability-delivery";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { applyDeliveredCapabilityView } from "./runtime-seed";
-import { discoverCursorCapabilities } from "./cursor-discovery";
 import os from "node:os";
 
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
@@ -11,6 +9,7 @@ import {
 } from "@/lib/projects/resolver";
 import { getStateStore } from "@/lib/state-store";
 import {
+  decodeCascadeKind,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityCascadeLayer,
   type AgentCapabilityInventory,
@@ -20,16 +19,6 @@ import {
   type AgentCapabilityViewResponse,
 } from "./schemas";
 
-import {
-  discoverClaudeAgents,
-  discoverClaudePlugins,
-  discoverClaudeSkills,
-  type ClaudeRuntimeProbe,
-} from "./claude-discovery";
-import {
-  discoverCodexPluginsCanonical,
-  discoverCodexSkillsCanonical,
-} from "./codex-discovery";
 import {
   createAgentCapabilityDiscoveryCache,
   runDiscoveryThroughCache,
@@ -90,17 +79,17 @@ async function resolveAgentCapabilityRouteView(input: {
     runtimeApplyState: context.runtimeApplyState,
     ...(pluginResolution ? { pluginResolution } : {}),
   });
-  if (view.backend !== "cursor" || input.scope.level !== "conversation")
-    return view;
-  const snapshot = await readCursorCapabilitySnapshot(
-    cursorAgentStorePath(input.scope.conversationId),
-  );
+  if (input.scope.level !== "conversation") return view;
+  const catalog = getBackendDescriptor(view.backend).capabilityCatalog;
+  const snapshot = await catalog?.delivered?.(input.scope.conversationId);
   const delivered =
     getRuntime(input.scope.conversationId)?.capabilitiesAtCreation ??
     snapshot?.capabilities;
+  if (!catalog?.delivered) return view;
   return {
     ...applyDeliveredCapabilityView(view, delivered),
-    ...(snapshot && input.cascadeKind === "cursor-skills"
+    ...(snapshot?.commands &&
+    decodeCascadeKind(input.cascadeKind).kind === "skills"
       ? { appliedCommands: snapshot.commands }
       : {}),
   };
@@ -311,73 +300,21 @@ async function fetchInventory(
   worktreePath: string,
   scope: AgentCapabilityScopeContext,
 ): Promise<AgentCapabilityInventory> {
-  const home = os.homedir();
-  switch (cascadeKind) {
-    case "cursor-skills":
-      return discoverCursorCapabilities({ worktreePath, home }, "skills");
-    case "cursor-plugins":
-      return discoverCursorCapabilities({ worktreePath, home }, "plugins");
-    case "cursor-agents":
-      return discoverCursorCapabilities({ worktreePath, home }, "agents");
-    case "claude-skills": {
-      const result = await discoverClaudeSkills({
-        worktreePath,
-        home,
-        runtimeProbe: runtimeProbeForScope(scope),
-      });
-      return {
-        cascadeKind,
-        items: [...result.items],
-        diagnostics: [...result.diagnostics],
-        sourceSignature: result.sourceSignature,
-        refreshedAt: new Date().toISOString(),
-      };
-    }
-    case "claude-plugins": {
-      const result = await discoverClaudePlugins({ worktreePath, home });
-      return {
-        cascadeKind,
-        items: [...result.items],
-        diagnostics: [...result.diagnostics],
-        sourceSignature: result.sourceSignature,
-        refreshedAt: new Date().toISOString(),
-      };
-    }
-    case "claude-agents": {
-      const result = await discoverClaudeAgents({
-        worktreePath,
-        home,
-        runtimeProbe: runtimeProbeForScope(scope),
-      });
-      return {
-        cascadeKind,
-        items: [...result.items],
-        diagnostics: [...result.diagnostics],
-        sourceSignature: result.sourceSignature,
-        refreshedAt: new Date().toISOString(),
-      };
-    }
-    case "codex-skills":
-      return mutableInventory(
-        await discoverCodexSkillsCanonical({ worktreePath, home }),
-      );
-    case "codex-plugins":
-      return mutableInventory(
-        await discoverCodexPluginsCanonical({ worktreePath, home }),
-      );
-  }
-}
-
-function mutableInventory(
-  inventory: Omit<AgentCapabilityInventory, "items" | "diagnostics"> & {
-    items: readonly AgentCapabilityInventory["items"][number][];
-    diagnostics: readonly AgentCapabilityInventory["diagnostics"][number][];
-  },
-): AgentCapabilityInventory {
+  const { backend, kind } = decodeCascadeKind(cascadeKind);
+  const catalog = getBackendDescriptor(backend).capabilityCatalog;
+  if (!catalog) throw new Error(`Backend ${backend} has no capability catalog`);
+  const inventory = await catalog.discover({
+    kind,
+    worktreePath,
+    home: os.homedir(),
+    conversationId: scope.conversationId,
+  });
   return {
-    ...inventory,
+    cascadeKind,
     items: [...inventory.items],
     diagnostics: [...inventory.diagnostics],
+    sourceSignature: inventory.sourceSignature,
+    refreshedAt: inventory.refreshedAt ?? new Date().toISOString(),
   };
 }
 
@@ -406,33 +343,13 @@ async function resolvePluginOverlay(input: {
 function pluginCascadeForChild(
   cascadeKind: AgentCapabilityCascadeKind,
 ): PluginCascadeKind | undefined {
-  if (cascadeKind === "claude-skills" || cascadeKind === "claude-agents") {
-    return "claude-plugins";
-  }
-  if (cascadeKind === "codex-skills") return "codex-plugins";
-  if (cascadeKind === "cursor-skills" || cascadeKind === "cursor-agents")
-    return "cursor-plugins";
-  return undefined;
-}
-
-function runtimeProbeForScope(
-  scope: AgentCapabilityScopeContext,
-): ClaudeRuntimeProbe | undefined {
-  if (scope.level !== "conversation" || !scope.conversationId) {
-    return undefined;
-  }
-  const runtime = getRuntime(scope.conversationId);
-  if (!runtime || runtime.backend !== "claude" || runtime.status !== "alive") {
-    return undefined;
-  }
-  return {
-    ...(runtime.supportedCommands
-      ? { supportedCommands: runtime.supportedCommands.bind(runtime) }
-      : {}),
-    ...(runtime.supportedAgents
-      ? { supportedAgents: runtime.supportedAgents.bind(runtime) }
-      : {}),
-  };
+  const { backend, kind } = decodeCascadeKind(cascadeKind);
+  if (kind === "plugins") return undefined;
+  const plugin = defaultAgentCapabilityMetadataRegistry
+    .listForBackend(backend)
+    .find((metadata) => metadata.capabilityKind === "plugin")?.cascadeKind;
+  // The registry validates the kind/cascade pairing when entries are registered.
+  return plugin as PluginCascadeKind | undefined;
 }
 
 function mutationScopeToRouteScope(scope: MutationScope): CapabilityRouteScope {

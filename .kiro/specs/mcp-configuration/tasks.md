@@ -1,5 +1,25 @@
 # Implementation Plan
 
+## Approved amendment delivery — 22 September 2026
+
+Authorized by Alex's **“Approved. Implement the design.”** in conversation `3526f6a0-a0a8-4406-8539-e4275afdcd81`, applied to the [revised proposal](../../../docs/reports/2026-09-22-managed-capabilities-design-proposal.md) and the amended [requirements](requirements.md) and [design](design.md). This plan replaces conflicting older tasks; existing checked boxes below are historical completion records, not evidence that this amendment has been implemented. `spec.json` gate history is unchanged.
+
+- [x] A1. Complete project-conversation MCP scope using `ConversationTarget` across routes, query keys, SSE, persistence, runtime lookup, composition, and mutation fanout. Remove the project-wide panel fallback. Prove durable sibling isolation and global/project fanout across both conversation kinds. _Requirements: 1, 10, 11, 12.1._
+- [x] A2. Apply supported updates at turn start and retire idle-only application. Preserve next-conversation exceptions, active turns, and background work. A mixed MCP update waits in full for its latest supported boundary. _Requirements: 6, 12.2._
+- [x] A3. Retain actual acceptance receipts and separate MCP/capability state. Cover deferred, failed, partial, unknown, and A/B acknowledgment ordering without inferring acceptance from option construction. _Requirements: 6.7, 12.2, 12.3._
+- [x] A4. Move provider support/timing ownership into descriptors, retain the neutral shared projection, fix supported Claude MCP replacement and timeout handling, and verify exact native exclusions before advertising omission. Keep useful functionality available when verification establishes a limitation. _Requirements: 4, 8, 12.5._
+- [x] A5. Deliver subtle support/timing information, truthful pending/error state, read-only unsupported controls with reset, and quiet success. Verify the drawer at desktop/mobile widths and with keyboard/touch interactions. _Requirements: 4.1, 10, 12.4._
+- [x] A6. Run focused behavior tests, registered typecheck and seam checks, and live adapter checks for advertised effects; record any unverified support as a limitation. _Requirements: 12.1–12.5._
+
+Implementation and verification evidence: [delivery report](../../../docs/reports/2026-09-22-managed-capabilities-implementation.md).
+
+### Follow-up, excluded from the first delivery
+
+- Native/plugin MCP availability: verify known disabled native selections, explicit CC/project precedence, and one connection owner per native identity before relaxing blanket suppression. Until then disclose missing plugin MCP and the existing CC configuration route. _Requirement: 12.6._
+- Generic plugin importing, automatic inventories, Codex legacy SSE bridging, plugin emulation, and elaborate suppression/recovery remain deferred. The earlier strict-authoritative and permission-fallback tasks do not mandate new enforcement. _Requirement: 12.7._
+
+## Historical implementation plan
+
 This plan delivers the MCP Configuration feature end to end: cascading global/project/session/conversation overrides, per-tool filtering, mid-conversation reconfiguration, and live UI across four surfaces — for both Claude and Codex, behind a backend-neutral abstraction.
 
 Presentational UI components (`src/components/mcp/*`) and CSS are already in place; this plan wires data, runtime emission, and live updates behind them.

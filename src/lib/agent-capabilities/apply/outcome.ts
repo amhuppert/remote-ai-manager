@@ -23,6 +23,7 @@ import {
   conversationOutcomeIdentity,
   conversationScopeOf,
   mutated,
+  mergeRuntimeOutcomes,
   verificationGatedDiagnostic,
   type AffectedConversation,
   type ApplyContext,
@@ -224,23 +225,21 @@ export async function handleComposeThrow(input: {
 }
 
 function isPendingForLifecycleComposeFailure(input: {
-  trigger: "idle-drain" | "turn-start";
+  trigger: "turn-start";
   cascadeKind: AgentCapabilityCascadeKind;
   previous: AgentCapabilityCascadeRuntimeState;
 }): boolean {
-  const { trigger, cascadeKind, previous } = input;
+  const { cascadeKind, previous } = input;
   if (previous.pendingHash === undefined) return false;
-  if (trigger === "idle-drain") {
-    return (
-      previous.lastApplyStatus === "staged-idle" ||
-      previous.lastApplyStatus === "rejected"
-    );
-  }
-  if (previous.lastApplyStatus === "staged-next-turn") return true;
+  if (
+    previous.lastApplyStatus === "staged-next-turn" ||
+    previous.lastApplyStatus === "staged-idle"
+  )
+    return true;
   // Only next-turn cascades retry rejected records at turn start (mirrors
   // planTurnStartCascadeApply's retryable-rejected read).
   return (
-    applyTimingForCascade(cascadeKind) === "next_turn" &&
+    applyTimingForCascade(cascadeKind) !== "next_conversation" &&
     previous.lastApplyStatus === "rejected"
   );
 }
@@ -248,7 +247,7 @@ function isPendingForLifecycleComposeFailure(input: {
 async function persistLifecycleComposeFailure(input: {
   context: ApplyContext;
   conversation: AffectedConversation;
-  trigger: "idle-drain" | "turn-start";
+  trigger: "turn-start";
   rawMessage: string;
   sanitized: string;
 }): Promise<ConversationApplyOutcome> {
@@ -372,10 +371,10 @@ async function persistLifecycleComposeFailure(input: {
   }
 
   if (mutated(existingState, nextState)) {
-    await deps.writeRuntimeState({
-      ...conversationIdentityForPorts(conversation),
-      state: nextState,
-    });
+    await deps.updateRuntimeState(
+      conversationIdentityForPorts(conversation),
+      (current) => mergeRuntimeOutcomes(current, existingState, nextState),
+    );
   }
 
   return {
@@ -518,10 +517,10 @@ async function persistTargetComposeFailure(input: {
     },
   };
   if (previous !== nextCascadeState) {
-    await deps.writeRuntimeState({
-      ...conversationIdentityForPorts(conversation),
-      state: nextState,
-    });
+    await deps.updateRuntimeState(
+      conversationIdentityForPorts(conversation),
+      (current) => mergeRuntimeOutcomes(current, existingState, nextState),
+    );
   }
 
   const outcome: CascadeApplyOutcome = {

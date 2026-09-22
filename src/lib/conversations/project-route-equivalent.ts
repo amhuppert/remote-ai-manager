@@ -41,6 +41,7 @@ export const PROJECT_CONVERSATION_ROUTE_OPERATIONS: ReadonlySet<string> =
   new Set([
     "abort",
     "agent-capabilities",
+    "mcp-config",
     "answer",
     "archive",
     "ask",

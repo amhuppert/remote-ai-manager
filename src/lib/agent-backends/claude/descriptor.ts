@@ -1,3 +1,4 @@
+import type { BackendCapabilityCatalogFacet } from "../capability-catalog";
 import type {
   ConversationExecutionPolicy,
   TaskExecutionPolicy,
@@ -14,7 +15,7 @@ import type { BackendContinuityAdapter } from "../continuity";
 import type { BackendRuntimeConfigAdapter } from "../runtime-config";
 import type { AgentTaskRunner } from "../task";
 import type { AgentFailureClassifier } from "../errors";
-import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 import type { BackendNativeMemory } from "../native-memory";
 import { getDefaultClaudeModel, getEffortLevelsForModel } from "../schemas";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
@@ -91,9 +92,45 @@ export const claudeConversationCapabilities: BackendConversationCapabilities = {
     mode: "tool-disabled",
   },
   capabilityKinds: [
-    { kind: "skills", applyTiming: "idle_live" },
-    { kind: "plugins", applyTiming: "idle_live" },
-    { kind: "agents", applyTiming: "next_conversation" },
+    {
+      kind: "skills",
+      applyTiming: "next_turn",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "sdk-runtime",
+        compositionSupport: "translator",
+      },
+    },
+    {
+      kind: "plugins",
+      applyTiming: "next_turn",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "sdk-runtime",
+        compositionSupport: "translator",
+        support: {
+          configurable: true,
+          notes: [
+            "Plugin MCP components are not delivered automatically. Add needed servers to MCP configuration.",
+          ],
+        },
+      },
+    },
+    {
+      kind: "agents",
+      applyTiming: "next_conversation",
+      catalog: {
+        discoverySupport: "available",
+        runtimeVisibility: "sdk-runtime",
+        compositionSupport: "translator",
+        support: {
+          configurable: false,
+          notes: [
+            "Native agents remain available. CC cannot disable individual agents.",
+          ],
+        },
+      },
+    },
   ],
 };
 
@@ -146,6 +183,7 @@ export const claudeNativeMemory: BackendNativeMemory = {
 };
 
 export interface ClaudeDescriptorDeps {
+  capabilityCatalog?: BackendCapabilityCatalogFacet;
   conversationFactory: ConversationBackendFactory;
   /** `createClaudeContinuityAdapter(...)` in production; injected so the
    * conformance suite can drive it against fake SDK/service ports. */
@@ -165,6 +203,7 @@ export function createClaudeBackendDescriptor(
 ): AgentBackendDescriptor {
   return {
     id: "claude",
+    capabilityCatalog: deps.capabilityCatalog,
     metadata: claudeBackendMetadata,
     modelCatalog: {
       getCatalog: async ({ configuredSelection }) => {

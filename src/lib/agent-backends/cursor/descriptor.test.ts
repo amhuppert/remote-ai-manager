@@ -17,7 +17,7 @@ import {
 } from "./descriptor";
 import { CURSOR_DEFAULT_MODEL } from "./model-policy";
 import { CURSOR_TURN_STALL_TIMEOUT_MS } from "./worker/bounds";
-import { cursorMcpCapabilities } from "@/lib/mcp/backend-capabilities";
+import { cursorMcpCapabilities } from "@/lib/agent-backends/cursor/mcp-capabilities";
 import { createCursorFailureClassifier } from "./failure-classifier";
 import { claudeBackendMetadata } from "../claude/descriptor";
 import { codexBackendMetadata } from "../codex/descriptor";
@@ -131,8 +131,9 @@ describe("cursor descriptor — facets", () => {
 });
 
 describe("cursor descriptor — conversation capabilities", () => {
-  it("declares exactly the Phase 1 capability values", () => {
-    expect(cursorConversationCapabilities).toEqual({
+  it("declares the supported conversation execution mechanisms", () => {
+    const { capabilityKinds, ...execution } = cursorConversationCapabilities;
+    expect(execution).toEqual({
       queue: { acceptsWhileRunning: true, deliveryTiming: "in_turn" },
       continuationStrength: "precise_session",
       fork: "synthetic",
@@ -147,15 +148,33 @@ describe("cursor descriptor — conversation capabilities", () => {
         mode: null,
         reason: "Capture is unavailable",
       },
-      capabilityKinds: [
-        { kind: "skills", applyTiming: "next_conversation" },
-        { kind: "plugins", applyTiming: "next_conversation" },
-        { kind: "agents", applyTiming: "next_conversation" },
-      ],
     });
+    expect(
+      capabilityKinds.map(({ kind, applyTiming }) => ({ kind, applyTiming })),
+    ).toEqual([
+      { kind: "skills", applyTiming: "next_conversation" },
+      { kind: "plugins", applyTiming: "next_conversation" },
+      { kind: "agents", applyTiming: "next_conversation" },
+    ]);
   });
 
-  it("carries those same literals on the registered facet", () => {
+  it("publishes configurable source catalogs with support disclosure for each kind", () => {
+    for (const { catalog } of cursorConversationCapabilities.capabilityKinds) {
+      expect(catalog).toMatchObject({
+        discoverySupport: "available",
+        runtimeVisibility: "source-only",
+        compositionSupport: "translator",
+        support: { configurable: true },
+      });
+      const notes = catalog?.support?.notes;
+      expect(notes?.length).toBeGreaterThan(0);
+      for (const note of notes ?? []) {
+        expect(note.trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("carries those same declarations on the registered facet", () => {
     expect(descriptor().conversation?.capabilities).toBe(
       cursorConversationCapabilities,
     );

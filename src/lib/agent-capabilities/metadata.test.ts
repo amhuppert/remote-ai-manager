@@ -83,26 +83,23 @@ describe("agent capability metadata registry", () => {
     }
   });
 
-  it("uses idle-live-apply for claude skills and plugins", () => {
+  it("applies ordinary Claude skill and plugin changes at the next turn", () => {
     expect(
       defaultAgentCapabilityMetadataRegistry.get("claude-skills")
         .applySemantics,
-    ).toBe("idle-live-apply");
+    ).toBe("next-turn");
     expect(
       defaultAgentCapabilityMetadataRegistry.get("claude-plugins")
         .applySemantics,
-    ).toBe("idle-live-apply");
+    ).toBe("next-turn");
   });
 
-  it("represents claude-agents using a verified suppression apply point, not idle-live-apply", () => {
-    // Native Claude SDK Settings has no per-agent disable; verified strategy is
-    // permission-layer denial of Task invocations on disabled agents. That
-    // strategy takes effect on the next conversation (Options.canUseTool is
-    // bound at session creation), so apply semantics must reflect that.
+  it("discloses unavailable individual Claude agent control independently of timing", () => {
     const claudeAgents =
       defaultAgentCapabilityMetadataRegistry.get("claude-agents");
     expect(claudeAgents.applySemantics).toBe("next-conversation");
-    expect(claudeAgents.compositionSupport).toBe("translator");
+    expect(claudeAgents.support?.configurable).toBe(false);
+    expect(claudeAgents.support?.notes.length).toBeGreaterThan(0);
   });
 
   it("throws when asked for an unregistered cascade", () => {
@@ -119,7 +116,7 @@ describe("agent capability metadata registry", () => {
         cascadeKind: "claude-skills",
         backend: "claude",
         capabilityKind: "skill",
-        applySemantics: "idle-live-apply",
+        applySemantics: "next-turn",
         discoverySupport: "available",
         runtimeVisibility: "sdk-runtime",
         compositionSupport: "translator",
@@ -136,16 +133,12 @@ describe("agent capability metadata registry", () => {
     expect(codexPlugins.capabilityKind).toBe("plugin");
   });
 
-  it("encodes claude-agents as runtime-visible but deferred-apply via metadata fields alone", () => {
-    // The "deferred" pattern (visible in runtime, applied at session boundary
-    // via a permission-layer translator) must be readable from metadata
-    // without UI/runtime layers having to special-case the cascade kind.
+  it("exposes native Claude agents without advertising a writable selection", () => {
     const claudeAgents =
       defaultAgentCapabilityMetadataRegistry.get("claude-agents");
     expect(claudeAgents.runtimeVisibility).toBe("sdk-runtime");
-    expect(claudeAgents.applySemantics).toBe("next-conversation");
-    expect(claudeAgents.compositionSupport).toBe("translator");
     expect(claudeAgents.capabilityKind).toBe("agent");
+    expect(claudeAgents.support?.configurable).toBe(false);
   });
 
   it("encodes every required metadata field on every cascade record", () => {
@@ -221,7 +214,7 @@ describe("agent capability metadata registry", () => {
           cascadeKind: "claude-skills",
           backend: "claude",
           // capabilityKind intentionally omitted
-          applySemantics: "idle-live-apply",
+          applySemantics: "next-turn",
           discoverySupport: "available",
           runtimeVisibility: "sdk-runtime",
           compositionSupport: "translator",
@@ -240,7 +233,7 @@ describe("agent capability metadata registry", () => {
           cascadeKind: "claude-skills",
           backend: "codex",
           capabilityKind: "skill",
-          applySemantics: "idle-live-apply",
+          applySemantics: "next-turn",
           discoverySupport: "available",
           runtimeVisibility: "sdk-runtime",
           compositionSupport: "translator",
@@ -273,7 +266,7 @@ describe("agent capability metadata registry", () => {
           cascadeKind: "claude-skills",
           backend: "claude",
           capabilityKind: "skill",
-          applySemantics: "idle-live-apply",
+          applySemantics: "next-turn",
           discoverySupport: "available",
           runtimeVisibility: "sdk-runtime",
           compositionSupport: "translator",
@@ -290,7 +283,7 @@ describe("agent capability metadata registry", () => {
           cascadeKind: "claude-skills",
           backend: "claude",
           capabilityKind: "skill",
-          applySemantics: "idle-live-apply",
+          applySemantics: "next-turn",
           discoverySupport: "available",
           runtimeVisibility: "sdk-runtime",
           compositionSupport: "translator",
@@ -299,7 +292,7 @@ describe("agent capability metadata registry", () => {
           cascadeKind: "claude-skills",
           backend: "claude",
           capabilityKind: "skill",
-          applySemantics: "idle-live-apply",
+          applySemantics: "next-turn",
           discoverySupport: "available",
           runtimeVisibility: "sdk-runtime",
           compositionSupport: "translator",

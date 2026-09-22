@@ -582,14 +582,16 @@ describe("agent-capabilities/default-deps runtime state accessors", () => {
       },
     });
 
-    await accessors.writeRuntimeState({
-      conversationScope: "project",
-      projectPath: "/repo",
-      projectName: "Repo",
-      conversationId: "plc-1",
-      worktreePath: "/repo",
-      backend: "claude",
-      state: {
+    await accessors.updateRuntimeState(
+      {
+        conversationScope: "project",
+        projectPath: "/repo",
+        projectName: "Repo",
+        conversationId: "plc-1",
+        worktreePath: "/repo",
+        backend: "claude",
+      },
+      () => ({
         cascades: {
           "claude-skills": {
             pendingHash: "pending",
@@ -597,8 +599,8 @@ describe("agent-capabilities/default-deps runtime state accessors", () => {
             lastApplyStatus: "staged-idle",
           },
         },
-      },
-    });
+      }),
+    );
 
     expect(writes).toEqual([
       {

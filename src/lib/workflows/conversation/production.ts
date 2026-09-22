@@ -100,14 +100,13 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         const session = await stateMod.getSession(projectPath, sessionName);
         return session?.mcpOverrides;
       },
-      readConversationOverrides: async (
-        projectPath,
-        sessionName,
-        conversationId,
-      ) => {
-        const session = await stateMod.getSession(projectPath, sessionName);
-        return session?.conversations.find((c) => c.id === conversationId)
-          ?.mcpOverrides;
+      readConversationOverrides: async (projectPath, target) => {
+        const conversation = await stateMod.getConversation(
+          projectPath,
+          conversationTargetStoreSessionName(target),
+          target.conversationId,
+        );
+        return conversation?.mcpOverrides;
       },
       discoverSources: (input) => discoveryMod.discoverAllSources(input),
       globalConfigPath: () =>

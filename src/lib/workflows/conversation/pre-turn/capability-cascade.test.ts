@@ -2,27 +2,17 @@ import {
   createActorDependenciesFixture,
   groupActorFixtureDependencies,
 } from "../testing/actor-deps-fixture";
-import { afterAll, beforeAll, describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   conversationStateSchema,
   type ConversationState,
 } from "@/lib/conversations/schemas";
 import type { AgentCapabilityRuntimeApplicationState } from "@/lib/agent-capabilities/schemas";
 import {
-  _registerBackendForTesting,
-  _resetBackendRegistryForTesting,
-} from "@/lib/agent-backends/registry-core";
-import { bootstrapBackends } from "@/lib/agent-backends/registry";
-import {
-  createTestFakeBackend,
-  TESTFAKE_BACKEND_ID,
-} from "@/lib/agent-backends/testing/testfake-backend";
-import {
   buildCapabilityApplyInput,
   resolveCapabilitySeedForNewRuntime,
   seedRuntimeCapabilityState,
   applyCapabilityCascadeAtTurnStart,
-  drainCapabilityWhenIdle,
   type CapabilityTurnContext,
   type CapabilitySeed,
   type ProjectCapabilitySeed,
@@ -36,23 +26,6 @@ vi.mock("@/lib/logging", () => ({
     debug: vi.fn(),
   }),
 }));
-
-beforeAll(() => {
-  _resetBackendRegistryForTesting();
-  bootstrapBackends();
-  _registerBackendForTesting(
-    createTestFakeBackend({
-      capabilities: {
-        capabilityKinds: [{ kind: "agents", applyTiming: "idle_live" }],
-      },
-    }).descriptor,
-  );
-});
-
-afterAll(() => {
-  _resetBackendRegistryForTesting();
-  bootstrapBackends();
-});
 
 function makeCtx(
   overrides: Partial<CapabilityTurnContext> = {},
@@ -210,50 +183,6 @@ describe("applyCapabilityCascadeAtTurnStart", () => {
       applyCapabilityCascadeAtTurnStart(deps, makeCtx(), {
         isNewRuntime: false,
       }),
-    ).resolves.toBeUndefined();
-  });
-});
-
-describe("drainCapabilityWhenIdle", () => {
-  it("drains staged-idle cascades for a Claude turn", async () => {
-    const deps = { applyCapabilityWhenIdle: vi.fn(async () => ({})) };
-    const ctx = makeCtx();
-
-    await drainCapabilityWhenIdle(deps, ctx);
-
-    expect(deps.applyCapabilityWhenIdle).toHaveBeenCalledWith(
-      buildCapabilityApplyInput(ctx),
-    );
-  });
-
-  it("no-ops for backends without idle-live-apply semantics", async () => {
-    const deps = { applyCapabilityWhenIdle: vi.fn(async () => ({})) };
-
-    await drainCapabilityWhenIdle(deps, makeCtx({ backend: "codex" }));
-
-    expect(deps.applyCapabilityWhenIdle).not.toHaveBeenCalled();
-  });
-
-  it("drains a registered backend that declares idle-live apply semantics", async () => {
-    const deps = { applyCapabilityWhenIdle: vi.fn(async () => ({})) };
-    const ctx = makeCtx({ backend: TESTFAKE_BACKEND_ID });
-
-    await drainCapabilityWhenIdle(deps, ctx);
-
-    expect(deps.applyCapabilityWhenIdle).toHaveBeenCalledWith(
-      buildCapabilityApplyInput(ctx),
-    );
-  });
-
-  it("never rethrows a drain failure", async () => {
-    const deps = {
-      applyCapabilityWhenIdle: vi.fn(async () => {
-        throw new Error("drain boom");
-      }),
-    };
-
-    await expect(
-      drainCapabilityWhenIdle(deps, makeCtx()),
     ).resolves.toBeUndefined();
   });
 });

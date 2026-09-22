@@ -73,7 +73,7 @@ describe("section 7.1 — capability view canonical identity", () => {
       backend: "claude",
       continuationStrength: "precise_session",
       structuredOutputEnforcement: "post_validation",
-      mcpApplicationBoundary: "between_turns",
+      mcpApplicationBoundary: "per_request",
       contextMetricsAvailable: true,
       nativeMidTurnAskUser: true,
     });
@@ -98,7 +98,7 @@ describe("section 7.1 — capability view canonical identity", () => {
     expect(capabilityViewForBackend("codex")).toEqual(CODEX_CAPABILITY_VIEW);
   });
 
-  it("Claude and Codex share output enforcement while exposing their capability differences", () => {
+  it("Claude and Codex share output enforcement and request boundaries while exposing their capability differences", () => {
     expect(CLAUDE_CAPABILITY_VIEW.backend).not.toBe(
       CODEX_CAPABILITY_VIEW.backend,
     );
@@ -108,7 +108,7 @@ describe("section 7.1 — capability view canonical identity", () => {
     expect(CLAUDE_CAPABILITY_VIEW.structuredOutputEnforcement).toBe(
       CODEX_CAPABILITY_VIEW.structuredOutputEnforcement,
     );
-    expect(CLAUDE_CAPABILITY_VIEW.mcpApplicationBoundary).not.toBe(
+    expect(CLAUDE_CAPABILITY_VIEW.mcpApplicationBoundary).toBe(
       CODEX_CAPABILITY_VIEW.mcpApplicationBoundary,
     );
     expect(CLAUDE_CAPABILITY_VIEW.contextMetricsAvailable).not.toBe(
@@ -391,7 +391,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     }
   });
 
-  it("conversation runtime without applyPortableMcpConfig produces capability_unavailable for Claude between_turns boundary", async () => {
+  it("conversation runtime without applyPortableMcpConfig produces capability_unavailable for Claude per_request boundary", async () => {
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
@@ -436,7 +436,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("capability_unavailable");
-      expect(result.outcome.error.message).toContain("between_turns");
+      expect(result.outcome.error.message).toContain("per_request");
     }
   });
 

@@ -1,4 +1,9 @@
 import {
+  type ConversationTarget,
+  conversationTargetApiBase,
+} from "@/lib/conversations/conversation-target";
+import { computeMcpConfigInvalidations } from "./sse-invalidation";
+import {
   useMutation,
   useQueryClient,
   type QueryKey,
@@ -22,9 +27,7 @@ export type McpMutationScope =
   | { level: "session"; projectName: string; sessionName: string }
   | {
       level: "conversation";
-      projectName: string;
-      sessionName: string;
-      conversationId: string;
+      target: ConversationTarget;
     };
 
 function mcpScopeUrl(scope: McpMutationScope): string {
@@ -36,7 +39,7 @@ function mcpScopeUrl(scope: McpMutationScope): string {
     case "session":
       return `/api/projects/${encodeURIComponent(scope.projectName)}/sessions/${encodeURIComponent(scope.sessionName)}/mcp-config`;
     case "conversation":
-      return `/api/projects/${encodeURIComponent(scope.projectName)}/sessions/${encodeURIComponent(scope.sessionName)}/conversations/${encodeURIComponent(scope.conversationId)}/mcp-config`;
+      return `${conversationTargetApiBase(scope.target)}/mcp-config`;
   }
 }
 
@@ -49,31 +52,12 @@ function mcpScopeQueryKey(scope: McpMutationScope): QueryKey {
     case "session":
       return mcpConfigKeys.session(scope.projectName, scope.sessionName);
     case "conversation":
-      return mcpConfigKeys.conversation(
-        scope.projectName,
-        scope.sessionName,
-        scope.conversationId,
-      );
+      return mcpConfigKeys.conversation(scope.target);
   }
 }
 
 function scopedInvalidations(scope: McpMutationScope): readonly QueryKey[] {
-  switch (scope.level) {
-    case "global":
-      return [mcpConfigKeys.all];
-    case "project":
-      return [mcpConfigKeys.project(scope.projectName)];
-    case "session":
-      return [mcpConfigKeys.session(scope.projectName, scope.sessionName)];
-    case "conversation":
-      return [
-        mcpConfigKeys.conversation(
-          scope.projectName,
-          scope.sessionName,
-          scope.conversationId,
-        ),
-      ];
-  }
+  return computeMcpConfigInvalidations(scope).map((match) => match.queryKey);
 }
 
 type McpServerView = McpConfigViewResponse["servers"][number];
@@ -281,7 +265,7 @@ function mcpScopeToolsUrl(scope: McpMutationScope, serverKey: string): string {
     case "session":
       return `/api/projects/${encodeURIComponent(scope.projectName)}/sessions/${encodeURIComponent(scope.sessionName)}/mcp-config/tools/${encodedServer}`;
     case "conversation":
-      return `/api/projects/${encodeURIComponent(scope.projectName)}/sessions/${encodeURIComponent(scope.sessionName)}/conversations/${encodeURIComponent(scope.conversationId)}/mcp-config/tools/${encodedServer}`;
+      return `${conversationTargetApiBase(scope.target)}/mcp-config/tools/${encodedServer}`;
   }
 }
 
@@ -299,12 +283,7 @@ export function useRefreshMcpToolsMutation(scope: McpMutationScope) {
     onSuccess: (_data, serverKey) => {
       if (scope.level === "conversation") {
         void queryClient.invalidateQueries({
-          queryKey: mcpToolsKeys.inventory(
-            scope.projectName,
-            scope.sessionName,
-            scope.conversationId,
-            serverKey,
-          ),
+          queryKey: mcpToolsKeys.inventory(scope.target, serverKey),
         });
       } else {
         void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });

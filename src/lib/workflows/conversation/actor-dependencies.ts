@@ -1,3 +1,4 @@
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type {
   ConversationBackendRuntime,
@@ -284,38 +285,24 @@ export interface ConversationPolicyDependencies {
   composePortableMcpForConversation(args: {
     backend: AgentBackendId;
     projectPath: string;
-    projectName: string;
-    sessionName: string;
-    conversationId: string;
+    target: ConversationTarget;
     worktreePath: string;
     transientPortableMcp?: PortableMcpConfig;
   }): Promise<PortableMcpConfig>;
 
   applyMcpAtTurnStart(input: {
     projectPath: string;
-    sessionName: string;
-    conversationId: string;
+    target: ConversationTarget;
     backend: AgentBackendId;
   }): Promise<ConversationApplyResult>;
 
   /**
-   * Promote any seeded `staged-next-turn` capability cascades for the
-   * conversation at the start of a new turn. Live for both backends — Codex
-   * rebuilds its options each turn, and Claude's seeded state from
-   * conversation start needs promotion on the first turn boundary.
+   * Attempt pending capability delivery at the start of a turn; the runtime
+   * reports when its backend has accepted the submitted configuration.
    */
   applyCapabilityAtTurnStart(
     input: ApplyConversationIdentity,
   ): Promise<unknown>;
-
-  /**
-   * Drain any `staged-idle` Claude capability cascades after a turn completes
-   * and the conversation transitions running → idle. No-op for Codex (no
-   * idle-live-apply semantics). Failures are recorded as `rejected` per
-   * cascade and surfaced via diagnostics; the previously applied hash is
-   * preserved so retries can proceed.
-   */
-  applyCapabilityWhenIdle(input: ApplyConversationIdentity): Promise<unknown>;
 
   /**
    * Compose the neutral capability cascade + initial apply state for a new

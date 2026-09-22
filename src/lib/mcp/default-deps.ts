@@ -24,7 +24,11 @@ import {
   type McpRuntimeApplyService,
 } from "./runtime-apply";
 import { getConversationTooling } from "@/lib/workflows/conversation/manager";
-import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import {
+  conversationTargetStoreSessionName,
+  projectConversationTarget,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
 import {
   createMcpConfigMutationService,
   type McpConfigMutationService,
@@ -118,8 +122,7 @@ export const defaultToolInventoryCache: ToolInventoryCache =
 
 // ---------------------------------------------------------------------------
 // Runtime apply service singleton — bridges the conversation PATCH handler to
-// the backend runtime so override changes reach live sessions on the next turn
-// (or immediately when Claude is idle).
+// the backend runtime so override changes are delivered at the next turn.
 // ---------------------------------------------------------------------------
 
 const composePortableForConversation = createComposePortableMcpForConversation({
@@ -136,13 +139,13 @@ const composePortableForConversation = createComposePortableMcpForConversation({
     );
     return session?.mcpOverrides;
   },
-  async readConversationOverrides(projectPath, sessionName, conversationId) {
-    const session = await defaultStateManager.getSession(
+  async readConversationOverrides(projectPath, target) {
+    const conversation = await defaultStateManager.getConversation(
       projectPath,
-      sessionName,
+      conversationTargetStoreSessionName(target),
+      target.conversationId,
     );
-    return session?.conversations.find((c) => c.id === conversationId)
-      ?.mcpOverrides;
+    return conversation?.mcpOverrides;
   },
   discoverSources: discoverAllSources,
   globalConfigPath: () => getDefaultGlobalMcpDefinitionPath(),
@@ -158,15 +161,10 @@ const defaultResolvePortableForConversation =
       );
       return session?.worktreePath;
     },
-    getProjectDisplayName,
     getConversationTooling(input) {
       return getConversationTooling({
         projectPath: input.projectPath,
-        target: targetFromStoreSessionName(
-          getProjectDisplayName(input.projectPath),
-          input.sessionName,
-          input.conversationId,
-        ),
+        target: input.target,
       });
     },
   });
@@ -197,14 +195,28 @@ function runtimeStatusFor(conversationId: string) {
 export async function defaultListGlobalRuntimeTargets(): Promise<
   readonly RuntimeTarget[]
 > {
-  const identities = await defaultStateManager.listConversationIdentities();
+  const [identities, projectConversations] = await Promise.all([
+    defaultStateManager.listConversationIdentities(),
+    defaultStateManager.listAllProjectConversations(),
+  ]);
   return collectRuntimeTargets({
-    conversations: identities.map((identity) => ({
-      projectPath: identity.projectPath,
-      sessionName: identity.sessionName,
-      conversationId: identity.id,
-    })),
-    getProjectName: getProjectDisplayName,
+    conversations: [
+      ...identities.map((identity) => ({
+        projectPath: identity.projectPath,
+        target: targetFromStoreSessionName(
+          getProjectDisplayName(identity.projectPath),
+          identity.sessionName,
+          identity.id,
+        ),
+      })),
+      ...projectConversations.map(({ projectPath, conversation }) => ({
+        projectPath,
+        target: projectConversationTarget(
+          getProjectDisplayName(projectPath),
+          conversation.id,
+        ),
+      })),
+    ],
     getRuntime: runtimeStatusFor,
   });
 }
@@ -212,16 +224,28 @@ export async function defaultListGlobalRuntimeTargets(): Promise<
 export async function defaultListProjectRuntimeTargets(
   projectPath: string,
 ): Promise<readonly RuntimeTarget[]> {
-  const sessions = await defaultStateManager.getProjectSessions(projectPath);
+  const [sessions, projectConversations] = await Promise.all([
+    defaultStateManager.getProjectSessions(projectPath),
+    defaultStateManager.getProjectConversations(projectPath),
+  ]);
+  const projectName = getProjectDisplayName(projectPath);
   return collectRuntimeTargets({
-    conversations: sessions.flatMap((session) =>
-      session.conversations.map((conversation) => ({
+    conversations: [
+      ...sessions.flatMap((session) =>
+        session.conversations.map((conversation) => ({
+          projectPath,
+          target: targetFromStoreSessionName(
+            projectName,
+            session.sessionName,
+            conversation.id,
+          ),
+        })),
+      ),
+      ...projectConversations.map((conversation) => ({
         projectPath,
-        sessionName: session.sessionName,
-        conversationId: conversation.id,
+        target: projectConversationTarget(projectName, conversation.id),
       })),
-    ),
-    getProjectName: getProjectDisplayName,
+    ],
     getRuntime: runtimeStatusFor,
   });
 }
@@ -238,10 +262,12 @@ export async function defaultListSessionRuntimeTargets(
   return collectRuntimeTargets({
     conversations: session.conversations.map((conversation) => ({
       projectPath,
-      sessionName: session.sessionName,
-      conversationId: conversation.id,
+      target: targetFromStoreSessionName(
+        getProjectDisplayName(projectPath),
+        sessionName,
+        conversation.id,
+      ),
     })),
-    getProjectName: getProjectDisplayName,
     getRuntime: runtimeStatusFor,
   });
 }

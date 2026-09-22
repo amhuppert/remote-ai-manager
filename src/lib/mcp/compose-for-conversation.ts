@@ -1,3 +1,4 @@
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 /**
  * Compose the emitted `PortableMcpConfig` for a single conversation turn.
  *
@@ -93,8 +94,7 @@ export interface ComposePortableMcpDeps {
   ): Promise<McpOverrides | undefined>;
   readConversationOverrides(
     projectPath: string,
-    sessionName: string,
-    conversationId: string,
+    target: ConversationTarget,
   ): Promise<McpOverrides | undefined>;
   discoverSources(input: {
     globalConfigPath: string;
@@ -106,9 +106,7 @@ export interface ComposePortableMcpDeps {
 export interface ComposePortableMcpArgs {
   backend: AgentBackendId;
   projectPath: string;
-  projectName: string;
-  sessionName: string;
-  conversationId: string;
+  target: ConversationTarget;
   worktreePath: string;
   /** Optional caller-supplied tooling (e.g., graph workflow context tools).
    * Merged last so one-shot task runners continue to work. */
@@ -134,12 +132,10 @@ export function createComposePortableMcpForConversation(
     ] = await Promise.all([
       deps.readGlobalOverrides(),
       deps.readProjectOverrides(args.projectPath),
-      deps.readSessionOverrides(args.projectPath, args.sessionName),
-      deps.readConversationOverrides(
-        args.projectPath,
-        args.sessionName,
-        args.conversationId,
-      ),
+      args.target.scope === "session"
+        ? deps.readSessionOverrides(args.projectPath, args.target.sessionName)
+        : undefined,
+      deps.readConversationOverrides(args.projectPath, args.target),
       deps.discoverSources({
         globalConfigPath: deps.globalConfigPath(),
         worktreePath: args.worktreePath,

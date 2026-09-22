@@ -10,7 +10,7 @@
  * whose audit gap nobody claims.
  */
 
-import { cursorMcpCapabilities } from "@/lib/mcp/backend-capabilities";
+import { cursorMcpCapabilities } from "@/lib/agent-backends/cursor/mcp-capabilities";
 import {
   cursorConversationCapabilities,
   cursorConversationExecution,
@@ -743,8 +743,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     claim:
       "A disabled server is omitted from the emitted configuration, and a configuration change takes effect on the next turn.",
     mechanism: "cc-owned",
-    limitation:
-      "A change cannot be applied to a live idle runtime the way Claude applies one, so the user waits for the next turn.",
+    limitation: "Saved changes apply when the next input is accepted.",
     owner: "command-center#114",
     verdict: "verified",
     blocker: null,
@@ -766,7 +765,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     blocker:
       "The provider exposes no way to read or override account-level MCP administration, so authoritative configuration cannot be declared without overclaiming.",
     liveFlow: false,
-    facts: ["mcp.strictAuthoritativeConfig"],
+    facts: ["mcp.strictAuthoritativeConfig", "mcp.notes"],
     auditGaps: ["comparison-mcp-authority"],
     evidence: [
       test("src/lib/mcp/backend-capabilities.test.ts"),

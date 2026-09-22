@@ -1,5 +1,25 @@
 # Implementation Plan
 
+## Approved amendment delivery — 22 September 2026
+
+Authorized by Alex's **“Approved. Implement the design.”** in conversation `3526f6a0-a0a8-4406-8539-e4275afdcd81`, applied to the [revised proposal](../../../docs/reports/2026-09-22-managed-capabilities-design-proposal.md) and amended [requirements](requirements.md) and [design](design.md). This plan supersedes older idle-drain, timing-based promotion, universal individual suppression, and fixed-panel tasks. Checked tasks below remain historical records; neither they nor historical `spec.json` gates claim this amendment complete.
+
+- [x] A1. Put native discovery, defaults, identity, settings, delivered snapshots, and support notes beneath descriptors/adapters. Replace shared provider dispatch and direct Cursor snapshot access with the small neutral catalog/delivered-selection contract. _Requirements: 7, 12, 21.1._
+- [x] A2. Fix effective Claude project/local plugin settings and host-bundle composition; discover disabled children with independent defaults. Reuse the complete Codex native skill catalog, preserve source identity and unrelated native selectors, and retain unmatched preferences visibly. _Requirements: 3, 5, 21.2, 21.3._
+- [x] A3. Reproduce and fix frontmatter comments containing colons while preserving quoted hashes and indented block-scalar content. Retain the existing scalar subset. Scoped `src/lib/commands/frontmatter.test.ts` runs matched one file: reproduction `vrun-0ebb9301-b5aa-4a01-bfbf-84a4ae13cbad` failed on spurious comment fields; `vrun-c8f12b30-75d4-4388-9c23-ad6ebab0c85f` passed after the fix. _Requirement: 21.7._
+- [x] A4. Move ordinary application to turn start, remove idle-only scheduling, and preserve explicit next-conversation exceptions and active runtime work. Replace seed/timing inference with actual per-kind acceptance and cover stale receipts plus new MCP alongside frozen capabilities. _Requirements: 9, 10, 19, 21.4._
+- [x] A5. Deliver accurate support/pending/failure UI through one accessible information control. Keep unsupported individual controls read-only/resettable, delayed controls editable, Codex native agents available, and the current Cursor delivery paths. Surface managed-skills bridge delivery failures. _Requirements: 11, 12, 21.5–21.7._
+- [x] A6. Run focused behavior tests and registered type/seam checks, then inspect actual delivered inventories and drawer keyboard/touch behavior for support claims. Treat failed fine-control probes as disclosed limitations. _Requirements: 21.1–21.7._
+
+Implementation and verification evidence: [delivery report](../../../docs/reports/2026-09-22-managed-capabilities-implementation.md).
+
+### Follow-up, excluded from the first delivery
+
+- Native/plugin MCP availability proceeds under the MCP amendment after native/managed precedence and known-disable verification. Generic plugin importing, Codex agent controls, structured Cursor agent MCP, full YAML, automatic inventory synchronization, and process-scoped replacement of the Codex skill bridge are deferred. _Requirement: 21.8._
+- The earlier sub-agent permission-hook and idle-drain tasks are not instructions to add a call-denial hook, recreate runtimes on every edit, or preserve idle scheduling. Availability with explicit limitations is the approved outcome when finer control is unsupported.
+
+## Historical implementation plan
+
 This plan delivers configurable agent capabilities end to end: five backend-specific cascades, native default discovery, sparse overrides, plugin parent-child disable behavior, conversation-start composition, runtime apply/staging, five UI panels, diagnostics, cross-client synchronization, and project-level conversation support.
 
 Implementation follows red-green-refactor by default. Each task should add focused failing coverage first unless the work is a narrow wiring change or Storybook prototype.

@@ -28,6 +28,7 @@ import {
 } from "./conformance";
 import type { ConversationBackendCreateInput } from "./conversation";
 import type { AgentTaskRequest } from "./task";
+import type { BackendRuntimeConfigAdapter } from "./runtime-config";
 import type { BackendModelSelection } from "./schemas";
 import { createClaudeBackendDescriptor } from "./claude/descriptor";
 import { claudeConversationBackendFactory } from "./claude/conversation-runtime";
@@ -54,11 +55,9 @@ import {
   loadGeneratedCursorModelCatalog,
 } from "./cursor/model-catalog";
 import { createScriptedTransport } from "./cursor/testing/scripted-worker";
-import {
-  claudeMcpCapabilities,
-  codexMcpCapabilities,
-  cursorMcpCapabilities,
-} from "@/lib/mcp/backend-capabilities";
+import { claudeMcpCapabilities } from "@/lib/agent-backends/claude/mcp-capabilities";
+import { codexMcpCapabilities } from "@/lib/agent-backends/codex/mcp-capabilities";
+import { cursorMcpCapabilities } from "@/lib/agent-backends/cursor/mcp-capabilities";
 import {
   createTestFakeBackend,
   TESTFAKE_HANGING_PROMPT,
@@ -436,6 +435,29 @@ describeBackendConformance(cursorDescriptor, {
 // ============================================================
 
 const testfake = createTestFakeBackend();
+const testfakeConversation = testfake.descriptor.conversation;
+if (!testfakeConversation) {
+  throw new Error("testfake must expose a conversation facet");
+}
+// The shared stand-in validates and records calls without delivering provider
+// configuration. This harness models staging explicitly rather than treating
+// that recorded call as an acknowledgement from a provider.
+const testfakeStagingAdapter: BackendRuntimeConfigAdapter = {
+  ...testfakeConversation.runtimeConfig,
+  async apply(input) {
+    const result = await testfakeConversation.runtimeConfig.apply(input);
+    return result.status === "applied" && input.resolved.kinds.length > 0
+      ? { status: "deferred", reason: "next_turn" }
+      : result;
+  },
+};
+const testfakeConformanceDescriptor = {
+  ...testfake.descriptor,
+  conversation: {
+    ...testfakeConversation,
+    runtimeConfig: testfakeStagingAdapter,
+  },
+};
 
 const testfakeTurnHarness: ConversationTurnConformanceHarness = {
   buildCreateInput: () =>
@@ -443,7 +465,7 @@ const testfakeTurnHarness: ConversationTurnConformanceHarness = {
   hangingPromptText: TESTFAKE_HANGING_PROMPT,
 };
 
-describeBackendConformance(testfake.descriptor, {
+describeBackendConformance(testfakeConformanceDescriptor, {
   continuity: continuityHarness,
   conversationTurn: testfakeTurnHarness,
   task: {
@@ -570,6 +592,43 @@ describe("conformance behavior checks reject lying descriptors", () => {
       checkApplyTimingBehavior(
         lying.descriptor,
         lying.descriptor.conversation!,
+        testfakeTurnHarness,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it.each(["next_turn", "next_conversation"] as const)(
+    "fails a descriptor that reports %s changes applied before their boundary",
+    async (applyTiming) => {
+      const lying = createTestFakeBackend({
+        capabilities: {
+          capabilityKinds: [{ kind: "agents", applyTiming }],
+        },
+      });
+      const facet = lying.descriptor.conversation;
+      if (!facet) throw new Error("testfake must expose a conversation facet");
+      await expect(
+        checkApplyTimingBehavior(lying.descriptor, facet, testfakeTurnHarness),
+      ).rejects.toThrow();
+    },
+  );
+
+  it("fails a next-turn adapter that defers until a new conversation", async () => {
+    const lying = createTestFakeBackend();
+    const facet = lying.descriptor.conversation;
+    if (!facet) throw new Error("testfake must expose a conversation facet");
+    await expect(
+      checkApplyTimingBehavior(
+        lying.descriptor,
+        {
+          ...facet,
+          runtimeConfig: {
+            ...facet.runtimeConfig,
+            async apply() {
+              return { status: "deferred", reason: "next_conversation" };
+            },
+          },
+        },
         testfakeTurnHarness,
       ),
     ).rejects.toThrow();

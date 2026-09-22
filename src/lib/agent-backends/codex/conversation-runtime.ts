@@ -1,3 +1,4 @@
+import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 /**
  * Codex conversations use one bounded app-server process per CC turn,
  * retaining only the opaque thread reference between turns.
@@ -73,6 +74,8 @@ import { createCodexFailureClassifier } from "./failure-classifier";
 import { createLogger } from "@/lib/logging";
 import {
   translateCodexRuntimeCapabilities,
+  mergeCodexNativeSkillSelectors,
+  type CodexCapabilityEmittedConfig,
   type CodexCapabilityApplyResult,
   type CodexCapabilityApplyTarget,
   type CodexRuntimeCapabilityConfig,
@@ -87,7 +90,7 @@ import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { toSdkModelReasoningEffort, toStringEnv } from "./shared";
 import { appendStructuredOutputInstruction } from "../structured-output-prompt";
-import { translatePortableMcpToCodex } from "./mcp-translation";
+import { translatePortableMcpToCodex } from "../mcp-translation";
 import {
   buildCodexMcpServersConfig,
   listNativeCodexMcpServers,
@@ -258,6 +261,10 @@ export interface CodexConversationRuntimeDeps {
   ensureManagedSkillsBridge(
     checkoutPath: string,
   ): Promise<CodexManagedSkillsBridgeResult>;
+  mergeNativeSkillSelectors(
+    config: CodexCapabilityEmittedConfig,
+    worktreePath: string,
+  ): Promise<CodexCapabilityEmittedConfig>;
   skillsChanged?(): void;
   now(): number;
 }
@@ -266,6 +273,7 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   inTurnDeliveryEnabled: CODEX_IN_TURN_DELIVERY_ENABLED,
   createAppServer: createCodexAppServerClient,
   skillsChanged: publishCodexSkillsChanged,
+  mergeNativeSkillSelectors: mergeCodexNativeSkillSelectors,
   createInstructionStore: createCodexInstructionStore,
   buildChildEnv,
   toStringEnv,
@@ -289,6 +297,11 @@ export class CodexConversationRuntime
   implements ConversationBackendRuntime, CodexCapabilityApplyTarget
 {
   readonly backend: AgentBackendId = "codex";
+  readonly mcpConfigDelivery = "input-accepted" as const;
+  readonly capabilityConfigDelivery = "input-accepted" as const;
+  get capabilityWorkingDirectory(): string {
+    return this.worktreePath;
+  }
   readonly queueUserInput?: (
     input: ConversationQueuedUserInput,
   ) => Promise<void>;
@@ -301,6 +314,7 @@ export class CodexConversationRuntime
   private threadId: string | null;
   private stagedPortableMcp: PortableMcpConfig | null;
   private stagedCapabilityConfig: CodexRuntimeCapabilityConfig | null;
+  private lastManagedSkillsFailure: string | null = null;
   private readonly sessionInstructions: string[];
   private readonly worktreePath: string;
   private readonly conversationId: string;
@@ -352,7 +366,10 @@ export class CodexConversationRuntime
       input.persistedRef?.backend === "codex" ? input.persistedRef.ref : null;
     this.stagedPortableMcp = input.tooling.portableMcp ?? null;
     this.stagedCapabilityConfig = input.tooling.capabilities
-      ? translateCodexRuntimeCapabilities(input.tooling.capabilities)
+      ? translateCodexRuntimeCapabilities(
+          input.tooling.capabilities,
+          input.worktreePath,
+        )
       : null;
     this.sessionInstructions = input.sessionInstructions;
     this.worktreePath = input.worktreePath;
@@ -755,9 +772,20 @@ export class CodexConversationRuntime
     let sequence = 0;
     const unsupportedRequests = new Set<string | number>();
     const wasFresh = this.threadId === null;
+    const dispatchedMcp = this.stagedPortableMcp;
+    const dispatchedCapabilities = this.stagedCapabilityConfig;
+    const mcpConfigHash = dispatchedMcp
+      ? computeEffectiveConfigHash(dispatchedMcp)
+      : undefined;
     const accept = (): Promise<void> => {
       state.acceptance ??= Promise.resolve().then(() =>
-        input.onEvent({ type: "input_accepted" }),
+        input.onEvent({
+          type: "input_accepted",
+          ...(mcpConfigHash ? { mcpConfigHash } : {}),
+          ...(dispatchedCapabilities?.capabilities
+            ? { capabilities: dispatchedCapabilities.capabilities }
+            : {}),
+        }),
       );
       return state.acceptance;
     };
@@ -803,12 +831,41 @@ export class CodexConversationRuntime
       const threadOptions = this.buildThreadOptions();
       const cwd = threadOptions.workingDirectory ?? this.worktreePath;
       const bridge = await this.deps.ensureManagedSkillsBridge(cwd);
-      if (bridge.status === "conflict")
+      if (bridge.status === "conflict") {
         logger.warn("codex-runtime.managed_skills_degraded", {
           conversationId: this.conversationId,
           detail: bridge.detail,
         });
-      const options = await this.buildCodexOptions();
+        if (this.lastManagedSkillsFailure !== bridge.detail) {
+          this.lastManagedSkillsFailure = bridge.detail;
+          await input.onEvent({
+            type: "transcript_entry",
+            entry: {
+              backend: "codex",
+              seq: 0,
+              type: "notice",
+              raw: {
+                timestamp: new Date(this.deps.now()).toISOString(),
+                type: "notice",
+                role: "notice",
+                content: [
+                  {
+                    type: "text",
+                    text: "Command Center skills could not be attached because the reserved skills location is occupied. Move the conflicting entry from .agents/skills/command-center and retry.",
+                  },
+                ],
+              },
+            },
+          });
+        }
+      } else {
+        this.lastManagedSkillsFailure = null;
+      }
+      const options = await this.buildCodexOptions(
+        undefined,
+        dispatchedMcp,
+        dispatchedCapabilities,
+      );
       const governing = composeCodexGoverningInstructions(
         this.sessionInstructions,
       );
@@ -1516,14 +1573,7 @@ export class CodexConversationRuntime
     );
   }
 
-  /**
-   * Replace the staged Codex capability config used to build the next turn's
-   * `CodexOptions.config`. The runtime rebuilds options per turn, so simply
-   * swapping the field is enough — the change takes effect on the very next
-   * `sendTurn` call. Returns `rejected` when the runtime is closed so the
-   * apply service can record the failure instead of falsely reporting
-   * `applied`.
-   */
+  /** Stage native selection; only the accepting turn acknowledges delivery. */
   async applyCapabilityConfig(
     config: CodexRuntimeCapabilityConfig,
   ): Promise<CodexCapabilityApplyResult> {
@@ -1531,11 +1581,11 @@ export class CodexConversationRuntime
       return { status: "rejected", error: "codex runtime is closed" };
     }
     this.stagedCapabilityConfig = config;
-    logger.info("codex-runtime.capability_applied", {
+    logger.info("codex-runtime.capability_staged", {
       conversationId: this.conversationId,
       configKeys: Object.keys(config.config).length,
     });
-    return { status: "applied" };
+    return { status: "deferred", reason: "next_turn" };
   }
 
   async applyPortableMcpConfig(
@@ -1628,6 +1678,9 @@ export class CodexConversationRuntime
 
   private async buildCodexOptions(
     capabilities?: ResolvedCapabilityCascade,
+    portableMcp: PortableMcpConfig | null = this.stagedPortableMcp,
+    stagedCapabilityConfig: CodexRuntimeCapabilityConfig | null = this
+      .stagedCapabilityConfig,
   ): Promise<CodexOptions> {
     // Thread the same cctl env contract every spawned session gets (doc 01 §2):
     // identity + server coordinates + PATH prepend, plus the graph-workflow lane
@@ -1675,10 +1728,8 @@ export class CodexConversationRuntime
       hide_agent_reasoning: false,
     };
 
-    if (this.stagedPortableMcp !== null) {
-      const { mcpServers } = this.deps.translatePortableMcpToCodex(
-        this.stagedPortableMcp,
-      );
+    if (portableMcp !== null) {
+      const { mcpServers } = this.deps.translatePortableMcpToCodex(portableMcp);
       const nativeServers = await this.listNativeMcpServers(env);
       configMerged.mcp_servers = buildCodexMcpServersConfig({
         managedMcpServers: mcpServers,
@@ -1687,9 +1738,16 @@ export class CodexConversationRuntime
     }
 
     const capabilityConfig = capabilities
-      ? translateCodexRuntimeCapabilities(capabilities)
-      : this.stagedCapabilityConfig;
-    if (capabilityConfig) Object.assign(configMerged, capabilityConfig.config);
+      ? translateCodexRuntimeCapabilities(capabilities, this.worktreePath)
+      : stagedCapabilityConfig;
+    if (capabilityConfig)
+      Object.assign(
+        configMerged,
+        await this.deps.mergeNativeSkillSelectors(
+          capabilityConfig.config,
+          this.worktreePath,
+        ),
+      );
 
     // Merged last so nothing above — a staged capability config, a portable-MCP
     // translation — can widen the sandbox it pins.

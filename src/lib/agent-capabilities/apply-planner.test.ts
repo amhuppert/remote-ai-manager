@@ -11,7 +11,6 @@ import {
 import {
   planCascadeApply,
   planCascadeFailure,
-  planIdleDrainCascadeApply,
   planMissingTargetCascadeAfterMutation,
   planTurnStartCascadeApply,
   type PlanCascadeApplyInput,
@@ -25,7 +24,6 @@ const baseInput = (
   previous: undefined,
   attemptedHash: "hash-attempt",
   attemptedItemIds: ["a", "b"],
-  triggerMode: "idle",
   ...overrides,
 });
 
@@ -35,7 +33,6 @@ describe("planCascadeApply", () => {
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
         applyTiming: applyTimingForCascade("codex-skills"),
-        triggerMode: "turn-active",
       }),
     );
     expect(plan.disposition).toBe("staged-next-turn");
@@ -84,17 +81,17 @@ describe("planCascadeApply", () => {
         },
       }),
     );
-    expect(plan.disposition).toBe("try-live-apply");
+    expect(plan.disposition).toBe("staged-next-turn");
   });
 
-  it("returns staged-idle for idle_live timing while a turn is active", () => {
-    const plan = planCascadeApply(baseInput({ triggerMode: "turn-active" }));
-    expect(plan.disposition).toBe("staged-idle");
+  it("stages mutations for the next turn", () => {
+    const plan = planCascadeApply(baseInput({}));
+    expect(plan.disposition).toBe("staged-next-turn");
   });
 
-  it("returns try-live-apply for idle_live timing when idle", () => {
-    const plan = planCascadeApply(baseInput({ triggerMode: "idle" }));
-    expect(plan.disposition).toBe("try-live-apply");
+  it("stages legacy live timing without applying during a save", () => {
+    const plan = planCascadeApply(baseInput({}));
+    expect(plan.disposition).toBe("staged-next-turn");
   });
 
   it("returns deferred-next-conversation for next_conversation timing (claude-agents)", () => {
@@ -102,88 +99,14 @@ describe("planCascadeApply", () => {
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("claude-agents"),
         applyTiming: applyTimingForCascade("claude-agents"),
-        triggerMode: "idle",
       }),
     );
     expect(plan.disposition).toBe("deferred-next-conversation");
   });
 });
 
-describe("planIdleDrainCascadeApply", () => {
-  it("drains staged-idle pending work when the composed hash still matches", () => {
-    const plan = planIdleDrainCascadeApply({
-      previous: {
-        pendingHash: "hash-a",
-        pendingItemIds: ["alpha"],
-        lastApplyStatus: "staged-idle",
-      },
-      composed: {
-        attemptedHash: "hash-a",
-        attemptedItemIds: ["alpha"],
-      },
-    });
-    expect(plan).toEqual({
-      disposition: "try-live-apply",
-      attemptedHash: "hash-a",
-      attemptedItemIds: ["alpha"],
-    });
-  });
-
-  it("retries rejected pending work on the next idle drain", () => {
-    const plan = planIdleDrainCascadeApply({
-      previous: {
-        appliedHash: "hash-applied",
-        pendingHash: "hash-pending",
-        pendingItemIds: ["alpha"],
-        lastApplyStatus: "rejected",
-        lastApplyError: "transient failure",
-      },
-      composed: {
-        attemptedHash: "hash-pending",
-        attemptedItemIds: ["alpha"],
-      },
-    });
-    expect(plan.disposition).toBe("try-live-apply");
-  });
-
-  it("clears obsolete staged-idle work when the composer no longer emits the cascade", () => {
-    const plan = planIdleDrainCascadeApply({
-      previous: {
-        pendingHash: "hash-obsolete",
-        pendingItemIds: ["alpha"],
-        lastApplyStatus: "staged-idle",
-      },
-      composed: undefined,
-    });
-    expect(plan).toEqual({
-      disposition: "idempotent-no-op",
-      stateAction: "clear-obsolete",
-      reason: "missing-composed-cascade",
-    });
-  });
-
-  it("preserves pending work without applying when the composed hash drifted", () => {
-    const plan = planIdleDrainCascadeApply({
-      previous: {
-        pendingHash: "hash-staged",
-        pendingItemIds: ["alpha"],
-        lastApplyStatus: "staged-idle",
-      },
-      composed: {
-        attemptedHash: "hash-drifted",
-        attemptedItemIds: ["beta"],
-      },
-    });
-    expect(plan).toEqual({
-      disposition: "idempotent-no-op",
-      stateAction: "preserve",
-      reason: "hash-drift",
-    });
-  });
-});
-
 describe("planTurnStartCascadeApply", () => {
-  it("promotes non-next-turn staged work when the composed hash still matches", () => {
+  it("requires delivery even for seeded work when the composed hash matches", () => {
     const plan = planTurnStartCascadeApply({
       applyTiming: "idle_live",
       previous: {
@@ -197,7 +120,7 @@ describe("planTurnStartCascadeApply", () => {
       },
     });
     expect(plan).toEqual({
-      disposition: "applied",
+      disposition: "try-turn-start-apply",
       attemptedHash: "hash-a",
       attemptedItemIds: ["alpha"],
     });
@@ -260,7 +183,7 @@ describe("planTurnStartCascadeApply", () => {
     });
   });
 
-  it("does not retry rejected idle_live pending work at turn start", () => {
+  it("retries rejected supported pending work at turn start", () => {
     const plan = planTurnStartCascadeApply({
       applyTiming: applyTimingForCascade("claude-skills"),
       previous: {
@@ -274,9 +197,9 @@ describe("planTurnStartCascadeApply", () => {
       },
     });
     expect(plan).toEqual({
-      disposition: "idempotent-no-op",
-      stateAction: "preserve",
-      reason: "not-turn-start-pending",
+      disposition: "try-turn-start-apply",
+      attemptedHash: "hash-pending",
+      attemptedItemIds: ["alpha"],
     });
   });
 

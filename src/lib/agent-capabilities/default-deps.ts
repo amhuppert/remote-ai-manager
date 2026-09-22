@@ -1,7 +1,5 @@
-import { discoverCursorCapabilities } from "./cursor-discovery";
 import {
   createCapabilityConfigComposer,
-  promoteSeededRuntimeState,
   projectConversationDiagnosticsSeed,
   type ComposedProjectConversationCapabilitySeed,
 } from "./runtime-seed";
@@ -10,14 +8,11 @@ import {
  *
  * Bridges the side-effect-free apply service to the live system:
  *   - Discovery + override resolution feeds `composeConversationStartRuntime`.
- *   - `runtime-registry` enumerates active conversations + reports turn state.
+ *   - `runtime-registry` enumerates active conversations.
  *   - `stateManager.mutateConversation` reads/writes the persisted runtime
  *     application state under `ConversationState.agentCapabilitiesRuntime`.
- *   - `applyClaudeRuntime` resolves the conversation's `ConversationBackendRuntime`
- *     from the registry and forwards to its `applyClaudeCapabilityConfig`
- *     port — letting the apply service live-apply idle Claude runtimes and
- *     fall back to `staged-idle` when a turn is active or the runtime is
- *     unavailable.
+ *   - The runtime-config port attempts delivery at the next turn, keeping the
+ *     selection pending until the backend accepts it.
  */
 
 import os from "node:os";
@@ -45,16 +40,6 @@ import {
 } from "./schemas";
 
 import { defaultGlobalCapabilityOverrideStore } from "./global-store";
-import {
-  discoverClaudeAgents,
-  discoverClaudePlugins,
-  discoverClaudeSkills,
-  getClaudeRuntimeProbe,
-} from "./claude-discovery";
-import {
-  discoverCodexPluginsCanonical,
-  discoverCodexSkillsCanonical,
-} from "./codex-discovery";
 import {
   composeConversationStartRuntime,
   ownedCascadesForBackend,
@@ -103,22 +88,6 @@ export interface ProjectConversationStartCapabilityComposerInput {
   backend: AgentBackendId;
 }
 
-/**
- * Explicit per-cascade discovery seam. Each persisted cascade kind maps to
- * one provider; the composer selects providers by walking the backend's
- * descriptor-declared cascades (`ownedCascadesForBackend`) — never by
- * branching on backend identity. Providers own their backend-specific
- * inputs internally (e.g. the Claude live-runtime probe), so the composer
- * hands every provider the same neutral input.
- *
- * The interface lives here rather than on the backend descriptor because
- * discovery is expressed in this domain's vocabulary
- * (`AgentCapabilityDiscoveredItem`/diagnostics) and `agent-backends` must not
- * import `agent-capabilities`; population is the bootstrap-style data table
- * below (`defaultDiscoveryProviders`), keyed exhaustively by the persisted
- * cascade-kind enum so declaring a new backend's cascades forces a provider
- * entry at compile time.
- */
 export interface CascadeDiscoveryInput {
   worktreePath: string;
   home: string;
@@ -289,62 +258,6 @@ export function createConversationStartCapabilityComposer(
   };
 }
 
-/**
- * Production discovery providers, one per persisted cascade kind. Exhaustive
- * over the enum: adding a cascade kind (the schema edit that admits a new
- * backend's cascades) fails compilation here until its provider is wired.
- */
-const defaultDiscoveryProviders: Readonly<
-  Record<AgentCapabilityCascadeKind, CascadeDiscoveryProvider>
-> = {
-  "claude-skills": {
-    discover: (input) =>
-      discoverClaudeSkills({
-        worktreePath: input.worktreePath,
-        home: input.home,
-        runtimeProbe: getClaudeRuntimeProbe(input.conversationId),
-      }),
-  },
-  "claude-plugins": {
-    discover: (input) =>
-      discoverClaudePlugins({
-        worktreePath: input.worktreePath,
-        home: input.home,
-      }),
-  },
-  "claude-agents": {
-    discover: (input) =>
-      discoverClaudeAgents({
-        worktreePath: input.worktreePath,
-        home: input.home,
-        runtimeProbe: getClaudeRuntimeProbe(input.conversationId),
-      }),
-  },
-  "cursor-skills": {
-    discover: (input) => discoverCursorCapabilities(input, "skills"),
-  },
-  "cursor-plugins": {
-    discover: (input) => discoverCursorCapabilities(input, "plugins"),
-  },
-  "cursor-agents": {
-    discover: (input) => discoverCursorCapabilities(input, "agents"),
-  },
-  "codex-skills": {
-    discover: (input) =>
-      discoverCodexSkillsCanonical({
-        worktreePath: input.worktreePath,
-        home: input.home,
-      }),
-  },
-  "codex-plugins": {
-    discover: (input) =>
-      discoverCodexPluginsCanonical({
-        worktreePath: input.worktreePath,
-        home: input.home,
-      }),
-  },
-};
-
 function isProjectConversationComposeInput(
   input: ConversationStartCapabilityComposerInput,
 ): input is ProjectConversationStartCapabilityComposerInput {
@@ -396,8 +309,13 @@ export const defaultComposeForConversation =
       stateManager.getSession(projectPath, sessionName),
     getProjectConversation: (projectPath, conversationId) =>
       stateManager.getProjectConversation(projectPath, conversationId),
-    getDiscoveryProvider: (cascadeKind) =>
-      defaultDiscoveryProviders[cascadeKind],
+    getDiscoveryProvider(cascadeKind) {
+      const { backend, kind } = decodeCascadeKind(cascadeKind);
+      const catalog = getBackendDescriptor(backend).capabilityCatalog;
+      return catalog
+        ? { discover: (input) => catalog.discover({ ...input, kind }) }
+        : undefined;
+    },
     composeRuntime: composeConversationStartRuntime,
     homeDir: () => os.homedir(),
     logDiscoveryFailure(input) {
@@ -414,7 +332,6 @@ export const defaultComposeForConversation =
 interface RuntimeSnapshot {
   status: "alive" | "dead";
   backend: AgentBackendId;
-  isTurnActive?: boolean;
 }
 
 export interface AffectedConversationListerDeps {
@@ -519,7 +436,6 @@ export function createAffectedConversationLister(
               conversationId: conv.id,
               worktreePath: session.worktreePath,
               backend: runtime.backend,
-              isTurnActive: runtime.isTurnActive === true,
             });
           }
         }
@@ -586,7 +502,6 @@ export function createAffectedConversationLister(
         conversationId: conversation.id,
         worktreePath: projectPath,
         backend: runtime.backend,
-        isTurnActive: runtime.isTurnActive === true,
       });
     }
 
@@ -699,10 +614,11 @@ export function createRuntimeStateAccessors(deps: RuntimeStateAccessorDeps): {
   readRuntimeState(
     conversation: ApplyConversationIdentity,
   ): Promise<AgentCapabilityRuntimeApplicationState | undefined>;
-  writeRuntimeState(
-    conversation: ApplyConversationIdentity & {
-      state: AgentCapabilityRuntimeApplicationState;
-    },
+  updateRuntimeState(
+    conversation: ApplyConversationIdentity,
+    updater: (
+      current: AgentCapabilityRuntimeApplicationState | undefined,
+    ) => AgentCapabilityRuntimeApplicationState,
   ): Promise<void>;
 } {
   return {
@@ -721,14 +637,16 @@ export function createRuntimeStateAccessors(deps: RuntimeStateAccessorDeps): {
       );
       return conversation?.agentCapabilitiesRuntime;
     },
-    async writeRuntimeState(input) {
+    async updateRuntimeState(input, updater) {
       if (input.conversationScope === "project") {
         await deps.mutateProjectConversation(
           input.projectPath,
           input.conversationId,
-          "agent-capabilities.writeRuntimeState",
+          "agent-capabilities.updateRuntimeState",
           (conversation) => {
-            conversation.agentCapabilitiesRuntime = input.state;
+            conversation.agentCapabilitiesRuntime = updater(
+              conversation.agentCapabilitiesRuntime,
+            );
           },
         );
         return;
@@ -738,9 +656,11 @@ export function createRuntimeStateAccessors(deps: RuntimeStateAccessorDeps): {
         input.projectPath,
         input.sessionName,
         input.conversationId,
-        "agent-capabilities.writeRuntimeState",
+        "agent-capabilities.updateRuntimeState",
         (conversation) => {
-          conversation.agentCapabilitiesRuntime = input.state;
+          conversation.agentCapabilitiesRuntime = updater(
+            conversation.agentCapabilitiesRuntime,
+          );
         },
       );
     },
@@ -849,13 +769,9 @@ function cascadeBackend(
 export const defaultCapabilityRuntimeApplyService: CapabilityRuntimeApplyService =
   createCapabilityRuntimeApplyService({
     listAffectedConversations: defaultListAffectedConversations,
-    isTurnActive(conversation) {
-      const runtime = getRuntime(conversation.conversationId);
-      return runtime?.isTurnActive === true;
-    },
     composeForConversation: defaultComposeForConversation,
     readRuntimeState: defaultRuntimeStateAccessors.readRuntimeState,
-    writeRuntimeState: defaultRuntimeStateAccessors.writeRuntimeState,
+    updateRuntimeState: defaultRuntimeStateAccessors.updateRuntimeState,
     applyRuntimeConfig: applyRuntimeConfigToConversationRuntime,
   });
 
@@ -949,7 +865,7 @@ export function createProjectConversationCapabilityConfigComposer(
       backend,
       capabilities: result.capabilities,
       diagnostics: result.diagnostics,
-      runtimeState: promoteSeededRuntimeState(result.runtimeState),
+      runtimeState: result.runtimeState,
     };
   };
 }

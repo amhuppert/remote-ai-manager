@@ -37,12 +37,7 @@ export interface ProjectApplyConversationIdentity {
   backend: AgentBackendId;
 }
 
-export type AffectedConversation = ApplyConversationIdentity & {
-  /** Snapshot taken when the service enumerated the conversation. Re-checked
-   * before live-apply so a turn that started between enumeration and apply
-   * does not get interrupted. */
-  isTurnActive: boolean;
-};
+export type AffectedConversation = ApplyConversationIdentity;
 
 export interface ApplyServiceDeps {
   metadataRegistry?: AgentCapabilityMetadataRegistry;
@@ -56,9 +51,6 @@ export interface ApplyServiceDeps {
     cascadeKind: AgentCapabilityCascadeKind;
     changedItemIds: readonly string[];
   }): Promise<readonly AffectedConversation[]>;
-  /** Re-check a conversation's runtime turn-active flag immediately before
-   * live-apply. */
-  isTurnActive(conversation: ApplyConversationIdentity): boolean;
   /** Produce a fresh conversation-start runtime composition that reflects the
    * current persisted overrides + discovery. */
   composeForConversation(
@@ -68,12 +60,12 @@ export interface ApplyServiceDeps {
   readRuntimeState(
     conversation: ApplyConversationIdentity,
   ): Promise<AgentCapabilityRuntimeApplicationState | undefined>;
-  /** Persist a new runtime apply state for the conversation; the apply service
-   * writes the entire state object atomically via this port. */
-  writeRuntimeState(
-    conversation: ApplyConversationIdentity & {
-      state: AgentCapabilityRuntimeApplicationState;
-    },
+  /** Commit against the fresh persisted state inside its short atomic mutation. */
+  updateRuntimeState(
+    conversation: ApplyConversationIdentity,
+    updater: (
+      current: AgentCapabilityRuntimeApplicationState | undefined,
+    ) => AgentCapabilityRuntimeApplicationState,
   ): Promise<void>;
   /**
    * Apply a freshly-resolved capability cascade to the conversation's live
@@ -92,7 +84,6 @@ export interface CascadeApplyOutcome {
   cascadeKind: AgentCapabilityCascadeKind;
   disposition:
     | "applied"
-    | "staged-idle"
     | "staged-next-turn"
     | "deferred-next-conversation"
     | "unsupported"
@@ -129,15 +120,12 @@ export interface CapabilityRuntimeApplyService {
   applyAfterOverrideChange(
     input: ApplyAfterMutationInput,
   ): Promise<ApplyAfterMutationResult>;
-  applyWhenConversationBecomesIdle(
-    input: ApplyAtConversationInput,
-  ): Promise<ConversationApplyOutcome>;
   applyAtTurnStart(
     input: ApplyAtConversationInput,
   ): Promise<ConversationApplyOutcome>;
 }
 
-export type ApplyTrigger = "after-mutation" | "idle-drain" | "turn-start";
+export type ApplyTrigger = "after-mutation" | "turn-start";
 
 export interface ComposedCascadeInfo {
   cascadeKind: AgentCapabilityCascadeKind;
@@ -168,6 +156,38 @@ export function mutated(
     if (before.cascades[k] !== after.cascades[k]) return true;
   }
   return false;
+}
+
+/** Preserve changes accepted while a runtime operation was in flight. */
+export function mergeRuntimeOutcomes(
+  current: AgentCapabilityRuntimeApplicationState | undefined,
+  previous: AgentCapabilityRuntimeApplicationState,
+  next: AgentCapabilityRuntimeApplicationState,
+): AgentCapabilityRuntimeApplicationState {
+  const cascades = { ...current?.cascades };
+  const kinds = new Set([
+    ...Object.keys(previous.cascades),
+    ...Object.keys(next.cascades),
+  ]);
+  for (const rawKind of kinds) {
+    const kind = rawKind as AgentCapabilityCascadeKind;
+    const before = previous.cascades[kind];
+    const after = next.cascades[kind];
+    if (before === after) continue;
+    const fresh = cascades[kind];
+    if (JSON.stringify(fresh) === JSON.stringify(before)) {
+      if (after === undefined) delete cascades[kind];
+      else cascades[kind] = after;
+    } else if (
+      after?.lastApplyStatus === "applied" &&
+      fresh &&
+      fresh.appliedHash === before?.appliedHash
+    ) {
+      // Delivery A is real, but it must not clear preference B saved during A.
+      cascades[kind] = { ...fresh, appliedHash: after.appliedHash };
+    }
+  }
+  return { cascades };
 }
 
 export function conversationScopeOf(

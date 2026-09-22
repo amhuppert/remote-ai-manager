@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentBackendDescriptor } from "@/lib/agent-backends/descriptor";
 import { createStubFailureClassifier } from "@/lib/agent-backends/errors";
-import { claudeMcpCapabilities } from "@/lib/mcp/backend-capabilities";
+import { defaultMcpCapabilityRegistry } from "@/lib/agent-backends/mcp-capabilities";
+const claudeMcpCapabilities =
+  defaultMcpCapabilityRegistry.getCapabilities("claude");
 import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import {
   capabilityViewForBackend,
@@ -18,7 +20,7 @@ describe("capabilityViewForBackend (descriptor-derived)", () => {
       backend: "claude",
       continuationStrength: "precise_session",
       structuredOutputEnforcement: "post_validation",
-      mcpApplicationBoundary: "between_turns",
+      mcpApplicationBoundary: "per_request",
       contextMetricsAvailable: true,
       nativeMidTurnAskUser: true,
     });

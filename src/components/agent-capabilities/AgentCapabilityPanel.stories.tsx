@@ -111,7 +111,7 @@ export const ParentStalePendingFailedDiagnostic: Story = {
         row({
           itemId: "pending-skill",
           displayName: "Pending Skill",
-          applyStatus: "staged-idle",
+          applyStatus: "staged-next-turn",
         }),
         row({
           itemId: "failed-skill",
@@ -121,7 +121,7 @@ export const ParentStalePendingFailedDiagnostic: Story = {
             {
               severity: "error",
               code: "agent-capability-apply-failed",
-              message: "Apply failed during idle reload.",
+              message: "Apply failed during turn preparation.",
               cascadeKind: "claude-skills",
               backend: "claude",
               itemId: "failed-skill",
@@ -256,6 +256,84 @@ export const PluginProvidedRows: Story = {
   },
 };
 
+export const SupportedAndLimitedControls: Story = {
+  args: {
+    title: "Skills",
+    view: viewWithRows([
+      row({
+        itemId: "plugin:review",
+        displayName: "Review",
+        owningPluginId: "quality-pack",
+        currentLayerValue: { enabled: false, originLayer: "conversation" },
+        ownEffectiveState: { enabled: false, originLayer: "conversation" },
+        effectiveState: { enabled: false, originLayer: "conversation" },
+        appliedEnabled: true,
+        support: {
+          configurable: false,
+          notes: [
+            "Individual skills follow this plugin. Disable the plugin to remove them.",
+          ],
+        },
+      }),
+      row({
+        itemId: "planning",
+        displayName: "Planning",
+        currentLayerValue: { enabled: false, originLayer: "conversation" },
+        ownEffectiveState: { enabled: false, originLayer: "conversation" },
+        effectiveState: { enabled: false, originLayer: "conversation" },
+        appliedEnabled: true,
+        applyStatus: "deferred-next-conversation",
+        support: {
+          configurable: true,
+          notes: ["Changes apply in a new conversation."],
+        },
+      }),
+      row({
+        itemId: "native",
+        displayName: "Native skill",
+        appliedEnabled: true,
+        applyStatus: "applied",
+      }),
+      row({ itemId: "unknown", displayName: "Unobserved skill" }),
+      row({
+        itemId: "failed",
+        displayName: "Failed selection",
+        applyStatus: "rejected",
+        diagnostics: [
+          {
+            severity: "error",
+            code: "apply-failed",
+            message: "Could not update this selection. Retry on the next turn.",
+            cascadeKind: "claude-skills",
+            backend: "claude",
+          },
+        ],
+      }),
+    ]),
+    layerOptions,
+    selectedScope: {
+      level: "conversation",
+      projectName: "remote-ai-manager",
+      sessionName: "capabilities",
+      conversationId: "conv-1",
+    },
+    ...sharedActions,
+    hideHeader: true,
+    hideLevels: true,
+  },
+  render: (args) => (
+    <div
+      data-cap-drawer
+      className="flex h-[700px] max-h-[calc(100vh-32px)] w-[920px] max-w-full flex-col overflow-hidden rounded-lg border border-solid border-border-default bg-bg-base"
+    >
+      <div className="border-x-0 border-t-0 border-b border-solid border-border-subtle px-lg py-md font-mono text-sm text-text-primary">
+        Capabilities · Conversation
+      </div>
+      <AgentCapabilityPanel {...args} />
+    </div>
+  ),
+};
+
 export const InteractiveRegression: Story = {
   args: {
     title: "Claude Skills",
@@ -365,7 +443,8 @@ function viewForCascade(
         cascadeKind,
         backend,
         capabilityKind,
-        applySemantics: backend === "codex" ? "next-turn" : "idle-live-apply",
+        applySemantics:
+          capabilityKind === "agent" ? "next-conversation" : "next-turn",
         discoverySupport: "available",
         runtimeVisibility: backend === "codex" ? "source-only" : "sdk-runtime",
         compositionSupport: "translator",
@@ -390,7 +469,7 @@ function viewWithRows(
       cascadeKind: "claude-skills",
       backend: "claude",
       capabilityKind: "skill",
-      applySemantics: "idle-live-apply",
+      applySemantics: "next-turn",
       discoverySupport: "available",
       runtimeVisibility: "sdk-runtime",
       compositionSupport: "translator",

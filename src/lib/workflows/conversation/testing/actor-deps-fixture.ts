@@ -136,8 +136,8 @@ export function createActorDependenciesFixture(
         reason: "Capture is unavailable",
       },
       capabilityKinds: [
-        { kind: "skills" as const, applyTiming: "idle_live" as const },
-        { kind: "plugins" as const, applyTiming: "idle_live" as const },
+        { kind: "skills" as const, applyTiming: "next_turn" as const },
+        { kind: "plugins" as const, applyTiming: "next_turn" as const },
         {
           kind: "agents" as const,
           applyTiming: "next_conversation" as const,
@@ -180,21 +180,15 @@ export function createActorDependenciesFixture(
     getWorkflowLaneInstructions: vi.fn(async () => null),
     readConversationMessages: vi.fn(async () => []),
     fileExists: vi.fn(() => false),
-    applyMcpAtTurnStart: vi.fn(
-      async (_input: {
-        projectPath: string;
-        sessionName: string;
-        conversationId: string;
-        backend: "claude" | "codex";
-      }) => ({
-        conversationId: "conv-1",
-        backend: "claude" as const,
-        disposition: "applied_now" as const,
+    applyMcpAtTurnStart: vi.fn<ActorFixtureDependencies["applyMcpAtTurnStart"]>(
+      async (input) => ({
+        conversationId: input.target.conversationId,
+        backend: input.backend,
+        disposition: "applied_now",
         effectiveConfigHash: "hash-1",
       }),
     ),
     applyCapabilityAtTurnStart: vi.fn(async () => ({})),
-    applyCapabilityWhenIdle: vi.fn(async () => ({})),
     composeCapabilityConfigForConversation: vi.fn(async () => undefined),
     composeCapabilityConfigForProjectConversation: vi.fn(async () => undefined),
     composePortableMcpForConversation: vi.fn<
@@ -204,7 +198,7 @@ export function createActorDependenciesFixture(
         {
           id: "gateway-alpha",
           transport: "streamable-http" as const,
-          url: `http://localhost:3000/api/projects/${args.projectName}/sessions/${args.sessionName}/mcp`,
+          url: `http://localhost:3000/api/projects/${args.target.projectName}/mcp`,
         },
         ...(args.transientPortableMcp?.servers ?? []),
       ],
@@ -332,7 +326,6 @@ export function groupActorFixtureDependencies(
       composePortableMcpForConversation: deps.composePortableMcpForConversation,
       applyMcpAtTurnStart: deps.applyMcpAtTurnStart,
       applyCapabilityAtTurnStart: deps.applyCapabilityAtTurnStart,
-      applyCapabilityWhenIdle: deps.applyCapabilityWhenIdle,
       composeCapabilityConfigForConversation:
         deps.composeCapabilityConfigForConversation,
       composeCapabilityConfigForProjectConversation:

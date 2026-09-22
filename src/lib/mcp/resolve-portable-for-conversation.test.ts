@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { describe, expect, it, vi } from "vitest";
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
@@ -54,14 +55,12 @@ describe("createResolvePortableForConversation", () => {
     const resolve = createResolvePortableForConversation({
       composePortableForConversation: compose,
       getSessionWorktreePath: async () => "/path/to/session",
-      getProjectDisplayName: () => "demo",
       getConversationTooling: () => tooling,
     });
 
     const result = await resolve({
       projectPath: "/path/to/project",
-      sessionName: "session-a",
-      conversationId: "conv-1",
+      target: sessionConversationTarget("demo", "session-a", "conv-1"),
       backend: "claude",
     });
 
@@ -69,9 +68,7 @@ describe("createResolvePortableForConversation", () => {
       expect.objectContaining({
         backend: "claude",
         projectPath: "/path/to/project",
-        projectName: "demo",
-        sessionName: "session-a",
-        conversationId: "conv-1",
+        target: sessionConversationTarget("demo", "session-a", "conv-1"),
         worktreePath: "/path/to/session",
         transientPortableMcp: TRANSIENT_PORTABLE,
       }),
@@ -85,14 +82,12 @@ describe("createResolvePortableForConversation", () => {
     const resolve = createResolvePortableForConversation({
       composePortableForConversation: compose,
       getSessionWorktreePath: async () => "/path/to/session",
-      getProjectDisplayName: () => "demo",
       getConversationTooling: () => undefined,
     });
 
     await resolve({
       projectPath: "/path/to/project",
-      sessionName: "session-a",
-      conversationId: "conv-1",
+      target: sessionConversationTarget("demo", "session-a", "conv-1"),
       backend: "claude",
     });
 
@@ -107,14 +102,12 @@ describe("createResolvePortableForConversation", () => {
     const resolve = createResolvePortableForConversation({
       composePortableForConversation: compose,
       getSessionWorktreePath: async () => undefined,
-      getProjectDisplayName: () => "demo",
       getConversationTooling: () => undefined,
     });
 
     await resolve({
       projectPath: "/path/to/project",
-      sessionName: "session-a",
-      conversationId: "conv-1",
+      target: sessionConversationTarget("demo", "session-a", "conv-1"),
       backend: "claude",
     });
 

@@ -246,17 +246,22 @@ export function resolveCascadeView(
       ? "stale"
       : discovered.runtimeVisibility;
 
+    const configurable =
+      (discovered?.support ?? input.metadata.support)?.configurable !== false;
     const runtimeEmittable =
+      configurable &&
       !stale &&
       !cascadeIsVerificationGated &&
       runtimeVisibility !== "unavailable";
 
-    const applyStatus = computeApplyStatus({
-      metadata: input.metadata,
-      runtimeState,
-      itemId,
-      runtimeEmittable,
-    });
+    const applyStatus = configurable
+      ? computeApplyStatus({
+          metadata: input.metadata,
+          runtimeState,
+          itemId,
+          runtimeEmittable,
+        })
+      : "unsupported";
 
     if (stale) {
       diagnostics.push({
@@ -314,6 +319,7 @@ export function resolveCascadeView(
       effectiveState: effective,
       originLayer: effective.originLayer,
       owningPluginId: discovered?.owningPluginId,
+      support: discovered?.support,
       inheritedDisableReason,
       runtimeVisibility,
       runtimeEmittable,

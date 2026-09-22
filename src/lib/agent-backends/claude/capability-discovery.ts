@@ -7,7 +7,7 @@
  *   - Plugin-contributed skills + agents: under each enabled plugin path
  *   - Project agents: `<worktree>/.claude/agents/*.md`
  *   - User agents:    `~/.claude/agents/*.md`
- *   - Plugins:        `~/.claude/settings.json` (`enabledPlugins`) joined
+ *   - Plugins:        user/project/local settings (`enabledPlugins`) joined
  *                      with `~/.claude/plugins/installed_plugins.json`
  *
  * The discovered records carry only the cascade-public fields exposed via
@@ -35,15 +35,15 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { parseFrontmatter } from "@/lib/commands/frontmatter";
 
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
-import { parseNativePluginEntries } from "@/lib/agent-backends/claude/runtime-config/plugin-native-records";
-import { redactAgentCapabilityText } from "./redaction";
+import { readClaudePluginNativeRecords } from "@/lib/agent-backends/claude/runtime-config/plugin-native-records";
+import { redactAgentCapabilityText } from "../capability-redaction";
 
 import type {
-  AgentCapabilityDiagnostic,
+  CapabilityCatalogDiagnostic as AgentCapabilityDiagnostic,
   AgentCapabilityDiscoveredItem,
   AgentCapabilityNativeDefault,
   AgentCapabilitySourceRef,
-} from "./schemas";
+} from "../capability-catalog";
 
 const logger = createLogger("agent-capabilities.claude-discovery");
 
@@ -279,53 +279,26 @@ async function resolveNativePlugins(
   const diagnostics: AgentCapabilityDiagnostic[] = [];
   const signatureParts: string[] = [];
 
-  if (!existsSync(settingsPath)) {
-    signatureParts.push(`settings:${settingsPath}:missing`);
-    return { records, diagnostics, signatureParts };
-  }
-
-  let settingsRaw: string;
+  let nativeEntries;
   try {
-    settingsRaw = await deps.readFile(settingsPath);
+    nativeEntries = await readClaudePluginNativeRecords(
+      { readFile: deps.readFile, homeDir: () => input.home },
+      input.worktreePath,
+    );
+    signatureParts.push(`settings:${JSON.stringify(nativeEntries)}`);
   } catch (err) {
     const message = redactAgentCapabilityText(getErrorMessage(err));
     diagnostics.push({
       severity: "warning",
       code: "agent-capability-source-unreadable",
-      message,
+      message: `settings.json read/parse error: ${message}`,
       cascadeKind: "claude-plugins",
       backend: "claude",
       sourceRef: { kind: "user-file", path: settingsPath },
     });
-    signatureParts.push(`settings:${settingsPath}:err:${message}`);
+    signatureParts.push(`settings:error:${message}`);
     return { records, diagnostics, signatureParts };
   }
-
-  let parsedSettings: { enabledPlugins?: unknown };
-  try {
-    parsedSettings = JSON.parse(settingsRaw) as { enabledPlugins?: unknown };
-  } catch (err) {
-    const message = redactAgentCapabilityText(getErrorMessage(err));
-    diagnostics.push({
-      severity: "warning",
-      code: "agent-capability-source-unreadable",
-      message: `settings.json parse error: ${message}`,
-      cascadeKind: "claude-plugins",
-      backend: "claude",
-      sourceRef: { kind: "user-file", path: settingsPath },
-    });
-    signatureParts.push(`settings:${settingsPath}:parse-err`);
-    return { records, diagnostics, signatureParts };
-  }
-
-  // Shared native-records parser — provider knowledge owned by the Claude
-  // runtime-config adapter; imported here (capabilities → backends) so the
-  // enabledPlugins shape is decoded in exactly one place.
-  const nativeEntries = parseNativePluginEntries(parsedSettings.enabledPlugins);
-
-  signatureParts.push(
-    `settings:${settingsPath}:${createHash("sha256").update(settingsRaw).digest("hex")}`,
-  );
 
   if (nativeEntries.length === 0) {
     return { records, diagnostics, signatureParts };
@@ -402,8 +375,11 @@ async function scanSkillsTree(
     if (existsSync(skillFile)) {
       const content = await deps.readFile(skillFile);
       const { fields, body } = parseFrontmatter(content);
-      const skillId = path.basename(dir);
-      const displayName = fields["name"] ?? skillId;
+      const nativeName = fields["name"] ?? path.basename(dir);
+      const skillId = ctx.owningPluginId
+        ? `${ctx.owningPluginId.split("@")[0]}:${nativeName}`
+        : nativeName;
+      const displayName = nativeName;
       const description =
         fields["description"] ??
         body
@@ -415,11 +391,20 @@ async function scanSkillsTree(
         itemId: skillId,
         displayName,
         capabilityKind: "skill",
+        ...(ctx.owningPluginId
+          ? {
+              support: {
+                configurable: false,
+                notes: [
+                  "Individual skills follow this plugin. Disable the plugin to remove them.",
+                ],
+              },
+            }
+          : {}),
         source: ctx.sourceRefForPath(skillFile),
-        nativeDefault: nativeDefaultForSkill(
-          skillId,
-          ctx.nativeDefaultsBySkillId,
-        ),
+        nativeDefault: ctx.owningPluginId
+          ? { enabled: true }
+          : nativeDefaultForSkill(skillId, ctx.nativeDefaultsBySkillId),
         ...(ctx.owningPluginId !== undefined
           ? { owningPluginId: ctx.owningPluginId }
           : {}),
@@ -486,8 +471,11 @@ async function scanAgentsDir(
       const agentPath = path.join(baseDir, entry.name);
       const content = await deps.readFile(agentPath);
       const { fields, body } = parseFrontmatter(content);
-      const agentId = entry.name.replace(/\.md$/, "");
-      const displayName = fields["name"] ?? agentId;
+      const nativeName = fields["name"] ?? entry.name.replace(/\.md$/, "");
+      const agentId = ctx.owningPluginId
+        ? `${ctx.owningPluginId.split("@")[0]}:${nativeName}`
+        : nativeName;
+      const displayName = nativeName;
       const description =
         fields["description"] ??
         body
@@ -639,7 +627,6 @@ export async function discoverClaudeSkills(
 
   for (const record of pluginResolution.records) {
     if (!record.installPath) continue;
-    if (!record.nativeEnabled) continue;
     const pluginSkillsDir = path.join(record.installPath, "skills");
     await scanSkillsTree(
       pluginSkillsDir,
@@ -716,7 +703,6 @@ export async function discoverClaudeAgents(
 
   for (const record of pluginResolution.records) {
     if (!record.installPath) continue;
-    if (!record.nativeEnabled) continue;
     const pluginAgentsDir = path.join(record.installPath, "agents");
     await scanAgentsDir(
       pluginAgentsDir,
@@ -805,3 +791,18 @@ export function getClaudeRuntimeProbe(
       : {}),
   };
 }
+
+export const claudeCapabilityCatalog: import("../capability-catalog").BackendCapabilityCatalogFacet =
+  {
+    discover(input) {
+      const args = {
+        ...input,
+        runtimeProbe: input.conversationId
+          ? getClaudeRuntimeProbe(input.conversationId)
+          : undefined,
+      };
+      if (input.kind === "plugins") return discoverClaudePlugins(args);
+      if (input.kind === "agents") return discoverClaudeAgents(args);
+      return discoverClaudeSkills(args);
+    },
+  };

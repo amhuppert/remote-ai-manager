@@ -21,10 +21,8 @@ import {
   codexConversationCapabilities,
   codexBackendMetadata,
 } from "../codex/descriptor";
-import {
-  claudeMcpCapabilities,
-  codexMcpCapabilities,
-} from "@/lib/mcp/backend-capabilities";
+import { claudeMcpCapabilities } from "@/lib/agent-backends/claude/mcp-capabilities";
+import { codexMcpCapabilities } from "@/lib/agent-backends/codex/mcp-capabilities";
 import {
   createTestFakeBackend,
   testWidenedAgentBackendSchema,

@@ -75,6 +75,8 @@ describe("projectRouteForSessionRequestPath", () => {
       "rename",
       "generate-name",
       "abort",
+      "mcp-config",
+      "mcp-config/tools/calc",
     ]) {
       expect(
         projectRouteForSessionRequestPath(

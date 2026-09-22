@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, renderHook, waitFor } from "@testing-library/react";
@@ -238,9 +239,7 @@ describe("NotificationListener", () => {
     es.emit("mcp-tools-updated", {
       type: "mcp-tools-updated",
       level: "conversation",
-      projectName: "proj",
-      sessionName: "sess",
-      conversationId: "conv-1",
+      target: sessionConversationTarget("proj", "sess", "conv-1"),
       serverKey: "calc",
     });
 
@@ -250,7 +249,10 @@ describe("NotificationListener", () => {
       }),
     );
     expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: mcpToolsKeys.inventory("proj", "sess", "conv-1", "calc"),
+      queryKey: mcpToolsKeys.inventory(
+        sessionConversationTarget("proj", "sess", "conv-1"),
+        "calc",
+      ),
     });
   });
 

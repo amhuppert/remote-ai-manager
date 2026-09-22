@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -247,9 +248,7 @@ describe("createComposePortableMcpForConversation (factory)", () => {
     await compose({
       backend: "claude",
       projectPath: "/projects/proj",
-      projectName: "proj",
-      sessionName: "sess",
-      conversationId: "conv",
+      target: sessionConversationTarget("proj", "sess", "conv"),
       worktreePath: "/projects/proj/.worktrees/sess",
     });
 
@@ -278,9 +277,7 @@ describe("createComposePortableMcpForConversation (factory)", () => {
     await compose({
       backend: "claude",
       projectPath: "/projects/proj",
-      projectName: "proj",
-      sessionName: "sess",
-      conversationId: "conv",
+      target: sessionConversationTarget("proj", "sess", "conv"),
       worktreePath: "/projects/proj/.worktrees/sess",
     });
 
@@ -289,8 +286,7 @@ describe("createComposePortableMcpForConversation (factory)", () => {
     expect(readSessionOverrides).toHaveBeenCalledWith("/projects/proj", "sess");
     expect(readConversationOverrides).toHaveBeenCalledWith(
       "/projects/proj",
-      "sess",
-      "conv",
+      sessionConversationTarget("proj", "sess", "conv"),
     );
   });
 
@@ -321,9 +317,7 @@ describe("createComposePortableMcpForConversation (factory)", () => {
     const portable = await compose({
       backend: "claude",
       projectPath: "/projects/proj",
-      projectName: "proj",
-      sessionName: "sess",
-      conversationId: "conv",
+      target: sessionConversationTarget("proj", "sess", "conv"),
       worktreePath: "/projects/proj/.worktrees/sess",
     });
 
@@ -349,9 +343,7 @@ describe("createComposePortableMcpForConversation (factory)", () => {
     const portable = await compose({
       backend: "claude",
       projectPath: "/projects/proj",
-      projectName: "proj",
-      sessionName: "sess",
-      conversationId: "conv",
+      target: sessionConversationTarget("proj", "sess", "conv"),
       worktreePath: "/worktree",
       transientPortableMcp: {
         servers: [

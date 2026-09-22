@@ -1,3 +1,4 @@
+import { conversationTargetSchema } from "@/lib/conversations/conversation-target";
 import { z } from "zod";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
@@ -40,6 +41,7 @@ export type ToolDiscoveryState = z.infer<typeof toolDiscoveryStateSchema>;
 export const mcpApplyDispositionSchema = z.enum([
   "applied_now",
   "deferred_to_next_turn",
+  "deferred_to_next_conversation",
   "no_active_runtime",
   "unsupported",
   "rejected",
@@ -114,6 +116,14 @@ const mcpServerCompatibilityViewSchema = z.object({
       backend: agentBackendSchema,
       supported: z.boolean(),
       reason: z.string().optional(),
+      notes: z.array(z.string()).optional(),
+      toolControl: z
+        .object({
+          configurable: z.boolean(),
+          notes: z.array(z.string()),
+          applyTiming: z.enum(["next-turn", "next-conversation"]).optional(),
+        })
+        .optional(),
     }),
   ),
 });
@@ -167,6 +177,9 @@ export const mcpConfigViewResponseSchema = z.object({
   diagnostics: z.array(mcpDiagnosticSchema),
   pendingServerKeys: z.array(z.string()),
   effectiveConfigHash: z.string().optional(),
+  target: conversationTargetSchema.optional(),
+  backend: agentBackendSchema.optional(),
+  runtime: mcpRuntimeApplicationStateSchema.optional(),
 });
 export type McpConfigViewResponse = z.infer<typeof mcpConfigViewResponseSchema>;
 
@@ -241,6 +254,7 @@ export const mcpConfigUpdatedEventSchema = z
     projectName: z.string().optional(),
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
+    target: conversationTargetSchema.optional(),
     changedServerKeys: z.array(z.string()),
     effectiveConfigHash: z.string(),
   })
@@ -254,6 +268,7 @@ export const mcpToolsUpdatedEventSchema = z
     projectName: z.string().optional(),
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
+    target: conversationTargetSchema.optional(),
     serverKey: z.string(),
   })
   .strict();

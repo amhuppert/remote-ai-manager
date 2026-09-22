@@ -1,3 +1,4 @@
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -12,11 +13,9 @@ export interface ResolvePortableForConversationDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string | undefined>;
-  getProjectDisplayName(projectPath: string): string;
   getConversationTooling(input: {
     projectPath: string;
-    sessionName: string;
-    conversationId: string;
+    target: ConversationTarget;
   }): ConversationToolingOverrides | undefined;
 }
 
@@ -24,29 +23,27 @@ export function createResolvePortableForConversation(
   deps: ResolvePortableForConversationDeps,
 ): (input: {
   projectPath: string;
-  sessionName: string;
-  conversationId: string;
+  target: ConversationTarget;
   backend: AgentBackendId;
 }) => Promise<ResolvedPortableForConversation> {
   return async (input) => {
-    const sessionWorktreePath = await deps.getSessionWorktreePath(
-      input.projectPath,
-      input.sessionName,
-    );
+    const sessionWorktreePath =
+      input.target.scope === "session"
+        ? await deps.getSessionWorktreePath(
+            input.projectPath,
+            input.target.sessionName,
+          )
+        : undefined;
     const worktreePath = sessionWorktreePath ?? input.projectPath;
-    const projectName = deps.getProjectDisplayName(input.projectPath);
     const tooling = deps.getConversationTooling({
       projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
+      target: input.target,
     });
     const transientPortableMcp = tooling?.portableMcp;
     const composeArgs: ComposePortableMcpArgs = {
       backend: input.backend,
       projectPath: input.projectPath,
-      projectName,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
+      target: input.target,
       worktreePath,
       ...(transientPortableMcp !== undefined ? { transientPortableMcp } : {}),
     };

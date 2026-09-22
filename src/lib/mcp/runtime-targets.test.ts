@@ -1,11 +1,11 @@
+import {
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { describe, expect, it } from "vitest";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { collectRuntimeTargets } from "./runtime-targets";
-
-function projectNameFromPath(projectPath: string): string {
-  return projectPath.slice(projectPath.lastIndexOf("/") + 1);
-}
 
 describe("collectRuntimeTargets", () => {
   it("collects only alive runtimes and preserves project/session identity", () => {
@@ -13,16 +13,13 @@ describe("collectRuntimeTargets", () => {
       conversations: [
         {
           projectPath: "/projects/proj",
-          sessionName: "sess-a",
-          conversationId: "conv-1",
+          target: sessionConversationTarget("proj", "sess-a", "conv-1"),
         },
         {
           projectPath: "/projects/proj",
-          sessionName: "sess-a",
-          conversationId: "conv-2",
+          target: sessionConversationTarget("proj", "sess-a", "conv-2"),
         },
       ],
-      getProjectName: projectNameFromPath,
       getRuntime(
         conversationId: string,
       ): { status: "alive" | "dead"; backend: AgentBackendId } | undefined {
@@ -39,12 +36,24 @@ describe("collectRuntimeTargets", () => {
     expect(targets).toEqual([
       {
         projectPath: "/projects/proj",
-        projectName: "proj",
-        sessionName: "sess-a",
-        conversationId: "conv-1",
+        target: sessionConversationTarget("proj", "sess-a", "conv-1"),
         backend: "claude",
       },
     ]);
+  });
+
+  it("includes project conversations alongside session conversations without a synthetic session identity", () => {
+    const project = projectConversationTarget("proj", "project-conv");
+    const session = sessionConversationTarget("proj", "sess", "session-conv");
+    const targets = collectRuntimeTargets({
+      conversations: [
+        { projectPath: "/projects/proj", target: project },
+        { projectPath: "/projects/proj", target: session },
+      ],
+      getRuntime: () => ({ status: "alive", backend: "claude" }),
+    });
+    expect(targets.map(({ target }) => target)).toEqual([project, session]);
+    expect(targets[0]?.target).not.toHaveProperty("sessionName");
   });
 
   it("flattens multiple projects and sessions in stable traversal order", () => {
@@ -52,16 +61,13 @@ describe("collectRuntimeTargets", () => {
       conversations: [
         {
           projectPath: "/projects/proj-a",
-          sessionName: "sess-a",
-          conversationId: "conv-1",
+          target: sessionConversationTarget("proj-a", "sess-a", "conv-1"),
         },
         {
           projectPath: "/projects/proj-b",
-          sessionName: "sess-b",
-          conversationId: "conv-2",
+          target: sessionConversationTarget("proj-b", "sess-b", "conv-2"),
         },
       ],
-      getProjectName: projectNameFromPath,
       getRuntime(conversationId: string) {
         return {
           status: "alive" as const,
@@ -70,7 +76,7 @@ describe("collectRuntimeTargets", () => {
       },
     });
 
-    expect(targets.map((target) => target.conversationId)).toEqual([
+    expect(targets.map((target) => target.target.conversationId)).toEqual([
       "conv-1",
       "conv-2",
     ]);
@@ -78,7 +84,7 @@ describe("collectRuntimeTargets", () => {
       "claude",
       "codex",
     ]);
-    expect(targets.map((target) => target.projectName)).toEqual([
+    expect(targets.map((target) => target.target.projectName)).toEqual([
       "proj-a",
       "proj-b",
     ]);

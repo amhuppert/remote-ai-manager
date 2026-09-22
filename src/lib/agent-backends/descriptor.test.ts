@@ -5,7 +5,7 @@ import { createTestFakeBackend } from "./testing/testfake-backend";
 import type { ConversationBackendFactory } from "./conversation";
 import type { BackendContinuityAdapter } from "./continuity";
 import type { AgentTaskRunner } from "./task";
-import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { McpBackendCapabilities } from "@/lib/agent-backends/mcp-capabilities";
 import { createStubFailureClassifier } from "./errors";
 import {
   registerBackend,

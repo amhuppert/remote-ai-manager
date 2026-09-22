@@ -94,6 +94,9 @@ export function scriptedCaptureSdk(
         return [];
       },
       async applyFlagSettings() {},
+      async setMcpServers() {
+        return { added: [], removed: [], errors: {} };
+      },
       async reloadPlugins() {},
       async *[Symbol.asyncIterator]() {
         while (!closed || (collection?.drainOnClose && messages.length > 0)) {

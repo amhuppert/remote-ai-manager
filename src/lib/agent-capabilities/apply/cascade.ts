@@ -12,9 +12,7 @@ import type {
 import { applyTimingForCascade } from "../metadata";
 import {
   planCascadeApply,
-  planIdleDrainCascadeApply,
   planTurnStartCascadeApply,
-  type ApplyTriggerMode,
   type CascadeApplyPlan,
 } from "../apply-planner";
 import { recordApplyOutcome, sanitizeApplyError } from "../runtime-hashes";
@@ -58,7 +56,7 @@ export async function applyOneCascade(input: {
     trigger,
     operationId,
   } = input;
-  const { deps, metadataRegistry } = context;
+  const { metadataRegistry } = context;
   const metadata = metadataRegistry.get(cascadeKind);
 
   if (metadata.backend !== conversation.backend) {
@@ -114,18 +112,6 @@ export async function applyOneCascade(input: {
 
   const composed = composedCascades.get(cascadeKind);
 
-  if (trigger === "idle-drain") {
-    return handleIdleDrain({
-      context,
-      cascadeKind,
-      conversation,
-      composed,
-      resolved,
-      previous,
-      operationId,
-    });
-  }
-
   if (trigger === "turn-start") {
     return handleTurnStart({
       context,
@@ -147,18 +133,12 @@ export async function applyOneCascade(input: {
     });
   }
 
-  const liveTurnActive = deps.isTurnActive(
-    conversationIdentityForPorts(conversation),
-  );
-  const triggerMode: ApplyTriggerMode = liveTurnActive ? "turn-active" : "idle";
-
   const plan = planCascadeApply({
     metadata,
     applyTiming: applyTimingForCascade(cascadeKind),
     previous,
     attemptedHash: composed.attemptedHash,
     attemptedItemIds: composed.attemptedItemIds,
-    triggerMode,
   });
   logCascadePlan({
     trigger,
@@ -172,37 +152,20 @@ export async function applyOneCascade(input: {
   });
 
   return executePlan({
-    context,
     plan,
     cascadeKind,
-    conversation,
     composed,
-    resolved,
     previous,
-    operationId,
   });
 }
 
 async function executePlan(input: {
-  context: ApplyContext;
   plan: CascadeApplyPlan;
   cascadeKind: AgentCapabilityCascadeKind;
-  conversation: AffectedConversation;
   composed: ComposedCascadeInfo;
-  resolved: ResolvedCapabilityCascade | undefined;
   previous: AgentCapabilityCascadeRuntimeState | undefined;
-  operationId?: string;
 }): Promise<ApplyOneCascadeResult> {
-  const {
-    context,
-    plan,
-    cascadeKind,
-    conversation,
-    composed,
-    resolved,
-    previous,
-    operationId,
-  } = input;
+  const { plan, cascadeKind, composed, previous } = input;
   switch (plan.disposition) {
     case "idempotent-no-op":
       return {
@@ -213,20 +176,6 @@ async function executePlan(input: {
       return {
         outcome: { cascadeKind, disposition: "unsupported" },
         nextState: previous,
-      };
-    case "staged-idle":
-      return {
-        outcome: {
-          cascadeKind,
-          disposition: "staged-idle",
-          attemptedHash: composed.attemptedHash,
-        },
-        nextState: recordApplyOutcome({
-          previous,
-          attemptedHash: composed.attemptedHash,
-          attemptedItemIds: composed.attemptedItemIds,
-          outcome: { status: "staged-idle" },
-        }),
       };
     case "staged-next-turn":
       return {
@@ -256,246 +205,7 @@ async function executePlan(input: {
           outcome: { status: "deferred-next-conversation" },
         }),
       };
-    case "try-live-apply":
-      return executeLiveApply({
-        context,
-        cascadeKind,
-        conversation,
-        composed,
-        resolved,
-        previous,
-        operationId,
-      });
   }
-}
-
-async function executeLiveApply(input: {
-  context: ApplyContext;
-  cascadeKind: AgentCapabilityCascadeKind;
-  conversation: AffectedConversation;
-  composed: ComposedCascadeInfo;
-  resolved: ResolvedCapabilityCascade | undefined;
-  previous: AgentCapabilityCascadeRuntimeState | undefined;
-  operationId?: string;
-}): Promise<ApplyOneCascadeResult> {
-  const {
-    context,
-    cascadeKind,
-    conversation,
-    composed,
-    resolved,
-    previous,
-    operationId,
-  } = input;
-  const port = context.deps.applyRuntimeConfig;
-  if (!port || !resolved) {
-    return {
-      outcome: {
-        cascadeKind,
-        disposition: "staged-idle",
-        attemptedHash: composed.attemptedHash,
-      },
-      nextState: recordApplyOutcome({
-        previous,
-        attemptedHash: composed.attemptedHash,
-        attemptedItemIds: composed.attemptedItemIds,
-        outcome: { status: "staged-idle" },
-      }),
-      diagnostic: {
-        severity: "info",
-        code: "agent-capability-apply-failed",
-        message:
-          "Runtime-config apply port unavailable; change staged for idle drain",
-        backend: conversation.backend,
-        cascadeKind,
-      },
-    };
-  }
-
-  let result: RuntimeConfigApplyResult;
-  try {
-    result = await port({
-      conversation: conversationIdentityForPorts(conversation),
-      resolved,
-    });
-  } catch (err) {
-    const message = getErrorMessage(err);
-    const sanitized = sanitizeApplyError(message);
-    logger.error("apply.failed", {
-      cascadeKind,
-      conversationId: conversation.conversationId,
-      operationId,
-      error: sanitized,
-    });
-    return {
-      outcome: {
-        cascadeKind,
-        disposition: "rejected",
-        attemptedHash: composed.attemptedHash,
-        error: sanitized,
-      },
-      nextState: recordApplyOutcome({
-        previous,
-        attemptedHash: composed.attemptedHash,
-        attemptedItemIds: composed.attemptedItemIds,
-        outcome: { status: "rejected", error: message },
-      }),
-      diagnostic: {
-        severity: "error",
-        code: "agent-capability-apply-failed",
-        message: `Runtime-config apply failed: ${sanitizeApplyError(message)}`,
-        backend: conversation.backend,
-        cascadeKind,
-      },
-    };
-  }
-
-  if (result.status === "deferred") {
-    const disposition =
-      result.reason === "next_conversation"
-        ? "deferred-next-conversation"
-        : "staged-idle";
-    return {
-      outcome: {
-        cascadeKind,
-        disposition,
-        attemptedHash: composed.attemptedHash,
-      },
-      nextState: recordApplyOutcome({
-        previous,
-        attemptedHash: composed.attemptedHash,
-        attemptedItemIds: composed.attemptedItemIds,
-        outcome: { status: disposition },
-      }),
-    };
-  }
-
-  if (result.status === "rejected") {
-    const sanitized = sanitizeApplyError(result.error);
-    logger.error("apply.failed", {
-      cascadeKind,
-      conversationId: conversation.conversationId,
-      operationId,
-      error: sanitized,
-    });
-    return {
-      outcome: {
-        cascadeKind,
-        disposition: "rejected",
-        attemptedHash: composed.attemptedHash,
-        error: sanitized,
-      },
-      nextState: recordApplyOutcome({
-        previous,
-        attemptedHash: composed.attemptedHash,
-        attemptedItemIds: composed.attemptedItemIds,
-        outcome: { status: "rejected", error: result.error },
-      }),
-      diagnostic: {
-        severity: "error",
-        code: "agent-capability-apply-failed",
-        message: `Runtime-config apply rejected: ${sanitizeApplyError(result.error)}`,
-        backend: conversation.backend,
-        cascadeKind,
-      },
-    };
-  }
-
-  logger.info("apply.succeeded", {
-    cascadeKind,
-    conversationId: conversation.conversationId,
-    operationId,
-  });
-  return {
-    outcome: {
-      cascadeKind,
-      disposition: "applied",
-      attemptedHash: composed.attemptedHash,
-    },
-    nextState: recordApplyOutcome({
-      previous,
-      attemptedHash: composed.attemptedHash,
-      attemptedItemIds: composed.attemptedItemIds,
-      outcome: { status: "applied" },
-    }),
-  };
-}
-
-async function handleIdleDrain(input: {
-  context: ApplyContext;
-  cascadeKind: AgentCapabilityCascadeKind;
-  conversation: AffectedConversation;
-  composed: ComposedCascadeInfo | undefined;
-  resolved: ResolvedCapabilityCascade | undefined;
-  previous: AgentCapabilityCascadeRuntimeState | undefined;
-  operationId?: string;
-}): Promise<ApplyOneCascadeResult> {
-  const {
-    context,
-    cascadeKind,
-    conversation,
-    composed,
-    resolved,
-    previous,
-    operationId,
-  } = input;
-  const plan = planIdleDrainCascadeApply({ previous, composed });
-  logCascadePlan({
-    trigger: "idle-drain",
-    conversation,
-    cascadeKind,
-    previous,
-    plannedDisposition: plan.disposition,
-    attemptedHash:
-      plan.disposition === "try-live-apply" ? plan.attemptedHash : undefined,
-    pendingItemCount:
-      plan.disposition === "try-live-apply"
-        ? plan.attemptedItemIds.length
-        : undefined,
-    reason: plan.disposition === "idempotent-no-op" ? plan.reason : undefined,
-    operationId,
-  });
-
-  if (plan.disposition === "idempotent-no-op") {
-    if (plan.reason === "hash-drift" && composed && previous?.pendingHash) {
-      // Drift between the hash recorded at staging time and what the composer
-      // now emits (e.g., overrides changed again before the drain ran). The
-      // staged record was for a different effective payload, so leave it in
-      // place rather than overwriting `lastApplyError` / pending state for a
-      // hash the operator never intended to drain. A subsequent
-      // `applyAfterOverrideChange` will re-stage with the new hash.
-      logger.info("apply.idle_drain_skipped_hash_drift", {
-        cascadeKind,
-        conversationId: conversation.conversationId,
-        stagedHash: previous.pendingHash,
-        composedHash: composed.attemptedHash,
-      });
-    }
-    if (plan.stateAction === "clear-obsolete") {
-      return {
-        outcome: { cascadeKind, disposition: "idempotent-no-op" },
-        nextState: undefined,
-      };
-    }
-    return {
-      outcome: { cascadeKind, disposition: "idempotent-no-op" },
-      nextState: previous,
-    };
-  }
-
-  return executeLiveApply({
-    context,
-    cascadeKind,
-    conversation,
-    composed: {
-      cascadeKind,
-      attemptedHash: plan.attemptedHash,
-      attemptedItemIds: plan.attemptedItemIds,
-    },
-    resolved,
-    previous,
-    operationId,
-  });
 }
 
 async function handleTurnStart(input: {
@@ -520,13 +230,11 @@ async function handleTurnStart(input: {
     previous,
     plannedDisposition: plan.disposition,
     attemptedHash:
-      plan.disposition === "try-turn-start-apply" ||
-      plan.disposition === "applied"
+      plan.disposition === "try-turn-start-apply"
         ? plan.attemptedHash
         : undefined,
     pendingItemCount:
-      plan.disposition === "try-turn-start-apply" ||
-      plan.disposition === "applied"
+      plan.disposition === "try-turn-start-apply"
         ? plan.attemptedItemIds.length
         : undefined,
     reason: plan.disposition === "idempotent-no-op" ? plan.reason : undefined,
@@ -567,20 +275,6 @@ async function handleTurnStart(input: {
         attemptedItemIds: plan.attemptedItemIds,
         previous,
       });
-    case "applied":
-      return {
-        outcome: {
-          cascadeKind,
-          disposition: "applied",
-          attemptedHash: plan.attemptedHash,
-        },
-        nextState: recordApplyOutcome({
-          previous,
-          attemptedHash: plan.attemptedHash,
-          attemptedItemIds: plan.attemptedItemIds,
-          outcome: { status: "applied" },
-        }),
-      };
   }
 }
 

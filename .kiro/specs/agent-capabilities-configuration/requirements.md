@@ -1,13 +1,19 @@
 # Requirements Document
 
+## Approved amendment — 22 September 2026
+
+Alex approved the [revised managed-capabilities design](../../../docs/reports/2026-09-22-managed-capabilities-design-proposal.md) in conversation `3526f6a0-a0a8-4406-8539-e4275afdcd81`: **“Approved. Implement the design.”** This amendment records the authorization for this legacy specification; it does not claim a new Spec Studio approval or alter historical `spec.json` gate records.
+
+Requirement 21 and the revised clauses below supersede older idle-apply, universal selective-control, fixed-five-panel, and shared provider-discovery promises. Existing registered backend cascades, including Cursor's, remain independent. The approved first delivery favors availability with accurate limitations; it does not require adding Codex agent controls or emulating full native plugins across backends.
+
 ## Project Description (Input)
-Configurable agent capabilities (skills, plugins, sub-agents) with 4-level cascade override system. Mirrors the existing MCP configuration architecture (global → project → session → conversation) but exposes 5 independent per-backend cascades — claude-skills, claude-plugins, claude-agents, codex-skills, codex-plugins — because skills/plugins/agents are backend-specific resources (different file locations, different identity, separate ecosystems), unlike MCP servers which are genuinely cross-backend. Each cascade supports per-item enable/disable with cascade-disable semantics (disabling a plugin disables its child skills/agents). Defaults mirror existing backend settings (`~/.claude/settings.json` for Claude, `~/.codex/` directory contents for Codex). Plugin install/uninstall is out of scope — CC only toggles what's already installed. Claude live-applies enable/disable changes via SDK `applyFlagSettings()` and `reloadPlugins()` when idle; Codex stages changes as next-turn config. UI exposes 5 separate config panels matching the cascades. Graph-workflow transient overrides are deferred to a follow-up spec.
+Configurable agent capabilities (skills, plugins, sub-agents) with independent backend cascades and global → project → session → conversation overrides; project conversations omit the session layer. Native defaults form the baseline, parent disable overlays child selection where supported, and changes save immediately for supported turn-start application or an explicit next-conversation boundary. UI control support comes from backend descriptors. Plugin installation, graph-workflow transient overrides, and additional deferred capability kinds remain out of scope.
 
 ## Introduction
 
 Command Center (CC) drives both Claude Code and Codex agent backends, each of which exposes capabilities — skills, plugins, and sub-agents — that the user may want to enable or disable on a per-context basis. Today CC has no UI or storage for this: capabilities default to whatever each backend resolves from its own configuration sources, giving the user no way to scope a capability narrowly to a single project, session, or conversation, or to silence a noisy plugin for one conversation only.
 
-This spec adds five independent per-backend cascade override systems that parallel the existing MCP configuration architecture: **claude-skills**, **claude-plugins**, **claude-agents**, **codex-skills**, **codex-plugins**. Each cascade resolves through four layers — global → project → session → conversation — and composes the effective enable/disable state at conversation start. Claude applies supported capability changes when the conversation is idle, without restarting; Codex stages changes as the next-turn configuration, matching its existing MCP pattern. The UI exposes the five cascades as five independent panels, because skills, plugins, and sub-agents are backend-specific resources with different identities, file locations, and ecosystems — unlike MCP servers, which are genuinely portable across backends.
+This spec preserves independent per-backend capability cascades, inherited selection, and conversation-start composition. Supported updates apply at turn start without interrupting a turn; creation-only changes retain next-conversation timing. Backend adapters own native identity, discovery, defaults, translation, and support limits. The existing drawer and panels consume neutral metadata rather than requiring identical controls or complete native plugin parity across backends.
 
 Plugin install/uninstall, marketplace browsing, and graph-workflow transient overrides are out of scope.
 
@@ -25,13 +31,13 @@ Plugin install/uninstall, marketplace browsing, and graph-workflow transient ove
 
 ## Requirements
 
-### Requirement 1: Five independent per-backend cascade stores
+### Requirement 1: Independent per-backend cascade stores
 
 **Objective**: As a CC user, I want skills, plugins, and sub-agents configured independently per backend, so that backend-specific resources do not get conflated and each surface can be configured naturally.
 
 #### Acceptance Criteria
 
-1. WHEN the system stores agent-capability overrides THEN it SHALL maintain five separate cascade stores corresponding to: Claude skills, Claude plugins, Claude sub-agents, Codex skills, and Codex plugins.
+1. WHEN the system stores agent-capability overrides THEN it SHALL maintain separate stores for the existing registered backend capability cascades. Adding Codex agent controls is deferred from this delivery.
 2. WHEN an override is read or written THEN the system SHALL key the operation by (cascade kind, layer, item identifier).
 3. WHEN a backend is active for a conversation THEN the runtime composer SHALL only consult cascades belonging to that backend (a Claude session shall ignore Codex cascades, and vice versa).
 4. The system SHALL NOT merge or deduplicate items across backends, even if their identifiers happen to coincide.
@@ -116,16 +122,16 @@ Plugin install/uninstall, marketplace browsing, and graph-workflow transient ove
 3. WHEN composition fails for one cascade kind THEN the system SHALL surface a diagnostic, fall back to the backend's native defaults for that cascade kind only, and SHALL NOT block the conversation from starting.
 4. Composing the effective state SHALL be deterministic and SHALL be exercisable in tests without spawning a real agent process.
 
-### Requirement 9: Claude idle live-apply
+### Requirement 9: Supported turn-start application
 
 **Objective**: As a CC user, I want to toggle Claude capabilities mid-conversation without restarting the session, so that I can react to noisy or missing capabilities in flight.
 
 #### Acceptance Criteria
 
-1. WHEN a user changes a Claude capability override AND the active Claude conversation is idle (no in-flight turn) AND the change is live-applicable THEN the system SHALL apply the change to the active session without restarting it, promptly after the write.
-2. WHEN a Claude conversation has a turn in flight at the moment of change THEN the system SHALL NOT interrupt the turn; the change SHALL be applied as soon as the conversation becomes idle.
+1. WHEN a user changes a capability override THEN the system SHALL save it immediately and request supported application at the next turn boundary, without an idle-triggered apply or blanket runtime recreation.
+2. WHEN a conversation has a turn in flight at the moment of change THEN the system SHALL NOT interrupt the turn; pending application SHALL wait for its supported boundary.
 3. WHEN a Claude capability change is NOT live-applicable for the current SDK THEN the system SHALL mark the override with its actual apply point (e.g., next conversation start) and SHALL NOT silently drop or misreport the change.
-4. The UI SHALL indicate, for each pending change, whether it is applied, staged for idle, or deferred to the next conversation start.
+4. The UI SHALL distinguish pending next-turn and next-conversation changes, failures, and unsupported controls. Normal accepted application needs no success chip.
 5. WHEN a live-apply attempt fails THEN the failure SHALL be surfaced to the UI, the override SHALL remain in storage, and the system SHALL allow retry.
 
 ### Requirement 10: Codex next-turn staging
@@ -139,13 +145,13 @@ Plugin install/uninstall, marketplace browsing, and graph-workflow transient ove
 3. The UI SHALL indicate whether a pending Codex change is staged for the next turn or has been applied.
 4. The system SHALL NOT attempt to live-apply Codex capability changes mid-turn.
 
-### Requirement 11: Five UI configuration panels
+### Requirement 11: Capability configuration panels
 
 **Objective**: As a CC user, I want one focused configuration panel per cascade kind, so that backend-specific ecosystems are not visually merged.
 
 #### Acceptance Criteria
 
-1. The UI SHALL expose five separate configuration panels: Claude Skills, Claude Plugins, Claude Sub-Agents, Codex Skills, and Codex Plugins.
+1. The UI SHALL retain the existing capability drawer, backend and scope selection, and panels for registered capability kinds.
 2. Each panel SHALL display, per item: name, source (e.g., owning plugin, file location, or marketplace), backend, effective state, the cascade layer that set the effective state, inherited-disable reason (if applicable), and any pending or stale status.
 3. Each panel SHALL allow filtering by enabled/disabled/stale state and searching by name.
 4. Each panel SHALL clearly indicate which cascade layer is currently being edited and SHALL allow switching layers without leaving the panel.
@@ -156,7 +162,7 @@ Plugin install/uninstall, marketplace browsing, and graph-workflow transient ove
 
 #### Acceptance Criteria
 
-1. The system SHALL declare, per backend, which capability kinds are supported, the apply semantics for each kind (idle live-apply, next-turn, or deferred-to-next-conversation), and which discovery sources are authoritative.
+1. Backend descriptors SHALL declare supported capability kinds, control effects and limitations, authoritative discovery, and next-turn or next-conversation timing. Shared code SHALL NOT own provider-specific discovery or infer behavior from backend names.
 2. The runtime SHALL consult this metadata before attempting any live-apply or staging action.
 3. The UI SHALL consult this metadata to decide which panels and status labels to render.
 4. Adding a new backend in the future SHALL be expressible as additional metadata records rather than requiring backend-kind conditionals scattered at call sites.
@@ -236,7 +242,7 @@ The following requirements extend the implemented capability cascade to project-
 
 1. WHEN a Claude project conversation starts THEN the system SHALL compose Claude skills, plugins, and sub-agents from global, project, and project-conversation layers. _(PLC-17, PLC-54)_
 2. WHEN a Codex project conversation starts THEN the system SHALL compose Codex skills and plugins from global, project, and project-conversation layers. _(PLC-17, PLC-54)_
-3. WHEN a user changes a live-applicable Claude capability override for an idle project conversation THEN the system SHALL apply the change using the same user-visible semantics as an idle session conversation. _(PLC-54)_
+3. WHEN a user changes a supported Claude capability override for a project conversation THEN the system SHALL schedule application at its next turn using the same semantics as a session conversation, retaining creation-only exceptions. _(PLC-54)_
 4. WHEN a user changes a Codex capability override for a project conversation THEN the system SHALL stage the change for the next project-conversation turn using the same user-visible semantics as a Codex session conversation. _(PLC-54)_
 5. If capability composition fails for one cascade kind on a project conversation, the system shall surface the diagnostic, fall back for that cascade kind, and allow the project-conversation turn to continue. _(PLC-51, PLC-54)_
 
@@ -250,6 +256,17 @@ The following requirements extend the implemented capability cascade to project-
 2. The system SHALL NOT add plugin installation, marketplace browsing, graph-workflow transient overrides, or cross-backend mirroring as part of PLC capability support. _(PLC-54-boundary)_
 3. The system SHALL NOT allow changing the fixed backend of an initialized project conversation through capability configuration. _(PLC-17, PLC-54-boundary)_
 4. Where project-conversation capability configuration is opened from the project cockpit, the capability system SHALL own only the capability override behavior and SHALL NOT own the cockpit command palette, conversation tabs, or composer behavior. _(PLC-53-boundary, PLC-54)_
+
+### Requirement 21: Bounded discovery, delivery, and truthful controls
+
+1. Adapters SHALL own native inventories, defaults, stable source-specific identities, plugin relationships, settings translation, and delivered selections. Shared code SHALL own scope precedence, sparse overrides, parent-child resolution, and acceptance bookkeeping. Equivalent session worktrees shall retain source identity without collapsing same-name sources.
+2. Discovery SHALL include disabled items and children of disabled plugins. A child's own native default SHALL remain independent of its parent's state, so enabling the parent restores the child's resolved preference. Native settings SHALL be evaluated for the actual launch directory.
+3. Codex discovery SHALL reuse the complete validated native skill catalog, retaining disabled entries. Emitted replacement selector arrays SHALL preserve unrelated native selectors. Claude discovery and application SHALL share effective plugin settings and host-bundle composition. Unmatched saved identities SHALL remain visible as missing sources; migration SHALL use only unambiguous source mappings.
+4. Applied state SHALL advance only after runtime acceptance of the addressed configuration, not from constructed options or declared timing. Capability kinds and MCP SHALL retain independent acceptance state; older receipts SHALL NOT clear newer pending preferences. Incomplete delivered selections SHALL NOT imply absent items are off.
+5. Unsupported individual controls SHALL be read-only with saved preferences visible and resettable, while their capabilities remain available through supported delivery. Delayed controls SHALL remain editable. Adapter-authored limitations SHALL use one subtle accessible information control; actionable failures SHALL remain visible and ordinary success quiet.
+6. In the first delivery, Claude plugin skills SHALL follow their parent and individual native-agent controls SHALL remain limited unless a focused probe demonstrates useful exclusion. Codex native agents SHALL remain available without a new managed cascade. Cursor SHALL retain current skill/plugin/agent next-conversation timing and MCP next-turn timing. No new call-denial hook SHALL be added solely for context reduction.
+7. The first delivery SHALL fix comment lines containing colons in the current frontmatter parser while preserving quoted hashes and indented block-scalar content. This does not add full YAML support. The Codex managed-skills bridge SHALL remain initially, with delivery failures visible to the operator.
+8. Native/plugin MCP availability is a bounded follow-up coordinated with the MCP specification. Generic plugin importing, structured Cursor agent MCP declarations, Codex agent controls, automatic inventory synchronization, complete YAML support, and elaborate suppression or recovery are deferred. Existing portable skill/component delivery and host-owned bundled capabilities remain available.
 
 ## Out of Scope
 

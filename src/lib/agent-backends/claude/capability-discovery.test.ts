@@ -14,7 +14,7 @@ import {
   discoverClaudeAgents,
   discoverClaudePlugins,
   discoverClaudeSkills,
-} from "./claude-discovery";
+} from "@/lib/agent-backends/claude/capability-discovery";
 
 let workTree: string;
 let home: string;
@@ -187,7 +187,7 @@ describe("Claude skill discovery", () => {
 
     const result = await discoverClaudeSkills({ worktreePath: workTree, home });
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.itemId).toBe("p-skill");
+    expect(result.items[0]?.itemId).toBe("test-plugin:p-skill");
     expect(result.items[0]?.owningPluginId).toBe("test-plugin@market");
     expect(result.items[0]?.source.kind).toBe("plugin");
   });
@@ -447,7 +447,7 @@ describe("Claude agent discovery", () => {
       home,
     });
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.itemId).toBe("reviewer");
+    expect(result.items[0]?.itemId).toBe("ace:reviewer");
     expect(result.items[0]?.owningPluginId).toBe("ace@market");
   });
 });
@@ -530,5 +530,28 @@ describe("SDK runtime probes", () => {
         (d) => d.code === "agent-capability-source-unreadable",
       ),
     ).toBe(true);
+  });
+});
+
+it("discovers disabled plugin children independently and reconciles qualified runtime names", async () => {
+  const pluginPath = path.join(home, "plugins", "hidden");
+  await writeSkill(path.join(pluginPath, "skills"), "review", "review");
+  await writeSettings(home, { "hidden@market": false });
+  await writeInstalledPlugins(home, {
+    "hidden@market": [{ installPath: pluginPath }],
+  });
+  const result = await discoverClaudeSkills({
+    worktreePath: workTree,
+    home,
+    runtimeProbe: {
+      supportedCommands: async () => [{ name: "hidden:review" }],
+    },
+  });
+  expect(result.items).toHaveLength(1);
+  expect(result.items[0]).toMatchObject({
+    itemId: "hidden:review",
+    owningPluginId: "hidden@market",
+    nativeDefault: { enabled: true },
+    runtimeVisibility: "runtime-visible",
   });
 });

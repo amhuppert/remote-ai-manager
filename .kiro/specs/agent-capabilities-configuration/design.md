@@ -1,5 +1,29 @@
 # Design: Agent Capabilities Configuration
 
+## Approved managed-capabilities amendment — 22 September 2026
+
+Alex's **“Approved. Implement the design.”** in conversation `3526f6a0-a0a8-4406-8539-e4275afdcd81` authorizes the [revised proposal](../../../docs/reports/2026-09-22-managed-capabilities-design-proposal.md). This section and the amended [requirements](requirements.md) govern the current delivery. Later sections preserve the earlier implementation baseline only where consistent with this amendment; this records no new Spec Studio gate and leaves historical approval records unchanged.
+
+| Earlier design promise | Approved replacement |
+|---|---|
+| Claude Idle Drain Apply; `staged-idle`; idle transition callback | Save immediately and request supported updates at turn start. Remove idle-only scheduling after equivalent coverage. Explicit next-conversation exceptions remain. |
+| Native discovery and provider metadata in the shared capability domain | One descriptor discovery facet exposes a small neutral catalog; adapters own native readers, defaults, identifiers, relationships, settings, delivery, and support. Shared code resolves scope and tracks acceptance. |
+| Timing-based seed promotion / constructed settings imply applied | Successful runtime application or exact-configuration acceptance is the receipt. Keep per-kind applied/pending state and MCP acceptance separate; stale receipts cannot clear newer intent. |
+| Every available item has an effective individual toggle | Unsupported individual controls are read-only, saved preferences remain resettable, and useful capability delivery remains available. |
+| Five panels as an exhaustive backend list | Retain registered cascades, the existing drawer, backend and scope selectors, and Cursor's current delivery. Defer Codex agent controls. |
+
+The descriptor catalog carries opaque source-specific identity, capability kind, display name, source, native default, optional owner, and semantic control support. It does not import capability API schemas. Move provider discovery beneath adapters and replace the shared dispatch table with descriptor lookup. Put Cursor delivered-selection snapshot access behind the same facade and expose whether its neutral selection is complete. Shared code never interprets provider formats or snapshot paths.
+
+Inventory includes disabled items and disabled-plugin children. Child defaults are independent of parent suppression; re-enabling a plugin restores each child's own preference. Reuse the complete Codex native skill catalog, keeping disabled entries and merging explicit selector changes with unrelated native selectors. Stable source identities distinguish same-name sources across equivalent worktrees. Carry stored keys through an unambiguous one-time source mapping when possible; unmatched preferences stay visible as missing sources. Claude uses one effective plugin-settings reader/composer, including project/local settings and host-bundle suppression at every application point.
+
+Turn-start scheduling changes when delivery is attempted, not how adapters apply it. Preserve active runtimes and background work. Cursor may accept MCP while keeping frozen capabilities; incomplete selection evidence cannot prove missing items off. Pending remains pending until actual acceptance. Partial support settles with a limitation; failure preserves requested preferences and previous accepted state. Reuse existing records and receipts rather than adding an aggregate launch digest or a new applied-state database.
+
+For the first delivery, Claude plugin skills follow their parent and individual native-agent controls remain limited without verified useful exclusion. Codex native agents remain available without a new cascade, and its managed-skills bridge remains with visible delivery failures. Cursor retains current catalog, supported plugin extraction, custom agents, and next-conversation capability timing. The parser correction skips actual comment lines containing colons after consuming indented block content; full YAML and structured agent MCP declarations remain deferred.
+
+Use typed control/timing metadata plus one subtle accessible info control for adapter-authored explanations. Supported delayed controls remain editable; unsupported individual controls are read-only with reset available. Ordinary success is quiet and actionable failures remain visible. Native/plugin MCP availability follows the bounded MCP amendment; generic importing, Codex agent controls, structured Cursor agent MCP, automatic inventories, and elaborate suppression/recovery are separate follow-ups.
+
+Verification covers source/default preservation, independent child restoration, actual receipt ordering, frozen capability selections with newly accepted MCP, unknown delivered state, visible bridge failures, scoped inheritance, and keyboard/touch access to limitations. No new call-denial hook or automatic runtime recreation is required.
+
 ## Overview
 
 This feature gives Command Center users explicit control over backend-native agent capabilities: Claude skills, Claude plugins, Claude sub-agents, Codex skills, and Codex plugins. Users can set broad defaults and narrow overrides at global, project, session, and conversation layers without editing backend-owned configuration files.

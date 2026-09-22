@@ -1,3 +1,4 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -286,8 +287,7 @@ describe("scope-store / conversation", () => {
 
     const result = await store.patchConversation(
       PROJECT_PATH,
-      SESSION_NAME,
-      CONVERSATION_ID,
+      sessionConversationTarget("proj", SESSION_NAME, CONVERSATION_ID),
       [
         { type: "set-server-enabled", serverKey: "ctx", enabled: false },
         {
@@ -314,12 +314,16 @@ describe("scope-store / conversation", () => {
     const { db, store } = createTestHarness();
     seedWholeState(db, stateWithAllScopes());
 
-    await store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, [
-      { type: "set-server-enabled", serverKey: "z", enabled: false },
-    ]);
-    await store.patchConversation(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID, [
-      { type: "reset-server", serverKey: "z" },
-    ]);
+    await store.patchConversation(
+      PROJECT_PATH,
+      sessionConversationTarget("proj", SESSION_NAME, CONVERSATION_ID),
+      [{ type: "set-server-enabled", serverKey: "z", enabled: false }],
+    );
+    await store.patchConversation(
+      PROJECT_PATH,
+      sessionConversationTarget("proj", SESSION_NAME, CONVERSATION_ID),
+      [{ type: "reset-server", serverKey: "z" }],
+    );
 
     const persisted = readWholeStateForTest(db);
     const conversation =
@@ -332,9 +336,11 @@ describe("scope-store / conversation", () => {
     const { db, store } = createTestHarness();
     seedWholeState(db, stateWithAllScopes());
     await expect(
-      store.patchConversation(PROJECT_PATH, SESSION_NAME, "missing", [
-        { type: "set-server-enabled", serverKey: "a", enabled: true },
-      ]),
+      store.patchConversation(
+        PROJECT_PATH,
+        sessionConversationTarget("proj", SESSION_NAME, "missing"),
+        [{ type: "set-server-enabled", serverKey: "a", enabled: true }],
+      ),
     ).rejects.toThrow(/not found/i);
   });
 });

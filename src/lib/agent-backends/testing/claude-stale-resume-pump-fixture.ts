@@ -55,6 +55,9 @@ function createRejectableProviderPort(): {
     supportedAgents: async () => [],
     mcpServerStatus: async () => [],
     applyFlagSettings: async () => {},
+    async setMcpServers() {
+      return { added: [], removed: [], errors: {} };
+    },
     reloadPlugins: async () => undefined,
     [Symbol.asyncIterator]() {
       return iterator;

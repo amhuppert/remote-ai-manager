@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import { createRuntimeStateAccessors } from "../default-deps";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
@@ -68,7 +71,7 @@ const claudeConversation = (
   conversationId: "conv-1",
   worktreePath: "/repo/.worktrees/session-a",
   backend: "claude",
-  isTurnActive: false,
+
   ...overrides,
 });
 
@@ -81,7 +84,7 @@ const codexConversation = (
   conversationId: "conv-c1",
   worktreePath: "/repo/.worktrees/session-c",
   backend: "codex",
-  isTurnActive: false,
+
   ...overrides,
 });
 
@@ -95,7 +98,7 @@ const projectConversation = (
     conversationId: "plc-1",
     worktreePath: "/repo",
     backend: "claude",
-    isTurnActive: false,
+
     ...overrides,
   }) as AffectedConversation;
 
@@ -160,12 +163,6 @@ const buildCodexComposition = (input: {
 interface FakeDepsOptions {
   metadataRegistry?: AgentCapabilityMetadataRegistry;
   affected?: readonly AffectedConversation[];
-  isTurnActive?: (input: {
-    conversationScope?: "session" | "project";
-    projectPath: string;
-    sessionName?: string;
-    conversationId: string;
-  }) => boolean;
   composeForConversation?: (input: {
     conversationScope?: "session" | "project";
     backend: AgentBackendId;
@@ -189,22 +186,17 @@ interface FakeDepsHandles {
   composeCalls: unknown[];
   readCalls: unknown[];
   writeCalls: unknown[];
-  turnActiveCalls: unknown[];
 }
 
 const buildDeps = (opts: FakeDepsOptions = {}): FakeDepsHandles => {
   const writes: FakeDepsHandles["writes"] = [];
+  const states = new Map<string, AgentCapabilityRuntimeApplicationState>();
   const composeCalls: unknown[] = [];
   const readCalls: unknown[] = [];
   const writeCalls: unknown[] = [];
-  const turnActiveCalls: unknown[] = [];
   return {
     deps: {
       listAffectedConversations: vi.fn(async () => opts.affected ?? []),
-      isTurnActive(input) {
-        turnActiveCalls.push(input);
-        return opts.isTurnActive?.(input) ?? false;
-      },
       async composeForConversation(input) {
         composeCalls.push(input);
         if (opts.composeForConversation) {
@@ -224,14 +216,29 @@ const buildDeps = (opts: FakeDepsOptions = {}): FakeDepsHandles => {
       },
       readRuntimeState: vi.fn(async (input) => {
         readCalls.push(input);
-        return opts.readRuntimeState?.() ?? undefined;
+        return (
+          states.get(input.conversationId) ??
+          opts.readRuntimeState?.() ??
+          undefined
+        );
       }),
-      writeRuntimeState: vi.fn(async (input) => {
+      updateRuntimeState: vi.fn(async (identity, updater) => {
+        const input = {
+          ...identity,
+          state: updater(
+            states.get(identity.conversationId) ??
+              (await opts.readRuntimeState?.()),
+          ),
+        };
         writeCalls.push(input);
+        states.set(input.conversationId, input.state);
         writes.push({
           conversationScope: input.conversationScope,
           conversationId: input.conversationId,
-          sessionName: input.sessionName,
+          sessionName:
+            input.conversationScope === "project"
+              ? undefined
+              : input.sessionName,
           state: input.state,
         });
       }),
@@ -242,11 +249,152 @@ const buildDeps = (opts: FakeDepsOptions = {}): FakeDepsHandles => {
     composeCalls,
     readCalls,
     writeCalls,
-    turnActiveCalls,
   };
 };
 
+async function applyMutationAtNextTurn(
+  deps: ApplyServiceDeps,
+  input: Parameters<
+    ReturnType<
+      typeof createCapabilityRuntimeApplyService
+    >["applyAfterOverrideChange"]
+  >[0],
+) {
+  const service = createCapabilityRuntimeApplyService(deps);
+  await service.applyAfterOverrideChange(input);
+  const affected = await deps.listAffectedConversations(input);
+  const conversations = [];
+  for (const conversation of affected)
+    conversations.push(await service.applyAtTurnStart(conversation));
+  return { conversations };
+}
+
 describe("apply-after-mutation", () => {
+  it("keeps a newer pending selection durably when an earlier turn-start delivery settles", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      const identity: ApplyConversationIdentity = {
+        conversationScope: "project",
+        projectName: "repo",
+        projectPath: "/repo",
+        conversationId: "conv-1",
+        worktreePath: "/repo",
+        backend: "claude",
+      };
+      const firstRows = [{ itemId: "alpha", enabled: false }];
+      const secondRows = [{ itemId: "alpha", enabled: true }];
+      const firstHash = computeCascadeRuntimeHash({
+        cascadeKind: "claude-skills",
+        rows: firstRows,
+      });
+      const secondHash = computeCascadeRuntimeHash({
+        cascadeKind: "claude-skills",
+        rows: secondRows,
+      });
+      fixture.seedProject("/repo");
+      await fixture.seedProjectConversation(
+        "/repo",
+        makeConversationState({
+          id: identity.conversationId,
+          scope: "project",
+          agentCapabilitiesRuntime: {
+            cascades: {
+              "claude-skills": {
+                pendingHash: firstHash,
+                pendingItemIds: ["alpha"],
+                lastApplyStatus: "staged-next-turn",
+              },
+              "claude-plugins": {
+                appliedHash: "plugins-unchanged",
+                lastApplyStatus: "applied",
+              },
+            },
+          },
+        }),
+      );
+      const accessors = createRuntimeStateAccessors(fixture.store);
+      let rows = firstRows;
+      let startApply: (() => void) | undefined;
+      let finishApply: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        startApply = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        finishApply = resolve;
+      });
+      const { deps } = buildDeps({
+        affected: [identity],
+        composeForConversation: async () =>
+          buildClaudeComposition({ cascades: { "claude-skills": { rows } } }),
+        applyRuntimeConfig: async () => {
+          startApply?.();
+          await gate;
+          return { status: "applied" };
+        },
+      });
+      // Save and workflow delivery have independent service instances over the same store.
+      const turnService = createCapabilityRuntimeApplyService({
+        ...deps,
+        ...accessors,
+      });
+      const saveService = createCapabilityRuntimeApplyService({
+        ...deps,
+        ...accessors,
+      });
+      const earlier = turnService.applyAtTurnStart(identity);
+      await started;
+      rows = secondRows;
+      await saveService.applyAfterOverrideChange({
+        scope: { level: "global" },
+        cascadeKind: "claude-skills",
+        changedItemIds: ["alpha"],
+      });
+      finishApply?.();
+      await earlier;
+      const reloaded = await fixture
+        .recreateStore()
+        .getProjectConversation("/repo", identity.conversationId);
+      expect(
+        reloaded?.agentCapabilitiesRuntime?.cascades["claude-skills"],
+      ).toMatchObject({
+        appliedHash: firstHash,
+        pendingHash: secondHash,
+        lastApplyStatus: "staged-next-turn",
+      });
+      expect(
+        reloaded?.agentCapabilitiesRuntime?.cascades["claude-plugins"],
+      ).toEqual({
+        appliedHash: "plugins-unchanged",
+        lastApplyStatus: "applied",
+      });
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("saving preferences only stages the change even while the runtime is idle", async () => {
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
+    const { deps, writes } = buildDeps({
+      affected: [claudeConversation()],
+      applyRuntimeConfig: port,
+    });
+    await createCapabilityRuntimeApplyService(deps).applyAfterOverrideChange({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+    expect(port).not.toHaveBeenCalled();
+    expect(writes[0]?.state.cascades["claude-skills"]).toMatchObject({
+      lastApplyStatus: "staged-next-turn",
+      pendingItemIds: ["alpha"],
+    });
+    expect(
+      writes[0]?.state.cascades["claude-skills"]?.appliedHash,
+    ).toBeUndefined();
+  });
+
   it("fans out to every affected conversation", async () => {
     const a = claudeConversation({ conversationId: "conv-1" });
     const b = claudeConversation({
@@ -292,18 +440,16 @@ describe("apply-after-mutation", () => {
     });
   });
 
-  it("Claude live-applies when idle and records applied", async () => {
+  it("Claude applies at turn start and records applied", async () => {
     const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
       status: "applied",
     }));
     const { deps, writes } = buildDeps({
       affected: [claudeConversation()],
-      isTurnActive: () => false,
+
       applyRuntimeConfig: port,
     });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
+    const result = await applyMutationAtNextTurn(deps, {
       scope: { level: "global" },
       cascadeKind: "claude-skills",
       changedItemIds: ["alpha"],
@@ -324,32 +470,23 @@ describe("apply-after-mutation", () => {
         },
       ],
     });
-    expect(writes[0]?.state.cascades["claude-skills"]).toMatchObject({
+    expect(writes.at(-1)?.state.cascades["claude-skills"]).toMatchObject({
       appliedHash: expect.any(String),
       lastApplyStatus: "applied",
     });
   });
 
-  it("Claude PLC live-applies when idle without synthetic session runtime state", async () => {
+  it("Claude PLC applies at turn start without synthetic session runtime state", async () => {
     const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
       status: "applied",
     }));
-    const {
-      deps,
-      writes,
-      composeCalls,
-      readCalls,
-      writeCalls,
-      turnActiveCalls,
-    } = buildDeps({
+    const { deps, writes, composeCalls, readCalls, writeCalls } = buildDeps({
       affected: [projectConversation()],
-      isTurnActive: () => false,
+
       applyRuntimeConfig: port,
     });
 
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
+    const result = await applyMutationAtNextTurn(deps, {
       scope: { level: "project", projectPath: "/repo" },
       cascadeKind: "claude-skills",
       changedItemIds: ["alpha"],
@@ -364,12 +501,10 @@ describe("apply-after-mutation", () => {
       disposition: "applied",
     });
     expect(port).toHaveBeenCalledTimes(1);
-    for (const call of [
-      composeCalls[0],
-      readCalls[0],
-      writeCalls[0],
-      turnActiveCalls[0],
-    ] as Record<string, unknown>[]) {
+    for (const call of [composeCalls[0], readCalls[0], writeCalls[0]] as Record<
+      string,
+      unknown
+    >[]) {
       expect(call).toMatchObject({
         conversationScope: "project",
         projectPath: "/repo",
@@ -377,7 +512,7 @@ describe("apply-after-mutation", () => {
       });
       expect("sessionName" in call).toBe(false);
     }
-    expect(writes[0]).toMatchObject({
+    expect(writes.at(-1)).toMatchObject({
       conversationScope: "project",
       conversationId: "plc-1",
       state: {
@@ -402,7 +537,7 @@ describe("apply-after-mutation", () => {
           sessionName: "session-a",
         }),
       ],
-      isTurnActive: () => false,
+
       applyRuntimeConfig: port,
     });
 
@@ -438,13 +573,13 @@ describe("apply-after-mutation", () => {
     expect(plcOutcome.sessionName).toBeUndefined();
   });
 
-  it("Claude PLC with turn active records staged-idle", async () => {
+  it("Claude PLC with turn active records staged-next-turn", async () => {
     const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
       status: "applied",
     }));
     const { deps, writes } = buildDeps({
-      affected: [projectConversation({ isTurnActive: true })],
-      isTurnActive: () => true,
+      affected: [projectConversation()],
+
       applyRuntimeConfig: port,
     });
 
@@ -458,12 +593,12 @@ describe("apply-after-mutation", () => {
 
     expect(result.conversations[0]?.cascades[0]).toMatchObject({
       cascadeKind: "claude-skills",
-      disposition: "staged-idle",
+      disposition: "staged-next-turn",
     });
     expect(port).not.toHaveBeenCalled();
     expect(writes[0]?.conversationScope).toBe("project");
     expect(writes[0]?.state.cascades["claude-skills"]).toMatchObject({
-      lastApplyStatus: "staged-idle",
+      lastApplyStatus: "staged-next-turn",
       pendingItemIds: ["alpha"],
     });
   });
@@ -523,7 +658,7 @@ describe("apply-after-mutation", () => {
     }));
     const { deps, writes } = buildDeps({
       affected: [claudeConversation()],
-      isTurnActive: () => false,
+
       applyRuntimeConfig: port,
       readRuntimeState: async () => ({
         cascades: {
@@ -551,13 +686,13 @@ describe("apply-after-mutation", () => {
     expect(writes).toHaveLength(0);
   });
 
-  it("Claude with turn active records staged-idle without calling the port", async () => {
+  it("Claude with turn active records staged-next-turn without calling the port", async () => {
     const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
       status: "applied",
     }));
     const { deps, writes } = buildDeps({
-      affected: [claudeConversation({ isTurnActive: true })],
-      isTurnActive: () => true,
+      affected: [claudeConversation()],
+
       applyRuntimeConfig: port,
     });
     const result = await createCapabilityRuntimeApplyService(
@@ -569,11 +704,11 @@ describe("apply-after-mutation", () => {
     });
     expect(result.conversations[0]?.cascades[0]).toMatchObject({
       cascadeKind: "claude-skills",
-      disposition: "staged-idle",
+      disposition: "staged-next-turn",
     });
     expect(port).not.toHaveBeenCalled();
     expect(writes[0]?.state.cascades["claude-skills"]).toMatchObject({
-      lastApplyStatus: "staged-idle",
+      lastApplyStatus: "staged-next-turn",
       pendingItemIds: ["alpha"],
     });
   });
@@ -692,9 +827,7 @@ describe("apply-after-mutation", () => {
         },
       }),
     });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
+    const result = await applyMutationAtNextTurn(deps, {
       scope: { level: "global" },
       cascadeKind: "claude-skills",
       changedItemIds: ["alpha"],
@@ -708,7 +841,7 @@ describe("apply-after-mutation", () => {
       code: "agent-capability-apply-failed",
       cascadeKind: "claude-skills",
     });
-    const state = writes[0]?.state.cascades["claude-skills"];
+    const state = writes.at(-1)?.state.cascades["claude-skills"];
     expect(state?.appliedHash).toBe(prevAppliedHash);
     expect(state?.lastApplyStatus).toBe("rejected");
     expect(state?.lastApplyError).toContain("sdk reload failed");
@@ -750,7 +883,7 @@ describe("apply-after-mutation", () => {
     const badOutcome = result.conversations.find(
       (c) => c.conversationId === "bad",
     );
-    expect(goodOutcome?.cascades[0]?.disposition).toBe("applied");
+    expect(goodOutcome?.cascades[0]?.disposition).toBe("staged-next-turn");
     expect(badOutcome?.cascades[0]).toMatchObject({
       cascadeKind: "claude-skills",
       disposition: "rejected",
@@ -898,7 +1031,7 @@ describe("apply-after-mutation", () => {
     ).toContain("did not emit");
   });
 
-  it("records staged-idle with a diagnostic when Claude port is unavailable", async () => {
+  it("stages without an error when the runtime port is unavailable during save", async () => {
     const { deps, writes } = buildDeps({
       affected: [claudeConversation()],
     });
@@ -911,14 +1044,11 @@ describe("apply-after-mutation", () => {
     });
     expect(result.conversations[0]?.cascades[0]).toMatchObject({
       cascadeKind: "claude-skills",
-      disposition: "staged-idle",
+      disposition: "staged-next-turn",
     });
-    expect(result.conversations[0]?.diagnostics[0]).toMatchObject({
-      cascadeKind: "claude-skills",
-      code: "agent-capability-apply-failed",
-    });
+    expect(result.conversations[0]?.diagnostics).toEqual([]);
     expect(writes[0]?.state.cascades["claude-skills"]?.lastApplyStatus).toBe(
-      "staged-idle",
+      "staged-next-turn",
     );
   });
 
@@ -942,9 +1072,7 @@ describe("apply-after-mutation", () => {
       }),
     });
 
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
+    const result = await applyMutationAtNextTurn(deps, {
       scope: { level: "project", projectPath: "/repo" },
       cascadeKind: "claude-skills",
       changedItemIds: ["alpha"],
@@ -963,8 +1091,8 @@ describe("apply-after-mutation", () => {
     expect(message).not.toContain("/home/alex");
     expect(message).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN");
     // Retryable: the previously-applied hash is preserved and re-staged so a
-    // later idle-drain can retry without losing operator intent.
-    const state = writes[0]?.state.cascades["claude-skills"];
+    // later turn-start can retry without losing operator intent.
+    const state = writes.at(-1)?.state.cascades["claude-skills"];
     expect(state?.appliedHash).toBe(previousAppliedHash);
     expect(state?.pendingHash).toBeDefined();
     expect(state?.lastApplyStatus).toBe("rejected");
@@ -1002,7 +1130,7 @@ describe("apply-after-mutation", () => {
           "claude-plugins": {
             pendingHash: composedPluginHash,
             pendingItemIds: ["plugin:p"],
-            lastApplyStatus: "staged-idle",
+            lastApplyStatus: "staged-next-turn",
           },
         },
       }),
@@ -1017,9 +1145,9 @@ describe("apply-after-mutation", () => {
       backend: "claude",
     };
     const result =
-      await createCapabilityRuntimeApplyService(
-        deps,
-      ).applyWhenConversationBecomesIdle(plcIdentity);
+      await createCapabilityRuntimeApplyService(deps).applyAtTurnStart(
+        plcIdentity,
+      );
 
     expect(result.conversationScope).toBe("project");
     expect(result).not.toHaveProperty("sessionName");
@@ -1051,8 +1179,8 @@ describe("apply-after-mutation", () => {
   });
 });
 
-describe("apply-claude-idle-drain", () => {
-  it("promotes staged-idle to applied on successful live-apply", async () => {
+describe("apply-claude-turn-start", () => {
+  it("promotes staged-next-turn to applied on successful delivery", async () => {
     const port = vi.fn(
       async (): Promise<RuntimeConfigApplyResult> => ({
         status: "applied",
@@ -1069,14 +1197,14 @@ describe("apply-claude-idle-drain", () => {
           "claude-skills": {
             pendingHash: composedHash,
             pendingItemIds: ["alpha"],
-            lastApplyStatus: "staged-idle",
+            lastApplyStatus: "staged-next-turn",
           },
         },
       }),
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1117,14 +1245,14 @@ describe("apply-claude-idle-drain", () => {
             appliedHash: prevApplied,
             pendingHash: stagedHash,
             pendingItemIds: ["alpha"],
-            lastApplyStatus: "staged-idle",
+            lastApplyStatus: "staged-next-turn",
           },
         },
       }),
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1168,14 +1296,14 @@ describe("apply-claude-idle-drain", () => {
           "claude-skills": {
             pendingHash: stagedHash,
             pendingItemIds: ["alpha"],
-            lastApplyStatus: "staged-idle",
+            lastApplyStatus: "staged-next-turn",
           },
         },
       }),
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1191,7 +1319,7 @@ describe("apply-claude-idle-drain", () => {
     expect(writes).toHaveLength(0);
   });
 
-  it("is a no-op when no cascades are staged-idle", async () => {
+  it("is a no-op when no cascades are staged-next-turn", async () => {
     const port = vi.fn();
     const { deps, writes } = buildDeps({
       applyRuntimeConfig: port,
@@ -1206,7 +1334,7 @@ describe("apply-claude-idle-drain", () => {
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1233,7 +1361,7 @@ describe("apply-claude-idle-drain", () => {
           "claude-skills": {
             pendingHash: "obsolete",
             pendingItemIds: ["alpha"],
-            lastApplyStatus: "staged-idle",
+            lastApplyStatus: "staged-next-turn",
           },
           "claude-plugins": {
             appliedHash: "still-applied",
@@ -1245,7 +1373,7 @@ describe("apply-claude-idle-drain", () => {
 
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1266,7 +1394,7 @@ describe("apply-claude-idle-drain", () => {
     });
   });
 
-  it("retries a previously-rejected pending hash on the next idle transition", async () => {
+  it("retries a previously-rejected pending hash on the next turn start", async () => {
     const composedHash = computeCascadeRuntimeHash({
       cascadeKind: "claude-skills",
       rows: [{ itemId: "alpha", enabled: false }],
@@ -1298,7 +1426,7 @@ describe("apply-claude-idle-drain", () => {
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1317,7 +1445,7 @@ describe("apply-claude-idle-drain", () => {
     });
   });
 
-  it("persists rejected pending state when idle-drain composition throws", async () => {
+  it("persists rejected pending state when turn-start composition throws", async () => {
     const stagedHash = computeCascadeRuntimeHash({
       cascadeKind: "claude-skills",
       rows: [{ itemId: "alpha", enabled: false }],
@@ -1327,7 +1455,7 @@ describe("apply-claude-idle-drain", () => {
       applyRuntimeConfig: port,
       composeForConversation: async () => {
         throw new Error(
-          "idle compose failed in /home/alex/projects/repo with token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
+          "turn-start compose failed in /home/alex/projects/repo with token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
         );
       },
       readRuntimeState: async () => ({
@@ -1336,7 +1464,7 @@ describe("apply-claude-idle-drain", () => {
             appliedHash: "prev-applied",
             pendingHash: stagedHash,
             pendingItemIds: ["alpha"],
-            lastApplyStatus: "staged-idle",
+            lastApplyStatus: "staged-next-turn",
           },
           "claude-plugins": {
             appliedHash: "plugin-applied",
@@ -1348,7 +1476,7 @@ describe("apply-claude-idle-drain", () => {
 
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1419,7 +1547,7 @@ describe("apply-claude-idle-drain", () => {
     });
     const result = await createCapabilityRuntimeApplyService(
       deps,
-    ).applyWhenConversationBecomesIdle({
+    ).applyAtTurnStart({
       projectPath: "/repo",
       projectName: "repo",
       sessionName: "session-a",
@@ -1437,12 +1565,16 @@ describe("apply-claude-idle-drain", () => {
 });
 
 describe("apply-at-turn-start", () => {
-  it("promotes seeded staged-next-turn to applied at first turn start", async () => {
+  it("requires acceptance before promoting creation input at turn start", async () => {
     const composedHash = computeCascadeRuntimeHash({
       cascadeKind: "claude-skills",
       rows: [{ itemId: "alpha", enabled: false }],
     });
     const { deps, writes } = buildDeps({
+      applyRuntimeConfig: async () => ({
+        status: "deferred",
+        reason: "next_turn",
+      }),
       composeForConversation: async () =>
         buildClaudeComposition({
           cascades: {
@@ -1472,11 +1604,11 @@ describe("apply-at-turn-start", () => {
     expect(
       result.cascades.find((c) => c.cascadeKind === "claude-skills"),
     ).toMatchObject({
-      disposition: "applied",
+      disposition: "staged-next-turn",
     });
     expect(writes[0]?.state.cascades["claude-skills"]).toMatchObject({
-      appliedHash: composedHash,
-      lastApplyStatus: "applied",
+      pendingHash: composedHash,
+      lastApplyStatus: "staged-next-turn",
     });
   });
 
@@ -1680,7 +1812,7 @@ describe("apply-at-turn-start", () => {
     );
   });
 
-  it("does not promote staged-idle (those wait for idle-drain)", async () => {
+  it("does not promote staged-next-turn (those wait for turn-start)", async () => {
     const { deps, writes } = buildDeps({
       composeForConversation: async () =>
         buildClaudeComposition({
@@ -1693,7 +1825,7 @@ describe("apply-at-turn-start", () => {
           "claude-skills": {
             pendingHash: "h",
             pendingItemIds: ["alpha"],
-            lastApplyStatus: "staged-idle",
+            lastApplyStatus: "staged-next-turn",
           },
         },
       }),
@@ -1902,12 +2034,14 @@ describe("apply-at-turn-start", () => {
     });
   });
 
-  it("does not retry a rejected Claude pending hash at turn start (waits for idle-drain)", async () => {
+  it("retries a rejected Claude pending hash at turn start", async () => {
     const composedHash = computeCascadeRuntimeHash({
       cascadeKind: "claude-skills",
       rows: [{ itemId: "alpha", enabled: false }],
     });
-    const port = vi.fn();
+    const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
+      status: "applied",
+    }));
     const { deps, writes } = buildDeps({
       applyRuntimeConfig: port,
       composeForConversation: async () =>
@@ -1940,15 +2074,15 @@ describe("apply-at-turn-start", () => {
     });
     expect(result.cascades[0]).toMatchObject({
       cascadeKind: "claude-skills",
-      disposition: "idempotent-no-op",
+      disposition: "applied",
     });
-    expect(port).not.toHaveBeenCalled();
-    expect(writes).toHaveLength(0);
+    expect(port).toHaveBeenCalledTimes(1);
+    expect(writes).toHaveLength(1);
   });
 });
 
 describe("runtime-config apply seam", () => {
-  it("records staged-idle when the adapter declares deferred/turn_active mid-race", async () => {
+  it("records staged-next-turn when the adapter declares deferred/turn_active mid-race", async () => {
     // The pre-check said idle, but a turn started before the adapter ran; the
     // declared result must land exactly where skipped-turn-active used to.
     const port = vi.fn<ApplyRuntimeConfigPort>(async () => ({
@@ -1957,12 +2091,10 @@ describe("runtime-config apply seam", () => {
     }));
     const { deps, writes } = buildDeps({
       affected: [claudeConversation()],
-      isTurnActive: () => false,
+
       applyRuntimeConfig: port,
     });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
+    const result = await applyMutationAtNextTurn(deps, {
       scope: { level: "global" },
       cascadeKind: "claude-skills",
       changedItemIds: ["alpha"],
@@ -1970,11 +2102,11 @@ describe("runtime-config apply seam", () => {
     expect(port).toHaveBeenCalledTimes(1);
     expect(result.conversations[0]?.cascades[0]).toMatchObject({
       cascadeKind: "claude-skills",
-      disposition: "staged-idle",
+      disposition: "staged-next-turn",
     });
-    expect(writes[0]?.state.cascades["claude-skills"]?.lastApplyStatus).toBe(
-      "staged-idle",
-    );
+    expect(
+      writes.at(-1)?.state.cascades["claude-skills"]?.lastApplyStatus,
+    ).toBe("staged-next-turn");
   });
 
   it("re-applies exactly once when a persisted appliedHash predates the neutral hash basis, then no-ops", async () => {
@@ -2005,8 +2137,8 @@ describe("runtime-config apply seam", () => {
       applyRuntimeConfig: port,
       readRuntimeState: async () => persisted,
     });
-    deps.writeRuntimeState = async (input) => {
-      persisted = input.state;
+    deps.updateRuntimeState = async (_identity, updater) => {
+      persisted = updater(persisted);
     };
     const service = createCapabilityRuntimeApplyService(deps);
 
@@ -2016,9 +2148,10 @@ describe("runtime-config apply seam", () => {
       changedItemIds: ["alpha"],
     });
     expect(first.conversations[0]?.cascades[0]).toMatchObject({
-      disposition: "applied",
+      disposition: "staged-next-turn",
       attemptedHash: neutralHash,
     });
+    await service.applyAtTurnStart(claudeConversation());
     expect(port).toHaveBeenCalledTimes(1);
     expect(persisted.cascades["claude-skills"]?.appliedHash).toBe(neutralHash);
 

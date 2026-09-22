@@ -1,3 +1,4 @@
+import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { mkdtemp, appendFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -89,6 +90,8 @@ function harness(
     async request(method, params) {
       requests.push({ method, params });
       if (method === "initialize") return {};
+      if (method === "config/read")
+        return { config: { skills: options?.config?.skills ?? null } };
       if (method === "skills/list")
         return { data: [{ cwd: options?.cwd ?? "/repo", skills, errors: [] }] };
       if (method === "thread/start" || method === "thread/resume")
@@ -159,6 +162,7 @@ function harness(
       linkPath: "/repo/.agents/skills/command-center",
     }),
     skillsChanged: vi.fn(),
+    mergeNativeSkillSelectors: async (config) => config,
     now: () => 1,
   };
   const runtime = new CodexConversationRuntime(
@@ -314,7 +318,7 @@ describe("Codex app-server conversation runtime", () => {
           kind: "skills",
           items: [
             {
-              itemId: "wait-what",
+              itemId: "skill:absolute:%2Fskills%2Fwait-what%2FSKILL.md",
               enabled: false,
               originLayer: "conversation",
             },
@@ -323,7 +327,9 @@ describe("Codex app-server conversation runtime", () => {
       ],
     });
     expect(h.appServerOptions?.config).toMatchObject({
-      skills: { config: [{ name: "wait-what", enabled: false }] },
+      skills: {
+        config: [{ path: "/skills/wait-what/SKILL.md", enabled: false }],
+      },
     });
     expect(
       h.requests.find((item) => item.method === "skills/list")?.params,
@@ -374,6 +380,7 @@ describe("Codex app-server conversation runtime", () => {
     const request = h.client.request.bind(h.client);
     let readingSkills = false;
     h.client.request = async (method, params) => {
+      if (method === "config/read") return { config: { skills: null } };
       if (method === "skills/list") {
         readingSkills = true;
         return catalog.promise;
@@ -921,6 +928,7 @@ describe("Codex app-server conversation runtime", () => {
     const h = harness();
     const runtime = new CodexConversationRuntime(createInput, {
       ...h.deps,
+      mergeNativeSkillSelectors: async (config) => config,
       ensureManagedSkillsBridge: async () => {
         await preparing.promise;
         return { status: "skipped", reason: "no_bundle" };
@@ -1540,3 +1548,72 @@ it.each([true, false])(
     ).toHaveLength(0);
   },
 );
+
+it("acknowledges only the MCP and capability snapshots accepted by this turn", async () => {
+  const capabilities = {
+    backend: "codex" as const,
+    kinds: [
+      {
+        kind: "plugins" as const,
+        items: [
+          {
+            itemId: "toolbox",
+            enabled: false,
+            originLayer: "conversation" as const,
+          },
+        ],
+      },
+    ],
+  };
+  const portableMcp = { servers: [] };
+  const h = harness({ tooling: { portableMcp, capabilities } });
+  const running = h.runtime.sendTurn(h.input);
+  await until(() => h.events.some((event) => event.type === "input_accepted"));
+  h.finish();
+  await running;
+  expect(h.events.find((event) => event.type === "input_accepted")).toEqual({
+    type: "input_accepted",
+    capabilities,
+    mcpConfigHash: computeEffectiveConfigHash(portableMcp),
+  });
+});
+
+it("shows an actionable host-skill delivery notice while preserving the conversation", async () => {
+  const h = harness(
+    {},
+    {
+      ensureManagedSkillsBridge: async () => ({
+        status: "conflict",
+        linkPath: "/repo/.agents/skills/command-center",
+        detail:
+          "project-owned content occupies the reserved managed-skills path",
+      }),
+    },
+  );
+  const running = h.runtime.sendTurn(h.input);
+  await until(() => h.events.some((event) => event.type === "input_accepted"));
+  h.finish();
+  const result = await running;
+  const notice = h.events.find(
+    (event) =>
+      event.type === "transcript_entry" && event.entry.type === "notice",
+  );
+  expect(notice).toMatchObject({
+    type: "transcript_entry",
+    entry: {
+      type: "notice",
+      raw: {
+        role: "notice",
+        content: [
+          {
+            type: "text",
+            text: expect.stringContaining(
+              "Command Center skills could not be attached",
+            ),
+          },
+        ],
+      },
+    },
+  });
+  expect(result.failure).toBeNull();
+});

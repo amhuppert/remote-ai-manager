@@ -19,6 +19,7 @@ import {
 import { Switch } from "@/components/ui/Switch";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
+import { SupportIndicator } from "./SupportIndicator";
 
 export interface AgentCapabilityLayerOption {
   label: string;
@@ -141,13 +142,28 @@ export function AgentCapabilityPanel({
   const overrideCount = view
     ? view.items.filter((row) => row.currentLayerValue !== undefined).length
     : 0;
+  const groupUnavailable = view ? controlUnavailableReason(view) : undefined;
+  const groupDiagnostics = view?.diagnostics ?? [];
+  const groupNotes = [
+    ...(view?.metadata?.support?.notes ?? []),
+    ...groupDiagnostics
+      .filter(
+        (diagnostic) =>
+          diagnostic.severity === "info" ||
+          (groupUnavailable && diagnostic.severity !== "error"),
+      )
+      .map((diagnostic) => diagnostic.message),
+  ];
+  if (groupUnavailable) groupNotes.push(groupUnavailable);
+  const visibleDiagnostics = groupDiagnostics.filter(
+    (diagnostic) =>
+      diagnostic.severity === "error" ||
+      (diagnostic.severity === "warning" && !groupUnavailable),
+  );
 
   return (
     <section
-      className={cn(
-        "flex min-h-0 min-w-0 flex-auto flex-col bg-bg-base",
-        view?.backend === "codex" && "shadow-[0_0_0_1px_var(--violet-glow)]",
-      )}
+      className={cn("flex min-h-0 min-w-0 flex-auto flex-col bg-bg-base")}
       data-cascade-kind={view?.cascadeKind}
     >
       {!hideHeader ? (
@@ -163,8 +179,6 @@ export function AgentCapabilityPanel({
             {view ? (
               <div className="mt-[4px] flex flex-wrap gap-xs font-mono text-[0.7rem] text-text-tertiary">
                 <span>{view.items.length} items</span>
-                <span>{view.backend}</span>
-                <span>{metadataLabel(view)}</span>
                 <span>{overrideCount} overrides here</span>
               </div>
             ) : null}
@@ -227,6 +241,7 @@ export function AgentCapabilityPanel({
         <div className="ml-auto font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {selectedOption?.label ?? levelLabel(selectedScope.level)}
         </div>
+        <SupportIndicator label={title} notes={groupNotes} />
       </div>
 
       {loading ? (
@@ -242,11 +257,11 @@ export function AgentCapabilityPanel({
           {errorMessage}
         </div>
       ) : null}
-      {view?.diagnostics.length ? (
-        <DiagnosticList diagnostics={view.diagnostics} />
+      {visibleDiagnostics.length ? (
+        <DiagnosticList diagnostics={visibleDiagnostics} />
       ) : null}
 
-      <div className="grid min-h-0 flex-auto [grid-auto-rows:calc(var(--space-3xl)+var(--space-2xl)+var(--space-md))] content-start gap-xs overflow-y-auto px-xl pt-md pb-xl [[data-cap-drawer]_&]:px-lg [[data-cap-drawer]_&]:pt-sm [[data-cap-drawer]_&]:pb-lg">
+      <div className="grid min-h-0 flex-auto auto-rows-min content-start gap-xs overflow-y-auto px-xl pt-md pb-xl [[data-cap-drawer]_&]:px-lg [[data-cap-drawer]_&]:pt-sm [[data-cap-drawer]_&]:pb-lg">
         {view
           ? visibleRows.map((row) => (
               <CapabilityRow
@@ -389,13 +404,40 @@ function CapabilityRow({
   ) => void;
   pending: boolean;
 }): React.JSX.Element {
-  const unavailableReason = controlUnavailableReason(view);
+  const unavailableReason = row.support
+    ? row.support.configurable
+      ? undefined
+      : (row.support.notes[0] ?? "Individual selection is unavailable.")
+    : controlUnavailableReason(view);
   const controlsDisabled = pending || unavailableReason !== undefined;
   const explicitHere = row.currentLayerValue !== undefined;
   const switchEnabled = row.ownEffectiveState.enabled;
   const effectiveOn = row.effectiveState.enabled;
   const pluginDisabled = row.inheritedDisableReason !== undefined;
-  const applyPending = row.applyStatus !== "none";
+  const applyLabel = applyStatusLabel(row.applyStatus);
+  const applyPending =
+    row.applyStatus === "staged-next-turn" ||
+    row.applyStatus === "deferred-next-conversation";
+  const visibleDiagnostics = row.diagnostics.filter(
+    (diagnostic) =>
+      diagnostic.severity === "error" ||
+      (diagnostic.severity === "warning" && !unavailableReason),
+  );
+  const notes = [
+    ...(row.support?.notes ?? []),
+    ...row.diagnostics
+      .filter((diagnostic) => !visibleDiagnostics.includes(diagnostic))
+      .map((diagnostic) => diagnostic.message),
+  ];
+  if (view.level === "conversation") {
+    if (row.appliedEnabled === undefined)
+      notes.push("Current availability unknown.");
+    else if (row.appliedEnabled !== row.effectiveState.enabled) {
+      notes.push(
+        `Saved ${enabledStateLabel(row.effectiveState.enabled)}. ${row.appliedEnabled ? "Still available" : "Not yet available"} in this conversation.`,
+      );
+    }
+  }
 
   const borderLeft = pluginDisabled
     ? "border-l-2 border-l-blue"
@@ -412,7 +454,7 @@ function CapabilityRow({
   return (
     <article
       className={cn(
-        "mb-sm grid h-full min-h-0 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-md overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-surface px-[14px] py-[11px] transition-[border-color,background] duration-150 hover:border-border-default max-900:grid-cols-[1fr]",
+        "mb-sm grid min-h-[92px] min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-md rounded-md border border-solid border-border-subtle bg-bg-surface px-[14px] py-[11px] transition-[border-color,background] duration-150 hover:border-border-default max-900:grid-cols-[1fr]",
         borderLeft,
         pendingRing,
       )}
@@ -453,53 +495,71 @@ function CapabilityRow({
               Stale
             </StatusChip>
           ) : null}
-          {row.applyStatus !== "none" ? (
-            <StatusChip tone="cyan" wrap layoutClassName="min-w-0">
-              {applyStatusLabel(row.applyStatus)}
+          {applyLabel ? (
+            <StatusChip
+              tone={row.applyStatus === "rejected" ? "red" : "amber"}
+              wrap
+              layoutClassName="min-w-0"
+            >
+              {applyLabel}
             </StatusChip>
           ) : null}
           {pending ? (
             <span className={cn(DETAILS_SPAN, "font-mono text-[0.7rem]")}>
-              Pending
-            </span>
-          ) : null}
-          {unavailableReason ? (
-            <span className={cn(DETAILS_SPAN, "font-mono text-[0.7rem]")}>
-              {unavailableReason}
+              Saving
             </span>
           ) : null}
         </div>
-        {row.diagnostics.length ? (
-          <DiagnosticList diagnostics={row.diagnostics} compact />
+        {visibleDiagnostics.length ? (
+          <DiagnosticList diagnostics={visibleDiagnostics} compact />
         ) : null}
       </div>
 
-      {onToggleItem || onResetItem ? (
+      {onToggleItem || onResetItem || notes.length ? (
         <div className="flex flex-wrap items-center justify-end gap-sm">
-          <Switch
-            size="md"
-            tone="cyan"
-            checked={switchEnabled}
-            disabled={controlsDisabled || !onToggleItem}
-            aria-label={`${switchEnabled ? "Disable" : "Enable"} ${row.displayName}`}
-            onCheckedChange={(next) => onToggleItem?.(row.itemId, next)}
+          <SupportIndicator
+            label={row.displayName}
+            notes={notes}
+            action={
+              row.owningPluginId && onOpenPlugin
+                ? {
+                    label: "Open parent plugin",
+                    onClick: () => {
+                      if (row.owningPluginId)
+                        onOpenPlugin(row.owningPluginId, row.backend);
+                    },
+                  }
+                : undefined
+            }
           />
-          {explicitHere ? (
-            // Retained on the `.btn` leaf recipe: this control needs a
-            // disabled-state fade (`disabled:opacity-45`), which the Button
-            // primitive cannot carry (it accepts no appearance className, and
-            // the fade is keyed on the button's own :disabled state, not the
-            // layout allowlist). Integration tracks this as a remediation
-            // consumer; see ApprovalGatePanel's local recipe for the precedent.
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm disabled:cursor-not-allowed disabled:opacity-45 max-768:min-h-[var(--touch-target-min)]"
-              aria-label={`Reset ${row.displayName}`}
-              disabled={controlsDisabled || !onResetItem}
-              onClick={() => onResetItem?.(row.itemId)}
-            >
-              Reset
-            </button>
+          {onToggleItem || onResetItem ? (
+            <>
+              <Switch
+                size="md"
+                tone="cyan"
+                checked={switchEnabled}
+                disabled={controlsDisabled || !onToggleItem}
+                aria-label={`${switchEnabled ? "Disable" : "Enable"} ${row.displayName}`}
+                onCheckedChange={(next) => onToggleItem?.(row.itemId, next)}
+              />
+              {explicitHere ? (
+                // Retained on the `.btn` leaf recipe: this control needs a
+                // disabled-state fade (`disabled:opacity-45`), which the Button
+                // primitive cannot carry (it accepts no appearance className, and
+                // the fade is keyed on the button's own :disabled state, not the
+                // layout allowlist). Integration tracks this as a remediation
+                // consumer; see ApprovalGatePanel's local recipe for the precedent.
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm disabled:cursor-not-allowed disabled:opacity-45 max-768:min-h-[var(--touch-target-min)]"
+                  aria-label={`Reset ${row.displayName}`}
+                  disabled={pending || !onResetItem}
+                  onClick={() => onResetItem?.(row.itemId)}
+                >
+                  Reset
+                </button>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}
@@ -651,11 +711,6 @@ function scopeDetail(scope: AgentCapabilityScope): string {
   return scope.conversationId;
 }
 
-function metadataLabel(view: AgentCapabilityViewResponse): string {
-  if (!view.metadata) return "metadata unavailable";
-  return `${view.metadata.applySemantics} ${view.metadata.compositionSupport}`;
-}
-
 function sourceLabel(source: AgentCapabilitySourceRef): string {
   if (source.kind === "plugin") return `plugin: ${source.pluginId}`;
   if (source.kind === "sdk-runtime") return "sdk runtime";
@@ -680,21 +735,32 @@ function pluginDisplayName(pluginId: string): string {
     : pluginId;
 }
 
-function applyStatusLabel(status: AgentCapabilityApplyStatus): string {
-  return status.replaceAll("-", " ");
+function applyStatusLabel(
+  status: AgentCapabilityApplyStatus,
+): string | undefined {
+  if (status === "staged-next-turn") return "Applies next turn";
+  if (status === "deferred-next-conversation")
+    return "Applies in a new conversation";
+  if (status === "rejected") return "Apply failed";
+  return undefined;
 }
 
 function controlUnavailableReason(
   view: AgentCapabilityViewResponse,
 ): string | undefined {
+  if (view.metadata?.support?.configurable === false) {
+    return (
+      view.metadata.support.notes[0] ?? "Individual selection is unavailable."
+    );
+  }
   if (view.metadata?.compositionSupport === "verification-gated") {
-    return "verification gated";
+    return "Individual selection is not yet verified. Saved preferences are retained.";
   }
   if (view.metadata?.compositionSupport === "diagnostic-only") {
-    return "diagnostic only";
+    return "CC can discover these capabilities but cannot apply individual selection.";
   }
   if (view.metadata?.discoverySupport === "unavailable-pending-verification") {
-    return "pending verification";
+    return "Native discovery is not yet verified. Saved preferences are retained.";
   }
   return undefined;
 }

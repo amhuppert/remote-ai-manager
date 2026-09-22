@@ -565,7 +565,7 @@ function makeFakeBackendActorDeps(
       effectiveConfigHash: "hash",
     }),
     applyCapabilityAtTurnStart: async () => ({}),
-    applyCapabilityWhenIdle: async () => ({}),
+
     composeCapabilityConfigForConversation: async () => undefined,
     composeCapabilityConfigForProjectConversation: async () => undefined,
     executeAgentCall: async () => fakeCompletedAgentCall,

@@ -960,11 +960,16 @@ export function createSetters(
           "state.mutate",
           { label, projectPath, sessionName, conversationId },
           () => {
-            const conversation = repos.conversations.findByKey(
-              projectPath,
-              sessionName,
-              conversationId,
-            );
+            const conversation = isProjectSentinel(sessionName)
+              ? repos.projectConversations.findByKey(
+                  projectPath,
+                  conversationId,
+                )
+              : repos.conversations.findByKey(
+                  projectPath,
+                  sessionName,
+                  conversationId,
+                );
             if (!conversation) {
               throw new Error(
                 `Conversation "${conversationId}" not found in session "${sessionName}"`,
@@ -972,12 +977,20 @@ export function createSetters(
             }
             const result = mutate(conversation.mcpOverrides);
             if (result.write) {
-              repos.conversations.updateChangedColumns(
-                projectPath,
-                sessionName,
-                conversationId,
-                { mcp_overrides: jsonOrNull(result.overrides) },
-              );
+              if (isProjectSentinel(sessionName)) {
+                repos.projectConversations.setMcpOverrides(
+                  projectPath,
+                  conversationId,
+                  result.overrides,
+                );
+              } else {
+                repos.conversations.updateChangedColumns(
+                  projectPath,
+                  sessionName,
+                  conversationId,
+                  { mcp_overrides: jsonOrNull(result.overrides) },
+                );
+              }
             }
             return result;
           },

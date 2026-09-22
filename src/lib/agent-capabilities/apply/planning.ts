@@ -1,48 +1,4 @@
-/**
- * Capability runtime apply service.
- *
- * Orchestrates the three lifecycle events that move a conversation's
- * per-cascade runtime apply state forward:
- *
- *   1. `applyAfterOverrideChange` — Override mutation just persisted. Fan
- *      out to every active conversation affected by the edited scope/cascade,
- *      compute a fresh runtime composition per conversation, and either live-
- *      apply (idle Claude), stage idle-drain (running Claude), stage next-turn
- *      (Codex), defer to next conversation (Claude sub-agents), or record
- *      unsupported (verification-gated cascades). Never mutates Codex live.
- *   2. `applyWhenConversationBecomesIdle` — Claude conversation transitioned
- *      from running to idle. Drain any cascades stored as `staged-idle`
- *      against the freshly-composed runtime payload through the Claude apply
- *      port. Records `applied` on success or `rejected` with sanitized error
- *      on failure; the previously-applied hash is preserved on failure via
- *      `recordApplyOutcome`. A previous `rejected` record with a preserved
- *      `pendingHash` is also retried here — that is the retry surface for
- *      transient Claude apply failures.
- *   3. `applyAtTurnStart` — A new turn is starting. Promote `staged-next-turn`
- *      entries to `applied` because the backend ingests the fresh options at
- *      turn boundary (Codex rebuilds SDK options per turn; Claude seeded
- *      `staged-next-turn` at session creation). A previous `rejected` Codex
- *      record with a preserved `pendingHash` is retried here — that is the
- *      retry surface for transient Codex apply failures. Deferred-next-
- *      conversation entries are left alone — only a fresh conversation
- *      runtime can apply those. Claude `rejected` records are not retried at
- *      turn-start; they wait for the next idle transition because Claude
- *      cannot be mutated at turn boundary.
- *
- * Failure isolation:
- *   - A discovery or composition failure for one cascade does not affect the
- *     other cascades on the same conversation; the outcome record carries a
- *     diagnostic and that cascade is recorded as `rejected`.
- *   - A live-apply failure for one conversation does not affect other
- *     conversations — each conversation gets its own outcome record.
- *   - The cached pending hash + items are preserved on `rejected` so retries
- *     can proceed without losing the operator's intent.
- *
- * Dependency boundaries: the service takes ports for conversation enumeration,
- * conversation runtime state I/O, fresh composition, and the Claude live-apply
- * adapter. Tests provide synchronous fakes; production wiring injects the real
- * state-store, the runtime registry, and the Claude `QuerySession` adapter.
- */
+/** Save preferences immediately; attempt supported delivery at the next turn boundary. */
 
 import { createLogger } from "@/lib/logging";
 import type {
@@ -60,6 +16,7 @@ import {
   conversationOutcomeIdentity,
   conversationScopeOf,
   mutated,
+  mergeRuntimeOutcomes,
   type AffectedConversation,
   type ApplyAfterMutationInput,
   type ApplyAfterMutationResult,
@@ -116,29 +73,12 @@ export function createCapabilityRuntimeApplyService(
     return { conversations: outcomes };
   }
 
-  async function applyWhenConversationBecomesIdle(
-    input: ApplyAtConversationInput,
-  ): Promise<ConversationApplyOutcome> {
-    return applyToConversation({
-      context,
-      conversation: {
-        ...input,
-        isTurnActive: false,
-      },
-      targetCascade: undefined,
-      trigger: "idle-drain",
-    });
-  }
-
   async function applyAtTurnStart(
     input: ApplyAtConversationInput,
   ): Promise<ConversationApplyOutcome> {
     return applyToConversation({
       context,
-      conversation: {
-        ...input,
-        isTurnActive: false,
-      },
+      conversation: input,
       targetCascade: undefined,
       trigger: "turn-start",
     });
@@ -146,7 +86,6 @@ export function createCapabilityRuntimeApplyService(
 
   return {
     applyAfterOverrideChange,
-    applyWhenConversationBecomesIdle,
     applyAtTurnStart,
   };
 }
@@ -246,10 +185,10 @@ async function applyToConversation(input: {
   }
 
   if (mutated(existingState, nextState)) {
-    await deps.writeRuntimeState({
-      ...conversationIdentityForPorts(conversation),
-      state: nextState,
-    });
+    await deps.updateRuntimeState(
+      conversationIdentityForPorts(conversation),
+      (current) => mergeRuntimeOutcomes(current, existingState, nextState),
+    );
   }
 
   return {

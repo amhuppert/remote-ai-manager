@@ -1,3 +1,7 @@
+import {
+  type ConversationTarget,
+  conversationTargetStoreSessionName,
+} from "@/lib/conversations/conversation-target";
 import { createHash } from "node:crypto";
 
 import type { GlobalOverrideStore } from "@/lib/mcp/global-store";
@@ -36,6 +40,7 @@ class GlobalConfigConflictError extends Error {}
 type StateManager = Pick<
   StateStore,
   | "getSession"
+  | "getConversation"
   | "getProjectMcpOverrides"
   | "mutateProjectMcpOverrides"
   | "mutateSessionMcpOverrides"
@@ -69,10 +74,8 @@ export interface McpConfigMutationService {
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult>;
   patchConversation(input: {
-    projectName: string;
     projectPath: string;
-    sessionName: string;
-    conversationId: string;
+    target: ConversationTarget;
     operations: readonly McpOverrideOperation[];
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult>;
@@ -291,26 +294,26 @@ export function createMcpConfigMutationService(
   }
 
   async function patchConversation(input: {
-    projectName: string;
     projectPath: string;
-    sessionName: string;
-    conversationId: string;
+    target: ConversationTarget;
     operations: readonly McpOverrideOperation[];
     expectedEffectiveConfigHash?: string;
   }): Promise<McpConfigMutationResult> {
-    // --- Resolve OUTSIDE the queue. Ancestor (project + session) overrides and
-    // the worktree path come from the session read; the conversation's own
-    // overrides are read FRESH inside the commit as the conflict fence. ---
-    const session = await deps.stateManager.getSession(
+    const session =
+      input.target.scope === "session"
+        ? await deps.stateManager.getSession(
+            input.projectPath,
+            input.target.sessionName,
+          )
+        : null;
+    const conversation = await deps.stateManager.getConversation(
       input.projectPath,
-      input.sessionName,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
-    const conversation = session?.conversations.find(
-      (entry) => entry.id === input.conversationId,
-    );
-    if (!session || !conversation) {
+    if (!conversation || (input.target.scope === "session" && !session)) {
       throw new Error(
-        `Conversation "${input.conversationId}" not found in "${input.projectPath}/${input.sessionName}"`,
+        `Conversation "${input.target.conversationId}" not found`,
       );
     }
     const [globalOverrides, projectOverrides, discovery] = await Promise.all([
@@ -318,21 +321,19 @@ export function createMcpConfigMutationService(
       deps.stateManager.getProjectMcpOverrides(input.projectPath),
       deps.discoverAllSources({
         globalConfigPath: deps.globalConfigPath(),
-        worktreePath: session.worktreePath,
+        worktreePath: session?.worktreePath ?? input.projectPath,
       }),
     ]);
-    const sessionOverrides = session.mcpOverrides;
+    const sessionOverrides = session?.mcpOverrides;
 
     return deps.stateManager.mutateConversationMcpOverrides<McpConfigMutationResult>(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
       "mcp.patchConversationChecked",
       (current) => {
         const currentHash = assembleConversationView(
-          input.projectName,
-          input.sessionName,
-          input.conversationId,
+          input.target,
           {
             globalOverrides,
             projectOverrides,
@@ -350,9 +351,7 @@ export function createMcpConfigMutationService(
         const result = patchAndPrune(current, input.operations);
         const nextOverrides = pruneEmptyOverrides(result.overrides);
         const nextHash = assembleConversationView(
-          input.projectName,
-          input.sessionName,
-          input.conversationId,
+          input.target,
           {
             globalOverrides,
             projectOverrides,
@@ -469,9 +468,7 @@ export function createMcpConfigMutationService(
   }
 
   function assembleConversationView(
-    projectName: string,
-    sessionName: string,
-    conversationId: string,
+    target: ConversationTarget,
     overrides: {
       globalOverrides: McpOverrides;
       projectOverrides: McpOverrides | undefined;
@@ -504,9 +501,11 @@ export function createMcpConfigMutationService(
       gatewayServerKeys: [],
       reservedGatewayServerKeys: [],
       pendingServerKeys: [],
-      projectName,
-      sessionName,
-      conversationId,
+      projectName: target.projectName,
+      ...(target.scope === "session"
+        ? { sessionName: target.sessionName }
+        : {}),
+      conversationId: target.conversationId,
     });
     return withEffectiveHash(view, discovery.servers);
   }

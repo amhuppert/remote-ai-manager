@@ -1,3 +1,7 @@
+import {
+  type ConversationTarget,
+  conversationTargetApiBase,
+} from "@/lib/conversations/conversation-target";
 import { z } from "zod";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/fetcher";
@@ -54,42 +58,31 @@ export function useSessionMcpConfigQuery(
 }
 
 export function useConversationMcpConfigQuery(
-  projectName: string,
-  sessionName: string,
-  conversationId: string,
+  target: ConversationTarget | undefined,
   options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: mcpConfigKeys.conversation(
-      projectName,
-      sessionName,
-      conversationId,
-    ),
-    queryFn: () =>
-      fetchMcpView(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mcp-config`,
-      ),
-    enabled: options?.enabled ?? true,
+    queryKey: target
+      ? mcpConfigKeys.conversation(target)
+      : [...mcpConfigKeys.conversations(), "unselected"],
+    queryFn: () => {
+      if (!target) throw new Error("Conversation target required");
+      return fetchMcpView(`${conversationTargetApiBase(target)}/mcp-config`);
+    },
+    enabled: target !== undefined && (options?.enabled ?? true),
   });
 }
 
 export function useMcpToolsQuery(
-  projectName: string,
-  sessionName: string,
-  conversationId: string,
+  target: ConversationTarget,
   serverKey: string,
   options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: mcpToolsKeys.inventory(
-      projectName,
-      sessionName,
-      conversationId,
-      serverKey,
-    ),
+    queryKey: mcpToolsKeys.inventory(target, serverKey),
     queryFn: () =>
       apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mcp-config/tools/${encodeURIComponent(serverKey)}`,
+        `${conversationTargetApiBase(target)}/mcp-config/tools/${encodeURIComponent(serverKey)}`,
         mcpToolInventoryResultSchema,
       ),
     enabled: options?.enabled ?? true,

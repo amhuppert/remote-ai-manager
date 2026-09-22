@@ -14,7 +14,7 @@ function skill(name: string, overrides: Record<string, unknown> = {}) {
   };
 }
 function response(skills: unknown[]) {
-  return { data: [{ cwd, skills, errors: [] }] };
+  return { config: { skills: null }, data: [{ cwd, skills, errors: [] }] };
 }
 
 describe("Codex native skill catalog", () => {
@@ -66,7 +66,7 @@ describe("Codex native skill catalog", () => {
     expect((await catalog.commands()).map((item) => item.name)).toEqual([
       "$new",
     ]);
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(4);
   });
 
   it("delivers an exact explicit selection despite prepended context and duplicate names", async () => {
@@ -131,4 +131,54 @@ describe("Codex native skill catalog", () => {
     );
     await expect(catalog.commands()).rejects.toThrow(/working directory/i);
   });
+});
+
+it("retains disabled native entries in inventory while autocomplete filters them", async () => {
+  const entries = [
+    skill("visible"),
+    skill("native-off", { enabled: false, path: "/linked/SKILL.md" }),
+  ];
+  const catalog = new CodexSkillCatalog(
+    { request: vi.fn().mockResolvedValue(response(entries)) },
+    cwd,
+  );
+  expect(await catalog.inventory()).toEqual(entries);
+  expect((await catalog.commands()).map((item) => item.name)).toEqual([
+    "$visible",
+  ]);
+});
+
+it("uses effective native config selectors rather than reading potentially ignored project files", async () => {
+  const native = [{ path: "/skills/native-off/SKILL.md", enabled: false }];
+  const request = vi
+    .fn()
+    .mockResolvedValue({ config: { skills: { config: native } } });
+  const catalog = new CodexSkillCatalog({ request }, cwd);
+  expect(await catalog.selectors()).toEqual(native);
+  expect(request).toHaveBeenCalledWith("config/read", {
+    cwd,
+    includeLayers: false,
+  });
+});
+
+it("uses the effective project selector when a native catalog lists the skill before applying it", async () => {
+  const catalog = new CodexSkillCatalog(
+    {
+      request: async (method) =>
+        method === "config/read"
+          ? {
+              config: {
+                skills: {
+                  config: [
+                    { path: "/skills/project-off/SKILL.md", enabled: false },
+                  ],
+                },
+              },
+            }
+          : response([skill("project-off")]),
+    },
+    cwd,
+  );
+  expect((await catalog.inventory())[0]?.enabled).toBe(false);
+  expect(await catalog.commands()).toEqual([]);
 });

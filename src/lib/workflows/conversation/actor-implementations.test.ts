@@ -1190,7 +1190,6 @@ describe("executePromptForMachine", () => {
 
     await conversationActors.executePromptForMachine(failedInput);
 
-    expect(mockDeps.applyCapabilityWhenIdle).toHaveBeenCalled();
     expect(mockDeps.mutateConversation).not.toHaveBeenCalled();
   });
 
@@ -2034,38 +2033,6 @@ describe("executePromptForMachine", () => {
     expect(result.aborted).toBe(false);
   });
 
-  it("drains Claude capability idle work when a caller turn fails", async () => {
-    const applyCapabilityWhenIdle = vi.fn(async () => ({}));
-    mockDeps = createMockDeps({ applyCapabilityWhenIdle });
-    conversationActors = createTestActorImplementations(mockDeps);
-    mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
-
-    const input = makeExecutePromptInput();
-    const key = conversationRuntimeKey(
-      input.projectPath,
-      conversationTargetStoreSessionName(input.target),
-      input.target.conversationId,
-    );
-    registerConversationRuntime(key, {
-      managed: createManagedRuntimeFixture(key),
-      abortController: new AbortController(),
-    });
-
-    const result = await conversationActors.executePromptForMachine(input);
-
-    expect(result.error).toBe("SDK crashed");
-    expect(result.aborted).toBe(false);
-    expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
-    expect(applyCapabilityWhenIdle).toHaveBeenCalledWith({
-      projectPath: input.projectPath,
-      projectName: input.target.projectName,
-      sessionName: conversationTargetStoreSessionName(input.target),
-      conversationId: input.target.conversationId,
-      worktreePath: input.worktreePath,
-      backend: "claude",
-    });
-  });
-
   it("retries once with a fresh runtime when prompt delivery never reached backend", async () => {
     const staleSendTurn = vi.fn();
     const staleRuntime = createMockBackendRuntime({
@@ -2471,9 +2438,7 @@ describe("executePromptForMachine", () => {
     expect(mockDeps.composePortableMcpForConversation).toHaveBeenCalledWith({
       backend: "claude",
       projectPath: "/projects/repo",
-      projectName: "repo",
-      sessionName: "sess-a",
-      conversationId: "conv-xyz",
+      target: input.target,
       worktreePath: "/projects/repo/.worktrees/sess-a",
       transientPortableMcp: transient,
     });
@@ -2567,8 +2532,7 @@ describe("executePromptForMachine", () => {
     expect(applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
     expect(applyMcpAtTurnStart).toHaveBeenCalledWith({
       projectPath: "/projects/repo",
-      sessionName: "test-session",
-      conversationId: "conv-1",
+      target: input.target,
       backend: "codex",
     });
     expect(applyMcpAtTurnStart.mock.invocationCallOrder[0]).toBeLessThan(
@@ -2786,7 +2750,7 @@ describe("executePromptForMachine", () => {
     const mutateConversation: ActorFixtureDependencies["mutateConversation"] =
       vi.fn(
         async (_projectPath, _sessionName, _conversationId, label, mutate) => {
-          if (label === "prompt.seedCapabilityRuntime") {
+          if (label === "prompt.updateCapabilityRuntime") {
             const stub = {} as ConversationState;
             mutate(stub);
             capturedSeed = stub.agentCapabilitiesRuntime;
@@ -2825,7 +2789,7 @@ describe("executePromptForMachine", () => {
     const labels = (
       mutateConversation as ReturnType<typeof vi.fn>
     ).mock.calls.map((call) => call[3]);
-    expect(labels).toContain("prompt.seedCapabilityRuntime");
+    expect(labels).toContain("prompt.updateCapabilityRuntime");
   });
 
   it("delivers seeded Codex capability config at first turn start before sendTurn", async () => {
@@ -2926,7 +2890,7 @@ describe("executePromptForMachine", () => {
     const labels = (
       mutateConversation as ReturnType<typeof vi.fn>
     ).mock.calls.map((call) => call[3]);
-    expect(labels).not.toContain("prompt.seedCapabilityRuntime");
+    expect(labels).not.toContain("prompt.updateCapabilityRuntime");
   });
 
   it("seeds Claude project-conversation capability config from the project composer", async () => {
@@ -2964,7 +2928,7 @@ describe("executePromptForMachine", () => {
     const mutateConversation: ActorFixtureDependencies["mutateConversation"] =
       vi.fn(
         async (_projectPath, _sessionName, _conversationId, label, mutate) => {
-          if (label === "prompt.seedCapabilityRuntime") {
+          if (label === "prompt.updateCapabilityRuntime") {
             const stub = {} as ConversationState;
             mutate(stub);
             capturedSeed = stub.agentCapabilitiesRuntime;

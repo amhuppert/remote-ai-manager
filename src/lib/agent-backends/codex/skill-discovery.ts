@@ -3,24 +3,16 @@ import {
   type AppServerClientOptions,
   type AppServerClient,
 } from "./app-server-client";
-import { CodexSkillCatalog } from "./skill-catalog";
+import {
+  CodexSkillCatalog,
+  type CodexNativeSkill,
+  type CodexNativeSkillSelector,
+} from "./skill-catalog";
 import { ensureCodexManagedSkillsBridgeForLaunch } from "./managed-skills-bridge";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { toStringEnv } from "./shared";
 import { CODEX_NATIVE_MEMORY_CONFIG } from "./native-memory";
 import { publishEvent } from "@/lib/events/publication";
-import type { BackendSkillCatalogFacet } from "../descriptor";
-import { translateCodexRuntimeCapabilities } from "./runtime-config";
-
-export const codexSkillCatalog: BackendSkillCatalogFacet = {
-  getCommands({ worktreePath, capabilities }) {
-    const config = capabilities
-      ? translateCodexRuntimeCapabilities(capabilities).config
-      : {};
-    return discoverCodexSkillCommands(worktreePath, { ...config });
-  },
-};
-
 export interface CodexSkillDiscoveryDeps {
   createAppServer(options: AppServerClientOptions): AppServerClient;
   ensureManagedSkillsBridge(cwd: string): Promise<unknown>;
@@ -38,13 +30,15 @@ export function publishCodexSkillsChanged(): void {
 }
 
 /** Read-only discovery has a bounded process lifetime and never starts a model turn. */
-export async function discoverCodexSkillCommands(
+async function withCodexSkillCatalog<T>(
+  consume: (catalog: CodexSkillCatalog) => Promise<T>,
   cwd: string,
   config: Record<string, unknown> = {},
   dependencies: Partial<CodexSkillDiscoveryDeps> = {},
+  prepareManagedSkills = true,
 ) {
   const deps = { ...defaults, ...dependencies };
-  await deps.ensureManagedSkillsBridge(cwd);
+  if (prepareManagedSkills) await deps.ensureManagedSkillsBridge(cwd);
   let failure: Error | undefined;
   const client = deps.createAppServer({
     cwd,
@@ -65,10 +59,47 @@ export async function discoverCodexSkillCommands(
       capabilities: { experimentalApi: false },
     });
     client.notify("initialized");
-    const commands = await catalog.commands();
+    const commands = await consume(catalog);
     if (failure) throw failure;
     return commands;
   } finally {
     await client.close();
   }
+}
+
+export function discoverCodexSkillCommands(
+  cwd: string,
+  config: Record<string, unknown> = {},
+  dependencies: Partial<CodexSkillDiscoveryDeps> = {},
+) {
+  return withCodexSkillCatalog(
+    (catalog) => catalog.commands(),
+    cwd,
+    config,
+    dependencies,
+  );
+}
+
+export function discoverCodexSkillInventory(
+  cwd: string,
+): Promise<CodexNativeSkill[]> {
+  return withCodexSkillCatalog(
+    (catalog) => catalog.inventory(),
+    cwd,
+    {},
+    {},
+    false,
+  );
+}
+
+export function discoverCodexSkillSelectors(
+  cwd: string,
+): Promise<CodexNativeSkillSelector[]> {
+  return withCodexSkillCatalog(
+    (catalog) => catalog.selectors(),
+    cwd,
+    {},
+    {},
+    false,
+  );
 }

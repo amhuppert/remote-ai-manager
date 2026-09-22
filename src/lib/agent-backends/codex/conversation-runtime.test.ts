@@ -600,6 +600,7 @@ describe("CodexConversationRuntime", () => {
       listNativeCodexMcpServers: vi.fn().mockResolvedValue([]),
       getCodexPricingOverrides: vi.fn().mockResolvedValue(null),
       readPersistedCostBaseline: vi.fn().mockResolvedValue(null),
+      mergeNativeSkillSelectors: async (config) => config,
       ensureManagedSkillsBridge: vi
         .fn()
         .mockResolvedValue({ status: "skipped", reason: "no_bundle" }),

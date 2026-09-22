@@ -31,18 +31,7 @@ export function registerMcpSseReactions(
       // An override at any scope changes the resolved view at that scope and
       // every descendant scope, so we invalidate the whole subtree — not
       // just the emitting level.
-      const invalidations = computeMcpConfigInvalidations({
-        level: data.level,
-        ...(data.projectName !== undefined && {
-          projectName: data.projectName,
-        }),
-        ...(data.sessionName !== undefined && {
-          sessionName: data.sessionName,
-        }),
-        ...(data.conversationId !== undefined && {
-          conversationId: data.conversationId,
-        }),
-      });
+      const invalidations = computeMcpConfigInvalidations(data);
       for (const matcher of invalidations) {
         void queryClient.invalidateQueries({ queryKey: matcher.queryKey });
       }
@@ -54,14 +43,9 @@ export function registerMcpSseReactions(
     "mcp-tools-updated",
     mcpToolsUpdatedEventSchema,
     (data) => {
-      if (data.projectName && data.sessionName && data.conversationId) {
+      if (data.target) {
         void queryClient.invalidateQueries({
-          queryKey: mcpToolsKeys.inventory(
-            data.projectName,
-            data.sessionName,
-            data.conversationId,
-            data.serverKey,
-          ),
+          queryKey: mcpToolsKeys.inventory(data.target, data.serverKey),
         });
       } else {
         void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });

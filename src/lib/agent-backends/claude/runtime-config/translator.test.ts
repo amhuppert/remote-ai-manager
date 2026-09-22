@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import type { ResolvedCapabilityCascade } from "../../runtime-config";
-import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "./agent-suppression";
 import { translateClaudeRuntimeCapabilities } from "./translator";
 
 function cascade(
@@ -97,7 +96,7 @@ describe("translateClaudeRuntimeCapabilities — plugins", () => {
 });
 
 describe("translateClaudeRuntimeCapabilities — agents", () => {
-  it("collects disabled agent names and pins the verified suppression strategy", () => {
+  it("does not advertise an unsupported individual-agent suppression", () => {
     const result = translateClaudeRuntimeCapabilities({
       cascade: cascade([
         {
@@ -110,10 +109,7 @@ describe("translateClaudeRuntimeCapabilities — agents", () => {
       ]),
       nativePluginRecords: [],
     });
-    expect(result.config.disabledAgentNames).toEqual(["reviewer"]);
-    expect(result.config.agentSuppressionStrategy).toBe(
-      CLAUDE_AGENT_SUPPRESSION_STRATEGY,
-    );
+    expect(result.config).toEqual({ enabledPlugins: {}, skillOverrides: {} });
   });
 });
 
@@ -126,8 +122,25 @@ describe("translateClaudeRuntimeCapabilities — absent kinds", () => {
     expect(result.config).toEqual({
       enabledPlugins: {},
       skillOverrides: {},
-      disabledAgentNames: [],
-      agentSuppressionStrategy: CLAUDE_AGENT_SUPPRESSION_STRATEGY,
     });
   });
+});
+
+it("omits plugin-owned skill decisions unsupported by native skillOverrides", () => {
+  const result = translateClaudeRuntimeCapabilities({
+    cascade: cascade([
+      {
+        kind: "skills",
+        items: [
+          {
+            itemId: "plugin:review",
+            enabled: false,
+            originLayer: "conversation",
+          },
+        ],
+      },
+    ]),
+    nativePluginRecords: [],
+  });
+  expect(result.config.skillOverrides).toEqual({});
 });

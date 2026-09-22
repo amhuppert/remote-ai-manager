@@ -1,13 +1,8 @@
 /**
- * Reader for Claude's native plugin enablement records.
- *
- * `~/.claude/settings.json`'s `enabledPlugins` accepts
- * `string[] | Record<pluginId, boolean | string[] | object>`; the entries are
- * provider knowledge the plugin translator needs to compute a minimal
- * flag-layer delta (see `plugin-translator.ts`). This module is the single
- * parser for that shape: the runtime-config adapter reads records itself at
- * apply/creation time, and capability discovery (above the seam) imports
- * `parseNativePluginEntries` so the knowledge is never duplicated.
+ * Claude plugin baselines, shared by adapter discovery and flag translation.
+ * User, project, and local settings merge per plugin in native precedence
+ * order. Extended native values remain private so no-op CC overrides leave
+ * them intact.
  */
 
 import { promises as fs } from "node:fs";
@@ -69,28 +64,36 @@ const defaultDeps: ClaudePluginNativeRecordsDeps = {
 };
 
 /**
- * Read the current native plugin records from `~/.claude/settings.json`.
+ * Read effective native plugin records for the addressed working directory.
  * Returns `[]` when the file is absent; throws when it exists but cannot be
  * read or parsed, so callers can distinguish "no native config" from "native
  * config unknown" (the latter must not be treated as an empty delta basis).
  */
 export async function readClaudePluginNativeRecords(
   deps: ClaudePluginNativeRecordsDeps = defaultDeps,
+  worktreePath?: string,
 ): Promise<readonly ClaudePluginNativeRecord[]> {
-  const settingsPath = path.join(deps.homeDir(), ".claude", "settings.json");
-  let raw: string;
-  try {
-    raw = await deps.readFile(settingsPath);
-  } catch (err) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return [];
+  const paths = [path.join(deps.homeDir(), ".claude", "settings.json")];
+  if (worktreePath)
+    paths.push(
+      path.join(worktreePath, ".claude", "settings.json"),
+      path.join(worktreePath, ".claude", "settings.local.json"),
+    );
+  const records = new Map<string, ClaudePluginNativeRecord>();
+  for (const settingsPath of paths) {
+    let raw: string;
+    try {
+      raw = await deps.readFile(settingsPath);
+    } catch (err) {
+      if (err instanceof Error && "code" in err && err.code === "ENOENT")
+        continue;
+      throw err;
     }
-    throw err;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !("enabledPlugins" in parsed))
+      continue;
+    for (const record of parseNativePluginEntries(parsed.enabledPlugins))
+      records.set(record.pluginId, record);
   }
-  const parsed = JSON.parse(raw) as { enabledPlugins?: unknown };
-  return parseNativePluginEntries(parsed.enabledPlugins);
+  return [...records.values()];
 }

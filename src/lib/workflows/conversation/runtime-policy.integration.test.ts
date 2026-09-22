@@ -1,3 +1,4 @@
+import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -57,7 +58,13 @@ describe("ephemeral policy application through the composed conversation", () =>
           write: true,
           overrides: {
             cascades: {
-              "codex-skills": { items: { "spec-init": { enabled: false } } },
+              "codex-skills": {
+                items: {
+                  "skill:repo:.agents%2Fskills%2Fspec-init%2FSKILL.md": {
+                    enabled: false,
+                  },
+                },
+              },
             },
           },
           result: undefined,
@@ -78,12 +85,13 @@ describe("ephemeral policy application through the composed conversation", () =>
                 kind === "codex-skills"
                   ? [
                       {
-                        itemId: "spec-init",
+                        itemId:
+                          "skill:repo:.agents%2Fskills%2Fspec-init%2FSKILL.md",
                         displayName: "spec-init",
                         capabilityKind: "skill",
                         source: {
                           kind: "project-file",
-                          path: `${input.worktreePath}/.agents/skills/spec-init`,
+                          path: `${input.worktreePath}/.agents/skills/spec-init/SKILL.md`,
                         },
                         nativeDefault: { enabled: true },
                         runtimeVisibility: "source-only",
@@ -105,8 +113,14 @@ describe("ephemeral policy application through the composed conversation", () =>
         readProjectOverrides: fixture.store.getProjectMcpOverrides,
         readSessionOverrides: async (p, s) =>
           (await fixture.store.getSession(p, s))?.mcpOverrides,
-        readConversationOverrides: async (p, s, c) =>
-          (await fixture.store.getConversation(p, s, c))?.mcpOverrides,
+        readConversationOverrides: async (p, target) =>
+          (
+            await fixture.store.getConversation(
+              p,
+              target.scope === "session" ? target.sessionName : "__project__",
+              target.conversationId,
+            )
+          )?.mcpOverrides,
         globalConfigPath: () => "/policy-home/.mcp.json",
         async discoverSources(input) {
           if (!input.worktreePath)
@@ -132,9 +146,13 @@ describe("ephemeral policy application through the composed conversation", () =>
           };
         },
       });
-      const appliedCapabilities = vi.fn(async () => ({
-        status: "applied" as const,
-      }));
+      let deliveredCapabilities: ResolvedCapabilityCascade | undefined;
+      const appliedCapabilities = vi.fn(
+        async (config: { capabilities?: ResolvedCapabilityCascade }) => {
+          deliveredCapabilities = config.capabilities;
+          return { status: "deferred" as const, reason: "next_turn" as const };
+        },
+      );
       const applyMcp = vi.fn(async () => ({
         disposition: "rejected" as const,
         droppedServerIds: ["s1"],
@@ -152,7 +170,10 @@ describe("ephemeral policy application through the composed conversation", () =>
           applyPortableMcpConfig: applyMcp,
           async sendTurn(input) {
             dispatches++;
-            await input.onEvent({ type: "input_accepted" });
+            await input.onEvent({
+              type: "input_accepted",
+              capabilities: deliveredCapabilities,
+            });
             return {
               backendRef: null,
               costUsd: 0,
@@ -168,6 +189,8 @@ describe("ephemeral policy application through the composed conversation", () =>
             };
           },
         }),
+        capabilityWorkingDirectory: worktreePath,
+        capabilityConfigDelivery: "input-accepted" as const,
         applyCapabilityConfig: appliedCapabilities,
       };
       const dependencies = groupActorFixtureDependencies(
@@ -260,7 +283,31 @@ describe("ephemeral policy application through the composed conversation", () =>
         expect(dispatches).toBe(1);
         expect(appliedCapabilities).toHaveBeenCalledWith({
           config: {
-            skills: { config: [{ enabled: false, name: "spec-init" }] },
+            skills: {
+              config: [
+                {
+                  enabled: false,
+                  path: `${worktreePath}/.agents/skills/spec-init/SKILL.md`,
+                },
+              ],
+            },
+          },
+          capabilities: {
+            backend: "codex",
+            kinds: [
+              { kind: "plugins", items: [] },
+              {
+                kind: "skills",
+                items: [
+                  {
+                    itemId:
+                      "skill:repo:.agents%2Fskills%2Fspec-init%2FSKILL.md",
+                    enabled: false,
+                    originLayer: "project",
+                  },
+                ],
+              },
+            ],
           },
         });
         const capabilityApplyCount = appliedCapabilities.mock.calls.length;
