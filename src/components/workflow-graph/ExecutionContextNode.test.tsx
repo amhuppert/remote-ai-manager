@@ -397,7 +397,7 @@ describe("ExecutionContextNode — card anatomy", () => {
 
     const crew = screen.getByTestId("node-crew");
     // The catalog's canonical long name, never the short selector id.
-    expect(crew).toHaveTextContent("Opus 5");
+    expect(crew).toHaveTextContent("Opus 5.5");
     expect(crew).toHaveTextContent("high");
 
     const seats = screen.getAllByTestId("node-crew-seat");
@@ -428,7 +428,7 @@ describe("ExecutionContextNode — card anatomy", () => {
     );
 
     expect(screen.getByTestId("context-node")).toHaveAccessibleName(
-      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 high, inherited",
+      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5.5 high, inherited",
     );
   });
 
@@ -607,7 +607,7 @@ it("changes a model to its supported parameter defaults", () => {
     screen.getByRole("combobox", { name: "Implementer model" }),
     { key: "Enter" },
   );
-  fireEvent.click(screen.getByRole("option", { name: "Opus 5" }));
+  fireEvent.click(screen.getByRole("option", { name: "Opus 5.5" }));
   expect(onChange).toHaveBeenCalledWith(
     { kind: "implementer" },
     {

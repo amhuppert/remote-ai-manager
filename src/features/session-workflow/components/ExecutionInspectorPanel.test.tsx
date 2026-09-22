@@ -173,7 +173,7 @@ describe("ExecutionInspectorPanel — Config tab + overview header", () => {
     const tab = screen.getByTestId("context-config-tab");
     // context-plan's resolved implementer is claude opus, summarised on the
     // Agents card before the reader drills into it.
-    expect(within(tab).getByText("Opus 5")).toBeInTheDocument();
+    expect(within(tab).getByText("Opus 5.5")).toBeInTheDocument();
 
     // Runtime facts live one screen in, under Placement (README §11).
     fireEvent.click(within(tab).getByRole("button", { name: /Placement/ }));

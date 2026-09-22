@@ -161,7 +161,7 @@ describe("contextNodeCrew", () => {
     expect(crew.implementer).toMatchObject({
       backend: "claude",
       // The catalog's canonical long name, never the short selector id.
-      modelLabel: "Opus 5",
+      modelLabel: "Opus 5.5",
       parametersLabel: "high",
     });
     expect(crew.implementer?.modelLabel).not.toBe("opus");
@@ -238,7 +238,7 @@ describe("contextNodeAriaLabel", () => {
 
   it("names status, lane, grade, paths, tasks and the implementer", () => {
     expect(contextNodeAriaLabel(base)).toBe(
-      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 high, inherited",
+      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5.5 high, inherited",
     );
   });
 
@@ -260,7 +260,7 @@ describe("contextNodeAriaLabel", () => {
     });
 
     expect(label).toBe(
-      "Implement checkout — Running, lane delivery, owning, implementer Opus 5 high, inherited",
+      "Implement checkout — Running, lane delivery, owning, implementer Opus 5.5 high, inherited",
     );
   });
 });

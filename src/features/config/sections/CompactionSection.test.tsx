@@ -155,7 +155,7 @@ describe("CompactionSection", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
-    selectModel("compaction.conversationModelSelection", "Opus 5");
+    selectModel("compaction.conversationModelSelection", "Opus 5.5");
 
     expect(getState().compaction?.conversationModelSelection).toEqual({
       modelId: "opus",

@@ -997,7 +997,7 @@ describe("QuickTicketDialog", () => {
 
     await user.click(autoStart);
     expect(await screen.findByTestId("model-selector-label")).toHaveTextContent(
-      /^Opus 5$/,
+      /^Opus 5\.5$/,
     );
     expect(screen.getByRole("combobox", { name: "Effort" })).toHaveTextContent(
       /^Medium$/,
