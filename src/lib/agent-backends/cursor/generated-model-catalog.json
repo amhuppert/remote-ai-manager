@@ -5,7 +5,9 @@
     {
       "id": "default",
       "label": "Auto",
-      "aliases": ["auto"],
+      "aliases": [
+        "auto"
+      ],
       "parameters": [],
       "variants": [
         {
@@ -411,7 +413,11 @@
     {
       "id": "composer-2.5",
       "label": "Composer 2.5",
-      "aliases": ["composer-latest", "composer", "composer-2-5"],
+      "aliases": [
+        "composer-latest",
+        "composer",
+        "composer-2-5"
+      ],
       "parameters": [
         {
           "id": "fast",
@@ -453,9 +459,322 @@
       ]
     },
     {
+      "id": "claude-opus-5-5",
+      "label": "Claude Opus 5.5",
+      "aliases": [
+        "opus-5.5",
+        "opus-5-5"
+      ],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "emphasis": "exceeds-scale"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "low",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "low",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "medium",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "medium",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "high",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "high",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "xhigh",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "xhigh",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "max",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "max",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "xhigh",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "xhigh",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "fast": "false"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "fast": "true"
+            }
+          },
+          "label": "Claude Opus 5.5",
+          "isDefault": false
+        }
+      ]
+    },
+    {
       "id": "claude-opus-5",
       "label": "Claude Opus 5",
-      "aliases": ["opus-5"],
+      "aliases": [
+        "opus-5"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -997,7 +1316,10 @@
     {
       "id": "claude-opus-4-8",
       "label": "Claude Opus 4.8",
-      "aliases": ["opus-4.8", "opus-4-8"],
+      "aliases": [
+        "opus-4.8",
+        "opus-4-8"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -1651,7 +1973,11 @@
     {
       "id": "gpt-5.6-sol",
       "label": "GPT-5.6 Sol",
-      "aliases": ["gpt-latest", "gpt-5-6-sol", "gpt-5.6"],
+      "aliases": [
+        "gpt-latest",
+        "gpt-5-6-sol",
+        "gpt-5.6"
+      ],
       "parameters": [
         {
           "id": "context",
@@ -2011,7 +2337,9 @@
     {
       "id": "gpt-5.5",
       "label": "GPT-5.5",
-      "aliases": ["gpt-5-5"],
+      "aliases": [
+        "gpt-5-5"
+      ],
       "parameters": [
         {
           "id": "context",
@@ -2258,7 +2586,9 @@
     {
       "id": "claude-fable-5-1",
       "label": "Claude Fable 5.1",
-      "aliases": ["fable-5-1"],
+      "aliases": [
+        "fable-5-1"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -2566,7 +2896,10 @@
     {
       "id": "claude-fable-5",
       "label": "Claude Fable 5",
-      "aliases": ["fable", "fable-5"],
+      "aliases": [
+        "fable",
+        "fable-5"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -3099,7 +3432,10 @@
     {
       "id": "muse-spark-1.3",
       "label": "Muse Spark 1.3",
-      "aliases": ["muse-spark", "muse"],
+      "aliases": [
+        "muse-spark",
+        "muse"
+      ],
       "parameters": [
         {
           "id": "context",
@@ -3288,7 +3624,9 @@
     {
       "id": "gpt-5.6-terra",
       "label": "GPT-5.6 Terra",
-      "aliases": ["gpt-5-6-terra"],
+      "aliases": [
+        "gpt-5-6-terra"
+      ],
       "parameters": [
         {
           "id": "context",
@@ -3648,7 +3986,9 @@
     {
       "id": "claude-sonnet-5",
       "label": "Claude Sonnet 5",
-      "aliases": ["sonnet-5"],
+      "aliases": [
+        "sonnet-5"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -3956,7 +4296,10 @@
     {
       "id": "claude-sonnet-4-6",
       "label": "Claude Sonnet 4.6",
-      "aliases": ["sonnet-4.6", "sonnet-4-6"],
+      "aliases": [
+        "sonnet-4.6",
+        "sonnet-4-6"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -4255,7 +4598,11 @@
     {
       "id": "gpt-5.3-codex",
       "label": "Codex 5.3",
-      "aliases": ["codex-latest", "codex", "codex-5.3"],
+      "aliases": [
+        "codex-latest",
+        "codex",
+        "codex-5.3"
+      ],
       "parameters": [
         {
           "id": "reasoning",
@@ -4391,7 +4738,10 @@
     {
       "id": "claude-opus-4-7",
       "label": "Claude Opus 4.7",
-      "aliases": ["opus-4.7", "opus-4-7"],
+      "aliases": [
+        "opus-4.7",
+        "opus-4-7"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -5292,7 +5642,10 @@
     {
       "id": "claude-opus-4-6",
       "label": "Claude Opus 4.6",
-      "aliases": ["opus-4.6", "opus-4-6"],
+      "aliases": [
+        "opus-4.6",
+        "opus-4-6"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -5547,7 +5900,10 @@
     {
       "id": "claude-opus-4-5",
       "label": "Claude Opus 4.5",
-      "aliases": ["opus-4.5", "opus-4-5"],
+      "aliases": [
+        "opus-4.5",
+        "opus-4-5"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -5727,7 +6083,9 @@
     {
       "id": "gpt-5.6-luna",
       "label": "GPT-5.6 Luna",
-      "aliases": ["gpt-5-6-luna"],
+      "aliases": [
+        "gpt-5-6-luna"
+      ],
       "parameters": [
         {
           "id": "context",
@@ -6159,7 +6517,12 @@
     {
       "id": "gemini-3.1-pro",
       "label": "Gemini 3.1 Pro",
-      "aliases": ["gemini-latest", "gemini-pro-latest", "gemini", "gemini-pro"],
+      "aliases": [
+        "gemini-latest",
+        "gemini-pro-latest",
+        "gemini",
+        "gemini-pro"
+      ],
       "parameters": [],
       "variants": [
         {
@@ -6175,7 +6538,9 @@
     {
       "id": "gpt-5.4-mini",
       "label": "GPT-5.4 Mini",
-      "aliases": ["gpt-mini-latest"],
+      "aliases": [
+        "gpt-mini-latest"
+      ],
       "parameters": [
         {
           "id": "reasoning",
@@ -6262,7 +6627,10 @@
     {
       "id": "gpt-5.4-nano",
       "label": "GPT-5.4 Nano",
-      "aliases": ["gpt-nano-latest", "gpt-nano"],
+      "aliases": [
+        "gpt-nano-latest",
+        "gpt-nano"
+      ],
       "parameters": [
         {
           "id": "reasoning",
@@ -6349,7 +6717,12 @@
     {
       "id": "claude-haiku-4-5",
       "label": "Claude Haiku 4.5",
-      "aliases": ["haiku-latest", "haiku", "haiku-4.5", "haiku-4-5"],
+      "aliases": [
+        "haiku-latest",
+        "haiku",
+        "haiku-4.5",
+        "haiku-4-5"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -6393,7 +6766,10 @@
     {
       "id": "claude-sonnet-4-5",
       "label": "Claude Sonnet 4.5",
-      "aliases": ["sonnet-4.5", "sonnet-4-5"],
+      "aliases": [
+        "sonnet-4.5",
+        "sonnet-4-5"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -6540,7 +6916,9 @@
     {
       "id": "claude-sonnet-4",
       "label": "Claude Sonnet 4",
-      "aliases": ["sonnet-4"],
+      "aliases": [
+        "sonnet-4"
+      ],
       "parameters": [
         {
           "id": "thinking",
@@ -6688,7 +7066,10 @@
     {
       "id": "kimi-k2.7-code",
       "label": "Kimi K2.7 Code",
-      "aliases": ["kimi-latest", "kimi"],
+      "aliases": [
+        "kimi-latest",
+        "kimi"
+      ],
       "parameters": [],
       "variants": [
         {
@@ -6749,7 +7130,7 @@
   ],
   "provenance": {
     "source": "Cursor.models.list",
-    "generatedAt": "2026-09-21T20:37:11.403Z",
+    "generatedAt": "2026-09-22T18:49:17.920Z",
     "sdkVersion": "1.0.31"
   }
 }
