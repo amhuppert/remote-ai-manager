@@ -1,6 +1,7 @@
 ---
 name: brainstorm
-description: Brainstorm Command Center feature ideas from a seed — a new idea, a direction, or an existing feature to iterate on. Use when explicitly asked to brainstorm, ideate, or generate feature ideas for Command Center.
+description: Brainstorm Command Center feature ideas from a seed — a new idea, a
+  direction, or an existing feature to iterate on.
 ---
 
 # Feature Brainstorming

@@ -1,6 +1,11 @@
 ---
 name: review-response
-description: Use when responding to adversarial review findings in Command Center — a design review, code review verdict, validator report, or findings document — before accepting, rejecting, or acting on any recommendation. Triggers on "consider the review", "respond to these findings", "should anything change based on this review", or receiving reviewer feedback that proposes design or scope changes.
+description: Use when responding to adversarial review findings in Command
+  Center — a design review, code review verdict, validator report, or findings
+  document — before accepting, rejecting, or acting on any recommendation.
+  Triggers on "consider the review", "respond to these findings", "should
+  anything change based on this review", or receiving reviewer feedback that
+  proposes design or scope changes.
 ---
 
 # Responding to Review Findings

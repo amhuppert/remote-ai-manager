@@ -1,8 +1,6 @@
 ---
 name: ui-design-autonomy
-description: Use when designing new UI, reworking existing UI, or making other
-  UI changes in this project. Grants design autonomy and requires
-  screenshot-based inspection of correctness and aesthetic quality.
+description: Use when designing new UI, reworking existing UI, or making other UI changes in this project. Grants design autonomy and requires screenshot-based inspection of correctness and aesthetic quality.
 ---
 
 # UI design autonomy

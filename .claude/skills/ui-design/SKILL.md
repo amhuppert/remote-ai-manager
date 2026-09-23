@@ -1,8 +1,8 @@
 ---
 name: ui-design
-description: Design a Command Center UI feature through proposals, user review,
-  and a Storybook prototype. Use when the user invokes /ui-design or explicitly
-  requests that design review workflow.
+description: Design a Command Center UI feature through proposals, user review, and a Storybook prototype. Use when the user invokes /ui-design or explicitly requests that design review workflow.
+argument-hint: <feature-description>
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill, WebSearch, WebFetch
 ---
 
 # UI feature design

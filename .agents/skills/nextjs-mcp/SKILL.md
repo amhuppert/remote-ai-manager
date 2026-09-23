@@ -1,6 +1,8 @@
 ---
 name: nextjs-mcp
-description: Diagnose the running Command Center app with Next.js and Chrome DevTools MCP; use for runtime errors, route or server-action inspection, visual verification, browser debugging, and performance traces.
+description: Diagnose the running Command Center app with Next.js and Chrome
+  DevTools MCP; use for runtime errors, route or server-action inspection,
+  visual verification, browser debugging, and performance traces.
 ---
 
 # Next.js and browser diagnostics

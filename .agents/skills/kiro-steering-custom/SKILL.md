@@ -1,8 +1,9 @@
 ---
 name: kiro-steering-custom
-description: Create domain-specific steering when the user requests persistent guidance beyond the core product, technology, and structure documents.
+description: Create domain-specific steering when the user requests persistent
+  guidance beyond the core product, technology, and structure documents.
 metadata:
-  shared-rules: "steering-principles.md"
+  shared-rules: steering-principles.md
 ---
 
 # Create custom steering

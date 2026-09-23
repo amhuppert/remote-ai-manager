@@ -1,6 +1,8 @@
 ---
 name: graph-workflow-development
-description: Use when designing or reviewing changes to Command Center's graph workflow feature, including audit-driven fixes and Native SDD integration. Does not cover authoring individual workflow plans.
+description: Use when designing or reviewing changes to Command Center's graph
+  workflow feature, including audit-driven fixes and Native SDD integration.
+  Does not cover authoring individual workflow plans.
 ---
 
 # Graph workflow development

@@ -1,8 +1,9 @@
 ---
 name: kiro-steering
-description: Maintain .kiro/steering/ when bootstrapping project guidance or synchronizing it with code and confirmed decisions.
+description: Maintain .kiro/steering/ when bootstrapping project guidance or
+  synchronizing it with code and confirmed decisions.
 metadata:
-  shared-rules: "steering-principles.md"
+  shared-rules: steering-principles.md
 ---
 
 # Maintain project steering

@@ -1,5 +1,8 @@
 ---
-description: Implement or change shared UI primitives in src/components/ui/, with the appropriate accessibility pattern, Storybook states, and live keyboard/axe verification. For page UI, use the design system and ui-design-autonomy; /ui-design is the explicit proposal workflow.
+description: Implement or change shared UI primitives in src/components/ui/,
+  with the appropriate accessibility pattern, Storybook states, and live
+  keyboard/axe verification. For page UI, use the design system and
+  ui-design-autonomy; /ui-design is the explicit proposal workflow.
 name: ui-primitive
 ---
 

@@ -1,0 +1,151 @@
+---
+name: cc-live-feature-test
+description: Verify Command Center behavior in the running app, using real
+  backend calls and durable-state checks where the feature depends on them. Use
+  for live feature validation or an explicit end-to-end check.
+---
+
+# Command Center — Live Feature Verification
+
+Verify the requested behavior through the running system. Exercise real LLM calls when agent execution is part of that behavior, and verify durable state when persistence or delivery is part of the claim. Choose evidence that can actually detect the failure: unit tests, live interactions, and backend readback establish different properties.
+
+Read the reference needed for the chosen check:
+
+- `references/routes-and-api.md` — deep-link URL table, REST fixture contracts, and durable-state file locations. Eliminates URL/endpoint guessing.
+- `references/playwright-recipes.md` — verified playwright-cli idioms (wait, snapshot, eval) and their gotchas, plus dev-mode timing expectations.
+
+## The default verification shape
+
+Use this loop for a feature that needs seeded agent state; skip fixture/LLM steps for a purely visual or local interaction check:
+
+1. `cctl dev ensure <server>` → the session-scoped `localUrl`.
+2. **Seed setup through the fixture API**, unless setup itself is the user flow under test: `cctl fixture session create <scratch-project> --json` returns a ready `conversationId`, deep-link `urls`, and the dev `dbPath`/`transcriptPath` — and pre-warms the routes so the first navigation is fast. Run turns with `cctl fixture prompt … --wait`. (Full verbs: the cc-cli skill.)
+3. **Deep-link** the browser straight to the target URL from the fixture output.
+4. Assert with **one-line `eval` probes returning tiny strings**; scope snapshots to elements; wait with the `run-code` waitFor idiom (never `networkidle` — SSE keeps the network busy forever).
+5. **Verify against durable state** — transcript JSONL, SQLite, API — never the optimistic UI alone.
+6. Clean up: `cctl fixture session delete`, `playwright-cli -s=<name> close`.
+
+## Which instance am I driving? (read before anything else)
+
+A live test involves **two independent CC instances**. `cctl dev ensure` does not start "your app" — it starts a *second CC server* with its own database, config, api-token, published `cctl`, and discovered-projects list. Meanwhile the `cctl` in your environment points at the **managing** instance, the one your agent session lives in.
+
+| | Managing CC | Worktree dev server |
+|---|---|---|
+| URL | ambient `CC_SERVER_URL` (e.g. `:3000`) | `cctl dev ensure`'s `localUrl` |
+| Config dir (DB, logs, transcripts) | production (`~/Library/Application Support/cc`) | `<worktree>/.config` |
+| Your agent session lives here | yes | no |
+| A bare `cctl <verb>` talks to | this one | never this one |
+| The live test must drive | never | always |
+
+**Every step of a live test — seeding, the action under test, and verification — targets the dev server.** A state-producing verb run from your own session (`cctl validate run`, `cctl workflow start`, `cctl spec …`) hits the **managing** instance and is invisible in the dev server's UI and DB. That is not a bug in the feature.
+
+This is a trap rather than an ordinary mistake because **it is invisible in the happy path**: reads of *discovered* state (projects, files) behave identically against either instance. Only **server-owned durable state** diverges — the validation ledger, workflow executions, jobs, notifications, conversations. So the failure looks like "the feature doesn't work" instead of "you asked the wrong server".
+
+### The diagnostic
+
+When live state "isn't showing up", run:
+
+```bash
+cctl dev doctor          # both instances side by side, each with its own token
+```
+
+It prints each instance's build, **config dir**, and published `cctl`, and names which one a bare `cctl` reaches. **Differing `config dir` values mean two databases** — anything you created through the CLI is in the other one. (The older tell works too: a config value you never set differing between CLI and UI — e.g. a concurrency limit reading `8` in one and `16` in the other — is two instances, not a bug.)
+
+Don't hand-roll this as `cctl doctor --server <devUrl>`: every instance mints its own token, so the ambient `CC_API_TOKEN` 401s there. `dev doctor` resolves the dev server and uses *that server's* token. To diagnose one specific URL you already have a token for, `cctl doctor --server <url>` prints its `serverBuild`, `configDir`, and `cliPath` (in text and in `--json`).
+
+### Producing server-owned state *inside* the dev server
+
+Step 2 below covers driving agent *turns*. For state only a server-side service can create, the move is to **run the verb from a session that lives on the dev server**:
+
+1. `cctl fixture session create <scratch-project>` — creates the session **on the dev server**.
+2. `cctl fixture prompt <project> <session> --text "run: <the cctl verb>" --wait` — the agent inside that session inherits *the dev server's* `CC_SERVER_URL` and `CC_API_TOKEN`, so its verbs land in the dev server's ledger and show up in its UI.
+
+`cctl fixture` is the one command family that works from **any** `cctl` binary — it addresses two instances by design, so it states no build stamp and the build-parity gate does not apply. You do not need a special binary for it.
+
+For overlapping validation scenarios, use the harness's tracked background execution rather than detaching processes. `cctl validate run` waits by default; `--queue-if-busy` chooses queue admission, not asynchronous execution. Read its current help and add `--json` when collecting a verdict.
+
+## Core principles (read first)
+
+1. **Use the real path for the claim.** Drive affected interactions in the app. Use real agent turns for agent-dependent behavior; layout changes do not require a paid model call.
+2. **Verify persisted behavior beyond optimistic state.** When claiming that something was saved, queued, or delivered, read it back through the relevant API, SQLite repository, or transcript after the action.
+3. **Reconcile contradictory evidence.** A green suite proves its assertions; a reproducible live failure reveals a gap to investigate. Identify the actual missing coverage rather than assuming the tests only exercised mocks.
+4. **Verify the test target is safe.** Confirm you are pointed at a worktree-local database, NOT production (see Step 0). Live testing creates and deletes real sessions/conversations/prompts — doing that against the production DB is destructive.
+
+## Step 0 — Safety: confirm you are NOT pointed at the production DB
+
+The section above says which instance to *drive*; this one is the other half — confirming the instance you are about to mutate is the worktree's and not production.
+
+This repository's registered dev-server configuration must create local configuration state in the current worktree — i.e. start the dev server with `CC_CONFIG_DIR` resolving to `<worktree>/.config`, giving an isolated `command-center.db`, logs, and transcripts. Verify this before doing anything that mutates state.
+
+- Production config dirs (DO NOT TEST AGAINST THESE):
+  - macOS: `~/Library/Application Support/cc`
+  - Linux: `$XDG_CONFIG_HOME/cc` or `~/.config/cc`
+- Run `cctl dev doctor` to inspect the running instance's actual `configDir`. Confirm it resolves **inside the current worktree**. Use `cctl dev list --json` and the registered command to diagnose a mismatch; command text and the existence of a `.config` directory alone do not prove the process uses that database.
+
+```bash
+WT="$(git rev-parse --show-toplevel)"
+# The worktree-local config dir the dev server should be using:
+test -d "$WT/.config" && echo "local config dir present: $WT/.config"
+# Confirm a worktree-local DB exists and is the one being written (watch mtime during the test):
+ls -la "$WT/.config/command-center.db"
+# Sanity: it must NOT be the production DB:
+echo "production (must NOT be the target): $HOME/Library/Application Support/cc/command-center.db"
+```
+
+If `cctl dev ensure` did NOT produce a worktree-local `.config` (no `CC_CONFIG_DIR` override, or it points outside the worktree, or it resolves to a production path), **STOP and surface it** — both because live testing would corrupt production data, and because that default behavior is itself a defect worth reporting. Do not proceed until the target is a worktree-local DB.
+
+## Step 1 — Environment setup
+
+1. **Get the URL with `cctl dev ensure`.** Never assume a port (3000/3002/6006): every worktree gets its own. Use the printed `localUrl`/`remoteUrl`. `cctl dev list --json` also gives `logFilePath` (the dev server's stdout/stderr — useful for startup/runtime errors and the HTTP access log).
+2. **Pick the binary by which server the command talks to.** Every CC server publishes a `cctl` stamped with its own build to `<its configDir>/bin/cctl`, and a binary addressing a server it did not come from exits **4** naming both builds.
+   - **Testing your own CLI changes** (new verbs, changed flags/help) → `<worktree>/.config/bin/cctl`. The PATH binary belongs to the managing instance and does not contain them.
+   - **Ordinary CC actions on your session** (`cctl dev ensure`, `notify`, `ask`, `validate run`) → the PATH binary, which is that server's own.
+   - **`cctl fixture`** → either. It spans both instances by design and is exempt from the gate.
+   - Hit an exit 4? `cctl doctor --server <url>` prints that server's `cliPath` (text and `--json`); `cctl dev doctor` prints both instances' at once.
+3. **Locate the durable state** (all under the worktree-local config dir from Step 0):
+   - SQLite DB: `<config>/command-center.db` (e.g. `sqlite3 <config>/command-center.db ".tables"`)
+   - NDJSON logs: `<config>/logs/...` — use the **`debug-logs` skill** for structure, locations, `traceId` tracing, and query recipes. Don't re-derive log layout here.
+   - Transcripts: `<config>/transcripts/<conversationId>.jsonl` — the source of truth for what the agent actually saw and produced.
+4. **Drive the browser with the `playwright-cli` skill**, using a named session (e.g. `playwright-cli -s=cclive open --browser=chrome <url>`). It keeps one browser across calls — right for multi-step, timing-sensitive flows. Use snapshots/`eval` for bounded state probes, and capture/open screenshots for visual claims.
+5. **Use a scratch project** (one set aside for testing, with no real work in it). Create a throwaway session for the test.
+6. **Name test sessions/conversations so they don't collide with your greps.** If you'll grep logs for `"foo"`, don't name the session `foo-test` — every line will match. Pick an orthogonal name.
+
+## Step 2 — Drive the feature, including real turns when relevant
+
+Exercise the actual user flow. Common gotchas when a feature depends on an **in-flight agent turn**:
+
+- **Keep the turn genuinely running for as long as you need.** A sleep or background task does not prove that the backend is actively streaming and can settle the turn early, changing the tested code path. Instead, give a long **pure-text streaming** task with no tools, e.g. *"Without using any tools, write a detailed 2500-word essay on <topic>; one continuous response, don't stop early."* Streaming output keeps the turn active for 30–60s.
+- **Confirm the state you depend on before acting.** If the flow requires "agent is working", verify it from the UI signals that reflect server state (e.g. a "Stop agent" control present, a send button whose label changes while running) AND, ideally, a log/API check — don't assume the turn started just because you submitted.
+- **Backend coverage.** If the feature is backend-sensitive, test each backend (Claude, Codex). The backend selector is typically only editable on a **fresh conversation** (it locks once a turn starts), so create a new conversation per backend. Before relying on a backend, do a startup precheck: send one trivial prompt and confirm a real turn runs — some backends fail immediately on env/CLI config (check the conversation log for a `*-runtime.turn_error`). A backend that can't start is an environment issue to flag, separate from the feature under test.
+- **Use unique, greppable markers in your inputs** and, where possible, ask for an answer that won't appear by coincidence (e.g. an arithmetic result), so you can unambiguously find both the input and the agent's response in the transcript.
+
+## Step 3 — Verify against backend state (the actual test)
+
+For backend delivery or persistence claims, gather the relevant durable evidence below. For visual behavior, inspect screenshots and computed styles; for interactions, exercise the affected input path. Do not require a database row for a purely presentational change:
+
+- **NDJSON logs** (via the `debug-logs` skill): trace the action by `traceId` from `request.start` → module events → `request.complete`. Distinguish *which API path* actually ran (the optimistic UI can make a dropped action look successful — confirm the expected POST/PUT actually fired and returned 2xx). Watch for the absence of an expected event (silent loss often logs nothing at warn/error).
+- **SQLite DB:** query the relevant table(s) and confirm the row(s) reflect the change. Re-read after the action — confirm it *persisted*, not just that an in-memory copy changed.
+- **Transcript JSONL:** confirm what the agent received and produced, in order, exactly once (no duplicates, no missing entries, nothing left dangling).
+- **API responses:** fetch the same endpoints the UI uses and confirm the server's view matches the claim.
+
+Reconcile the UI against the backend. If the screen says success but the DB/logs/transcript disagree, **the backend is the truth** and you've found a bug.
+
+## Step 4 — Persistence/round-trip caution
+
+A feature can pass its whole test suite and still lose data, because the tests use an in-memory fake store that preserves fields the **real persistence layer drops**. When a feature persists new state, verify the round-trip explicitly:
+
+- Check the real DB schema actually has columns/storage for the new state (`sqlite3 <db> ".schema <table>"`), and that the repo's **write mapping AND read mapping** both handle it. A Zod schema field with a `.default(...)` will silently reset to the default on every read if the read mapping omits it — making loss invisible.
+- For a deterministic, timing-independent repro, add/run a contract test that exercises the **real** repo round-trip (write → read-back → assert the value survived), not a fake store. A failing round-trip test is the cleanest possible evidence.
+
+## Step 5 — Clean up
+
+- Delete the throwaway test session/conversations (`cctl fixture session delete <project> <session>`), or clearly flag what you left behind and why.
+- Remove task-owned scratch files that are no longer needed. Keep a meaningful regression test when it belongs to the authorized fix, and report any retained evidence artifacts; routine cleanup does not require another approval.
+- Close the Playwright session when done (`playwright-cli -s=<name> close`), unless leaving it open helps the user inspect.
+- Stay within the worktree. Do not modify the production config dir or anything outside the worktree without explicit permission; if the feature needs a global config change to test, ask first.
+
+## Reporting
+
+State plainly, per scenario and relevant backend, whether it works. Cite evidence appropriate to the claim: inspected screenshots and interaction results for UI behavior; log lines, DB rows, transcript entries, or API readback for backend behavior. If it's broken, give the root cause with `file:line` and a deterministic repro. Never report success on the strength of the optimistic UI alone. If you couldn't test something (e.g. a backend that can't start in this environment), say so and why, rather than implying coverage you didn't achieve.
+
+Stop when the requested scenarios and relevant checks pass. Repeat or broaden only for a changed condition, a failure, or an unresolved concern; report any blocked scenario and its verification limit.

@@ -1,5 +1,7 @@
 ---
-description: Diagnose Command Center failures using structured logs, including request tracing, prompt/runtime errors, session lifecycle, and state-store problems. For latency analysis, use cc-performance-log-analysis.
+description: Diagnose Command Center failures using structured logs, including
+  request tracing, prompt/runtime errors, session lifecycle, and state-store
+  problems. For latency analysis, use cc-performance-log-analysis.
 name: debug-logs
 ---
 

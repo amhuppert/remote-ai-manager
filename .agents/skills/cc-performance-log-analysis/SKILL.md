@@ -1,6 +1,8 @@
 ---
 name: cc-performance-log-analysis
-description: Analyze Command Center performance logs for request latency, state-store contention, duplicate work, SSE cost, external-command time, or before/after regressions; use DuckDB for custom SQL questions over logs.
+description: Analyze Command Center performance logs for request latency,
+  state-store contention, duplicate work, SSE cost, external-command time, or
+  before/after regressions; use DuckDB for custom SQL questions over logs.
 ---
 
 # CC Performance Log Analysis

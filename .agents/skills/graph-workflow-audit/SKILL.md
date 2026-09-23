@@ -1,6 +1,12 @@
 ---
 name: graph-workflow-audit
-description: Audit the performance of a completed (or halted) graph workflow execution — friction points, deviations from the plan, what worked well, cost, and wall-clock time. Use when asked to "audit this workflow execution", "review the workflow run", "how did the workflow perform", "workflow retrospective", "workflow post-mortem", "where did the workflow struggle", "what did the execution cost", or before proposing graph-workflow engine/planning improvements based on a real run.
+description: Audit the performance of a completed (or halted) graph workflow
+  execution — friction points, deviations from the plan, what worked well, cost,
+  and wall-clock time. Use when asked to "audit this workflow execution",
+  "review the workflow run", "how did the workflow perform", "workflow
+  retrospective", "workflow post-mortem", "where did the workflow struggle",
+  "what did the execution cost", or before proposing graph-workflow
+  engine/planning improvements based on a real run.
 ---
 
 # Graph Workflow Execution Audit
@@ -252,6 +258,11 @@ docs/reports/graph-workflow-improvement-report.md rather than re-inventing.>
   cumulative DROP within one id as a lineage restart, and sum each lineage's
   final value (`summarizeTranscriptTelemetry` in
   `src/lib/workflow-graph/conversation-telemetry.ts` implements this).
+- **A recorded row can also be the higher, correct figure.** Output-capture
+  turns that ran as task runs wrote no transcript cost frame: a Codex capture
+  turn's cost is only in the recorded row, and a Claude one's is recorded
+  nowhere. The extractor keeps the recorded cost for those conversations and
+  lists them as `unpriced_capture_turns` under "Telemetry confidence".
 - **Lane labels ≠ context purpose.** A "Validate: …" *context* still runs in
   the implementer lane; `context_validator` is the separate validator agent.
   Validator invocations often have no conversation cost row (task-runner
