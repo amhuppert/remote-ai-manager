@@ -25,6 +25,13 @@ derives the union of selected covered ids for each stable authored context and
 freezes those claims in the candidate manifest. A record may cover none, one or
 several spec criteria, and several contexts may cover the same criterion.
 
+A record that covers nothing is plan-authored: an obligation the plan added
+and the spec never approved. Foundation and closeout contexts often need a few;
+a context that owns only plan-authored records is worth a second look, and the
+propose gate lists each such context as `coverage/plan-authored-context`, an
+advisory. Justify those records against the design in the context description,
+or add `covers`.
+
 The `coverage/not-must-run` finding names a selected criterion whose claimants
 the run can skip. Cover it from an always-run context and apply the corrected
 plan with `cctl workflow replace`. Unknown, unselected and dynamic-context

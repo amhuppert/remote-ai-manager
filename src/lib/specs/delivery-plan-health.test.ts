@@ -280,13 +280,16 @@ describe("projectDeliveryPlanDraftHealth", () => {
       ),
     });
 
-    expect(health.findings.map((finding) => finding.ruleId)).toEqual([
-      "coverage/selected-criterion-uncovered",
-    ]);
+    // Removing the only covers entry leaves the selected criterion unclaimed
+    // (a refusal) and makes the context plan-authored (an advisory).
     expect(
-      health.findings.every((finding) => finding.severity === "blocks_propose"),
-    ).toBe(true);
+      health.findings.map((finding) => [finding.ruleId, finding.severity]),
+    ).toEqual([
+      ["coverage/selected-criterion-uncovered", "blocks_propose"],
+      ["coverage/plan-authored-context", "advisory"],
+    ]);
     expect(health.findings[0]?.elementHandle).toBe("R1.1");
+    expect(health.refusalConditions).toHaveLength(1);
     expect(health.unresolved).toEqual([
       {
         criterionElementId: "criterion-one",
@@ -390,6 +393,43 @@ describe("projectDeliveryPlanDraftHealth", () => {
         condition.startsWith("charter.mission:"),
       ),
     ).toBe(true);
+  });
+
+  it("names a plan-authored stable context as an advisory that neither refuses nor owes a criterion act", () => {
+    // The selection stays covered by another context; context-build simply
+    // carries criteria the spec never named.
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted(
+        {
+          stableAccountabilityContextIds: ["context-build", "context-other"],
+          accountabilityGroupAnalysis: [
+            {
+              bindingKey: "criterion-one",
+              claimantContextIds: ["context-other"],
+              stableExistingClaimantContextIds: ["context-other"],
+              mustRunClaimantContextIds: ["context-other"],
+              covered: true,
+            },
+          ],
+        },
+        [],
+      ),
+    });
+
+    const advisory = health.findings.find(
+      (finding) => finding.ruleId === "coverage/plan-authored-context",
+    );
+    expect(advisory).toMatchObject({ severity: "advisory" });
+    expect(advisory?.message).toContain("context-build");
+    expect(advisory?.message).toContain("plan-authored");
+    expect(health.refusalConditions).not.toContain(
+      expect.stringContaining("plan-authored"),
+    );
+    expect(
+      health.unresolved.map((row) => row.criterionElementId),
+    ).not.toContain(null);
   });
 
   it("reports the admitted launch's graph advisories without blocking propose", () => {

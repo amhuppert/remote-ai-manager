@@ -20,10 +20,23 @@ mark unchanged ones briefly. Choose detail by consequence and uncertainty.
 
 Use the target project's envelope or documented constraints, including users,
 concurrency, trust, lifetime, compatibility, scale, and failure cost where relevant.
-For each proposed mechanism, connect its cost to an approved obligation or
-observed failure and explain why the simpler approach falls short. Keep
-abstractions that hide real complexity; ordinary engineering quality applies
+Keep abstractions that hide real complexity; ordinary engineering quality applies
 within every envelope.
+
+Render the mechanism table, one row per named mechanism, per state a public
+result can take, and per shared contract:
+
+| Mechanism | Present consumer or envelope condition | Simpler alternative and why it falls short |
+|---|---|---|
+
+A consumer is a caller, journey, or obligation that exists in the approved
+requirements today. "Future automation", "a downstream context", or "callers may
+need" is not a consumer: cut the row or mark it deferred. A state nobody
+observes is not a state; an outcome with four values the user cannot act on
+differently is one value and an error. Prose that connects cost to obligation
+is not a substitute for the table: in one audited design a paragraph of
+complexity review sat beside eleven internal contracts and a four-state
+publication ledger that no requirement consumed.
 
 Record consequential choices in native decision elements. Include a credible
 simpler alternative, consequences, reversal cost, and what would require

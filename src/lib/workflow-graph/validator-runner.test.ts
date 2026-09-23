@@ -1017,6 +1017,20 @@ describe("buildContextValidationPrompt", () => {
     );
   });
 
+  it("bounds findings by the charter's non-goals so an out-of-envelope condition is advisory, not blocking", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+    });
+
+    const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
+    expect(guidance).toContain("non-goals");
+    expect(guidance).toContain("outside the envelope");
+    expect(guidance).toContain("advisory");
+  });
+
   it("instructs the validator to check each charter invariant and cite its id when invariants are declared", () => {
     const prompt = buildContextValidationPrompt({
       context,

@@ -201,6 +201,7 @@ describe("buildIterationPrompt", () => {
     for (const prompt of prompts) {
       expect(prompt).toContain("this context's own acceptance criteria");
       expect(prompt).toContain("an open task, not a handoff note");
+      expect(prompt).toContain("outside the envelope");
       expect(prompt).toContain(
         "Fix it or leave the owning task open and say why",
       );
@@ -1308,6 +1309,54 @@ describe("buildIterationPrompt", () => {
 });
 
 describe("buildFollowUpPrompt", () => {
+  it("restates the current acceptance criteria so a retry works from the criteria the validator judges", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: { "task-1": makeTaskState({ taskId: "task-1" }) },
+      attemptNumber: 2,
+      maxAttempts: 3,
+      contextValidationAcceptanceCriteria: [
+        {
+          id: "effect-outcome",
+          statement: "Publication state is Unknown whenever a probe fails.",
+        },
+      ],
+    });
+
+    const section = prompt.slice(prompt.indexOf("## Acceptance Criteria"));
+    expect(section).toContain("[effect-outcome]");
+    expect(section).toContain(
+      "Publication state is Unknown whenever a probe fails.",
+    );
+    // A live edit may have rewritten a criterion since the seed prompt; the
+    // retry says which text governs instead of leaving the agent to guess.
+    expect(section).toContain("these govern");
+    expect(prompt.indexOf("## Acceptance Criteria")).toBeLessThan(
+      prompt.indexOf("## Remaining Tasks"),
+    );
+  });
+
+  it("omits the acceptance-criteria section when the context has no validator", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: { "task-1": makeTaskState({ taskId: "task-1" }) },
+      attemptNumber: 1,
+      maxAttempts: 2,
+    });
+    expect(prompt).not.toContain("## Acceptance Criteria");
+  });
+
+  it("tells the agent that an out-of-envelope gap is declined or asked about, not built", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: { "task-1": makeTaskState({ taskId: "task-1" }) },
+      attemptNumber: 1,
+      maxAttempts: 2,
+    });
+    expect(prompt).toContain("outside the envelope");
+    expect(prompt).toContain("cctl ask");
+  });
+
   it("lists remaining task details and reminds the agent to continue", () => {
     const prompt = buildFollowUpPrompt({
       remainingTasks: [

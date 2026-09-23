@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES } from "./delivery-plan-binding-lint";
 import {
+  ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
+  type DeliveryPlanBindingLintIssueCode,
+} from "./lint-rules";
+import {
   DELIVERY_PLAN_GATE_RULE_IDS,
   LAUNCH_ADVISORY_RULE_ID,
   LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
@@ -39,8 +43,17 @@ describe("NATIVE_SDD_GUIDANCE delivery-plan lint taxonomy", () => {
     );
 
     expect(severityOf.get(LAUNCH_ADVISORY_RULE_ID)).toBe("advisory");
+    for (const code of ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES) {
+      expect(severityOf.get(code)).toBe("advisory");
+    }
     for (const code of EMITTABLE_CODES) {
       if (code === LAUNCH_ADVISORY_RULE_ID) continue;
+      if (
+        ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES.has(
+          code as DeliveryPlanBindingLintIssueCode,
+        )
+      )
+        continue;
       expect(severityOf.get(code)).toBe("blocks_propose");
     }
   });

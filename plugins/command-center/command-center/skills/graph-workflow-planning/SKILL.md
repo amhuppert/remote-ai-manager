@@ -174,7 +174,7 @@ Do not write acceptance criteria that:
 - Depend on another context's private work.
 - Mix contradictory design states, such as requiring runtime application for a feature also marked verification-gated or diagnostic-only.
 - Ask the agent validator to enforce deterministic checks like tests, typecheck, lint, or build. Use `scriptValidator` only when the context should end in a fully valid state.
-- Use vague phrases like "retryable diagnostics", "fully wired", or "complete lifecycle" without spelling out the exact states and paths.
+- Use vague phrases like "retryable diagnostics", "fully wired", or "complete lifecycle" without spelling out the exact states and paths, or state a property with no decision rule for the indeterminate case ("truthful publication state", "according to the approved rules", "rejects path-boundary errors"). A property is a search space, and a validator finds the next unhandled point in it every round; name the tie-break ("a failed metadata probe reports Unknown") or enumerate the cases the context must handle and the conditions it may refuse. Two audited contexts each spent four rounds and a circuit breaker on one such property before a repair wrote the rule down.
 - Use existence verbs — "exists", "is exported", "types are defined" — for capabilities that must be runtime-reachable. Existence is satisfiable by dead code with green unit tests; require the production caller, or name the downstream context that owns the wiring.
 - Sweep an unbounded surface — "every call site", "all legacy paths", "complete parity" — without a task that first inventories that surface mechanically. An open quantifier over an uninventoried surface converges one discovered site per validation round.
 - Describe how the work must be produced rather than what must be true afterwards: "a failing test was written first", "TDD was followed", "ran X before Y". A validator judges the finished candidate and cannot verify process, so a correct implementation fails for lacking proof. Spell the outcome instead — "a regression test exists and fails when the behaviour is reverted" — and keep the process rule in `conventions`.
@@ -251,7 +251,7 @@ Authoring any of them — guard syntax, cardinality, loop bodies, handoff fields
 Guard against these before starting execution:
 
 - Implementer/validator misalignment: acceptance criteria judge behavior the implementer was not instructed to build.
-- Ambiguous criteria: validator keeps discovering new edge cases because the state contract was underspecified.
+- Ambiguous or unbounded criteria: the validator keeps discovering new edge cases because the state contract was underspecified, or because nothing in the charter says which conditions are outside the envelope, so every faithful reading is a valid finding and the run escalates toward hardening nobody asked for. Put the envelope's exclusions in `nonGoals`; validators treat findings that need them as advisories and implementers decline them.
 - Contradictory criteria: design says a capability is gated, while acceptance criteria require it to work as runtime-applied.
 - Missing context: implementer gets only a task slice while validator expects whole-design behavior.
 - Overbroad contexts: one context owns mutation routing, lifecycle hooks, backend adapters, diagnostics, and retry semantics.

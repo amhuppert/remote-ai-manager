@@ -22,6 +22,7 @@ export const EVERGREEN_LINT_RULES = [
     ruleId: "9.13.design-stage-without-design-content",
     severity: "advisory",
   },
+  { ruleId: "9.14.duplicate-validation-note", severity: "advisory" },
 ] as const satisfies readonly EvergreenLintRuleDefinition[];
 
 export type EvergreenLintRuleId =
@@ -43,10 +44,21 @@ export const DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES = [
   "coverage/unselected",
   "binding/pending-reaffirmation",
   "binding/reaffirmed-without-delivery",
+  "coverage/plan-authored-context",
 ] as const;
 
 export type DeliveryPlanBindingLintIssueCode =
   (typeof DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES)[number];
+
+/**
+ * The binding codes that inform rather than refuse. A plan-authored context is
+ * legitimate — a foundation or closeout context often owes nothing the spec
+ * names — but in one audited run four such contexts carried twenty-two
+ * criteria nobody had approved, so the gate names them and lets the human
+ * decide.
+ */
+export const ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES: ReadonlySet<DeliveryPlanBindingLintIssueCode> =
+  new Set<DeliveryPlanBindingLintIssueCode>(["coverage/plan-authored-context"]);
 
 /** The rule id a refused graph launch reports under. */
 export const LAUNCH_NOT_ADMISSIBLE_RULE_ID = "launch/not-admissible";

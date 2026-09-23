@@ -484,6 +484,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       "- **Not a planning defect** — a failing implementation approach, flaky infrastructure, or work that simply has not succeeded yet.",
       "",
       "Do not weaken acceptance criteria merely to make failures pass. A repair must preserve the workflow's intent — prefer clarifying ambiguity, correcting factual errors, or splitting an impossible criterion into achievable ones with rationale. When uncertain, return planningDefect: false.",
+      "Check the charter's non-goals and operating envelope before clarifying an ambiguous criterion. Narrowing a criterion to the envelope is a scope correction, not a weakening: when the validator's reading enforces a condition the charter excludes, restate the criterion at the envelope's boundary and say which non-goal decides it. When a repair would strengthen a criterion beyond the reading the implementer could have taken, name the charter source or spec obligation that pays for the added work; a stricter reading with no such source is the implementer's default, not the plan's defect.",
       ...(haltReason.type === "max_iterations"
         ? [
             "",

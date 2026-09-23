@@ -126,6 +126,10 @@ describe("buildPlanRepairPrompt", () => {
     expect(prompt.toLowerCase()).toContain("charter");
     // Decision framework + guardrail
     expect(prompt).toContain("Do not weaken acceptance criteria");
+    // A repair that narrows a criterion to the operating envelope is a scope
+    // correction, and one that strengthens it must say what pays for it.
+    expect(prompt).toContain("envelope");
+    expect(prompt).toContain("strengthen");
     expect(prompt).toContain("planningDefect");
     // Op vocabulary with EXACT JSON shapes (live-proof regression: the agent
     // emitted typeless operations when only prose named the vocabulary).

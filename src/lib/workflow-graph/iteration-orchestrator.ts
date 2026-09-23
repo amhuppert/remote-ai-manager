@@ -1518,6 +1518,10 @@ export function createGraphWorkflowIterationOrchestrator(
               charterAmendments: seededExecution.charterAmendments,
               resumeUserInput: resumeUserInputPrompt,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
+              contextValidationAcceptanceCriteria: context.contextValidator
+                .enabled
+                ? context.acceptanceCriteria
+                : undefined,
               outputSchema: context.outputSchema,
             })
           : buildIterationPrompt({
@@ -1848,6 +1852,12 @@ export function createGraphWorkflowIterationOrchestrator(
           charter: scopedCharter,
           charterAmendments: midExecution.charterAmendments,
           askUserQuestionsEnabled: context.askUserQuestions.enabled,
+          // Read from the current execution, not the seed: a live edit during
+          // this iteration changes the criteria the validator will apply.
+          contextValidationAcceptanceCriteria: context.contextValidator.enabled
+            ? getContextDefinition(midExecution, input.contextId)
+                .acceptanceCriteria
+            : undefined,
           outputSchema: context.outputSchema,
         });
         const followUpPrompt = await composeGraphRolePrompt({

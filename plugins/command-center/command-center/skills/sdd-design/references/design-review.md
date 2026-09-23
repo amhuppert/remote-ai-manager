@@ -40,6 +40,15 @@ Cite evidence for claimed defects; distinguish inability to verify from proof
 of failure. Prefer narrowing, moving, removing, or splitting before adding work.
 A speculative improvement alone does not justify expanding scope.
 
+A finding that adds behavior names the envelope row or approved obligation that
+pays for it; without one it is a suggestion, not a finding. When a rehearsal
+exposes public behavior the design leaves unstated, list "unsupported in this
+version, refused with a plain error" among the resolutions, not only "specify
+it". Close the review with an aggregate line: what the accepted findings add,
+what they remove, and at least one candidate for removal the author should
+consider, or a statement that none exists. A review whose every finding pins
+more behavior has reviewed the contract, not its proportion.
+
 Report every known blocking class, grouping sibling instances, and keep optional
 suggestions bounded. On repair rounds, review changed semantics and consistency;
 reopen other decisions only for new evidence. Finish once the scoped claims have

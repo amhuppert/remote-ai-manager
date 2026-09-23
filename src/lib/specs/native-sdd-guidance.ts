@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
   DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
   type DeliveryPlanBindingLintIssueCode,
   DELIVERY_PLAN_GATE_RULE_IDS,
@@ -65,7 +66,9 @@ const GATE_RULE_SEVERITY: Record<
 const DELIVERY_PLAN_LINT_RULES = [
   ...DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES.map((ruleId) => ({
     ruleId,
-    severity: "blocks_propose",
+    severity: ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES.has(ruleId)
+      ? "advisory"
+      : "blocks_propose",
     ...(HUMAN_ACT_BINDING_CODES.has(ruleId) ? { note: "human act" } : {}),
   })),
   ...DELIVERY_PLAN_GATE_RULE_IDS.map((ruleId) => ({

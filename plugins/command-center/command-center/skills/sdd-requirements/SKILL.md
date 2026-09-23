@@ -49,6 +49,23 @@ named surfaces, and outcomes an inspector can observe. Inventory a surface
 before using "all" or "every" over it. Keep process conventions outside criteria.
 EARS is optional; sentence shape does not establish completeness.
 
+Every requirement carries one line naming what it obliges downstream: a new
+owner, a new class of proof, a new class of accepted input, or a new failure
+classification. Where a simpler contract would serve the envelope, present it
+as the requirement and the fuller one as an alternative with what it gives up;
+the reviewer then approves a choice instead of editing a proposal.
+
+State the accepted-input policy once, in a section: which inputs the tool
+refuses with a plain error (for example symlinks inside selected trees,
+special files, names that collide under the destination's rules) and which it
+handles. Do not derive per-criterion defenses from the envelope's trust row;
+"external data can be hostile" means it is never executed, not that every
+layout it can take is handled.
+
+Set each criterion's validation-strategy kinds and leave the note empty unless
+it says something specific to that criterion. A verification approach shared
+by several criteria belongs once in the design; lint reports identical notes.
+
 For each changed journey, include an example from the normal entry point through
 the meaningful action to its result. Name important failure or unavailable
 behavior as separate obligations where independently failable. Design settles

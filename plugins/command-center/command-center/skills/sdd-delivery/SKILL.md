@@ -26,12 +26,20 @@ and matched-deferral rules to assign production wiring. Leave no behavior,
 shared interface, or integration responsibility for separate agents to invent.
 
 Use a foundation context when shared changed contracts must precede independent
-consumers. If design supplied a prototype, apply its
+consumers, and limit it to what the first working path consumes. If design
+supplied a prototype, apply its
 [delivery handoff](../sdd-design/references/contract-prototype.md#handoff-to-delivery),
-including source availability and adoption responsibilities. Schedule a thin
-working path through a real entry point, action, and observable result early;
-broaden or parallelize once the necessary boundaries are settled. Cut contexts
-at validation boundaries, not to achieve a preferred context count.
+including source availability and adoption responsibilities. Schedule the thin
+working path the design named, through a real entry point, action, and
+observable result, as the first context after tooling; broaden or parallelize
+once the necessary boundaries are settled. A broad safety or persistence owner
+scheduled ahead of that path is the first circuit breaker waiting to fire. Cut
+contexts at validation boundaries, not to achieve a preferred context count.
+
+Plan-authored criteria (records with no `covers`) are obligations the spec
+never approved. Keep them to what the design names, and expect the propose gate
+to list every context that owns nothing but plan-authored criteria; each one
+needs a justification in its description or a `covers` entry.
 
 Give each changed journey an integration owner and criteria that exercise its
 normal entry point, meaningful action, and result. Split separately failable
@@ -50,11 +58,17 @@ checks the composition; implementation owners still build its production callers
 
 ## Keep scope visible
 
-Include the project's operating envelope, when available, as a ranked charter
-source resolvable from execution worktrees. Apply global constraints globally and
-scope feature-specific sources to their consumers. Without an envelope document,
-carry known constraints in the charter rather than requiring another file or
-assuming Command Center's operating conditions.
+Carry the operating envelope into the charter itself, not only as a ranked
+source: put its "outside the envelope" list and the accepted-input policy into
+`nonGoals`, where implementers decline against them and validators treat
+findings that need those conditions as advisories. A source document ranked
+below the pinned design loses to it on every disputed reading; in one audited
+run the envelope sat twenty-ninth of thirty-nine sources and never bounded a
+verdict. Still include the document as a source resolvable from execution
+worktrees. Apply global constraints globally and scope feature-specific sources
+to their consumers. Without an envelope document, carry known constraints in
+the charter rather than requiring another file or assuming Command Center's
+operating conditions.
 
 Put this convention once in the charter's `conventions`, or in session
 implementation instructions:

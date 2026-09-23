@@ -81,7 +81,7 @@ const snapshot: SpecRevisionSnapshot = {
 };
 
 describe("spec execution claims document", () => {
-  it("gives an authored context with no selected coverage an explicit section", () => {
+  it("gives an authored context with no selected coverage an explicit scoped statement", () => {
     const projection = buildSpecOwnershipProjection(
       binding,
       snapshot,
@@ -90,8 +90,36 @@ describe("spec execution claims document", () => {
     );
     expect(projection.body).toContain("claims.md#context-context-wiring");
     expect(projection.body).toContain(
-      "## Context context-wiring\n\nNo selected spec criteria are claimed by this context.",
+      "No selected spec criteria are claimed by this context.",
     );
+    expect(projection.body).not.toContain("| Criterion id");
+    expect(projection.body).not.toContain("## Context index");
+  });
+  it("scopes a lane's projection to the criteria it claims and points elsewhere for the rest", () => {
+    const projection = buildSpecOwnershipProjection(
+      binding,
+      snapshot,
+      "context-spawner",
+    );
+    // The reader's own claim renders as a row; a criterion nobody in this
+    // context claims does not, however it is dispositioned.
+    expect(projection.body).toContain("| `criterion-selected` |");
+    expect(projection.body).not.toContain("criterion-external");
+    // The whole map lives in the seeded document, not in every prompt.
+    expect(projection.body).not.toContain("## Context index");
+    expect(projection.body).not.toContain("## Context context-integrate");
+    expect(projection.body).toContain("claims.md#context-context-spawner");
+  });
+  it("carries no per-criterion validation guidance in any projection", () => {
+    for (const contextId of [undefined, "context-spawner"]) {
+      const projection = buildSpecOwnershipProjection(
+        binding,
+        snapshot,
+        contextId,
+      );
+      expect(projection.body).not.toContain("Validation guidance");
+      expect(projection.body).not.toContain("Pinned validation guidance");
+    }
   });
   it("indexes every claimant context and keeps shared criteria in each context section", () => {
     const document = buildSpecExecutionClaimsDocument(
@@ -134,10 +162,10 @@ describe("spec execution claims document", () => {
 
 This immutable binding is the authority for criterion ownership. A claimant is accountable for delivery; it need not perform every implementation step itself.
 
-| Criterion id | Brief guidance | Disposition | Delivered by execution | Claimant context ids | Validation guidance |
-| --- | --- | --- | --- | --- | --- |
-| \`criterion-selected\` | Brief for criterion-selected. | \`in_scope\` | — | \`context-spawner\`, \`context-integrate\` | Pinned validation guidance only (not an evidence checklist): \`test_run\` |
-| \`criterion-external\` | Brief for criterion-external. | \`delivered_elsewhere\` | \`execution-earlier\` | — | Pinned validation guidance only (not an evidence checklist): \`test_run\` |
+| Criterion id | Brief guidance | Disposition | Delivered by execution | Claimant context ids |
+| --- | --- | --- | --- | --- |
+| \`criterion-selected\` | Brief for criterion-selected. | \`in_scope\` | — | \`context-spawner\`, \`context-integrate\` |
+| \`criterion-external\` | Brief for criterion-external. | \`delivered_elsewhere\` | \`execution-earlier\` | — |
 
 ## Context index
 

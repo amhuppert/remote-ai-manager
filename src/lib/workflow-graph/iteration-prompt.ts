@@ -47,6 +47,14 @@ const COMPLETE_TASK_COMMAND =
 const SELF_DISCOVERED_GAP_RULE =
   "A gap you discover against this context's own acceptance criteria is an open task, not a handoff note. Fix it or leave the owning task open and say why; do not run `cctl workflow task complete` for work with a known gap. A residual in a summary does not satisfy the criterion.";
 
+// The complement of the gap rule. Without it the only sanctioned move on a
+// finding is to build it, so a run escalates toward conditions the charter
+// never asked for: in one audited run neither hotspot implementer ever
+// declined a finding on envelope grounds or asked, and both built for
+// filesystems the charter's non-goals excluded.
+const OUT_OF_ENVELOPE_RULE =
+  "A gap or finding that only arises under a condition the charter lists as a non-goal or outside the envelope is not a gap to build. Decline it in your `cctl workflow task complete` summary, citing the charter entry; if you cannot tell whether it is inside the envelope, ask with `cctl ask` before building it.";
+
 function buildCharterSection(
   charter: WorkflowCharter,
   contextId: string,
@@ -464,6 +472,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       "Follow these steps exactly:",
       "1. Work through the tasks in order, completing each one before moving to the next.",
       SELF_DISCOVERED_GAP_RULE,
+      OUT_OF_ENVELOPE_RULE,
       `2. Run \`${COMPLETE_TASK_COMMAND}\` after finishing each task, using the task's id from the list above.`,
       "",
       "IMPORTANT: If you do not run `cctl workflow task complete`, the task remains open and blocks all workflow progress. The workflow will stall and require manual intervention.",
@@ -584,6 +593,13 @@ export interface BuildFollowUpPromptInput {
    * When true a short ask-protocol reminder section is added; otherwise none.
    */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * The context's CURRENT acceptance criteria, in their stored shape. The seed
+   * prompt carried them once; a retry after a validation failure or a plan
+   * repair used to carry only the failure text, so a criterion rewritten by a
+   * live edit reached the validator and never the implementer.
+   */
+  contextValidationAcceptanceCriteria?: AcceptanceCriteria;
   /** The context's declared output schema; present only for schema contexts. */
   outputSchema?: Record<string, unknown>;
 }
@@ -631,10 +647,24 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
     sections.push(buildAskUserQuestionsReminderSection());
   }
 
+  if (input.contextValidationAcceptanceCriteria) {
+    sections.push(
+      [
+        "## Acceptance Criteria",
+        "The context validator judges the whole context against these exact criteria. If they differ from criteria in an earlier prompt of this conversation, these govern.",
+        "",
+        acceptanceCriteriaRecordListText(
+          input.contextValidationAcceptanceCriteria,
+        ),
+      ].join("\n"),
+    );
+  }
+
   sections.push(
     ["## Remaining Tasks", ...taskLines].join("\n"),
     `Please continue working through them in order, running \`cctl workflow task complete\` for each.`,
     SELF_DISCOVERED_GAP_RULE,
+    OUT_OF_ENVELOPE_RULE,
     `This is follow-up attempt ${input.attemptNumber} of ${input.maxAttempts}.`,
     "The workflow cannot progress until tasks are completed via `cctl workflow task complete`. Without it, the workflow will stall.",
   );

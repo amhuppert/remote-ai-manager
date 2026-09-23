@@ -160,6 +160,28 @@ describe("delivery-plan binding lint", () => {
     expect(codes(binding(), admitted())).not.toContain(code);
   });
 
+  it("names a stable context whose criteria cover no selected spec criterion as plan-authored", () => {
+    // The context keeps its records but none carries `covers`: the plan, not
+    // the spec, decided what this context owes. That is legitimate for a
+    // foundation context and worth a second look in every case, so it is an
+    // advisory with a null criterion, never a refusal.
+    const issues = lintDeliveryPlanBinding({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted({ covers: [] }),
+    });
+    expect(issues).toContainEqual({
+      code: "coverage/plan-authored-context",
+      path: ["definition", "executionContexts", 0, "acceptanceCriteria"],
+      criterionElementId: null,
+      message:
+        "Context context-implement owns no selected spec criterion: its 1 acceptance criterion (observable-outcome) is plan-authored. Justify each plan-authored obligation against the design or the charter, or add covers.",
+    });
+    expect(codes(binding(), admitted())).not.toContain(
+      "coverage/plan-authored-context",
+    );
+  });
+
   it("deduplicates repeated coverage and permits multiple contexts to cover one criterion", () => {
     const admission = admitted({
       covers: ["criterion-selected", "criterion-selected"],

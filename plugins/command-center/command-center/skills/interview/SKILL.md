@@ -76,8 +76,14 @@ Keep each question about one decision. Offer a few meaningful alternatives
 with short labels and descriptions of their consequences. Use `context` to
 explain why the answer matters; add `tradeoff` when it helps compare options.
 Mark an option `recommended: true` only when the known objective supports
-it, rather than guessing the user's preferences. `multiSelect: true` fits
-compatible choices; mutually exclusive directions use `false`.
+it, rather than guessing the user's preferences. When the question decides
+scope or breadth, recommend the smaller option unless a named envelope row
+(users, failure cost, compatibility) pays for the larger one, and state in the
+tradeoff what the larger option obliges downstream: a new owner, proof class,
+or input class. A request's feature list supports the larger option only in
+the sense that it was asked for; that is not the same as the envelope paying
+for it. `multiSelect: true` fits compatible choices; mutually exclusive
+directions use `false`.
 
 This illustrates the payload shape; adapt the content to the actual unknown:
 

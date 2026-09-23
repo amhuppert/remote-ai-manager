@@ -58,6 +58,15 @@ integration ownership, and scope within the appetite. Required premises must be
 verified or supplied as explicit new work. Remaining choices must be local to
 implementation or disclosed limitations consistent with the approved contract.
 
+Include the outline's mechanism table: every named mechanism, state, and shared
+contract with its present consumer or the envelope condition it handles, and
+the simpler alternative it beat. A row whose consumer is future automation or
+a later context is deferred, not designed. A design-quality rubric scores what
+survives that table; it does not substitute for it.
+
+Name the thin production path the delivery must build first, so planning
+cannot schedule a broad foundation ahead of it.
+
 Use the design review reference to assess those claims, then finish the native
 lint and consistency sweep and the requested draft or proposal. Report the
 evidence, unresolved findings, and actual submission state. Human approval

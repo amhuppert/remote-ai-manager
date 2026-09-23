@@ -252,20 +252,20 @@ describe("native SDD ownership prompt projection", () => {
     const claimsPointer =
       "Read your claims first: [context-implement](.cc/graph-workflow-docs/spec-bindings/candidate-ownership/claims.md#context-context-implement).";
     expect(ownership).toContain(claimsPointer);
+    // The lane prompt carries only the criteria this context claims, with
+    // every claimant still named on its row; the rest of the map lives in the
+    // seeded claims document, not in every prompt.
     expect(ownership).toContain("criterion-implementer-a");
     expect(ownership).toContain(
       "Implement capability A in the production path.",
     );
-    expect(ownership).toContain("criterion-sibling-b");
-    expect(ownership).toContain("context-verify");
-    expect(ownership).toContain("criterion-redundant");
     expect(ownership).toMatch(
       /criterion-redundant.*context-implement.*context-verify/s,
     );
-    expect(ownership).toContain("criterion-deferred");
-    expect(ownership).toContain("deferred");
-    expect(ownership).toContain("Pinned validation guidance only");
-    expect(ownership).toContain("not an evidence checklist");
+    expect(ownership).not.toContain("criterion-sibling-b");
+    expect(ownership).not.toContain("criterion-deferred");
+    expect(ownership).not.toContain("## Context index");
+    expect(ownership).not.toContain("Pinned validation guidance");
 
     const projection = await contract.loadPromptProjection?.(execution);
     expect(projection).not.toBeNull();
@@ -279,9 +279,27 @@ describe("native SDD ownership prompt projection", () => {
       ),
     );
     expect(projection).toEqual(documentProjection);
-    expect(
-      buildSpecExecutionClaimsDocument(documentProjection).contents.trimEnd(),
-    ).toBe(ownership.replace(`${claimsPointer}\n\n`, ""));
+    const claimsDocument =
+      buildSpecExecutionClaimsDocument(documentProjection).contents;
+    // The seeded document is the whole map, and every row a lane sees is a
+    // verbatim row of it, so the two can never disagree about a claim.
+    for (const criterionId of [
+      "criterion-implementer-a",
+      "criterion-sibling-b",
+      "criterion-redundant",
+      "criterion-deferred",
+    ]) {
+      expect(claimsDocument).toContain(criterionId);
+    }
+    expect(claimsDocument).toContain("## Context index");
+    expect(claimsDocument).not.toContain("Pinned validation guidance");
+    const laneRows = ownership
+      .split("\n")
+      .filter((line) => line.startsWith("| `criterion-"));
+    expect(laneRows).toHaveLength(2);
+    for (const row of laneRows) {
+      expect(claimsDocument).toContain(row);
+    }
   });
 
   it("leaves an ordinary unbound implementer execution free of a spec section", async () => {

@@ -43,11 +43,17 @@ be added in a later task.
 | `intent_constraints` | Appetite, real obligations, and operating conditions that bound the solution. |
 
 Appetite is the investment worth making, such as "within the existing detail
-page" or "a modest persistence change is justified." Preserve the user's budget
-or scope statement rather than inventing an estimate. Use the target project's
-operating envelope, such as `ENVELOPE.md`, when available; otherwise use known
-constraints without requiring another document. Distinguish evidence, user
-decisions, assumptions, and open questions.
+page" or "a modest persistence change is justified." Record the user's budget
+or scope statement; do not invent an estimate, and do not adopt a request's
+full feature list as the appetite by default. When no budget was supplied, the
+brief still proposes a first version: the smallest slice that carries the
+representative situation from entry to result, with each deferred capability
+named alongside what it would add. Recommend the smaller version unless the
+envelope's users or failure-cost rows pay for the larger; when the cut is
+consequential, ask through the interview rather than deciding silently. Use
+the target project's operating envelope, such as `ENVELOPE.md`, when available;
+otherwise use known constraints without requiring another document. Distinguish
+evidence, user decisions, assumptions, and open questions.
 
 If no spec was requested and the behavior is bounded with no consequential
 uncertainty about durability, lifecycle, shared contracts, or integration,

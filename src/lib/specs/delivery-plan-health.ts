@@ -1,4 +1,5 @@
 import {
+  ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
   LAUNCH_NOT_ADMISSIBLE_RULE_ID,
   LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
   LAUNCH_ADVISORY_RULE_ID,
@@ -299,7 +300,11 @@ export function projectDeliveryPlanDraftHealth(
       ...issues.map(
         (issue): DeliveryPlanGateFinding => ({
           ruleId: issue.code,
-          severity: "blocks_propose",
+          severity: ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES.has(
+            issue.code,
+          )
+            ? "advisory"
+            : "blocks_propose",
           elementHandle: handleFor(input.pinnedRevision, issue),
           message: issue.message,
           ...rationaleFor(issue.code),
@@ -317,7 +322,11 @@ export function projectDeliveryPlanDraftHealth(
     ],
     unresolved: unresolvedRows(input.pinnedRevision, issues, dispositions),
     refusalConditions: [
-      ...issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
+      ...issues.flatMap((issue) =>
+        ADVISORY_DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES.has(issue.code)
+          ? []
+          : [`${issue.path.join(".")}: ${issue.message}`],
+      ),
       ...charterConditions,
     ],
     claims: claimsLedger(

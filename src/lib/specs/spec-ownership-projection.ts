@@ -6,7 +6,7 @@ import {
   specExecutionBindingSnapshotV2Schema,
   type SpecExecutionBindingSnapshotV2,
 } from "./execution-binding";
-import type { SpecRevisionSnapshot, ValidationStrategy } from "./schemas";
+import type { SpecRevisionSnapshot } from "./schemas";
 
 const ownershipBindingSchema = specExecutionBindingSnapshotV2Schema
   .pick({
@@ -22,7 +22,6 @@ type OwnershipBinding = Pick<
 >;
 
 const MAX_BRIEF_LENGTH = 240;
-const MAX_GUIDANCE_NOTE_LENGTH = 240;
 
 export interface SpecOwnershipProjection extends GraphRolePromptProjection {
   candidateId: string;
@@ -38,19 +37,18 @@ function boundedText(value: string, maxLength: number): string {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function validationGuidance(strategy: ValidationStrategy): string {
-  const kinds = strategy.kinds.map(inlineCode).join(", ");
-  const note =
-    strategy.note === undefined
-      ? ""
-      : ` — ${boundedText(strategy.note, MAX_GUIDANCE_NOTE_LENGTH)}`;
-  return `Pinned validation guidance only (not an evidence checklist): ${kinds}${note}`;
-}
-
 /**
  * Projects the immutable binding through its pinned revision. No graph runtime
  * state participates, so the candidate's ownership map stays fixed even after
- * live graph edits. A lane also receives a pointer to its own claims section.
+ * live graph edits.
+ *
+ * Without a reader the projection is the whole map: every disposition row and
+ * a per-context index, which is what the seeded claims document renders. With
+ * a reader (a lane or validator prompt for one context) it is scoped to the
+ * criteria that context claims, plus a pointer to the seeded document for the
+ * rest. Every prompt used to carry the whole map; in a 96-criterion, 17-context
+ * run that table was most of every seed and validator prompt and told each
+ * reader nothing it owned.
  */
 export function buildSpecOwnershipProjection(
   inputBinding: OwnershipBinding,
@@ -68,15 +66,7 @@ export function buildSpecOwnershipProjection(
   const criteria = new Map(
     snapshot.elements.flatMap(({ element, version }) =>
       version.payload.kind === "criterion"
-        ? [
-            [
-              element.id,
-              {
-                brief: version.payload.text,
-                validationStrategy: version.payload.validationStrategy,
-              },
-            ] as const,
-          ]
+        ? [[element.id, { brief: version.payload.text }] as const]
         : [],
     ),
   );
@@ -100,8 +90,15 @@ export function buildSpecOwnershipProjection(
     }
     const claimants =
       claimantsByCriterion.get(disposition.criterionElementId) ?? [];
-    return `| ${inlineCode(disposition.criterionElementId)} | ${boundedText(criterion.brief, MAX_BRIEF_LENGTH)} | ${inlineCode(disposition.disposition)} | ${disposition.deliveredByExecutionId === null ? "—" : inlineCode(disposition.deliveredByExecutionId)} | ${claimants.length === 0 ? "—" : claimants.map(inlineCode).join(", ")} | ${validationGuidance(criterion.validationStrategy)} |`;
+    return {
+      criterionElementId: disposition.criterionElementId,
+      line: `| ${inlineCode(disposition.criterionElementId)} | ${boundedText(criterion.brief, MAX_BRIEF_LENGTH)} | ${inlineCode(disposition.disposition)} | ${disposition.deliveredByExecutionId === null ? "—" : inlineCode(disposition.deliveredByExecutionId)} | ${claimants.length === 0 ? "—" : claimants.map(inlineCode).join(", ")} |`,
+    };
   });
+  const tableHeader = [
+    "| Criterion id | Brief guidance | Disposition | Delivered by execution | Claimant context ids |",
+    "| --- | --- | --- | --- | --- |",
+  ];
 
   const claimsByContext = new Map(
     binding.claims.map((claim) => [claim.contextId, claim.criterionElementIds]),
@@ -116,24 +113,42 @@ export function buildSpecOwnershipProjection(
     }));
   const sectionAnchor = (id: string) => `context-${encodeURIComponent(id)}`;
   const reader = contexts.find((claim) => claim.contextId === contextId);
+  const preamble = [
+    `- Candidate: ${inlineCode(binding.candidateId)}`,
+    `- Pinned revision: ${inlineCode(binding.pinnedRevisionId)}`,
+    "",
+  ];
+
+  if (reader !== undefined) {
+    const claimed = new Set(reader.criterionElementIds);
+    const ownRows = rows.filter((row) => claimed.has(row.criterionElementId));
+    return {
+      heading: "Spec ownership",
+      candidateId: binding.candidateId,
+      body: [
+        ...preamble,
+        `Read your claims first: [${reader.contextId}](${candidateClaimsDocumentPath(binding.candidateId)}#${sectionAnchor(reader.contextId)}).`,
+        "",
+        "This immutable binding is the authority for criterion ownership. A claimant is accountable for delivery; it need not perform every implementation step itself.",
+        "",
+        `These are the pinned spec criteria context ${inlineCode(reader.contextId)} claims. The complete map, including every other context's claims, is the seeded claims document above; read it for cross-context ownership checks rather than expecting it here.`,
+        "",
+        ...(ownRows.length === 0
+          ? ["No selected spec criteria are claimed by this context."]
+          : [...tableHeader, ...ownRows.map((row) => row.line)]),
+      ].join("\n"),
+    };
+  }
+
   return {
     heading: "Spec ownership",
     candidateId: binding.candidateId,
     body: [
-      `- Candidate: ${inlineCode(binding.candidateId)}`,
-      `- Pinned revision: ${inlineCode(binding.pinnedRevisionId)}`,
-      "",
-      ...(reader
-        ? [
-            `Read your claims first: [${reader.contextId}](${candidateClaimsDocumentPath(binding.candidateId)}#${sectionAnchor(reader.contextId)}).`,
-            "",
-          ]
-        : []),
+      ...preamble,
       "This immutable binding is the authority for criterion ownership. A claimant is accountable for delivery; it need not perform every implementation step itself.",
       "",
-      "| Criterion id | Brief guidance | Disposition | Delivered by execution | Claimant context ids | Validation guidance |",
-      "| --- | --- | --- | --- | --- | --- |",
-      ...rows,
+      ...tableHeader,
+      ...rows.map((row) => row.line),
       "",
       "## Context index",
       "",

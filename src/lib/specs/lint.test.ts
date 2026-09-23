@@ -275,6 +275,79 @@ describe("lint", () => {
     ).toEqual([]);
   });
 
+  it("9.14 advises when criteria share one identical validation note", () => {
+    const noted = (
+      id: string,
+      handle: string,
+      note: string,
+    ): RevisionElement => ({
+      ...criterion(id, handle, "requirement-1"),
+      payload: {
+        kind: "criterion",
+        text: `Criterion ${handle}`,
+        validationStrategy: { kinds: ["test_run"], note },
+      },
+    });
+    const shared =
+      "Exercise the production CLI against isolated fixtures for the named case.";
+    const draft = snapshot(
+      [
+        requirement("requirement-1", "R1"),
+        noted("criterion-1", "R1.1", shared),
+        noted("criterion-2", "R1.2", `  ${shared}\n`),
+        noted("criterion-3", "R1.3", "Inspect the documented matrix."),
+      ],
+      "requirements",
+    );
+
+    expect(lint(draft, records())).toContainEqual({
+      ruleId: "9.14.duplicate-validation-note",
+      severity: "advisory",
+      elementHandle: "R1.1",
+      message:
+        "R1.1 and R1.2 carry one identical validation note; a verification approach shared by several criteria belongs once in the design, and a criterion note should say only what is specific to that criterion.",
+    });
+    expect(
+      lint(draft, records()).filter(
+        (finding) => finding.ruleId === "9.14.duplicate-validation-note",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("9.14 is silent for distinct or absent validation notes", () => {
+    const noted = (
+      id: string,
+      handle: string,
+      note?: string,
+    ): RevisionElement => ({
+      ...criterion(id, handle, "requirement-1"),
+      payload: {
+        kind: "criterion",
+        text: `Criterion ${handle}`,
+        validationStrategy:
+          note === undefined
+            ? { kinds: ["test_run"] }
+            : { kinds: ["test_run"], note },
+      },
+    });
+    const draft = snapshot(
+      [
+        requirement("requirement-1", "R1"),
+        noted("criterion-1", "R1.1", "Check the exit status."),
+        noted("criterion-2", "R1.2", "Check the written bytes."),
+        noted("criterion-3", "R1.3"),
+        noted("criterion-4", "R1.4"),
+      ],
+      "requirements",
+    );
+
+    expect(
+      lint(draft, records()).filter(
+        (finding) => finding.ruleId === "9.14.duplicate-validation-note",
+      ),
+    ).toEqual([]);
+  });
+
   it("9.4 names an untraced task", () => {
     const draft = snapshot([
       ...cleanElements(),

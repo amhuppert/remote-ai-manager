@@ -502,6 +502,38 @@ export function lint(
     );
   }
 
+  // 9.14 — one note stamped on many criteria is a template, not guidance. It
+  // reaches every implementer and validator prompt through the ownership
+  // projection, so a sentence nobody chose per criterion becomes an obligation
+  // on all of them.
+  const criteriaByNote = new Map<string, RevisionElement[]>();
+  for (const criterionElement of criteria) {
+    if (criterionElement.payload.kind !== "criterion") continue;
+    const note = criterionElement.payload.validationStrategy.note;
+    if (note === undefined) continue;
+    const normalized = note.replaceAll(/\s+/g, " ").trim();
+    if (normalized.length === 0) continue;
+    criteriaByNote.set(normalized, [
+      ...(criteriaByNote.get(normalized) ?? []),
+      criterionElement,
+    ]);
+  }
+  for (const sharers of criteriaByNote.values()) {
+    if (sharers.length < 2) continue;
+    const handles = sharers.map((element) => element.handle);
+    const named =
+      handles.length === 2
+        ? `${handles[0]} and ${handles[1]}`
+        : `${handles.slice(0, -1).join(", ")} and ${handles.at(-1)}`;
+    findings.push(
+      finding(
+        "9.14.duplicate-validation-note",
+        sharers[0]?.handle ?? draft.specHandle,
+        `${named} carry one identical validation note; a verification approach shared by several criteria belongs once in the design, and a criterion note should say only what is specific to that criterion.`,
+      ),
+    );
+  }
+
   if (draft.authoringStage === "plan") {
     for (const criterionElement of criteria) {
       const isCovered = tasks.some((taskElement) =>

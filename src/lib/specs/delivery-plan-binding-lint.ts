@@ -207,6 +207,32 @@ export function lintDeliveryPlanBinding(
     }
   }
 
+  input.admission.launch.definition.executionContexts.forEach(
+    (context, contextIndex) => {
+      if (!stableSourceIds.has(context.id)) return;
+      const records = criterionRecordsOf(context.acceptanceCriteria);
+      if (records.length === 0) return;
+      const coversSelected = records.some((record) =>
+        (record.covers ?? []).some((criterionId) =>
+          selectedCriterionIds.has(criterionId),
+        ),
+      );
+      if (coversSelected) return;
+      const noun = records.length === 1 ? "criterion" : "criteria";
+      issues.push({
+        code: "coverage/plan-authored-context",
+        path: [
+          "definition",
+          "executionContexts",
+          contextIndex,
+          "acceptanceCriteria",
+        ],
+        criterionElementId: null,
+        message: `Context ${context.id} owns no selected spec criterion: its ${records.length} acceptance ${noun} (${records.map((record) => record.id).join(", ")}) is plan-authored. Justify each plan-authored obligation against the design or the charter, or add covers.`,
+      });
+    },
+  );
+
   return issues;
 }
 

@@ -4,6 +4,8 @@ Command Center is run by one person, Alex, on two machines: a Mac and a Linux bo
 
 Nearest archetype: single-operator tool, daemon variant. It departs from that archetype in three ways. One always-on server coordinates many concurrent agent sessions, workflows, and child processes. Several CC processes can share one machine: a production build runs beside the live server on the same database, and a per-session dev server is a separate CC instance with its own database. Agents are trusted. Per-lane and per-worktree restrictions exist so that concurrent agents do not clobber each other's work; they are coordination, not a security boundary. What agents and models produce is still parsed strictly, because model output is unreliable data, not because it is hostile.
 
+The design rule that follows from this envelope: choose the simplest design that solves the whole problem, add a guard, fallback, retry, or abstraction only for a failure mode that occurs here and is worth handling, and let everything else fail fast with an error that says what to do. A guarantee only counts if it is used. A rule that is painful for Alex or an agent to follow gets routed around and then protects nothing, so a modest rule that will be followed beats a strict one that will be bypassed. The complexity budget goes to the real problem, coordinating many sessions, workflows, and backends at once, not to conditions this envelope excludes.
+
 | Dimension | Condition |
 |---|---|
 | Users | Alex alone, at a laptop browser, a phone on the tailnet, a terminal, and through agents driving `cctl`. Alex and those agents are the only readers of logs and errors. |
@@ -27,3 +29,24 @@ Nearest archetype: single-operator tool, daemon variant. It departs from that ar
 - Retries with backoff around local calls; circuit breakers, health endpoints, metrics exporters, tracing to an external system.
 - Horizontal scale, sharding, request-rate caches, feature flags, i18n.
 - An enterprise-managed host overriding agent SDK settings.
+
+## Accepted inputs
+
+- Configuration and plan documents (`config.json`, `CommandCenter.json`, workflow definitions, spec payloads) are parsed against strict schemas and refused whole on an unknown or malformed field. Recovery is Alex editing the file or a migration; there is no lenient mode and no partial load.
+- Model and agent output is parsed strictly. A structured-output parse failure gets a bounded number of repair attempts, then the turn fails with the raw payload kept in the lossless transcript envelope. No heuristic salvage beyond that.
+- Identities (project, session, conversation, execution, context, ticket) are exact strings. A reference that does not resolve is an error, never a fuzzy match.
+
+## Recovery
+
+- A failed turn, session, validation run, or workflow iteration is retried by Alex or by the workflow's own bounded iteration policy. A halted execution is resumed after diagnosis. No automatic retry with backoff wraps a local call.
+- Durable state is the SQLite database and the config directory. They are migrated forward and never rebuilt; a shape breakage is fixed by hand-editing the file or writing a migration, with the server stopped if needed.
+- Worktrees, lane branches, dev servers, and child processes are disposable: recreate them rather than repair them.
+- A rebuild restarts the daemon with conversations mid-flight. Continuity resumes what the backend can resume and reports the rest as interrupted.
+- An error says what failed and what to do next. Beyond that, no partial-progress accounting is owed to anyone but the person reading the log, and that person can retry.
+
+## First version
+
+- A new capability ships as the smallest slice that reaches a real entry point (a route, a `cctl` verb, a UI control) and a visible result, on the backend that needs it, verified on the host it was built on. The second host is exercised when Alex next uses it there, not by a mandatory parallel proof.
+- Breadth is a later increment with its own evidence, not a first-version obligation: every registered backend, both host OSes, every content or artifact type, every result-shape variant.
+- Deferred until a present consumer names them: cross-machine state, other human users, versioning of the HTTP API or CLI output for outside consumers, Windows, provider parity beyond the registered backends, and any guarantee whose only consumer is future automation.
+- When a requirement or design would add a mechanism for a condition listed outside this envelope, the proposal names the condition and the cheaper alternative, and recommends the smaller version. Approving the larger one is Alex's call, made once, in the open.
