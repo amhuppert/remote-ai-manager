@@ -4,6 +4,7 @@ import {
   graphWorkflowExecutionActReceiptSchema,
   graphWorkflowExecutionOriginSchema,
   graphWorkflowLaunchReceiptSchema,
+  graphWorkflowUpstreamInputSchema,
 } from "@/lib/workflow-graph/schemas";
 import { graphWorkflowBoundaryKindSchema } from "@/lib/workflow-graph/event-schemas";
 import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
@@ -180,4 +181,12 @@ export const expandResponseSchema = z.object({
   createdContextIds: z.array(z.string()).default([]),
   createdTaskIds: z.array(z.string()).default([]),
   rejoinContextIds: z.array(z.string()).default([]),
+});
+export const inputsResponseSchema = z.object({
+  ok: z.literal(true),
+  inputs: z.array(
+    graphWorkflowUpstreamInputSchema.extend({
+      output: z.record(z.string(), jsonValueSchema).nullable(),
+    }),
+  ),
 });

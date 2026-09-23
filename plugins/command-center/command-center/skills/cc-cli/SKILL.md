@@ -68,8 +68,13 @@ Read that file in bounded chunks or search it locally.
 
 `--json` changes representation, not scope: omitted rows stay omitted. Follow
 returned handles and omission commands. Where help offers `--full`, use it to
-request complete data; `--out <path>` selects the artifact destination. Binary
-exports always return an artifact receipt. Structured input commands have a
+request complete data. `--out` names the artifact file inside
+`.cc/temp/cctl-artifacts/` under the directory cctl runs in: a relative path
+resolves there, not against the working directory (`--out status.json`, never
+`--out .cc/temp/status.json`), a destination outside it is refused, a
+subdirectory must already exist, and an existing file is not overwritten. The
+receipt's `artifact.path` is the absolute location. Binary exports always
+return an artifact receipt. Structured input commands have a
 validation twin, such as `ask-check` or `spec draft-check`; it admits the same
 file without applying the write. Check leaf help for any server preflight.
 

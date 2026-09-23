@@ -37,6 +37,7 @@ import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 import {
+  costSettlementFrame,
   recordConversationCostSettlement,
   type CostSettlementIdentity,
 } from "@/lib/conversations/cost-settlement";
@@ -1913,6 +1914,32 @@ async function executePromptForMachine(
  * TranscriptMessage via the existing append path, and lets the broadcast
  * meta trigger `message-appended` SSE once.
  */
+/**
+ * A task run leaves no backend result frame in the conversation transcript, so
+ * its billed cost (a failed run is billed too) would be invisible to every
+ * transcript reader. The durable total already includes it through the turn's
+ * accounting; this frame only makes the transcript agree. Each run is its own
+ * lineage: sharing the live session's would read as a restart of that lineage.
+ */
+async function recordTaskRunCost(
+  deps: ConversationActorDependencies,
+  input: RunTaskRunInput,
+  result: AgentCallResult,
+  meta: TranscriptBroadcastMeta,
+): Promise<void> {
+  const costUsd = result.usage.costUsd;
+  if (typeof costUsd !== "number" || !(costUsd > 0)) return;
+  await deps.transcript.safeAppendTranscriptEntryOnce(
+    input.target.conversationId,
+    costSettlementFrame(input.target.conversationId, {
+      lineageId: `task_run:${input.executionAttemptId ?? randomUUID()}`,
+      cumulativeCostUsd: costUsd,
+      costUsdDelta: costUsd,
+    }),
+    meta,
+  );
+}
+
 async function runTaskRunTurnForMachine(
   deps: ConversationActorDependencies,
   input: RunTaskRunInput,
@@ -2176,6 +2203,8 @@ async function runTaskRunTurnForMachine(
       continuationDisposition: "retain",
     });
   }
+
+  await recordTaskRunCost(deps, input, result, broadcastMeta);
 
   const projected = toPromptActorResult(
     { kind: "call_result", result },

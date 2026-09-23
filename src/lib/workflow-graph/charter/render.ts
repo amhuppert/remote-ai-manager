@@ -33,6 +33,29 @@ function contextScopedSources(
   });
 }
 
+/**
+ * Whether a worktree document belongs in this context's view. A document that
+ * is the locator of a context-scoped source takes that source's scope, so the
+ * charter stays the single owner of who a source is for; a document no source
+ * names is everyone's.
+ */
+export function isDocumentInContextScope(
+  charter: WorkflowCharter,
+  contextId: string,
+  relativePath: string,
+): boolean {
+  const sources = charter.sourcesOfTruth.filter(
+    (source) => source.locator === relativePath,
+  );
+  return (
+    sources.length === 0 ||
+    sources.some((source) => {
+      const scope = sourceScopeContextIds(source);
+      return scope === null || scope.includes(contextId);
+    })
+  );
+}
+
 /** A source's applicability note: prose passes through, structured scopes join. */
 function appliesToNote(source: PersistedSourceOfTruth): string | null {
   if (source.appliesTo === undefined) return null;
@@ -223,6 +246,38 @@ export function renderCharterMarkdown(
   charter: WorkflowCharter,
   amendments: readonly CharterAmendment[] = [],
 ): string {
+  return renderCharter(charter, amendments, rankedSources(charter));
+}
+
+/**
+ * The charter as written into the worktree, where every context's agents can
+ * read it: context-scoped sources are left out because each context's prompt
+ * already lists the ones that apply to it, and naming them here would
+ * advertise a source to the contexts it was scoped away from.
+ */
+export function renderCharterDocument(
+  charter: WorkflowCharter,
+  amendments: readonly CharterAmendment[] = [],
+): string {
+  const globalSources = rankedSources(charter).filter(
+    (source) => sourceScopeContextIds(source) === null,
+  );
+  return renderCharter(
+    charter,
+    amendments,
+    globalSources,
+    globalSources.length < charter.sourcesOfTruth.length
+      ? "Sources scoped to specific contexts are listed in the prompts of the contexts they apply to."
+      : null,
+  );
+}
+
+function renderCharter(
+  charter: WorkflowCharter,
+  amendments: readonly CharterAmendment[],
+  sources: readonly PersistedSourceOfTruth[],
+  scopedSourcesNote: string | null = null,
+): string {
   const showInvariantScopes = hasScopedInvariants(charter.invariants);
   const sections: Array<string | null> = [
     "# Workflow Charter",
@@ -240,7 +295,8 @@ export function renderCharterMarkdown(
     renderBulletSection("Known ambiguities", charter.knownAmbiguities),
     [
       "## Source-of-truth hierarchy (highest authority first)",
-      ...rankedSources(charter).map(renderMarkdownSourceEntry),
+      ...sources.map(renderMarkdownSourceEntry),
+      ...(scopedSourcesNote !== null ? [scopedSourcesNote] : []),
     ].join("\n\n"),
     renderAmendmentLog(amendments),
   ];

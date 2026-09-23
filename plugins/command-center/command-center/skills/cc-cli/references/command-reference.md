@@ -502,6 +502,9 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl workflow graph expand-check` — Validate: Expand the graph from this lane
   - `cctl workflow graph expand-check --file <path> [options]`
   - Flags: `--file` (required).
+- `cctl workflow inputs` — Read this lane's upstream inputs
+  - `cctl workflow inputs [options]`
+  - Flags: `--full`, `--out`.
 - `cctl workflow list` — List saved workflow definitions
   - `cctl workflow list [options]`
 - `cctl workflow live` — Inspect and change the active execution

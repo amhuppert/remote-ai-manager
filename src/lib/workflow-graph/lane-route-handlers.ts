@@ -15,6 +15,9 @@
  * to the currently-active execution — preserving the stale-lane guard the MCP
  * URL provided). The CLI fills both from `CC_WORKFLOW_EXECUTION_ID` /
  * `CC_WORKFLOW_CONTEXT_ID` (doc 01 §2).
+ *
+ * One read endpoint rides alongside: a lane's own upstream inputs, so an agent
+ * can script over the payloads its prompt carries instead of re-typing them.
  */
 
 import { NextResponse } from "next/server";
@@ -31,6 +34,9 @@ import {
   type LaneIdentityReading,
 } from "@/lib/agent-gateway/lane-identity";
 import { resolveProjectPath } from "@/lib/projects/resolver";
+import { getActiveGraphWorkflowExecution } from "@/lib/state-store";
+import { resolveUpstreamInputs } from "./context-outputs";
+import type { GraphWorkflowExecution } from "./schemas";
 import { createLogger, withTracing } from "@/lib/logging";
 import { GraphExecutionContractViolationError } from "./execution-contract-port";
 import type { AgentAddedTask } from "@/lib/workflow-graph/runtime-edits";
@@ -125,6 +131,10 @@ export interface LaneRouteDeps {
     executionId: string,
     contextId: string,
   ): Promise<LoadLaneToolContextResult>;
+  readActiveExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution | null>;
 }
 
 function invalidBody(error: z.ZodError): Response {
@@ -682,12 +692,63 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
     });
   }
 
+  /**
+   * The calling context's upstream inputs, from the same resolver the prompt's
+   * "Inputs from upstream" section reads, so the export and the prompt agree
+   * and a context never receives a payload from a context it does not follow.
+   */
+  async function readInputs(
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const { name, session, contextId } = await params;
+    const projectName = name ?? "";
+    const sessionName = session ?? "";
+    const refusal = refuseProjectSentinelSessionParam(sessionName, projectName);
+    if (refusal) return refusal;
+    const project = await resolveProjectOr404(deps, projectName);
+    if (!project.ok) return project.response;
+
+    const executionId =
+      new URL(request.url).searchParams.get("executionId") ?? "";
+    const execution = await deps.readActiveExecution(
+      project.value,
+      sessionName,
+    );
+    const cid = contextId ?? "";
+    // Both refusals mean the lane's injected identity is stale — the same
+    // conflict the mutating lane verbs report — not a missing resource.
+    if (
+      execution === null ||
+      execution.id !== executionId ||
+      !execution.workingDefinition.executionContexts.some(
+        (context) => context.id === cid,
+      )
+    ) {
+      return jsonError(
+        "This lane's execution context is not part of the session's active graph workflow execution",
+        409,
+      );
+    }
+
+    const inputs = resolveUpstreamInputs(execution, cid);
+    log.info("graph-workflow-lane.inputs_read", {
+      contextId: cid,
+      inputCount: inputs.length,
+    });
+    return NextResponse.json({ ok: true, inputs });
+  }
+
   return {
     completeTask,
     addTask,
     upsertSharedDocument,
     requestCollaboration,
     expandGraph,
+    readInputs,
   };
 }
 
@@ -699,6 +760,8 @@ const defaultDeps: LaneRouteDeps = {
   publishExpansionRefusal,
   resolveProjectPath,
   loadLaneToolContext: loadGraphWorkflowLaneToolContext,
+  readActiveExecution: async (projectPath, sessionName) =>
+    getActiveGraphWorkflowExecution(projectPath, sessionName),
 };
 
 const defaultHandlers = createLaneRouteHandlers(defaultDeps);
@@ -717,3 +780,5 @@ export const REQUEST_COLLABORATION = withTracing(
 );
 /** POST …/graph-workflow/contexts/[contextId]/expand */
 export const EXPAND_GRAPH = withTracing(defaultHandlers.expandGraph);
+/** GET …/graph-workflow/contexts/[contextId]/inputs?executionId= */
+export const READ_INPUTS = withTracing(defaultHandlers.readInputs);

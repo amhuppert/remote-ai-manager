@@ -187,7 +187,7 @@ workflows.
 They resolve the lane's execution + context from the env CC injects at spawn —
 `CC_WORKFLOW_EXECUTION_ID` and `CC_WORKFLOW_CONTEXT_ID`. You never pass those;
 run the verbs outside a lane and they exit `2` naming the missing variable.
-Every lane verb runs the execution's **halt check first**: if the run has been
+Every lane verb except the `inputs` read runs the execution's **halt check first**: if the run has been
 halted or is blocked on a pending collaboration, the command exits `1` printing
 the halt reason verbatim — stop and end your turn.
 
@@ -203,6 +203,7 @@ cctl workflow task complete <taskId> --summary "<what changed, how verified>"
 cctl workflow task add --title "<name>" --instructions "<self-contained steps>" [--slug <slug>]
 cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json
 cctl workflow collab request --brief "<question with context>"
+cctl workflow inputs [--full --out <name>]
 ```
 
 - `task complete` — mark the current task done. **Call this after each task** —
@@ -224,6 +225,11 @@ cctl workflow collab request --brief "<question with context>"
   the **background**: the command returns immediately with a workflow id — **stop
   work on this turn and wait** for the follow-up that delivers the outcome. Only
   allowed when the context enables collaboration; otherwise exits `1`.
+- `inputs` — list the payloads this context receives from its direct
+  predecessors, the same ones its prompt carries (each is `delivered`, `skipped`,
+  or `none`). `--full` returns every payload; add `--out <name>` to save them as
+  one JSON file under `.cc/temp/cctl-artifacts/` and script over it instead of
+  copying a payload by hand. It never returns another context's inputs.
 
 ```
 cctl workflow task complete implement-auth --summary "Added OAuth2 route + tests; bun test green"

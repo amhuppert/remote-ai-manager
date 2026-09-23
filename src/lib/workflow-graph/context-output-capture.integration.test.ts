@@ -12,8 +12,8 @@ import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lif
 import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
 
 /**
- * R2.1 end-to-end: engine → production capture runner → canonical AgentCall
- * gate → FAKE AGENT BACKEND.
+ * R2.1 end-to-end: engine → production capture runner → conversation turn on
+ * the lane's live runtime → canonical AgentCall gate → FAKE AGENT BACKEND.
  *
  * Every other D2 test replaces one of those hops with a double, so none of them
  * can show that a real agent reply becomes a persisted, schema-conformant
@@ -23,23 +23,22 @@ import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversati
  * `validateJsonSchemaSubset`), the real capture runner translates the verdict,
  * and the real orchestrator decides whether the context may complete.
  *
- * The production host and admitted completion handle carry the original AgentCall
- * result through the task facade. Only provider execution and external
- * infrastructure are substituted; persistence uses an isolated SQLite fixture.
+ * The production conversation manager and actor carry the original AgentCall
+ * result to the runner. Only the provider runtime and external infrastructure
+ * are substituted; persistence uses an isolated SQLite fixture.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  AgentTaskRequest,
-  AgentTaskResult,
-  AgentTaskRunner,
-} from "@/lib/agent-backends/task";
+  ConversationBackendCreateInput,
+  ConversationBackendFactory,
+  ConversationBackendTurnInput,
+} from "@/lib/agent-backends/conversation";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 import { DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS } from "@/lib/workflows/primitives/agent-call-facade";
-import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
 
-import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { createMockBackendRuntime } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "./test-fixtures";
@@ -62,70 +61,90 @@ const PLAN_OUTPUT_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
+interface BackendCapture {
+  runtimes: ConversationBackendCreateInput[];
+  turns: ConversationBackendTurnInput[];
+}
+
 /**
- * The fake agent backend. It returns assistant TEXT only — never a native
- * structured payload — so the gate's extraction path is what turns a reply into
- * a candidate, exactly as a Claude lane behaves.
+ * The fake conversation backend. Each turn returns assistant TEXT only — never
+ * a native structured payload — so the gate's extraction path is what turns a
+ * reply into a candidate, exactly as a Claude lane behaves.
  */
-function fakeBackend(
+function fakeConversationBackend(
   replies: readonly string[],
-  capture: { requests: AgentTaskRequest[] },
-): AgentTaskRunner {
+  capture: BackendCapture,
+): ConversationBackendFactory {
   let index = 0;
   return {
     backend: "claude",
-    async run(request) {
-      capture.requests.push(request);
-      const text = replies[Math.min(index, replies.length - 1)] ?? "";
-      index += 1;
-      const result: AgentTaskResult = {
-        backendRef: { backend: "claude", ref: "sess-capture" },
-        text,
-        structuredOutput: undefined,
-        usage: { inputTokens: 10, outputTokens: 20, cachedInputTokens: 0 },
-        error: null,
-        timedOut: false,
-        failure: null,
-        continuationDisposition: "retain",
-      };
-      return result;
+    validateModelSelection() {},
+    async createRuntime(input) {
+      capture.runtimes.push(input);
+      return createMockBackendRuntime({
+        modelSelection: input.modelSelection,
+        ...(input.fsWritePolicy ? { fsWritePolicy: input.fsWritePolicy } : {}),
+        async sendTurn(turn) {
+          capture.turns.push(turn);
+          await turn.onEvent({ type: "input_accepted" });
+          const text = replies[Math.min(index, replies.length - 1)] ?? "";
+          index += 1;
+          return {
+            backendRef: RESUMED_BACKEND_REF,
+            continuationDisposition: "retain",
+            costUsd: null,
+            durationMs: 1,
+            numTurns: 1,
+            contextTokens: 0,
+            contextWindowMax: null,
+            contentBlocks: [{ type: "text", text }],
+            compacted: false,
+            aborted: false,
+            failure: null,
+          };
+        },
+      });
     },
   };
 }
 
 /**
- * The production task-run path, with only the backend faked: the real actor
- * implementation (which runs the real `executeAgentCall` gate) followed by the
- * real hosted task facade and outcome projection. Every branch the
- * engine depends on — accepted payload with its provenance, schema rejection
- * with per-issue errors and the refused text, infrastructure failure — is
- * decided by production code here, not by this test.
+ * The production conversation path for the lane conversation, with only the
+ * provider runtime faked: the real manager and actor run the real
+ * `executeAgentCall` gate and project its outcome. Every branch the engine
+ * depends on — accepted payload with its provenance, schema rejection with
+ * per-issue errors and the refused text — is decided by production code here.
  */
-function productionTaskRun(
-  runner: AgentTaskRunner,
-): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  const actorDependencies = createActorDependenciesFixture({
-    getTaskRunner: vi.fn(() => runner),
+async function laneConversation(
+  replies: readonly string[],
+  capture: BackendCapture,
+) {
+  const lifecycle = await createLifecycleFixture({
+    address: {
+      projectPath: "/repo",
+      target: {
+        scope: "session",
+        projectName: "repo",
+        sessionName: "session-1",
+        conversationId: "conversation-lane",
+      },
+    },
+    conversation: { agentBackend: "claude", backendRef: RESUMED_BACKEND_REF },
+    actorDeps: {
+      getConversationBackendFactory: () =>
+        fakeConversationBackend(replies, capture),
+    },
   });
-
-  return async (input) => {
-    const fixture = await createLifecycleFixture({
-      binding: input.binding,
-      conversation: { agentBackend: "claude", backendRef: RESUMED_BACKEND_REF },
-      actorDeps: actorDependencies,
-    });
-    try {
-      return await fixture.executeWorkflowTaskRun({
+  return {
+    executeConversationTurn: (input: ConversationTurnSubmission) =>
+      lifecycle.manager.executeConversationTurn({
         ...input,
         binding: {
           ...input.binding,
           worktreePath: input.binding.worktreePath ?? "/repo",
         },
-        resumeRef: input.resumeRef ?? RESUMED_BACKEND_REF,
-      });
-    } finally {
-      await fixture.close();
-    }
+      }),
+    close: () => lifecycle.close(),
   };
 }
 
@@ -226,12 +245,12 @@ function completePlanTask(repository: Repository) {
 
 function buildOrchestrator(
   repository: Repository,
-  runner: AgentTaskRunner,
+  lane: Awaited<ReturnType<typeof laneConversation>>,
   signalHalt?: ReturnType<typeof vi.fn>,
 ) {
-  // PRODUCTION capture runner over the production task-run path.
+  // PRODUCTION capture runner over the production conversation path.
   const outputCaptureRunner = createGraphWorkflowOutputCaptureRunner({
-    executeWorkflowTaskRun: productionTaskRun(runner),
+    executeConversationTurn: lane.executeConversationTurn,
   });
 
   return createContextIterationFixture({
@@ -274,20 +293,21 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
 
   it("drives a schema-declaring context to completed and persists a payload that parses against the declared schema", async () => {
     const repository = createRepository(executionWithSchema());
-    const capture = { requests: [] as AgentTaskRequest[] };
+    const capture: BackendCapture = { runtimes: [], turns: [] };
     // Fenced JSON with prose around it: the gate's extraction fall-through is
     // what must recover the payload, since the fake backend returns no native
     // structured output.
-    const runner = fakeBackend(
+    const lane = await laneConversation(
       [
         'Here is the output you asked for:\n\n```json\n{"summary":"Migrate the store first","risks":["schema drift"]}\n```\n',
       ],
       capture,
     );
 
-    const result = await buildOrchestrator(repository, runner).runIteration(
+    const result = await buildOrchestrator(repository, lane).runIteration(
       ITERATION_INPUT,
     );
+    await lane.close();
 
     const persisted = repository.read();
     const captured = persisted.contextOutputs["context-plan"];
@@ -307,10 +327,15 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
     expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
     expect(result.decision.kind).toBe("ready_to_land");
 
-    // The declared contract reached the backend verbatim.
-    const captureRequest = capture.requests.at(-1);
-    expect(captureRequest?.outputSchema).toEqual(PLAN_OUTPUT_SCHEMA);
-    expect(captureRequest?.prompt).toContain("Final Output");
+    // The declared contract reached the backend verbatim, on a turn of the
+    // lane's existing session.
+    const captureTurn = capture.turns.at(-1);
+    expect(captureTurn?.outputFormat).toEqual({
+      type: "json_schema",
+      schema: PLAN_OUTPUT_SCHEMA,
+    });
+    expect(captureTurn?.promptText).toContain("Final Output");
+    expect(capture.runtimes.at(-1)?.persistedRef).toEqual(RESUMED_BACKEND_REF);
   });
 
   it.each([
@@ -331,7 +356,7 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
       payloadLocation: "scratch" as const,
     },
   ])(
-    "carries the exact $label write policy and existing lane ref to the backend request",
+    "carries the exact $label write policy and existing lane ref to the backend runtime",
     async ({ placement, ownedPaths, payloadLocation }) => {
       const execution = executionWithSchema();
       const context = execution.workingDefinition.executionContexts.find(
@@ -354,21 +379,23 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
         payloadLocation,
       }).policy;
       const repository = createRepository(execution);
-      const capture = { requests: [] as AgentTaskRequest[] };
-      const runner = fakeBackend(
+      const capture: BackendCapture = { runtimes: [], turns: [] };
+      const lane = await laneConversation(
         ['{"summary":"Policy retained","risks":[]}'],
         capture,
       );
 
-      await buildOrchestrator(repository, runner).runIteration({
+      await buildOrchestrator(repository, lane).runIteration({
         ...ITERATION_INPUT,
         executionTarget,
       });
+      await lane.close();
 
-      expect(capture.requests).toHaveLength(1);
-      expect(capture.requests[0]).toMatchObject({
-        workingDirectory: executionTarget.worktreePath,
-        resumeRef: RESUMED_BACKEND_REF,
+      expect(capture.turns).toHaveLength(1);
+      expect(capture.runtimes).toHaveLength(1);
+      expect(capture.runtimes[0]).toMatchObject({
+        worktreePath: executionTarget.worktreePath,
+        persistedRef: RESUMED_BACKEND_REF,
         fsWritePolicy: expectedPolicy,
       });
     },
@@ -376,17 +403,18 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
 
   it("does not complete the context when the backend's payload cannot satisfy the schema, and records the gate's issues", async () => {
     const repository = createRepository(executionWithSchema());
-    const capture = { requests: [] as AgentTaskRequest[] };
+    const capture: BackendCapture = { runtimes: [], turns: [] };
     // `risks` is a string, not an array of strings — the real subset validator
     // refuses it, and the bounded repair attempt gets the same reply back.
-    const runner = fakeBackend(
+    const lane = await laneConversation(
       ['{"summary":"Migrate the store first","risks":"schema drift"}'],
       capture,
     );
 
-    const result = await buildOrchestrator(repository, runner).runIteration(
+    const result = await buildOrchestrator(repository, lane).runIteration(
       ITERATION_INPUT,
     );
+    await lane.close();
 
     const persisted = repository.read();
     expect(persisted.contextOutputs["context-plan"]).toBeUndefined();
@@ -414,13 +442,13 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
     ).toContain("$.risks");
 
     // The gate's bounded repair really ran: more than one backend turn.
-    expect(capture.requests.length).toBeGreaterThan(1);
+    expect(capture.turns.length).toBeGreaterThan(1);
     // …and the rejection record says so. This is the halt surfaces' only
     // honest repair provenance, propagated from the gate that spent it —
     // through backendDetails, the actor, the task-run result and the capture
     // outcome — rather than re-derived from D1's unrelated plan-repair rounds.
     expect(failure).toMatchObject({
-      gateRepairAttempts: capture.requests.length - 1,
+      gateRepairAttempts: capture.turns.length - 1,
       gateRepairBudget: DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS,
     });
     // The contract that refused travels WITH the refusal: the halt surfaces'
@@ -434,8 +462,8 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
 
   it("accepts a payload the gate recovers on its repair attempt", async () => {
     const repository = createRepository(executionWithSchema());
-    const capture = { requests: [] as AgentTaskRequest[] };
-    const runner = fakeBackend(
+    const capture: BackendCapture = { runtimes: [], turns: [] };
+    const lane = await laneConversation(
       [
         // First reply is unusable; the gate's repair turn gets a valid one.
         "I could not produce that.",
@@ -444,7 +472,8 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
       capture,
     );
 
-    await buildOrchestrator(repository, runner).runIteration(ITERATION_INPUT);
+    await buildOrchestrator(repository, lane).runIteration(ITERATION_INPUT);
+    await lane.close();
 
     const persisted = repository.read();
     expect(persisted.contextOutputs["context-plan"]?.value).toEqual({
@@ -452,7 +481,7 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
       risks: [],
     });
     expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
-    expect(capture.requests.length).toBeGreaterThan(1);
+    expect(capture.turns.length).toBeGreaterThan(1);
   });
 });
 

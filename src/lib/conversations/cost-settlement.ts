@@ -45,6 +45,29 @@ export interface CostSettlementDeps {
 }
 
 /**
+ * The transcript frame for cost that no backend result frame carries. It is
+ * lineage-cumulative like every result frame, so transcript readers fold it
+ * with the same final-per-lineage rule; the id makes a re-append a no-op.
+ */
+export function costSettlementFrame(
+  conversationId: string,
+  settlement: ConversationCostSettlement,
+): TranscriptEntry & { id: string } {
+  const cumulativeMicros = Math.round(settlement.cumulativeCostUsd * 1e6);
+  return {
+    id: `cost-settlement:${conversationId}:${settlement.lineageId}:${cumulativeMicros}`,
+    timestamp: new Date().toISOString(),
+    type: COST_SETTLEMENT_FRAME_TYPE,
+    raw: {
+      kind: COST_SETTLEMENT_FRAME_TYPE,
+      lineageId: settlement.lineageId,
+      cumulativeCostUsd: settlement.cumulativeCostUsd,
+      costUsdDelta: settlement.costUsdDelta,
+    },
+  };
+}
+
+/**
  * Apply a provider cost settlement that arrived outside a turn result to the
  * conversation's durable total, its live actor when hosted, its transcript,
  * and the SSE bus. The backend runtime owns exactly-once reporting; this seam
@@ -72,19 +95,11 @@ export async function recordConversationCostSettlement(
   }
 
   if (deps.appendTranscriptEntryOnce !== undefined) {
-    const cumulativeMicros = Math.round(settlement.cumulativeCostUsd * 1e6);
     try {
-      await deps.appendTranscriptEntryOnce(identity.conversationId, {
-        id: `cost-settlement:${identity.conversationId}:${settlement.lineageId}:${cumulativeMicros}`,
-        timestamp: new Date().toISOString(),
-        type: COST_SETTLEMENT_FRAME_TYPE,
-        raw: {
-          kind: COST_SETTLEMENT_FRAME_TYPE,
-          lineageId: settlement.lineageId,
-          cumulativeCostUsd: settlement.cumulativeCostUsd,
-          costUsdDelta: settlement.costUsdDelta,
-        },
-      });
+      await deps.appendTranscriptEntryOnce(
+        identity.conversationId,
+        costSettlementFrame(identity.conversationId, settlement),
+      );
     } catch (error) {
       logger.warn("conversation.cost_settlement_frame_failed", {
         ...conversationEventScopeFields(

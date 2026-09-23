@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { createLogger } from "@/lib/logging";
-import { renderCharterMarkdown, computeCharterHash } from "./render";
+import { renderCharterDocument, computeCharterHash } from "./render";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import type { ArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
@@ -255,7 +255,7 @@ export function createWorkflowCharterService(
       kind: "graph_shared_document",
       worktreePath: input.worktreePath,
       relativePath: CHARTER_RELATIVE_PATH,
-      contents: renderCharterMarkdown(charter),
+      contents: renderCharterDocument(charter),
       audience: "user_facing",
       description: CHARTER_DESCRIPTION,
       readWhen: CHARTER_READ_WHEN,

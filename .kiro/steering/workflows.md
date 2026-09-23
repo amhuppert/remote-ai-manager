@@ -591,8 +591,8 @@ stays null — the halt stands for the operator (see "Plan repair" above).
 
 ### Validator conversation turns
 
-Validators and advisory responses dispatch `conversation_turn` on durable lane
-conversations. The actor composes validator charter, validation policy, role
+Validators, advisory responses, and D2 output capture dispatch
+`conversation_turn` on durable lane conversations. The actor composes validator charter, validation policy, role
 mandate, asking instructions, and the stored profile; the runner supplies the
 review work and authority-selected verdict schema. The actor owns backend
 continuity and streams into the lane transcript, which is the review artifact.
@@ -601,9 +601,13 @@ question-ending turn; the durable conversation and pending question remain.
 AgentCall skips structured-output enforcement when the actor reports a pending
 question, and the graph iteration orchestrator owns parking the context.
 
-D2 output capture and plan repair retain explicit `task_run` dispatch: they are
-bounded format/repair protocols with separate output and instruction contracts.
-Changing their dispatch belongs with a change to those contracts.
+D2 output capture continues the implementer's live lane runtime with a
+`single` structured-output turn. It must match the implementer turn's model,
+write policy, and ask-user setting: any difference rebuilds the runtime, and a
+rebuilt or task-run transport changes the request prefix and forfeits the
+provider's prompt cache for the whole conversation. Plan repair retains explicit
+`task_run` dispatch as a bounded repair protocol with its own output and
+instruction contracts.
 
 ### The advisory loop
 

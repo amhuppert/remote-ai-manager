@@ -4,17 +4,20 @@ import { getProjectDisplayName as getConversationProjectName } from "@/lib/proje
  * Dispatches the D2 format turn that captures a context's structured output.
  *
  * The turn is an AgentCall carrying the context's declared `outputSchema`,
- * dispatched onto the context's EXISTING implementer lane conversation so the
- * payload is restated from the work the lane already did. Validation is not
- * re-implemented here: `executeWorkflowTaskRun` routes the turn through the
- * conversation actor into `executeAgentCall`, whose structured-output protocol
+ * continued on the context's EXISTING implementer lane conversation so the
+ * payload is restated from the work the lane already did. It is a conversation
+ * turn on the live runtime rather than a task run: the task-run path closes the
+ * runtime and resumes the session through another transport without the lane's
+ * instructions and tools, which changes the request prefix and forfeits the
+ * backend's prompt cache for the whole conversation. Validation is not
+ * re-implemented here: `executeConversationTurn` routes the turn through the
+ * conversation actor into `executeAgentCall`, whose structured-output gate
  * performs candidate extraction fall-through plus bounded repair. This module
  * only translates that single verdict into the engine's capture vocabulary —
- * the same composition `validator-runner.ts` uses for its schema-validated turn.
+ * the same composition `advisory-response-runner.ts` uses on the same lane.
  */
 
 import { createLogger } from "@/lib/logging";
-import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowContextOutputCaptureInput } from "@/lib/workflow-graph/context-validation-coordinator";
 import {
   buildOutputCapturePrompt,
@@ -26,11 +29,11 @@ import {
   composeImplementerLaneWriteEnvelope,
   resolveImplementerContinuationWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
+import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
 import {
-  executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
-  type ExecuteWorkflowTaskRunInput,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+  toTaskRunResult,
+  type TaskRunResult,
+} from "@/lib/workflows/conversation/turn-result";
 
 const logger = createLogger("graph-workflow-output-capture");
 
@@ -41,29 +44,20 @@ const logger = createLogger("graph-workflow-output-capture");
  */
 const MAX_REJECTED_TEXT_CHARS = 4_000;
 
-interface ExecuteWorkflowTaskRunFn {
-  (input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
-}
-
 export interface GraphWorkflowOutputCaptureRunnerDeps {
-  executeWorkflowTaskRun?: ExecuteWorkflowTaskRunFn;
+  executeConversationTurn?: typeof defaultExecuteConversationTurn;
   composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
   resolveWorktreePath?(
     projectPath: string,
     sessionName: string,
   ): Promise<string>;
-  /** Per-turn wall-clock bound, resolved from the same backend defaults the
-   *  validator turn uses. Omitted leaves the actor's own default in force.
-   *  Typed as `AgentBackendId` — the resolved context already carries one, so
-   *  widening to `string` here would only force the caller to cast it back. */
-  resolveTimeoutMs?(backend: AgentBackendId): Promise<number | undefined>;
 }
 
 export function createGraphWorkflowOutputCaptureRunner(
   deps: GraphWorkflowOutputCaptureRunnerDeps = {},
 ) {
-  const executeWorkflowTaskRun =
-    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const executeConversationTurn =
+    deps.executeConversationTurn ?? defaultExecuteConversationTurn;
   const composeWriteEnvelope =
     deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
 
@@ -86,9 +80,6 @@ export function createGraphWorkflowOutputCaptureRunner(
         ? { previousRejection: input.previousRejection }
         : {}),
     });
-    const timeoutMs = await deps.resolveTimeoutMs?.(
-      context.implementer.agent.backend,
-    );
     const writeEnvelopeResolution =
       await resolveImplementerContinuationWriteEnvelope(
         {
@@ -136,7 +127,14 @@ export function createGraphWorkflowOutputCaptureRunner(
       fsWriteRestricted: writeEnvelope !== null,
     });
 
-    const result = await executeWorkflowTaskRun({
+    const outputFormat = {
+      type: "json_schema" as const,
+      // The declared contract, verbatim: the gate validates against this exact
+      // document, so anything less than the whole schema would validate a
+      // different contract than the author wrote.
+      schema: input.outputSchema,
+    };
+    const execution = await executeConversationTurn({
       binding: {
         kind: "durable",
         address: {
@@ -151,30 +149,41 @@ export function createGraphWorkflowOutputCaptureRunner(
           ? { worktreePath: input.executionTarget.worktreePath }
           : {}),
       },
-      kind: "task_run",
-      executionClass: "governed-execution",
-      executionProfile: "standard",
-      prompt,
-      // The declared contract, verbatim: the gate validates against this exact
-      // document, so anything less than the whole schema would validate a
-      // different contract than the author wrote.
-      structuredOutputTurns: "single",
-      outputFormat: { type: "json_schema", schema: input.outputSchema },
-      modelSelection: context.implementer.agent.modelSelection,
-      ...(writeEnvelope !== null
-        ? { fsWritePolicy: writeEnvelope.policy }
-        : {}),
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      origin: {
-        source: "workflow",
-        workflow: {
+      turn: {
+        kind: "conversation_turn",
+        promptText: prompt,
+        autonomous: true,
+        // Must equal the implementer turn's value: it feeds the runtime's
+        // session instructions, and a mismatch rebuilds the runtime, which is
+        // the cache loss this turn exists to avoid.
+        askUserQuestionsEnabled: context.askUserQuestions.enabled,
+        backend: context.implementer.agent.backend,
+        outputFormat,
+        structuredOutputTurns: "single",
+        modelSelection: context.implementer.agent.modelSelection,
+        ...(writeEnvelope !== null
+          ? { fsWritePolicy: writeEnvelope.policy }
+          : {}),
+      },
+      executionContext: {
+        workflowContext: {
           executionId: input.execution.id,
-          nodeId: input.contextId,
-          iterationIndex:
-            input.execution.contextStates[input.contextId]?.iterationCount ?? 0,
+          contextId: input.contextId,
         },
       },
+      waitUntilReady: true,
     });
+    const result = toTaskRunResult(
+      execution.kind === "settled"
+        ? execution.turn.outcome
+        : {
+            kind: "not_started",
+            reason:
+              execution.code === "cancelled" ? "cancelled" : "configuration",
+            message: execution.message,
+          },
+      outputFormat,
+    );
 
     return toCaptureOutcome(result, input);
   }

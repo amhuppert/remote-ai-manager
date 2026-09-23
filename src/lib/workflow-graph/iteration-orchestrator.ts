@@ -70,7 +70,11 @@ import {
   resolveLogicalAuthoredContextId,
   resolveScopedCharterForContext,
 } from "./charter/invariant-scope";
-import { contextOwesOutput, resolveUpstreamInputs } from "./context-outputs";
+import {
+  contextOwesOutput,
+  resolveUpstreamInputs,
+  type GraphWorkflowUpstreamInput,
+} from "./context-outputs";
 import { resolveLoopHistory } from "./loop-history";
 
 import { isValidationRoundOpen } from "@/lib/workflow-graph/validation-round";
@@ -275,6 +279,19 @@ export interface GraphWorkflowIterationOrchestratorDeps {
     execution: GraphWorkflowExecution;
     worktreePath: string;
   }): Promise<GraphWorkflowExecution>;
+  /**
+   * Save the delivered upstream payloads as files in the context's payload
+   * directory before its seed turn, returning the directory the prompt names
+   * (null when nothing was delivered). Absent writes no files; the prompt then
+   * points only at `cctl workflow inputs`.
+   */
+  writeUpstreamInputFiles?(input: {
+    executionId: string;
+    contextId: string;
+    placementMode: ContextPlacement["mode"];
+    worktreePath: string;
+    inputs: readonly GraphWorkflowUpstreamInput[];
+  }): string | null;
   /**
    * Summarize the lane conversation's transcript (true lineage cost, SDK turn
    * count, file re-read stats) for the `conversation.telemetry` iteration
@@ -1458,6 +1475,35 @@ export function createGraphWorkflowIterationOrchestrator(
         }),
       });
 
+      const upstreamInputs = resolveUpstreamInputs(
+        seededExecution,
+        input.contextId,
+      );
+      const writeInputFiles = (
+        inputs: readonly GraphWorkflowUpstreamInput[],
+      ): string | null => {
+        if (!deps.writeUpstreamInputFiles || !input.executionTarget) {
+          return null;
+        }
+        try {
+          return deps.writeUpstreamInputFiles({
+            executionId: seededExecution.id,
+            contextId: input.contextId,
+            placementMode: context.placement.mode,
+            worktreePath: input.executionTarget.worktreePath,
+            inputs,
+          });
+        } catch (err) {
+          // The files are a convenience over `cctl workflow inputs`, which
+          // reads the same payloads, so a failed write only drops the pointer.
+          logger.warn("graph-workflow.iteration.upstream_input_files_failed", {
+            executionId: seededExecution.id,
+            contextId: input.contextId,
+            error: getErrorMessage(err),
+          });
+          return null;
+        }
+      };
       const basePrompt =
         promptMode === "follow_up"
           ? buildFollowUpPrompt({
@@ -1472,6 +1518,7 @@ export function createGraphWorkflowIterationOrchestrator(
               charterAmendments: seededExecution.charterAmendments,
               resumeUserInput: resumeUserInputPrompt,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
+              outputSchema: context.outputSchema,
             })
           : buildIterationPrompt({
               context,
@@ -1502,10 +1549,8 @@ export function createGraphWorkflowIterationOrchestrator(
               validationSelections,
               // What this context receives (D2 Req 5) — the same resolver the
               // inspector UI and, later, D4 conditional edges read.
-              upstreamInputs: resolveUpstreamInputs(
-                seededExecution,
-                input.contextId,
-              ),
+              upstreamInputs,
+              upstreamInputsDirectory: writeInputFiles(upstreamInputs),
               // Prior passes of this loop (R16.1) — null for every context that
               // is not a pass ENTRY, so ordinary upstream injection stays the
               // only channel for same-pass body contexts.
@@ -1803,6 +1848,7 @@ export function createGraphWorkflowIterationOrchestrator(
           charter: scopedCharter,
           charterAmendments: midExecution.charterAmendments,
           askUserQuestionsEnabled: context.askUserQuestions.enabled,
+          outputSchema: context.outputSchema,
         });
         const followUpPrompt = await composeGraphRolePrompt({
           execution: midExecution,

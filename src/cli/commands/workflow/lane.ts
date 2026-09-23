@@ -1,23 +1,34 @@
 import { quoteLiteralText } from "../../framework/literal-text";
-import { mutation, recoveryFacts, writeRunner } from "cli-for-agents";
-import { instruction } from "cli-for-agents/guidance";
+import {
+  invocation,
+  mutation,
+  recoveryFacts,
+  runner,
+  writeRunner,
+} from "cli-for-agents";
+import { hint, instruction } from "cli-for-agents/guidance";
 import { z } from "zod";
 import { resolveCcLane, type CcErrorCode } from "../../framework/context";
 import { encodePathSegment, type LaneContext } from "../../transport";
 import type * as specs from "./definitions";
+import { inputsCommand } from "./definitions";
 import {
   collabResponseSchema,
   completeResponseSchema,
   expandResponseSchema,
+  inputsResponseSchema,
   sharedDocFileSchema,
 } from "./schemas";
 import {
   graphPath,
   lanePath,
   principal,
+  readResponse,
   writeResponse,
   okSchema,
   type Input,
+  type JsonObject,
+  type Read,
   type Write,
   type Mutation,
 } from "./shared";
@@ -257,4 +268,124 @@ export const collabRequestHandler: Write<typeof specs.collabRequestSpec> = {
         `Collaboration ${status}${workflowId ? ` (${workflowId})` : ""}.\n`,
       ),
   }),
+};
+
+type UpstreamInput = z.infer<typeof inputsResponseSchema>["inputs"][number];
+type InputStatus = "delivered" | "skipped" | "none";
+type InputSummaryRow = {
+  contextId: string;
+  title: string;
+  status: InputStatus;
+  fields: string[] | null;
+  bytes: number | null;
+};
+type InputsSummaryData = { contextId: string; inputs: InputSummaryRow[] };
+type InputsFullData = {
+  contextId: string;
+  inputs: Array<{
+    contextId: string;
+    title: string;
+    status: InputStatus;
+    output: JsonObject | null;
+  }>;
+};
+
+function inputStatus(input: UpstreamInput): InputStatus {
+  if (input.skipped) return "skipped";
+  return input.output === null ? "none" : "delivered";
+}
+
+async function readLaneInputs(app: Input<typeof specs.inputsSpec>["app"]) {
+  const resolved = await resolveCcLane(app);
+  if (!resolved.ok) return resolved;
+  const context = resolved.value;
+  const response = await readResponse(
+    app,
+    {
+      ...context,
+      method: "GET",
+      path: `${lanePath(context)}/inputs?executionId=${encodeURIComponent(context.executionId)}`,
+    },
+    inputsResponseSchema,
+  );
+  if (!response.ok) return response;
+  return {
+    ok: true as const,
+    contextId: context.contextId,
+    inputs: response.data.inputs,
+  };
+}
+
+const inputsSummaryRunner = runner<
+  Input<typeof specs.inputsSpec>,
+  InputsSummaryData,
+  CcErrorCode
+>({
+  async run({ app }) {
+    const read = await readLaneInputs(app);
+    if (!read.ok) return read;
+    const data: InputsSummaryData = {
+      contextId: read.contextId,
+      inputs: read.inputs.map((input) => ({
+        contextId: input.contextId,
+        title: input.title,
+        status: inputStatus(input),
+        fields: input.schemaFields?.map((field) => field.name) ?? null,
+        bytes:
+          input.output === null
+            ? null
+            : new TextEncoder().encode(JSON.stringify(input.output)).byteLength,
+      })),
+    };
+    if (!read.inputs.some((input) => input.output !== null))
+      return { ok: true, data };
+    return {
+      ok: true,
+      data,
+      hint: hint(
+        invocation(inputsCommand, { level: "full" }),
+        "Read every payload; add --out <name> to save them as one JSON file",
+      ),
+    };
+  },
+  text: (data) =>
+    quoteLiteralText(
+      data.inputs.length === 0
+        ? `${data.contextId} has no upstream inputs.\n`
+        : data.inputs
+            .map(
+              (row) =>
+                `${row.contextId}: ${row.title}; ${row.status}${row.fields ? `; fields ${row.fields.join(", ")}` : ""}${row.bytes !== null ? `; ${row.bytes} bytes` : ""}`,
+            )
+            .join("\n") + "\n",
+    ),
+});
+
+const inputsFullRunner = runner<
+  Input<typeof specs.inputsSpec>,
+  InputsFullData,
+  CcErrorCode
+>({
+  async run({ app }) {
+    const read = await readLaneInputs(app);
+    if (!read.ok) return read;
+    return {
+      ok: true,
+      data: {
+        contextId: read.contextId,
+        inputs: read.inputs.map((input) => ({
+          contextId: input.contextId,
+          title: input.title,
+          status: inputStatus(input),
+          output: input.output,
+        })),
+      },
+    };
+  },
+  text: (data) => quoteLiteralText(`${JSON.stringify(data.inputs, null, 2)}\n`),
+});
+
+export const inputsHandler: Read<typeof specs.inputsSpec> = {
+  run: inputsSummaryRunner,
+  levels: { full: inputsFullRunner },
 };

@@ -146,7 +146,9 @@ export function projectGraphWorkflowResultOutputs(input: {
         contextId: context.id,
         outputName,
         deepLink,
-        command: `cctl workflow result --execution ${shellQuote(input.execution.id)} --context ${shellQuote(context.id)} --output ${shellQuote(outputName)}`,
+        // The full execution read carries every context output; the reference's
+        // contextId and outputName address the value inside it.
+        command: `cctl workflow status ${shellQuote(input.execution.id)} --full`,
       };
       values[outputName] = reference;
     }

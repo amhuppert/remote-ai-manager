@@ -1,4 +1,5 @@
 import { readRuntimeInstructions } from "./runtime-instructions";
+import { projectTranscriptUsage } from "@/lib/agent-backends/transcript-projections";
 import { createCursorTaskRunner } from "@/lib/agent-backends/cursor/task-runner";
 import { createScriptedTransport } from "@/lib/agent-backends/cursor/testing/scripted-worker";
 import { translatePortableMcpToCursor } from "@/lib/agent-backends/cursor/mcp-translation";
@@ -8672,6 +8673,75 @@ describe("runTaskRunTurnForMachine", () => {
       }),
       expect.anything(),
     );
+  });
+
+  it.each([
+    ["completed", null],
+    ["failed", "provider error"],
+  ])(
+    "records a %s task run's cost as a transcript frame the usage reader counts",
+    async (_label, error) => {
+      const runner = makeMockTaskRunner(async () => ({
+        backendRef: { backend: "codex" as const, ref: "thread-1" },
+        text: error === null ? "done" : null,
+        usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.25 },
+        error,
+        timedOut: false,
+        failure:
+          error === null
+            ? null
+            : { kind: "backend_error", message: error, retryable: false },
+        continuationDisposition: "retain",
+      }));
+      mockDeps = createMockDeps({
+        getTaskRunner: vi.fn(() => runner),
+        executeAgentCall: defaultExecuteAgentCall,
+      });
+      conversationActors = createTestActorImplementations(mockDeps);
+
+      await conversationActors.runTaskRunTurnForMachine(
+        makeRunTaskRunInput({ executionAttemptId: "attempt-7" }),
+      );
+
+      const frames = vi
+        .mocked(mockDeps.safeAppendTranscriptEntryOnce)
+        .mock.calls.map(([, entry]) => projectTranscriptUsage(entry))
+        .filter((usage) => usage !== null);
+      // Its own lineage: sharing the live session's would read as a restart
+      // of that lineage and drop cost, and it must not be counted twice.
+      expect(frames).toEqual([
+        {
+          lineageId: "task_run:attempt-7",
+          cumulativeCostUsd: 0.25,
+          numTurns: null,
+        },
+      ]);
+    },
+  );
+
+  it("records no cost frame for a task run whose backend reported no cost", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: "done",
+      usage: { inputTokens: 100, outputTokens: 20 },
+      error: null,
+      timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
+    }));
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    conversationActors = createTestActorImplementations(mockDeps);
+
+    await conversationActors.runTaskRunTurnForMachine(makeRunTaskRunInput());
+
+    const frames = vi
+      .mocked(mockDeps.safeAppendTranscriptEntryOnce)
+      .mock.calls.map(([, entry]) => projectTranscriptUsage(entry))
+      .filter((usage) => usage !== null);
+    expect(frames).toEqual([]);
   });
 
   it("task_run failure surfaces aborted=true when failureKind is aborted and persists no transcript entry", async () => {

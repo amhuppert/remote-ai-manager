@@ -9,7 +9,9 @@ import type {
 import {
   CHARTER_DOCUMENT_PATH,
   computeCharterHash,
+  isDocumentInContextScope,
   renderCharterDigest,
+  renderCharterDocument,
   renderCharterMarkdown,
   renderCharterPromptSection,
 } from "./render";
@@ -525,5 +527,57 @@ describe("amendment log rendering", () => {
     expect(renderCharterDigest(makeCharter(), IN_SCOPE_CONTEXT)).not.toContain(
       "Amendment log",
     );
+  });
+});
+
+describe("renderCharterDocument", () => {
+  it("lists global sources and leaves context-scoped sources to each context's prompt", () => {
+    const document = renderCharterDocument(makeCharter());
+    expect(document).toContain("Reference Prototype");
+    expect(document).toContain("Upstream Spec");
+    // The on-disk document is read by every context's agents, so naming a
+    // source scoped to other contexts would advertise it to all of them.
+    expect(document).not.toContain("Acceptance Criteria Doc");
+    expect(document).not.toContain(scopedSource.locator);
+  });
+
+  it("matches the full markdown when no source is context-scoped", () => {
+    const charter = makeCharter({
+      sourcesOfTruth: [globalSource, legacySource],
+    });
+    expect(renderCharterDocument(charter)).toBe(renderCharterMarkdown(charter));
+  });
+});
+
+describe("isDocumentInContextScope", () => {
+  const charter = makeCharter();
+
+  it("keeps a document that is no charter source in every context's scope", () => {
+    expect(
+      isDocumentInContextScope(charter, OUT_OF_SCOPE_CONTEXT, "notes.md"),
+    ).toBe(true);
+  });
+
+  it("scopes a source document to the contexts its source applies to", () => {
+    expect(
+      isDocumentInContextScope(charter, IN_SCOPE_CONTEXT, scopedSource.locator),
+    ).toBe(true);
+    expect(
+      isDocumentInContextScope(
+        charter,
+        OUT_OF_SCOPE_CONTEXT,
+        scopedSource.locator,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a globally sourced document in every context's scope", () => {
+    expect(
+      isDocumentInContextScope(
+        charter,
+        OUT_OF_SCOPE_CONTEXT,
+        globalSource.locator,
+      ),
+    ).toBe(true);
   });
 });

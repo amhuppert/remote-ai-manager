@@ -245,6 +245,15 @@ describe("projectGraphWorkflowResultOutputs", () => {
     });
     expect(JSON.stringify(projection)).not.toContain(above);
     expect(execution.contextOutputs["context-plan"]?.value.above).toBe(above);
+    // The retrieval command must be one cctl actually has: the full execution
+    // read carries every context output, oversized values included.
+    const reference =
+      projection.kind === "declared_outputs"
+        ? projection.byContext["context-plan"]?.above
+        : undefined;
+    expect(reference).toMatchObject({
+      command: `cctl workflow status '${execution.id}' --full`,
+    });
   });
 
   it("references every oversized value independently with stable coordinates", () => {

@@ -184,6 +184,7 @@ const auditJoinStateSchema = z.object({
 const auditDefinitionContextSchema = z.object({
   id: z.string(),
   title: z.string().default(""),
+  contextValidator: z.object({ enabled: z.boolean() }).partial().optional(),
 });
 
 const auditExecutionProjectionSchema = z.object({
@@ -573,6 +574,12 @@ export interface TranscriptScan {
   reads: { uniqueFiles: number; totalReads: number; repeatReads: number };
   /** Files Read more than once, most-repeated first (capped). */
   topReReads: Array<{ path: string; count: number }>;
+  /**
+   * An assistant entry follows the last usage frame. A legacy output-capture
+   * turn (dispatched as a task run) left exactly this shape: its reply was
+   * appended but no frame ever priced it.
+   */
+  unpricedTrailingOutput: boolean;
 }
 
 const TOP_TOOL_COUNTS_LIMIT = 5;
@@ -603,6 +610,7 @@ export function scanTranscriptText(jsonlText: string): TranscriptScan {
   let backgroundTasksKilled = 0;
   let modelFallbacks = 0;
   let compactions = 0;
+  let unpricedTrailingOutput = false;
 
   for (const line of jsonlText.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;
@@ -638,7 +646,17 @@ export function scanTranscriptText(jsonlText: string): TranscriptScan {
                 numTurns:
                   typeof raw.numTurns === "number" ? raw.numTurns : null,
               }
-            : null;
+            : // Cost no result frame carries (late settlements, task runs):
+              // lineage-cumulative under its own lineage id.
+              raw.kind === "cost_settlement" &&
+                typeof raw.lineageId === "string" &&
+                typeof raw.cumulativeCostUsd === "number"
+              ? {
+                  lineageId: raw.lineageId,
+                  cumulativeCostUsd: raw.cumulativeCostUsd,
+                  numTurns: null,
+                }
+              : null;
     if (lineageUsage !== null) {
       // Cumulative per lineage — the last result in file order is the final.
       // A restarted subprocess can resume the SAME session id with its
@@ -656,7 +674,9 @@ export function scanTranscriptText(jsonlText: string): TranscriptScan {
       if (lineageUsage.numTurns !== null) {
         apiTurns = (apiTurns ?? 0) + lineageUsage.numTurns;
       }
+      unpricedTrailingOutput = false;
     }
+    if (entry.type === "assistant") unpricedTrailingOutput = true;
 
     if (raw !== null && typeof raw.subtype === "string") {
       if (raw.subtype === "task_updated") {
@@ -742,6 +762,7 @@ export function scanTranscriptText(jsonlText: string): TranscriptScan {
       .sort((a, b) => b[1] - a[1])
       .slice(0, TOP_RE_READS_LIMIT)
       .map(([path, count]) => ({ path, count })),
+    unpricedTrailingOutput,
   };
 }
 
@@ -884,7 +905,9 @@ function buildIterations(records: JsonlRecord[]): IterationReport[] {
         seedPromptLength: null,
         maxContextTokens: null,
         conversationId: null,
-        model: fieldStr(record.fields, "model"),
+        model:
+          fieldStr(record.fields, "modelId") ??
+          fieldStr(record.fields, "model"),
       };
       iterations.push(current);
       continue;
@@ -1417,6 +1440,17 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   });
 
   // ---- cost rollup ------------------------------------------------------
+  const captureConversationIds = new Set<string>();
+  for (const logs of Object.values(contextLogs)) {
+    for (const record of logs.iterations) {
+      if (record.event !== "output_capture.started") continue;
+      const conversationId = fieldStr(record.fields, "conversationId");
+      if (conversationId !== null) captureConversationIds.add(conversationId);
+    }
+  }
+  // Conversations whose output-capture turn left an unpriced reply in the
+  // transcript: capture used to run as a task run, which wrote no usage frame.
+  const unpricedCaptureConversationIds: string[] = [];
   let totalUsd = 0;
   let missingCostCount = 0;
   let anyTranscriptCost = false;
@@ -1436,10 +1470,21 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       totalUsd += cost;
     }
     const transcriptCost = conversation.transcript?.costUsd ?? null;
+    const unpricedCapture =
+      captureConversationIds.has(conversation.conversationId) &&
+      conversation.transcript?.unpricedTrailingOutput === true;
+    if (unpricedCapture) {
+      unpricedCaptureConversationIds.push(conversation.conversationId);
+    }
     if (transcriptCost !== null) {
       anyTranscriptCost = true;
-      correctedSum += transcriptCost;
+      // The recorded row already includes a Codex capture turn the transcript
+      // never saw; correcting down to the transcript would drop real spend.
+      const recordedIncludesCapture =
+        unpricedCapture && cost !== null && cost > transcriptCost;
+      correctedSum += recordedIncludesCapture ? cost : transcriptCost;
       if (
+        !recordedIncludesCapture &&
         cost !== null &&
         Math.abs(cost - transcriptCost) >=
           Math.max(
@@ -1998,8 +2043,15 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       summary: "execution ran to completion with no halts",
     });
   }
+  // A context with validation disabled records a GO no reviewer gave.
+  const validationDisabledContextIds = new Set(
+    execution.workingDefinition.executionContexts
+      .filter((context) => context.contextValidator?.enabled === false)
+      .map((context) => context.id),
+  );
   const firstTryContexts = contexts.filter(
     (context) =>
+      !validationDisabledContextIds.has(context.contextId) &&
       context.status === "completed" &&
       context.iterationCount <= 1 &&
       context.validations.every((v) => v.pass),
@@ -2138,6 +2190,22 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     confidence.push({
       kind: "missing_conversation_costs",
       summary: `${missingCostCount} conversation(s) have no recorded cost — the cost total is a floor`,
+    });
+  }
+  if (validationDisabledContextIds.size > 0) {
+    confidence.push({
+      kind: "validation_disabled",
+      summary: `context validation was disabled for ${[
+        ...validationDisabledContextIds,
+      ].join(
+        ", ",
+      )}: their GO verdicts are not reviews, and their acceptance criteria were checked by no validator`,
+    });
+  }
+  if (unpricedCaptureConversationIds.length > 0) {
+    confidence.push({
+      kind: "unpriced_capture_turns",
+      summary: `${unpricedCaptureConversationIds.length} output-capture turn(s) never reached the transcript's cost frames (capture ran as a task run): a Codex turn's cost is in the recorded row, a Claude turn's is recorded nowhere, so the cost total is a floor: ${unpricedCaptureConversationIds.join(", ")}`,
     });
   }
   if (costGapConversations.length > 0) {
@@ -2439,6 +2507,13 @@ export function renderMarkdown(report: AuditReport): string {
           ? formatUsd(conversation.costUsd)
           : "cost unknown";
       if (
+        scan?.costUsd != null &&
+        conversation.costUsd !== null &&
+        scan.unpricedTrailingOutput &&
+        conversation.costUsd > scan.costUsd
+      ) {
+        costPart = `${formatUsd(conversation.costUsd)} recorded (the transcript's ${formatUsd(scan.costUsd)} omits an unpriced turn)`;
+      } else if (
         scan?.costUsd != null &&
         conversation.costUsd !== null &&
         Math.abs(conversation.costUsd - scan.costUsd) > 0.01

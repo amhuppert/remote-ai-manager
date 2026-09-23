@@ -1615,6 +1615,7 @@ describe("cost gaps", () => {
         compactions: 0,
         reads: { uniqueFiles: 0, totalReads: 0, repeatReads: 0 },
         topReReads: [],
+        unpricedTrailingOutput: false,
       },
     });
     const report = buildAuditReport(input);
@@ -1676,5 +1677,145 @@ describe("telemetry confidence", () => {
     expect(md).toContain("operator recovery");
     expect(md).toContain("Halt recoveries");
     expect(md).toContain("join_failure");
+  });
+});
+
+describe("output-capture cost accounting", () => {
+  const line = (entry: Record<string, unknown>) => JSON.stringify(entry);
+
+  it("counts cost_settlement frames as their own lineage", () => {
+    const scan = scanTranscriptText(
+      [
+        line({
+          type: "result",
+          raw: { total_cost_usd: 1.5, session_id: "sess-1", num_turns: 3 },
+        }),
+        line({
+          type: "cost_settlement",
+          raw: {
+            kind: "cost_settlement",
+            lineageId: "task_run:attempt-1",
+            cumulativeCostUsd: 0.25,
+            costUsdDelta: 0.25,
+          },
+        }),
+      ].join("\n"),
+    );
+    expect(scan.costUsd).toBeCloseTo(1.75);
+  });
+
+  it("marks assistant output that no later usage frame prices", () => {
+    const priced = scanTranscriptText(
+      [
+        line({ type: "assistant", role: "assistant", content: [] }),
+        line({ type: "result", raw: { total_cost_usd: 1, session_id: "s" } }),
+      ].join("\n"),
+    );
+    const unpriced = scanTranscriptText(
+      [
+        line({ type: "result", raw: { total_cost_usd: 1, session_id: "s" } }),
+        line({ type: "assistant", role: "assistant", content: [] }),
+      ].join("\n"),
+    );
+    expect(priced.unpricedTrailingOutput).toBe(false);
+    expect(unpriced.unpricedTrailingOutput).toBe(true);
+  });
+
+  function withCaptureTurn(
+    recordedUsd: number,
+    transcriptUsd: number,
+  ): AuditInput {
+    const input = baseInput();
+    const base = scanTranscriptText("");
+    input.conversations = input.conversations.map((c) =>
+      c.id === "conv-val"
+        ? {
+            ...c,
+            totalCostUsd: recordedUsd,
+            transcriptScan: {
+              ...base,
+              costUsd: transcriptUsd,
+              unpricedTrailingOutput: true,
+            },
+          }
+        : c,
+    );
+    input.contextLogs.validate?.iterations.push(
+      rec(T("11:55:31"), "output_capture.started", {
+        conversationId: "conv-val",
+        retry: false,
+      }),
+    );
+    return input;
+  }
+
+  it("keeps the recorded cost when a legacy capture turn is missing from the transcript", () => {
+    const report = buildAuditReport(withCaptureTurn(1.25, 0.8));
+    // The recorded row includes the capture turn the transcript never saw, so
+    // correcting down to the transcript would subtract real spend.
+    expect(report.cost.correctedTotalUsd).toBeCloseTo(report.cost.totalUsd);
+    expect(report.friction.some((f) => f.kind === "cost_mismatch")).toBe(false);
+    expect(renderMarkdown(report)).not.toMatch(/\$1\.25 recorded → /);
+  });
+
+  it("says the total is a floor when a capture turn's cost never reached the transcript", () => {
+    const report = buildAuditReport(withCaptureTurn(0.8, 0.8));
+    const note = report.confidence.find(
+      (entry) => entry.kind === "unpriced_capture_turns",
+    );
+    expect(note?.summary).toContain("conv-val");
+  });
+});
+
+describe("contexts with validation disabled", () => {
+  function inputWithValidation(enabled: boolean): AuditInput {
+    const input = baseInput();
+    input.execution = mustParseExecution({
+      ...baseExecutionRaw(),
+      workingDefinition: {
+        executionContexts: [
+          {
+            id: "impl",
+            title: "Implement",
+            contextValidator: { enabled: true },
+          },
+          { id: "validate", title: "Validate", contextValidator: { enabled } },
+        ],
+      },
+    });
+    return input;
+  }
+
+  it("does not count a context without a validator as passing first try", () => {
+    const report = buildAuditReport(inputWithValidation(false));
+    const firstTry = report.positives.find((p) => p.kind === "first_try_go");
+    expect(firstTry?.summary ?? "").not.toContain("validate");
+    const note = report.confidence.find(
+      (entry) => entry.kind === "validation_disabled",
+    );
+    expect(note?.summary).toContain("validate");
+  });
+
+  it("still counts a validated context that passed first try", () => {
+    const report = buildAuditReport(inputWithValidation(true));
+    const firstTry = report.positives.find((p) => p.kind === "first_try_go");
+    expect(firstTry?.summary).toContain("validate");
+    expect(
+      report.confidence.some((entry) => entry.kind === "validation_disabled"),
+    ).toBe(false);
+  });
+});
+
+describe("iteration model", () => {
+  it("reads the modelId the iteration log records", () => {
+    const input = baseInput();
+    input.contextLogs.validate!.iterations[0] = rec(
+      T("11:45:00"),
+      "iteration.started",
+      { iterationNumber: 1, modelId: "gpt-6-astra" },
+    );
+    const report = buildAuditReport(input);
+    const validate = report.contexts.find((c) => c.contextId === "validate");
+    expect(validate?.iterations[0]?.model).toBe("gpt-6-astra");
   });
 });

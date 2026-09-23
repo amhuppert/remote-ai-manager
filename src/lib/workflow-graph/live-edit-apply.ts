@@ -44,7 +44,7 @@ import type {
   PublishCharterUpdatedInput,
   PublishLiveEditAppliedInput,
 } from "./execution-events";
-import { CHARTER_DOCUMENT_PATH, renderCharterMarkdown } from "./charter/render";
+import { CHARTER_DOCUMENT_PATH, renderCharterDocument } from "./charter/render";
 import { type GraphExecutionContract } from "./execution-contract-port";
 
 import { classifyExecutionEditability } from "./lifecycle-classifier";
@@ -546,7 +546,7 @@ export async function applyLiveEditsToActiveExecution(
       if (session?.worktreePath) {
         await deps.writeCharterDocument({
           worktreePath: session.worktreePath,
-          markdown: renderCharterMarkdown(
+          markdown: renderCharterDocument(
             committed.charter,
             committed.charterAmendments,
           ),

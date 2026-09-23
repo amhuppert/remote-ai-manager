@@ -173,22 +173,69 @@ function canonicalizeUnderExisting(
   return missing.length === 0 ? resolved : path.join(resolved, ...missing);
 }
 
+function defaultScratchRootDir(): string {
+  return path.join(os.tmpdir(), SCRATCH_ROOT_DIR_NAME);
+}
+
+function contextScratchPath(
+  scratchRootDir: string,
+  executionId: string,
+  contextId: string,
+): string {
+  return path.join(
+    scratchRootDir,
+    toLanePathSegment(executionId),
+    toLanePathSegment(contextId),
+  );
+}
+
+function worktreePayloadPath(worktreeRoot: string, contextId: string): string {
+  return path.join(
+    worktreeRoot,
+    PAYLOAD_NAMESPACE_DIR,
+    PAYLOAD_PARENT_DIR,
+    toLanePathSegment(contextId),
+  );
+}
+
+/**
+ * Where a context keeps payload files, before canonicalization: its private
+ * scratch for a read-only context, the worktree's git-ignored `.cc/temp/<id>`
+ * otherwise. A `full` context has no envelope but uses the same worktree
+ * location its prompt directs payloads to.
+ */
+export function contextPayloadDirectory(
+  input: {
+    executionId: string;
+    contextId: string;
+    worktreePath: string;
+    placementMode: ContextPlacement["mode"];
+  },
+  deps: Pick<ImplementerLaneWriteEnvelopeDeps, "scratchRootDir"> = {},
+): string {
+  return input.placementMode === "readOnly"
+    ? contextScratchPath(
+        deps.scratchRootDir ?? defaultScratchRootDir(),
+        input.executionId,
+        input.contextId,
+      )
+    : worktreePayloadPath(input.worktreePath, input.contextId);
+}
+
 export function composeImplementerLaneWriteEnvelope(
   input: ComposeImplementerLaneWriteEnvelopeInput,
   deps: ImplementerLaneWriteEnvelopeDeps = {},
 ): ImplementerLaneWriteEnvelope {
-  const scratchRootDir =
-    deps.scratchRootDir ?? path.join(os.tmpdir(), SCRATCH_ROOT_DIR_NAME);
+  const scratchRootDir = deps.scratchRootDir ?? defaultScratchRootDir();
   const ensureDir =
     deps.ensureDir ?? ((dir: string) => mkdirSync(dir, { recursive: true }));
   const realpath = deps.realpath ?? realpathSync;
   const exists = deps.exists ?? existsSync;
 
-  const contextSegment = toLanePathSegment(input.contextId);
-  const rawScratchDir = path.join(
+  const rawScratchDir = contextScratchPath(
     scratchRootDir,
-    toLanePathSegment(input.executionId),
-    contextSegment,
+    input.executionId,
+    input.contextId,
   );
   if (!isInsideLanePath(scratchRootDir, rawScratchDir)) {
     fail(
@@ -258,12 +305,7 @@ export function composeImplementerLaneWriteEnvelope(
 
   let payloadDir = contextScratchDir;
   if ((input.payloadLocation ?? "worktree") === "worktree") {
-    const rawPayloadDir = path.join(
-      worktreeRoot,
-      PAYLOAD_NAMESPACE_DIR,
-      PAYLOAD_PARENT_DIR,
-      contextSegment,
-    );
+    const rawPayloadDir = worktreePayloadPath(worktreeRoot, input.contextId);
     let payloadNamespace: string;
     try {
       ensureDir(rawPayloadDir);

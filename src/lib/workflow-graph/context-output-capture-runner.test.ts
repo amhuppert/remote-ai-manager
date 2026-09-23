@@ -1,19 +1,49 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
+import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
 import { AgentTurnFailedError } from "./errors";
 import type { GraphWorkflowExecution } from "./schemas";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
 
-/** The single dispatched task-run input, narrowed from the spy's untyped call
+/** The single dispatched turn input, narrowed from the spy's untyped call
  *  record so each assertion reads against the real request contract. */
 function dispatchedInput(spy: {
   mock: { calls: unknown[][] };
-}): ExecuteWorkflowTaskRunInput {
+}): ConversationTurnSubmission {
   const first = spy.mock.calls[0]?.[0];
-  if (first === undefined) throw new Error("no task run was dispatched");
-  return first as ExecuteWorkflowTaskRunInput;
+  if (first === undefined) throw new Error("no turn was dispatched");
+  return first as ConversationTurnSubmission;
+}
+
+function answering(result: ConversationTurnExecution) {
+  return vi.fn(async (_input: ConversationTurnSubmission) => result);
+}
+
+const CAPTURED = settledConversationTurn({
+  outcome: {
+    kind: "completed",
+    structuredOutput: { summary: "done", risks: [] },
+    parse: { source: "raw_json" },
+    text: "",
+  },
+});
+
+function gateRefusal(details: Record<string, unknown>, refusedText: string) {
+  return settledConversationTurn({
+    outcome: {
+      kind: "failed",
+      error: {
+        backend: "claude",
+        failureKind: "schema_validation",
+        message: "structured output failed validation",
+        backendDetails: details,
+      },
+      contentBlocks: [{ type: "text", text: refusedText }],
+    },
+  });
 }
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -53,53 +83,44 @@ function captureInput(execution: GraphWorkflowExecution) {
 }
 
 describe("graph workflow output capture runner", () => {
-  it("dispatches the declared schema as the turn's outputFormat on the lane conversation", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      kind: "structured" as const,
-      structuredOutput: { summary: "done", risks: [] },
-      parse: { source: "raw_json" as const },
-      text: "",
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
-      backendRef: null,
-      continuationDisposition: "retain" as const,
-    }));
+  it("continues the live lane conversation with the declared schema as a single-turn output contract", async () => {
+    const executeConversationTurn = answering(CAPTURED);
 
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
     });
     const outcome = await runner.captureContextOutput(
       captureInput(executionWithSchema()),
     );
 
-    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
-    const dispatched = dispatchedInput(executeWorkflowTaskRun);
-    // Validation must ride the canonical AgentCall gate, which only runs when
-    // the turn carries the declared schema verbatim.
-    expect(dispatched.outputFormat).toEqual({
-      type: "json_schema",
-      schema: OUTPUT_SCHEMA,
-    });
-    // Lane continuity: the format turn reuses the context's work conversation.
+    expect(executeConversationTurn).toHaveBeenCalledTimes(1);
+    const dispatched = dispatchedInput(executeConversationTurn);
+    // A conversation turn rides the lane's live runtime, so the backend sees the
+    // same session prefix as the work turn and can reuse its prompt cache.
+    expect(dispatched.turn.kind).toBe("conversation_turn");
     expect(dispatched.binding.address.target.conversationId).toBe(
       "conversation-lane",
     );
-    expect(dispatched.kind).toBe("task_run");
-    expect(dispatched.modelSelection).toEqual({
+    if (dispatched.turn.kind !== "conversation_turn") {
+      throw new Error("expected a conversation turn");
+    }
+    // Validation must ride the canonical AgentCall gate, which only runs when
+    // the turn carries the declared schema verbatim.
+    expect(dispatched.turn.outputFormat).toEqual({
+      type: "json_schema",
+      schema: OUTPUT_SCHEMA,
+    });
+    expect(dispatched.turn.structuredOutputTurns).toBe("single");
+    expect(dispatched.turn.modelSelection).toEqual({
       modelId: "opus",
       parameters: { effort: "high" },
     });
-    expect(dispatched.fsWritePolicy).toBeUndefined();
-    expect(dispatched.prompt).toContain('"summary"');
-    expect(dispatched.prompt).toContain("Output only the JSON object");
-    expect(dispatched.structuredOutputTurns).toBe("single");
+    expect(dispatched.turn.fsWritePolicy).toBeUndefined();
+    expect(dispatched.turn.promptText).toContain('"summary"');
+    expect(dispatched.executionContext?.workflowContext).toEqual({
+      executionId: expect.any(String),
+      contextId: "context-plan",
+    });
 
     expect(outcome).toEqual({
       kind: "captured",
@@ -108,23 +129,30 @@ describe("graph workflow output capture runner", () => {
     });
   });
 
+  it("keeps the implementer's ask-user setting so the live runtime is not rebuilt", async () => {
+    const executeConversationTurn = answering(CAPTURED);
+    const execution = executionWithSchema();
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!context) throw new Error("fixture missing context-plan");
+    context.askUserQuestions = { enabled: true };
+
+    const runner = createGraphWorkflowOutputCaptureRunner({
+      executeConversationTurn,
+    });
+    await runner.captureContextOutput(captureInput(execution));
+
+    const dispatched = dispatchedInput(executeConversationTurn);
+    if (dispatched.turn.kind !== "conversation_turn") {
+      throw new Error("expected a conversation turn");
+    }
+    expect(dispatched.turn.askUserQuestionsEnabled).toBe(true);
+    expect(dispatched.turn.autonomous).toBe(true);
+  });
+
   it("retains a confined implementer's write envelope on the format turn", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      kind: "structured" as const,
-      structuredOutput: { summary: "done", risks: [] },
-      text: "",
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
-      backendRef: null,
-      continuationDisposition: "retain" as const,
-    }));
+    const executeConversationTurn = answering(CAPTURED);
     const execution = executionWithSchema();
     const context = execution.workingDefinition.executionContexts.find(
       (entry) => entry.id === "context-plan",
@@ -139,7 +167,7 @@ describe("graph workflow output capture runner", () => {
     };
 
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
     });
     await runner.captureContextOutput({
       ...captureInput(execution),
@@ -153,28 +181,16 @@ describe("graph workflow output capture runner", () => {
       ownedPaths: [],
       payloadLocation: "scratch",
     }).policy;
-    expect(dispatchedInput(executeWorkflowTaskRun).fsWritePolicy).toEqual(
-      expectedPolicy,
-    );
+    const dispatched = dispatchedInput(executeConversationTurn);
+    if (dispatched.turn.kind !== "conversation_turn") {
+      throw new Error("expected a conversation turn");
+    }
+    expect(dispatched.turn.fsWritePolicy).toEqual(expectedPolicy);
+    expect(dispatched.binding.worktreePath).toBe(executionTarget.worktreePath);
   });
 
   it("composes an owned-lane envelope from the resolved execution target", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      kind: "structured" as const,
-      structuredOutput: { summary: "done", risks: [] },
-      text: "",
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
-      backendRef: null,
-      continuationDisposition: "retain" as const,
-    }));
+    const executeConversationTurn = answering(CAPTURED);
     const execution = executionWithSchema();
     const context = execution.workingDefinition.executionContexts.find(
       (entry) => entry.id === "context-plan",
@@ -199,7 +215,7 @@ describe("graph workflow output capture runner", () => {
       ownedPrefixes: ["/lane/reports"],
     }));
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
       composeWriteEnvelope,
     });
 
@@ -220,13 +236,15 @@ describe("graph workflow output capture runner", () => {
       ownedPaths: ["reports"],
       payloadLocation: "worktree",
     });
-    expect(dispatchedInput(executeWorkflowTaskRun).fsWritePolicy).toEqual(
-      policy,
-    );
+    const dispatched = dispatchedInput(executeConversationTurn);
+    if (dispatched.turn.kind !== "conversation_turn") {
+      throw new Error("expected a conversation turn");
+    }
+    expect(dispatched.turn.fsWritePolicy).toEqual(policy);
   });
 
   it("fails closed when an owned capture has no execution target", async () => {
-    const executeWorkflowTaskRun = vi.fn();
+    const executeConversationTurn = vi.fn();
     const resolveWorktreePath = vi.fn(async () => "/session-worktree");
     const execution = executionWithSchema();
     const context = execution.workingDefinition.executionContexts.find(
@@ -239,7 +257,7 @@ describe("graph workflow output capture runner", () => {
       ownedPaths: ["reports"],
     };
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
       resolveWorktreePath,
     });
 
@@ -247,29 +265,14 @@ describe("graph workflow output capture runner", () => {
       runner.captureContextOutput(captureInput(execution)),
     ).rejects.toThrow(/no execution target/i);
     expect(resolveWorktreePath).not.toHaveBeenCalled();
-    expect(executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(executeConversationTurn).not.toHaveBeenCalled();
   });
 
   it("renders the previous rejection into a retry turn's prompt", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      kind: "structured" as const,
-      structuredOutput: { summary: "done", risks: [] },
-      text: "",
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
-      backendRef: null,
-      continuationDisposition: "retain" as const,
-    }));
+    const executeConversationTurn = answering(CAPTURED);
 
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
     });
     await runner.captureContextOutput({
       ...captureInput(executionWithSchema()),
@@ -285,37 +288,26 @@ describe("graph workflow output capture runner", () => {
       },
     });
 
-    const dispatched = dispatchedInput(executeWorkflowTaskRun);
-    expect(dispatched.prompt).toContain("previous output was rejected");
-    expect(dispatched.prompt).toContain("$.risks is required");
+    const dispatched = dispatchedInput(executeConversationTurn);
+    if (dispatched.turn.kind !== "conversation_turn") {
+      throw new Error("expected a conversation turn");
+    }
+    expect(dispatched.turn.promptText).toContain(
+      "previous output was rejected",
+    );
+    expect(dispatched.turn.promptText).toContain("$.risks is required");
   });
 
   it("maps a gate refusal into a rejection with path-keyed issues and the refused text", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      kind: "error" as const,
-      error:
-        "structured output failed validation: $.risks is required; $.summary must be string",
-      aborted: false,
-      structuredOutputIssues: [
-        "$.risks is required",
-        "$.summary must be string",
-      ],
-      text: '{"summary": 4}',
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
-      backendRef: null,
-      continuationDisposition: "retain" as const,
-    }));
+    const executeConversationTurn = answering(
+      gateRefusal(
+        { errors: ["$.risks is required", "$.summary must be string"] },
+        '{"summary": 4}',
+      ),
+    );
 
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
     });
     const outcome = await runner.captureContextOutput(
       captureInput(executionWithSchema()),
@@ -335,28 +327,19 @@ describe("graph workflow output capture runner", () => {
   });
 
   it("carries the gate's own repair spend and budget onto the rejection", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      kind: "error" as const,
-      error: "structured output failed validation: $.risks is required",
-      aborted: false,
-      structuredOutputIssues: ["$.risks is required"],
-      structuredOutputRepair: { attempts: 1, maxAttempts: 1 },
-      text: "{}",
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
-      backendRef: null,
-      continuationDisposition: "retain" as const,
-    }));
+    const executeConversationTurn = answering(
+      gateRefusal(
+        {
+          errors: ["$.risks is required"],
+          repairAttempts: 1,
+          repairMaxAttempts: 1,
+        },
+        "{}",
+      ),
+    );
 
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
     });
     const outcome = await runner.captureContextOutput(
       captureInput(executionWithSchema()),
@@ -367,25 +350,37 @@ describe("graph workflow output capture runner", () => {
   });
 
   it("throws for a turn that failed outside the gate instead of counting a schema rejection", async () => {
-    const executeWorkflowTaskRun = vi.fn(async () => ({
-      kind: "error" as const,
-      error: "SDK transport closed",
-      aborted: false,
-      usage: {
-        costUsd: null,
-        durationMs: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-      },
-      backendRef: null,
-      continuationDisposition: "retain" as const,
-    }));
+    const executeConversationTurn = answering(
+      settledConversationTurn({
+        outcome: {
+          kind: "failed",
+          error: {
+            backend: "claude",
+            failureKind: "backend_error",
+            message: "SDK transport closed",
+          },
+        },
+      }),
+    );
 
     const runner = createGraphWorkflowOutputCaptureRunner({
-      executeWorkflowTaskRun,
+      executeConversationTurn,
+    });
+
+    await expect(
+      runner.captureContextOutput(captureInput(executionWithSchema())),
+    ).rejects.toBeInstanceOf(AgentTurnFailedError);
+  });
+
+  it("throws when the conversation refuses to admit the turn", async () => {
+    const executeConversationTurn = answering({
+      kind: "refused",
+      code: "busy",
+      message: "conversation is busy",
+    });
+
+    const runner = createGraphWorkflowOutputCaptureRunner({
+      executeConversationTurn,
     });
 
     await expect(

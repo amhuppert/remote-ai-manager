@@ -260,6 +260,9 @@ function makeDeps(
         }
       );
     },
+    async readActiveExecution() {
+      return null;
+    },
   };
 }
 
@@ -896,6 +899,14 @@ describe("lane route handlers — token gate", () => {
           params(BASE_PARAMS),
         ),
     ],
+    [
+      "readInputs",
+      (handlers) =>
+        handlers.readInputs(
+          new Request("http://cc.local/api?executionId=execution-1"),
+          params(BASE_PARAMS),
+        ),
+    ],
   ];
 
   it.each(invocations)(
@@ -910,6 +921,7 @@ describe("lane route handlers — token gate", () => {
         }),
       );
       const resolveProjectPath = vi.fn(async () => "/projects/test");
+      const readActiveExecution = vi.fn(async () => null);
       const handlers = createLaneRouteHandlers({
         auth: {
           async requireToken() {
@@ -931,11 +943,13 @@ describe("lane route handlers — token gate", () => {
         publishExpansionRefusal() {},
         resolveProjectPath,
         loadLaneToolContext,
+        readActiveExecution,
       });
 
       const response = await invoke(handlers);
 
       expect(response.status).toBe(401);
+      expect(readActiveExecution).not.toHaveBeenCalled();
       const body = await response.json();
       expect(body.error).toContain("token");
       expect(resolveProjectPath).not.toHaveBeenCalled();
@@ -1462,5 +1476,96 @@ describe("lane route handlers — graph expansion capability chain", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ halt: true });
     expect(expandGraph).not.toHaveBeenCalled();
+  });
+});
+
+describe("lane route handlers — read inputs", () => {
+  function executionWithPlanOutput(): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({ status: "running" });
+    const plan = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!plan) throw new Error("fixture missing context-plan");
+    plan.outputSchema = {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+    };
+    execution.contextOutputs["context-plan"] = {
+      value: { summary: "Migrate the store first" },
+      capturedAt: "2026-09-22T00:00:00.000Z",
+      iteration: 1,
+      parse: { source: "raw_json" },
+    };
+    return execution;
+  }
+
+  function get(executionId: string): Request {
+    return new Request(
+      `http://cc.local/api?executionId=${encodeURIComponent(executionId)}`,
+    );
+  }
+
+  it("returns exactly the calling context's upstream payloads", async () => {
+    const { context } = buildContext();
+    const execution = executionWithPlanOutput();
+    const handlers = createLaneRouteHandlers({
+      ...makeDeps(context),
+      async readActiveExecution() {
+        return execution;
+      },
+    });
+
+    const response = await handlers.readInputs(
+      get(execution.id),
+      params({ ...BASE_PARAMS, contextId: "context-implement" }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.inputs).toEqual([
+      expect.objectContaining({
+        contextId: "context-plan",
+        skipped: false,
+        output: { summary: "Migrate the store first" },
+      }),
+    ]);
+  });
+
+  it("gives a context nothing from contexts it does not depend on", async () => {
+    const { context } = buildContext();
+    const execution = executionWithPlanOutput();
+    const handlers = createLaneRouteHandlers({
+      ...makeDeps(context),
+      async readActiveExecution() {
+        return execution;
+      },
+    });
+
+    const response = await handlers.readInputs(
+      get(execution.id),
+      params({ ...BASE_PARAMS, contextId: "context-verify" }),
+    );
+
+    const body = await response.json();
+    expect(JSON.stringify(body)).not.toContain("Migrate the store first");
+  });
+
+  it("refuses a lane whose execution is no longer the active one", async () => {
+    const { context } = buildContext();
+    const execution = executionWithPlanOutput();
+    const handlers = createLaneRouteHandlers({
+      ...makeDeps(context),
+      async readActiveExecution() {
+        return execution;
+      },
+    });
+
+    const response = await handlers.readInputs(
+      get("stale-execution"),
+      params({ ...BASE_PARAMS, contextId: "context-implement" }),
+    );
+
+    expect(response.status).toBe(409);
   });
 });

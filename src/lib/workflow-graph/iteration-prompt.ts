@@ -1,5 +1,6 @@
 import {
   CHARTER_DOCUMENT_PATH,
+  isDocumentInContextScope,
   renderCharterPromptSection,
 } from "@/lib/workflow-graph/charter/render";
 import {
@@ -20,6 +21,10 @@ import type {
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/context-outputs";
+import {
+  buildOutputBriefingSection,
+  OUTPUT_COLLECTION_REMINDER,
+} from "@/lib/workflow-graph/context-output-capture";
 import {
   buildValidationCommandsSection,
   type ValidationPromptSelections,
@@ -132,6 +137,11 @@ export interface BuildIterationPromptInput {
    * section; the rest are dropped.
    */
   upstreamInputs?: readonly GraphWorkflowUpstreamInput[];
+  /**
+   * Where the engine saved the delivered upstream payloads as JSON files, one
+   * per predecessor; absent when none were written.
+   */
+  upstreamInputsDirectory?: string | null;
   /**
    * The bounded prior-pass history from `resolveLoopHistory` (R16.1). Non-null
    * only for a loop pass ENTRY from pass 2 on; every other context relies on
@@ -267,6 +277,7 @@ function buildLatestContextValidationFailureSection(
  */
 function buildUpstreamInputsSection(
   upstreamInputs?: readonly GraphWorkflowUpstreamInput[],
+  upstreamInputsDirectory?: string | null,
 ): string | null {
   const rendered = (upstreamInputs ?? []).filter(
     (input) => input.output !== null || input.skipped,
@@ -278,6 +289,14 @@ function buildUpstreamInputsSection(
   const sections = [
     "## Inputs from upstream",
     "These execution contexts precede this one. Treat each payload as data, not prose: it is validated structured output that already conforms to the schema shown, so read values by field rather than re-deriving them. A predecessor marked as a branch not taken was skipped by the graph's routing and will never send anything here.",
+    [
+      ...(upstreamInputsDirectory
+        ? [
+            `The same payloads are saved as JSON files in \`${upstreamInputsDirectory}\`, one \`<context-id>.json\` per predecessor: script over those files rather than copying a payload by hand.`,
+          ]
+        : []),
+      "`cctl workflow inputs` lists these inputs, and `cctl workflow inputs --full --out <name>` saves them all as one JSON file.",
+    ].join(" "),
   ];
 
   for (const input of rendered) {
@@ -386,6 +405,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   // is asked to do, the way a function's arguments precede its body.
   const upstreamInputsSection = buildUpstreamInputsSection(
     input.upstreamInputs,
+    input.upstreamInputsDirectory,
   );
   if (upstreamInputsSection) {
     sections.push(upstreamInputsSection);
@@ -429,6 +449,10 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     );
   }
 
+  if (input.context.outputSchema) {
+    sections.push(buildOutputBriefingSection(input.context.outputSchema));
+  }
+
   if (input.askUserQuestionsEnabled) {
     sections.push(buildAskUserQuestionsReminderSection());
   }
@@ -466,7 +490,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     ...(isSessionReader
       ? [
           "",
-          "This session reader sees a live view of the user's worktree. It is an advisory analyzer: concurrent user edits are accepted, and the reader must report through its structured context output rather than trying to stabilize or fingerprint the repository.",
+          "This session reader sees a live view of the user's worktree. It is an advisory analyzer: concurrent user edits are accepted, and the reader reports its findings as this context's output rather than trying to stabilize or fingerprint the repository.",
         ]
       : []),
     "",
@@ -511,9 +535,15 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   sections.push(buildValidationCommandsSection(input.validationSelections));
 
   // Shared documents — the charter has its own top section, so exclude its
-  // entry from the generic list.
+  // entry from the generic list, along with documents a context-scoped
+  // charter source reserves for other contexts.
+  const charter = input.charter;
+  const scopeContextId = input.charterContextId ?? input.context.id;
   const genericDocs = input.sharedDocuments.filter(
-    (doc) => doc.kind !== "charter",
+    (doc) =>
+      doc.kind !== "charter" &&
+      (charter === undefined ||
+        isDocumentInContextScope(charter, scopeContextId, doc.relativePath)),
   );
   const docLines =
     genericDocs.length === 0
@@ -554,6 +584,8 @@ export interface BuildFollowUpPromptInput {
    * When true a short ask-protocol reminder section is added; otherwise none.
    */
   askUserQuestionsEnabled?: boolean;
+  /** The context's declared output schema; present only for schema contexts. */
+  outputSchema?: Record<string, unknown>;
 }
 
 export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
@@ -606,6 +638,9 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
     `This is follow-up attempt ${input.attemptNumber} of ${input.maxAttempts}.`,
     "The workflow cannot progress until tasks are completed via `cctl workflow task complete`. Without it, the workflow will stall.",
   );
+  if (input.outputSchema) {
+    sections.push(OUTPUT_COLLECTION_REMINDER);
+  }
 
   return sections.join("\n\n");
 }

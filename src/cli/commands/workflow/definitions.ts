@@ -658,6 +658,21 @@ export const sharedDocUpsertCommand = ccCommands.defineCommand(
     }),
   },
 );
+export const inputsSpec = {
+  path: "workflow inputs",
+  summary: "Read this lane's upstream inputs",
+  description:
+    "List the validated payloads this lane's context receives from its direct predecessors, the same inputs its prompt carries. --full returns every payload; add --out <name> to save them as one JSON file to script over.",
+  requires: "cc",
+  effects: "read",
+  args: [],
+  flags: {},
+  levels: { full: { output: "artifact-eligible" } },
+} as const;
+export const inputsCommand = ccCommands.defineCommand(inputsSpec, {
+  examples: [{ why: "List this lane's upstream inputs" }],
+  handler: async () => ({ default: (await import("./lane")).inputsHandler }),
+});
 export const collabRequestSpec = {
   path: "workflow collab request",
   summary: "Request lane collaboration",
@@ -714,6 +729,7 @@ export const workflowCommands = [
   graphExpandCommand,
   sharedDocUpsertCommand,
   collabRequestCommand,
+  inputsCommand,
 ] as const;
 export const workflowGroups = [
   defineGroup({

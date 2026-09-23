@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { atomicWriteFile } from "@/lib/shared/atomic-write-json";
-import { renderCharterMarkdown } from "./charter/render";
+import { renderCharterDocument } from "./charter/render";
 import type { SharedDocumentStore } from "./shared-document-store";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
@@ -82,7 +82,7 @@ export function createWorkflowDocumentMaterializer(
         await writeInto(
           worktreePath,
           entry.relativePath,
-          renderCharterMarkdown(execution.charter, execution.charterAmendments),
+          renderCharterDocument(execution.charter, execution.charterAmendments),
         );
         charterWritten = true;
         continue;

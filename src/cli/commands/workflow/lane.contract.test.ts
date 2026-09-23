@@ -171,6 +171,7 @@ function laneRouteHost(
   context: GraphWorkflowToolServerContext,
   files: Record<string, string> = {},
   auth?: LaneRouteDeps["auth"],
+  activeExecution: GraphWorkflowExecution | null = null,
 ): CliHost {
   const deps: LaneRouteDeps = {
     auth: auth ?? {
@@ -201,6 +202,9 @@ function laneRouteHost(
           remainingTaskCount: 1,
         },
       };
+    },
+    async readActiveExecution() {
+      return activeExecution;
     },
   };
   const handlers = createLaneRouteHandlers(deps);
@@ -240,6 +244,11 @@ function laneRouteHost(
         }
         if (leaf === "tasks") {
           return handlers.addTask(request, {
+            params: Promise.resolve({ name, session, contextId }),
+          });
+        }
+        if (leaf === "inputs") {
+          return handlers.readInputs(request, {
             params: Promise.resolve({ name, session, contextId }),
           });
         }
@@ -426,5 +435,71 @@ describe("cctl workflow lane verbs against the real lane route handlers", () => 
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("cctl workflow inputs against the real lane route handler", () => {
+  function executionWithPlanOutput(): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({ status: "running" });
+    const plan = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!plan) throw new Error("fixture missing context-plan");
+    plan.outputSchema = {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+    };
+    execution.contextOutputs["context-plan"] = {
+      value: { summary: "Migrate the store first" },
+      capturedAt: "2026-09-22T00:00:00.000Z",
+      iteration: 1,
+      parse: { source: "raw_json" },
+    };
+    return execution;
+  }
+
+  function implementEnv(execution: GraphWorkflowExecution): CliEnv {
+    return {
+      ...laneEnv,
+      CC_WORKFLOW_EXECUTION_ID: execution.id,
+      CC_WORKFLOW_CONTEXT_ID: "context-implement",
+    };
+  }
+
+  it("summarizes this lane's upstream inputs and points at the full export", async () => {
+    const execution = executionWithPlanOutput();
+    const result = await runCcWithHost(
+      ["workflow", "inputs"],
+      implementEnv(execution),
+      laneRouteHost(buildRealContext(), {}, undefined, execution),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("context-plan: Plan; delivered");
+    expect(result.stdout).toContain("fields summary");
+    expect(result.stdout).toContain("workflow inputs --full");
+    // The summary names inputs; it does not dump them.
+    expect(result.stdout).not.toContain("Migrate the store first");
+  });
+
+  it("returns every payload verbatim at the full level", async () => {
+    const execution = executionWithPlanOutput();
+    const result = await runCcWithHost(
+      ["workflow", "inputs", "--full", "--json"],
+      implementEnv(execution),
+      laneRouteHost(buildRealContext(), {}, undefined, execution),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout.split("\n")[0] ?? "{}");
+    expect(envelope.payload.data.inputs).toEqual([
+      {
+        contextId: "context-plan",
+        title: "Plan",
+        status: "delivered",
+        output: { summary: "Migrate the store first" },
+      },
+    ]);
   });
 });

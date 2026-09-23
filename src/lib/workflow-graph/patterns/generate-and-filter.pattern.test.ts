@@ -307,6 +307,8 @@ async function runPattern(options: {
               refusalCodes.push(notice.refusalCode);
             },
             resolveProjectPath: async () => turn.projectPath,
+            readActiveExecution: (projectPath, sessionName) =>
+              turn.repository.getActive(projectPath, sessionName),
             // The two halves the expand path actually reads off the loader: the
             // stale-lane guard and the pre-dispatch halt check, both against the
             // live execution.

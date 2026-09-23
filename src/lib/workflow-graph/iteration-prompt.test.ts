@@ -952,6 +952,49 @@ describe("buildIterationPrompt", () => {
     expect(sharedSection).toMatch(/plan\.md.*implementation tasks\.$/m);
   });
 
+  it("lists a charter-source document only to the contexts its source applies to", () => {
+    const rubricPath = ".cc/graph-workflow-docs/rubric.md";
+    const charter = makeCharter({
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "rubric",
+          label: "Rubric",
+          type: "document",
+          locator: rubricPath,
+          description: "How judges score.",
+          appliesTo: { contextIds: ["context-judge"] },
+        },
+      ],
+    });
+    const sharedDocuments = [
+      makeSharedDoc({
+        id: "doc-rubric",
+        relativePath: rubricPath,
+        description: "Scoring rubric",
+        kind: "seeded",
+      }),
+      makeSharedDoc(),
+    ];
+    const promptFor = (contextId: string) =>
+      buildIterationPrompt({
+        context: makeContext({ id: contextId }),
+        tasks: [makeTask()],
+        taskStates: {},
+        sharedDocuments,
+        allowAgentTaskAdd: false,
+        charter,
+      });
+    const sharedSection = (prompt: string) =>
+      prompt.slice(prompt.indexOf("## Shared Documents"));
+
+    expect(sharedSection(promptFor("context-judge"))).toContain(rubricPath);
+    const writer = sharedSection(promptFor("context-writer"));
+    expect(writer).not.toContain(rubricPath);
+    // Documents no source scopes stay visible to everyone.
+    expect(writer).toContain("memory-bank/shared/plan.md");
+  });
+
   it("renders 'None registered' in the generic list when only the charter entry exists", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
@@ -1112,6 +1155,35 @@ describe("buildIterationPrompt", () => {
       expect(prompt.indexOf("## Inputs from upstream")).toBeLessThan(
         prompt.indexOf("## Tasks (work through them in order)"),
       );
+    });
+
+    it("points the agent at file copies of its inputs and the export command", () => {
+      const inputsSection = (prompt: string) =>
+        prompt.split("## Inputs from upstream")[1]?.split("\n## ")[0] ?? "";
+      const withFiles = buildIterationPrompt({
+        context: makeContext(),
+        tasks: [makeTask()],
+        taskStates: {},
+        sharedDocuments: [],
+        allowAgentTaskAdd: false,
+        upstreamInputs: [planInput],
+        upstreamInputsDirectory: "/scratch/context-implement/inputs",
+      });
+      const withoutFiles = buildIterationPrompt({
+        context: makeContext(),
+        tasks: [makeTask()],
+        taskStates: {},
+        sharedDocuments: [],
+        allowAgentTaskAdd: false,
+        upstreamInputs: [planInput],
+      });
+
+      expect(inputsSection(withFiles)).toContain(
+        "/scratch/context-implement/inputs",
+      );
+      expect(inputsSection(withFiles)).toContain("cctl workflow inputs");
+      expect(inputsSection(withoutFiles)).not.toContain("/scratch/");
+      expect(inputsSection(withoutFiles)).toContain("cctl workflow inputs");
     });
 
     it("names the declared fields so the agent can address the payload", () => {
@@ -1642,5 +1714,95 @@ describe("ask-protocol reminder (Req 8.1-8.4)", () => {
     expect(seedUnset).not.toContain(heading);
     expect(followUpDisabled).not.toContain(heading);
     expect(followUpUnset).not.toContain(heading);
+  });
+});
+
+describe("output collection briefing for output-schema contexts", () => {
+  const judgmentSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["verdict", "strongestLines"],
+    properties: {
+      verdict: {
+        type: "string",
+        description: "The judge's closing assessment in one or two paragraphs.",
+        minLength: 200,
+        maxLength: 2000,
+      },
+      strongestLines: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: { type: "string" },
+      },
+    },
+  };
+
+  it("tells a schema context what it will be asked to report, before the protocol", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext({ outputSchema: judgmentSchema }),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    const section = prompt.split("## Output\n")[1]?.split("\n## ")[0] ?? "";
+    expect(section).toContain("`verdict`");
+    expect(section).toContain(
+      "The judge's closing assessment in one or two paragraphs.",
+    );
+    expect(section).toContain("`strongestLines`");
+    expect(prompt.indexOf("## Output\n")).toBeLessThan(
+      prompt.indexOf("## Required Protocol"),
+    );
+  });
+
+  it("keeps format constraints out of the work turn", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext({ outputSchema: judgmentSchema }),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    for (const constraint of [
+      "maxLength",
+      "minItems",
+      "additionalProperties",
+      "2000",
+    ]) {
+      expect(prompt).not.toContain(constraint);
+    }
+  });
+
+  it("renders no output briefing for a context without an output schema", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).not.toContain("## Output\n");
+  });
+
+  it("keeps the collection note on follow-up turns of a schema context only", () => {
+    const base = {
+      remainingTasks: [makeTask()],
+      taskStates: {},
+      attemptNumber: 1,
+      maxAttempts: 3,
+    };
+    const withSchema = buildFollowUpPrompt({
+      ...base,
+      outputSchema: judgmentSchema,
+    });
+    const withoutSchema = buildFollowUpPrompt(base);
+
+    expect(withSchema).toContain("follow-up turn");
+    expect(withoutSchema).not.toContain("follow-up turn");
   });
 });

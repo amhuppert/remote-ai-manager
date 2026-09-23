@@ -65,7 +65,6 @@ import {
 } from "@/lib/state-store";
 
 import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
-import { resolveConfiguredAgentBackendDefaults } from "@/lib/agent-backends/conversation-policy";
 
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 
@@ -97,6 +96,7 @@ import { computeCandidateTreeHash } from "@/lib/git/diff";
 
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
+import { writeUpstreamInputFiles } from "./upstream-input-files";
 import { createGraphWorkflowAdvisoryResponseRunner } from "./advisory-response-runner";
 import { createParallelWorktrees } from "./parallel-worktrees";
 import { createSharedDocumentStore } from "./shared-document-store";
@@ -335,11 +335,6 @@ function createProductionGraphWorkflowRuntime(
           if (!session) throw new Error("Session not found");
           return session.worktreePath;
         },
-        async resolveTimeoutMs(backend) {
-          const config = await readConfig();
-          return resolveConfiguredAgentBackendDefaults(config, backend)
-            .timeoutMs;
-        },
       });
       const advisoryResponseRunner = createGraphWorkflowAdvisoryResponseRunner({
         async resolveWorktreePath(projectPath, sessionName) {
@@ -452,6 +447,7 @@ function createProductionGraphWorkflowRuntime(
               return null;
             }
           },
+          writeUpstreamInputFiles: (input) => writeUpstreamInputFiles(input),
           materializeWorkflowDocuments: (input) =>
             publishWorkflowDocuments(input, {
               getActive: executionRepository.getActive,

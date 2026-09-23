@@ -15,6 +15,7 @@
 
 import { renderFormatTurnPrompt } from "@/lib/agent-backends/structured-output-prompt";
 import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
+import { describeOutputSchemaFields } from "@/lib/workflow-graph/context-outputs";
 import type { GraphWorkflowValidationIssue } from "@/lib/workflow-graph/definition-schemas";
 
 /**
@@ -56,6 +57,37 @@ export type GraphWorkflowContextOutputCaptureOutcome =
  * prompt AND used by the rejection summary so both name the same contract.
  */
 const CAPTURE_HEADING = "## Final Output";
+
+const OUTPUT_COLLECTION_NOTE =
+  "This context's result is collected after its tasks are complete, in a separate follow-up turn that asks you to restate your finished work in a fixed format. Don't format anything for it now and don't look for a way to submit it: there is no submission command. Do the work, run `cctl workflow task complete` for each task, and end your turn with the finished work in whatever form suits it.";
+
+/**
+ * The work-turn half of the output contract, rendered in the implementer's
+ * seed prompt. The work turn learns WHAT the format turn will ask for (field
+ * names and their descriptions) but none of the shape or limits, so its effort
+ * goes into the work rather than into formatting or hunting for a submit path.
+ */
+export function buildOutputBriefingSection(
+  outputSchema: Record<string, unknown>,
+): string {
+  const fields = describeOutputSchemaFields(outputSchema) ?? [];
+  const lines = ["## Output", OUTPUT_COLLECTION_NOTE];
+  if (fields.length > 0) {
+    lines.push(
+      "",
+      "The follow-up turn will ask you to report:",
+      ...fields.map(
+        (field) =>
+          `- \`${field.name}\`${field.description ? ` — ${field.description}` : ""}`,
+      ),
+    );
+  }
+  return lines.join("\n");
+}
+
+/** The one-line form of the same contract for follow-up prompts. */
+export const OUTPUT_COLLECTION_REMINDER =
+  "Reminder: this context's result is collected in a follow-up turn after its tasks are complete. Finish the work and end your turn with it; there is no submission command.";
 
 /**
  * The format turn's prompt.

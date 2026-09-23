@@ -15,11 +15,12 @@ The default report bounds ranked sections; `--top` selects their size. Use
 `payload.data`; `--full --out` writes it as an artifact with a bounded summary.
 
 ```sh
-cctl logs report --in .cc/temp/server.log --full --out .cc/temp/analysis.json
-cctl logs trace trace-one --in .cc/temp/server.log --speedscope --out .cc/temp/trace.speedscope.json
+cctl logs report --in .cc/temp/server.log --full --out analysis.json
+cctl logs trace trace-one --in .cc/temp/server.log --speedscope --out trace.speedscope.json
 ```
 
-`--speedscope` selects the exact trace export and `--out` chooses its destination.
+`--speedscope` selects the exact trace export and `--out` names its file inside
+`.cc/temp/cctl-artifacts/`.
 The receipt reports the artifact path, media type, byte count, and SHA-256.
 Use trace ids and measured timings as evidence; an unexplained interval alone
 does not identify the component responsible.
