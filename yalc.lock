@@ -2,7 +2,7 @@
   "version": "v1",
   "packages": {
     "cli-for-agents": {
-      "signature": "cf950cb9653d7ff36a1ca662578329a1",
+      "signature": "fbf35faa4bb58e92a28dffcfc299f24a",
       "file": true
     }
   }

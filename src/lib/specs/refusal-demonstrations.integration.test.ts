@@ -412,8 +412,20 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       revisionId: design.revision.id,
       approvedAt: "2026-07-31T10:01:20.000Z",
     });
-    const attempt = await postJson<{ revision: { id: string } }>(
+    const amendment = await postJson<{ revision: { id: string } }>(
       world.postAction(slug, "open-amendment", {}, "agent"),
+    );
+    const attempt = await postJson<{ revision: { id: string } }>(
+      world.postAction(
+        slug,
+        "return-to-requirements",
+        {
+          expectedRevisionId: amendment.revision.id,
+          reason:
+            "Introduce contract content on the attempt that will be withdrawn.",
+        },
+        "agent",
+      ),
     );
     const orphanWrite = {
       elementId: "requirement-orphaned",
@@ -446,8 +458,20 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     await world.repos.specs.withdrawRevision({
       revisionId: attempt.revision.id,
     });
-    const followUp = await postJson<{ revision: { id: string } }>(
+    const reopened = await postJson<{ revision: { id: string } }>(
       world.postAction(slug, "open-amendment", {}, "agent"),
+    );
+    const followUp = await postJson<{ revision: { id: string } }>(
+      world.postAction(
+        slug,
+        "return-to-requirements",
+        {
+          expectedRevisionId: reopened.revision.id,
+          reason:
+            "Restore the withdrawn requirement through the contract authoring stage.",
+        },
+        "agent",
+      ),
     );
 
     const refused = await world.postAction(

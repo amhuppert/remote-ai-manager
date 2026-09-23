@@ -132,7 +132,7 @@ export async function assembleResponse(execution, options) {
             }
             else {
                 assertPrimaryText(rendered);
-                primaryText = rendered.trimEnd();
+                primaryText = neutralizeReservedLabels(rendered.trimEnd());
             }
         }
         catch {
@@ -227,10 +227,11 @@ export function renderResponse(response, format, compactReferences = false) {
     return envelope.ok ? { stdout: text, stderr: "", exitCode } : { stdout: "", stderr: text, exitCode };
 }
 function assertPrimaryText(value) {
-    if (typeof value !== "string" || /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value.replaceAll("\n", ""))
-        || /(?:^|\n)\s*(?:hint|reminder|instruction|error|issue|why|doctor(?: argv)?|continuation(?: argv)?|secondary|effect|recovery|details|artifact):/i.test(value)) {
-        throw new TypeError("Primary text contains reserved protocol or controls.");
-    }
+    if (typeof value !== "string" || /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value.replaceAll("\n", "")))
+        throw new TypeError("Primary text contains controls or is not text.");
+}
+function neutralizeReservedLabels(value) {
+    return value.replace(/(^|\n)(?=\s*(?:hint|reminder|instruction|error|issue|why|doctor(?: argv)?|continuation(?: argv)?|secondary|effect|recovery|details|artifact):)/gi, "$1| ");
 }
 /** Escape prose/JSON display fields only; never rewrite a shell invocation. */
 function lineText(value) { return value.replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029"); }

@@ -1,10 +1,44 @@
 import { recordTestEvent } from "./test-observation.js";
 import { scalar } from "./input-model.js";
-import { kernelError } from "../results.js";
+import { kernelError, protocolLimits } from "../results.js";
 import { commandData } from "./declarations.js";
 import { executableRecord, payloadModule } from "./runner-modules.js";
-import { assertFields, assertNonnegativeInteger, assertRecord, frozenJson } from "./validation.js";
+import { assertFields, assertNonnegativeInteger, assertRecord, boundedSummary, frozenJson } from "./validation.js";
+import { hasCode, InputOverflowError } from "./host.js";
 import { checkedSha256 } from "../values.js";
+/** A local input stage failure described without file contents or raw exception text. */
+class InputFailure extends TypeError {
+    diagnostic;
+    constructor(diagnostic) {
+        super(diagnostic.why);
+        this.diagnostic = diagnostic;
+    }
+}
+function readCause(error, maxBytes) {
+    if (error instanceof InputOverflowError)
+        return `input exceeds the ${maxBytes}-byte limit.`;
+    if (hasCode(error, "ENOENT"))
+        return "file does not exist.";
+    if (hasCode(error, "EISDIR"))
+        return "path is a directory, not a file.";
+    if (hasCode(error, "ENOTDIR"))
+        return "a parent path component is not a directory.";
+    if (hasCode(error, "EACCES") || hasCode(error, "EPERM"))
+        return "OS denied read access.";
+    const code = error instanceof Error && "code" in error && typeof error.code === "string" && /^E[A-Z]{1,15}$/.test(error.code) ? ` (${error.code})` : "";
+    return `file read failed${code}; check that it is a readable regular file.`;
+}
+/** Parser prose can quote source text, so keep only its leading reason and derive the location. */
+function jsonCause(error, text) {
+    const message = error instanceof SyntaxError ? error.message : "";
+    const reason = /^Unexpected token\b/.test(message) ? "Unexpected token"
+        : message.split(/ in JSON\b|, "/u)[0].replace(/[\p{Cc}\p{Cs}]/gu, "").trim().slice(0, 160) || "invalid JSON syntax";
+    const position = /\bat position (\d+)\b/.exec(message)?.[1];
+    if (position === undefined || Number(position) > text.length)
+        return `${reason}.`;
+    const before = text.slice(0, Number(position)).split("\n");
+    return `${reason} at line ${before.length} column ${before.at(-1).length + 1}.`;
+}
 function schemaIssues(value) {
     if (!Array.isArray(value) || !value.length)
         throw new TypeError("Expected schema issues.");
@@ -33,6 +67,15 @@ export async function resolveLocalInput(invocation, request) {
     try {
         const { input, command } = invocation;
         const { model, handler } = commandData(command);
+        const fail = (source, message, cause) => {
+            const definition = source.kind === "argument" || source.kind === "payload" ? undefined : model.flags[source.name].definition;
+            const subject = source.kind === "payload" ? "Payload --file" : source.kind === "argument" ? `Argument <${source.name}>`
+                : `${definition.secret ? "Secret " : ""}${source.kind === "global" ? "global" : "flag"} --${source.name}${definition.value.kind === "file" ? "" : "-file"}`;
+            const label = subject.charAt(0).toUpperCase() + subject.slice(1);
+            if (definition?.secret)
+                return new InputFailure({ message, why: `${label} ${cause}` });
+            return new InputFailure({ message, why: boundedSummary(path => `${label} ${source.path === "-" ? "stdin" : JSON.stringify(path(source.path))} ${cause}`, `${label} ${cause} Its path exceeds the diagnostic limit.`, protocolLimits.diagnosticSummary) });
+        };
         const args = { ...input.args };
         const flags = { ...input.flags };
         const globals = { ...input.globals };
@@ -62,21 +105,51 @@ export async function resolveLocalInput(invocation, request) {
         let payloadBytes;
         for (const source of input.sources) {
             request.signal.throwIfAborted();
-            const data = await (source.path === "-" ? request.host.files.readStdin(source.maxBytes, request.signal)
-                : request.host.files.read(source.path, source.maxBytes, request.signal));
+            let data;
+            try {
+                data = await (source.path === "-" ? request.host.files.readStdin(source.maxBytes, request.signal)
+                    : request.host.files.read(source.path, source.maxBytes, request.signal));
+            }
+            catch (error) {
+                throw fail(source, "Input file could not be read.", `could not be read: ${readCause(error, source.maxBytes)}`);
+            }
             request.signal.throwIfAborted();
-            if (!(data instanceof Uint8Array) || data.byteLength > source.maxBytes)
+            if (!(data instanceof Uint8Array))
                 throw new TypeError("Invalid bounded read.");
-            const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(data);
+            if (data.byteLength > source.maxBytes)
+                throw fail(source, "Input file could not be read.", `could not be read: ${readCause(new InputOverflowError(), source.maxBytes)}`);
+            let text;
+            try {
+                text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(data);
+            }
+            catch {
+                throw fail(source, "Input is not valid UTF-8.", "is not valid UTF-8 text.");
+            }
             if (source.kind === "payload") {
-                payload = frozenJson(JSON.parse(text));
+                let parsed;
+                try {
+                    parsed = JSON.parse(text);
+                }
+                catch (error) {
+                    throw fail(source, "Input is not valid JSON.", `is not valid JSON: ${jsonCause(error, text)}`);
+                }
+                payload = frozenJson(parsed);
                 payloadBytes = new Uint8Array(data);
             }
             else if (source.kind === "argument")
                 args[source.name] = text;
             else {
                 const definition = model.flags[source.name].definition;
-                (source.kind === "global" ? globals : flags)[source.name] = definition.value.kind === "file" ? text : scalar(definition.value, text);
+                let value = text;
+                if (definition.value.kind !== "file") {
+                    try {
+                        value = scalar(definition.value, text);
+                    }
+                    catch {
+                        throw fail(source, "Input file value is invalid.", `contents are not a valid value for --${source.name}.`);
+                    }
+                }
+                (source.kind === "global" ? globals : flags)[source.name] = value;
             }
         }
         phase = "KERNEL_CONTRACT";
@@ -92,7 +165,14 @@ export async function resolveLocalInput(invocation, request) {
             decoder = payloadModule(defaultExport, model.spec.effects);
             module = decoder.handler;
             phase = "KERNEL_INPUT";
-            const result = await decoder.decode["~standard"].validate(payload);
+            let result;
+            try {
+                result = await decoder.decode["~standard"].validate(payload);
+            }
+            catch (error) {
+                const name = error instanceof Error && /^[A-Za-z_$][\w$]{0,63}$/u.test(error.name) ? error.name : "a non-Error value";
+                throw fail(input.sources.find(source => source.kind === "payload"), "Payload decoder failed.", `decoder threw ${name} instead of returning schema issues.`);
+            }
             request.signal.throwIfAborted();
             phase = "KERNEL_CONTRACT";
             const checked = executableRecord(result);
@@ -119,8 +199,18 @@ export async function resolveLocalInput(invocation, request) {
         assertRecord(resolved);
         return { ok: true, input: Object.freeze({ ...resolved, module, ...(decoder ? { decoder, payload } : {}), ...(payloadHash ? { payloadHash } : {}) }) };
     }
-    catch {
-        return { ok: false, code: request.signal.aborted ? "KERNEL_CANCELLED" : phase };
+    catch (error) {
+        if (request.signal.aborted)
+            return { ok: false, code: "KERNEL_CANCELLED" };
+        if (error instanceof InputFailure) {
+            // The catalog owner checks the summary bounds; an unreportable detail keeps the plain refusal.
+            try {
+                kernelError("KERNEL_INPUT", error.diagnostic);
+                return { ok: false, code: "KERNEL_INPUT", diagnostic: error.diagnostic };
+            }
+            catch { }
+        }
+        return { ok: false, code: phase };
     }
 }
 //# sourceMappingURL=local-input.js.map

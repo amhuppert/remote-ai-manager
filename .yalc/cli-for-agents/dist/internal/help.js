@@ -23,9 +23,12 @@ export function projectHelp(cli, path) {
     // Every CLI has a doctor leaf; its model owns the same globals/framework inputs
     // accepted by the parser at hubs. Do not duplicate that inventory here.
     const hubModel = Object.values(state.nodes).find(n => n.model)?.model;
+    const artifactPolicy = options.output.artifacts;
     const flags = Object.values((model ?? hubModel)?.flags ?? {})
         .filter(entry => model || entry.global || entry.help.source === "framework" && entry.help.kind === "boolean")
-        .map(entry => entry.help);
+        .map(entry => entry.help.name === "out" && !("resolve" in artifactPolicy)
+        ? { ...entry.help, description: `${entry.help.description} Artifact directory: ${JSON.stringify(artifactPolicy.directory)}.` }
+        : entry.help);
     const args = (spec?.args ?? []).map(arg => ({ name: arg.name, description: arg.description,
         required: arg.required !== false && arg.default === undefined, variadic: arg.variadic === true, value: arg.value, ...(arg.default !== undefined ? { default: arg.default } : {}) }));
     const usage = [state.name, path, ...args.map(arg => `${arg.required ? "<" : "["}${arg.name}${arg.variadic ? "..." : ""}${arg.required ? ">" : "]"}`),

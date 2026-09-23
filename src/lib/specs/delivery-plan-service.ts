@@ -706,6 +706,7 @@ export function createDeliveryPlanService(
         `Managed workflow definition ${attempt.workflow_definition_id ?? "(missing identity)"} is unavailable.`,
       );
     }
+    const builderHref = `/projects/${encodeURIComponent(deps.projectName?.(spec.projectPath) ?? spec.projectPath.split("/").filter(Boolean).at(-1) ?? spec.projectPath)}/workflows?definition=${encodeURIComponent(workflowDefinition.id)}`;
     return {
       attempt: {
         id: attempt.id,
@@ -756,7 +757,7 @@ export function createDeliveryPlanService(
                 ),
       workflowDefinition: {
         ...workflowDefinition,
-        builderHref: `/projects/${encodeURIComponent(deps.projectName?.(spec.projectPath) ?? spec.projectPath.split("/").filter(Boolean).at(-1) ?? spec.projectPath)}/workflows?definition=${encodeURIComponent(workflowDefinition.id)}`,
+        builderHref,
       },
       reviewStatus: planReview(
         currentDefinition,
@@ -771,7 +772,7 @@ export function createDeliveryPlanService(
       dispositionCounts: dispositionCounts(document.binding),
       unresolved: [...health.unresolved],
       snapshots: snapshots(attempt),
-      nextAct: nextAct(attempt, spec),
+      nextAct: nextAct(attempt, spec, builderHref),
     };
   }
 
@@ -2101,6 +2102,7 @@ function executionScopeFromDeliveryPlanBinding(
 function nextAct(
   attempt: SpecDeliveryPlanAttemptRow,
   spec: Spec,
+  builderHref: string,
 ): DeliveryPlanNextAct {
   const upgrade = coverageUpgradeRefusal(attempt, spec.slug);
   if (upgrade !== null)
@@ -2113,6 +2115,7 @@ function nextAct(
     status: attempt.status,
     specSlug: spec.slug,
     workflowDefinitionId: attempt.workflow_definition_id ?? attempt.id,
+    builderHref,
     signOffRequiresHuman: dialRequiresHumanApproval(
       resolveDial(spec.gatePolicy, "execution_start"),
     ),

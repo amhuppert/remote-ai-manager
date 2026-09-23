@@ -132,6 +132,13 @@ The lists select commands independently of registration: every selected name mus
 
 Command Center resolves wrapper paths from the canonical project root and runs them with the session or lane worktree as `cwd`. An unmerged session therefore cannot exercise edits to its own registry or wrappers through `cctl validate`; developing a wrapper is the narrow diagnostic case where running that wrapper directly is legitimate. State that reason first and use the smallest scope.
 
+Establish canonical registrations before launching delivery when practical.
+Graph roles freeze their command selection at launch: `all` includes only the
+commands registered then, even if that set is empty. Registering checks later
+does not enable them in a running execution; an authorized workflow live edit
+must update its role selection. Local wrapper results remain local evidence,
+not CC validation gates, until the checks are registered and selected.
+
 ## Step 3: Propose Configuration
 
 Present the analysis results and the complete proposed content of every created or modified file.

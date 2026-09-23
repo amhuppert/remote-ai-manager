@@ -218,8 +218,14 @@ afterEach(() => harness.fixture.close());
 describe("an imported spec keeps every human gate", () => {
   it("refuses an agent sign-off on an amendment exactly as a natively authored spec does", async () => {
     const imported = await importedSpec();
-    const amendment = await harness.authoring.openAmendment({
+    const design = await harness.authoring.openAmendment({
       specId: imported.spec.id,
+      actor: AGENT,
+    });
+    const amendment = await harness.authoring.returnToRequirements({
+      specId: imported.spec.id,
+      expectedRevisionId: design.revision.id,
+      reason: "Revise the imported Requirements contract.",
       actor: AGENT,
     });
     await harness.authoring.upsertDraftElement({

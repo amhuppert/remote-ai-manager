@@ -13,7 +13,14 @@ import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definitio
 import { managedDefinitionPreflightSummarySchema } from "@/lib/workflows/managed-definition-preflight-contract";
 import {
   lintFindingSchema,
+  deliveryPlanNextActSchema,
   specStartedExecutionViewSchema,
+  type SpecDeliveryPlanStatus,
+} from "./view-schemas";
+
+export {
+  deliveryPlanNextActSchema,
+  type DeliveryPlanNextAct,
 } from "./view-schemas";
 
 const nonNegativeInt = z.number().int().nonnegative();
@@ -74,15 +81,6 @@ export const deliveryPlanSnapshotViewSchema = z
 export type DeliveryPlanSnapshotView = z.infer<
   typeof deliveryPlanSnapshotViewSchema
 >;
-
-export const deliveryPlanNextActSchema = z
-  .object({
-    actor: z.enum(["agent", "human"]),
-    command: z.string().min(1),
-    reason: z.string().min(1),
-  })
-  .strict();
-export type DeliveryPlanNextAct = z.infer<typeof deliveryPlanNextActSchema>;
 
 export const deliveryPlanPrelaunchViewSchema = z
   .object({
@@ -149,6 +147,25 @@ export const deliveryPlanViewSchema = z
   })
   .strict();
 export type DeliveryPlanView = z.infer<typeof deliveryPlanViewSchema>;
+
+export function deliveryPlanStatus(
+  view: DeliveryPlanView,
+): SpecDeliveryPlanStatus {
+  const { attempt, workflowDefinition, nextAct, reviewStatus } = view;
+  return {
+    attemptId: attempt.id,
+    status: attempt.status,
+    pinnedRevisionId: attempt.pinnedRevisionId,
+    draftRevision: attempt.draftRevision,
+    workflowDefinition: {
+      id: workflowDefinition.id,
+      revision: workflowDefinition.revision,
+      builderHref: workflowDefinition.builderHref,
+    },
+    nextAct,
+    reviewStatus,
+  };
+}
 
 export const deliveryPlanMutationViewSchema = deliveryPlanViewSchema
   .extend({

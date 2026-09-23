@@ -14,7 +14,12 @@ export type ConversationIdentityReading =
 export function encodeConversationIdentity(
   scope: ConversationIdentity,
 ): string {
-  return JSON.stringify(scope);
+  // HTTP headers cannot carry arbitrary Unicode; JSON escapes preserve the
+  // original session name for the existing decoder and membership check.
+  return JSON.stringify(scope).replace(
+    /[^\x20-\x7e]/g,
+    (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
 
 export function readConversationIdentity(

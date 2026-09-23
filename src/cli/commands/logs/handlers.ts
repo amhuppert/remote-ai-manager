@@ -159,11 +159,15 @@ function jsonReport(report: unknown): JsonValue {
 }
 function failed(error: unknown) {
   const message = getErrorMessage(error);
+  // Required diagnostics survive failed artifact delivery. One hundred Unicode
+  // code points plus the prefix fit the protocol's 512-byte JSON reservation.
+  const cause = Array.from(message.replace(/[\p{Cc}\p{Cs}]/gu, " "));
+  const summary = cause.slice(0, 100).join("").trim() || "Unknown failure";
   logger.error("log_analysis.error", { error: message });
   return {
     ok: false,
     error: ccErrors.error("CC_OPERATION_FAILED", {
-      message: "Log analysis failed; inspect the diagnostic detail.",
+      message: `Log analysis failed: ${summary}${cause.length > 100 ? "…" : ""}`,
       details: { reason: message },
     }),
   } as const;

@@ -1,3 +1,4 @@
+import { deliveryPlanStatus } from "./delivery-plan-views";
 import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
 import { createDeliveryApprovalService } from "./delivery-approval";
 import { createDeliveryReviewService } from "./delivery-review-service";
@@ -971,6 +972,10 @@ export function createSpecSpineWorld(
     name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null;
 
   const readHandlers = createSpecRouteHandlers({
+    async readDeliveryPlan(spec) {
+      const result = await services.deliveryPlan.read({ spec });
+      return result.ok ? deliveryPlanStatus(result.value) : null;
+    },
     readDeliveryReview: (spec) => services.readDeliveryReview(spec),
     resolveProjectPath,
     listSpecs: (projectPath) => specs.listByProject(projectPath),

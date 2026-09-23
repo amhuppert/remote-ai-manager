@@ -256,6 +256,7 @@ function execution(
 
 function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
   return {
+    readDeliveryPlan: async () => null,
     readDeliveryReview: async () => null,
     resolveProjectPath: async (name) => (name === "demo" ? PROJECT_PATH : null),
     listSpecs: async () => [spec],
@@ -341,6 +342,46 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
     ...overrides,
   };
 }
+
+describe("operational spec status", () => {
+  it("reports the current authoring revision separately from a pinned delivery attempt", async () => {
+    const deliveryPlan = {
+      attemptId: "attempt-old",
+      status: "draft" as const,
+      pinnedRevisionId: "approved-old",
+      draftRevision: 4,
+      workflowDefinition: {
+        id: "managed-one",
+        revision: 7,
+        builderHref: "/projects/demo/workflows?definition=managed-one",
+      },
+      nextAct: {
+        actor: "agent" as const,
+        command:
+          "cctl workflow validate --file .cc/temp/plan.json --definition managed-one",
+        reason: "Check the authored draft.",
+      },
+      reviewStatus: { state: "unreviewed" as const },
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({ readDeliveryPlan: async () => deliveryPlan }),
+    );
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/native-sdd/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      currentRevision: {
+        id: revision.id,
+        number: revision.number,
+        state: revision.state,
+        authoringStage: revision.authoringStage,
+      },
+      deliveryPlan,
+    });
+  });
+});
 
 describe("spec read route handlers", () => {
   it("returns a bounded nested current-revision outline with stable handles and domain status", async () => {

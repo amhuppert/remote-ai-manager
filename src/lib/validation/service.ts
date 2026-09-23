@@ -986,9 +986,10 @@ export function createValidationService(
           request.commandName,
         );
         // Only claim another component handles it when that is true.
-        const message = handledByScriptGate
+        const policyMessage = handledByScriptGate
           ? `Skipped "${request.commandName}": it is disabled for the ${roleLabel} in context "${resolved.contextId}". Do not run it in this execution context; it is handled by the script validator.`
           : `Skipped "${request.commandName}": workflow policy disables it for the ${roleLabel} in context "${resolved.contextId}". Do not attempt to run it by other means.`;
+        const message = `${policyMessage} A frozen role selection includes commands registered at launch or the last role live edit; later registration alone does not grant access. An authorized workflow live edit can update the selection.`;
         logger.info("validation.policy_skipped", {
           name: request.commandName,
           role: resolved.role,

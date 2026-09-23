@@ -69,6 +69,79 @@ function fixture(respond: (url: string, init: FetchInit) => unknown) {
   };
 }
 describe("native fixture commands", () => {
+  it.each(["scratch", "Fixture project /日本語"])(
+    "creates and deletes named sessions in %s without losing recovery receipts",
+    async (project) => {
+      const sessionName = "Retro153 – CLI /checks";
+      const reference = `${encodeURIComponent(project)}/${encodeURIComponent(sessionName)}`;
+      const test = fixture((_url, init) =>
+        init.method === "DELETE"
+          ? { worktreeRemoved: true }
+          : { sessionName, conversations: [{ id: "dev-conversation" }] },
+      );
+      const created = await test.run([
+        "session",
+        "create",
+        project,
+        "--name",
+        sessionName,
+        "--skip-warm",
+      ]);
+      expect(created.exitCode, created.stdout).toBe(0);
+      expect(created.envelope).toMatchObject({
+        effect: "applied",
+        recovery: {
+          references: [
+            { kind: "fixture-session", id: reference },
+            { kind: "conversation", id: "dev-conversation" },
+          ],
+        },
+        payload: { data: { sessionName } },
+      });
+      const deleted = await test.run([
+        "session",
+        "delete",
+        project,
+        sessionName,
+      ]);
+      expect(deleted.exitCode, deleted.stdout).toBe(0);
+      expect(deleted.envelope).toMatchObject({
+        effect: "applied",
+        recovery: { references: [{ kind: "fixture-session", id: reference }] },
+        payload: { data: { project, sessionName, worktreeRemoved: true } },
+      });
+      expect(
+        test.requests.filter(
+          ({ init }) => init.method === "POST" || init.method === "DELETE",
+        ),
+      ).toHaveLength(2);
+    },
+  );
+
+  it("retains a named project's recovery identity after creation loses acknowledgement", async () => {
+    const project = "Fixture project /日本語";
+    const test = fixture(() => {
+      throw new Error("ECONNRESET");
+    });
+    const result = await test.run([
+      "session",
+      "create",
+      project,
+      "--name",
+      "Retro153 – CLI checks",
+      "--skip-warm",
+    ]);
+    expect(result.exitCode, result.stdout).toBe(3);
+    expect(result.envelope).toMatchObject({
+      effect: "unknown",
+      recovery: {
+        references: [{ kind: "project", id: encodeURIComponent(project) }],
+      },
+      error: { code: "CC_CONNECTION" },
+    });
+    expect(test.requests.at(-1)?.init.method).toBe("POST");
+  });
+
   it("creates a session only on the discovered dev instance across build skew", async () => {
     const test = fixture(() => ({
       sessionName: "fx-test",
@@ -119,18 +192,26 @@ describe("native fixture commands", () => {
     ).toBe(2);
     expect(test.requests).toHaveLength(0);
   });
-  it("deletes an addressed fixture and preserves the worktree removal receipt", async () => {
-    const test = fixture(() => ({ worktreeRemoved: true }));
-    const result = await test.run(["session", "delete", "scratch", "fx-test"]);
-    expect(result.exitCode, result.stdout).toBe(0);
-    expect(test.requests[1]?.url).toBe(
-      "http://localhost:5010/api/projects/scratch/sessions?sessionName=fx-test",
-    );
-    expect(test.requests[1]?.init.method).toBe("DELETE");
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      payload: { data: { worktreeRemoved: true } },
-    });
-  });
+  it.each(["fx-test", "Retro153 – CLI /checks"])(
+    "deletes %s and preserves the worktree removal receipt",
+    async (sessionName) => {
+      const test = fixture(() => ({ worktreeRemoved: true }));
+      const result = await test.run([
+        "session",
+        "delete",
+        "scratch",
+        sessionName,
+      ]);
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(test.requests[1]?.url).toBe(
+        `http://localhost:5010/api/projects/scratch/sessions?sessionName=${encodeURIComponent(sessionName)}`,
+      );
+      expect(test.requests[1]?.init.method).toBe("DELETE");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        payload: { data: { worktreeRemoved: true } },
+      });
+    },
+  );
   it("selects the target conversation and completes its prompt from SSE", async () => {
     const text = "Preserve `ticks` and $HOME\n";
     const test = fixture((_url, init) =>

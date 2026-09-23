@@ -14,7 +14,7 @@ export const specStatusSpec = {
   path: "spec status",
   summary: "Read lifecycle gates and delivery progress",
   description:
-    "Read bounded status collections with counts and continuation commands. Full returns every row; executing may mean a parked review or a completed lane waiting for its merge.",
+    "Read the authoring revision, editable objects and revision guards, pinned delivery attempt, and next actor with review links. Collections are bounded; full returns every row. Executing may mean a parked review or a completed lane waiting for its merge.",
   requires: "cc",
   effects: "read",
   args: [slug],

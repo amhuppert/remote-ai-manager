@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { bytes } from "cli-for-agents";
+import { bytes, protocolLimits } from "cli-for-agents";
+import { runForTest } from "cli-for-agents/testing";
 import { createCcRuntimeFixture } from "../../testing/framework";
 
 function line(durationMs = 600, traceId = "trace-one") {
@@ -24,6 +25,63 @@ function fixture() {
   });
 }
 describe("library offline log analysis", () => {
+  it.each(["json", "text"] as const)(
+    "retains a bounded root cause when optional detail delivery fails in %s",
+    async (format) => {
+      const test = fixture();
+      const cause = `Invalid string length\n${"🧪".repeat(1000)}`;
+      let deliveryAttempted = false;
+      const result = await runForTest(
+        test.cli,
+        [
+          "logs",
+          "report",
+          "--in",
+          "/logs/before",
+          "--out",
+          "/artifacts/error.json",
+        ],
+        {
+          format,
+          host: {
+            ...test.kernelHost,
+            files: {
+              ...test.kernelHost.files,
+              async read() {
+                throw new RangeError(cause);
+              },
+              async writeAtomic() {
+                deliveryAttempted = true;
+                throw new Error("EACCES: diagnostic artifact is not writable");
+              },
+            },
+          },
+        },
+      );
+      expect(deliveryAttempted).toBe(true);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain("Invalid string length");
+      if (result.format === "json") {
+        expect(result.envelope).toMatchObject({
+          error: {
+            code: "CC_OPERATION_FAILED",
+            message: expect.stringContaining("Invalid string length"),
+            secondary: expect.arrayContaining([
+              expect.objectContaining({ code: "KERNEL_OUTPUT" }),
+            ]),
+          },
+        });
+        if (result.envelope.ok) throw new Error("Expected log failure");
+        const message = result.envelope.error.message;
+        expect(
+          new TextEncoder().encode(JSON.stringify(message)).byteLength,
+        ).toBeLessThanOrEqual(protocolLimits.diagnosticSummary);
+        expect(message).not.toContain("\n");
+        expect(result.envelope.error).not.toHaveProperty("details");
+      }
+    },
+  );
+
   it.each(["invalid\ntimestamp", "invalid".repeat(100)])(
     "keeps invalid timestamp prose outside the bounded diagnostic",
     async (value) => {

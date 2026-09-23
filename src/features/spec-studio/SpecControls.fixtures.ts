@@ -335,6 +335,12 @@ export function specControlsDetailFixture(
     linkedTickets: [],
     elementStatuses: { requirements: [], tasks: [] },
     status: {
+      currentRevision: {
+        id: revision.id,
+        number: revision.number,
+        state: revision.state,
+        authoringStage: revision.authoringStage,
+      },
       specId: "spec-1",
       slug: "native-sdd",
       imported: false,

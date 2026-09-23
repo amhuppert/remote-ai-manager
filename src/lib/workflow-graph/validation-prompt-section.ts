@@ -213,7 +213,13 @@ export function buildValidationCommandsSection(
     "## Validation Commands",
     "Run registered validation only through `cctl validate run <name>`. Runs default to changed scope; use `--scope full` when full-project evidence is required. A full-only command falls back automatically. Do not invoke test runners, type checkers, linters, formatters, or builds directly, and never bypass the wrapper to avoid a queue or an execution-context policy.",
     enabledLine(selections.enabled),
+    "A frozen role selection includes the commands registered when the execution launched or its role was live-edited. Selecting all does not grant commands registered later. To change that selection, use the existing authorized workflow live-edit process; registering a command alone does not enable it here.",
   ];
+  if (selections.registry === "none") {
+    lines.push(
+      "No validation commands are registered in the canonical project's CommandCenter.json. Register checks there before relying on CC validation gates; worktree-local wrappers are not automatically registered checks.",
+    );
+  }
   if (selections.disabled.length > 0) {
     lines.push(
       `Disabled for you in this context: ${selections.disabled.join(", ")}.`,

@@ -1267,7 +1267,7 @@ describe("cctl workflow author flow against the real create-path validation", ()
       routeHost(null, { [PLAN]: validPlan() }),
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Plan is valid.");
+    expect(result.stdout).toContain("Plan is structurally valid.");
   });
 
   it("validate exits 2 with JSON-path issues for a cyclic graph", async () => {

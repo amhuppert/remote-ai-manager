@@ -171,6 +171,7 @@ async function orphanThroughRequestedChanges(
       actor: ACTOR,
     });
   },
+  authoringStage: "requirements" | "design" = "requirements",
 ) {
   const created = await service.createSpec({
     projectPath: PROJECT_PATH,
@@ -208,7 +209,16 @@ async function orphanThroughRequestedChanges(
     approvedAt: "2026-07-31T10:01:20.000Z",
   });
 
-  const attempt = await service.openAmendment({ specId, actor: ACTOR });
+  const openedAttempt = await service.openAmendment({ specId, actor: ACTOR });
+  const attempt =
+    authoringStage === "requirements"
+      ? await service.returnToRequirements({
+          specId,
+          expectedRevisionId: openedAttempt.revision.id,
+          reason: "Introduce the requirement on a separate contract attempt.",
+          actor: ACTOR,
+        })
+      : openedAttempt;
   await attemptElements(attempt.revision.id);
   await specs.proposeRevision({
     revisionId: attempt.revision.id,
@@ -217,10 +227,22 @@ async function orphanThroughRequestedChanges(
   // The human read the proposal and requested changes, which ends the revision.
   await specs.withdrawRevision({ revisionId: attempt.revision.id });
 
-  const followUp = await service.openAmendment({ specId, actor: ACTOR });
+  const openedFollowUp = await service.openAmendment({ specId, actor: ACTOR });
+  const followUp =
+    authoringStage === "requirements"
+      ? await service.returnToRequirements({
+          specId,
+          expectedRevisionId: openedFollowUp.revision.id,
+          reason: "Re-author the withdrawn contract content explicitly.",
+          actor: ACTOR,
+        })
+      : openedFollowUp;
   return {
     specId,
-    approved: designCheckpoint.revision,
+    approved:
+      authoringStage === "requirements"
+        ? created.draft
+        : designCheckpoint.revision,
     attempt: attempt.revision,
     followUp: followUp.revision,
   };
@@ -596,7 +618,26 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("records the revival in the durable log when a create continues the spec as an amendment", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const payload = {
+      kind: "decision" as const,
+      title: "A decision on a withdrawn Design attempt",
+      chosenApproach: "Restore the historical design identity.",
+      rejectedAlternatives: [],
+      reason: "Exercise first-save revival in a Design amendment.",
+      tracedRequirementElementIds: [KEPT_ID],
+    };
+    const world = await orphanThroughRequestedChanges(async (revisionId) => {
+      await service.upsertDraftElement({
+        specId,
+        revisionId,
+        elementId: ORPHAN_ID,
+        kind: "decision",
+        parentElementId: null,
+        payload,
+        baseElementVersion: null,
+        actor: ACTOR,
+      });
+    }, "design");
     // The follow-up amendment has to be concluded before a create can continue
     // the spec: a create lands on the amendment path only with no draft open.
     await specs.proposeRevision({
@@ -608,19 +649,6 @@ describe("historical element reintroduction (ticket #42)", () => {
       approvedAt: "2026-07-31T10:05:00.000Z",
     });
 
-    const designCheckpoint = await service.openAmendment({
-      specId: world.specId,
-      actor: ACTOR,
-    });
-    await specs.proposeRevision({
-      revisionId: designCheckpoint.revision.id,
-      proposedAt: "2026-07-31T10:05:10.000Z",
-    });
-    await specs.approveRevision({
-      revisionId: designCheckpoint.revision.id,
-      approvedAt: "2026-07-31T10:05:20.000Z",
-    });
-
     const created = await service.createSpec({
       projectPath: PROJECT_PATH,
       slug: SLUG,
@@ -628,9 +656,12 @@ describe("historical element reintroduction (ticket #42)", () => {
       gatePolicy: { preset: "fast-path" },
       initialElement: {
         elementId: ORPHAN_ID,
-        kind: "requirement",
+        kind: "decision",
         parentElementId: null,
-        payload: requirement("Restored by the first save of the amendment."),
+        payload: {
+          ...payload,
+          chosenApproach: "Restored by the first save of the amendment.",
+        },
         reintroduceHistorical: true,
       },
       actor: ACTOR,

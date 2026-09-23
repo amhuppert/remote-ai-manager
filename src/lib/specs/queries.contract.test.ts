@@ -15,6 +15,7 @@ describe("Spec Studio query contracts", () => {
     expect(clientSpecStatusViewSchema).toBe(canonicalSpecStatusViewSchema);
 
     const status = {
+      currentRevision: null,
       specId: "spec-1",
       slug: "status-line",
       phase: { primary: "draft", authoringStage: "plan" },

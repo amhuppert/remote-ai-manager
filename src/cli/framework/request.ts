@@ -33,6 +33,13 @@ export function ccRequestError(
   response: Exclude<CliRequestResult, { kind: "ok" }>,
   options: CcRequestFailureOptions = {},
 ): CliError<CcErrorCode> {
+  if (response.kind === "invalid_request") {
+    const cause = Array.from(response.detail.replace(/[\p{Cc}\p{Cs}]/gu, " "));
+    return ccErrors.error("CC_USAGE", {
+      message: `Request was not sent: ${cause.slice(0, 100).join("")}${cause.length > 100 ? "…" : ""}`,
+      details: { detail: response.detail },
+    });
+  }
   if (response.kind === "connection") {
     return ccErrors.error("CC_CONNECTION", {
       message: "cannot reach the CC server — is the CC server running?",

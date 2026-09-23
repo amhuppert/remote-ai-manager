@@ -63,7 +63,18 @@ async function planAction(
   const recovery = recoveryFacts([
     { kind: "spec-delivery-attempt", id: response.value.attempt.id },
   ]);
-  const json = jsonSchema.safeParse(response.value);
+  const {
+    previousHealth,
+    invalidatedApproval,
+    executionStartAdmission,
+    ...plan
+  } = response.value;
+  const json = jsonSchema.safeParse({
+    plan,
+    previousHealth,
+    invalidatedApproval,
+    executionStartAdmission,
+  });
   if (!json.success)
     return {
       effect: "applied",
@@ -124,7 +135,7 @@ export const planSignOffHandler = scalar<
       return {
         effect: "not_applied",
         result: refused(
-          "The proposed delivery plan has no frozen candidate identity; propose the plan before requesting sign-off.",
+          "The proposed delivery plan has no frozen candidate identity; propose the plan before signing it off.",
         ),
       };
     candidateId = preview.value.candidateId;

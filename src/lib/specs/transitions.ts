@@ -306,8 +306,6 @@ export function openDraftAuthoringStage(
     return base.authoringStage === "plan" ? "design" : base.authoringStage;
   }
   if (base?.state === "approved") {
-    if (base.authoringStage === "requirements") return "design";
-    if (base.authoringStage === "design") return "requirements";
     return "design";
   }
 

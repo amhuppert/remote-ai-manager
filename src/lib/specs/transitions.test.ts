@@ -482,7 +482,7 @@ describe("transition predicates", () => {
           policy: contractPolicy,
           baseRevision: { state: "approved", authoringStage: "design" },
         }),
-      ).toBe("requirements");
+      ).toBe("design");
       expect(
         openDraftAuthoringStage({
           policy: contractPolicy,

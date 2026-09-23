@@ -15,6 +15,10 @@ export type LocalInput = {
     readonly module: Readonly<Record<string, unknown>>;
     readonly decoder?: LazyPayload;
 };
+export type InputDiagnostic = {
+    readonly message: string;
+    readonly why: string;
+};
 export type LocalResolution = {
     readonly ok: true;
     readonly input: LocalInput;
@@ -22,6 +26,7 @@ export type LocalResolution = {
     readonly ok: false;
     readonly code: KernelCode;
     readonly issues?: readonly Issue[];
+    readonly diagnostic?: InputDiagnostic;
 };
 export declare function resolveLocalInput<Contexts, Code extends string, G extends Readonly<Record<string, Flag>>>(invocation: ParsedInvocation<Contexts, Code, G>, request: ResolvedRunRequest): Promise<LocalResolution>;
 //# sourceMappingURL=local-input.d.ts.map

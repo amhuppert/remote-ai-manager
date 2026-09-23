@@ -162,7 +162,9 @@ export const createHandler: Write<typeof fixtureSpecs.create> = {
         const project = ctx.args.project;
         const sessionName =
           ctx.flags.name ?? `fx-${ctx.clock.now().toString(36)}`;
-        const recovery = recoveryFacts([{ kind: "project", id: project }]);
+        const recovery = recoveryFacts([
+          { kind: "project", id: encodePathSegment(project) },
+        ]);
         const response = await cliRequest(app.host, {
           ...requestParams(target),
           method: "POST",
@@ -204,7 +206,10 @@ export const createHandler: Write<typeof fixtureSpecs.create> = {
         return {
           effect: "applied",
           recovery: recoveryFacts([
-            { kind: "fixture-session", id: `${project}/${name}` },
+            {
+              kind: "fixture-session",
+              id: `${encodePathSegment(project)}/${encodePathSegment(name)}`,
+            },
             ...(conversationId
               ? [{ kind: "conversation", id: conversationId }]
               : []),
@@ -251,7 +256,10 @@ export const deleteHandler: Write<typeof fixtureSpecs.delete> = {
       const project = ctx.args.project;
       const sessionName = ctx.args["session-name"];
       const recovery = recoveryFacts([
-        { kind: "fixture-session", id: `${project}/${sessionName}` },
+        {
+          kind: "fixture-session",
+          id: `${encodePathSegment(project)}/${encodePathSegment(sessionName)}`,
+        },
       ]);
       const response = await cliRequest(app.host, {
         ...requestParams(resolved.value),

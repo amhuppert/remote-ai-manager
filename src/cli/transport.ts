@@ -260,6 +260,7 @@ export type CliErrorDetails =
 
 export type CliRequestResult =
   | { kind: "ok"; status: number; body: unknown }
+  | { kind: "invalid_request"; detail: string }
   | { kind: "connection"; detail: string }
   | { kind: "auth"; hadToken: boolean; tokenSource: TokenSource | null }
   | {
@@ -457,6 +458,49 @@ function buildRequestInit(params: CliRequestParams): FetchInit {
   return init;
 }
 
+/** Only failures before fetch prove that a write was never submitted. */
+async function submitRequest(
+  host: CliHost,
+  params: CliRequestParams,
+): Promise<
+  | { kind: "response"; response: Response }
+  | Extract<CliRequestResult, { kind: "invalid_request" | "connection" }>
+> {
+  let url: URL;
+  let init: FetchInit;
+  try {
+    url = new URL(params.path, params.server);
+    init = buildRequestInit(params);
+  } catch (error) {
+    const detail = getErrorMessage(error);
+    return {
+      kind: "invalid_request",
+      detail: params.token
+        ? detail.replaceAll(params.token, "[redacted]")
+        : detail,
+    };
+  }
+  try {
+    // Validate before fetch obscures whether a request was submitted, keeping
+    // the caller's header spelling on the wire. Native errors can quote a
+    // normalized Authorization value, so do not expose their exception text.
+    new Headers(init.headers);
+  } catch {
+    return {
+      kind: "invalid_request",
+      detail: "Request headers contain an invalid name or value.",
+    };
+  }
+  try {
+    return {
+      kind: "response",
+      response: await host.fetch(url.toString(), init),
+    };
+  } catch (error) {
+    return { kind: "connection", detail: getErrorMessage(error) };
+  }
+}
+
 function classifyErrorBody(
   status: number,
   body: unknown,
@@ -537,8 +581,6 @@ export async function cliRequest(
   host: CliHost,
   params: CliRequestParams,
 ): Promise<CliRequestResult> {
-  const url = new URL(params.path, params.server);
-  const init = buildRequestInit(params);
   if (params.principalIdentity !== undefined) {
     logger.debug("cli.request_principal_attached", {
       method: params.method,
@@ -549,15 +591,9 @@ export async function cliRequest(
     });
   }
 
-  let response: Response;
-  try {
-    response = await host.fetch(url.toString(), init);
-  } catch (error) {
-    return {
-      kind: "connection",
-      detail: getErrorMessage(error),
-    };
-  }
+  const submitted = await submitRequest(host, params);
+  if (submitted.kind !== "response") return submitted;
+  const { response } = submitted;
 
   if (response.status === 401) {
     return {
@@ -609,15 +645,9 @@ export async function cliRequestStream(
   host: CliHost,
   params: CliRequestParams,
 ): Promise<CliStreamRequestResult> {
-  let response: Response;
-  try {
-    response = await host.fetch(
-      new URL(params.path, params.server).toString(),
-      buildRequestInit(params),
-    );
-  } catch (error) {
-    return { kind: "connection", detail: getErrorMessage(error) };
-  }
+  const submitted = await submitRequest(host, params);
+  if (submitted.kind !== "response") return submitted;
+  const { response } = submitted;
   if (response.status === 401) {
     await response.body?.cancel().catch(() => {});
     return {
@@ -657,18 +687,9 @@ export async function cliRequestText(
   host: CliHost,
   params: CliRequestParams,
 ): Promise<CliTextRequestResult> {
-  const url = new URL(params.path, params.server);
-  const init = buildRequestInit(params);
-
-  let response: Response;
-  try {
-    response = await host.fetch(url.toString(), init);
-  } catch (error) {
-    return {
-      kind: "connection",
-      detail: getErrorMessage(error),
-    };
-  }
+  const submitted = await submitRequest(host, params);
+  if (submitted.kind !== "response") return submitted;
+  const { response } = submitted;
 
   if (response.status === 401) {
     return {
@@ -716,15 +737,9 @@ export async function cliRequestBytes(
   host: CliHost,
   params: CliRequestParams,
 ): Promise<CliBytesRequestResult> {
-  const url = new URL(params.path, params.server);
-  const init = buildRequestInit(params);
-
-  let response: Response;
-  try {
-    response = await host.fetch(url.toString(), init);
-  } catch (error) {
-    return { kind: "connection", detail: getErrorMessage(error) };
-  }
+  const submitted = await submitRequest(host, params);
+  if (submitted.kind !== "response") return submitted;
+  const { response } = submitted;
 
   if (response.status === 401) {
     return {

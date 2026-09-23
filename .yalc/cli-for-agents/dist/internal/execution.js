@@ -17,8 +17,8 @@ export function unknownAcknowledgment(invocation, payloadHash) {
  */
 class ContractFailure extends Error {
 }
-function failure(code, issues) {
-    return Object.freeze({ ok: false, error: kernelError(code, { message: kernelErrors[code].description, ...(issues ? { issues } : {}) }) });
+function failure(code, issues, diagnostic) {
+    return Object.freeze({ ok: false, error: kernelError(code, { message: kernelErrors[code].description, ...diagnostic, ...(issues ? { issues } : {}) }) });
 }
 function outcome(result, operation, renderPrimary = () => "", offline = false) {
     if (result.ok && operation.effect !== "read" && operation.effect !== "applied")
@@ -54,7 +54,7 @@ export async function execute(invocation, request, contexts, postOperation) {
     const local = await resolveLocalInput(invocation, request);
     const skipped = (result) => ({ execution: outcome(result, initial), secondary: [], postOperation: "skipped" });
     if (!local.ok)
-        return skipped(failure(local.code, local.issues));
+        return skipped(failure(local.code, local.issues, local.diagnostic));
     let run;
     let unknownEffect;
     try {

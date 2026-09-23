@@ -143,7 +143,7 @@ export const specAmendSpec = {
   path: "spec amend",
   summary: "Open an editable amendment",
   description:
-    "The server chooses the valid amendment basis and reports withdrawn revisions it skipped.",
+    "Approved Requirements or Design opens a Design draft. Use return-to-requirements for contract changes. The server chooses the valid amendment basis and reports withdrawn revisions it skipped.",
   requires: "cc",
   effects: "write",
   args: [slug],
@@ -344,7 +344,7 @@ export const specReturnToRequirementsSpec = {
   path: "spec return-to-requirements",
   summary: "Return design work to an editable requirements revision",
   description:
-    "Read the current revision and state it as expectedRevisionId. The server withdraws the design revision and records the reason.",
+    "The CLI reads the current revision and binds it as expectedRevisionId. The server withdraws that design revision and records the reason.",
   requires: "cc",
   effects: "write",
   args: [slug],
@@ -903,9 +903,9 @@ export const specPlanProposeCommand = ccCommands.defineCommand(
 
 export const specPlanSignOffSpec = {
   path: "spec plan sign-off",
-  summary: "Request sign-off of the exact proposed candidate",
+  summary: "Sign off the exact proposed candidate",
   description:
-    "Supply both candidate identity fields or neither. Omission reads the frozen proposal and binds both back on the request. The server enforces human-only sign-off.",
+    "Records approval or policy admission; it does not request human review. Supply both candidate fields or neither to bind the frozen proposal. Under human-required policy, hand off to the Builder URL in spec plan status; the server refuses agent sign-off.",
   related: [
     {
       path: "spec start",
@@ -932,7 +932,7 @@ export const specPlanSignOffCommand = ccCommands.defineCommand(
     examples: [
       {
         args: { slug: "native-sdd" },
-        why: "Request sign-off of the exact proposed candidate",
+        why: "Sign off the frozen candidate when the execution-start policy permits the caller",
       },
     ],
     handler: async () => ({

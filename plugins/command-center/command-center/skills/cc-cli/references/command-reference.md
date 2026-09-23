@@ -323,7 +323,7 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl spec plan reopen` — Reopen delivery planning and invalidate candidate approval
   - `cctl spec plan reopen <slug> (--reason <string> | --reason-file <path>) [options]`
   - Flags: `--reason` / `--reason-file` (required), `--reason-file`.
-- `cctl spec plan sign-off` — Request sign-off of the exact proposed candidate
+- `cctl spec plan sign-off` — Sign off the exact proposed candidate
   - `cctl spec plan sign-off <slug> [options]`
   - Flags: `--candidate`, `--candidate-hash`.
 - `cctl spec plan status` — Read delivery plan obligations

@@ -30,6 +30,13 @@ function readReference(): SchemaDocument {
     example: {
       dataLocation: "payload.data",
       artifactLocation: "payload.artifact.path",
+      planLocation: "payload.data.plan",
+      artifactContents: {
+        response:
+          "Parse the saved envelope, then select payload.data.plan for a plan result.",
+        data: "Parse the saved domain data, then select plan for a plan result.",
+        binary: "Read the document bytes; no JSON envelope is implied.",
+      },
       revisionRoles: {
         baseRevision:
           "The immediate parent named by currentRevision.revision.basedOnRevisionId",
@@ -41,6 +48,8 @@ function readReference(): SchemaDocument {
     },
     notes: [
       "The library owns the response envelope: ok and effect state the outcome; payload carries inline data or an artifact manifest; errors, reminders, instruction, hint, and recovery have their own protocol fields.",
+      "Inspect payload.artifact.contains before reading a file. Automatic JSON spill saves the response envelope (response); --json --out saves domain data (data) when the original payload was inline; binary exports save document bytes (binary).",
+      "Plan get/status reads and open/propose/reopen/sign-off receipts keep the plan at payload.data.plan. Mutation-only previousHealth, invalidatedApproval, and executionStartAdmission are siblings of plan.",
       "--json changes serialization only. Disclosure levels select the same data in text and JSON. A bounded collection reports returned and total counts and a typed reveal invocation.",
       "spec show defaults to an outline; --summary returns counts, --rendered writes canonical Markdown, and --full writes the complete detail JSON. Artifact hashes cover the exact bytes on disk.",
       "spec status defaults to bounded collections; --full returns every row. Lint data is under lint; addressed reads are under element or section. Sections use their stable id and have no element handle.",

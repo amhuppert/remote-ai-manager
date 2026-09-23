@@ -65,6 +65,9 @@ is under `payload.data` with `payload.kind: "inline"`. An artifact result has
 `payload.kind: "artifact"`, a bounded `payload.summary`, and
 `payload.artifact` containing the file path, media type, byte count, and hash.
 Read that file in bounded chunks or search it locally.
+Check `artifact.contains` before parsing it: `response` is the complete response
+envelope, `data` is command data, and `binary` is the exported document's bytes.
+See [spec reads](references/spec-reads.md) for a JSON extraction example.
 
 `--json` changes representation, not scope: omitted rows stay omitted. Follow
 returned handles and omission commands. Where help offers `--full`, use it to

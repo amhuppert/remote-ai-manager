@@ -856,6 +856,19 @@ function projectNextAction(
       instruction: `Open an amendment draft: revision ${input.snapshot.revision.number} was withdrawn and carries nothing forward.`,
     };
   }
+  if (
+    input.snapshot?.revision.state === "approved" &&
+    input.snapshot.revision.authoringStage === "requirements"
+  ) {
+    return {
+      kind: "amend",
+      actsNext: "agent",
+      gate: null,
+      subject: null,
+      elementId: null,
+      instruction: `Requirements are approved. Run cctl spec amend ${input.specSlug ?? "<slug>"} to open the Design draft.`,
+    };
+  }
   const open = projectOpenComments(input);
   // Element approval is refused on a draft, so naming a subject here would
   // send the caller at an act the transition cannot accept. The subjects stay

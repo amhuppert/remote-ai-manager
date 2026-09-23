@@ -249,7 +249,7 @@ function detailPayload(
     totalInScope: 12,
   },
 ) {
-  return {
+  const payload = {
     spec: executingSpec,
     aliases: [],
     revisions: [detailRevision],
@@ -462,6 +462,12 @@ function detailPayload(
     },
     status: {
       specId: executingSpec.id,
+      currentRevision: {
+        id: detailRevision.id,
+        number: detailRevision.number,
+        state: detailRevision.state,
+        authoringStage: detailRevision.authoringStage,
+      },
       slug: "native-sdd",
       phase: {
         primary: "executing",
@@ -529,6 +535,8 @@ function detailPayload(
     },
     importRecord: null,
   };
+  specDetailViewSchema.parse(payload);
+  return payload;
 }
 
 function reviewDetailPayload() {
@@ -717,6 +725,13 @@ function initialReviewDetailPayload() {
     ],
     baseRevision: null,
     currentRevision: snapshot,
+    status: {
+      ...payload.status,
+      currentRevision: {
+        ...payload.status.currentRevision,
+        number: initialRevision.number,
+      },
+    },
   };
 }
 
@@ -831,6 +846,7 @@ describe("Spec Studio detail routes", () => {
       elementStatuses: { requirements: [], tasks: [] },
       status: {
         specId: executingSpec.id,
+        currentRevision: null,
         slug: "native-sdd",
         phase: { primary: "executing", authoringFacet: "in_review" },
         gates: [],
@@ -1248,6 +1264,10 @@ describe("Spec Studio detail routes", () => {
           ...payload.currentRevision,
           revision: { ...payload.currentRevision.revision, state },
         },
+        status: {
+          ...payload.status,
+          currentRevision: { ...payload.status.currentRevision, state },
+        },
         comments: [],
       });
       const { container } = renderWithQuery(<SpecDetailPage />);
@@ -1401,6 +1421,13 @@ describe("Spec Studio detail routes", () => {
                 approvedAt: NOW,
               },
             },
+        status: {
+          ...payload.status,
+          currentRevision: {
+            ...payload.status.currentRevision,
+            state: abandoned ? current.revision.state : "approved",
+          },
+        },
         liveProposals: [],
         comments: [structuredRoot],
       };

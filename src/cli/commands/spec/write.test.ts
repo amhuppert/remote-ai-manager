@@ -75,6 +75,7 @@ function statusBody() {
         elementId: null,
       },
     ],
+    currentRevision: null,
     coverage: { coveredCriteria: 1, totalCriteria: 1, percentage: 100 },
   };
 }
@@ -3194,7 +3195,7 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
     expect(text.exitCode).toBe(0);
 
     expect(inlineDataOf(structured)).toMatchObject({
-      attempt: { draftRevision: 1 },
+      plan: { attempt: { draftRevision: 1 } },
     });
   });
 
@@ -3214,7 +3215,7 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
     expect(text.exitCode).toBe(0);
 
     expect(inlineDataOf(structured)).toMatchObject({
-      attempt: { draftRevision: 5 },
+      plan: { attempt: { draftRevision: 5 } },
     });
   });
 });

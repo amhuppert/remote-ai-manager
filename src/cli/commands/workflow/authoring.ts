@@ -104,7 +104,7 @@ const validateImplementation: Validate = {
       const preflight = data.preflight;
       return quoteLiteralText(
         [
-          "Plan is valid.",
+          "Plan is structurally valid. Semantic review is separate; inspect its recorded verdict with cctl workflow review get.",
           ...(data.warnings ?? []).map(
             (warning) =>
               `Advice at ${warning.path}${warning.recordId ? ` (${warning.recordId})` : ""}: ${warning.message}`,
@@ -118,7 +118,7 @@ const validateImplementation: Validate = {
                     ? [`Reason: ${finding.rationale}`]
                     : []),
                 ]),
-                `Coverage: ${preflight.summary.claimed} of ${preflight.summary.selected} selected criteria covered; ${preflight.summary.unclaimed} uncovered`,
+                `Criteria mapping: ${preflight.summary.claimed} of ${preflight.summary.selected} selected criteria mapped; ${preflight.summary.unclaimed} unmapped`,
                 `Dispositions: ${preflight.summary.dispositions.map((entry) => `${entry.kind} ${entry.count}`).join(", ") || "none"}`,
                 `Charter: ${preflight.summary.charter.state}`,
               ]

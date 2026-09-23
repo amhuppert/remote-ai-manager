@@ -26,6 +26,7 @@ function statusView() {
       text: `Question ${index + 1}`,
       elementId: null,
     })),
+    currentRevision: null,
     coverage: { coveredCriteria: 0, totalCriteria: 0, percentage: 0 },
     delivery: {
       allWaived: false,
@@ -48,6 +49,72 @@ function statusView() {
 }
 
 describe("spec disclosure", () => {
+  it("leads with the editable objects, their own revision guards, and the next actors", async () => {
+    const status = {
+      ...statusView(),
+      currentRevision: {
+        id: "revision-new",
+        number: 4,
+        state: "draft",
+        authoringStage: "design",
+      },
+      reviewHref: "/specs/project-one/native-sdd",
+      nextAction: {
+        kind: "propose",
+        actsNext: "agent",
+        gate: null,
+        subject: null,
+        elementId: null,
+        instruction: "cctl spec propose native-sdd",
+      },
+      deliveryPlan: {
+        attemptId: "attempt-old",
+        status: "draft",
+        pinnedRevisionId: "approved-old",
+        draftRevision: 4,
+        workflowDefinition: {
+          id: "managed-one",
+          revision: 7,
+          builderHref: "/projects/project-one/workflows?definition=managed-one",
+        },
+        nextAct: {
+          actor: "agent",
+          command:
+            "cctl workflow validate --file .cc/temp/plan.json --definition managed-one",
+          reason: "Check the graph.",
+        },
+        reviewStatus: { state: "unreviewed" },
+      },
+    };
+    const fixture = createCcRuntimeFixture({
+      respond: () => jsonReply(status),
+    });
+    const result = await fixture.run(["spec", "status", "native-sdd"], "text");
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(result.stdout).toContain(
+      "Editable spec draft: revision-new (design)",
+    );
+    expect(result.stdout).toContain("baseElementVersion");
+    expect(result.stdout).toContain(
+      "Authoring acts next: agent — cctl spec propose native-sdd",
+    );
+    expect(result.stdout).toContain(
+      "Delivery attempt: attempt-old (draft); pinned revision approved-old",
+    );
+    expect(result.stdout).toContain(
+      "Editable workflow: managed-one; --expected-revision 7",
+    );
+    expect(result.stdout).toContain(
+      "Plan preview guard: --expected-draft-revision 4",
+    );
+    expect(result.stdout).toContain(
+      status.deliveryPlan.workflowDefinition.builderHref,
+    );
+    expect(result.stdout.indexOf("Editable workflow:")).toBeLessThan(
+      result.stdout.indexOf("Criteria mapping:"),
+    );
+  });
+
   it("quotes protocol-shaped status prose while preserving its JSON data", async () => {
     const status = statusView();
     const prose =

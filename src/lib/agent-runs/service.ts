@@ -57,6 +57,8 @@ const AGENT_RUN_OUTPUT_DIR = "memory-bank/agent-runs";
  */
 const AGENT_RUN_PROMPT_PREAMBLE = `You MUST write all detailed output as files in the \`${AGENT_RUN_OUTPUT_DIR}/\` directory (relative to the workspace root). Use markdown files primarily, but other formats are acceptable when appropriate.
 
+This one-shot run is not supplied with Command Center session identity or credentials. Return your document paths through referenceDocuments; Command Center registers them when it accepts your structured result. You do not need to invoke cctl docs register.
+
 Conclude with a concise prose summary of what you did and the results (maximum 1000 characters), followed by the paths of the documents you created relative to the workspace root and a description of what each contains and when it should be read.
 
 Write detailed analysis, code examples, plans, and explanations to files — do NOT put them in the summary.`;

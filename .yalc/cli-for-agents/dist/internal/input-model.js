@@ -289,7 +289,7 @@ export function inputModel(spec, globals) {
     for (const name of ["help", "json", "version"])
         add(name, { description: `${name} output.`, value: { kind: "boolean" } }, "framework");
     if (spec.output === "binary" || Object.values(spec.levels ?? {}).some(l => l.output === "artifact-eligible"))
-        add("out", { description: "Write artifact to this path.", value: { kind: "output-path" } }, "framework");
+        add("out", { description: "Write artifact to this output destination. Relative paths resolve inside the artifact directory; absolute paths must stay inside it. The parent directory must exist. Existing files are reused only when their bytes are identical; they are never overwritten.", value: { kind: "output-path" } }, "framework");
     return Object.freeze({ spec, flags: Object.freeze(entries), selectors: Object.freeze(selectors) });
 }
 /** Checks caller/example records without reading a selected source or environment. */

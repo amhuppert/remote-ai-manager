@@ -14,6 +14,7 @@ export interface DeliveryPlanNextActInput {
   readonly specSlug: string;
   /** The managed definition the draft's authoring path is validated against. */
   readonly workflowDefinitionId: string;
+  readonly builderHref: string;
   /** Whether the `execution_start` dial makes sign-off a human act. */
   readonly signOffRequiresHuman: boolean;
   /** Whether a parked attempt already carries an approval. */
@@ -43,8 +44,12 @@ export function deliveryPlanNextAct(
     case "proposed":
       return {
         actor: input.signOffRequiresHuman ? "human" : "agent",
-        command: `cctl spec plan sign-off ${input.specSlug}`,
-        reason: "Sign the finalized launch envelope.",
+        command: input.signOffRequiresHuman
+          ? `Review and sign off in Builder: ${input.builderHref}`
+          : `cctl spec plan sign-off ${input.specSlug}`,
+        reason: input.signOffRequiresHuman
+          ? "Execution start requires human approval of the finalized launch envelope."
+          : "Sign the finalized launch envelope under the execution-start policy.",
       };
     case "approved":
       return {
@@ -63,7 +68,9 @@ export function deliveryPlanNextAct(
           }
         : {
             actor: input.signOffRequiresHuman ? "human" : "agent",
-            command: `cctl spec plan sign-off ${input.specSlug}`,
+            command: input.signOffRequiresHuman
+              ? `Review and sign off in Builder: ${input.builderHref}`
+              : `cctl spec plan sign-off ${input.specSlug}`,
             reason: "The parked candidate still needs sign-off.",
           };
     case "launched":

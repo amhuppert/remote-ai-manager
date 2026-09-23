@@ -132,6 +132,12 @@ export function deliveryDashboardFixture(): {
       revisions: [...detail.revisions, populated.revision],
       status: {
         ...detail.status,
+        currentRevision: {
+          id: populated.revision.id,
+          number: populated.revision.number,
+          state: populated.revision.state,
+          authoringStage: populated.revision.authoringStage,
+        },
         coverage: { coveredCriteria: 12, totalCriteria: 12, percentage: 100 },
         delivery: {
           ...detail.status.delivery,

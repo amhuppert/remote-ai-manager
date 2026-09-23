@@ -10,6 +10,7 @@ describe("server-authored spec start continuations", () => {
         status,
         specSlug: "native-sdd",
         workflowDefinitionId: "workflow-one",
+        builderHref: "/projects/project-one/workflows?definition=workflow-one",
         signOffRequiresHuman: true,
         parkedApproved: true,
       });

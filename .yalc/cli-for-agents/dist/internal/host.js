@@ -1,8 +1,14 @@
 import { bytes, milliseconds } from "../values.js";
 export function checkLimit(limit) { bytes(limit); }
 export function checkDuration(duration) { milliseconds(duration); }
-export function overflow() { return new RangeError("Input exceeds byte limit"); }
-export function collisionError() { return new Error("Atomic write collision: existing file differs"); }
+export class InputOverflowError extends RangeError {
+    constructor() { super("Input exceeds byte limit"); }
+}
+export function overflow() { return new InputOverflowError(); }
+export class ArtifactCollisionError extends Error {
+    constructor() { super("Atomic write collision: existing file differs"); }
+}
+export function collisionError() { return new ArtifactCollisionError(); }
 export function sameBytes(left, right) {
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }

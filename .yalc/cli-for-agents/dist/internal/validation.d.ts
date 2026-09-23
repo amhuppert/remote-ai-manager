@@ -13,6 +13,8 @@ export declare function serializedJson(value: unknown): string;
 /** An observation only; constructors must retain a snapshot before checking shape/size. */
 export declare function assertJsonValue(value: unknown): asserts value is JsonValue;
 /** Count the actual JSON representation, including quotes, escapes and UTF-8 expansion. */
+/** Fit path-bearing prose to a serialized limit: full paths, then middle-elided paths, then the fallback. */
+export declare function boundedSummary(render: (path: (value: string) => string) => string, fallback: string, limit: number): string;
 export declare function assertSerializedLimit(value: unknown, limit: number): void;
 /** Detach and deep-freeze: the caller keeps its object, the kernel keeps a JSON copy. */
 export declare function frozenJson<T>(value: T): T;

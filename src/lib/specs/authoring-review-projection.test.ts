@@ -1218,6 +1218,64 @@ describe("authoringReviewProjection", () => {
     expect(projection.nextAction.kind).toBe("none");
   });
 
+  it("continues approved Requirements by opening Design, without asking for another approval", () => {
+    const approved = revision({
+      id: "requirements-approved",
+      number: 1,
+      state: "approved",
+      authoringStage: "requirements",
+      approvedAt: AT,
+    });
+    const projection = project(
+      {
+        revisions: [approved],
+        snapshots: [
+          {
+            revision: approved,
+            elements: [
+              requirement(
+                approved.id,
+                "requirement-1",
+                1,
+                "Approved contract.",
+                0,
+              ),
+            ],
+            assumptionCitations: [],
+          },
+        ],
+      },
+      {
+        specSlug: "native-sdd",
+        approvals: [
+          approval({
+            id: "requirements-sign-off",
+            revision_id: approved.id,
+            subject_kind: "revision",
+          }),
+        ],
+        admissions: [
+          admission({
+            id: "requirements-admitted",
+            revision_id: approved.id,
+            gate: "requirements",
+          }),
+        ],
+      },
+    );
+
+    expect(projection.nextAction).toMatchObject({
+      kind: "amend",
+      actsNext: "agent",
+      gate: null,
+    });
+    expect(projection.nextAction.instruction).toContain(
+      "cctl spec amend native-sdd",
+    );
+    expect(projection.nextAction.instruction).toContain("Design");
+    expect(projection.pendingBlock).toBeNull();
+  });
+
   /**
    * The two-sided account. A pending-only projection reads as "7 lost" where
    * the truth is "7 banked", which is what mispriced the reopen: the ledger

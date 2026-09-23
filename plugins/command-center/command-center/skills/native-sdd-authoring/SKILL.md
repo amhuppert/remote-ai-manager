@@ -53,12 +53,17 @@ section must send.
 
 Requirements admits intent, requirements, and criteria only. Design admits the
 design narrative and decisions only. Settle Requirements before entering
-Design; do not author both stages in one revision or batch. To extend an
-approved spec, open an amendment, author and approve the Requirements delta,
-then advance into a separate Design draft. If the contract changes during
-Design, run `cctl spec return-to-requirements <slug> --reason <why>`; this
+Design; do not author both stages in one revision or batch. After Requirements
+approval, `cctl spec amend <slug>` opens the Design draft. An amendment of an
+approved Design also opens at Design, preserving unchanged Requirements and
+their approvals. If the contract needs to change, run
+`cctl spec return-to-requirements <slug> --reason <why>` from the Design draft; this
 withdraws the Design attempt and reopens from the latest approved Requirements
-checkpoint without copying unapproved design choices backward.
+checkpoint, or the approved imported baseline when no separate checkpoint
+exists. It does not copy unapproved design choices backward.
+Approve the changed Requirements, then use `amend` again to open Design.
+`advance` concludes an open Requirements draft only when its policy does not
+require human sign-off; it does not open a draft after an approval.
 Inspect stage and return-path contracts with `cctl spec status --help`,
 `cctl spec return-to-requirements --help`, and `cctl spec schema guidance`.
 

@@ -3,7 +3,8 @@ import { renderResponse } from "./response.js";
 import { bytes } from "../values.js";
 import { decodeWireEnvelope, kernelError, protocolLimits } from "../results.js";
 import { assertArtifactBasename, binaryBytes } from "./binary.js";
-import { assertArtifactMetadata, assertFields, assertRecord, assertSerializedLimit, assertText, frozenJson } from "./validation.js";
+import { ArtifactCollisionError, hasCode } from "./host.js";
+import { assertArtifactMetadata, assertFields, boundedSummary, assertRecord, assertSerializedLimit, assertText, frozenJson } from "./validation.js";
 /** Resolves canonical roots, validates policy and freezes an app-free snapshot. */
 export async function resolveArtifactPolicy(policy, host) {
     const snapshot = frozenJson(policy);
@@ -28,6 +29,11 @@ function within(destination, root) {
     const normalized = root.replace(/\/+$/, "") || "/";
     return destination === normalized || destination.startsWith(normalized === "/" ? "/" : normalized + "/");
 }
+class ArtifactWriteError extends TypeError {
+}
+function artifactWriteError(cause, destination, directory) {
+    return new ArtifactWriteError(boundedSummary(path => `Artifact delivery failed for ${JSON.stringify(path(destination))} (artifact directory ${JSON.stringify(path(directory))}): ${cause}`, `Artifact delivery failed: ${cause} Destination and artifact directory paths exceed the diagnostic limit.`, protocolLimits.diagnosticSummary));
+}
 /** One bounded writer for automatic spill, explicit out and finite binary exports. */
 export async function writeArtifact(request, policy, host, signal) {
     if (!(request.bytes instanceof Uint8Array))
@@ -46,19 +52,46 @@ export async function writeArtifact(request, policy, host, signal) {
     const path = await import("node:path");
     const target = metadata.out === undefined ? path.join(policy.directory, `${hash}-${metadata.basename}`)
         : path.isAbsolute(metadata.out) ? metadata.out : `${policy.directory}${path.sep}${metadata.out}`;
-    const destination = await host.files.canonicalPath(target);
+    let destination;
+    try {
+        destination = await host.files.canonicalPath(target);
+    }
+    catch {
+        throw artifactWriteError("destination path could not be resolved.", path.resolve(target), policy.directory);
+    }
     if (!within(destination, policy.directory) || destination === policy.directory)
-        throw new TypeError("Artifact destination is outside its directory.");
+        throw artifactWriteError("destination is outside the artifact directory; choose a path inside it.", destination, policy.directory);
     if (policy.forbiddenRoots.some(root => within(destination, root)))
-        throw new TypeError("Artifact destination is forbidden.");
-    if (await host.files.kind(path.dirname(destination)) !== "directory")
-        throw new TypeError("Artifact parent must exist.");
+        throw artifactWriteError("destination is inside a forbidden root.", destination, policy.directory);
+    let parentKind;
+    try {
+        parentKind = await host.files.kind(path.dirname(destination));
+    }
+    catch {
+        throw artifactWriteError("parent directory could not be inspected; check access permissions.", destination, policy.directory);
+    }
+    if (parentKind !== "directory")
+        throw artifactWriteError("parent directory does not exist; create it or pass a bare filename to --out.", destination, policy.directory);
     const manifest = { path: destination, format: metadata.format, mediaType: metadata.mediaType,
         bytes: bytes(data.byteLength), sha256: hash, reason: metadata.reason, contains: metadata.contains };
     // Refuse an unreportable path before publishing anything.
-    assertSerializedLimit(manifest, protocolLimits.manifest);
+    try {
+        assertSerializedLimit(manifest, protocolLimits.manifest);
+    }
+    catch {
+        throw artifactWriteError("artifact manifest exceeds its protocol byte limit.", destination, policy.directory);
+    }
     signal.throwIfAborted();
-    await host.files.writeAtomic(destination, data, "reuse-identical-or-refuse");
+    try {
+        await host.files.writeAtomic(destination, data, "reuse-identical-or-refuse");
+    }
+    catch (error) {
+        const cause = error instanceof ArtifactCollisionError ? "no-overwrite collision: existing file has different bytes."
+            : hasCode(error, "EACCES") || hasCode(error, "EPERM") ? "OS denied write access to the destination or its parent."
+                : hasCode(error, "ENOSPC") ? "filesystem has no space for the artifact."
+                    : "filesystem write failed; inspect directory permissions and available space.";
+        throw artifactWriteError(cause, destination, policy.directory);
+    }
     // Publication is acknowledged even if cancellation arrives while it settles.
     return frozenJson(manifest);
 }
@@ -113,8 +146,8 @@ export async function deliver(response, options) {
                     reason: options.out !== undefined ? "explicit_out" : "stdout_budget_exceeded", contains: dataOnly ? "data" : "response" }, options.artifacts, options.host, options.signal);
             }
         }
-        catch {
-            failure = { code: "KERNEL_OUTPUT", message: "Artifact delivery failed; optional detail omitted." };
+        catch (error) {
+            failure = { code: "KERNEL_OUTPUT", message: error instanceof ArtifactWriteError ? error.message : "Artifact delivery failed; optional detail omitted." };
         }
     }
     if (manifest && response.binary && !failure) {
@@ -165,7 +198,7 @@ function compactEnvelope(source, manifest, failure, compactSecondary = false) {
                 : "Optional response detail omitted; no artifact available." }];
     if (source.ok && !failure)
         return decodeWireEnvelope({ ...protocol, payload, issues });
-    const primary = source.ok ? kernelError("KERNEL_OUTPUT", { message: failure.message }) : source.error;
+    const primary = source.ok ? kernelError("KERNEL_OUTPUT", { message: "Artifact delivery failed.", why: failure.message }) : source.error;
     const { details: _details, issues: _issues, ...error } = primary;
     const { issues: _successIssues, ...fields } = protocol;
     const failures = source.ok ? [] : [...source.error.secondary, ...(failure ? [failure] : [])];

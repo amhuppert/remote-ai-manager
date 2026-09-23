@@ -221,12 +221,86 @@ beforeEach(() => {
 
 afterEach(() => harness.fixture.close());
 
+async function openRequirementsAmendment(specId: string) {
+  const design = await harness.authoring.openAmendment({
+    specId,
+    actor: AGENT,
+  });
+  expect(design.revision.authoringStage).toBe("design");
+  const returned = harness.authoring.returnToRequirements({
+    specId,
+    expectedRevisionId: design.revision.id,
+    reason: "Revise the imported Requirements contract.",
+    actor: AGENT,
+  });
+  await expect(returned).resolves.toMatchObject({
+    revision: { authoringStage: "requirements" },
+  });
+  return returned;
+}
+
 /**
  * An imported spec carries no approval row at all: its gates were admitted on
  * import basis. The first amendment must therefore ask a human about what it
  * changed and nothing else, or every imported element would be re-litigated.
  */
 describe("amending an imported spec", () => {
+  it("returns to the approved imported baseline without copying unapproved Design changes", async () => {
+    const imported = await importedSpec();
+    const baseline = await harness.fixture.specs.getRevisionSnapshot(
+      imported.revision.id,
+    );
+    if (baseline === null) throw new Error("expected imported baseline");
+    expect(baseline.revision.authoringStage).toBe("design");
+    expect(
+      await harness.fixture.specs.listRevisions(imported.spec.id),
+    ).toHaveLength(1);
+    const design = await harness.authoring.openAmendment({
+      specId: imported.spec.id,
+      actor: AGENT,
+    });
+    const importedDecision = baseline.elements.find(
+      ({ version }) => version.payload.kind === "decision",
+    );
+    if (importedDecision?.version.payload.kind !== "decision") {
+      throw new Error("expected imported decision");
+    }
+    await harness.authoring.upsertDraftElement({
+      specId: imported.spec.id,
+      revisionId: design.revision.id,
+      elementId: importedDecision.element.id,
+      kind: "decision",
+      parentElementId: null,
+      payload: {
+        ...importedDecision.version.payload,
+        chosenApproach:
+          "An unapproved change must not shape the Requirements baseline.",
+      },
+      baseElementVersion: 1,
+      actor: AGENT,
+    });
+
+    const returned = await harness.authoring.returnToRequirements({
+      specId: imported.spec.id,
+      expectedRevisionId: design.revision.id,
+      reason: "Change Requirements before revising the design.",
+      actor: AGENT,
+    });
+    expect(returned.revision).toMatchObject({
+      authoringStage: "requirements",
+      basedOnRevisionId: imported.revision.id,
+    });
+    expect(
+      await harness.fixture.specs.findRevision(design.revision.id),
+    ).toMatchObject({ state: "withdrawn" });
+    const restored = await harness.fixture.specs.getRevisionSnapshot(
+      returned.revision.id,
+    );
+    expect(restored?.elements.map(({ version }) => version.payload)).toEqual(
+      baseline.elements.map(({ version }) => version.payload),
+    );
+  });
+
   it("lists only the changed requirement as outstanding and signs off once it is approved", async () => {
     const imported = await importedSpec();
     const changedElementId = imported.elementIdByStatement.get(
@@ -236,10 +310,7 @@ describe("amending an imported spec", () => {
       throw new Error("expected the imported requirement to exist");
     }
 
-    const amendment = await harness.authoring.openAmendment({
-      specId: imported.spec.id,
-      actor: AGENT,
-    });
+    const amendment = await openRequirementsAmendment(imported.spec.id);
     await harness.authoring.upsertDraftElement({
       specId: imported.spec.id,
       revisionId: amendment.revision.id,
@@ -339,10 +410,7 @@ describe("amending an imported spec", () => {
       );
     }
 
-    const amendment = await harness.authoring.openAmendment({
-      specId: imported.spec.id,
-      actor: AGENT,
-    });
+    const amendment = await openRequirementsAmendment(imported.spec.id);
     await harness.authoring.upsertDraftElement({
       specId: imported.spec.id,
       revisionId: amendment.revision.id,
@@ -379,10 +447,7 @@ describe("amending an imported spec", () => {
   it("owes approval for an element the import baseline never carried", async () => {
     const imported = await importedSpec();
 
-    const amendment = await harness.authoring.openAmendment({
-      specId: imported.spec.id,
-      actor: AGENT,
-    });
+    const amendment = await openRequirementsAmendment(imported.spec.id);
     await harness.authoring.upsertDraftElement({
       specId: imported.spec.id,
       revisionId: amendment.revision.id,

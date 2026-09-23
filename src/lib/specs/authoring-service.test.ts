@@ -553,24 +553,42 @@ describe("AuthoringService create and draft writes", () => {
       approvedAt: "2026-07-18T12:14:00.000Z",
     });
 
-    const amended = await createDraft(
-      firstElement("Amendment requirement.", "requirement-2"),
-    );
+    const amended = await service.createSpec({
+      projectPath: PROJECT_PATH,
+      slug: "native-sdd",
+      name: "Native SDD",
+      gatePolicy: { preset: "contract-bearing" },
+      initialElement: {
+        elementId: "decision-1",
+        kind: "decision",
+        parentElementId: null,
+        position: 1,
+        payload: {
+          kind: "decision",
+          title: "Correct the design",
+          chosenApproach: "Amend Design directly.",
+          rejectedAlternatives: [],
+          reason: "The approved requirements are unchanged.",
+          tracedRequirementElementIds: ["requirement-1"],
+        },
+      },
+      actor: ACTOR,
+    });
     const snapshot = await service.getRevisionSnapshot(amended.draft.id);
 
     expect(amended.spec.id).toBe(created.spec.id);
     expect(amended.draft.id).not.toBe(created.draft.id);
     expect(amended.draft.basedOnRevisionId).toBe(approvedDesign.id);
-    expect(amended.draft.authoringStage).toBe("requirements");
+    expect(amended.draft.authoringStage).toBe("design");
     expect(snapshot?.elements.map(({ element }) => element.id).sort()).toEqual([
+      "decision-1",
       "requirement-1",
-      "requirement-2",
     ]);
     expect(published.at(-1)).toEqual(
       expect.objectContaining({
         type: "spec-changed",
         revisionId: amended.draft.id,
-        elementIds: ["requirement-2"],
+        elementIds: ["decision-1"],
       }),
     );
   });

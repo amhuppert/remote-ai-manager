@@ -76,16 +76,21 @@ export function consultedAuthoringGates(
 
   for (const classification of diff.classifications) {
     if (classification.classification === "unchanged") continue;
-    const row =
-      revisionById.get(classification.elementId) ??
-      baseById.get(classification.elementId);
-    if (row === undefined) continue;
-    const elementStage = authoringStageForElement(
-      row.payload.kind,
-      row.payload.kind === "section" ? row.payload.role : undefined,
-    );
-    if (authoringStageIndex(elementStage) < currentStageIndex) {
-      consulted.add(elementStage);
+    // Reclassifying a section changes both stages: its old role must not
+    // disappear from governance just because the new role belongs here.
+    const rows = [
+      baseById.get(classification.elementId),
+      revisionById.get(classification.elementId),
+    ];
+    for (const row of rows) {
+      if (row === undefined) continue;
+      const elementStage = authoringStageForElement(
+        row.payload.kind,
+        row.payload.kind === "section" ? row.payload.role : undefined,
+      );
+      if (authoringStageIndex(elementStage) < currentStageIndex) {
+        consulted.add(elementStage);
+      }
     }
   }
 

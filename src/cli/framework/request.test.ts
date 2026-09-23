@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { recoveryFacts } from "cli-for-agents";
-import { cliRequest, type CliHost } from "../transport";
+import {
+  cliRequest,
+  cliRequestBytes,
+  cliRequestStream,
+  cliRequestText,
+  type CliHost,
+} from "../transport";
 import {
   ccRequestError,
   ccRequestFailure,
@@ -11,6 +17,106 @@ import {
 const recovery = recoveryFacts([{ kind: "session", id: "session" }]);
 
 describe("native CC request results", () => {
+  it.each([
+    "secret-token\nsecond-line",
+    "secret-token\nsecond-line\n",
+    "secret-token\nsecond-line ",
+  ])(
+    "does not expose malformed API token %# in local construction diagnostics",
+    async (token) => {
+      const host: CliHost = {
+        async fetch() {
+          throw new Error("must not submit an invalid header");
+        },
+        async readTextFile() {
+          return null;
+        },
+        async readFileBytes() {
+          return null;
+        },
+        async sleep() {},
+        homedir: "/Users/test",
+        platform: "darwin",
+      };
+      const response = await cliRequest(host, {
+        server: "http://cc.test",
+        token,
+        tokenSource: "env",
+        method: "POST",
+        path: "/api/example",
+      });
+      expect(response.kind).toBe("invalid_request");
+      expect(JSON.stringify(response)).not.toContain("secret-token");
+    },
+  );
+
+  describe.each([
+    ["JSON", cliRequest],
+    ["text", cliRequestText],
+    ["bytes", cliRequestBytes],
+    ["stream", cliRequestStream],
+  ] as const)("%s transport", (_name, request) => {
+    it.each([
+      [{ server: "invalid-url" }, "Invalid URL"],
+      [{ headers: { "x-invalid": "日本語" } }, "Request headers"],
+      [{ body: 1n }, "BigInt"],
+    ] as const)(
+      "refuses local construction failure %# before submission",
+      async (override, cause) => {
+        let submitted = false;
+        const host: CliHost = {
+          async fetch() {
+            submitted = true;
+            throw new Error("ECONNRESET");
+          },
+          async readTextFile() {
+            return null;
+          },
+          async readFileBytes() {
+            return null;
+          },
+          async sleep() {},
+          homedir: "/Users/test",
+          platform: "darwin",
+        };
+        const params = {
+          server: "http://cc.test",
+          token: "token",
+          tokenSource: "env" as const,
+          method: "POST",
+          path: "/api/example",
+        };
+        const pending = request(host, { ...params, ...override });
+        await expect(pending).resolves.toMatchObject({
+          kind: "invalid_request",
+          detail: expect.stringContaining(cause),
+        });
+        expect(submitted).toBe(false);
+        const localResponse = await pending;
+        if (localResponse.kind === "ok")
+          throw new Error("Expected local refusal");
+        expect(ccWriteFailure(localResponse, recovery)).toMatchObject({
+          effect: "not_applied",
+          result: {
+            error: {
+              code: "CC_USAGE",
+              message: expect.stringContaining(cause),
+            },
+          },
+        });
+        const response = await request(host, params);
+        expect(submitted).toBe(true);
+        if (response.kind === "ok")
+          throw new Error("Expected transport failure");
+        expect(ccWriteFailure(response, recovery)).toMatchObject({
+          effect: "unknown",
+          recovery,
+          result: { error: { code: "CC_CONNECTION" } },
+        });
+      },
+    );
+  });
+
   it.each([
     "Read these findings:\nThen retry.",
     "Required recovery step. ".repeat(80),

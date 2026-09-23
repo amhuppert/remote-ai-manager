@@ -33,11 +33,44 @@ always return artifacts. Use `--out <path>` to choose their destination.
 Read the file in byte ranges or search it locally. A JSON artifact can contain
 one long line, so a line-ranged read may still flood context.
 
+Use the manifest's `contains` field to interpret the file. Automatic JSON spill
+contains a `response` envelope. `--json --out` exports `data` when the original
+payload was inline. A `binary` artifact contains the exported document, such as
+the JSON view from `spec show --full`, without a response wrapper.
+
 Within inline show data, `spec` is the identity and `counts` or
 `requirements` are sibling view fields. Status, lint, get, and section get keep
 `status`, `lint`, `element`, and `section` inside `payload.data`. Get also
 provides `elementId`, `kind`, and `elementVersion` there. Use those identities
 rather than traversing the durable snapshot row.
+
+Plan reads and open/propose/reopen/sign-off receipts keep the plan at
+`payload.data.plan`. Abandon returns only the retired attempt's ID.
+For example, this extracts selected plan fields from a successful read while
+handling inline output, automatic spill, and explicit JSON `--out`:
+
+```sh
+cctl spec plan status my-spec --json > .cc/temp/plan-receipt.json
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+receipt = json.loads(Path('.cc/temp/plan-receipt.json').read_text())
+if not receipt['ok']:
+    raise SystemExit(receipt['error']['message'])
+payload = receipt['payload']
+if payload['kind'] == 'inline':
+    data = payload['data']
+else:
+    artifact = payload['artifact']
+    if artifact['contains'] == 'binary':
+        raise SystemExit('Read the exported document at ' + artifact['path'])
+    exported = json.loads(Path(artifact['path']).read_text())
+    data = exported['payload']['data'] if artifact['contains'] == 'response' else exported
+plan = data['plan']
+print(json.dumps({'attempt': plan['attempt'], 'nextAct': plan['nextAct']}, indent=2))
+PY
+```
 
 `spec status`, `spec diff`, `spec delta`, `spec plan get`, and `spec plan status`
 return bounded collections by default. Follow omission commands or choose

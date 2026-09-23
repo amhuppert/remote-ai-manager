@@ -76,6 +76,7 @@ import { isEarlierMergedDelivery } from "./delivery-history";
 import { findDeliveryVerdictForExecution } from "./delivery-verdict-identity";
 import type { DeliveryPlanService } from "./delivery-plan-service";
 import {
+  deliveryPlanStatus,
   deliveryPlanEditRequestSchema,
   deliveryPlanOpenRequestSchema,
   deliveryPlanPreviewRequestSchema,
@@ -270,6 +271,9 @@ export type SpecRouteContext = {
 };
 
 export interface SpecRouteDeps {
+  readDeliveryPlan(
+    spec: Spec,
+  ): Promise<PublishedSpecStatusView["deliveryPlan"]>;
   readDeliveryReview(spec: Spec): Promise<DeliveryReviewView | null>;
   resolveProjectPath(name: string): Promise<string | null>;
   listSpecs(projectPath: string): Promise<Spec[]>;
@@ -366,6 +370,7 @@ interface SpecCoverage {
 
 interface SpecStatusView {
   specId: string;
+  currentRevision: PublishedSpecStatusView["currentRevision"];
   slug: string;
   phase: SpecPhaseProjection;
   executions: SpecStatusExecution[];
@@ -470,6 +475,12 @@ function createDefaultDeps(): SpecRouteDeps {
   };
 
   return {
+    async readDeliveryPlan(spec) {
+      const services = await loadProductionSpecRouteServices(spec.projectPath);
+      const result = await services.deliveryPlan.read({ spec });
+      if (!result.ok) return null;
+      return deliveryPlanStatus(result.value);
+    },
     async readDeliveryReview(spec) {
       const services = await loadProductionSpecRouteServices(spec.projectPath);
       return services.readDeliveryReview(spec);
@@ -1721,6 +1732,15 @@ async function buildStatus(
   return {
     specId: spec.id,
     slug: spec.slug,
+    currentRevision:
+      state.currentRevision === null
+        ? null
+        : {
+            id: state.currentRevision.id,
+            number: state.currentRevision.number,
+            state: state.currentRevision.state,
+            authoringStage: state.currentRevision.authoringStage,
+          },
     phase: phase(spec, state.revisions, executions, criteria),
     executions: executions.map((run) => ({
       id: run.id,
@@ -2758,6 +2778,8 @@ export function createSpecRouteHandlers(
     const review = await deps.readDeliveryReview(resolved.value.spec);
     return NextResponse.json({
       ...status,
+      deliveryPlan: await deps.readDeliveryPlan(resolved.value.spec),
+      reviewHref: `/specs/${encodeURIComponent(resolved.value.projectName)}/${encodeURIComponent(resolved.value.spec.slug)}`,
       deliveryReadiness:
         review === null
           ? null
@@ -4181,7 +4203,7 @@ function routeFailure(
       // immutable, so the only way forward is opening an amendment draft.
       instruction:
         error.currentRevision === null
-          ? `This spec has no open draft, and its approved revisions are immutable. Run \`cctl spec amend ${context?.specSlug ?? "<slug>"}\` to open an amendment draft, then advance that draft.`
+          ? `This spec has no open draft, and its approved revisions are immutable. Run \`cctl spec amend ${context?.specSlug ?? "<slug>"}\` to open an editable draft. Follow its next action from \`cctl spec status ${context?.specSlug ?? "<slug>"}\`.`
           : "Read the current draft and authoring stage, then advance that exact revision if it still applies.",
       details: {
         expectedRevisionId: error.expectedRevisionId,

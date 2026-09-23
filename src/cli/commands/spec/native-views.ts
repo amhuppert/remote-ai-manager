@@ -131,8 +131,41 @@ function projectStatus(
 type StatusData = ReturnType<typeof projectStatus>;
 function statusText(data: JsonData<StatusData>): string {
   const status = data.status;
+  const revision = status.currentRevision;
+  const plan = status.deliveryPlan;
   const lines = [
     `${status.slug}; phase: ${status.phase.primary}`,
+    ...(revision === null
+      ? ["Authoring revision: none"]
+      : [
+          `Authoring revision: ${revision.number} (${revision.state}); revisionId ${revision.id}`,
+          revision.state === "draft"
+            ? `Editable spec draft: ${revision.id} (${revision.authoringStage}); baseElementVersion comes from cctl spec get ${status.slug} <handle>`
+            : "Editable spec draft: none",
+        ]),
+    ...(status.nextAction?.actsNext
+      ? [
+          `Authoring acts next: ${status.nextAction.actsNext} — ${status.nextAction.instruction}`,
+        ]
+      : []),
+    ...(status.reviewHref ? [`Spec review: ${status.reviewHref}`] : []),
+    ...(plan
+      ? [
+          `Delivery attempt: ${plan.attemptId} (${plan.status}); pinned revision ${plan.pinnedRevisionId}`,
+          plan.status === "draft"
+            ? `Editable workflow: ${plan.workflowDefinition.id}; --expected-revision ${plan.workflowDefinition.revision}`
+            : "Editable workflow: none; the candidate is frozen",
+          ...(plan.status === "draft"
+            ? [
+                `Plan preview guard: --expected-draft-revision ${plan.draftRevision}`,
+              ]
+            : []),
+          `Plan acts next: ${plan.nextAct.actor} — ${plan.nextAct.command}`,
+          `Plan review: ${plan.workflowDefinition.builderHref}; semantic review ${plan.reviewStatus.state}`,
+        ]
+      : status.deliveryPlan === null
+        ? ["Delivery attempt: none"]
+        : []),
     ...(status.phase.authoringStage
       ? [`Authoring stage: ${status.phase.authoringStage}`]
       : []),
@@ -142,7 +175,7 @@ function statusText(data: JsonData<StatusData>): string {
           `Next transition: ${status.authoringSequence.nextTransition.action}; consulted gates ${status.authoringSequence.nextTransition.consultedGates.map((gate) => `${gate.gate} (${gate.dial})`).join(", ") || "none"}`,
         ]
       : []),
-    `Coverage: ${status.coverage.coveredCriteria}/${status.coverage.totalCriteria} current-revision criteria (${status.coverage.percentage}%)`,
+    `Criteria mapping: ${status.coverage.coveredCriteria}/${status.coverage.totalCriteria} current-revision criteria (${status.coverage.percentage}%); mapping does not establish implementation or evidence`,
     ...(status.draftHealth
       ? [
           `Lint findings: ${status.draftHealth.total} total, ${status.draftHealth.blocking} blocking`,

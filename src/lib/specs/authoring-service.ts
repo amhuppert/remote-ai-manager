@@ -87,6 +87,7 @@ import {
   toDiffRows,
 } from "./review-state";
 import {
+  nearestApprovedAncestor,
   selectOrdinaryContinuation,
   type BlockedByProposal,
   type OrdinaryContinuation,
@@ -3072,15 +3073,19 @@ export function createAuthoringService(
               currentDraft,
             );
           }
-          const requirementsCheckpoint = repo
-            .listRevisions(spec.id)
-            .filter(
-              (revision) =>
-                revision.state === "approved" &&
-                revision.authoringStage === "requirements",
-            )
-            .at(-1);
-          if (requirementsCheckpoint === undefined) {
+          const revisions = repo.listRevisions(spec.id);
+          // Imports admit Requirements and Design in one approved baseline.
+          // Reuse that settled content when no separate checkpoint exists,
+          // never the unapproved Design attempt being returned from.
+          const requirementsCheckpoint =
+            revisions
+              .filter(
+                (revision) =>
+                  revision.state === "approved" &&
+                  revision.authoringStage === "requirements",
+              )
+              .at(-1) ?? nearestApprovedAncestor(revisions, target.id);
+          if (requirementsCheckpoint === null) {
             throw new StageBlockedWriteError({
               code: "stage_blocked",
               unmetConditions: [

@@ -1,3 +1,4 @@
+import { planReviewAdvisorySchema } from "@/lib/workflows/plan-review/status-schemas";
 import { deliveryReadinessSchema } from "./delivery-review-schemas";
 import { z } from "zod";
 
@@ -21,6 +22,7 @@ import {
 } from "./reference-view-schemas";
 import {
   actorProvenanceSchema,
+  deliveryPlanAttemptStatusSchema,
   evidenceKindSchema,
   resolvedGateDialSchema,
   specAliasSchema,
@@ -688,9 +690,43 @@ export const specEditContextViewSchema = z
   .strict();
 export type SpecEditContextView = z.infer<typeof specEditContextViewSchema>;
 
+export const deliveryPlanNextActSchema = z
+  .object({
+    actor: z.enum(["agent", "human"]),
+    command: z.string().min(1),
+    reason: z.string().min(1),
+  })
+  .strict();
+export type DeliveryPlanNextAct = z.infer<typeof deliveryPlanNextActSchema>;
+
+export const specDeliveryPlanStatusSchema = z
+  .object({
+    attemptId: z.string().min(1),
+    status: deliveryPlanAttemptStatusSchema,
+    pinnedRevisionId: z.string().min(1),
+    draftRevision: z.number().int().positive(),
+    workflowDefinition: z
+      .object({
+        id: z.string().min(1),
+        revision: z.number().int().positive(),
+        builderHref: z.string().min(1),
+      })
+      .strict(),
+    nextAct: deliveryPlanNextActSchema,
+    reviewStatus: planReviewAdvisorySchema,
+  })
+  .strict();
+export type SpecDeliveryPlanStatus = z.infer<
+  typeof specDeliveryPlanStatusSchema
+>;
+
 export const specStatusViewSchema = z
   .object({
     specId: z.string().min(1),
+    currentRevision: specEditContextViewSchema.shape.currentRevision,
+    // The status endpoint includes the live plan; embedded detail omits it.
+    deliveryPlan: specDeliveryPlanStatusSchema.nullable().optional(),
+    reviewHref: z.string().min(1).optional(),
     slug: z.string().min(1),
     phase: specPhaseProjectionSchema,
     executions: z.array(specStatusExecutionSchema).default([]),

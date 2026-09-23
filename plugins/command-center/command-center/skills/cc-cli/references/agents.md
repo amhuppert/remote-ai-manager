@@ -5,6 +5,13 @@ worktree. The sub-agent operates autonomously under its configured permissions a
 persist conversation state. Because a run can take tens of minutes, it is
 **job-shaped**: the server runs it and the CLI observes it.
 
+This generic one-shot path does not supply CC session identity, credentials, or
+the scoped `cctl` setup. Give the delegate the evidence it needs and have it
+return files through `referenceDocuments`; the server registers those files
+when it accepts the structured result. The delegate need not run
+`cctl docs register`. Other server-owned task paths can explicitly supply CC
+scope, so access in one delegation path does not establish access in another.
+
 ```
 cctl agent run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]
 cctl agent status <runId> [--json]

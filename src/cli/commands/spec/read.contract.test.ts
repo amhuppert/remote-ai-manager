@@ -893,6 +893,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
 
 function createDeps(): SpecRouteDeps {
   return {
+    readDeliveryPlan: async () => null,
     readDeliveryReview: async () => null,
     async resolveProjectPath(name) {
       return name === "demo" ? PROJECT_PATH : null;
@@ -1530,7 +1531,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(result.exitCode, result.stderr || result.stdout).toBe(0);
     expect(result.stdout).toContain(
       [
-        "coverage: 2 of 3 selected criteria covered, 1 uncovered",
+        "Criteria mapping: 2 of 3 selected criteria mapped, 1 unmapped",
         "dispositions: in_scope 3, deferred 1",
         "charter: authored, 4 invariants, 6 sources",
       ].join("\n"),

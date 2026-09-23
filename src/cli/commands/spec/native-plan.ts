@@ -107,6 +107,8 @@ const planTextSchema = z.object({
       nextAct: true,
       unresolved: true,
       snapshots: true,
+      reviewStatus: true,
+      workflowDefinition: true,
     })
     .loose(),
   disclosure: z.record(z.string(), z.unknown()).optional(),
@@ -122,6 +124,8 @@ function planText(data: JsonValue): string {
     nextAct,
     unresolved,
     snapshots,
+    reviewStatus,
+    workflowDefinition,
     ...details
   } = plan;
   const omitted = Object.entries(disclosure ?? {}).flatMap(([name, value]) => {
@@ -142,6 +146,14 @@ function planText(data: JsonValue): string {
     [
       `${attempt.specSlug}  plan attempt ${attempt.id}  status: ${attempt.status}`,
       `pinned revision: ${attempt.pinnedRevisionId}  draft revision: ${attempt.draftRevision}`,
+      ...(attempt.status === "draft"
+        ? [
+            `Editable workflow: ${workflowDefinition.id}; --expected-revision ${workflowDefinition.revision}`,
+          ]
+        : ["Editable workflow: none; the candidate is frozen"]),
+      `acts next: ${nextAct.actor} — ${nextAct.command}`,
+      `Reason: ${nextAct.reason}`,
+      `Review: ${workflowDefinition.builderHref}`,
       `delta basis: ${attempt.deltaBasisExecutionId ?? "none — nothing has delivered yet"}`,
       ...(attempt.candidateHash === null
         ? []
@@ -153,7 +165,8 @@ function planText(data: JsonValue): string {
         : [
             `approved: snapshot ${approval.snapshotId}, candidate ${approval.candidateId} at ${approval.candidateHash}`,
           ]),
-      `plan findings: ${health.total} total, ${health.blocking} blocking`,
+      `Structural validation: ${health.blocking === 0 ? "valid" : "blocked"}; ${health.total} findings, ${health.blocking} blocking`,
+      `Semantic review: ${reviewStatus.state}${reviewStatus.state === "unreviewed" ? "" : `; conversation ${reviewStatus.reviewerConversationId} at ${reviewStatus.reviewedAt}`}`,
       ...(health.blocking === 0 ? ["propose: nothing refuses"] : []),
       ...deliveryPlanLedgerLines(ledger),
       ...health.findings.map(
@@ -171,8 +184,6 @@ function planText(data: JsonValue): string {
         ? [`Plan details:\n${JSON.stringify(details, null, 2)}`]
         : []),
       ...omitted,
-      `acts next: ${nextAct.actor} — ${nextAct.command}`,
-      `Reason: ${nextAct.reason}`,
       `Complete plan: ${commands.document}`,
     ].join("\n") + "\n"
   );
