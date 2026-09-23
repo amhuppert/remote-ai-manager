@@ -368,6 +368,8 @@ export const claudeBackendConfigSchema = z
 
 export const codexModelSchema = z.enum([
   "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6-luna",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
@@ -381,7 +383,7 @@ export type CodexModel = z.infer<typeof codexModelSchema>;
 
 /** Returns the default Codex model. */
 export function getDefaultCodexModel(): CodexModel {
-  return "gpt-5.4";
+  return "gpt-6-sol";
 }
 
 export const codexReasoningEffortSchema = z.enum([
@@ -414,7 +416,10 @@ export type CodexPricingTable = z.infer<typeof codexPricingTableSchema>;
 
 // GPT-6 Astra supports low→ultra but not minimal; its "ultra" level was read
 // off the Codex CLI's own `gpt-6-astra` model preset (v0.153.3), which lists
-// it as "Maximum reasoning with automatic task delegation". Within the GPT-5.6
+// it as "Maximum reasoning with automatic task delegation". GPT-6 Sol (low→ultra)
+// and GPT-6 Luna (low→max) were read off the model list Codex v0.156.0 fetches
+// from the Codex backend. The API also documents "none" for both, but Codex
+// does not offer it, so it stays out. Within the GPT-5.6
 // family "max" and "ultra" are exclusive to the Sol flagship; Terra and Luna
 // expose only the standard low→xhigh range. "minimal" is omitted from every
 // model — Codex does not accept it for these models.
@@ -425,6 +430,8 @@ export type CodexPricingTable = z.infer<typeof codexPricingTableSchema>;
 // at all are wrong.
 const CODEX_MODEL_REASONING_LEVELS: Record<string, CodexReasoningEffort[]> = {
   "gpt-6-astra": ["low", "medium", "high", "xhigh", "max", "ultra"],
+  "gpt-6-sol": ["low", "medium", "high", "xhigh", "max", "ultra"],
+  "gpt-6-luna": ["low", "medium", "high", "xhigh", "max"],
   "gpt-5.6-sol": ["low", "medium", "high", "xhigh", "max", "ultra"],
   "gpt-5.6-terra": ["low", "medium", "high", "xhigh"],
   "gpt-5.6-luna": ["low", "medium", "high", "xhigh"],

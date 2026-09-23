@@ -28,7 +28,7 @@ import type { AgentSessionRef } from "../../src/lib/shared/schemas";
 
 if (process.argv.includes("--help")) {
   console.log(
-    "node --import tsx scripts/spikes/codex-app-server-runtime-smoke.ts [--out .cc/temp/NEW_DIRECTORY]\nReal pinned Codex, gpt-5.6-sol. Scratch CC/Codex state; private auth copy removed at completion. Uses the production steering default. This is adapter smoke, not CC queue end-to-end coverage.",
+    "node --import tsx scripts/spikes/codex-app-server-runtime-smoke.ts [--out .cc/temp/NEW_DIRECTORY]\nReal pinned Codex, gpt-6-sol. Scratch CC/Codex state; private auth copy removed at completion. Uses the production steering default. This is adapter smoke, not CC queue end-to-end coverage.",
   );
   process.exit(0);
 }
@@ -179,7 +179,7 @@ async function main(): Promise<void> {
       await import("../../src/lib/agent-backends/codex/rollout-policy");
     const binary = resolveCodexAppServerExecutable();
     const version = (await execFileAsync(binary, ["--version"])).stdout.trim();
-    assert.equal(version, "codex-cli 0.153.3");
+    assert.equal(version, "codex-cli 0.156.0");
     assert.equal(CODEX_IN_TURN_DELIVERY_ENABLED, true);
     check("pinned binary; production steering enabled", {
       version,
@@ -189,7 +189,7 @@ async function main(): Promise<void> {
     const conversationId = `runtime-smoke-${randomUUID()}`;
     const transcriptPath = await getTranscriptPath(conversationId);
     const modelSelection = {
-      modelId: "gpt-5.6-sol",
+      modelId: "gpt-6-sol",
       parameters: { reasoning: "low", fast: "false" },
     };
     const prefixA = `AUTH_A_${randomUUID().slice(0, 8)}`;

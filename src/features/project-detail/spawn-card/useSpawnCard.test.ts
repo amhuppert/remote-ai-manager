@@ -107,7 +107,7 @@ describe("toEditableSessions", () => {
       parameters: { effort: "high" },
     });
     expect(rows[1]!.modelSelection).toEqual({
-      modelId: "gpt-5.4",
+      modelId: "gpt-6-sol",
       parameters: { reasoning: "high", fast: "false" },
     });
   });
@@ -161,7 +161,7 @@ describe("updateEditableSession", () => {
     const next = updateEditableSession(rows, 0, "agent", "codex");
     expect(next[0]!.agent).toBe("codex");
     expect(next[0]!.modelSelection).toEqual({
-      modelId: "gpt-5.4",
+      modelId: "gpt-6-sol",
       parameters: { reasoning: "high", fast: "false" },
     });
   });

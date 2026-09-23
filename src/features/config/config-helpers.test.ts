@@ -204,6 +204,8 @@ describe("getModelOptionsForBackend", () => {
   it("returns Codex models for codex backend", () => {
     expect(getModelOptionsForBackend("codex")).toEqual([
       "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -242,6 +244,7 @@ describe("getEffortOptionsForBackend", () => {
     expect(result).toContain("medium");
     expect(result).toContain("high");
     expect(result).toContain("xhigh");
-    expect(result).not.toContain("max");
+    expect(result).toContain("max");
+    expect(result).not.toContain("minimal");
   });
 });

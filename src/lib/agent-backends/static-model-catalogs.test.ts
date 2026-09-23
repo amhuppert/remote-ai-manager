@@ -78,6 +78,44 @@ describe("static backend model catalogs", () => {
     ).toBe(false);
   });
 
+  it("defaults Codex to GPT-6 Sol", () => {
+    expect(getStaticBackendModelCatalog("codex").defaultModelId).toBe(
+      "gpt-6-sol",
+    );
+  });
+
+  it("offers GPT-6 Sol and Luna with only their supported reasoning levels", () => {
+    const catalog = getStaticBackendModelCatalog("codex");
+
+    expect(catalog.models.find(({ id }) => id === "gpt-6-sol")).toEqual(
+      expect.objectContaining({ label: "GPT-6 Sol", description: "Flagship" }),
+    );
+    expect(catalog.models.find(({ id }) => id === "gpt-6-luna")).toEqual(
+      expect.objectContaining({
+        label: "GPT-6 Luna",
+        description: "Fast & affordable",
+      }),
+    );
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6-sol",
+        parameters: { reasoning: "ultra", fast: "false" },
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6-luna",
+        parameters: { reasoning: "max", fast: "true" },
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6-luna",
+        parameters: { reasoning: "ultra", fast: "false" },
+      }).valid,
+    ).toBe(false);
+  });
+
   it("preserves a configured custom Codex model with generic complete variants", () => {
     const catalog = getStaticBackendModelCatalog("codex", {
       modelId: "o3-pro-custom",

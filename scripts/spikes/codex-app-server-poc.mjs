@@ -1412,8 +1412,8 @@ const runtimeVersion = (
 ).stdout.trim();
 assert.equal(
   runtimeVersion,
-  "codex-cli 0.153.3",
-  "Probe contract is pinned to Codex 0.153.3",
+  "codex-cli 0.156.0",
+  "Probe contract is pinned to Codex 0.156.0",
 );
 await mkdir(workspace, { recursive: true });
 await mkdir(codexHome, { recursive: true, mode: 0o700 });

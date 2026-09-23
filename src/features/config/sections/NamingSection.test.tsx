@@ -138,7 +138,7 @@ describe("NamingSection", () => {
     expect(getState().conversationNaming).toMatchObject({
       backend: "codex",
       modelSelection: {
-        modelId: "gpt-5.4",
+        modelId: "gpt-6-sol",
         parameters: { reasoning: "high", fast: "false" },
       },
     });

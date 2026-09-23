@@ -25,6 +25,16 @@ export const DEFAULT_CODEX_PRICING: CodexPricingTable = {
     cachedInputPerMillion: 1,
     outputPerMillion: 50,
   },
+  "gpt-6-sol": {
+    inputPerMillion: 2,
+    cachedInputPerMillion: 0.2,
+    outputPerMillion: 10,
+  },
+  "gpt-6-luna": {
+    inputPerMillion: 0.1,
+    cachedInputPerMillion: 0.01,
+    outputPerMillion: 0.5,
+  },
   "gpt-5.6-sol": {
     inputPerMillion: 5,
     cachedInputPerMillion: 0.5,

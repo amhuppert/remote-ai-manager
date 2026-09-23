@@ -141,11 +141,11 @@ describe("CompactionSection", () => {
     expect(getState().compaction).toMatchObject({
       backend: "codex",
       conversationModelSelection: {
-        modelId: "gpt-5.4",
+        modelId: "gpt-6-sol",
         parameters: { reasoning: "high", fast: "false" },
       },
       messageModelSelection: {
-        modelId: "gpt-5.4",
+        modelId: "gpt-6-sol",
         parameters: { reasoning: "high", fast: "false" },
       },
     });

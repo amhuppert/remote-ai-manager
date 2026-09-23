@@ -39,7 +39,7 @@ describe("GET /api/agent-backends", () => {
     const codex = elementAt(parsed.backends, 1);
     expect(codex.toneToken).toBe("violet");
     expect(codex.skillTriggerPrefix).toBe("$");
-    expect(codex.defaultModelId).toBe("gpt-5.4");
+    expect(codex.defaultModelId).toBe("gpt-6-sol");
     expect(codex.capabilities?.queue.deliveryTiming).toBe("in_turn");
 
     const cursor = elementAt(parsed.backends, 2);
