@@ -3,6 +3,7 @@ import { constants, accessSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
   errnoCode,
@@ -11,7 +12,10 @@ import {
 } from "@/lib/shared/process-identity";
 import type { AppServerProcessHost } from "./app-server-client";
 import { buildCodexConfigArgs } from "./app-server-config-args";
-import { CODEX_APP_SERVER_VERSION } from "./app-server-protocol";
+import {
+  CODEX_APP_SERVER_VERSION,
+  type SurvivingProcess,
+} from "./app-server-protocol";
 
 const packageSchema = z.object({ version: z.string() });
 
@@ -100,6 +104,28 @@ async function processTable(): Promise<Map<
   }
 }
 
+const COLLECTION_POLL_MS = 50;
+
+/** Executable names for survivors; arguments are never read. */
+async function name(pids: number[]): Promise<SurvivingProcess[]> {
+  const names = new Map<number, string>();
+  try {
+    const { stdout } = await execFileAsync(
+      "ps",
+      ["-o", "pid=,comm=", "-p", pids.join(",")],
+      { encoding: "utf8", timeout: 250 },
+    );
+    for (const line of stdout.trim().split("\n")) {
+      const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+      if (match?.[1] && match[2])
+        names.set(Number(match[1]), path.basename(match[2].trim()));
+    }
+  } catch {
+    // Unnamed survivors are still reported by pid.
+  }
+  return pids.map((pid) => ({ pid, command: names.get(pid) ?? "unknown" }));
+}
+
 export function createAppServerProcessHost(): AppServerProcessHost {
   return {
     spawn({ cwd, env, config }) {
@@ -161,12 +187,20 @@ export function createAppServerProcessHost(): AppServerProcessHost {
           }
         }
       }
-      return async () => {
-        const after = await processTable();
-        if (!after) return false;
-        return [...owned].every(
-          ([childPid, start]) => after.get(childPid)?.start !== start,
-        );
+      return async (deadline) => {
+        for (;;) {
+          const after = await processTable();
+          const alive =
+            after &&
+            [...owned]
+              .filter(
+                ([childPid, start]) => after.get(childPid)?.start === start,
+              )
+              .map(([childPid]) => childPid);
+          if (alive?.length === 0) return [];
+          if (Date.now() >= deadline) return alive ? await name(alive) : null;
+          await delay(Math.min(COLLECTION_POLL_MS, deadline - Date.now()));
+        }
       };
     },
     processGroupId: readProcessGroupIdSync,

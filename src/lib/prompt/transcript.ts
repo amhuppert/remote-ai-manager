@@ -91,6 +91,15 @@ function isVisibleEntry(entry: TranscriptEntry): entry is TranscriptEntry & {
   );
 }
 
+/**
+ * Whether `readTranscriptEntriesWithSeq` surfaces this line with its own
+ * seq: a visible message or a stored tool_result line. Every other line is a
+ * forensic payload (e.g. a raw backend protocol frame) that no reader shows.
+ */
+export function isAddressableTranscriptEntry(entry: TranscriptEntry): boolean {
+  return isVisibleEntry(entry) || entry.type === "tool_result";
+}
+
 // ============================================================
 // Path Management
 // ============================================================
@@ -315,18 +324,7 @@ export async function appendTranscriptEntryOnce(
   const filePath = await getTranscriptPath(conversationId, configDir);
   const previous = idempotentAppendLocks.get(filePath) ?? Promise.resolve();
   const current = previous.then(async () => {
-    if (existsSync(filePath)) {
-      const raw = await readFile(filePath, "utf-8");
-      const alreadyAppended = raw.split("\n").some((line) => {
-        if (line.trim() === "") return false;
-        try {
-          return (JSON.parse(line) as { id?: unknown }).id === entry.id;
-        } catch {
-          return false;
-        }
-      });
-      if (alreadyAppended) return;
-    }
+    if (await productionEntryIdIndex.has(filePath, entry.id)) return;
     await appendTranscriptEntry(conversationId, entry, configDir, meta);
   });
   const settled = current.catch(() => undefined);
@@ -757,6 +755,28 @@ const productionMaxSeqIO: TranscriptMaxSeqIO = {
     (await readTranscriptEntriesWithSeqImpl(filePath)).maxSeq,
 };
 
+// A single `read` may return short; loop until the range is filled or the
+// file ends, so a partial read can never truncate a line silently.
+async function readRange(
+  reader: TranscriptRangeReader,
+  start: number,
+  length: number,
+): Promise<Buffer> {
+  const buf = Buffer.alloc(length);
+  let filled = 0;
+  while (filled < length) {
+    const { bytesRead } = await reader.read(
+      buf,
+      filled,
+      length - filled,
+      start + filled,
+    );
+    if (bytesRead <= 0) break;
+    filled += bytesRead;
+  }
+  return filled === length ? buf : buf.subarray(0, filled);
+}
+
 const MAX_SEQ_CACHE_MAX = 500;
 const NEWLINE_SCAN_CHUNK_BYTES = 1024 * 1024;
 
@@ -849,28 +869,6 @@ export function createTranscriptMaxSeqReader(
     }
     cache.set(filePath, entry);
     return entry.maxSeq;
-  }
-
-  // A single `read` may return short; loop until the range is filled or the
-  // file ends, so a partial read can never truncate a line silently.
-  async function readRange(
-    reader: TranscriptRangeReader,
-    start: number,
-    length: number,
-  ): Promise<Buffer> {
-    const buf = Buffer.alloc(length);
-    let filled = 0;
-    while (filled < length) {
-      const { bytesRead } = await reader.read(
-        buf,
-        filled,
-        length - filled,
-        start + filled,
-      );
-      if (bytesRead <= 0) break;
-      filled += bytesRead;
-    }
-    return filled === length ? buf : buf.subarray(0, filled);
   }
 
   async function coldScan(filePath: string, size: number): Promise<ColdScan> {
@@ -1029,6 +1027,158 @@ export async function getTranscriptMaxSeq(
 
 export function _resetTranscriptMaxSeqCacheForTesting(): void {
   productionMaxSeqReader.resetCache();
+}
+
+// ============================================================
+// Entry-id index (idempotent appends)
+// ============================================================
+
+export type TranscriptEntryIdIO = Pick<
+  TranscriptMaxSeqIO,
+  "stat" | "openRange"
+>;
+
+export interface TranscriptEntryIdIndex {
+  /** Whether any line of the transcript carries this entry id. */
+  has(filePath: string, id: string): Promise<boolean>;
+  resetCache(): void;
+}
+
+const ENTRY_ID_INDEX_CACHE_MAX = 200;
+
+interface EntryIdScan {
+  /** Offset just past the last scanned newline; `ids` covers `[0, scanned)`. */
+  scanned: number;
+  ids: Set<string>;
+  /** Ids on an unterminated final line, re-read once that line completes. */
+  tailIds: Set<string>;
+}
+
+interface EntryIdIndexEntry extends EntryIdScan {
+  mtimeMs: number;
+  size: number;
+}
+
+function collectEntryIds(text: string, ids: Set<string>): void {
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const id = (JSON.parse(line) as { id?: unknown }).id;
+      if (typeof id === "string") ids.add(id);
+    } catch {
+      continue;
+    }
+  }
+}
+
+/**
+ * Answer "is this entry id already in the transcript?" for idempotent appends.
+ *
+ * Streams of stamped frames (checkpoint capture, Cursor deltas) make one
+ * once-append per frame. Parsing the whole file for each costs tens of
+ * milliseconds of synchronous work on a multi-megabyte transcript, enough to
+ * push capture audit writes past their settlement budget, so the index
+ * remembers the ids it has scanned and reads only the appended byte range.
+ *
+ * Like the max-seq reader it assumes transcripts are append-only. A shrink, a
+ * same-size rewrite with a new mtime, or an append whose cached boundary is not
+ * a line terminator all force a full rescan.
+ */
+export function createTranscriptEntryIdIndex(
+  io: TranscriptEntryIdIO,
+): TranscriptEntryIdIndex {
+  const cache = new Map<string, EntryIdIndexEntry>();
+
+  function remember(filePath: string, entry: EntryIdIndexEntry): void {
+    // Bounded eviction via insertion-order (oldest first).
+    cache.delete(filePath);
+    if (cache.size >= ENTRY_ID_INDEX_CACHE_MAX) {
+      const firstKey = cache.keys().next().value;
+      if (firstKey !== undefined) cache.delete(firstKey);
+    }
+    cache.set(filePath, entry);
+  }
+
+  async function readFrom(
+    filePath: string,
+    start: number,
+    size: number,
+  ): Promise<Buffer> {
+    const reader = await io.openRange(filePath);
+    try {
+      return await readRange(reader, start, size - start);
+    } finally {
+      await reader.close();
+    }
+  }
+
+  /** Adds the ids of `bytes`, which begin at line-boundary offset `scanned`. */
+  function absorb(
+    bytes: Buffer,
+    scanned: number,
+    ids: Set<string>,
+  ): EntryIdScan {
+    const lastNewline = bytes.lastIndexOf(0x0a);
+    collectEntryIds(bytes.subarray(0, lastNewline + 1).toString("utf-8"), ids);
+    const tailIds = new Set<string>();
+    collectEntryIds(bytes.subarray(lastNewline + 1).toString("utf-8"), tailIds);
+    return { scanned: scanned + lastNewline + 1, ids, tailIds };
+  }
+
+  async function readAppended(
+    filePath: string,
+    cached: EntryIdIndexEntry,
+    size: number,
+  ): Promise<EntryIdScan | null> {
+    if (cached.scanned === 0)
+      return absorb(await readFrom(filePath, 0, size), 0, cached.ids);
+    // Read one byte before the scanned end so the append can be proven to
+    // start on a line boundary.
+    const bytes = await readFrom(filePath, cached.scanned - 1, size);
+    if (bytes[0] !== 0x0a) return null;
+    return absorb(bytes.subarray(1), cached.scanned, cached.ids);
+  }
+
+  return {
+    resetCache() {
+      cache.clear();
+    },
+    async has(filePath: string, id: string): Promise<boolean> {
+      if (!existsSync(filePath)) return false;
+      const stats = await io.stat(filePath);
+      const cached = cache.get(filePath);
+      let current: EntryIdScan | null = null;
+      if (
+        cached &&
+        cached.mtimeMs === stats.mtimeMs &&
+        cached.size === stats.size
+      ) {
+        current = cached;
+      } else if (cached && stats.size > cached.size) {
+        current = await readAppended(filePath, cached, stats.size);
+      }
+      current ??= await timed(
+        transcriptLogger,
+        "transcript.entry_ids.scan",
+        { bytes: stats.size },
+        async () =>
+          absorb(await readFrom(filePath, 0, stats.size), 0, new Set()),
+        (result) => ({ ids: result.ids.size }),
+      );
+      remember(filePath, {
+        ...current,
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+      });
+      return current.ids.has(id) || current.tailIds.has(id);
+    },
+  };
+}
+
+const productionEntryIdIndex = createTranscriptEntryIdIndex(productionMaxSeqIO);
+
+export function _resetTranscriptEntryIdIndexForTesting(): void {
+  productionEntryIdIndex.resetCache();
 }
 
 // Cache the fully-parsed transcript message array per file path, keyed on
@@ -1398,7 +1548,7 @@ async function readTranscriptEntriesWithSeqImpl(
       continue;
     }
 
-    if (entry.type === "tool_result") {
+    if (isAddressableTranscriptEntry(entry)) {
       entries.push({
         kind: "tool_result",
         seq: lineIndex,

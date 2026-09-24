@@ -43,10 +43,12 @@ export function observeCodexFaultProcess(host: AppServerProcessHost) {
         const inspect = (await host.observeChildren?.(pid)) ?? null;
         if (evidence) evidence.childrenInspectionAvailable = inspect !== null;
         if (!inspect) return null;
-        return async () => {
-          const cleared = await inspect();
-          if (evidence) evidence.childrenCleared = cleared;
-          return cleared;
+        return async (deadline) => {
+          const survivors = await inspect(deadline);
+          if (evidence)
+            evidence.childrenCleared =
+              survivors === null ? null : survivors.length === 0;
+          return survivors;
         };
       },
     } satisfies AppServerProcessHost,

@@ -12,9 +12,10 @@ import { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
 import type { ConversationBackgroundActivity } from "@/lib/conversations/schemas";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import { compactionConfigSchema } from "@/lib/config/schemas";
-import type {
-  TranscriptEntriesResult,
-  TranscriptEntryWithSeq,
+import {
+  isAddressableTranscriptEntry,
+  type TranscriptEntriesResult,
+  type TranscriptEntryWithSeq,
 } from "@/lib/prompt/transcript";
 import {
   ConversationMaintenanceActiveError,
@@ -344,6 +345,8 @@ export async function createLifecycleFixture(
                 const entries = transcripts.get(path) ?? [];
                 if (entries.some((existing) => existing.entryId === entry.id))
                   return;
+                // Mirrors the archive reader: forensic lines never surface.
+                if (!isAddressableTranscriptEntry(entry)) return;
                 entries.push({
                   seq: (entries.at(-1)?.seq ?? -1) + 1,
                   entryId: entry.id,

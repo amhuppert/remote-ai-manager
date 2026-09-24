@@ -7,6 +7,7 @@ import {
   readFile,
   stat,
   open,
+  utimes,
 } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -22,6 +23,9 @@ import {
   createTranscriptMaxSeqReader,
   getTranscriptMaxSeq,
   type TranscriptMaxSeqIO,
+  createTranscriptEntryIdIndex,
+  _resetTranscriptEntryIdIndexForTesting,
+  type TranscriptEntryIdIO,
   appendTranscriptEntry,
   appendTranscriptEntryOnce,
   safeAppendTranscriptEntry,
@@ -46,6 +50,8 @@ const TEST_DIR = path.join("/tmp", "cc-transcript-test-" + Date.now());
 
 beforeEach(async () => {
   await mkdir(path.join(TEST_DIR, "transcripts"), { recursive: true });
+  // Every test recreates TEST_DIR, so a path can reappear with new content.
+  _resetTranscriptEntryIdIndexForTesting();
 });
 
 afterEach(async () => {
@@ -3095,6 +3101,141 @@ describe("getTranscriptMaxSeq", () => {
     _resetTranscriptEntriesCacheForTesting();
     expect(await parityMaxSeq(filePath)).toBe(0);
     expect(await getTranscriptMaxSeq(filePath)).toBe(0);
+  });
+});
+
+// ==========================================================================
+// createTranscriptEntryIdIndex
+// ==========================================================================
+
+describe("createTranscriptEntryIdIndex", () => {
+  function countingIO(): {
+    io: TranscriptEntryIdIO;
+    counter: { bytesRead: number };
+  } {
+    const counter = { bytesRead: 0 };
+    const io: TranscriptEntryIdIO = {
+      stat: async (target) => {
+        const stats = await stat(target);
+        return { mtimeMs: stats.mtimeMs, size: stats.size };
+      },
+      openRange: async (target) => {
+        const handle = await open(target, "r");
+        return {
+          read: async (buffer, offset, length, position) => {
+            const result = await handle.read(buffer, offset, length, position);
+            counter.bytesRead += result.bytesRead;
+            return { bytesRead: result.bytesRead };
+          },
+          close: () => handle.close(),
+        };
+      },
+    };
+    return { io, counter };
+  }
+
+  const idLine = (id: string, padding = ""): string =>
+    JSON.stringify({
+      id,
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "codex_app_server",
+      raw: { padding },
+    });
+
+  async function writeLines(name: string, content: string): Promise<string> {
+    const filePath = path.join(TEST_DIR, "transcripts", name);
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  it("answers a warm transcript's growth from the appended bytes alone", async () => {
+    const padding = "q".repeat(4096);
+    const lines = Array.from({ length: 300 }, (_, i) =>
+      idLine(`entry-${i}`, padding),
+    );
+    const filePath = await writeLines(
+      "ids-bounded.jsonl",
+      lines.join("\n") + "\n",
+    );
+    const fileSize = (await stat(filePath)).size;
+    expect(fileSize).toBeGreaterThan(1024 * 1024);
+    const { io, counter } = countingIO();
+    const index = createTranscriptEntryIdIndex(io);
+    expect(await index.has(filePath, "late")).toBe(false);
+
+    counter.bytesRead = 0;
+    await appendFile(filePath, idLine("late") + "\n", "utf-8");
+
+    expect(await index.has(filePath, "late")).toBe(true);
+    expect(await index.has(filePath, "entry-7")).toBe(true);
+    expect(await index.has(filePath, "missing")).toBe(false);
+    expect(counter.bytesRead).toBeLessThan(4096 * 2);
+  });
+
+  it("finds an id on a final line that has no trailing newline", async () => {
+    const filePath = await writeLines(
+      "ids-unterminated.jsonl",
+      `${idLine("first")}\n${idLine("last")}`,
+    );
+    const index = createTranscriptEntryIdIndex(countingIO().io);
+    expect(await index.has(filePath, "last")).toBe(true);
+
+    await appendFile(filePath, `\n${idLine("after")}\n`, "utf-8");
+    expect(await index.has(filePath, "last")).toBe(true);
+    expect(await index.has(filePath, "after")).toBe(true);
+  });
+
+  it("rescans instead of trusting the index when the file is rewritten shorter", async () => {
+    const filePath = await writeLines(
+      "ids-shrink.jsonl",
+      `${idLine("gone", "x".repeat(64))}\n`,
+    );
+    const index = createTranscriptEntryIdIndex(countingIO().io);
+    expect(await index.has(filePath, "gone")).toBe(true);
+
+    await writeFile(filePath, `${idLine("kept")}\n`, "utf-8");
+    expect(await index.has(filePath, "gone")).toBe(false);
+    expect(await index.has(filePath, "kept")).toBe(true);
+  });
+
+  it("rescans when a same-size rewrite changes the file", async () => {
+    const filePath = await writeLines(
+      "ids-rewrite.jsonl",
+      `${idLine("aaaa")}\n`,
+    );
+    const index = createTranscriptEntryIdIndex(countingIO().io);
+    expect(await index.has(filePath, "aaaa")).toBe(true);
+
+    await writeFile(filePath, `${idLine("bbbb")}\n`, "utf-8");
+    const later = new Date(Date.now() + 5_000);
+    await utimes(filePath, later, later);
+    expect(await index.has(filePath, "aaaa")).toBe(false);
+    expect(await index.has(filePath, "bbbb")).toBe(true);
+  });
+
+  it("keeps once-appends idempotent across a plain writer's interleaved append", async () => {
+    const entry = (id: string): TranscriptEntry & { id: string } => ({
+      id,
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "codex_app_server",
+      raw: { id },
+    });
+    await appendTranscriptEntryOnce("ids-interleaved", entry("a"), TEST_DIR);
+    await appendTranscriptEntry("ids-interleaved", entry("b"), TEST_DIR);
+    await appendTranscriptEntryOnce("ids-interleaved", entry("b"), TEST_DIR);
+    await appendTranscriptEntryOnce("ids-interleaved", entry("a"), TEST_DIR);
+    await appendTranscriptEntryOnce("ids-interleaved", entry("c"), TEST_DIR);
+
+    const raw = await readFile(
+      path.join(TEST_DIR, "transcripts", "ids-interleaved.jsonl"),
+      "utf-8",
+    );
+    expect(
+      raw
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { id: string }).id),
+    ).toEqual(["a", "b", "c"]);
   });
 });
 

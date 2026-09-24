@@ -100,7 +100,10 @@ import type {
   ConversationBackgroundActivity,
   ConversationState,
 } from "@/lib/conversations/schemas";
-import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
+import {
+  isAddressableTranscriptEntry,
+  type TranscriptEntriesResult,
+} from "@/lib/prompt/transcript";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   captureCheckpointSourceForHost,
@@ -2757,25 +2760,24 @@ export function createConversationManager(
           part: "control" | "output" | "activity" | "settlement",
         ) => {
           const id = `${handoff.captureId}:${ordinal++}`;
-          auditEntryIds.push(id);
+          const stamped: TranscriptEntry & { id: string } = {
+            ...entry,
+            id,
+            origin: {
+              source: "checkpoint_capture",
+              checkpointCapture: {
+                operationId: operation.id,
+                captureId: handoff.captureId,
+                part,
+              },
+            },
+          };
+          // Raw backend protocol frames stay forensic, as in ordinary turns;
+          // only entries the archive reader addresses join the audit range.
+          if (isAddressableTranscriptEntry(stamped)) auditEntryIds.push(id);
           const persist = () =>
             deps.checkpoint
-              .appendCaptureEntryOnce(context().target.conversationId, {
-                ...entry,
-                id,
-                role: entry.role ?? "notice",
-                content: entry.content?.length
-                  ? entry.content
-                  : [{ type: "text", text: `Checkpoint capture ${part}` }],
-                origin: {
-                  source: "checkpoint_capture",
-                  checkpointCapture: {
-                    operationId: operation.id,
-                    captureId: handoff.captureId,
-                    part,
-                  },
-                },
-              })
+              .appendCaptureEntryOnce(context().target.conversationId, stamped)
               .then(() => {
                 pendingWrites.delete(id);
               });
@@ -2906,7 +2908,7 @@ export function createConversationManager(
         };
         const finishAudit = async (result: CaptureHandoffResult) => {
           sinkSettled = true;
-          if (!result.submitted && auditEntryIds.length === 0) return;
+          if (!result.submitted && ordinal === 0) return;
           if (result.candidateText !== null && !outputAdded) {
             outputAdded = true;
             await append(

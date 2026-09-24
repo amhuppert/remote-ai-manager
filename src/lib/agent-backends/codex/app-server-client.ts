@@ -13,6 +13,7 @@ import type {
   AppServerFrame,
   AppServerMessage,
   AppServerRpcError,
+  SurvivingProcess,
 } from "./app-server-protocol";
 
 export interface AppServerProcess {
@@ -34,7 +35,16 @@ export interface AppServerProcessHost {
   processGroupId(pid: number): number | null;
   startTicks(pid: number): Promise<string | null>;
   isGroupAlive(pgid: number): boolean;
-  observeChildren?(pid: number): Promise<(() => Promise<boolean>) | null>;
+  /**
+   * Snapshot the leader's descendants. The returned check waits until each has
+   * exited or `deadline` (epoch ms) passes, resolving with the survivors (empty
+   * once all are collected) or null when the process table cannot be read.
+   */
+  observeChildren?(
+    pid: number,
+  ): Promise<
+    ((deadline: number) => Promise<readonly SurvivingProcess[] | null>) | null
+  >;
   signalGroup(pgid: number, signal: NodeJS.Signals): void;
 }
 export interface AppServerClientOptions {
@@ -191,11 +201,15 @@ export function createCodexAppServerClient(
       /* Failure observers cannot stop process teardown. */
     }
   }
-  function unverified(): AppServerTransportError {
+  function unverified(
+    stage: string,
+    survivors?: readonly SurvivingProcess[],
+  ): AppServerTransportError {
     if (!cleanupFailure) {
       cleanupFailure = new AppServerTransportError(
         "cleanup_unverified",
         "Codex process cleanup could not be verified; inspect surviving commands before resuming. This protection ends at CC restart.",
+        { stage, ...(survivors ? { survivors } : {}) },
       );
       report(cleanupFailure);
     }
@@ -464,7 +478,7 @@ export function createCodexAppServerClient(
     resolveExit();
     rejectPending("Codex app-server exited before responding");
     if (turnMayBeActive && (!closing || code !== 0 || signal !== null))
-      unverified();
+      unverified("exited_with_active_turn");
     if (!closing)
       fail(
         new AppServerTransportError(
@@ -544,28 +558,35 @@ export function createCodexAppServerClient(
           currentIdentity !== originalIdentity ||
           host.processGroupId(child.pid) !== groupId
         )
-          throw unverified();
-        if (turnMayBeActive) unverified();
+          throw unverified("leader_identity_lost");
+        if (turnMayBeActive) unverified("signaled_active_turn");
         host.signalGroup(groupId, signal);
         gone = await waitForExit(remaining(phase, timeout));
       }
-      if (!gone) throw unverified();
-      if (
-        options.captureCleanup &&
-        (!children ||
-          !(await bounded(
-            children().catch(() => false),
-            remaining(3, 1000),
-            false,
-          )))
-      )
-        throw unverified();
+      if (!gone) throw unverified("leader_survived_signals");
+      if (options.captureCleanup) {
+        // MCP servers run in their own process groups and can briefly outlive
+        // the leader (chrome-devtools-mcp's telemetry watchdog sends a
+        // shutdown event first), so descendants get the rest of the three
+        // capture seconds to exit.
+        const collectBy = cleanupStarted + 3000;
+        const survivors = children
+          ? await bounded(
+              children(collectBy).catch(() => null),
+              Math.max(0, collectBy + 1000 - Date.now()),
+              null,
+            )
+          : null;
+        if (survivors === null) throw unverified("descendants_unobservable");
+        if (survivors.length > 0)
+          throw unverified("descendants_survived", survivors);
+      }
       if (cleanupFailure) throw cleanupFailure;
     } catch (error) {
       throw error instanceof AppServerTransportError &&
         error.code === "cleanup_unverified"
         ? error
-        : unverified();
+        : unverified("cleanup_error");
     } finally {
       decoder.discard();
       const unfinishedCaptureDrain =
@@ -594,7 +615,7 @@ export function createCodexAppServerClient(
         stream.once("close", () => {
           stream.off("error", onStreamError);
         });
-      if (unfinishedCaptureDrain) throw unverified();
+      if (unfinishedCaptureDrain) throw unverified("capture_drain_unfinished");
     }
   }
   function close(): Promise<void> {

@@ -78,7 +78,7 @@ function fixture(
     processGroupId: () => child.pid,
     startTicks: async () => child.ticks,
     isGroupAlive: () => child.alive,
-    observeChildren: async () => async () => true,
+    observeChildren: async () => async () => [],
     signalGroup: (_pgid, signal) => {
       signals.push(signal);
       if (child.signalExit === signal) child.exit(null, signal);
@@ -512,7 +512,9 @@ describe("Codex app-server client", () => {
 describe("capture-only app-server cleanup", () => {
   it("does not mistake a completed leader for collected children", async () => {
     const { client, host } = fixture({ captureCleanup: true });
-    host.observeChildren = async () => async () => false;
+    host.observeChildren = async () => async () => [
+      { pid: 41, command: "node" },
+    ];
     await expect(client.close()).rejects.toMatchObject({
       code: "cleanup_unverified",
     });
@@ -522,11 +524,31 @@ describe("capture-only app-server cleanup", () => {
     host.observeChildren = async () => null;
     await expect(client.close()).rejects.toMatchObject({
       code: "cleanup_unverified",
+      evidence: { stage: "descendants_unobservable" },
     });
+  });
+  it("gives descendants the capture budget to exit and names the survivors", async () => {
+    const { client, host } = fixture({ captureCleanup: true });
+    const deadlines: number[] = [];
+    host.observeChildren = async () => async (deadline: number) => {
+      deadlines.push(deadline);
+      return [{ pid: 41, command: "node" }];
+    };
+    const started = Date.now();
+    await expect(client.close()).rejects.toMatchObject({
+      code: "cleanup_unverified",
+      evidence: {
+        stage: "descendants_survived",
+        survivors: [{ pid: 41, command: "node" }],
+      },
+    });
+    expect(deadlines).toHaveLength(1);
+    expect(deadlines[0]).toBeGreaterThanOrEqual(started + 3000);
+    expect(deadlines[0]).toBeLessThanOrEqual(Date.now() + 3000);
   });
   it("collects children independently of completed turns", async () => {
     const { client, child, host } = fixture({ captureCleanup: true });
-    const collected = deferred<boolean>();
+    const collected = deferred<readonly { pid: number; command: string }[]>();
     host.observeChildren = async () => () => collected.promise;
     let settled = false;
     const closed = client.close().then(() => {
@@ -534,7 +556,7 @@ describe("capture-only app-server cleanup", () => {
     });
     await tick();
     expect(settled).toBe(false);
-    collected.resolve(true);
+    collected.resolve([]);
     await closed;
     expect(child.alive).toBe(false);
   });

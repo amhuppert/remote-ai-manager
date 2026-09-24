@@ -619,6 +619,59 @@ describe.each(["session", "project"] as const)(
       }
     });
 
+    it("records backend protocol frames as invisible capture activity", async () => {
+      const written: (TranscriptEntry & { id: string })[] = [];
+      const requestId = randomUUID();
+      const h = await createCheckpointHarness({
+        scope,
+        appendCaptureEntryOnce: async (id, entry, append) => {
+          written.push(entry);
+          await append(id, entry);
+        },
+        captureHandoff: async (input) => {
+          await input.onTranscript({
+            backend: "codex",
+            seq: 0,
+            type: "codex_app_server",
+            raw: {
+              timestamp: "2026-01-01T00:00:00Z",
+              type: "codex_app_server",
+              raw: { record: '{"method":"item/agentMessage/delta"}' },
+            },
+          });
+          return acceptedCapture(h.seededRef);
+        },
+      });
+      try {
+        const started = h.admittedOr(
+          await h.fixture.manager.startConversationCheckpoint({
+            address: h.fixture.binding.address,
+            requestId,
+            handoff: { mode: "tool-disabled" },
+          }),
+        );
+        const operation = await started.completion;
+        const frame = written.find(
+          (entry) => entry.type === "codex_app_server",
+        );
+        expect(frame).toMatchObject({
+          id: `${requestId}:capture:1`,
+          origin: { checkpointCapture: { part: "activity" } },
+        });
+        expect(frame?.role).toBeUndefined();
+        expect(frame?.content).toBeUndefined();
+        expect(operation).toMatchObject({
+          phase: "ready",
+          handoff: { stage: "included" },
+        });
+        expect(operation.handoff?.sourceCoverage?.entryIds).toEqual(
+          written.filter((entry) => entry !== frame).map((entry) => entry.id),
+        );
+      } finally {
+        await h.close();
+      }
+    });
+
     it("holds generation and queued input until the settlement audit is durable", async () => {
       const barrier = deferred();
       const reached = deferred();

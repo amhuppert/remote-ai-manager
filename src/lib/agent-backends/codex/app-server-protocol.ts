@@ -34,6 +34,13 @@ export interface AppServerFrame {
   message: AppServerMessage;
 }
 
+/** A process CC launched that was still running when cleanup was checked. */
+export interface SurvivingProcess {
+  pid: number;
+  /** Executable name only; arguments may carry secrets. */
+  command: string;
+}
+
 export class AppServerTransportError extends Error {
   constructor(
     readonly code:
@@ -44,7 +51,13 @@ export class AppServerTransportError extends Error {
       | "consumer_failed"
       | "cleanup_unverified",
     message: string,
-    readonly evidence: { byteLength?: number; truncated?: boolean } = {},
+    readonly evidence: {
+      byteLength?: number;
+      truncated?: boolean;
+      /** Which cleanup check could not be verified. */
+      stage?: string;
+      survivors?: readonly SurvivingProcess[];
+    } = {},
   ) {
     super(message);
     this.name = "AppServerTransportError";
