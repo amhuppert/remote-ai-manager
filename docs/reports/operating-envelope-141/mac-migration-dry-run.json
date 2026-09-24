@@ -1,9 +1,0 @@
-{
-  "migration": "0051",
-  "source": "read-only SQLite backup of Mac database",
-  "changed": true,
-  "archivedExecutionReadable": true,
-  "replayByteIdentical": true,
-  "afterDigest": "2662a9a063e2883d6fe38b4f1963168c3c0a5c1f060e8146d831334495e8ab80",
-  "checkedAt": "2026-09-16T20:04:35.254Z"
-}
