@@ -319,9 +319,12 @@ describe("queueMessage in_turn", () => {
     expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
   });
 
-  it("defers an explicit model selection instead of live-delivering under the active runtime selection", async () => {
+  it("defers an explicit model selection that differs from the runtime's active selection", async () => {
     const queueUserInputMock = vi.fn();
-    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+    getRuntimeMock.mockReturnValue({
+      queueUserInput: queueUserInputMock,
+      modelSelection: { modelId: "sonnet", parameters: { effort: "high" } },
+    });
 
     const result = await queueMessage({
       ...baseParams,
@@ -338,6 +341,86 @@ describe("queueMessage in_turn", () => {
     expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
     expect(queueUserInputMock).not.toHaveBeenCalled();
     expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("defers an explicit model selection when no live runtime can confirm the active selection", async () => {
+    getRuntimeMock.mockReturnValue(undefined);
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "use these model options",
+      backend: "claude",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "max" },
+      },
+      deps,
+    });
+
+    expect(result.deliveryTiming).toBe("next_turn");
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("live-delivers an explicit model selection that matches the runtime's active selection", async () => {
+    // The composer sends its current selection with every queued message. A
+    // selection the running turn already uses is not a model change, so it
+    // must not push the message to the next turn.
+    const queueUserInputMock = vi
+      .fn()
+      .mockImplementation(async (input: ConversationQueuedUserInput) => {
+        await input.onAccepted?.();
+      });
+    getRuntimeMock.mockReturnValue({
+      queueUserInput: queueUserInputMock,
+      modelSelection: { modelId: "opus", parameters: { effort: "max" } },
+    });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "same model as the running turn",
+      backend: "claude",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "max" },
+      },
+      deps,
+    });
+
+    expect(result.deliveryTiming).toBe("in_turn");
+    expect(claimLiveDeliveryMock).toHaveBeenCalledTimes(1);
+    expect(queueUserInputMock).toHaveBeenCalledTimes(1);
+    expect(appendTranscriptEntryMock).toHaveBeenCalledTimes(1);
+    expect(markDeliveredMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("compares model selections by canonical identity, not parameter order", async () => {
+    const queueUserInputMock = vi
+      .fn()
+      .mockImplementation(async (input: ConversationQueuedUserInput) => {
+        await input.onAccepted?.();
+      });
+    getRuntimeMock.mockReturnValue({
+      queueUserInput: queueUserInputMock,
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "same selection, different key order",
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "false", reasoning: "high" },
+      },
+      deps,
+    });
+
+    expect(result.deliveryTiming).toBe("in_turn");
+    expect(queueUserInputMock).toHaveBeenCalledTimes(1);
   });
 
   it("confirms delivery: claim -> queueUserInput -> append (once) -> markDelivered", async () => {

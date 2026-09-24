@@ -54,6 +54,10 @@ const createInput: ConversationBackendCreateInput = {
 function harness(
   overrides: Partial<ConversationBackendCreateInput> = {},
   extraDeps: Partial<CodexConversationRuntimeDeps> = {},
+  fixture: {
+    /** Hold the `turn/start` reply until this resolves. */
+    holdTurnStart?: Promise<void>;
+  } = {},
 ) {
   const requests: { method: string; params: unknown }[] = [];
   const events: ConversationBackendEvent[] = [];
@@ -104,6 +108,7 @@ function harness(
         };
       if (method === "thread/inject_items") return {};
       if (method === "turn/start") {
+        if (fixture.holdTurnStart) await fixture.holdTurnStart;
         notify("turn/started", {
           threadId: "thread-1",
           turn: { id: "turn-1", status: "inProgress" },
@@ -234,6 +239,62 @@ async function until(predicate: () => boolean) {
 }
 
 describe("Codex app-server conversation runtime", () => {
+  it("holds a steer sent before turn/start is acknowledged and delivers it once the turn id is known", async () => {
+    // The conversation reads as running from prompt submission, long before
+    // the app-server acknowledges turn/start. A message queued in that window
+    // must wait for the turn id rather than be refused into the next turn.
+    const hold = Promise.withResolvers<void>();
+    const h = harness({}, {}, { holdTurnStart: hold.promise });
+    const turn = h.runtime.sendTurn(h.input);
+    await until(() => h.requests.some((item) => item.method === "turn/start"));
+    let settled: "pending" | "accepted" | "rejected" = "pending";
+    const delivery = h
+      .steer({ content: [{ type: "text", text: "early follow-up" }] })
+      .then(
+        () => {
+          settled = "accepted";
+        },
+        () => {
+          settled = "rejected";
+        },
+      );
+    await until(() => true);
+    expect(settled).toBe("pending");
+    expect(
+      h.requests.filter((item) => item.method === "turn/steer"),
+    ).toHaveLength(0);
+    hold.resolve();
+    await delivery;
+    expect(settled).toBe("accepted");
+    expect(
+      h.requests.find((item) => item.method === "turn/steer")?.params,
+    ).toMatchObject({ threadId: "thread-1", expectedTurnId: "turn-1" });
+    h.finish();
+    await turn;
+  });
+
+  it("rejects a steer held for turn/start when the turn fails before it is acknowledged", async () => {
+    const hold = Promise.withResolvers<void>();
+    const h = harness({}, {}, { holdTurnStart: hold.promise });
+    const controller = new AbortController();
+    const turn = h.runtime.sendTurn({ ...h.input, signal: controller.signal });
+    await until(() => h.requests.some((item) => item.method === "turn/start"));
+    const delivery = h
+      .steer({ content: [{ type: "text", text: "early follow-up" }] })
+      .then(
+        () => "accepted",
+        (error) => String(error),
+      );
+    controller.abort();
+    hold.resolve();
+    const outcome = await delivery;
+    await turn;
+    expect(outcome).toMatch(/ended before steering|no active turn/);
+    expect(
+      h.requests.filter((item) => item.method === "turn/steer"),
+    ).toHaveLength(0);
+  });
+
   it("delivers the selected native skill with context and images on start and steer", async () => {
     const h = harness();
     const prompt = "[$wait-what](</skills/wait-what/SKILL.md>) explain";

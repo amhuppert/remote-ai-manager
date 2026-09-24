@@ -192,7 +192,31 @@ interface CodexTurnState {
   aborted: boolean;
   stopped: Promise<void> | null;
   steer: Promise<void>;
+  /**
+   * Settles once the turn id is known (turn/start acknowledged or
+   * turn/started observed), or rejects when the turn ends without one. A
+   * steer that arrives in the window between submission and acknowledgement
+   * waits on this instead of being refused into the next turn.
+   */
+  started: PromiseWithResolvers<void>;
 }
+/** Resolve with `promise`, or reject as soon as `signal` aborts. */
+function raceWithAbort(
+  promise: Promise<void>,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (!signal) return promise;
+  if (signal.aborted)
+    return Promise.reject(new Error("Codex turn ended before steering"));
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(new Error("Codex turn ended before steering"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
 async function withinDeadline(
   promise: Promise<void>,
   milliseconds: number,
@@ -762,7 +786,12 @@ export class CodexConversationRuntime
       aborted: input.signal.aborted,
       stopped: null,
       steer: Promise.resolve(),
+      started: Promise.withResolvers<void>(),
     };
+    // Only a waiting steer observes the rejection; without a handler an
+    // unsteered turn that ends before acknowledgement would surface as an
+    // unhandled rejection.
+    state.started.promise.catch(() => {});
     this.active = state;
     let nativeCursor: CodexNativeCursor | null = null;
     let nativeCursorFailed = false;
@@ -928,8 +957,10 @@ export class CodexConversationRuntime
           const lifecycle = turnNotificationSchema.safeParse(message.params);
           if (!lifecycle.success || lifecycle.data.threadId !== state.threadId)
             return;
-          if (message.method === "turn/started" && state.turnId === null)
+          if (message.method === "turn/started" && state.turnId === null) {
             state.turnId = lifecycle.data.turn.id;
+            state.started.resolve();
+          }
           if (
             message.method === "turn/completed" &&
             lifecycle.data.turn.id === state.turnId
@@ -1142,6 +1173,7 @@ export class CodexConversationRuntime
       if (state.turnId !== null && state.turnId !== started.turn.id)
         throw new Error("Codex start acknowledgement named a different turn");
       state.turnId = started.turn.id;
+      state.started.resolve();
       await accept();
       await state.completion.promise;
       await state.steer;
@@ -1213,6 +1245,7 @@ export class CodexConversationRuntime
             "Codex capture native evidence is incomplete",
           );
       }
+      state.started.reject(new Error("Codex turn ended before steering"));
       await state.steer;
       const cleanup = await Promise.allSettled(
         [...this.inputDirectories].map((directory) =>
@@ -1302,27 +1335,25 @@ export class CodexConversationRuntime
 
   private async steerInput(input: ConversationQueuedUserInput): Promise<void> {
     const state = this.active;
-    const threadId = state?.threadId;
-    const turnId = state?.turnId;
-    if (
-      !state ||
-      !threadId ||
-      !turnId ||
-      state.terminal ||
-      state.aborted ||
-      this._status === "dead" ||
-      !state.client
-    ) {
+    if (!state || state.terminal || state.aborted || this._status === "dead") {
       throw new Error("Codex has no active turn ready for steering");
     }
-    const client = state.client;
     const delivery = state.steer.then(async () => {
+      // The conversation reads as running from submission, but the turn is
+      // steerable only once the app-server has named it. Wait for that
+      // rather than refusing, so a follow-up typed during startup still
+      // lands in this turn.
+      await raceWithAbort(state.started.promise, input.signal);
+      const { threadId, turnId, client } = state;
       if (
         this.active !== state ||
         state.terminal ||
         state.aborted ||
         this._status === "dead" ||
-        input.signal?.aborted
+        input.signal?.aborted ||
+        !threadId ||
+        !turnId ||
+        !client
       )
         throw new Error("Codex turn ended before steering");
       const content = await this.prepareLiveInput(input);

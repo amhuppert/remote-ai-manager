@@ -38,7 +38,10 @@ import {
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { formatNotepadFeedbackPrompt } from "@/lib/notepads/format-feedback";
 import { appendTranscriptEntryOnce as defaultAppendTranscriptEntry } from "./transcript";
-import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationBackendRuntime,
+  ConversationImageRef,
+} from "@/lib/agent-backends/conversation";
 import type {
   DocumentFeedbackPayload,
   MessageContentBlock,
@@ -51,6 +54,7 @@ import type {
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import { modelSelectionKey } from "@/lib/agent-backends/model-selection";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -392,6 +396,16 @@ export async function queueMessage(
 // Reserve dispatch order before asynchronous preparation; enqueue remains prompt.
 const liveDispatches = new Map<string, Promise<void>>();
 
+function runtimeRunsSelection(
+  runtime: ConversationBackendRuntime | undefined,
+  selection: BackendModelSelection,
+): boolean {
+  return (
+    runtime !== undefined &&
+    modelSelectionKey(runtime.modelSelection) === modelSelectionKey(selection)
+  );
+}
+
 async function queueMessageInOrder(
   params: QueueMessageParams,
   deps: QueueMessageDeps,
@@ -430,7 +444,16 @@ async function queueMessageInOrder(
     return { entry, deliveryTiming: "next_turn" };
   }
 
-  if (modelSelection !== undefined) {
+  // A model selection can only take effect at a turn boundary, so a message
+  // that CHANGES the selection waits for the next turn. The composer sends its
+  // current selection with every queued message, so a selection the running
+  // turn already uses is not a change and must not push the message out of
+  // the turn. Without a live runtime nothing can confirm the active selection,
+  // and the next-turn drain honours the selection either way.
+  if (
+    modelSelection !== undefined &&
+    !runtimeRunsSelection(deps.getRuntime(conversationId), modelSelection)
+  ) {
     logger.info("queue.delivery_deferred", {
       projectName: deps.getProjectDisplayName(projectPath),
       ...scopeRef,
@@ -438,6 +461,7 @@ async function queueMessageInOrder(
       messageIds: [entry.id],
       status: "pending",
       reason: "model_selection",
+      modelId: modelSelection.modelId,
     });
     return { entry, deliveryTiming: "next_turn" };
   }

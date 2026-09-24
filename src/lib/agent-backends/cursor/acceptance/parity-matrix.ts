@@ -446,7 +446,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/conversations/message-queue-service.test.ts"),
       test("src/lib/conversations/message-queue-recovery.test.ts"),
-      report("docs/plans/command-center-112-queue-forks/validation.md"),
       APPLICATION_PASS,
     ],
   },
@@ -468,7 +467,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
       test("src/lib/sessions/synthetic-fork-seed.test.ts"),
       test("src/lib/conversations/service.test.ts"),
       test("src/lib/agent-backends/cursor/continuity.test.ts"),
-      report("docs/plans/command-center-112-queue-forks/validation.md"),
       APPLICATION_PASS,
     ],
   },
@@ -577,7 +575,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/agent-backends/cursor/background-tasks.test.ts"),
       test("src/lib/agent-backends/cursor/background-task-store.test.ts"),
-      report("docs/reports/2026-09-14-cursor-background-tasks.md"),
       APPLICATION_PASS,
     ],
   },
@@ -596,10 +593,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     liveFlow: false,
     facts: ["conversation.capabilities.externalTurns"],
     auditGaps: ["comparison-external-turns"],
-    evidence: [
-      test("src/lib/agent-backends/cursor/descriptor.test.ts"),
-      report("docs/reports/2026-09-14-cursor-background-tasks.md"),
-    ],
+    evidence: [test("src/lib/agent-backends/cursor/descriptor.test.ts")],
   },
 
   // ----- capabilities ----------------------------------------------------
@@ -621,9 +615,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
       test("src/lib/agent-backends/cursor/capability-delivery.test.ts"),
       test("src/lib/agent-backends/cursor/capability-catalog.test.ts"),
       test("src/lib/managed-skills/service.test.ts"),
-      report(
-        "docs/reports/2026-09-07-cursor-capability-delivery-investigation.md",
-      ),
       APPLICATION_PASS,
     ],
   },
@@ -714,7 +705,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/agent-backends/cursor/worker/mcp-bridge.test.ts"),
       live("mcp-parity.acceptance.test.ts", "mcp-parity-transports"),
-      report("docs/reports/2026-09-10-cursor-mcp-parity-validation.md"),
     ],
   },
   {
@@ -734,7 +724,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/mcp/tool-discovery-probe.test.ts"),
       test("src/lib/agent-backends/cursor/worker/mcp-bridge.test.ts"),
-      report("docs/reports/2026-09-10-cursor-mcp-parity-validation.md"),
+      report(FINAL_REPORT),
     ],
   },
   {
@@ -767,10 +757,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     liveFlow: false,
     facts: ["mcp.strictAuthoritativeConfig", "mcp.notes"],
     auditGaps: ["comparison-mcp-authority"],
-    evidence: [
-      test("src/lib/mcp/backend-capabilities.test.ts"),
-      report("docs/reports/2026-09-10-cursor-mcp-parity-validation.md"),
-    ],
+    evidence: [test("src/lib/mcp/backend-capabilities.test.ts")],
   },
   {
     id: "mcp-conversation-override",
@@ -808,7 +795,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/agent-backends/cursor/task-runner.test.ts"),
       test("src/lib/agent-backends/task-execution.test.ts"),
-      report("docs/reports/2026-09-11-cursor-task-runner-validation.md"),
       APPLICATION_PASS,
     ],
   },
@@ -845,7 +831,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     auditGaps: ["defect-3-continuity-binding"],
     evidence: [
       test("src/lib/agent-backends/cursor/continuity-binding.test.ts"),
-      report("docs/reports/2026-09-11-cursor-task-runner-validation.md"),
       APPLICATION_PASS,
     ],
   },
@@ -864,11 +849,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     liveFlow: true,
     facts: [],
     auditGaps: ["feature-ticket-command"],
-    evidence: [
-      test("src/lib/tickets/slash-command.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
-      APPLICATION_PASS,
-    ],
+    evidence: [test("src/lib/tickets/slash-command.test.ts"), APPLICATION_PASS],
   },
   {
     id: "quick-ticket-enrichment",
@@ -885,11 +866,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     liveFlow: true,
     facts: [],
     auditGaps: ["feature-quick-ticket-enrichment"],
-    evidence: [
-      test("src/lib/tickets/enrichment.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
-      APPLICATION_PASS,
-    ],
+    evidence: [test("src/lib/tickets/enrichment.test.ts"), APPLICATION_PASS],
   },
   {
     id: "conversation-naming",
@@ -906,7 +883,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     auditGaps: ["feature-conversation-naming"],
     evidence: [
       test("src/lib/conversations/name-generation.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
       APPLICATION_PASS,
     ],
   },
@@ -923,11 +899,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     liveFlow: true,
     facts: [],
     auditGaps: ["feature-session-naming"],
-    evidence: [
-      test("src/lib/sessions/service.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
-      APPLICATION_PASS,
-    ],
+    evidence: [test("src/lib/sessions/service.test.ts"), APPLICATION_PASS],
   },
   {
     id: "compaction-generation",
@@ -944,7 +916,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     auditGaps: ["feature-compaction"],
     evidence: [
       test("src/lib/context-artifacts/service.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
       APPLICATION_PASS,
     ],
   },
@@ -963,7 +934,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     auditGaps: ["feature-commit-merge-message"],
     evidence: [
       test("src/lib/conversation-commands/service.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
       APPLICATION_PASS,
     ],
   },
@@ -982,7 +952,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     auditGaps: ["feature-validation-fix"],
     evidence: [
       test("src/lib/workflows/auxiliary-cursor.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
+      report(FINAL_REPORT),
     ],
   },
   {
@@ -1001,7 +971,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/workflows/auxiliary-cursor.test.ts"),
       test("src/lib/sessions/conflict-resolution.test.ts"),
-      report("docs/reports/2026-09-14-cursor-auxiliary-consumers.md"),
+      report(FINAL_REPORT),
     ],
   },
 
@@ -1022,7 +992,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/workflow-graph/config-schemas.test.ts"),
       test("src/lib/workflow-graph/definition-validation.test.ts"),
-      report("docs/reports/2026-09-14-cursor-graph-workflows-118.md"),
       APPLICATION_PASS,
     ],
   },
@@ -1042,7 +1011,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/workflow-graph/validator-runner.test.ts"),
       test("src/lib/workflow-graph/plan-repair/agent-runner.test.ts"),
-      report("docs/reports/2026-09-14-cursor-graph-workflows-118.md"),
       APPLICATION_PASS,
     ],
   },
@@ -1244,7 +1212,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     evidence: [
       test("src/lib/agent-backends/cursor/runtime-config.test.ts"),
       live("instructions.acceptance.test.ts", "instructions-durable-resume"),
-      report("docs/reports/2026-09-12-cursor-execution-policy.md"),
     ],
   },
   {
@@ -1268,7 +1235,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
         "src/lib/workflow-graph/implementer-write-envelope.integration.test.ts",
       ),
       live("instructions.acceptance.test.ts", "instructions-durable-resume"),
-      report("docs/reports/2026-09-12-cursor-execution-policy.md"),
     ],
   },
   {
@@ -1293,7 +1259,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
         "native-memory-conversation-fallback",
       ),
       live("native-memory.acceptance.test.ts", "native-memory-task-fallback"),
-      report("docs/reports/2026-09-15-cursor-native-memory.md"),
     ],
   },
   {
@@ -1329,10 +1294,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     liveFlow: false,
     facts: [],
     auditGaps: [],
-    evidence: [
-      test("src/lib/agent-backends/cursor/policy.test.ts"),
-      report("docs/reports/2026-09-12-cursor-execution-policy.md"),
-    ],
+    evidence: [test("src/lib/agent-backends/cursor/policy.test.ts")],
   },
 ];
 

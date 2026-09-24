@@ -1,4 +1,4 @@
-// @vitest-inputs src/**/*.test.{ts,tsx,mjs} docs/reports/*cursor*.md docs/plans/command-center-112-queue-forks/*.md docs/cursor-backend.md
+// @vitest-inputs src/**/*.test.{ts,tsx,mjs} docs/reports/*cursor*.md docs/cursor-backend.md
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
