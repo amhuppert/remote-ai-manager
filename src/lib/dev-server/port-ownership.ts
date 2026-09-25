@@ -39,6 +39,12 @@ export interface PortOwnershipDeps {
    * EADDRINUSE.
    */
   probePortBindable(port: number): Promise<PortBindProbeResult>;
+  /**
+   * PID of this Command Center server. Its listener is never a dev server:
+   * CC runs from a project root, so without this exclusion a project-root
+   * dev server would classify CC itself as an unmanaged listener to stop.
+   */
+  selfPid: number;
 }
 
 export interface PortOwnershipInput {
@@ -103,12 +109,18 @@ export function isSameOrDescendantPath(
  * Decide whether a process cwd qualifies as "owned" by either the session
  * worktree or an explicitly configured app cwd. Pure string comparison —
  * the caller is responsible for realpath normalization when symlinks matter.
+ *
+ * CC places every session, lane, and merge worktree under
+ * `<projectRoot>/.worktrees/`, so a listener there belongs to that nested
+ * worktree, never to the project root that contains it.
  */
 export function isOwnedProcessCwd(
   candidate: string,
   worktreePath: string,
   allowedCwd?: string | null,
 ): boolean {
+  if (isSameOrDescendantPath(candidate, path.join(worktreePath, ".worktrees")))
+    return false;
   if (isSameOrDescendantPath(candidate, worktreePath)) return true;
   if (allowedCwd && isSameOrDescendantPath(candidate, allowedCwd)) return true;
   return false;
@@ -189,6 +201,16 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
 
     for (const pid of pids) {
       const cwd = await deps.getProcessCwd(pid).catch(() => null);
+
+      if (pid === deps.selfPid) {
+        logger.info("dev-server.ownership.self_listener", { port, pid });
+        return {
+          status: "conflict",
+          pid,
+          cwd,
+          reason: "command_center_server",
+        };
+      }
 
       if (cwd === null) {
         lastUnknown = { pid, reason: "cwd_unresolved" };
@@ -293,6 +315,7 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
       if (!pids || pids.length === 0) continue;
 
       for (const pid of pids) {
+        if (pid === deps.selfPid) continue;
         const cwd = await deps.getProcessCwd(pid).catch(() => null);
         if (cwd === null) continue;
 
@@ -661,6 +684,7 @@ const defaultPortOwnershipDeps: PortOwnershipDeps = {
   getProcessCwd: defaultGetProcessCwd,
   realpath: defaultRealpath,
   probePortBindable: probePortBindableViaNet,
+  selfPid: process.pid,
 };
 
 export const defaultPortOwnershipService = createPortOwnershipService(

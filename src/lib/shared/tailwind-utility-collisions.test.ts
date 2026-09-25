@@ -339,6 +339,11 @@ const UTILITY_FIRST_PATHS = [
   // Registered in all three mirrored allowlists (here + eslint.config.mjs
   // MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}components${path.sep}notepad-capture${path.sep}`,
+  // Dev-server overview and the project-root dev-server control: authored
+  // utility-first from the start. Registered in all three mirrored allowlists
+  // (here + eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
+  `${path.sep}features${path.sep}dev-servers${path.sep}`,
+  `${path.sep}features${path.sep}project-detail${path.sep}ProjectDevServersButton.tsx`,
 ];
 
 function srcFiles(ext: string): string[] {

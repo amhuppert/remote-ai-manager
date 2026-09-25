@@ -229,6 +229,10 @@ const MIGRATED_UTILITY_FIRST = [
   // .prettierrc class-sort override and the tailwind-utility-collisions
   // UTILITY_FIRST_PATHS allowlist.
   "src/components/topbar/**/*.{ts,tsx}",
+  // Dev-server overview and the project-root dev-server control: authored
+  // utility-first from the start.
+  "src/features/dev-servers/**/*.{ts,tsx}",
+  "src/features/project-detail/ProjectDevServersButton.tsx",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`

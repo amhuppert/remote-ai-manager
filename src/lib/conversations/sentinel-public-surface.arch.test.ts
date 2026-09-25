@@ -7,6 +7,7 @@ import { activeConversationHref } from "@/lib/active-conversations/row-helpers";
 import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import { describeActiveRow } from "@/components/session/sidebar/ConversationSidebar.helpers";
 import { contextArtifactKeys } from "@/lib/context-artifacts/query-keys";
+import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { contextArtifactsBaseUrl } from "@/lib/context-artifacts/queries";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import {
@@ -101,6 +102,16 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   ["lib/tickets/slash-command.ts", "internal-adapter"],
   ["lib/documents/session-index.ts", "internal-adapter"],
   ["lib/agent-capabilities/sse-invalidation.ts", "internal-adapter"],
+  // Project-root dev servers are registry entries keyed by the sentinel with
+  // the project root as their worktree. The service resolves that owner
+  // without a session lookup; the overview lists and stops them. Their public
+  // surfaces carry `owner: { kind: "project" }` / `sessionName: null`, and the
+  // project routes have no session segment. The two route modules also refuse
+  // the sentinel where a session name arrives from the client.
+  ["lib/dev-server/service.ts", "internal-adapter"],
+  ["lib/dev-server/overview.ts", "internal-adapter"],
+  ["lib/dev-server/route-handlers.ts", "internal-adapter"],
+  ["lib/dev-server/overview-route-handlers.ts", "internal-adapter"],
   // NOTE: `lib/conversations/ask-route-handlers.ts` deliberately does NOT import
   // the sentinel. It carries a `ConversationScopeRef` and materializes the store
   // key at the `clearConversationQuestion` call via `storeSessionNameFromScopeRef`.
@@ -128,6 +139,9 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // conversation's queue events have no `sessionName` field at all.
   ["lib/conversations/message-queue-service.ts", "scope-derivation"],
   ["lib/prompt/transcript.ts", "scope-derivation"],
+  // Publishes `dev-server-status` from a registry entry, deriving the project
+  // scope (no `sessionName` field) for sentinel-keyed project-root servers.
+  ["lib/dev-server/registry.ts", "scope-derivation"],
   // Lifts a store session key into the listed conversation's public scope
   // variant, so a sentinel-keyed row is listed as `scope: "project"` with no
   // `sessionName` field at all.
@@ -296,6 +310,7 @@ describe("project sentinel stays off public identity surfaces", () => {
       projectConversationKeys.list("demo"),
       projectConversationKeys.messages("demo", "conv-1"),
       agentCapabilityKeys.projectConversation("demo", "conv-1", "mcp"),
+      devServerKeys.project("demo"),
     ]) {
       expect(JSON.stringify(key)).not.toContain(
         PROJECT_CONVERSATION_SESSION_SENTINEL,

@@ -39,6 +39,8 @@ import {
 } from "@/lib/project-conversations-client/queries";
 import { useReopenProjectConversation } from "@/lib/project-conversations-client/mutations";
 import { useSessionFilters } from "./hooks/use-session-filters";
+import { CC_IBTN_LINK_CLASS } from "./header-action-class";
+import ProjectDevServersButton from "./ProjectDevServersButton";
 import ProjectCockpit from "./cockpit/ProjectCockpit";
 import {
   useActiveTabId,
@@ -51,22 +53,6 @@ interface ProjectDetailViewProps {
   defaultAgentBackend: AgentBackendId;
   backendDefaults: BackendSelectionDefaultsById;
 }
-
-// Byte-for-byte reproduction of the `.cc-ibtn` leaf recipe (project-detail.css).
-// The matching primitive is `IconButton variant="pill"`, but it renders a
-// `<button>` while this control is a navigation `<Link>` (anchor) — swapping the
-// element would drop native link behaviour (middle-click/open-in-new-tab/href),
-// a functional regression. So the pill appearance is re-homed as inline utilities
-// on the Link instead. This consumer is never toggled (`.active`), so only the
-// base + hover state is transcribed. The `@media (max-width:768px)` 44px touch
-// target the recipe carried is folded into the `max-768:` utilities.
-const CC_IBTN_LINK_CLASS =
-  "inline-flex h-[30px] items-center gap-[6px] rounded-md border border-solid " +
-  "border-border-subtle bg-transparent px-[10px] py-0 font-mono text-[0.72rem] " +
-  "font-medium text-text-secondary transition-all duration-150 ease-[ease] " +
-  "[&_svg]:text-text-tertiary [&_svg]:transition-colors [&_svg]:duration-150 [&_svg]:ease-[ease] " +
-  "hover:border-border-strong hover:bg-bg-hover hover:text-text-primary hover:[&_svg]:text-cyan " +
-  "max-768:h-[44px] max-768:min-h-[44px] max-768:flex-1 max-768:justify-center";
 
 // Byte-for-byte reproduction of the `.cc-primary` leaf recipe (project-detail.css).
 // NOT swapped to `Button variant="primary"`: that primitive is the global
@@ -389,6 +375,7 @@ export default function ProjectDetailView({
                   </span>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-sm max-768:self-stretch">
+                  <ProjectDevServersButton projectName={projectName} />
                   <MemoryEntryLink
                     projectName={projectName}
                     placement="cockpit"

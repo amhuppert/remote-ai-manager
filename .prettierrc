@@ -135,7 +135,9 @@
         "src/features/session/document-viewer/DocumentSurface.tsx",
         "src/components/BackendExecutionWarning.tsx",
         "src/components/BackendExecutionWarning.stories.tsx",
-        "src/components/topbar/**/*.{ts,tsx}"
+        "src/components/topbar/**/*.{ts,tsx}",
+        "src/features/dev-servers/**/*.{ts,tsx}",
+        "src/features/project-detail/ProjectDevServersButton.tsx"
       ],
       "options": {
         "plugins": ["prettier-plugin-tailwindcss"],

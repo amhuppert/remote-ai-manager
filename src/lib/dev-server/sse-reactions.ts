@@ -17,14 +17,21 @@ export function registerDevServerSseReactions(
   deps: DevServerSseReactionDeps,
 ): void {
   // The event carries the project/session it belongs to, so only that
-  // session's dev-server list is refetched instead of every session's.
+  // owner's dev-server list is refetched instead of every session's. The
+  // cross-project overview lists every owner, so any change refreshes it.
   addSseListener(
     es,
     "dev-server-status",
     devServerStatusEventSchema,
     (data) => {
       void deps.queryClient.invalidateQueries({
-        queryKey: devServerKeys.list(data.projectName, data.sessionName),
+        queryKey:
+          data.scope === "project"
+            ? devServerKeys.project(data.projectName)
+            : devServerKeys.list(data.projectName, data.sessionName),
+      });
+      void deps.queryClient.invalidateQueries({
+        queryKey: devServerKeys.overview(),
       });
     },
   );

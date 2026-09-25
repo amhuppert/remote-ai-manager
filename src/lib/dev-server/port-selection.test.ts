@@ -304,6 +304,7 @@ describe("createPortSelectionService.selectPort", () => {
           probed.push(port);
           return { bindable: true };
         },
+        selfPid: 1,
       };
       const ownership = createPortOwnershipService(ownershipDeps);
       const service = createPortSelectionService({

@@ -430,3 +430,21 @@ export function CheckpointIcon({ size, className }: IconProps) {
     </svg>
   );
 }
+
+export function ServerStackIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="4" width="17" height="6.5" rx="1.5" />
+      <rect x="3.5" y="13.5" width="17" height="6.5" rx="1.5" />
+      <line x1="7" y1="7.25" x2="8" y2="7.25" />
+      <line x1="7" y1="16.75" x2="8" y2="16.75" />
+    </svg>
+  );
+}

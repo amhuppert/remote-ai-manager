@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   notFound,
+  refuseProjectSentinelSessionParam,
   resolveProjectOr404,
   resolveProjectSessionOr404,
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { decodeRouteSegment } from "@/lib/shared/decode-route-segment";
 import { createLogger, withTracing } from "@/lib/logging";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getSession as defaultGetSession } from "@/lib/state-store";
 import {
@@ -172,10 +175,58 @@ const stopUnmanagedRequestSchema = z.object({
   port: z.number().int().positive(),
 });
 
+/**
+ * Who the route addresses. Session routes carry a `[session]` segment; the
+ * project-root routes under `/api/projects/[name]/dev-servers` do not, and
+ * address the project's own checkout through the internal project sentinel.
+ */
+type DevServerRouteOwner =
+  | { scope: "project"; sessionName: string }
+  | { scope: "session"; sessionName: string };
+
+function ownerFromParams(
+  params: Record<string, string>,
+): RouteResolution<DevServerRouteOwner> {
+  const raw = params["session"];
+  if (raw === undefined) {
+    return {
+      ok: true,
+      value: {
+        scope: "project",
+        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      },
+    };
+  }
+  const refusal = refuseProjectSentinelSessionParam(raw, params["name"] ?? "");
+  if (refusal) return { ok: false, response: refusal };
+  return {
+    ok: true,
+    value: { scope: "session", sessionName: decodeRouteSegment(raw) },
+  };
+}
+
 export function createDevServerRouteHandlers(
   deps: DevServerRouteDeps = defaultDeps,
 ) {
   async function resolveTarget(
+    request: Request,
+    input: {
+      projectName: string;
+      projectPath: string;
+      owner: DevServerRouteOwner;
+    },
+  ): Promise<RouteResolution<Pick<ResolvedDevServerTarget, "worktreePath">>> {
+    if (input.owner.scope === "project") {
+      return { ok: true, value: { worktreePath: input.projectPath } };
+    }
+    return resolveSessionTarget(request, {
+      projectName: input.projectName,
+      projectPath: input.projectPath,
+      sessionName: input.owner.sessionName,
+    });
+  }
+
+  async function resolveSessionTarget(
     request: Request,
     input: {
       projectName: string;
@@ -211,7 +262,9 @@ export function createDevServerRouteHandlers(
   ): Promise<Response> {
     const params = await context.params;
     const projectName = params["name"] ?? "";
-    const sessionName = decodeURIComponent(params["session"] ?? "");
+    const owner = ownerFromParams(params);
+    if (!owner.ok) return owner.response;
+    const { sessionName } = owner.value;
     const project = await resolveProjectOr404(deps, projectName);
     if (!project.ok) return project.response;
 
@@ -219,7 +272,7 @@ export function createDevServerRouteHandlers(
       const target = await resolveTarget(request, {
         projectName,
         projectPath: project.value,
-        sessionName,
+        owner: owner.value,
       });
       if (!target.ok) return target.response;
       const servers = await deps.service.list({
@@ -246,8 +299,10 @@ export function createDevServerRouteHandlers(
   ): Promise<Response> {
     const params = await context.params;
     const projectName = params["name"] ?? "";
-    const sessionName = decodeURIComponent(params["session"] ?? "");
-    const serverName = decodeURIComponent(params["serverName"] ?? "");
+    const owner = ownerFromParams(params);
+    if (!owner.ok) return owner.response;
+    const { sessionName } = owner.value;
+    const serverName = decodeRouteSegment(params["serverName"] ?? "");
     const project = await resolveProjectOr404(deps, projectName);
     if (!project.ok) return project.response;
 
@@ -255,7 +310,7 @@ export function createDevServerRouteHandlers(
       const target = await resolveTarget(request, {
         projectName,
         projectPath: project.value,
-        sessionName,
+        owner: owner.value,
       });
       if (!target.ok) return target.response;
       const server = await deps.service.ensure({
@@ -286,7 +341,9 @@ export function createDevServerRouteHandlers(
   ): Promise<Response> {
     const params = await context.params;
     const projectName = params["name"] ?? "";
-    const sessionName = decodeURIComponent(params["session"] ?? "");
+    const owner = ownerFromParams(params);
+    if (!owner.ok) return owner.response;
+    const { sessionName } = owner.value;
     const project = await resolveProjectOr404(deps, projectName);
     if (!project.ok) return project.response;
 
@@ -340,8 +397,10 @@ export function createDevServerRouteHandlers(
   ): Promise<Response> {
     const params = await context.params;
     const projectName = params["name"] ?? "";
-    const sessionName = params["session"] ?? "";
-    const serverName = params["serverName"] ?? "";
+    const owner = ownerFromParams(params);
+    if (!owner.ok) return owner.response;
+    const { sessionName } = owner.value;
+    const serverName = decodeRouteSegment(params["serverName"] ?? "");
     const project = await resolveProjectOr404(deps, projectName);
     if (!project.ok) return project.response;
 
@@ -349,7 +408,7 @@ export function createDevServerRouteHandlers(
       const target = await resolveTarget(request, {
         projectName,
         projectPath: project.value,
-        sessionName,
+        owner: owner.value,
       });
       if (!target.ok) return target.response;
       const existing = deps.getServer({
@@ -389,18 +448,25 @@ export function createDevServerRouteHandlers(
   ): Promise<Response> {
     const params = await context.params;
     const projectName = params["name"] ?? "";
-    const sessionName = params["session"] ?? "";
-    const resolved = await resolveProjectSessionOr404(
-      deps,
-      projectName,
-      sessionName,
-    );
-    if (!resolved.ok) return resolved.response;
+    const owner = ownerFromParams(params);
+    if (!owner.ok) return owner.response;
+    const { sessionName } = owner.value;
+    let projectPath: string;
+    if (owner.value.scope === "project") {
+      const project = await resolveProjectOr404(deps, projectName);
+      if (!project.ok) return project.response;
+      projectPath = project.value;
+    } else {
+      const resolved = await resolveProjectSessionOr404(
+        deps,
+        projectName,
+        sessionName,
+      );
+      if (!resolved.ok) return resolved.response;
+      projectPath = resolved.value.projectPath;
+    }
 
-    await deps.stopAllForSession({
-      projectPath: resolved.value.projectPath,
-      sessionName,
-    });
+    await deps.stopAllForSession({ projectPath, sessionName });
     return NextResponse.json({ status: "ok" });
   }
 
@@ -410,8 +476,10 @@ export function createDevServerRouteHandlers(
   ): Promise<Response> {
     const params = await context.params;
     const projectName = params["name"] ?? "";
-    const sessionName = decodeURIComponent(params["session"] ?? "");
-    const serverName = decodeURIComponent(params["serverName"] ?? "");
+    const owner = ownerFromParams(params);
+    if (!owner.ok) return owner.response;
+    const { sessionName } = owner.value;
+    const serverName = decodeRouteSegment(params["serverName"] ?? "");
     const project = await resolveProjectOr404(deps, projectName);
     if (!project.ok) return project.response;
 
@@ -462,6 +530,10 @@ export function createDevServerRouteHandlers(
 }
 
 const defaultHandlers = createDevServerRouteHandlers();
+
+// Each handler serves both the session routes
+// (`/api/projects/[name]/sessions/[session]/dev-servers/...`) and the
+// project-root routes (`/api/projects/[name]/dev-servers/...`).
 
 /** GET /api/projects/[name]/sessions/[session]/dev-servers — list dev server status */
 export const GET = withTracing(defaultHandlers.GET);

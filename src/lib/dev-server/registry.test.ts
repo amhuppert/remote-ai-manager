@@ -17,6 +17,7 @@ import {
   type TraceContext,
 } from "@/lib/logging";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 function createTestDeps(
   overrides: Partial<DevServerRegistryDeps> = {},
@@ -217,10 +218,32 @@ describe("DevServerRegistry", () => {
       expect(deps.broadcast).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "dev-server-status",
+          scope: "session",
           projectName: "proj",
           sessionName: "s1",
         }),
       );
+    });
+
+    it("broadcasts a project-root server in the project scope, with no session name", async () => {
+      await registry.startServer({
+        projectPath: "/base/proj",
+        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+        startMode: startMode(59802),
+      });
+
+      const events = vi
+        .mocked(deps.broadcast)
+        .mock.calls.map(([event]) => event)
+        .filter((event) => event.type === "dev-server-status");
+      expect(events.length).toBeGreaterThan(0);
+      for (const event of events) {
+        expect(event).toMatchObject({ scope: "project", projectName: "proj" });
+        expect(event).not.toHaveProperty("sessionName");
+      }
     });
 
     it("rejects duplicate start for running/starting server", async () => {

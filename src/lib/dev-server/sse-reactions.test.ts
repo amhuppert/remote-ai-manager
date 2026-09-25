@@ -15,11 +15,12 @@ function setup() {
 }
 
 describe("registerDevServerSseReactions — dev-server-status", () => {
-  it("invalidates only the scoped list for the event's project/session", () => {
+  it("invalidates the event's own list and the cross-project overview", () => {
     const { fake, invalidate } = setup();
 
     fake.emit("dev-server-status", {
       type: "dev-server-status",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       serverName: "web",
@@ -29,9 +30,31 @@ describe("registerDevServerSseReactions — dev-server-status", () => {
       errorMessage: null,
     });
 
-    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(2);
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: devServerKeys.list("proj", "sess"),
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: devServerKeys.overview(),
+    });
+  });
+
+  it("addresses a project-scope event to the project-root list", () => {
+    const { fake, invalidate } = setup();
+
+    fake.emit("dev-server-status", {
+      type: "dev-server-status",
+      scope: "project",
+      projectName: "proj",
+      serverName: "web",
+      status: "starting",
+      port: 3000,
+      remoteUrl: null,
+      errorMessage: null,
+    });
+
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: devServerKeys.project("proj"),
     });
   });
 

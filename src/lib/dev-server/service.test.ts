@@ -12,6 +12,7 @@ import {
 import type { DevServerConfig } from "@/lib/dev-server/schemas";
 import type { PortSelectionResult } from "./port-selection";
 import type { Logger } from "@/lib/logging";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 type ConfiguredServer = DevServerConfig;
 
 interface CapturedLog {
@@ -212,6 +213,23 @@ describe("dev-server-service", () => {
       expect(sb.localUrl).toBeNull();
     });
 
+    it("lists project-root servers from the project root without a session", async () => {
+      const h = makeHarness({ sessionMissing: true });
+      const readRepoConfig = vi.fn(h.deps.readRepoConfig);
+      const service = createDevServerService({ ...h.deps, readRepoConfig });
+
+      const result = await service.list({
+        projectPath: "/projects/test",
+        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      });
+
+      expect(readRepoConfig).toHaveBeenCalledWith("/projects/test");
+      expect(h.reconcile).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreePath: "/projects/test" }),
+      );
+      expect(result.map((r) => r.serverName)).toEqual(["nextjs"]);
+    });
+
     it("returns empty array when no servers configured", async () => {
       const h = makeHarness({ configured: [] });
       const service = createDevServerService(h.deps);
@@ -230,6 +248,25 @@ describe("dev-server-service", () => {
       await expect(
         service.ensure({ projectPath: "/projects/test", sessionName: "s1" }),
       ).rejects.toBeInstanceOf(NoDevServersConfiguredError);
+    });
+
+    it("spawns a project-root server in the project root without a session", async () => {
+      const h = makeHarness({ sessionMissing: true });
+      const service = createDevServerService(h.deps);
+
+      await service.ensure({
+        projectPath: "/projects/test",
+        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        serverName: "nextjs",
+        wait: false,
+      });
+
+      expect(h.startServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          worktreePath: "/projects/test",
+        }),
+      );
     });
 
     it("spawns the dev server in the lane worktree when a worktreePath override is given", async () => {

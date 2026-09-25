@@ -21,6 +21,7 @@ import * as liveness from "./liveness";
 import { readConfig as defaultReadConfig } from "../config/loader";
 import { getLanUrl as defaultGetLanUrl } from "../shared/network";
 import { getProjectDisplayName } from "../projects/resolver";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
   getGlobalSingleton,
   getGlobalValue,
@@ -137,10 +138,14 @@ function broadcastEntryStatus(
   // Client query keys are addressed by project NAME while the registry keys
   // entries by path. The resolver builds the path as join(baseDir, name), so
   // the trailing segment is the name the SSE reaction must invalidate with.
+  // Project-root entries are keyed by the internal project sentinel, which
+  // stays off the wire: they publish the project scope with no session name.
   const event: DevServerStatusEvent = {
     type: "dev-server-status",
+    ...(isProjectSentinel(entry.sessionName)
+      ? { scope: "project" as const }
+      : { scope: "session" as const, sessionName: entry.sessionName }),
     projectName: getProjectDisplayName(entry.projectPath),
-    sessionName: entry.sessionName,
     serverName: entry.serverName,
     status: entry.status,
     port: entry.port,
@@ -902,6 +907,11 @@ export function createDevServerRegistry(
     return results;
   }
 
+  /** Runtime state for every registered dev server, across all projects. */
+  function getAllServers(): DevServerEntry[] {
+    return Array.from(getRegistry().values());
+  }
+
   /** Get runtime state for a specific dev server. */
   function getServer(params: {
     projectPath: string;
@@ -1059,6 +1069,7 @@ export function createDevServerRegistry(
     captureStopForWorktree,
     stopAll,
     getSessionServers,
+    getAllServers,
     getServer,
     killListeningProcessForPort,
     _resetForTesting,
@@ -1176,6 +1187,7 @@ export const stopAllForSession = defaultRegistry.stopAllForSession;
 export const stopAllForWorktree = defaultRegistry.stopAllForWorktree;
 export const captureStopForWorktree = defaultRegistry.captureStopForWorktree;
 export const getSessionServers = defaultRegistry.getSessionServers;
+export const getAllServers = defaultRegistry.getAllServers;
 export const getServer = defaultRegistry.getServer;
 export const killListeningProcessForPort =
   defaultRegistry.killListeningProcessForPort;

@@ -161,6 +161,7 @@ describe("projectRouteForSessionRequestPath", () => {
       "conversations",
       "agent-capabilities",
       "mcp-config",
+      "dev-servers",
     ]) {
       expect(
         projectRouteForSessionRequestPath(
@@ -208,7 +209,6 @@ describe("projectRouteForSessionRequestPath", () => {
       "alignment",
       "graph-workflow",
       "workflow-envelopes",
-      "dev-servers",
       "reference-documents",
     ]) {
       expect(

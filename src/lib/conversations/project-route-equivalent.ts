@@ -73,6 +73,7 @@ export const PROJECT_LEVEL_ROUTE_OPERATIONS: ReadonlySet<string> = new Set([
   "agent-capabilities",
   "commands",
   "conversations",
+  "dev-servers",
   "diff",
   "files",
   "mcp-config",

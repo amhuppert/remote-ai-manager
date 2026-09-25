@@ -23,6 +23,7 @@ function createTestDeps(
     getProcessCwd: vi.fn().mockResolvedValue(null),
     realpath: vi.fn().mockImplementation(async (p: string) => p),
     probePortBindable: vi.fn().mockResolvedValue({ bindable: true }),
+    selfPid: 1,
     ...overrides,
   };
 }
@@ -92,10 +93,61 @@ describe("pure path helpers", () => {
     it("returns false when cwd is outside worktree and allowedCwd not provided", () => {
       expect(isOwnedProcessCwd("/var/run/other", "/wt")).toBe(false);
     });
+
+    it("returns false when cwd is a session worktree nested under a project root", () => {
+      expect(
+        isOwnedProcessCwd("/repo/.worktrees/feature-a1b2c3/apps/web", "/repo"),
+      ).toBe(false);
+      expect(isOwnedProcessCwd("/repo/.worktrees", "/repo")).toBe(false);
+    });
+
+    it("still owns a project-root cwd whose name merely starts with .worktrees", () => {
+      expect(isOwnedProcessCwd("/repo/.worktrees-notes", "/repo")).toBe(true);
+    });
   });
 });
 
 describe("createPortOwnershipService.classifyPort", () => {
+  it("never reports the Command Center server itself as owned, even when it runs from the worktree", async () => {
+    const deps = createTestDeps({
+      listListeningPids: vi.fn().mockResolvedValue([4242]),
+      getProcessCwd: vi.fn().mockResolvedValue("/repo"),
+      selfPid: 4242,
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.classifyPort({
+      port: 3000,
+      worktreePath: "/repo",
+    });
+
+    expect(result).toEqual({
+      status: "conflict",
+      pid: 4242,
+      cwd: "/repo",
+      reason: "command_center_server",
+    });
+  });
+
+  it("reports a session dev server as a conflict for its project root", async () => {
+    const deps = createTestDeps({
+      listListeningPids: vi.fn().mockResolvedValue([5150]),
+      getProcessCwd: vi.fn().mockResolvedValue("/repo/.worktrees/feature-x"),
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.classifyPort({
+      port: 3001,
+      worktreePath: "/repo",
+    });
+
+    expect(result).toEqual({
+      status: "conflict",
+      pid: 5150,
+      cwd: "/repo/.worktrees/feature-x",
+    });
+  });
+
   it("returns available when no listener exists on the port and the port is bindable", async () => {
     const deps = createTestDeps({
       listListeningPids: vi.fn().mockResolvedValue([]),
@@ -527,6 +579,32 @@ describe("createPortOwnershipService.findOwnedListenerInRange", () => {
 
     expect(result).toEqual({ status: "none" });
     expect(deps.getProcessCwd).not.toHaveBeenCalled();
+  });
+
+  it("skips the Command Center server and nested session worktrees when scanning a project root", async () => {
+    const deps = createTestDeps({
+      listAllListeningPorts: vi.fn().mockResolvedValue(
+        new Map<number, number[]>([
+          [3000, [4242]],
+          [3001, [5150]],
+        ]),
+      ),
+      getProcessCwd: vi.fn().mockImplementation(async (pid: number) => {
+        if (pid === 4242) return "/repo";
+        if (pid === 5150) return "/repo/.worktrees/feature-x";
+        return null;
+      }),
+      selfPid: 4242,
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.findOwnedListenerInRange({
+      basePort: 3000,
+      rangeSize: 100,
+      worktreePath: "/repo",
+    });
+
+    expect(result).toEqual({ status: "none" });
   });
 
   it("returns none when the batched listener lookup throws", async () => {

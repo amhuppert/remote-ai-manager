@@ -42,8 +42,12 @@ async function apiPost(url: string, body?: unknown): Promise<unknown> {
   return res.json().catch(() => ({}));
 }
 
-function apiBase(projectName: string, sessionName: string): string {
+function sessionApiBase(projectName: string, sessionName: string): string {
   return `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/dev-servers`;
+}
+
+function projectApiBase(projectName: string): string {
+  return `/api/projects/${encodeURIComponent(projectName)}/dev-servers`;
 }
 
 export interface UnmanagedConflict {
@@ -53,7 +57,9 @@ export interface UnmanagedConflict {
   cwd: string;
 }
 
-function parseUnmanagedConflict(error: unknown): UnmanagedConflict | null {
+export function parseUnmanagedConflict(
+  error: unknown,
+): UnmanagedConflict | null {
   if (!(error instanceof ApiCallError)) return null;
   if (error.code !== "UNMANAGED_DEV_SERVER_DETECTED") return null;
   const d = error.details ?? {};
@@ -83,13 +89,26 @@ export type DevServerDisplayState = DevServerRuntimeState & {
 };
 
 /**
- * Data-fetching hook for dev server state.
+ * Data-fetching hook for a session's dev server state.
  * Real-time updates driven by SSE invalidation in NotificationListener.
  */
 export function useDevServers(projectName: string, sessionName: string) {
+  return useDevServerController(
+    sessionApiBase(projectName, sessionName),
+    devServerKeys.list(projectName, sessionName),
+  );
+}
+
+/** Dev servers that run in the project's own checkout, without a session. */
+export function useProjectDevServers(projectName: string) {
+  return useDevServerController(
+    projectApiBase(projectName),
+    devServerKeys.project(projectName),
+  );
+}
+
+function useDevServerController(base: string, queryKey: readonly string[]) {
   const queryClient = useQueryClient();
-  const base = apiBase(projectName, sessionName);
-  const queryKey = devServerKeys.list(projectName, sessionName);
 
   const [unmanagedConflict, setUnmanagedConflict] =
     useState<UnmanagedConflict | null>(null);

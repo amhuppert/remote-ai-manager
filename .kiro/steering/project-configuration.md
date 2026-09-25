@@ -43,6 +43,9 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 ### `devServers` — Dev server declarations
 
 - Array of `{ name, command, port: { base, range? }, cwd? }` — started on demand through the UI or `cctl dev ensure`, not automatically at session creation. `port` is required.
+- Owners: a session worktree, a graph-workflow lane worktree, or the project root. Project-root servers are keyed in the registry by the project sentinel session name with `worktreePath = projectPath`; the service resolves that owner without a session lookup, and the project routes live at `/api/projects/[name]/dev-servers/...` (same handlers as the session routes, which refuse the sentinel).
+- `GET /api/dev-servers` (`dev-server/overview.ts`) projects every project's root servers plus active session/lane servers; `POST /api/dev-servers/stop` stops one listed instance by its exact registry identity.
+- Port ownership (`dev-server/port-ownership.ts`) never counts the CC server's own PID or a cwd under `<worktree>/.worktrees/` as owned — without both, a project-root start would offer to kill CC or a session's server.
 - Spawned with `shell: true` (unlike init and validation wrappers)
 - **CC owns port assignment.** CC scans `port.base`‥`port.base + port.range − 1` (`range` default 100), picks the first port already owned by this worktree (adopt) or free, and injects it as `CC_ASSIGNED_PORT` and `PORT` (plus any optional `port.env` alias). The `command` references `$CC_ASSIGNED_PORT`/`$PORT` directly — there is no `CC_PORT` stdout protocol and no helper scripts.
 - Readiness = TCP connect on the assigned port; 60s timeout (`READINESS_TIMEOUT_MS` in `dev-server/config.ts`) → `error`

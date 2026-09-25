@@ -78,6 +78,7 @@ function devServerStatusEvent(
 ): SSEEvent {
   return {
     type: "dev-server-status",
+    scope: "session",
     projectName: "p",
     sessionName: "s",
     serverName: "next",
@@ -261,6 +262,25 @@ describe("projectLifecycle — supported lifecycle events", () => {
     expect(projectLifecycle(devServerStatusEvent("error"))?.status).toBe(
       "failed",
     );
+  });
+
+  it("projects a project-root dev-server-status to a project/server scopeId", () => {
+    expect(
+      projectLifecycle({
+        type: "dev-server-status",
+        scope: "project",
+        projectName: "p",
+        serverName: "next",
+        status: "running",
+        port: 3000,
+        remoteUrl: null,
+        errorMessage: null,
+        ownedByThisSession: true,
+        worktreePath: "/repos/p",
+        ownerPid: 12,
+        logFilePath: null,
+      }),
+    ).toEqual({ scope: "dev-server", scopeId: "p/next", status: "running" });
   });
 
   it("projects both debug events to a running debug scope keyed by conversationId", () => {

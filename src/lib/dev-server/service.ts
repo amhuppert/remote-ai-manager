@@ -24,6 +24,7 @@ import { createTailscaleService } from "../shared/tailscale";
 import { readConfig as readGlobalConfig } from "../config/loader";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { sleep } from "@/lib/shared/sleep";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type {
   DevServerConfig,
   DevServerStatus,
@@ -359,6 +360,27 @@ export function createDevServerService(
     };
   }
 
+  // Project-root servers are addressed by the project sentinel and run in the
+  // project's own checkout; every other owner is a session. A graph-workflow
+  // lane conversation runs under the parent session name but in its own
+  // worktree; honor that override so the dev server is spawned in and keyed by
+  // the lane worktree. Ordinary sessions pass no override.
+  async function resolveOwnerWorktree(params: {
+    projectPath: string;
+    sessionName: string;
+    worktreePath?: string;
+  }): Promise<string> {
+    if (isProjectSentinel(params.sessionName)) return params.projectPath;
+    const session = await deps.getSession(
+      params.projectPath,
+      params.sessionName,
+    );
+    if (!session) {
+      throw new SessionNotFoundError(params.projectPath, params.sessionName);
+    }
+    return params.worktreePath ?? session.worktreePath;
+  }
+
   async function resolveContext(params: {
     projectPath: string;
     sessionName: string;
@@ -367,17 +389,7 @@ export function createDevServerService(
     worktreePath: string;
     configured: NormalizedDevServerConfig[];
   }> {
-    const session = await deps.getSession(
-      params.projectPath,
-      params.sessionName,
-    );
-    if (!session) {
-      throw new SessionNotFoundError(params.projectPath, params.sessionName);
-    }
-    // A graph-workflow lane conversation runs under the parent session name but
-    // in its own worktree; honor that override so the dev server is spawned in
-    // and keyed by the lane worktree. Ordinary sessions pass no override.
-    const worktreePath = params.worktreePath ?? session.worktreePath;
+    const worktreePath = await resolveOwnerWorktree(params);
     const repoConfig = await deps.readRepoConfig(worktreePath);
     const configured = (repoConfig?.devServers ?? []).map(
       normalizeDevServerConfig,

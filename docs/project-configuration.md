@@ -52,7 +52,7 @@ my-project/
 |---|---|---|---|
 | `initScriptPath` | `string \| null` | No | Script to run after a session worktree is created |
 | `validation` | `ValidationConfig` | No | Named validation commands and merge-workflow selections |
-| `devServers` | `Array<DevServer>` | No | Dev servers that can be launched from the session UI (see [`devServers`](#devservers--dev-server-configuration)) |
+| `devServers` | `Array<DevServer>` | No | Dev servers that can be launched from a session or the project root (see [`devServers`](#devservers--dev-server-configuration)) |
 | `agentBackends` | `{ cursor?: { disabledModels?: string[] } }` | No | Per-project agent backend configuration (see [`agentBackends.cursor`](#agentbackendscursor--cursor-disabled-models)) |
 
 ---
@@ -246,7 +246,7 @@ and machine-readable; use colorless, quiet output on success.
 
 ## `devServers` â€” Dev Server Configuration
 
-Declares dev servers that users can start and stop from the session detail page in Command Center. Each server runs inside the session's worktree, gets automatic port management, liveness monitoring, and optional remote URL resolution via Tailscale or LAN IP.
+Declares dev servers that users can start and stop from Command Center. A server runs either inside a session's worktree or in the project's own checkout (the project root, with no session), and gets automatic port management, liveness monitoring, and optional remote URL resolution via Tailscale or LAN IP.
 
 ### Configuration
 
@@ -300,6 +300,10 @@ CC owns port assignment. Before spawning the server, CC scans the window `baseâ€
 ### When It Runs
 
 Dev servers are started either from the Command Center UI on the session detail page **or** on demand by the agent inside the session via the session-scoped MCP tools described below. They are not started automatically during session creation.
+
+Project-root dev servers start from the **Dev servers** button on the project page or from the global **Dev servers** view (`/dev-servers`). They run in the project's main checkout on whatever branch it has checked out, read that checkout's `CommandCenter.json`, and write their log to `<project>/.cc/dev-server-logs/`. The global view lists every project's root servers alongside every starting or running session and workflow-lane server.
+
+Ownership checks for a project root never claim the Command Center server itself or a listener running inside `<project>/.worktrees/`, so a session's server is never offered as an unmanaged process to stop.
 
 When a session is deleted, all running dev servers for that session are stopped automatically.
 

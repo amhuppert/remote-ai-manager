@@ -280,7 +280,10 @@ export function projectLifecycle(event: SSEEvent): LifecycleProjection | null {
     case "dev-server-status":
       return {
         scope: "dev-server",
-        scopeId: `${event.projectName}/${event.sessionName}/${event.serverName}`,
+        scopeId:
+          event.scope === "project"
+            ? `${event.projectName}/${event.serverName}`
+            : `${event.projectName}/${event.sessionName}/${event.serverName}`,
         status: mapDevServerStatus(event.status),
       };
     case "debug-mode-status":

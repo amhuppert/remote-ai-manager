@@ -248,6 +248,8 @@ export interface DevServerPanelProps extends Omit<
   /** Position the panel below this element. */
   anchorRef: RefObject<HTMLElement | null>;
   presentation?: "anchored" | "dialog";
+  /** Names where these servers run when it is not the session worktree. */
+  scopeLabel?: string;
 }
 
 function UnmanagedConflictDialog({
@@ -332,6 +334,7 @@ export function DevServerPanel({
   onStopAll,
   anchorRef,
   presentation = "anchored",
+  scopeLabel,
   unmanagedConflict,
   onDismissUnmanagedConflict,
   onStopUnmanagedAndRetry,
@@ -376,9 +379,28 @@ export function DevServerPanel({
             ? { top: panelPos.top, right: panelPos.right }
             : undefined
         }
+        // Radix returns focus to its own Dialog.Trigger, which this
+        // externally-controlled panel does not have, so focus would drop to
+        // <body>. Return it to the control that opened the panel instead.
+        onCloseAutoFocus={(event) => {
+          const anchor = anchorRef.current;
+          const target = anchor?.matches("button, a[href]")
+            ? anchor
+            : anchor?.querySelector<HTMLElement>("button, a[href]");
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
       >
         <div className={HEADER}>
-          <span className={TITLE}>Dev Servers</span>
+          <span className="flex min-w-0 items-baseline gap-sm">
+            <span className={TITLE}>Dev Servers</span>
+            {scopeLabel !== undefined && (
+              <span className="truncate font-mono text-[0.7rem] text-text-tertiary">
+                {scopeLabel}
+              </span>
+            )}
+          </span>
           <button
             className={CLOSE}
             onClick={onClose}

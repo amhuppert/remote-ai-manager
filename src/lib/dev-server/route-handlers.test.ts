@@ -21,6 +21,7 @@ import type { PortOwnershipInput, PortOwnershipResult } from "./port-ownership";
 import { createPortSelectionService } from "./port-selection";
 import type { PublishFn } from "@/lib/events/publication";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
   DevServerTargetError,
   type ResolvedDevServerTarget,
@@ -109,6 +110,102 @@ function context(params: Record<string, string>) {
 async function json(response: Response): Promise<unknown> {
   return response.json() as Promise<unknown>;
 }
+
+describe("project-root dev-server routes", () => {
+  it("GET lists the project-root servers without resolving a session target", async () => {
+    const service = makeService();
+    const { handlers, deps } = makeHandlers(service);
+
+    const response = await handlers.GET(
+      new Request("http://cc.test/api/projects/project/dev-servers"),
+      context({ name: "project" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(service.list).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      worktreePath: "/repos/project",
+    });
+    expect(deps.targetResolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it("START spawns in the project root", async () => {
+    const service = makeService();
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.START(
+      new Request("http://cc.test/api/projects/project/dev-servers/web/start", {
+        method: "POST",
+      }),
+      context({ name: "project", serverName: "web" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(service.ensure).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      serverName: "web",
+      wait: false,
+      worktreePath: "/repos/project",
+    });
+  });
+
+  it("STOP stops the project-root instance", async () => {
+    const { handlers, deps } = makeHandlers(makeService());
+
+    const response = await handlers.STOP(
+      new Request("http://cc.test/api/projects/project/dev-servers/web/stop", {
+        method: "POST",
+      }),
+      context({ name: "project", serverName: "web" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.stopServer).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      worktreePath: "/repos/project",
+      serverName: "web",
+    });
+  });
+
+  it("STOP_ALL stops every project-root server", async () => {
+    const { handlers, deps } = makeHandlers(makeService());
+
+    const response = await handlers.STOP_ALL(
+      new Request("http://cc.test/api/projects/project/dev-servers/stop-all", {
+        method: "POST",
+      }),
+      context({ name: "project" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.stopAllForSession).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+    });
+  });
+
+  it("refuses the internal project sentinel in a session route position", async () => {
+    const service = makeService();
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.START_ALL(
+      new Request("http://cc.test/dev-servers/start-all", { method: "POST" }),
+      context({
+        name: "project",
+        session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toMatchObject({
+      code: "project_conversation_route_required",
+    });
+    expect(service.list).not.toHaveBeenCalled();
+  });
+});
 
 describe("dev-server route handlers", () => {
   it("GET lists servers through DevServerService so status is reconciled consistently", async () => {

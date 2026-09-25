@@ -18,6 +18,10 @@ import {
 import MemoryEntryLink from "@/components/memory/MemoryEntryLink";
 import QuickTicketButton from "@/components/topbar/QuickTicketButton";
 import {
+  DevServersMenuItem,
+  DevServersNavLink,
+} from "@/components/topbar/DevServersNavLink";
+import {
   ValidationBudgetIndicator,
   ValidationBudgetMenuItem,
   ValidationBudgetSheet,
@@ -48,7 +52,14 @@ type OpenSwitcher = "project" | "session" | null;
 interface TopbarProps {
   breadcrumbs: BreadcrumbSegment[];
   /** Controls which right-side content to show */
-  page: "projects" | "sessions" | "detail" | "tickets" | "specs" | "memory";
+  page:
+    | "projects"
+    | "sessions"
+    | "detail"
+    | "tickets"
+    | "specs"
+    | "memory"
+    | "dev-servers";
   /** Session detail controls — only rendered when page === "detail" */
   sessionControls?: React.ReactNode;
   /** Global status indicators — rendered when page !== "detail" */
@@ -390,6 +401,7 @@ export default function Topbar({
             </svg>
             <span className="leading-none max-768:hidden">Tickets</span>
           </Link>
+          <DevServersNavLink active={pathname === "/dev-servers"} />
           <Link
             href="/templates"
             className={cn(
@@ -484,6 +496,7 @@ export default function Topbar({
               <DropdownMenuItem asChild touch>
                 <Link href={specsHref}>Specs</Link>
               </DropdownMenuItem>
+              <DevServersMenuItem />
               <DropdownMenuItem asChild touch>
                 <Link href="/templates">Workflow Templates</Link>
               </DropdownMenuItem>
