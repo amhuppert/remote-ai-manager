@@ -296,6 +296,7 @@ export interface CreateMemoryNoteVariables {
   hook: string;
   body?: string;
   slug?: string;
+  indexMode?: MemoryIndexMode;
   /**
    * The predecessor this note replaces. The archival of that record and the
    * creation of this one are one transaction server-side, so the Library never

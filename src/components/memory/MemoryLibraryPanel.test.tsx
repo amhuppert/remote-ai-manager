@@ -263,9 +263,7 @@ describe("MemoryLibraryPanel — browse", () => {
 
     const user = userEvent.setup();
     async function chooseSort(label: string) {
-      await user.click(
-        screen.getByRole("combobox", { name: "Sort memory notes" }),
-      );
+      await user.click(screen.getByRole("combobox", { name: "Sort" }));
       await user.click(screen.getByRole("option", { name: label }));
     }
     await chooseSort("Newest created");
@@ -295,7 +293,7 @@ describe("MemoryLibraryPanel — browse", () => {
     await user.clear(
       screen.getByRole("searchbox", { name: "Search memory notes" }),
     );
-    await user.click(screen.getByRole("radio", { name: "review" }));
+    await chooseOption(user, "Status", "Review due");
     expect(order()).toEqual([
       "memory-row-alpha",
       "memory-row-beta",
@@ -326,7 +324,7 @@ describe("MemoryLibraryPanel — browse", () => {
     await screen.findByTestId("memory-row-mem-shared-db");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "proposed" }));
+    await chooseOption(user, "Status", "Proposed");
 
     const proposal = await screen.findByTestId("memory-row-mem-proposal");
     expect(within(proposal).getByText("proposed")).toBeInTheDocument();
@@ -596,7 +594,7 @@ describe("MemoryLibraryPanel — repair", () => {
     const user = await openDetail(
       "one DB across branches; unparseable rows quarantined",
     );
-    await user.click(await screen.findByRole("button", { name: "Archive" }));
+    await openMoreAction(user, "Archive");
 
     await waitFor(() => {
       const call = lastRequest(
@@ -676,6 +674,7 @@ describe("MemoryLibraryPanel — repair", () => {
     const user = await openDetail(
       "one DB across branches; unparseable rows quarantined",
     );
+    await user.click(await screen.findByRole("button", { name: /History/ }));
     await user.click(
       await screen.findByRole("button", { name: "Restore revision 3" }),
     );
@@ -706,7 +705,7 @@ describe("MemoryLibraryPanel — repair", () => {
     const user = await openDetail(
       "one DB across branches; unparseable rows quarantined",
     );
-    await user.click(await screen.findByRole("button", { name: "Supersede…" }));
+    await openMoreAction(user, "Supersede…");
     const hookField = await screen.findByRole("textbox", {
       name: /replacement hook/i,
     });
@@ -730,7 +729,7 @@ describe("MemoryLibraryPanel — repair", () => {
     const user = await openDetail(
       "one DB across branches; unparseable rows quarantined",
     );
-    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    await openMoreAction(user, "Delete…");
     // The click that names the act must not be the click that performs it.
     expect(api.requestsTo("DELETE", /^\/api\/memory\/notes\//)).toHaveLength(0);
 
@@ -744,7 +743,7 @@ describe("MemoryLibraryPanel — repair", () => {
 
   it("drops an open detail when the note is deleted somewhere else", async () => {
     await openDetail("one DB across branches; unparseable rows quarantined");
-    await screen.findByRole("button", { name: "Delete…" });
+    await screen.findByRole("button", { name: "More actions" });
 
     // The record is gone, so the read that would confirm it now fails.
     api.reply("GET", /^\/api\/memory\/notes\/mem-shared-db\?/, {
@@ -786,6 +785,598 @@ describe("MemoryLibraryPanel — repair", () => {
   });
 });
 
+describe("MemoryLibraryPanel — index inclusion", () => {
+  const HOOK = "one DB across branches; unparseable rows quarantined";
+  const DETAIL_PATH = /^\/api\/memory\/notes\/mem-shared-db\?/;
+
+  function stubDetail(detail: MemoryNote) {
+    api.reply("GET", DETAIL_PATH, {
+      json: { note: detail, links: [], lineage: NO_LINEAGE },
+    });
+  }
+
+  beforeEach(() => {
+    stubList();
+    stubReviewQueue();
+    stubDetail(note());
+    api.reply("GET", /^\/api\/memory\/notes\/mem-shared-db\/revisions\?/, {
+      json: { revisions: [revision()] },
+    });
+  });
+
+  function modeRadio(label: "Always" | "Auto" | "Search only") {
+    return within(
+      screen.getByRole("radiogroup", { name: "Index inclusion" }),
+    ).getByRole("radio", { name: label });
+  }
+
+  function emitAgentWrite(revisionNumber: number) {
+    const es = new FakeEventSource("/api/events");
+    registerMemorySseReactions(es, { queryClient: activeQueryClient });
+    es.emit("memory-changed", {
+      type: "memory-changed",
+      change: "updated",
+      memoryId: "mem-shared-db",
+      slug: "shared-state-db-across-branches",
+      scope: "project",
+      projectPath: "/repos/cc",
+      sessionName: null,
+      sessionCreatedAt: null,
+      lifecycle: "active",
+      revision: revisionNumber,
+      authorKind: "agent",
+      link: null,
+    } satisfies MemoryChangedEvent);
+  }
+
+  it.each([
+    ["always", "Always"],
+    ["auto", "Auto"],
+    ["search-only", "Search only"],
+  ] as const)(
+    "opens a %s note with its saved inclusion selected",
+    async (mode, label) => {
+      stubDetail(note({ indexMode: mode }));
+      await openDetail(HOOK);
+      await screen.findByRole("radiogroup", { name: "Index inclusion" });
+      expect(modeRadio(label)).toBeChecked();
+      expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();
+    },
+  );
+
+  it("shows an archived note's inclusion read-only", async () => {
+    stubDetail(note({ indexMode: "search-only", lifecycle: "archived" }));
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+
+    expect(modeRadio("Search only")).toBeChecked();
+    expect(screen.getByText("Archived memories are read-only.")).toBeVisible();
+    await user.click(modeRadio("Always"));
+    expect(modeRadio("Search only")).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();
+  });
+
+  it("saves a mode-only change as exactly that field against the read revision", async () => {
+    api.reply("PATCH", DETAIL_PATH, {
+      json: { note: note({ indexMode: "always", revision: 5 }) },
+    });
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+
+    await user.click(modeRadio("Always"));
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    await waitFor(() =>
+      expect(lastRequest("PATCH", DETAIL_PATH)?.jsonBody).toEqual({
+        baseRevision: 4,
+        indexMode: "always",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Saved"),
+    );
+    expect(modeRadio("Always")).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Revert" })).toBeDisabled();
+  });
+
+  it("clears the draft when the mode returns to its saved value or is reverted", async () => {
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+    const save = screen.getByRole("button", { name: "Save note" });
+
+    await user.click(modeRadio("Search only"));
+    expect(save).toBeEnabled();
+    await user.click(modeRadio("Auto"));
+    expect(save).toBeDisabled();
+
+    await user.click(modeRadio("Always"));
+    await user.click(screen.getByRole("button", { name: "Revert" }));
+    expect(modeRadio("Auto")).toBeChecked();
+    expect(save).toBeDisabled();
+  });
+
+  it("asks before discarding a mode-only draft on navigation", async () => {
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+    await user.click(modeRadio("Always"));
+
+    await user.click(screen.getByRole("button", { name: "← Library" }));
+    await screen.findByRole("alertdialog", { name: "Discard memory edits" });
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(modeRadio("Always")).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "← Library" }));
+    await user.click(screen.getByRole("button", { name: "Discard edits" }));
+    expect(
+      screen.queryByRole("radiogroup", { name: "Index inclusion" }),
+    ).toBeNull();
+  });
+
+  it("adopts a newer server mode while clean", async () => {
+    await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+
+    stubDetail(note({ indexMode: "always", revision: 9 }));
+    emitAgentWrite(9);
+
+    await waitFor(() => expect(modeRadio("Always")).toBeChecked());
+  });
+
+  it("keeps a dirty mode and its base revision when another writer advances the note", async () => {
+    api.reply("PATCH", DETAIL_PATH, {
+      status: 409,
+      json: {
+        error: "another writer advanced this note",
+        code: "stale_revision",
+        details: {
+          currentRevision: 9,
+          baseRevision: 4,
+          slug: "shared-state-db-across-branches",
+        },
+      },
+    });
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+    await user.click(modeRadio("Search only"));
+
+    stubDetail(note({ indexMode: "always", revision: 9 }));
+    emitAgentWrite(9);
+    await waitFor(() =>
+      expect(api.requestsTo("GET", DETAIL_PATH)).not.toHaveLength(1),
+    );
+    expect(modeRadio("Search only")).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+    await waitFor(() =>
+      expect(lastRequest("PATCH", DETAIL_PATH)?.jsonBody).toEqual({
+        baseRevision: 4,
+        indexMode: "search-only",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("revision 9");
+    expect(modeRadio("Search only")).toBeChecked();
+  });
+
+  it("keeps the draft after a failed save so it can be retried", async () => {
+    api.reply("PATCH", DETAIL_PATH, {
+      status: 500,
+      json: { error: "the state store is unavailable" },
+    });
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+    await user.click(modeRadio("Always"));
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "the state store is unavailable",
+    );
+    expect(modeRadio("Always")).toBeChecked();
+    expect(modeRadio("Always")).toBeEnabled();
+
+    api.reply("PATCH", DETAIL_PATH, {
+      json: { note: note({ indexMode: "always", revision: 5 }) },
+    });
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Saved"),
+    );
+  });
+
+  it("locks the draft and competing actions while a save is in flight", async () => {
+    api.pending("PATCH", DETAIL_PATH);
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+    await user.click(modeRadio("Always"));
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Saving…"),
+    );
+    expect(screen.getByRole("button", { name: "Save note" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(modeRadio("Auto")).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Hook" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Revert" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Mark reviewed" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "More actions" })).toBeDisabled();
+  });
+
+  it("blocks lifecycle actions until an unsaved mode is saved or reverted", async () => {
+    const user = await openDetail(HOOK);
+    await screen.findByRole("radiogroup", { name: "Index inclusion" });
+    await user.click(modeRadio("Always"));
+
+    expect(
+      screen.getByText("Save or revert changes before another action."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Mark reviewed" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "More actions" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Revert" }));
+    expect(screen.getByRole("button", { name: "More actions" })).toBeEnabled();
+    expect(
+      screen.queryByText("Save or revert changes before another action."),
+    ).toBeNull();
+  });
+
+  it("carries the saved inclusion into a replacement note", async () => {
+    stubDetail(note({ indexMode: "always" }));
+    api.reply("POST", /^\/api\/memory\/notes\?/, {
+      json: {
+        note: note({ id: "mem-successor", indexMode: "always" }),
+        advisories: { overlapCandidates: [], hookWarnings: [] },
+      },
+    });
+    const user = await openDetail(HOOK);
+    await openMoreAction(user, "Supersede…");
+    await user.type(
+      await screen.findByRole("textbox", { name: /replacement hook/i }),
+      "the replacement",
+    );
+    await user.click(screen.getByRole("button", { name: "Create successor" }));
+
+    await waitFor(() =>
+      expect(lastRequest("POST", /^\/api\/memory\/notes\?/)?.jsonBody).toEqual(
+        expect.objectContaining({
+          indexMode: "always",
+          supersedes: "mem-shared-db",
+        }),
+      ),
+    );
+  });
+});
+
+/** Pick an option from one of the Library's labelled selects. */
+async function chooseOption(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  option: string,
+) {
+  await user.click(screen.getByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+
+/** Open the detail's More actions menu and choose the named item. */
+async function openMoreAction(
+  user: ReturnType<typeof userEvent.setup>,
+  item: string,
+) {
+  await user.click(await screen.findByRole("button", { name: "More actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+describe("MemoryLibraryPanel — index inclusion in the library", () => {
+  const ALWAYS = note({
+    id: "mem-always",
+    slug: "always-note",
+    hook: "alpha lane trap",
+    indexMode: "always",
+  });
+  const AUTO = note({
+    id: "mem-auto",
+    slug: "auto-note",
+    hook: "beta lane lesson",
+    indexMode: "auto",
+  });
+  const SEARCH_ONLY = note({
+    id: "mem-search",
+    slug: "search-note",
+    hook: "gamma reference",
+    indexMode: "search-only",
+  });
+
+  it("labels every row with its saved inclusion", async () => {
+    stubList([ALWAYS, AUTO, SEARCH_ONLY]);
+    stubReviewQueue();
+    renderPanel();
+
+    expect(
+      await screen.findByTestId("memory-row-mem-always"),
+    ).toHaveAccessibleDescription(/Index inclusion: Always/);
+    expect(
+      screen.getByTestId("memory-row-mem-auto"),
+    ).toHaveAccessibleDescription(/Index inclusion: Auto/);
+    expect(
+      screen.getByTestId("memory-row-mem-search"),
+    ).toHaveAccessibleDescription(/Index inclusion: Search only/);
+  });
+
+  it("narrows every row source by inclusion alongside search and status", async () => {
+    stubList([ALWAYS, AUTO, SEARCH_ONLY]);
+    stubReviewQueue([queueEntry({ note: ALWAYS }), queueEntry({ note: AUTO })]);
+    renderPanel();
+    await screen.findByTestId("memory-row-mem-auto");
+    const user = userEvent.setup();
+
+    await chooseOption(user, "Index inclusion", "Always");
+    expect(screen.getByTestId("memory-row-mem-always")).toBeInTheDocument();
+    expect(screen.queryByTestId("memory-row-mem-auto")).toBeNull();
+    expect(screen.queryByTestId("memory-row-mem-search")).toBeNull();
+
+    await chooseOption(user, "Status", "Review due");
+    expect(
+      await screen.findByTestId("memory-row-mem-always"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("memory-row-mem-auto")).toBeNull();
+
+    await user.type(screen.getByRole("searchbox"), "beta");
+    expect(screen.queryByTestId("memory-row-mem-always")).toBeNull();
+    expect(screen.getByText("No matching memories")).toBeVisible();
+  });
+
+  it("clears search, scope, and inclusion together but keeps the status", async () => {
+    stubList([ALWAYS, AUTO]);
+    stubReviewQueue();
+    api.reply(
+      "GET",
+      /^\/api\/memory\/notes\?project=cc&session=s1&scope=project&lifecycle=active$/,
+      { json: { notes: [ALWAYS, AUTO] } },
+    );
+    renderPanel();
+    await screen.findByTestId("memory-row-mem-auto");
+    const user = userEvent.setup();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+
+    await chooseOption(user, "Scope", "Project");
+    await chooseOption(user, "Index inclusion", "Search only");
+    await user.type(screen.getByRole("searchbox"), "lane");
+    expect(await screen.findByText("No matching memories")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(
+      await screen.findByTestId("memory-row-mem-auto"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Scope" })).toHaveTextContent(
+      "All scopes",
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Index inclusion" }),
+    ).toHaveTextContent("All modes");
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent(
+      "Active",
+    );
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
+  it("names a genuinely empty queue rather than a missed match", async () => {
+    stubList([]);
+    stubReviewQueue();
+    renderPanel();
+
+    expect(await screen.findByText("No active memories")).toBeVisible();
+    expect(screen.queryByText("No matching memories")).toBeNull();
+  });
+
+  it("opens a queue shortcut past an inclusion filter that would hide it", async () => {
+    stubList();
+    stubReviewQueue();
+    api.reply(
+      "GET",
+      /^\/api\/memory\/review\?project=cc&session=s1&promotionCandidates=true&sessionName=s1&sessionCreatedAt=/,
+      {
+        json: {
+          entries: [
+            queueEntry({
+              staleness: [],
+              noteReviewDue: false,
+              promotionCandidate: true,
+            }),
+          ],
+        },
+      },
+    );
+    renderPanel();
+    await screen.findByTestId("memory-row-mem-shared-db");
+    const user = userEvent.setup();
+
+    await chooseOption(user, "Index inclusion", "Search only");
+    await user.click(
+      await screen.findByRole("button", { name: /1 promotion candidate/i }),
+    );
+
+    expect(
+      await screen.findByTestId("memory-row-mem-session"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Index inclusion" }),
+    ).toHaveTextContent("All modes");
+  });
+
+  it("keeps the editor open when a save moves its note out of the filter", async () => {
+    stubList([AUTO]);
+    stubReviewQueue();
+    api.reply("GET", /^\/api\/memory\/notes\/mem-auto\?/, {
+      json: { note: AUTO, links: [], lineage: NO_LINEAGE },
+    });
+    api.reply("GET", /^\/api\/memory\/notes\/mem-auto\/revisions\?/, {
+      json: { revisions: [] },
+    });
+    const saved = { ...AUTO, indexMode: "always" as const, revision: 5 };
+    api.reply("PATCH", /^\/api\/memory\/notes\/mem-auto\?/, {
+      json: { note: saved },
+    });
+    renderWithQuery(
+      <MemoryLibraryPanel
+        projectName="cc"
+        sessionName="s1"
+        conversationId="conv-1"
+        active
+        layout="page"
+      />,
+    );
+    const user = userEvent.setup();
+    await screen.findByTestId("memory-row-mem-auto");
+    await chooseOption(user, "Index inclusion", "Auto");
+    await user.click(screen.getByTestId("memory-row-mem-auto"));
+    const group = await screen.findByRole("radiogroup", {
+      name: "Index inclusion",
+    });
+
+    stubList([saved]);
+    await user.click(within(group).getByRole("radio", { name: "Always" }));
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("memory-row-mem-auto")).toBeNull(),
+    );
+    expect(within(group).getByRole("radio", { name: "Always" })).toBeChecked();
+  });
+});
+
+describe("MemoryLibraryPanel — memory help", () => {
+  beforeEach(() => {
+    stubList();
+    stubReviewQueue();
+    api.reply("GET", /^\/api\/memory\/notes\/mem-shared-db\?/, {
+      json: { note: note(), links: [], lineage: NO_LINEAGE },
+    });
+    api.reply("GET", /^\/api\/memory\/notes\/mem-shared-db\/revisions\?/, {
+      json: { revisions: [] },
+    });
+  });
+
+  it("explains the system in a dialog without touching the library", async () => {
+    renderPanel();
+    await screen.findByTestId("memory-row-mem-shared-db");
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox"), "DB");
+    const requestsBefore = api.requests.length;
+
+    const trigger = screen.getByRole("button", { name: "How memory works" });
+    await user.click(trigger);
+    const dialog = await screen.findByRole("dialog", {
+      name: "How memory works",
+    });
+    expect(dialog).toHaveAccessibleDescription(
+      /keeps useful knowledge available across conversations/u,
+    );
+    for (const heading of [
+      "What agents receive",
+      "Where a memory applies",
+      "Choose index inclusion",
+      "Keep memories useful",
+      "Editing and removal",
+      "Inspect a conversation's index",
+    ]) {
+      expect(
+        within(dialog).getByRole("heading", { name: heading }),
+      ).toBeInTheDocument();
+    }
+
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(trigger).toHaveFocus();
+    expect(screen.getByRole("searchbox")).toHaveValue("DB");
+    expect(api.requests.length).toBe(requestsBefore);
+  });
+
+  it("keeps an unsaved draft through opening and closing help", async () => {
+    renderWithQuery(
+      <MemoryLibraryPanel
+        projectName="cc"
+        sessionName="s1"
+        conversationId="conv-1"
+        active
+        layout="page"
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: `Open memory note ${note().hook}`,
+      }),
+    );
+    const group = await screen.findByRole("radiogroup", {
+      name: "Index inclusion",
+    });
+    await user.type(screen.getByLabelText("Hook"), " draft");
+    await user.click(within(group).getByRole("radio", { name: "Always" }));
+
+    await user.click(screen.getByRole("button", { name: "How memory works" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "How memory works",
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close memory help" }),
+    );
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByLabelText("Hook")).toHaveValue(`${note().hook} draft`);
+    expect(within(group).getByRole("radio", { name: "Always" })).toBeChecked();
+    expect(api.requestsTo("PATCH", /^\/api\/memory\/notes\//)).toHaveLength(0);
+  });
+
+  it("is available from the index preview and keeps its subject", async () => {
+    api.json("GET", "/api/projects/cc/sessions/s1/conversations", [
+      toPublicConversationState(
+        makeConversationState({ id: "conv-1", name: "the open lane" }),
+      ),
+    ]);
+    api.json("GET", "/api/projects/cc/conversations", []);
+    api.reply("GET", /^\/api\/memory\/index\?conversation=conv-1$/, {
+      json: {
+        mode: "full",
+        block: {
+          kind: "full",
+          since: null,
+          text: "<memory-index>\nadvisory\n</memory-index>",
+          bytes: 39,
+          budget: { bytes: 12288, hooks: 80 },
+          omitted: 0,
+          total: 0,
+          withheld: { reviewDue: 0, expired: 0, proposed: 0 },
+          entries: [],
+        },
+      },
+    });
+    renderPanel();
+    await screen.findByTestId("memory-row-mem-shared-db");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: "Index preview" }));
+    await screen.findByTestId("memory-index-preview-block");
+
+    await user.click(screen.getByRole("button", { name: "How memory works" }));
+    await screen.findByRole("dialog", { name: "How memory works" });
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByTestId("memory-index-preview-block").textContent).toBe(
+      "<memory-index>\nadvisory\n</memory-index>",
+    );
+    expect(screen.getByRole("radio", { name: "Index preview" })).toBeChecked();
+  });
+});
+
 describe("MemoryLibraryPanel — proposed global notes", () => {
   it("approves an agent's global proposal, activating it", async () => {
     stubList();
@@ -804,7 +1395,7 @@ describe("MemoryLibraryPanel — proposed global notes", () => {
     renderPanel();
     await screen.findByTestId("memory-row-mem-shared-db");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "proposed" }));
+    await chooseOption(user, "Status", "Proposed");
     await user.click(
       await screen.findByRole("button", {
         name: "Open memory note prefer bun over npm in every project",
@@ -835,7 +1426,7 @@ describe("MemoryLibraryPanel — proposed global notes", () => {
     });
 
     await openDetail("one DB across branches; unparseable rows quarantined");
-    await screen.findByRole("button", { name: "Archive" });
+    await screen.findByRole("button", { name: "More actions" });
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 });
@@ -897,7 +1488,7 @@ describe("MemoryLibraryPanel — promotion candidates", () => {
     await screen.findByTestId("memory-row-mem-shared-db");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "global" }));
+    await chooseOption(user, "Scope", "Global");
     await user.type(
       screen.getByRole("searchbox", { name: /search/i }),
       "matches no candidate",
@@ -912,7 +1503,9 @@ describe("MemoryLibraryPanel — promotion candidates", () => {
     ).toBeInTheDocument();
     // The filters the badge cleared say so on screen, so the view the human
     // now reads is not narrowed by a control still claiming otherwise.
-    expect(screen.getByRole("radio", { name: "all" })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Scope" })).toHaveTextContent(
+      "All scopes",
+    );
     expect(screen.getByRole("searchbox", { name: /search/i })).toHaveValue("");
   });
 });
@@ -948,7 +1541,7 @@ describe("MemoryLibraryPanel — index preview", () => {
     await screen.findByTestId("memory-row-mem-shared-db");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "index" }));
+    await user.click(screen.getByRole("radio", { name: "Index preview" }));
 
     // The preview opens on the conversation the panel is mounted in, so the
     // first thing a human sees is what the lane in front of them was told.
@@ -968,8 +1561,8 @@ describe("MemoryLibraryPanel — derived freshness", () => {
     const { queryClient } = renderPanel();
     await screen.findByTestId("memory-row-mem-shared-db");
     expect(
-      screen.queryByRole("button", { name: /promotion candidate/iu }),
-    ).toBeNull();
+      await screen.findByRole("button", { name: /0 promotion candidates/iu }),
+    ).toBeInTheDocument();
 
     sessionFinished = true;
     api.reply(
@@ -1013,13 +1606,13 @@ describe("MemoryLibraryPanel — derived freshness", () => {
     await screen.findByTestId("memory-row-mem-shared-db");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "review" }));
+    await chooseOption(user, "Status", "Review due");
     expect(
       await screen.findByTestId("memory-row-mem-shared-db"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("memory-row-mem-session")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("radio", { name: "session" }));
+    await chooseOption(user, "Scope", "Session");
 
     await waitFor(() =>
       expect(screen.queryByTestId("memory-row-mem-shared-db")).toBeNull(),
@@ -1049,12 +1642,15 @@ describe("MemoryLibraryPanel — pending feedback", () => {
       "one DB across branches; unparseable rows quarantined",
     );
 
-    const archive = await screen.findByRole("button", { name: "Archive" });
-    expect(archive).not.toHaveAttribute("aria-busy");
+    const actions = await screen.findByRole("button", { name: "More actions" });
+    expect(actions).not.toHaveAttribute("aria-busy");
 
-    await user.click(archive);
+    await openMoreAction(user, "Archive");
 
-    await waitFor(() => expect(archive).toHaveAttribute("aria-busy", "true"));
+    // The menu closes as the act is chosen, so the pending state stays on the
+    // control that opened it.
+    await waitFor(() => expect(actions).toHaveAttribute("aria-busy", "true"));
+    expect(screen.getByText("Archiving…")).toBeVisible();
   });
 });
 
@@ -1173,7 +1769,7 @@ describe("MemoryLibraryPanel — page navigation", () => {
     expect(screen.getByRole("button", { name: "← Library" })).toHaveFocus();
     expect(screen.getByRole("searchbox")).toHaveValue("one DB");
     await user.type(screen.getByLabelText("Hook"), " draft");
-    await user.click(screen.getByRole("radio", { name: "index" }));
+    await user.click(screen.getByRole("radio", { name: "Index preview" }));
     expect(
       await screen.findByRole("alertdialog", { name: "Discard memory edits" }),
     ).toBeTruthy();

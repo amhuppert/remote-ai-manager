@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   Select,
   SelectTrigger,
@@ -11,6 +11,11 @@ import {
 import { useSessionsQuery } from "@/lib/sessions/queries";
 import { createClientLogger } from "@/lib/logging/client-logger";
 
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/Collapsible";
 import {
   EmptyState,
   EmptyStateDesc,
@@ -32,6 +37,9 @@ import type {
 } from "@/lib/memory/query-keys";
 import { useProjectConversationsQuery } from "@/lib/project-conversations-client/queries";
 import { cn } from "@/lib/ui/cn";
+import { ChevronDownIcon } from "@/components/icons";
+
+import { MEMORY_DISCLOSURE_TRIGGER_CLASS } from "./memory-disclosure";
 
 export interface MemoryIndexPreviewProps {
   scopeRef: MemoryScopeRef;
@@ -148,33 +156,71 @@ function ProjectMemoryIndexPreview({
     <>
       <div className="flex shrink-0 flex-col gap-sm border-0 border-b border-solid border-border-subtle px-md py-sm">
         {layout === "page" ? (
-          <Select
-            value={
-              scope === "project" ? "project" : `session:${selectedSession}`
-            }
-            onValueChange={(value) => {
-              const session = value === "project" ? null : value.slice(8);
-              setSelectedSession(session);
-              setScope(session === null ? "project" : "session");
-              setSelected(null);
-              onSubjectChange?.(null, session);
-            }}
-          >
-            <SelectTrigger aria-label="Conversation scope">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="project">Project conversations</SelectItem>
-              {(sessions.data ?? []).map((session) => (
-                <SelectItem
-                  key={session.sessionName}
-                  value={`session:${session.sessionName}`}
+          <div className="grid grid-cols-2 items-start gap-sm @max-[560px]:grid-cols-1">
+            <PickerField label="Conversation scope">
+              {(id) => (
+                <Select
+                  value={
+                    scope === "project"
+                      ? "project"
+                      : `session:${selectedSession}`
+                  }
+                  onValueChange={(value) => {
+                    const session = value === "project" ? null : value.slice(8);
+                    setSelectedSession(session);
+                    setScope(session === null ? "project" : "session");
+                    setSelected(null);
+                    onSubjectChange?.(null, session);
+                  }}
                 >
-                  {session.sessionName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                  <SelectTrigger id={id} layoutClassName="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="project">
+                      Project conversations
+                    </SelectItem>
+                    {(sessions.data ?? []).map((session) => (
+                      <SelectItem
+                        key={session.sessionName}
+                        value={`session:${session.sessionName}`}
+                      >
+                        {session.sessionName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </PickerField>
+            <PickerField label="Conversation">
+              {(id) =>
+                conversations.length === 0 ? (
+                  <span className="font-mono text-[0.7rem] text-text-tertiary">
+                    No conversations to preview in this scope.
+                  </span>
+                ) : (
+                  <Select value={selected ?? ""} onValueChange={selectSubject}>
+                    <SelectTrigger id={id} layoutClassName="w-full">
+                      <SelectValue placeholder="Choose a conversation" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {conversations.map((conversation) => (
+                        <SelectItem
+                          key={conversation.id}
+                          value={conversation.id}
+                        >
+                          {conversationLabel(conversation)} ·{" "}
+                          {scope === "session"
+                            ? selectedSession
+                            : scopeRef.projectName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )
+              }
+            </PickerField>
+          </div>
         ) : scopeRef.sessionName === null ? null : (
           <SegmentedControl
             value={scope}
@@ -198,24 +244,10 @@ function ProjectMemoryIndexPreview({
             Could not load conversations
           </p>
         ) : null}
-        {conversations.length === 0 ? (
+        {layout === "page" ? null : conversations.length === 0 ? (
           <span className="font-mono text-[0.7rem] text-text-tertiary">
             No conversations to preview in this scope.
           </span>
-        ) : layout === "page" ? (
-          <Select value={selected ?? ""} onValueChange={selectSubject}>
-            <SelectTrigger aria-label="Conversation to preview">
-              <SelectValue placeholder="Choose a conversation" />
-            </SelectTrigger>
-            <SelectContent>
-              {conversations.map((conversation) => (
-                <SelectItem key={conversation.id} value={conversation.id}>
-                  {conversationLabel(conversation)} ·{" "}
-                  {scope === "session" ? selectedSession : scopeRef.projectName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         ) : (
           <div className="flex flex-wrap gap-xs">
             {conversations.map((conversation) => (
@@ -237,9 +269,9 @@ function ProjectMemoryIndexPreview({
             aria-label="Which render of the index to show"
           >
             <SegmentedControlItem value="next-turn">
-              next turn
+              Next turn
             </SegmentedControlItem>
-            <SegmentedControlItem value="full">full index</SegmentedControlItem>
+            <SegmentedControlItem value="full">Full index</SegmentedControlItem>
           </SegmentedControl>
           {selectedConversation === null ? null : (
             <span className="font-mono text-[0.7rem] text-text-tertiary">
@@ -250,12 +282,34 @@ function ProjectMemoryIndexPreview({
         {/* Only under the next-turn view: the full index makes no claim about a
             turn, so the same sentence there would be noise. */}
         {render === "next-turn" ? (
-          <p
-            data-testid="memory-index-preview-boundary"
-            className="m-0 font-mono text-[0.7rem] leading-[1.5] text-text-tertiary"
-          >
-            {NEXT_TURN_BOUNDARY}
-          </p>
+          <div className="flex flex-col gap-2xs">
+            <p className="m-0 font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+              Preview based on this conversation&apos;s current state. Changes
+              when a turn starts can result in a full index instead.
+            </p>
+            <Collapsible>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className={MEMORY_DISCLOSURE_TRIGGER_CLASS}
+                >
+                  Preview limits
+                  <ChevronDownIcon
+                    size={14}
+                    className="shrink-0 group-data-[state=open]:rotate-180"
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <p
+                  data-testid="memory-index-preview-boundary"
+                  className="m-0 pt-xs font-mono text-[0.7rem] leading-[1.5] text-text-tertiary"
+                >
+                  {NEXT_TURN_BOUNDARY}
+                </p>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
         ) : null}
       </div>
 
@@ -264,7 +318,11 @@ function ProjectMemoryIndexPreview({
           <EmptyStateTitle>Choose a conversation to preview</EmptyStateTitle>
         </EmptyState>
       ) : (
-        <PreviewBody failed={preview.isError} block={preview.data} />
+        <PreviewBody
+          failed={preview.isError}
+          block={preview.data}
+          render={render}
+        />
       )}
     </>
   );
@@ -289,6 +347,28 @@ function isPreviewScope(value: string): value is PreviewScope {
 
 function isMemoryIndexRender(value: string): value is MemoryIndexRender {
   return value === "next-turn" || value === "full";
+}
+
+/** A picker with its label shown above it, wired by id. */
+function PickerField({
+  label,
+  children,
+}: {
+  label: string;
+  children(id: string): React.ReactNode;
+}): React.JSX.Element {
+  const id = useId();
+  return (
+    <div className="flex min-w-0 flex-col gap-2xs">
+      <label
+        htmlFor={id}
+        className="font-mono text-[0.66rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
+      >
+        {label}
+      </label>
+      {children(id)}
+    </div>
+  );
 }
 
 /**
@@ -337,11 +417,16 @@ function ConversationChoice({
 
 interface PreviewBodyProps {
   failed: boolean;
+  render: MemoryIndexRender;
   /** Undefined until the read resolves; null when the server composed none. */
   block: MemoryIndexBlockView | null | undefined;
 }
 
-function PreviewBody({ failed, block }: PreviewBodyProps): React.JSX.Element {
+function PreviewBody({
+  failed,
+  block,
+  render,
+}: PreviewBodyProps): React.JSX.Element {
   if (failed) {
     return (
       <EmptyState layoutClassName="min-h-0 flex-1">
@@ -363,10 +448,14 @@ function PreviewBody({ failed, block }: PreviewBodyProps): React.JSX.Element {
   if (block === null) {
     return (
       <EmptyState layoutClassName="min-h-0 flex-1">
-        <EmptyStateTitle>This conversation is told nothing</EmptyStateTitle>
+        <EmptyStateTitle>
+          {render === "next-turn"
+            ? "No memory block for the next turn"
+            : "No memory block for this conversation"}
+        </EmptyStateTitle>
         <EmptyStateDesc>
-          Its next turn carries no memory block at all — either its read policy
-          delivers none, or no note it can see is eligible for the index.
+          Either its delivery policy provides no memory, or no note it can see
+          is eligible for the index.
         </EmptyStateDesc>
       </EmptyState>
     );

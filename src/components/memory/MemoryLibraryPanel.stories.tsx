@@ -1,5 +1,6 @@
 import { useState, type ComponentProps } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { installFetchFixture } from "@/test/fetch-fixture";
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
@@ -59,7 +60,28 @@ const due: MemoryNote = {
   reviewAfter: "2026-08-15T00:00:00.000Z",
 };
 
+const longNote: MemoryNote = {
+  ...base,
+  id: "long",
+  slug: "graph-workflow-shared-docs-revert-between-turns-under-concurrent-lane-writes",
+  indexMode: "always",
+  hook: "A registered graph-workflow shared doc can silently revert to an earlier revision between agent turns when two lanes write it concurrently; re-read the doc at the start of every turn and never trust the copy from the previous turn.",
+  body: Array.from(
+    { length: 12 },
+    (_, index) =>
+      `Step ${index + 1}: re-read the shared document, compare its revision with the one the lane last wrote, and stop if they differ.`,
+  ).join("\n"),
+  statusNote: {
+    text: "Still reproducing on the lane runner after the last engine change; recheck once the join fix merges.",
+    updatedAt: "2026-09-04T00:00:00.000Z",
+    reviewAfter: "2026-09-20T00:00:00.000Z",
+  },
+  revision: 4,
+  updatedAt: "2026-09-07T12:00:00.000Z",
+};
+
 const libraryNotes: MemoryNote[] = [
+  longNote,
   {
     ...base,
     id: "validation",
@@ -126,6 +148,16 @@ const libraryNotes: MemoryNote[] = [
     updatedAt: "2026-09-05T10:00:00.000Z",
   },
 ];
+
+/** Per-story fixture behavior for the note-update route. */
+type PatchBehavior = "persist" | "pending" | "error" | "conflict";
+
+function patchBehaviorOf(parameters: Record<string, unknown>): PatchBehavior {
+  const value = parameters["memoryPatch"];
+  return value === "pending" || value === "error" || value === "conflict"
+    ? value
+    : "persist";
+}
 
 function Preview(args: ComponentProps<typeof MemoryLibraryPanel>) {
   const [client] = useState(
@@ -225,13 +257,34 @@ const meta = {
         lineage: { supersedes: null, supersededBy: null },
       },
     }));
-    api.reply("GET", /^\/api\/memory\/notes\/[^/]+\/revisions/, {
-      json: { revisions: [] },
-    });
+    api.reply("GET", /^\/api\/memory\/notes\/[^/]+\/revisions/, (req) => ({
+      json: {
+        revisions: req.pathname.includes("/long/")
+          ? [3, 2, 1].map((revision) => ({
+              id: `long-rev-${revision}`,
+              memoryId: longNote.id,
+              revision,
+              snapshot: { ...longNote, revision },
+              origin: revision === 1 ? "create" : "edit",
+              baseRevision: revision === 1 ? null : revision - 1,
+              restoredFromRevision: null,
+              authorKind: "agent",
+              authorConversationId: null,
+              createdAt: `2026-09-0${revision}T00:00:00.000Z`,
+            }))
+          : [],
+      },
+    }));
+    const patchBehavior = patchBehaviorOf(context.parameters);
     api.reply("PATCH", /^\/api\/memory\/notes\//, (req) => {
       const note = notes.find((note) => req.pathname.endsWith(`/${note.id}`));
       if (!note) return { status: 404, json: { error: "Note not found" } };
-      if (context.name === "Conflict")
+      if (patchBehavior === "error")
+        return {
+          status: 503,
+          json: { error: "The memory store is temporarily unavailable." },
+        };
+      if (context.name === "Conflict" || patchBehavior === "conflict")
         return {
           status: 409,
           json: {
@@ -324,6 +377,8 @@ const meta = {
       },
     });
     if (context.name === "Loading") api.pending("GET", "/api/memory/notes");
+    if (patchBehavior === "pending")
+      api.pending("PATCH", /^\/api\/memory\/notes\//);
     if (context.name === "Error")
       api.reply("GET", "/api/memory/notes", {
         status: 503,
@@ -334,8 +389,86 @@ const meta = {
 } satisfies Meta<typeof MemoryLibraryPanel>;
 export default meta;
 type Story = StoryObj<typeof meta>;
+type StoryContext = Parameters<NonNullable<Story["play"]>>[0];
+
+/** The page, including portalled menus, listboxes, and dialogs. */
+function page(canvasElement: HTMLElement) {
+  return within(canvasElement.ownerDocument.body);
+}
+
+async function chooseMode(
+  canvasElement: HTMLElement,
+  label: "Always" | "Auto" | "Search only",
+) {
+  const group = await page(canvasElement).findByRole("radiogroup", {
+    name: "Index inclusion",
+  });
+  await userEvent.click(within(group).getByRole("radio", { name: label }));
+}
+
+async function saveModeChange({ canvasElement }: StoryContext) {
+  await chooseMode(canvasElement, "Always");
+  await userEvent.click(
+    page(canvasElement).getByRole("button", { name: "Save note" }),
+  );
+}
+
+async function openHelp({ canvasElement }: StoryContext) {
+  const body = page(canvasElement);
+  await userEvent.click(
+    await body.findByRole("button", { name: "How memory works" }),
+  );
+  const dialog = await body.findByRole("dialog", { name: "How memory works" });
+  // The dialog animates in from transparent.
+  await waitFor(() => expect(dialog).toBeVisible());
+}
+
 export const Default: Story = {};
 export const Detail: Story = { args: { initialNoteId: "lesson" } };
+export const DetailAlways: Story = { args: { initialNoteId: "validation" } };
+export const DetailSearchOnly: Story = { args: { initialNoteId: "env" } };
+export const ModeDirty: Story = {
+  args: { initialNoteId: "lesson" },
+  play: async ({ canvasElement }) => {
+    await chooseMode(canvasElement, "Search only");
+    await expect(
+      page(canvasElement).getByRole("button", { name: "Save note" }),
+    ).toBeEnabled();
+  },
+};
+export const Saving: Story = {
+  args: { initialNoteId: "lesson" },
+  parameters: { memoryPatch: "pending" },
+  play: async (context) => {
+    await saveModeChange(context);
+    await expect(
+      await page(context.canvasElement).findByText("Saving…"),
+    ).toBeVisible();
+  },
+};
+export const SaveError: Story = {
+  args: { initialNoteId: "lesson" },
+  parameters: { memoryPatch: "error" },
+  play: async (context) => {
+    await saveModeChange(context);
+    await expect(
+      await page(context.canvasElement).findByRole("alert"),
+    ).toHaveTextContent("temporarily unavailable");
+  },
+};
+export const ModeFilteredEmpty: Story = {
+  play: async ({ canvasElement }) => {
+    const body = page(canvasElement);
+    await userEvent.click(
+      await body.findByRole("combobox", { name: "Index inclusion" }),
+    );
+    await userEvent.click(
+      await body.findByRole("option", { name: "Search only" }),
+    );
+    await userEvent.type(body.getByRole("searchbox"), "no note says this");
+    await expect(await body.findByText("No matching memories")).toBeVisible();
+  },
+};
 export const Proposals: Story = {
   args: { initialQueue: "proposed", initialNoteId: "proposal" },
 };
@@ -348,12 +481,58 @@ export const Compact: Story = { args: { layout: "compact" } };
 export const Empty: Story = {};
 export const Loading: Story = {};
 export const Error: Story = {};
-export const Conflict: Story = { args: { initialNoteId: "lesson" } };
+export const Conflict: Story = {
+  args: { initialNoteId: "lesson" },
+  play: async (context) => {
+    await saveModeChange(context);
+    await expect(
+      await page(context.canvasElement).findByRole("alert"),
+    ).toHaveTextContent("revision 2");
+  },
+};
 export const ChoosePreviewSubject: Story = { args: { initialView: "index" } };
 export const IndexPreview: Story = {
   args: { initialView: "index", conversationId: "preview" },
 };
+export const IndexPreviewLimits: Story = {
+  args: { initialView: "index", conversationId: "preview" },
+  play: async ({ canvasElement }) => {
+    const body = page(canvasElement);
+    await userEvent.click(
+      await body.findByRole("button", { name: "Preview limits" }),
+    );
+    await waitFor(() =>
+      expect(body.getByTestId("memory-index-preview-boundary")).toBeVisible(),
+    );
+  },
+};
 export const Mobile: Story = {
   args: { initialQueue: "proposed", initialNoteId: "proposal" },
   globals: { viewport: { value: "mobile1", isRotated: false } },
+};
+export const MobileLibrary: Story = {
+  globals: { viewport: { value: "mobile1", isRotated: false } },
+};
+export const LongDetail: Story = { args: { initialNoteId: "long" } };
+export const MemoryHelp: Story = { play: openHelp };
+export const MemoryHelpMobile: Story = {
+  globals: { viewport: { value: "mobile1", isRotated: false } },
+  play: openHelp,
+};
+export const MemoryHelpDirtyEditor: Story = {
+  args: { initialNoteId: "lesson" },
+  play: async (context) => {
+    const body = page(context.canvasElement);
+    await chooseMode(context.canvasElement, "Always");
+    await openHelp(context);
+    await userEvent.click(
+      body.getByRole("button", { name: "Close memory help" }),
+    );
+    await waitFor(() => expect(body.queryByRole("dialog")).toBeNull());
+    const group = body.getByRole("radiogroup", { name: "Index inclusion" });
+    await expect(
+      within(group).getByRole("radio", { name: "Always" }),
+    ).toBeChecked();
+    await expect(body.getByText("Unsaved changes")).toBeVisible();
+  },
 };

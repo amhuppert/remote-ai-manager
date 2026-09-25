@@ -4,8 +4,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { MultilineInput } from "@/components/MultilineInput";
+import { ChevronDownIcon } from "@/components/icons";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/Collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/DropdownMenu";
 import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
+import { FormHint } from "@/components/ui/FormField";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { describeMemoryAge, renderMemoryStatusLine } from "@/lib/memory/age";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
@@ -28,12 +43,15 @@ import {
 } from "@/lib/memory/queries";
 import type { MemoryScopeRef } from "@/lib/memory/query-keys";
 import type {
+  MemoryIndexMode,
   MemoryLink,
   MemoryNote,
   MemoryNoteRevision,
 } from "@/lib/memory/schemas";
 
 import MemoryArtifactChips from "./MemoryArtifactChips";
+import MemoryIndexModeField from "./MemoryIndexModeField";
+import { MEMORY_DISCLOSURE_TRIGGER_CLASS } from "./memory-disclosure";
 
 type MemoryNoteDetailLineage = MemoryNoteDetailPayload["lineage"];
 
@@ -125,6 +143,7 @@ function LoadedNoteDetail({
   }, [note.id]);
   const [successorHook, setSuccessorHook] = useState("");
   const [promotedSlug, setPromotedSlug] = useState("");
+  const [justSaved, setJustSaved] = useState(false);
 
   // The editor holds the snapshot its draft was derived from, so "dirty" is a
   // comparison against what was read rather than against whatever the head has
@@ -148,8 +167,10 @@ function LoadedNoteDetail({
     adopt(note);
   }
   const draft = editor.draft;
-  const setDraft = (next: (current: NoteDraft) => NoteDraft): void =>
+  const setDraft = (next: (current: NoteDraft) => NoteDraft): void => {
+    setJustSaved(false);
     setEditor((current) => ({ ...current, draft: next(current.draft) }));
+  };
 
   const update = useUpdateMemoryNoteMutation();
   const markReviewed = useMarkMemoryReviewedMutation();
@@ -213,27 +234,62 @@ function LoadedNoteDetail({
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
 
+  // One write at a time: every act here adopts the note it gets back, so a
+  // second write started under a pending one — or an edit typed while a save is
+  // in flight — would be overwritten by whichever response lands last.
+  const busy =
+    update.isPending ||
+    markReviewed.isPending ||
+    archive.isPending ||
+    restore.isPending ||
+    promote.isPending ||
+    decide.isPending ||
+    remove.isPending ||
+    create.isPending;
+  // Every other act is based on the SAVED note; letting one run under a dirty
+  // draft would either discard the draft or apply it to a note the human did
+  // not intend.
+  const actionsBlocked = dirty || busy;
+  const readOnly = note.lifecycle === "archived";
+  const fieldsDisabled = readOnly || busy;
+  const saveStatus = update.isPending
+    ? "Saving…"
+    : dirty
+      ? "Unsaved changes"
+      : justSaved
+        ? "Saved"
+        : "";
+  const lifecyclePending = archive.isPending
+    ? "Archiving…"
+    : remove.isPending
+      ? "Deleting…"
+      : null;
+
   return (
-    <div
-      ref={detailElement}
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
-    >
-      <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle px-md py-sm">
-        <Button touch variant="ghost" size="sm" onClick={onClose}>
-          ← Library
-        </Button>
-        <StatusChip tone="neutral">{note.scope}</StatusChip>
-        <StatusChip tone="neutral">{note.kind}</StatusChip>
-        {note.lifecycle === "active" ? null : (
-          <StatusChip
-            tone={note.lifecycle === "proposed" ? "amber" : "neutral"}
+    <div ref={detailElement} className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-col gap-xs border-0 border-b border-solid border-border-subtle px-md py-sm">
+        <div className="flex flex-wrap items-center gap-sm">
+          <Button touch variant="ghost" size="sm" onClick={onClose}>
+            ← Library
+          </Button>
+          <Badge subtle>{note.scope}</Badge>
+          <Badge subtle>{note.kind}</Badge>
+          {note.lifecycle === "active" ? null : (
+            <StatusChip
+              tone={note.lifecycle === "proposed" ? "amber" : "neutral"}
+            >
+              {note.lifecycle}
+            </StatusChip>
+          )}
+        </div>
+        <span className="font-mono text-[0.7rem] [overflow-wrap:anywhere] text-text-tertiary">
+          {note.slug} · rev {note.revision} · updated{" "}
+          <time
+            dateTime={note.updatedAt}
+            title={describeMemoryAge(note.updatedAt, now)}
           >
-            {note.lifecycle}
-          </StatusChip>
-        )}
-        <span className="font-mono text-[0.7rem] text-text-tertiary">
-          {note.slug} · rev {note.revision} ·{" "}
-          {describeMemoryAge(note.updatedAt, now)}
+            {formatLocalTime(note.updatedAt)}
+          </time>
         </span>
       </div>
 
@@ -255,345 +311,424 @@ function LoadedNoteDetail({
         </div>
       ) : null}
 
-      {lineage.supersededBy === null ? null : (
-        <div className="shrink-0 border-0 border-b border-solid border-border-subtle px-md py-sm font-mono text-[0.72rem] text-text-tertiary">
-          Replaced by{" "}
-          <span className="text-text-secondary">{lineage.supersededBy}</span> —
-          read that note instead.
-        </div>
-      )}
-      {lineage.supersedes === null ? null : (
-        <div className="shrink-0 border-0 border-b border-solid border-border-subtle px-md py-sm font-mono text-[0.72rem] text-text-tertiary">
-          Supersedes{" "}
-          <span className="text-text-secondary">{lineage.supersedes}</span>
-        </div>
-      )}
-
-      <div className="flex flex-col gap-sm px-md py-md">
-        <label className="flex flex-col gap-xs font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
-          Hook
-          <input
-            aria-label="Hook"
-            value={draft.hook}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, hook: event.target.value }))
-            }
-            className={FIELD_CLASS}
-          />
-        </label>
-        <label className="flex flex-col gap-xs font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
-          Body
-          <MultilineInput
-            aria-label="Body"
-            rows={8}
-            value={draft.body}
-            onValueChange={(body) =>
-              setDraft((current) => ({ ...current, body }))
-            }
-            className={FIELD_CLASS}
-          />
-        </label>
-        <label className="flex flex-col gap-xs font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
-          Status note
-          <input
-            aria-label="Status note"
-            placeholder="the perishable half, leased separately"
-            value={draft.statusNote}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                statusNote: event.target.value,
-              }))
-            }
-            className={FIELD_CLASS}
-          />
-        </label>
-        {note.statusNote !== null ? (
-          <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-            {renderMemoryStatusLine(note.statusNote, now)}
-          </p>
-        ) : null}
-        {reLeased === null ? null : (
-          <p
-            data-testid="memory-status-re-lease"
-            className="m-0 font-mono text-[0.7rem] text-text-secondary"
-          >
-            Re-asserted {renderMemoryStatusLine(reLeased, now)} — leased until{" "}
-            {formatLocalTime(reLeased.reviewAfter)}
-          </p>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {lineage.supersededBy === null ? null : (
+          <div className="border-0 border-b border-solid border-border-subtle px-md py-sm font-mono text-[0.72rem] text-text-tertiary">
+            Replaced by{" "}
+            <span className="text-text-secondary">{lineage.supersededBy}</span>{" "}
+            — read that note instead.
+          </div>
+        )}
+        {lineage.supersedes === null ? null : (
+          <div className="border-0 border-b border-solid border-border-subtle px-md py-sm font-mono text-[0.72rem] text-text-tertiary">
+            Supersedes{" "}
+            <span className="text-text-secondary">{lineage.supersedes}</span>
+          </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-sm">
-          <Button
-            touch
-            variant="default"
-            size="sm"
-            disabled={changed === null || update.isPending}
-            onClick={() => {
-              if (changed === null) return;
-              update.mutate({ ...base, fields: changed }, { onSuccess: adopt });
-            }}
-          >
-            {update.isPending ? "Saving…" : "Save note"}
-          </Button>
-          <Button
-            touch
-            variant="ghost"
-            size="sm"
-            disabled={changed === null}
-            onClick={() => adopt(editor.base)}
-          >
-            Revert
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-sm border-0 border-t border-solid border-border-subtle px-md py-sm">
-        {note.lifecycle === "proposed" ? (
-          <>
-            <Button
-              touch
-              variant="default"
-              size="sm"
-              loading={decide.isPending}
-              onClick={() => decide.mutate({ ...base, decision: "approve" })}
-            >
-              Approve
-            </Button>
-            <Button
-              touch
-              variant="ghost"
-              size="sm"
-              loading={decide.isPending}
-              onClick={() =>
-                decide.mutate(
-                  { ...base, decision: "reject" },
-                  { onSuccess: adopt },
-                )
+        <div className="flex flex-col gap-md px-md py-md">
+          {readOnly ? (
+            <FormHint>Archived memories are read-only.</FormHint>
+          ) : null}
+          <label className={LABEL_CLASS}>
+            Hook
+            <input
+              aria-label="Hook"
+              value={draft.hook}
+              disabled={fieldsDisabled}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  hook: event.target.value,
+                }))
               }
-            >
-              Reject
-            </Button>
-          </>
-        ) : null}
-        <Button
-          touch
-          variant="ghost"
-          size="sm"
-          loading={markReviewed.isPending}
-          onClick={() =>
-            markReviewed.mutate(
-              { ...base, target: "note" },
-              { onSuccess: ({ note: reviewed }) => adopt(reviewed) },
-            )
-          }
-        >
-          Mark reviewed
-        </Button>
-        {note.statusNote !== null ? (
-          <Button
-            touch
-            variant="ghost"
-            size="sm"
-            loading={markReviewed.isPending}
-            onClick={() =>
-              markReviewed.mutate(
-                { ...base, target: "statusNote" },
-                { onSuccess: ({ note: reviewed }) => adopt(reviewed) },
-              )
+              className={FIELD_CLASS}
+            />
+          </label>
+          <MemoryIndexModeField
+            value={draft.indexMode}
+            disabled={fieldsDisabled}
+            onValueChange={(indexMode) =>
+              setDraft((current) => ({ ...current, indexMode }))
             }
-          >
-            Mark status reviewed
-          </Button>
-        ) : null}
-        {note.scope === "session" ? (
-          <Button
-            touch
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              setPendingAct((act) => (act === "promote" ? "none" : "promote"))
-            }
-          >
-            Promote…
-          </Button>
-        ) : null}
-        <Button
-          touch
-          variant="ghost"
-          size="sm"
-          onClick={() =>
-            setPendingAct((act) => (act === "supersede" ? "none" : "supersede"))
-          }
-        >
-          Supersede…
-        </Button>
-        {note.lifecycle === "archived" ? null : (
-          <Button
-            touch
-            variant="ghost"
-            size="sm"
-            loading={archive.isPending}
-            onClick={() => archive.mutate({ ...base }, { onSuccess: adopt })}
-          >
-            Archive
-          </Button>
-        )}
-        <Button
-          touch
-          variant="danger"
-          size="sm"
-          // The confirmation closes as soon as it is confirmed (Radix routes
-          // the Action through onOpenChange), so the delete's pending state is
-          // shown here — at the control that opened it — rather than nowhere.
-          loading={remove.isPending}
-          onClick={() => setPendingAct("delete")}
-        >
-          Delete…
-        </Button>
-      </div>
-
-      {pendingAct === "promote" ? (
-        <div className={FORM_CLASS}>
-          <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-            Promotion creates a project-scope note superseding this one. A slug
-            already taken at project scope is refused by name — choose another
-            rather than accepting a suffix.
-          </p>
-          <input
-            aria-label="Promoted slug"
-            placeholder="project-scope slug (optional)"
-            value={promotedSlug}
-            onChange={(event) => setPromotedSlug(event.target.value)}
-            className={FIELD_CLASS}
           />
-          <div className="flex items-center gap-sm">
-            <Button
-              touch
-              variant="default"
-              size="sm"
-              loading={promote.isPending}
-              onClick={() =>
-                promote.mutate(
-                  {
-                    ...base,
-                    ...(promotedSlug.trim() === ""
-                      ? {}
-                      : { slug: promotedSlug.trim() }),
-                  },
-                  {
-                    onSuccess: (outcome) => {
-                      setPendingAct("none");
-                      onOpenNote(outcome.promoted.id);
-                    },
-                  },
-                )
+          <label className={LABEL_CLASS}>
+            Body
+            <MultilineInput
+              aria-label="Body"
+              rows={8}
+              value={draft.body}
+              disabled={fieldsDisabled}
+              onValueChange={(body) =>
+                setDraft((current) => ({ ...current, body }))
               }
-            >
-              Promote to project
-            </Button>
-            <Button
-              touch
-              variant="ghost"
-              size="sm"
-              onClick={() => setPendingAct("none")}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {pendingAct === "supersede" ? (
-        <div className={FORM_CLASS}>
-          <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-            The successor is created and this note archived in one act, so the
-            pair can never be left half-done.
-          </p>
-          <input
-            aria-label="Replacement hook"
-            placeholder="what the replacement claims"
-            value={successorHook}
-            onChange={(event) => setSuccessorHook(event.target.value)}
-            className={FIELD_CLASS}
-          />
-          <div className="flex items-center gap-sm">
-            <Button
-              touch
-              variant="default"
-              size="sm"
-              disabled={successorHook.trim() === ""}
-              loading={create.isPending}
-              onClick={() =>
-                create.mutate(
-                  {
-                    ref: scopeRef,
-                    scope: note.scope,
-                    kind: note.kind,
-                    hook: successorHook.trim(),
-                    body: editor.base.body,
-                    supersedes: note.id,
-                  },
-                  {
-                    onSuccess: (successor) => {
-                      setPendingAct("none");
-                      setSuccessorHook("");
-                      onOpenNote(successor.id);
-                    },
-                  },
-                )
-              }
-            >
-              Create successor
-            </Button>
-            <Button
-              touch
-              variant="ghost"
-              size="sm"
-              onClick={() => setPendingAct("none")}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      <MemoryArtifactChips projectName={scopeRef.projectName} links={links} />
-
-      {revisions.length > 0 ? (
-        <div className="border-0 border-t border-solid border-border-subtle px-md py-sm">
-          <span className="font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
-            History
-          </span>
-          <ul className="m-0 flex list-none flex-col gap-xs p-0 pt-sm">
-            {revisions.map((entry) => (
-              <li
-                key={entry.revision}
-                className="flex items-center gap-sm font-mono text-[0.7rem] text-text-tertiary"
+              className={FIELD_CLASS}
+            />
+          </label>
+          <div className="flex flex-col gap-xs">
+            <label className={LABEL_CLASS}>
+              Status note
+              <input
+                aria-label="Status note"
+                placeholder="Temporary context or current status"
+                value={draft.statusNote}
+                disabled={fieldsDisabled}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    statusNote: event.target.value,
+                  }))
+                }
+                className={FIELD_CLASS}
+              />
+            </label>
+            {note.statusNote !== null ? (
+              <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
+                {renderMemoryStatusLine(note.statusNote, now)}
+              </p>
+            ) : null}
+            {reLeased === null ? null : (
+              <p
+                data-testid="memory-status-re-lease"
+                className="m-0 font-mono text-[0.7rem] text-text-secondary"
               >
-                <span className="min-w-0 flex-1 truncate">
-                  rev {entry.revision} · {entry.origin} ·{" "}
-                  {describeMemoryAge(entry.createdAt, now)}
-                </span>
+                Re-asserted {renderMemoryStatusLine(reLeased, now)} — leased
+                until {formatLocalTime(reLeased.reviewAfter)}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-xs border-0 border-t border-solid border-border-subtle px-md py-sm">
+          <div className="flex flex-wrap items-center gap-sm">
+            {note.lifecycle === "proposed" ? (
+              <>
+                <Button
+                  touch
+                  variant="default"
+                  size="sm"
+                  disabled={actionsBlocked}
+                  loading={decide.isPending}
+                  onClick={() =>
+                    decide.mutate({ ...base, decision: "approve" })
+                  }
+                >
+                  Approve
+                </Button>
                 <Button
                   touch
                   variant="ghost"
                   size="sm"
-                  loading={restore.isPending}
+                  disabled={actionsBlocked}
+                  loading={decide.isPending}
                   onClick={() =>
-                    restore.mutate(
-                      { ...base, revision: entry.revision },
+                    decide.mutate(
+                      { ...base, decision: "reject" },
                       { onSuccess: adopt },
                     )
                   }
                 >
-                  {`Restore revision ${entry.revision}`}
+                  Reject
                 </Button>
-              </li>
-            ))}
-          </ul>
+              </>
+            ) : null}
+            <Button
+              touch
+              variant="ghost"
+              size="sm"
+              disabled={actionsBlocked}
+              loading={markReviewed.isPending}
+              onClick={() =>
+                markReviewed.mutate(
+                  { ...base, target: "note" },
+                  { onSuccess: ({ note: reviewed }) => adopt(reviewed) },
+                )
+              }
+            >
+              Mark reviewed
+            </Button>
+            {note.statusNote !== null ? (
+              <Button
+                touch
+                variant="ghost"
+                size="sm"
+                disabled={actionsBlocked}
+                loading={markReviewed.isPending}
+                onClick={() =>
+                  markReviewed.mutate(
+                    { ...base, target: "statusNote" },
+                    { onSuccess: ({ note: reviewed }) => adopt(reviewed) },
+                  )
+                }
+              >
+                Mark status reviewed
+              </Button>
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  touch
+                  variant="ghost"
+                  size="sm"
+                  disabled={actionsBlocked}
+                  // Menu items close the menu as they are chosen, so an act
+                  // still in flight shows its pending state at the control
+                  // that opened it rather than nowhere.
+                  loading={lifecyclePending !== null}
+                >
+                  More actions
+                  <ChevronDownIcon size={14} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {note.scope === "session" ? (
+                  <DropdownMenuItem
+                    touch
+                    onSelect={() => setPendingAct("promote")}
+                  >
+                    Promote…
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem
+                  touch
+                  onSelect={() => setPendingAct("supersede")}
+                >
+                  Supersede…
+                </DropdownMenuItem>
+                {note.lifecycle === "archived" ? null : (
+                  <DropdownMenuItem
+                    touch
+                    onSelect={() =>
+                      archive.mutate({ ...base }, { onSuccess: adopt })
+                    }
+                  >
+                    Archive
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  touch
+                  danger
+                  onSelect={() => setPendingAct("delete")}
+                >
+                  Delete…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {lifecyclePending === null ? null : (
+              <span className="font-mono text-[0.7rem] text-text-secondary">
+                {lifecyclePending}
+              </span>
+            )}
+          </div>
+          {dirty ? (
+            <FormHint>Save or revert changes before another action.</FormHint>
+          ) : null}
         </div>
-      ) : null}
+
+        {pendingAct === "promote" ? (
+          <div className={FORM_CLASS}>
+            <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
+              Promotion creates a project-scope note superseding this one. A
+              slug already taken at project scope is refused by name — choose
+              another rather than accepting a suffix.
+            </p>
+            <input
+              aria-label="Promoted slug"
+              placeholder="project-scope slug (optional)"
+              value={promotedSlug}
+              onChange={(event) => setPromotedSlug(event.target.value)}
+              className={FIELD_CLASS}
+            />
+            <div className="flex items-center gap-sm">
+              <Button
+                touch
+                variant="default"
+                size="sm"
+                disabled={actionsBlocked}
+                loading={promote.isPending}
+                onClick={() =>
+                  promote.mutate(
+                    {
+                      ...base,
+                      ...(promotedSlug.trim() === ""
+                        ? {}
+                        : { slug: promotedSlug.trim() }),
+                    },
+                    {
+                      onSuccess: (outcome) => {
+                        setPendingAct("none");
+                        onOpenNote(outcome.promoted.id);
+                      },
+                    },
+                  )
+                }
+              >
+                Promote to project
+              </Button>
+              <Button
+                touch
+                variant="ghost"
+                size="sm"
+                onClick={() => setPendingAct("none")}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {pendingAct === "supersede" ? (
+          <div className={FORM_CLASS}>
+            <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
+              The successor is created and this note archived in one act, so the
+              pair can never be left half-done.
+            </p>
+            <input
+              aria-label="Replacement hook"
+              placeholder="what the replacement claims"
+              value={successorHook}
+              onChange={(event) => setSuccessorHook(event.target.value)}
+              className={FIELD_CLASS}
+            />
+            <div className="flex items-center gap-sm">
+              <Button
+                touch
+                variant="default"
+                size="sm"
+                disabled={successorHook.trim() === "" || actionsBlocked}
+                loading={create.isPending}
+                onClick={() =>
+                  create.mutate(
+                    {
+                      ref: scopeRef,
+                      scope: note.scope,
+                      kind: note.kind,
+                      hook: successorHook.trim(),
+                      body: editor.base.body,
+                      indexMode: editor.base.indexMode,
+                      supersedes: note.id,
+                    },
+                    {
+                      onSuccess: (successor) => {
+                        setPendingAct("none");
+                        setSuccessorHook("");
+                        onOpenNote(successor.id);
+                      },
+                    },
+                  )
+                }
+              >
+                Create successor
+              </Button>
+              <Button
+                touch
+                variant="ghost"
+                size="sm"
+                onClick={() => setPendingAct("none")}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <MemoryArtifactChips projectName={scopeRef.projectName} links={links} />
+
+        {revisions.length > 0 ? (
+          <div className="border-0 border-t border-solid border-border-subtle px-md py-sm">
+            <Collapsible>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className={MEMORY_DISCLOSURE_TRIGGER_CLASS}
+                >
+                  History
+                  <Badge tier="count">{revisions.length}</Badge>
+                  <ChevronDownIcon
+                    size={14}
+                    className="ml-auto shrink-0 group-data-[state=open]:rotate-180"
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <ul className="m-0 flex list-none flex-col gap-xs p-0 pt-sm">
+                  {revisions.map((entry) => (
+                    <li
+                      key={entry.revision}
+                      className="flex flex-wrap items-center gap-sm font-mono text-[0.7rem] text-text-tertiary"
+                    >
+                      <span className="min-w-0 flex-1">
+                        rev {entry.revision} · {entry.origin} ·{" "}
+                        {describeMemoryAge(entry.createdAt, now)}
+                      </span>
+                      <Button
+                        touch
+                        variant="ghost"
+                        size="sm"
+                        disabled={actionsBlocked}
+                        loading={
+                          restore.isPending &&
+                          restore.variables?.revision === entry.revision
+                        }
+                        onClick={() =>
+                          restore.mutate(
+                            { ...base, revision: entry.revision },
+                            { onSuccess: adopt },
+                          )
+                        }
+                      >
+                        {`Restore revision ${entry.revision}`}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-t border-solid border-border-subtle bg-bg-surface px-md py-sm">
+        <span
+          role="status"
+          className="min-w-0 flex-1 font-mono text-[0.7rem] text-text-secondary"
+        >
+          {saveStatus}
+        </span>
+        <div className="ml-auto flex items-center gap-sm">
+          <Button
+            touch
+            variant="ghost"
+            size="sm"
+            disabled={!dirty || busy}
+            onClick={() => adopt(editor.base)}
+          >
+            Revert
+          </Button>
+          <Button
+            touch
+            variant="primary"
+            size="sm"
+            disabled={!dirty || busy}
+            loading={update.isPending}
+            onClick={() => {
+              if (changed === null) return;
+              update.mutate(
+                { ...base, fields: changed },
+                {
+                  onSuccess: (saved) => {
+                    adopt(saved);
+                    setJustSaved(true);
+                  },
+                },
+              );
+            }}
+          >
+            Save note
+          </Button>
+        </div>
+      </div>
 
       <ConfirmDialog
         open={pendingAct === "delete"}
@@ -614,8 +749,11 @@ function LoadedNoteDetail({
   );
 }
 
+const LABEL_CLASS =
+  "flex flex-col gap-xs font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase";
+
 const FIELD_CLASS =
-  "w-full rounded-sm border border-solid border-border-default bg-bg-base px-sm py-xs max-768:min-h-[44px] font-mono text-[0.78rem] normal-case tracking-normal text-text-primary placeholder:text-text-tertiary focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)] focus:outline-none";
+  "w-full rounded-sm border border-solid border-border-default bg-bg-base px-sm py-xs max-768:min-h-[44px] font-mono text-[0.78rem] normal-case tracking-normal text-text-primary placeholder:text-text-tertiary focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60";
 
 const FORM_CLASS =
   "flex flex-col gap-sm border-0 border-t border-solid border-border-subtle bg-bg-base px-md py-md";
@@ -624,6 +762,7 @@ interface NoteDraft {
   hook: string;
   body: string;
   statusNote: string;
+  indexMode: MemoryIndexMode;
 }
 
 function draftOf(note: MemoryNote): NoteDraft {
@@ -631,6 +770,7 @@ function draftOf(note: MemoryNote): NoteDraft {
     hook: note.hook,
     body: note.body,
     statusNote: note.statusNote?.text ?? "",
+    indexMode: note.indexMode,
   };
 }
 
@@ -639,7 +779,8 @@ function isClean(draft: NoteDraft, note: MemoryNote): boolean {
   return (
     draft.hook === saved.hook &&
     draft.body === saved.body &&
-    draft.statusNote === saved.statusNote
+    draft.statusNote === saved.statusNote &&
+    draft.indexMode === saved.indexMode
   );
 }
 
@@ -656,6 +797,7 @@ function editOf(draft: NoteDraft, note: MemoryNote): MemoryNoteEdit | null {
   if (draft.statusNote !== saved.statusNote) {
     edit.statusNote = draft.statusNote.trim() === "" ? null : draft.statusNote;
   }
+  if (draft.indexMode !== saved.indexMode) edit.indexMode = draft.indexMode;
   return Object.keys(edit).length === 0 ? null : edit;
 }
 

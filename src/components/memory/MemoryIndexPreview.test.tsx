@@ -300,12 +300,23 @@ describe("MemoryIndexPreview", () => {
     );
   });
 
-  it("says the conversation is told nothing when it has no block", async () => {
+  it("names the missing block for the render that was asked for", async () => {
     stubIndex(CONVERSATION_ID, "next-turn", null);
+    stubIndex(CONVERSATION_ID, "full", null);
     renderPreview();
 
-    expect(await screen.findByText(/told nothing/iu)).toBeInTheDocument();
+    expect(
+      await screen.findByText("No memory block for the next turn"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/delivery policy/iu)).toBeInTheDocument();
     expect(screen.queryByTestId("memory-index-preview-block")).toBeNull();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("radio", { name: /full index/iu }));
+    expect(
+      await screen.findByText("No memory block for this conversation"),
+    ).toBeInTheDocument();
   });
 
   it("previews the conversation the human selects", async () => {
@@ -420,17 +431,29 @@ describe("MemoryIndexPreview — next-turn delivery vs the whole index", () => {
     stubIndex(CONVERSATION_ID, "full", full);
     renderPreview();
 
-    const boundary = await screen.findByTestId("memory-index-preview-boundary");
+    expect(
+      await screen.findByText(
+        "Preview based on this conversation's current state. Changes when a turn starts can result in a full index instead.",
+      ),
+    ).toBeVisible();
+    // The full statement sits behind a disclosure, closed by default.
+    expect(screen.queryByTestId("memory-index-preview-boundary")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Preview limits" }));
+    const boundary = screen.getByTestId("memory-index-preview-boundary");
     expect(boundary).toHaveTextContent(/due as this conversation stands/iu);
     expect(boundary).toHaveTextContent(/supplied when a turn is dispatched/iu);
     expect(boundary).toHaveTextContent(/write envelope/iu);
 
-    const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: /full index/iu }));
 
     await expect
-      .poll(() => screen.queryByTestId("memory-index-preview-boundary"))
+      .poll(() => screen.queryByRole("button", { name: "Preview limits" }))
       .toBeNull();
+    expect(screen.queryByTestId("memory-index-preview-boundary")).toBeNull();
+    expect(
+      screen.queryByText(/Preview based on this conversation's current state/u),
+    ).toBeNull();
   });
 
   it("labels a full next-turn delivery as the whole index rather than a delta", async () => {

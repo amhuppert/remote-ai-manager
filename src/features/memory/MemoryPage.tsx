@@ -110,25 +110,33 @@ export function MemoryScreen({
           <h1 className="m-0 font-display text-[1.5rem] font-extrabold tracking-[-0.03em] text-text-primary">
             Memory
           </h1>
-          <Select
-            value={projectName === null ? "global" : `project:${projectName}`}
-            onValueChange={chooseProject}
-          >
-            <SelectTrigger aria-label="Memory context">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="global">Global</SelectItem>
-              {(projects.data ?? []).map((project) => (
-                <SelectItem
-                  key={project.name}
-                  value={`project:${project.name}`}
-                >
-                  {project.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-sm">
+            <label
+              htmlFor="memory-context"
+              className="font-mono text-[0.66rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
+            >
+              Context
+            </label>
+            <Select
+              value={projectName === null ? "global" : `project:${projectName}`}
+              onValueChange={chooseProject}
+            >
+              <SelectTrigger id="memory-context">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="global">Global</SelectItem>
+                {(projects.data ?? []).map((project) => (
+                  <SelectItem
+                    key={project.name}
+                    value={`project:${project.name}`}
+                  >
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         {projects.isError ? (
           <p role="alert" className="font-mono text-[0.72rem] text-red-text">
