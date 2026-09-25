@@ -340,6 +340,8 @@ export interface QuerySessionOptions {
 // ============================================================
 
 interface PendingTurn {
+  /** True for a virtual turn synthesized from an unsolicited SDK message. */
+  external: boolean;
   resolve: (result: TurnResult) => void;
   reject: (error: Error) => void;
   emit: TurnEmit;
@@ -764,6 +766,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       isFirstPrompt,
     });
 
+    if (pendingTurn?.external) supersedeExternalTurn(pendingTurn);
+
     const callerTraceContext = captureTraceContext();
     const releaseContext = registerPromptContext(
       prompt,
@@ -771,6 +775,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     );
     return new Promise<TurnResult>((resolve, reject) => {
       pendingTurn = {
+        external: false,
         resolve,
         reject,
         emit,
@@ -1320,6 +1325,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
       const handler = options.externalTurnHandler;
       const externalTurn: PendingTurn = {
+        external: true,
         resolve: handler.onComplete,
         reject: (err: Error) => {
           logger.warn("query-session.virtual_turn_rejected", {
@@ -1517,6 +1523,21 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         // Already forwarded via emit above
         break;
     }
+  }
+
+  /**
+   * A caller prompt that arrives while the CLI is in its own auto-continuation
+   * is folded into that turn, and the one `result` that follows answers the
+   * caller. The virtual turn completes here, on what it has streamed so far:
+   * nothing later can complete it, and the conversation host admits no further
+   * turn while one is in flight.
+   */
+  function supersedeExternalTurn(turn: PendingTurn): void {
+    pendingTurn = null;
+    logger.info("query-session.external_turn_superseded", {
+      conversationId: options.conversationId,
+    });
+    turn.resolve(buildTurnResult(turn, { error: null, aborted: false }));
   }
 
   function rejectPendingTurn(error: Error): void {

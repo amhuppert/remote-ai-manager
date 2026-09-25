@@ -1318,6 +1318,75 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
     session.close();
   });
 
+  it("completes an open virtual turn when a caller prompt takes over the stream", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const externalOnComplete = vi.fn();
+    const session = createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: {
+          emit: vi.fn(),
+          onComplete: externalOnComplete,
+        },
+      }),
+    );
+
+    const turn1 = session.sendPrompt("First", vi.fn());
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // A background task settles and the CLI opens its own turn before the
+    // caller's already-admitted follow-up reaches the session.
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-1",
+      uuid: "sys-2",
+    } as unknown as SDKMessage);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The CLI folds the follow-up into the turn it already opened, so the
+    // stream carries one result for both.
+    const followUp = session.sendPrompt("Follow-up", vi.fn());
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u3",
+      message: { content: [{ type: "text", text: "Follow-up answer" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u4",
+      total_cost_usd: 0.05,
+      duration_ms: 300,
+      num_turns: 2,
+      result: "Follow-up answer",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    const result = await followUp;
+    expect(result.finalText).toBe("Follow-up answer");
+    expect(externalOnComplete).toHaveBeenCalledTimes(1);
+    const external = externalOnComplete.mock.calls[0]![0] as TurnResult;
+    expect(external.error).toBeNull();
+    expect(external.aborted).toBe(false);
+
+    session.close();
+  });
+
   it("preserves drop-and-log behavior when no externalTurnHandler is provided", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

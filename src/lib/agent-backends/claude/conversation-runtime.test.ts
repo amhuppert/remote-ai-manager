@@ -997,6 +997,72 @@ describe("ClaudeConversationRuntime — external turn events", () => {
 
     runtime.close();
   });
+
+  it("completes a virtual turn that a caller turn takes over before its result", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const externalEvents: ConversationBackendEvent[] = [];
+    const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
+      conversationId: "conv-ext-overlap",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+      onExternalTurnEvent: (event: ConversationBackendEvent) => {
+        externalEvents.push(event);
+      },
+    });
+    const sendTurn = (promptText: string) =>
+      runtime.sendTurn({
+        promptText,
+        imageRefs: [],
+        sessionInstructions: [],
+        autonomous: true,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+    const result = (uuid: string, text: string) =>
+      ({
+        type: "result",
+        subtype: "success",
+        session_id: "sess-1",
+        uuid,
+        total_cost_usd: 0,
+        duration_ms: 0,
+        num_turns: 1,
+        result: text,
+        is_error: false,
+      }) as unknown as SDKMessage;
+
+    const first = sendTurn("hello");
+    mock.pushMessage(result("u1", ""));
+    await first;
+
+    // The CLI opens its own turn when a background task settles, then folds
+    // the caller's follow-up into it and answers both with one result.
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-1",
+      uuid: "sys-2",
+    } as unknown as SDKMessage);
+    await new Promise((r) => setTimeout(r, 0));
+    const followUp = sendTurn("follow-up");
+    mock.pushMessage(result("u3", "Follow-up answer"));
+    await followUp;
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(externalEvents.map((e) => e.type)).toContain(
+      "external_turn_completed",
+    );
+
+    runtime.close();
+  });
 });
 
 describe("ClaudeConversationRuntime — applyPortableMcpConfig", () => {
