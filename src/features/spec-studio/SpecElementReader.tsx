@@ -52,7 +52,6 @@ const REVISION_PRESENTATION: Record<
   ChipPresentation
 > = {
   draft: { label: "Draft", tone: "neutral" },
-  proposed: { label: "In review", tone: "amber" },
   approved: { label: "Approved", tone: "green" },
   withdrawn: { label: "Withdrawn", tone: "neutral" },
 };
@@ -86,7 +85,7 @@ export function SpecElementReader({
   const titleId = `${readerId}-${kind}-title`;
   const snapshot = detail.currentRevision ?? detail.currentApprovedRevision;
   // Only the current revision is editable, and only while it is a draft: a
-  // removal against an approved or proposed revision is refused server-side,
+  // removal against an approved or withdrawn revision is refused server-side,
   // so offering the control there would be a button that only ever fails.
   const removal = useDraftElementRemoval({
     projectName,

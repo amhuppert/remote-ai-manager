@@ -31,7 +31,7 @@ export type ApprovalLedgerGovernance = "per_subject" | "combined_sign_off";
  * Both sides of what the consulted authoring gates ask for: what is already
  * settled and by which act, beside what a human still owes.
  *
- * The pending half alone is what mispriced a reopen — a list of seven
+ * The pending half alone misprices an amendment draft — a list of seven
  * outstanding subjects reads as seven approvals lost when the truth is that
  * everything unchanged is banked. Only authoring subjects appear: the
  * execution-scoped gates admit a run as a whole and have no per-subject side.
@@ -56,15 +56,6 @@ export interface ApprovalLedger {
  */
 export const APPROVAL_CARRY_RULE =
   "unchanged subject content under the same applicable gate";
-
-/**
- * The sentence a reopen receipt owes its reader. Withdrawing a proposal or
- * receiving Request Changes looks like losing every approval the review had
- * collected; naming the carry here is what stops an author re-litigating
- * settled content.
- */
-export const REOPEN_CARRY_NOTE =
-  "approvals on unchanged subjects carry into the reopened draft; only edited subjects need re-approval";
 
 /**
  * The ledger of a revision whose content cannot be read. It asserts nothing:
@@ -93,9 +84,8 @@ const SATISFIED_CLASSES = [
 ] as const satisfies ReadonlyArray<readonly [keyof ApprovalLedger, string]>;
 
 /**
- * The one rendering of the ledger, read by `spec status`, by every receipt
- * that carries it, and by the review-feedback notice — so no surface can word
- * the same counts differently.
+ * The one rendering of the ledger, read by `spec status` and by every receipt
+ * that carries it, so no surface can word the same counts differently.
  *
  * A collapsed gate whose sign-off has not happened yet has satisfied nothing,
  * and saying "0 satisfied" alone would read as "nothing is governed here": it

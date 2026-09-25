@@ -1,5 +1,7 @@
 # Design addendum: policy-change staging semantics and action authority
 
+> **Superseded in part (2026-09-24).** Revisions and delivery-plan attempts no longer have a Proposed state: a draft is reviewed while it stays editable, and sign-off is the only freeze. References to `proposed` revisions describe the retired lifecycle; the staging rules otherwise stand. Requirement 27 in `requirements.md` and "Amendment — continuous review" in `design.md` describe the current lifecycle.
+
 **Status:** APPROVED by Alex 2026-07-25 (ticket command-center#24) — both product decisions (§4 PC1 draft pinning with prospective dials; §4 PC5 human-only whole-spec abandon) are accepted, not open — and folded into `requirements.md` (R25 + deltas), `design.md` (amendment section + traceability rows), and `tasks.md` (23.x) the same day; this document remains the decision record. Delivery is staged: 23.1 (the confirmation-bypass hotfix) ships first and independently; 23.2–23.6 are the governed-semantics work. Product-design deltas (§7) are **not yet folded** — this amendment writes only inside `.kiro/specs/native-sdd/`.
 **Motivated by:** Ticket command-center#24 — a P0 authority bug found during review (the hard confirmation can be bypassed) plus two under-specified semantics the first authoring run walked into.
 **Extends:** `requirements.md` R11 + new R25; `design.md` Transition Ownership (policy change, abandon), PolicyEngine, ReviewService, Security Considerations; `docs/design/native-sdd/01-product-design.md` B8 (rev 6).

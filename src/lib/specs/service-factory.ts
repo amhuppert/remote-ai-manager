@@ -113,9 +113,9 @@ export async function createProductionSpecRouteServices(
     links: linksRepo,
     events,
     attention: eventsRepo,
-    // The approval notifier plus the proposer-facing feedback half (#60):
-    // review feedback lands as passive durable notices in the proposing
-    // conversation, never as a wake.
+    // The approval notifier plus the author-facing feedback half (#60):
+    // review feedback lands as passive durable notices in the conversation
+    // that authored the draft, never as a wake.
     notifier: {
       ...notifier,
       reviewFeedback: reviewFeedbackNotifier.reviewFeedback,
@@ -423,7 +423,6 @@ export async function createProductionSpecRouteServices(
           (revision) =>
             revision.number > (pinned?.number ?? 0) &&
             (revision.state === "draft" ||
-              revision.state === "proposed" ||
               (revision.state === "approved" &&
                 revision.authoringStage === "requirements")),
         )

@@ -168,8 +168,13 @@ const DB_FILE_NAME = "command-center.db";
  * graph lanes: every validator runs on one durable conversation. Older builds
  * require both fields, so migration
  * `0055-graph-workflow-validator-conversations` fences them the same way.
+ *
+ * Version 23 retires the `proposed` spec revision state: a draft is reviewed in
+ * place, so content approvals record the subject fingerprint they approved.
+ * Older builds would pin such an approval by revision id alone, so migration
+ * `0057-continuous-spec-review` fences them.
  */
-export const KNOWN_SCHEMA_VERSION = 22;
+export const KNOWN_SCHEMA_VERSION = 23;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -457,7 +462,7 @@ const SPEC_SCHEMA_DDL = `
     spec_id               TEXT NOT NULL,
     number                INTEGER NOT NULL CHECK (number > 0),
     state                 TEXT NOT NULL CHECK (state IN (
-      'draft', 'proposed', 'approved', 'withdrawn'
+      'draft', 'approved', 'withdrawn'
     )),
     authoring_stage       TEXT NOT NULL DEFAULT 'plan' CHECK (
       authoring_stage IN ('requirements', 'design', 'plan')
@@ -488,26 +493,6 @@ const SPEC_SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_spec_revisions_spec_state
     ON spec_revisions (spec_id, state, number DESC);
-
-  /*
-   * Why a proposal ended as superseded (#50). One row per dismissed revision,
-   * written in the same transaction as its withdrawal, so the state change can
-   * never exist without the record of who ended it and what forked past it.
-   */
-  CREATE TABLE IF NOT EXISTS spec_revision_supersessions (
-    revision_id                TEXT PRIMARY KEY,
-    spec_id                    TEXT NOT NULL,
-    superseded_by_revision_id  TEXT NOT NULL,
-    reason                     TEXT NOT NULL,
-    actor_json                 TEXT NOT NULL,
-    dismissed_at               TEXT NOT NULL,
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id) ON DELETE CASCADE,
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (superseded_by_revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_revision_supersessions_spec
-    ON spec_revision_supersessions (spec_id);
 
   CREATE TABLE IF NOT EXISTS spec_element_versions (
     revision_id     TEXT NOT NULL,
@@ -543,6 +528,8 @@ const SPEC_SCHEMA_DDL = `
     approver      TEXT NOT NULL,
     granted_at    TEXT NOT NULL,
     validity      TEXT NOT NULL CHECK (validity IN ('valid', 'stale', 'closed')),
+    -- Added after the table shipped, so it also appears in ADDITIVE_COLUMNS.
+    subject_fingerprint_json TEXT,
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
     FOREIGN KEY (element_id) REFERENCES spec_elements(id),
     FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
@@ -960,7 +947,7 @@ export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
     pinned_revision_id        TEXT NOT NULL,
     delta_basis_execution_id  TEXT,
     status                    TEXT NOT NULL CHECK (status IN (
-      'draft', 'proposed', 'approved', 'parked', 'launched', 'abandoned'
+      'draft', 'approved', 'parked', 'launched', 'abandoned'
     )),
     draft_revision            INTEGER NOT NULL CHECK (draft_revision > 0),
     content_json              TEXT NOT NULL,
@@ -1132,7 +1119,7 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
     spec_id               TEXT NOT NULL,
     number                INTEGER NOT NULL CHECK (number > 0),
     state                 TEXT NOT NULL CHECK (state IN (
-      'draft', 'proposed', 'approved', 'withdrawn'
+      'draft', 'approved', 'withdrawn'
     )),
     authoring_stage       TEXT NOT NULL DEFAULT 'plan' CHECK (
       authoring_stage IN ('requirements', 'design', 'plan')
@@ -1184,6 +1171,8 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
     approver      TEXT NOT NULL,
     granted_at    TEXT NOT NULL,
     validity      TEXT NOT NULL CHECK (validity IN ('valid', 'stale', 'closed')),
+    -- Added after the table shipped, so it also appears in ADDITIVE_COLUMNS.
+    subject_fingerprint_json TEXT,
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
     FOREIGN KEY (element_id) REFERENCES spec_elements(id),
     FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
@@ -2972,6 +2961,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     type: "TEXT",
   },
   { table: "document_comments", column: "end_line", type: "INTEGER" },
+  {
+    table: "spec_approvals",
+    column: "subject_fingerprint_json",
+    type: "TEXT",
+  },
   { table: "document_comments", column: "end_section_id", type: "TEXT" },
   { table: "notepad_comments", column: "end_line", type: "INTEGER" },
   { table: "notepad_comments", column: "end_section_id", type: "TEXT" },

@@ -151,7 +151,7 @@ function managedProjection(
     criterionRows: [],
     claims: [],
     comments: [],
-    nextAct: "propose",
+    nextAct: "sign_off",
     currentCandidate: null,
     currentCandidateHash: null,
     currentApproval: null,
@@ -166,8 +166,7 @@ function managedProjection(
       claims: false,
     },
     capabilities: {
-      canPropose: true,
-      canSignOff: false,
+      canSignOff: true,
       canReopen: false,
       canAbandon: true,
       canLaunch: false,
@@ -352,15 +351,15 @@ describe("workflow definition route handlers", () => {
     getDefinition.mockResolvedValue(record);
     listDefinitions.mockResolvedValue([record]);
     const projection = managedProjection({
-      lifecycle: "in_review",
+      lifecycle: "approved",
       editable: false,
+      nextAct: "launch",
       capabilities: {
-        canPropose: false,
-        canSignOff: true,
+        canSignOff: false,
         canReopen: true,
         canAbandon: true,
-        canLaunch: false,
-        refusals: {},
+        canLaunch: true,
+        refusals: { signOff: "Only the current draft can be signed off." },
       },
     });
     const managedDefinitions = {
@@ -387,7 +386,7 @@ describe("workflow definition route handlers", () => {
       makeContext({ name: "repo" }),
     );
     expect(await listResponse.json()).toMatchObject({
-      items: [{ management: { lifecycle: "in_review", editable: false } }],
+      items: [{ management: { lifecycle: "approved", editable: false } }],
     });
 
     const updateResponse = await managedHandlers.UPDATE(
@@ -1654,12 +1653,12 @@ describe("managed draft replace (one write path)", () => {
     },
   );
 
-  it("refuses replace and edit on a proposed candidate with the reopen instruction and its why-line", async () => {
+  it("refuses replace and edit on a signed candidate with the reopen instruction and its why-line", async () => {
     const record = storedDraft();
     const store = draftStore(record);
     const handlers = managedHandlers(
       store,
-      managedProjection({ lifecycle: "in_review", editable: false }),
+      managedProjection({ lifecycle: "approved", editable: false }),
     );
 
     const replaceResponse = await put(handlers, barePlan(record));
@@ -1819,7 +1818,7 @@ describe("managed draft replace (one write path)", () => {
       const response = await put(
         managedHandlers(
           store,
-          managedProjection({ lifecycle: "in_review", editable: false }),
+          managedProjection({ lifecycle: "approved", editable: false }),
           gateReads(store, 0, 0),
           log,
         ),
@@ -1913,7 +1912,7 @@ describe("managed draft replace (one write path)", () => {
       const response = await put(
         managedHandlers(
           store,
-          managedProjection({ lifecycle: "in_review", editable: false }),
+          managedProjection({ lifecycle: "approved", editable: false }),
           gateReads(store, 0, 0),
           log,
         ),
@@ -1977,7 +1976,7 @@ describe("managed draft replace (one write path)", () => {
       const log = createCapturingLogger();
       const handlers = managedHandlers(
         store,
-        managedProjection({ lifecycle: "in_review", editable: false }),
+        managedProjection({ lifecycle: "approved", editable: false }),
         gateReads(store, 0, 0),
         log,
       );

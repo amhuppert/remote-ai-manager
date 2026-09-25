@@ -35,6 +35,8 @@ import {
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
 import { createReviewService, type ReviewService } from "./review-service";
+import { revisionReviewHash } from "./review-hash";
+import type { SpecGate } from "./schemas";
 
 const PROJECT_PATH = "/repos/propose-request-changes";
 const PROJECT_NAME = "propose-request-changes-project";
@@ -53,6 +55,7 @@ const HUMAN = { kind: "human" } as const;
  */
 describe("propose approval requests across the real revision lifecycle", () => {
   let db: Db;
+  let specs: ReturnType<typeof createSpecsRepo>;
   let eventsRepo: SpecEventsRepo;
   let notificationsRepo: NotificationsRepo;
   let authoring: AuthoringService;
@@ -63,7 +66,7 @@ describe("propose approval requests across the real revision lifecycle", () => {
   beforeEach(async () => {
     db = _createTestDb({ inMemory: true });
     db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
-    const specs = createSpecsRepo(db, createWriteQueue());
+    specs = createSpecsRepo(db, createWriteQueue());
     const reviewRepo = createSpecReviewRepo(db);
     const linksRepo = createSpecLinksRepo(db);
     const deliveryRepo = createSpecDeliveryRepo(db);
@@ -137,7 +140,7 @@ describe("propose approval requests across the real revision lifecycle", () => {
     firstRevisionId = created.draft.id;
     // A requirement with no criterion is an empty spec to the lint, and the
     // draft stays at the requirements stage so exactly one authoring gate is
-    // consulted on either side of the Request Changes.
+    // consulted when it asks for review.
     await authoring.upsertDraftElement({
       specId,
       revisionId: firstRevisionId,
@@ -189,7 +192,11 @@ describe("propose approval requests across the real revision lifecycle", () => {
     );
   }
 
-  async function proposeAndReadTheGateAsk(revisionId: string) {
+  /** The ask a review request filed for `gate`, which must be consulted. */
+  async function proposeAndReadTheAsk(
+    revisionId: string,
+    gate: SpecGate = "requirements",
+  ) {
     const result = await authoring.proposeRevision({
       specId,
       revisionId,
@@ -200,75 +207,26 @@ describe("propose approval requests across the real revision lifecycle", () => {
         `expected a successful proposal: ${result.refusal.unmetConditions.join(" ")}`,
       );
     }
-    const [ask, ...rest] = result.approvalRequests;
-    if (ask === undefined || rest.length > 0) {
+    const ask = result.approvalRequests.find(
+      (candidate) => candidate.gate === gate,
+    );
+    if (ask === undefined) {
       throw new Error(
-        `expected one consulted gate, got ${JSON.stringify(result.approvalRequests)}`,
+        `expected the ${gate} gate to be consulted, got ${JSON.stringify(result.approvalRequests)}`,
       );
     }
     return ask;
   }
 
-  /**
-   * Request Changes is not an idempotent re-file: it ends the reviewed
-   * revision and opens a new one, so the identity the next propose files under
-   * is a different one and the human gets a new entry rather than a silently
-   * reused old id.
-   */
-  it("files a new ask under the revision Request Changes opened, retiring the old one", async () => {
-    const first = await proposeAndReadTheGateAsk(firstRevisionId);
-    expect(first).toMatchObject({ gate: "requirements", outcome: "filed" });
-    const firstAttentionId = first.attentionId;
-    expect(firstAttentionId).not.toBeNull();
+  async function reviewHash(revisionId: string): Promise<string> {
+    const snapshot = await specs.getRevisionSnapshot(revisionId);
+    if (snapshot === null) throw new Error(`no snapshot for ${revisionId}`);
+    return revisionReviewHash(snapshot);
+  }
 
-    // A run's ask is answered by the run, not by the revision's review, so it
-    // must survive the same Request Changes that retires the authoring ask.
-    seedRunningExecution(firstRevisionId);
-    const runAsk = await review.requestApproval({
-      specId,
-      revisionId: firstRevisionId,
-      gate: "delivery",
-      actor: AGENT,
-    });
-    if (!runAsk.ok) throw new Error("the run's request was refused");
-
-    const changes = await review.requestChanges({
-      specId,
-      revisionId: firstRevisionId,
-      actor: HUMAN,
-    });
-    if (!changes.ok) throw new Error("Request Changes was refused");
-    expect(changes.value.withdrawn).toMatchObject({
-      id: firstRevisionId,
-      state: "withdrawn",
-    });
-    expect(changes.value.draft.id).not.toBe(firstRevisionId);
-    expect(openAuthoringRequests()).toEqual([]);
-
-    const second = await proposeAndReadTheGateAsk(changes.value.draft.id);
-    expect(second).toMatchObject({ gate: "requirements", outcome: "filed" });
-    expect(second.attentionId).not.toBe(firstAttentionId);
-    expect(openAuthoringRequests()).toEqual([
-      {
-        attentionId: second.attentionId,
-        revisionId: changes.value.draft.id,
-        gate: "requirements",
-        scope: "gate",
-        subject: "requirements",
-        executionId: null,
-      },
-    ]);
-    expect(openRunRequestIds()).toEqual([runAsk.value.attentionId]);
-  });
-
-  /**
-   * Returning to Requirements ends the Design revision the same way Request
-   * Changes ends a reviewed one, so the ask the design proposal filed must end
-   * with it: the human otherwise keeps a "Design approval required" entry for
-   * a revision no later sign-off can answer (command-center#152).
-   */
-  it("retires the design ask and closes its queue entry when the proposed design returns to Requirements", async () => {
-    const requirementsAsk = await proposeAndReadTheGateAsk(firstRevisionId);
+  /** Requirements reviewed and signed off, so amendments have a base. */
+  async function signOffRequirements(): Promise<void> {
+    const requirementsAsk = await proposeAndReadTheAsk(firstRevisionId);
     expect(requirementsAsk).toMatchObject({
       gate: "requirements",
       outcome: "filed",
@@ -278,12 +236,17 @@ describe("propose approval requests across the real revision lifecycle", () => {
       revisionId: firstRevisionId,
       approver: "alex",
       actor: HUMAN,
+      expectedReviewHash: await reviewHash(firstRevisionId),
     });
     if (!signedOff.ok) {
       throw new Error(
         `requirements sign-off refused: ${signedOff.refusal.unmetConditions.join(" ")}`,
       );
     }
+  }
+
+  /** Opens the Design amendment and authors one decision on it. */
+  async function openDesignDraft(decisionElementId: string): Promise<string> {
     const { revision: design } = await authoring.openAmendment({
       specId,
       actor: AGENT,
@@ -292,7 +255,7 @@ describe("propose approval requests across the real revision lifecycle", () => {
     await authoring.upsertDraftElement({
       specId,
       revisionId: design.id,
-      elementId: "decision-1",
+      elementId: decisionElementId,
       kind: "decision",
       parentElementId: null,
       position: 2,
@@ -307,21 +270,156 @@ describe("propose approval requests across the real revision lifecycle", () => {
       baseElementVersion: null,
       actor: AGENT,
     });
-    const proposed = await authoring.proposeRevision({
+    return design.id;
+  }
+
+  /**
+   * The author keeps editing the draft under review, and each edit may be
+   * followed by another review request. The ask belongs to the draft, not to
+   * one version of its content, so the human keeps one entry rather than one
+   * per request.
+   */
+  it("lands a review request after further edits on the ask already in the queue", async () => {
+    const first = await proposeAndReadTheAsk(firstRevisionId);
+    expect(first).toMatchObject({ gate: "requirements", outcome: "filed" });
+
+    await authoring.upsertDraftElement({
       specId,
-      revisionId: design.id,
+      revisionId: firstRevisionId,
+      elementId: "criterion-2",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      position: 2,
+      payload: {
+        kind: "criterion",
+        text: "A refused transition leaves the stage unchanged.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      baseElementVersion: null,
       actor: AGENT,
     });
-    if (!proposed.ok) {
-      throw new Error(
-        `design proposal refused: ${proposed.refusal.unmetConditions.join(" ")}`,
-      );
-    }
-    const designAsk = proposed.approvalRequests.find(
-      (ask) => ask.gate === "design",
-    );
+    const second = await proposeAndReadTheAsk(firstRevisionId);
+
+    expect(second).toMatchObject({
+      gate: "requirements",
+      outcome: "already-filed",
+      attentionId: first.attentionId,
+    });
+    expect(openAuthoringRequests()).toEqual([
+      {
+        attentionId: first.attentionId,
+        revisionId: firstRevisionId,
+        gate: "requirements",
+        scope: "gate",
+        subject: "requirements",
+        executionId: null,
+      },
+    ]);
+    const revision = await specs.getRevisionSnapshot(firstRevisionId);
+    expect(revision?.revision.state).toBe("draft");
+  });
+
+  /**
+   * The ask was filed while the policy wanted a human. Once the policy lets
+   * the author's propose freeze the draft, nobody is left to answer it, so the
+   * freeze retires it and its queue entry rather than leaving a Needs You row
+   * for a revision that is already approved.
+   */
+  it("retires the ask when a later Notify propose freezes the draft", async () => {
+    const ask = await proposeAndReadTheAsk(firstRevisionId);
+    expect(ask).toMatchObject({ gate: "requirements", outcome: "filed" });
+    await specs.updateGatePolicy({
+      specId,
+      gatePolicy: { preset: "exploratory" },
+      updatedAt: NOW,
+    });
+
+    const frozen = await authoring.proposeRevision({
+      specId,
+      revisionId: firstRevisionId,
+      actor: AGENT,
+    });
+
+    expect(frozen).toMatchObject({
+      ok: true,
+      absorbedSignOff: true,
+      revision: { state: "approved" },
+    });
+    expect(openAuthoringRequests()).toEqual([]);
+    expect(
+      notificationsRepo
+        .findSpecNotificationsBySpecId(specId)
+        .filter((row) => row.gateRequestId === ask.attentionId)
+        .map((row) => row.type)
+        .sort(),
+    ).toEqual(["spec-approval-requested", "spec-attention-resolved"]);
+  });
+
+  /**
+   * Withdrawing the draft under review ends it, so the next draft is a
+   * different identity: the next review request files a new entry rather than
+   * silently reusing the retired one. A run's ask is answered by the run, not
+   * by the revision's review, so it survives the same withdrawal.
+   */
+  it("files a new ask under the draft opened after a withdrawal, retiring the old ask but never the run's", async () => {
+    await signOffRequirements();
+    const withdrawnDraftId = await openDesignDraft("decision-1");
+    const first = await proposeAndReadTheAsk(withdrawnDraftId, "design");
+    expect(first).toMatchObject({ outcome: "filed" });
+    const firstAttentionId = first.attentionId;
+    expect(firstAttentionId).not.toBeNull();
+
+    seedRunningExecution(firstRevisionId);
+    const runAsk = await review.requestApproval({
+      specId,
+      revisionId: firstRevisionId,
+      gate: "delivery",
+      actor: AGENT,
+    });
+    if (!runAsk.ok) throw new Error("the run's request was refused");
+
+    const withdrawn = await review.withdraw({
+      specId,
+      revisionId: withdrawnDraftId,
+      actor: HUMAN,
+    });
+    if (!withdrawn.ok) throw new Error("the withdrawal was refused");
+    expect(withdrawn.value).toMatchObject({
+      id: withdrawnDraftId,
+      state: "withdrawn",
+    });
+    expect(openAuthoringRequests()).toEqual([]);
+
+    const nextDraftId = await openDesignDraft("decision-2");
+    expect(nextDraftId).not.toBe(withdrawnDraftId);
+    const second = await proposeAndReadTheAsk(nextDraftId, "design");
+    expect(second).toMatchObject({ gate: "design", outcome: "filed" });
+    expect(second.attentionId).not.toBe(firstAttentionId);
+    expect(openAuthoringRequests()).toEqual([
+      {
+        attentionId: second.attentionId,
+        revisionId: nextDraftId,
+        gate: "design",
+        scope: "gate",
+        subject: "design",
+        executionId: null,
+      },
+    ]);
+    expect(openRunRequestIds()).toEqual([runAsk.value.attentionId]);
+  });
+
+  /**
+   * Returning to Requirements ends the Design revision the same way a
+   * withdrawal does, so the ask the design review request filed must end with
+   * it: the human otherwise keeps a "Design approval required" entry for a
+   * revision no later sign-off can answer (command-center#152).
+   */
+  it("retires the design ask and closes its queue entry when the design draft returns to Requirements", async () => {
+    await signOffRequirements();
+    const designId = await openDesignDraft("decision-1");
+    const designAsk = await proposeAndReadTheAsk(designId, "design");
     expect(designAsk).toMatchObject({ outcome: "filed" });
-    const designAttentionId = designAsk?.attentionId ?? null;
+    const designAttentionId = designAsk.attentionId;
     if (designAttentionId === null) throw new Error("no design ask filed");
     expect(openAuthoringRequests().map((ask) => ask.attentionId)).toEqual([
       designAttentionId,
@@ -329,13 +427,13 @@ describe("propose approval requests across the real revision lifecycle", () => {
 
     const returned = await authoring.returnToRequirements({
       specId,
-      expectedRevisionId: design.id,
+      expectedRevisionId: designId,
       reason: "The requirements need another pass first.",
       actor: AGENT,
     });
 
     expect(returned.withdrawnRevision).toMatchObject({
-      id: design.id,
+      id: designId,
       state: "withdrawn",
     });
     expect(openAuthoringRequests()).toEqual([]);
@@ -365,7 +463,7 @@ describe("propose approval requests across the real revision lifecycle", () => {
    * in the human's queue instead of opening a second row for one ask.
    */
   it("answers a re-file of the still-open gate identity with its own attention id", async () => {
-    const filed = await proposeAndReadTheGateAsk(firstRevisionId);
+    const filed = await proposeAndReadTheAsk(firstRevisionId);
 
     const refiled = await review.requestApproval({
       specId,

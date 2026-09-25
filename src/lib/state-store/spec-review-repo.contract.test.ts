@@ -162,6 +162,12 @@ function maximalApproval(): SpecApprovalRow {
     approver: "alex@example.com",
     granted_at: "2026-07-18T09:00:00.000Z",
     validity: "stale",
+    subject_fingerprint_json: JSON.stringify({
+      elements: [{ elementId: ELEMENT_ID, payloadHash: "payload-hash-review" }],
+      citationContractVersion: 2,
+      citationCount: 0,
+      citationSubhash: "a".repeat(64),
+    }),
   });
 }
 

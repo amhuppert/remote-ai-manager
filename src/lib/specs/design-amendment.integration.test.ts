@@ -10,6 +10,7 @@ import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import { createAuthoringService } from "./authoring-service";
 import { draftAuthoringSequence } from "./authoring-sequence";
 import { createSpecEventsPublisher } from "./events";
+import { revisionReviewHash } from "./review-hash";
 import { createReviewService } from "./review-service";
 import type { SpecRevisionSnapshot } from "./schemas";
 
@@ -70,6 +71,11 @@ async function snapshot(revisionId: string): Promise<SpecRevisionSnapshot> {
   return value;
 }
 
+/** The review token for the draft content as it stands right now. */
+async function reviewHash(revisionId: string): Promise<string> {
+  return revisionReviewHash(await snapshot(revisionId));
+}
+
 async function approve(specId: string, revisionId: string) {
   const proposal = await world.authoring.proposeRevision({
     specId,
@@ -83,6 +89,7 @@ async function approve(specId: string, revisionId: string) {
       revisionId,
       actor: HUMAN,
       approver: "Alex",
+      expectedReviewHash: await reviewHash(revisionId),
     }),
   ).toMatchObject({ ok: true });
 }
@@ -239,7 +246,11 @@ describe("approved Design amendments", () => {
       revisionId: revision.id,
       actor: AGENT,
     });
-    expect(proposal).toMatchObject({ ok: true, absorbedSignOff: false });
+    expect(proposal).toMatchObject({
+      ok: true,
+      absorbedSignOff: false,
+      revision: { state: "draft" },
+    });
     if (!proposal.ok) throw new Error("expected proposal");
     expect(proposal.pendingBlock?.outstandingSubjects).toEqual([
       { gate: "design", subject: "D1", elementId: "decision-1" },
@@ -256,6 +267,7 @@ describe("approved Design amendments", () => {
         revisionId: revision.id,
         actor: AGENT,
         approver: "agent",
+        expectedReviewHash: await reviewHash(revision.id),
       }),
     ).toMatchObject({ ok: false, refusal: { code: "human_act_required" } });
     expect(
@@ -264,6 +276,7 @@ describe("approved Design amendments", () => {
         revisionId: revision.id,
         actor: HUMAN,
         approver: "Alex",
+        expectedReviewHash: await reviewHash(revision.id),
       }),
     ).toMatchObject({ ok: true });
     expect((await snapshot(design.id)).revision).toEqual(baseline.revision);
@@ -274,7 +287,7 @@ describe("approved Design amendments", () => {
   });
 
   it("refuses Requirements writes and removals until the explicit return path is used", async () => {
-    const { specId, requirements, revision } = await openDesignAmendment();
+    const { specId, revision } = await openDesignAmendment();
     const initial = await snapshot(revision.id);
     const requirement = initial.elements.find(
       ({ element }) => element.id === "requirement-1",
@@ -303,22 +316,39 @@ describe("approved Design amendments", () => {
       }),
     ).rejects.toMatchObject({ code: "stage_blocked" });
     expect((await snapshot(revision.id)).elements).toEqual(initial.elements);
+  });
+
+  it("returns a Design amendment to Requirements over the approved Design, dropping only its unapproved edits", async () => {
+    const { specId, design, revision } = await openDesignAmendment();
+    await world.authoring.upsertDraftElement({
+      specId,
+      revisionId: revision.id,
+      elementId: "decision-1",
+      kind: "decision",
+      parentElementId: null,
+      position: 2,
+      payload: decision("Unapproved correction."),
+      baseElementVersion: 1,
+      actor: AGENT,
+    });
+
     const returned = await world.authoring.returnToRequirements({
       specId,
       expectedRevisionId: revision.id,
       reason: "Contract change is required.",
       actor: AGENT,
     });
+
     expect(returned.revision).toMatchObject({
       authoringStage: "requirements",
-      basedOnRevisionId: requirements.id,
+      basedOnRevisionId: design.id,
     });
     expect((await snapshot(revision.id)).revision.state).toBe("withdrawn");
-    expect(
-      (await snapshot(returned.revision.id)).elements.some(
-        ({ element }) => element.kind === "decision",
-      ),
-    ).toBe(false);
+    const payloads = (value: SpecRevisionSnapshot) =>
+      value.elements.map(({ version }) => version.payload);
+    expect(payloads(await snapshot(returned.revision.id))).toEqual(
+      payloads(await snapshot(design.id)),
+    );
   });
 
   it("retains the Requirements gate when an intent section becomes design narrative", async () => {
@@ -362,12 +392,26 @@ describe("approved Design amendments", () => {
     expect(proposal).toMatchObject({
       ok: true,
       absorbedSignOff: false,
-      revision: { state: "proposed" },
+      revision: { state: "draft" },
     });
     if (!proposal.ok) throw new Error("expected proposal");
     expect(proposal.pendingBlock?.gates.map(({ gate }) => gate)).toEqual([
       "requirements",
     ]);
+    expect(proposal.nextAction).toMatchObject({
+      kind: "sign_off_revision",
+      actsNext: "human",
+    });
+    expect(
+      await world.reviewing.signOffRevision({
+        specId,
+        revisionId: revision.id,
+        actor: HUMAN,
+        approver: "Alex",
+        expectedReviewHash: await reviewHash(revision.id),
+      }),
+    ).toMatchObject({ ok: true });
+    expect((await snapshot(revision.id)).revision.state).toBe("approved");
   });
 
   it("requires renewed Requirements approval for a changed requirement citation", async () => {
@@ -417,7 +461,9 @@ describe("approved Design amendments", () => {
         revisionId: revision.id,
         actor: HUMAN,
         approver: "Alex",
+        expectedReviewHash: await reviewHash(revision.id),
       }),
     ).toMatchObject({ ok: false });
+    expect((await snapshot(revision.id)).revision.state).toBe("draft");
   });
 });

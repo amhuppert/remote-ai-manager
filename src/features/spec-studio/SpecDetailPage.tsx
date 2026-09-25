@@ -45,6 +45,7 @@ import type {
   SpecApprovalRow,
   SpecAuthoringStage,
   SpecCommentRow,
+  SpecRevision,
   SpecRevisionElement,
 } from "@/lib/specs/schemas";
 import { specCommentRowSchema } from "@/lib/specs/schemas";
@@ -52,8 +53,10 @@ import type { RequirementStatus, TaskWorkStatus } from "@/lib/specs/phase";
 import type { SpecPhasePrimary } from "@/lib/specs/phase";
 import { cn } from "@/lib/ui/cn";
 
-import { strandedProposals } from "./live-proposals";
-import { revisionAdmittedByImport } from "./presentation";
+import {
+  deliveryPlanReadyForSignOff,
+  revisionAdmittedByImport,
+} from "./presentation";
 import SpecCommentThreadList, {
   type SpecCommentThreadListHandle,
 } from "./SpecCommentThreadList";
@@ -200,7 +203,6 @@ function SpecDetailPageInner(): React.JSX.Element {
               detail.spec.slug,
             )}
             highlightedChangeId={searchParams.get("change")}
-            addressedRevisionId={searchParams.get("revision")}
             targetHandle={deepLinkId}
             onViewChange={selectView}
           />
@@ -268,7 +270,6 @@ export function SpecDetailContent({
   requestedSlug,
   view,
   highlightedChangeId = null,
-  addressedRevisionId = null,
   targetHandle = null,
   onViewChange,
 }: {
@@ -277,8 +278,6 @@ export function SpecDetailContent({
   requestedSlug: string;
   view: DetailView;
   highlightedChangeId?: string | null;
-  /** The proposal a History or lifecycle link addressed (`?revision=`). */
-  addressedRevisionId?: string | null;
   targetHandle?: string | null;
   onViewChange(view: DetailView): void;
 }): React.JSX.Element {
@@ -299,9 +298,7 @@ export function SpecDetailContent({
   const overviewReviewHostAvailable =
     snapshot !== null &&
     !readOnly &&
-    detail.liveProposals.some(
-      (proposal) => proposal.snapshot.revision.id === snapshot.revision.id,
-    );
+    detail.draftReview?.snapshot.revision.id === snapshot.revision.id;
   const overviewCommentPlacement = useMemo(
     () =>
       snapshot === null
@@ -331,40 +328,18 @@ export function SpecDetailContent({
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const gateHref = `${detailHref}?view=gate-policy`;
-  const reviewHref = `${detailHref}?view=${
-    (detail.currentRevision ?? detail.currentApprovedRevision)?.revision
-      .authoringStage === "design"
-      ? "design"
-      : "requirements"
-  }`;
-  // A proposal an approved revision forked past owes a human act nothing else
-  // on this page offers, and the phase it projects into ("approved", say) has
-  // a CTA that points somewhere else entirely. It takes the primary action for
-  // the same reason a parked delivery gate does: the state is unreachable
-  // until a human ends it (#50).
-  const strandedProposal = strandedProposals(detail).at(-1) ?? null;
-  const strandedActionHref =
-    strandedProposal === null
+  const reviewHref = `${detailHref}?view=${authoringReviewView(detail)}`;
+  const primaryActionHref =
+    statePresentation.href ??
+    (statePresentation.view === null
       ? null
-      : `${reviewHref}&revision=${encodeURIComponent(strandedProposal.revision.id)}`;
-  const stateActionHref =
-    statePresentation.view === null
-      ? null
-      : `${detailHref}?view=${statePresentation.view}`;
-  const primaryActionHref = strandedActionHref ?? stateActionHref;
-  const primaryActionLabel =
-    strandedProposal === null
-      ? statePresentation.action
-      : `Dismiss stranded revision ${strandedProposal.revision.number}`;
-  const primaryActionTone =
-    strandedProposal === null ? statePresentation.tone : "amber";
-  // An execution running over a proposed revision projects as `executing` with
-  // an `in_review` authoring facet, so the state-driven primary action points at
-  // evidence and would otherwise leave review mode with no entry point at all.
+      : `${detailHref}?view=${statePresentation.view}`);
+  // A draft opened while an execution runs projects as `executing` with a
+  // `draft` authoring facet, so the state-driven primary action points at
+  // delivery and would otherwise leave review of the draft with no entry point.
   const showSecondaryReviewLink =
-    statePresentation.view !== "requirements" &&
-    statePresentation.view !== "design" &&
-    detail.status.phase.authoringFacet === "in_review";
+    detail.status.phase.primary === "executing" &&
+    detail.status.phase.authoringFacet === "draft";
   const specReferenceAttrs: SpecMentionAttrs = {
     projectName,
     slug: detail.spec.slug,
@@ -383,7 +358,6 @@ export function SpecDetailContent({
           view={view}
           onViewChange={onViewChange}
           highlightedChangeId={highlightedChangeId}
-          addressedRevisionId={addressedRevisionId}
           targetHandle={targetHandle}
           onReviewComplete={(message) => {
             setCompletionMessage(message);
@@ -433,26 +407,26 @@ export function SpecDetailContent({
                   {showSecondaryReviewLink && (
                     <Link
                       href={reviewHref}
-                      title="Review the proposed revision"
+                      title="Review the open draft"
                       className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
                     >
-                      Review revision
+                      Review draft
                     </Link>
                   )}
                   {primaryActionHref !== null &&
-                    primaryActionLabel !== null && (
+                    statePresentation.action !== null && (
                       <Link
                         href={primaryActionHref}
                         className={cn(
                           "inline-flex h-[28px] items-center rounded-sm border border-solid px-md font-mono text-[0.72rem] font-semibold no-underline transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
-                          primaryActionTone === "green"
+                          statePresentation.tone === "green"
                             ? "border-green-dim bg-green-glow text-green hover:border-green"
-                            : primaryActionTone === "amber"
+                            : statePresentation.tone === "amber"
                               ? "border-amber-dim bg-amber-glow text-amber hover:border-amber"
                               : "border-cyan-dim bg-cyan-glow text-cyan hover:border-cyan",
                         )}
                       >
-                        {primaryActionLabel}
+                        {statePresentation.action}
                       </Link>
                     )}
                 </div>
@@ -562,6 +536,8 @@ export interface DetailStatePresentation {
   description: string;
   action: string | null;
   view: DetailView | null;
+  /** Where the action leads when its control lives outside Spec Studio. */
+  href?: string;
 }
 
 const bannerLineClass = {
@@ -588,6 +564,16 @@ const bannerTextClass = {
 const bannerApprovalsLinkClass =
   "text-[0.68rem] text-text-secondary no-underline underline-offset-2 hover:text-text-primary hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
 
+/** The view that hosts review of the current authoring revision. */
+function authoringReviewView(
+  detail: SpecDetailView,
+): "requirements" | "design" {
+  return (detail.currentRevision ?? detail.currentApprovedRevision)?.revision
+    .authoringStage === "design"
+    ? "design"
+    : "requirements";
+}
+
 /**
  * The pending-approvals summary is a control, not a statistic: a pending
  * delivery approval names itself and links straight to the approval control
@@ -595,12 +581,13 @@ const bannerApprovalsLinkClass =
  * to the surface that hosts their decision (F15).
  */
 function BannerApprovalsSummary({
-  pendingApprovals,
+  detail,
   detailHref,
 }: {
-  pendingApprovals: SpecDetailView["status"]["pendingApprovals"];
+  detail: SpecDetailView;
   detailHref: string;
 }): React.JSX.Element {
+  const pendingApprovals = detail.status.pendingApprovals;
   if (pendingApprovals.some((pending) => pending.gate === "delivery")) {
     return (
       <Link
@@ -611,20 +598,20 @@ function BannerApprovalsSummary({
       </Link>
     );
   }
-  if (pendingApprovals.length > 0) {
-    const target = pendingApprovals.some(
-      (pending) => pending.gate === "execution_start",
-    )
-      ? `${detailHref}?view=delivery`
-      : `${detailHref}?view=requirements`;
-    return (
-      <Link href={target} className={bannerApprovalsLinkClass}>
-        {pendingApprovals.length} pending approval
-        {pendingApprovals.length === 1 ? "" : "s"} — review
-      </Link>
-    );
-  }
-  return <>0 pending approvals</>;
+  const count = pendingApprovals.length;
+  if (count === 0) return <>0 pending approvals</>;
+  const plural = count === 1 ? "" : "s";
+  const executionStartPending = pendingApprovals.some(
+    (pending) => pending.gate === "execution_start",
+  );
+  const target = executionStartPending
+    ? `${detailHref}?view=delivery`
+    : `${detailHref}?view=${authoringReviewView(detail)}`;
+  return (
+    <Link href={target} className={bannerApprovalsLinkClass}>
+      {count} pending approval{plural} — review
+    </Link>
+  );
 }
 
 export function SpecRevisionBanner({
@@ -672,11 +659,8 @@ export function SpecRevisionBanner({
         {description}
       </span>
       <span className="shrink-0 text-[0.68rem] text-text-tertiary">
-        <BannerApprovalsSummary
-          pendingApprovals={detail.status.pendingApprovals}
-          detailHref={detailHref}
-        />{" "}
-        · {detail.status.openQuestions.length} open questions
+        <BannerApprovalsSummary detail={detail} detailHref={detailHref} /> ·{" "}
+        {detail.status.openQuestions.length} open questions
       </span>
     </section>
   );
@@ -861,11 +845,7 @@ export function revisionLine(detail: SpecDetailView, revision: number): string {
   if (snapshot === null) return `rev ${revision} unavailable`;
   const current = snapshot.revision;
   const stateDate =
-    current.state === "approved"
-      ? current.approvedAt
-      : current.state === "proposed"
-        ? current.proposedAt
-        : current.createdAt;
+    current.state === "approved" ? current.approvedAt : current.createdAt;
   const base = detail.baseRevision?.revision;
   const baseDate = base?.approvedAt;
   // An imported revision is admitted on the source's word with no approval row
@@ -915,7 +895,7 @@ export function detailStatePresentation(
       tone: "amber",
       banner: "Acceptance criteria need reaffirmation",
       description:
-        "Requirements or design changed. Confirm which earlier deliveries still satisfy the criteria before proposing this plan.",
+        "Requirements or design changed. Confirm which earlier deliveries still satisfy the criteria before signing off this plan.",
       action: "Review criteria",
       view: "delivery",
     };
@@ -929,20 +909,14 @@ export function detailStatePresentation(
       : `${subject} approved`;
   switch (phase) {
     case "draft":
+      // The draft is reviewable while the author keeps editing it, so the
+      // human act it asks for is review, hosted by its authoring stage's view.
       return {
         tone: "amber",
         banner: "Draft contract",
-        description: "Resolve lint and human decisions before proposal.",
-        action: "Open gate policy",
-        view: "overview",
-      };
-    case "in_review":
-      return {
-        tone: "amber",
-        banner: "Revision awaits sign-off",
         description:
-          "Review semantic changes and satisfy sign-off preconditions.",
-        action: "Review revision",
+          "Review and approve while the draft is open; sign-off freezes it.",
+        action: "Review changes",
         view: authoringStage === "design" ? "design" : "requirements",
       };
     case "approved":
@@ -990,9 +964,8 @@ export function detailStatePresentation(
         };
       }
       if (
-        deliveryPlan.approval !== null &&
-        (deliveryPlan.attempt.status === "approved" ||
-          deliveryPlan.attempt.status === "parked")
+        deliveryPlan.attempt.status === "approved" ||
+        deliveryPlan.attempt.status === "parked"
       ) {
         // The CTA names an act, so it must land on the control that performs
         // it. Addressing the surface alone resolved to the page a human
@@ -1006,26 +979,23 @@ export function detailStatePresentation(
           view: "delivery",
         };
       }
+      if (deliveryPlanReadyForSignOff(deliveryPlan)) {
+        return {
+          tone: "amber",
+          banner: "Delivery plan ready for sign-off",
+          description:
+            "Review the managed definition in Workflow Builder and sign it off; sign-off freezes the exact graph execution will launch.",
+          action: "Review and sign off",
+          view: "delivery",
+          href: deliveryPlan.workflowDefinition.builderHref,
+        };
+      }
       if (deliveryPlan.attempt.status === "draft") {
         return {
           tone: "amber",
           banner: "Delivery plan in draft",
           description:
             "Configure the managed definition and resolve its blocking findings in Workflow Builder.",
-          action: "Open delivery",
-          view: "delivery",
-        };
-      }
-      if (
-        deliveryPlan.attempt.status === "proposed" ||
-        deliveryPlan.attempt.status === "approved" ||
-        deliveryPlan.attempt.status === "parked"
-      ) {
-        return {
-          tone: "amber",
-          banner: "Delivery plan awaits approval",
-          description:
-            "Review and approve the exact finalized candidate in Workflow Builder.",
           action: "Open delivery",
           view: "delivery",
         };
@@ -1163,7 +1133,7 @@ function SpecProseSection({
   revisionId: string;
   /** The revision on screen, named by a clip's reference. */
   revisionNumber: number;
-  revisionState: "draft" | "proposed" | "approved" | "withdrawn";
+  revisionState: SpecRevision["state"];
   specAbandoned: boolean;
 }): React.JSX.Element | null {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1276,7 +1246,7 @@ function SpecProseSection({
 
   if (payload === null) return null;
   const composer: CommentComposerCapability | undefined =
-    revisionState === "proposed" && !specAbandoned
+    revisionState === "draft" && !specAbandoned
       ? { kind: "persist-only", submit: createComment }
       : undefined;
   // Clip is not gated the way commenting is: it writes to the reader's notepad,
@@ -1779,10 +1749,8 @@ function buildRailItems(detail: SpecDetailView): RailItem[] {
           handle: `D${number}`,
           kind: "decision",
           name: payload.title,
-          status:
-            snapshot.revision.state === "proposed" ? "Proposed" : "Current",
-          statusTone:
-            snapshot.revision.state === "proposed" ? "amber" : "green",
+          status: snapshot.revision.state === "draft" ? "Draft" : "Current",
+          statusTone: snapshot.revision.state === "draft" ? "amber" : "green",
           ...approvalPresentation(
             latestApprovalValidity(
               detail.approvals,

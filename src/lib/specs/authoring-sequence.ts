@@ -101,7 +101,7 @@ export function remainingAuthoringSequence(
 /**
  * The sequence for one open draft, read from the revision snapshots the
  * change-policy transaction and the status projection each already load.
- * Returns null for any revision that is not a draft: a proposed, approved, or
+ * Returns null for any revision that is not a draft: an approved or
  * withdrawn revision is never restaged and owes no remaining sequence (R25.4).
  */
 export function draftAuthoringSequence(input: {

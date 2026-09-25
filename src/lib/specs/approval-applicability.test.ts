@@ -6,6 +6,7 @@ import {
   sameSubjectFingerprint,
   subjectFingerprint,
   type ApprovalApplicabilityContext,
+  type ApprovalCitationState,
   type ApprovalRecord,
 } from "./approval-applicability";
 import {
@@ -98,25 +99,37 @@ function context(
   const rows = overrides.revisionRows ?? baseRows();
   return {
     revisionId: "revision-2",
-    basedOnRevisionId: "revision-1",
     ancestorRevisionIds: new Set(["revision-1"]),
     revisionRows: rows,
     ...emptyCitationState,
-    stateForRevision: (revisionId) =>
-      revisionId === "revision-1"
-        ? { rows: baseRows(), ...emptyCitationState }
-        : null,
+    parentCitationContractVersion: 2,
     ...overrides,
   };
 }
 
-const approval = (overrides: Partial<ApprovalRecord> = {}): ApprovalRecord => ({
-  subjectKind: "requirement",
-  elementId: "requirement-1",
-  revisionId: "revision-1",
-  validity: "valid",
-  ...overrides,
-});
+function approval(
+  overrides: Partial<ApprovalRecord> = {},
+  approvedCitationState: ApprovalCitationState = emptyCitationState,
+): ApprovalRecord {
+  const subject = {
+    subjectKind: overrides.subjectKind ?? "requirement",
+    elementId:
+      overrides.elementId === undefined ? "requirement-1" : overrides.elementId,
+  };
+  const fingerprint = subjectFingerprint(
+    baseRows(),
+    subject,
+    approvedCitationState,
+  );
+  if (fingerprint === null) throw new Error("fixture subject missing");
+  return {
+    ...subject,
+    revisionId: "revision-1",
+    validity: "valid",
+    fingerprint,
+    ...overrides,
+  };
+}
 
 describe("subjectFingerprint", () => {
   it("keys a requirement on its own pair plus one pair per criterion", () => {
@@ -224,13 +237,25 @@ describe("approvalAppliesToRevision", () => {
   it("refuses an approval from a revision the current one does not descend from", () => {
     expect(
       approvalAppliesToRevision(
-        context({
-          stateForRevision: (revisionId) =>
-            revisionId === "revision-1" || revisionId === "revision-sibling"
-              ? { rows: baseRows(), ...emptyCitationState }
-              : null,
-        }),
+        context(),
         approval({ revisionId: "revision-sibling" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("stops applying once the draft it was granted on is edited in place", () => {
+    const rows = baseRows();
+    rows[1] = row(
+      "criterion-1",
+      criterionPayload,
+      "requirement-1",
+      "criterion-1-edited-after-approval",
+    );
+
+    expect(
+      approvalAppliesToRevision(
+        context({ revisionRows: rows, ancestorRevisionIds: new Set() }),
+        approval({ revisionId: "revision-2" }),
       ),
     ).toBe(false);
   });
@@ -242,15 +267,6 @@ describe("approvalAppliesToRevision", () => {
         approval({ revisionId: "revision-2" }),
       ),
     ).toBe(true);
-  });
-
-  it("refuses when the approved revision's content can no longer be read", () => {
-    expect(
-      approvalAppliesToRevision(
-        context({ stateForRevision: () => null }),
-        approval(),
-      ),
-    ).toBe(false);
   });
 
   it("refuses when a criterion under an unchanged requirement statement changed", () => {
@@ -293,7 +309,7 @@ describe("approvalAppliesToRevision", () => {
     expect(
       approvalAppliesToRevision(
         context({ revisionRows: rows }),
-        approval({ subjectKind: "decision", elementId: "decision-2" }),
+        approval({ subjectKind: "decision", elementId: "decision-1" }),
       ),
     ).toBe(false);
   });
@@ -310,118 +326,58 @@ describe("approvalAppliesToRevision", () => {
     ).toBe(false);
   });
 
-  it("reads each distinct approved revision once however many approvals name it", () => {
-    const reads: string[] = [];
-    const applies = createApprovalApplicability(
-      context({
-        ancestorRevisionIds: new Set(["revision-1", "revision-0"]),
-        stateForRevision: (revisionId) => {
-          reads.push(revisionId);
-          return { rows: baseRows(), ...emptyCitationState };
-        },
-      }),
-    );
-    const subjects: ApprovalRecord[] = [
-      approval(),
-      approval({ subjectKind: "decision", elementId: "decision-1" }),
-      approval({ subjectKind: "plan", elementId: null }),
-    ];
-    const manyApprovals = [
-      ...subjects,
-      ...subjects.map((subject) => ({ ...subject, revisionId: "revision-0" })),
-      ...subjects,
-      ...subjects.map((subject) => ({ ...subject, revisionId: "revision-0" })),
-    ];
-
-    expect(manyApprovals.map(applies)).toEqual(manyApprovals.map(() => true));
-    expect([...new Set(reads)]).toEqual(["revision-1", "revision-0"]);
-    expect(reads).toEqual(["revision-1", "revision-0"]);
-  });
-
   it("invalidates only the approval subject whose citation set changed", () => {
     const baseCitation = premiseCitation("requirement-1");
     const currentCitation = premiseCitation("requirement-1", "assumption-2");
+    const approvedCitations = {
+      citationContractVersion: 2 as const,
+      citations: [baseCitation],
+    };
     const applies = createApprovalApplicability(
-      context({
-        citations: [baseCitation, currentCitation],
-        stateForRevision: (revisionId) =>
-          revisionId === "revision-1"
-            ? {
-                rows: baseRows(),
-                citationContractVersion: 2,
-                citations: [baseCitation],
-              }
-            : null,
-      }),
+      context({ citations: [baseCitation, currentCitation] }),
     );
 
-    expect(applies(approval())).toBe(false);
+    expect(applies(approval({}, approvedCitations))).toBe(false);
     expect(
-      applies(approval({ subjectKind: "decision", elementId: "decision-1" })),
+      applies(
+        approval(
+          { subjectKind: "decision", elementId: "decision-1" },
+          approvedCitations,
+        ),
+      ),
     ).toBe(true);
   });
 
   it("allows only an empty contract-1 subject across the first contract-2 boundary", () => {
-    const legacyState = {
-      rows: baseRows(),
-      citationContractVersion: 1 as const,
-      citations: [] as RevisionCitation[],
-    };
-    expect(
-      approvalAppliesToRevision(
-        context({
-          stateForRevision: (revisionId) =>
-            revisionId === "revision-1" ? legacyState : null,
-        }),
-        approval(),
-      ),
-    ).toBe(true);
+    const legacy = { citationContractVersion: 1 as const, citations: [] };
+    const firstContract2 = context({ parentCitationContractVersion: 1 });
 
     expect(
+      approvalAppliesToRevision(firstContract2, approval({}, legacy)),
+    ).toBe(true);
+    expect(
       approvalAppliesToRevision(
-        context({
-          stateForRevision: (revisionId) =>
-            revisionId === "revision-1"
-              ? {
-                  ...legacyState,
-                  citations: [premiseCitation("requirement-1")],
-                }
-              : null,
-        }),
-        approval(),
+        firstContract2,
+        approval(
+          {},
+          { ...legacy, citations: [premiseCitation("requirement-1")] },
+        ),
       ),
     ).toBe(false);
   });
 
   it("does not carry a contract-1 approval beyond the first contract-2 revision", () => {
-    const states = new Map([
-      [
-        "revision-1",
-        {
-          rows: baseRows(),
-          citationContractVersion: 1 as const,
-          citations: [] as RevisionCitation[],
-        },
-      ],
-      [
-        "revision-2",
-        {
-          rows: baseRows(),
-          citationContractVersion: 2 as const,
-          citations: [] as RevisionCitation[],
-        },
-      ],
-    ]);
-
     expect(
       approvalAppliesToRevision(
         context({
           revisionId: "revision-3",
-          basedOnRevisionId: "revision-2",
           ancestorRevisionIds: new Set(["revision-1", "revision-2"]),
-          stateForRevision: (revisionId) => states.get(revisionId) ?? null,
+          parentCitationContractVersion: 2,
         }),
-        approval({ revisionId: "revision-1" }),
+        approval(
+          { revisionId: "revision-1" },
+          { citationContractVersion: 1, citations: [] },
+        ),
       ),
     ).toBe(false);
   });

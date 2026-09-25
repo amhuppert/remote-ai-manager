@@ -410,10 +410,13 @@ export function computeRequirementCausedRework(
     ) {
       claimIds.push(event.payload.claimId);
     }
+    // The author may ask for review of the same draft more than once, and
+    // each request records the measure; the rework is the revision's, once.
     if (
       event.payload.kind === "post-approval-revision-created" &&
       event.payload.nonTrivial &&
-      event.payload.changedIntentElementIds.length > 0
+      event.payload.changedIntentElementIds.length > 0 &&
+      !revisionIds.includes(event.payload.revisionId)
     ) {
       revisionIds.push(event.payload.revisionId);
     }

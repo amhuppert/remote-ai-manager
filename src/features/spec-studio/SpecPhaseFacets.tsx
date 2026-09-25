@@ -5,7 +5,6 @@ import { deliveryLabel, deliveryTone, phaseLabels } from "./presentation";
 
 const phaseClass = {
   draft: "text-amber",
-  in_review: "text-amber",
   approved: "text-green",
   executing: "text-cyan",
   delivered: "text-green",
@@ -14,8 +13,6 @@ const phaseClass = {
 
 const phaseDotClass = {
   draft: "bg-amber shadow-[0_0_7px_var(--color-amber-glow)]",
-  in_review:
-    "bg-amber shadow-[0_0_7px_var(--color-amber-glow)] animate-pulse-dot",
   approved: "bg-green shadow-[0_0_7px_var(--color-green-glow)]",
   executing:
     "bg-cyan shadow-[0_0_7px_var(--color-cyan-glow)] animate-pulse-dot",

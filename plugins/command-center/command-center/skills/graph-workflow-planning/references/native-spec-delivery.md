@@ -20,7 +20,7 @@ pins the current approved revision.
 ## How spec criteria reach contexts
 
 Author the link as `covers: ["<criterion-element-id>"]` on each context criterion
-record. The `binding` gives every pinned spec criterion one disposition; proposal
+record. The `binding` gives every pinned spec criterion one disposition; sign-off
 derives the union of selected covered ids for each stable authored context and
 freezes those claims in the candidate manifest. A record may cover none, one or
 several spec criteria, and several contexts may cover the same criterion.
@@ -28,7 +28,7 @@ several spec criteria, and several contexts may cover the same criterion.
 A record that covers nothing is plan-authored: an obligation the plan added
 and the spec never approved. Foundation and closeout contexts often need a few;
 a context that owns only plan-authored records is worth a second look, and the
-propose gate lists each such context as `coverage/plan-authored-context`, an
+sign-off gate lists each such context as `coverage/plan-authored-context`, an
 advisory. Justify those records against the design in the context description,
 or add `covers`.
 

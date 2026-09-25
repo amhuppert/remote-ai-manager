@@ -31,8 +31,8 @@ import {
   seedDeliveryPlanParents,
 } from "./spec-delivery-plan-test-fixture";
 import {
+  DeliveryPlanStatusConflictError,
   FinalizedDeliveryPlanCandidateMismatchError,
-  FinalizedDeliveryPlanApprovalIdentityMismatchError,
   StaleDeliveryPlanDraftError,
   type SpecDeliveryPlanRepo,
 } from "./spec-delivery-plan-repo";
@@ -138,12 +138,12 @@ describe("version-3 delivery-plan repository contract", () => {
           claims: deriveDeliveryPlanClaims(document.binding, launch.definition),
         }),
       persist: (record) => {
-        const proposed = plans.propose({
+        const proposed = plans.approveCandidate({
           attemptId: opened.id,
           expectedDraftRevision: opened.draft_revision,
           snapshotId: "snapshot-v4",
-          proposedAt: "2026-09-05T12:00:00.000Z",
-          actor: AGENT,
+          approvedAt: "2026-09-05T12:00:00.000Z",
+          actor: HUMAN,
           candidate: {
             record,
             candidateHash: deliveryPlanCandidateHash(record),
@@ -199,17 +199,18 @@ describe("version-3 delivery-plan repository contract", () => {
 
     for (const [index, mismatch] of mismatches.entries()) {
       expect(() =>
-        plans.propose({
+        plans.approveCandidate({
           attemptId: opened.id,
           expectedDraftRevision: opened.draft_revision,
           snapshotId: `snapshot-invalid-${index}`,
           candidate: mismatch,
-          proposedAt: "2026-08-15T09:03:00.000Z",
-          actor: AGENT,
+          approvedAt: "2026-08-15T09:03:00.000Z",
+          actor: HUMAN,
         }),
       ).toThrow(FinalizedDeliveryPlanCandidateMismatchError);
     }
     expect(plans.findSnapshotsByAttemptId(opened.id)).toEqual([]);
+    expect(plans.findAttemptById(opened.id)?.status).toBe("draft");
   });
 
   it("round-trips binding CAS, immutable manifest, approval history, and clone-on-reopen identity", () => {
@@ -241,13 +242,24 @@ describe("version-3 delivery-plan repository contract", () => {
       edited.draft_revision,
       editedDocument.binding,
     );
-    const proposed = plans.propose({
+    expect(() =>
+      plans.approveCandidate({
+        attemptId: opened.id,
+        expectedDraftRevision: 1,
+        snapshotId: "snapshot-stale",
+        candidate: frozen,
+        approvedAt: "2026-08-15T09:03:00.000Z",
+        actor: HUMAN,
+      }),
+    ).toThrow(StaleDeliveryPlanDraftError);
+
+    const proposed = plans.approveCandidate({
       attemptId: opened.id,
       expectedDraftRevision: edited.draft_revision,
       snapshotId: "snapshot-v3-round-trip",
       candidate: frozen,
-      proposedAt: "2026-08-15T09:03:00.000Z",
-      actor: AGENT,
+      approvedAt: "2026-08-15T09:05:00.000Z",
+      actor: HUMAN,
     });
     expect(proposed.snapshot).toMatchObject({
       workflow_definition_id: frozen.record.workflowDefinition.id,
@@ -259,37 +271,35 @@ describe("version-3 delivery-plan repository contract", () => {
     expect(JSON.parse(proposed.snapshot.content_json)).not.toHaveProperty(
       "document",
     );
-
-    expect(() =>
-      plans.recordTransition({
-        attemptId: opened.id,
-        transition: {
-          kind: "approve",
-          candidateId: frozen.record.candidateId,
-          candidateHash: `sha256:${"0".repeat(64)}`,
-        },
-        occurredAt: "2026-08-15T09:04:00.000Z",
-        actor: HUMAN,
-      }),
-    ).toThrow(FinalizedDeliveryPlanApprovalIdentityMismatchError);
-
-    const approved = plans.recordTransition({
-      attemptId: opened.id,
-      transition: {
-        kind: "approve",
-        candidateId: frozen.record.candidateId,
-        candidateHash: frozen.candidateHash,
-      },
-      occurredAt: "2026-08-15T09:05:00.000Z",
-      actor: HUMAN,
+    // Sign-off freezes and approves in one act: the draft goes straight to
+    // approved, with no reviewable state between the two.
+    const approved = plans.findAttemptById(opened.id);
+    expect(approved).toMatchObject({
+      status: "approved",
+      proposed_snapshot_id: proposed.snapshot.id,
     });
-    expect(approved.status).toBe("approved");
+    expect(JSON.parse(approved?.approval_json ?? "null")).toMatchObject({
+      snapshotId: proposed.snapshot.id,
+      candidateId: frozen.record.candidateId,
+      candidateHash: frozen.candidateHash,
+      approvedBy: HUMAN,
+    });
     expect(
       plans.findCandidateApprovalBySnapshotId(proposed.snapshot.id),
     ).toMatchObject({
       candidate_id: frozen.record.candidateId,
       candidate_hash: frozen.candidateHash,
     });
+    expect(() =>
+      plans.approveCandidate({
+        attemptId: opened.id,
+        expectedDraftRevision: edited.draft_revision,
+        snapshotId: "snapshot-second",
+        candidate: frozen,
+        approvedAt: "2026-08-15T09:05:30.000Z",
+        actor: HUMAN,
+      }),
+    ).toThrow(DeliveryPlanStatusConflictError);
 
     const reopened = plans.reopen({
       attemptId: opened.id,

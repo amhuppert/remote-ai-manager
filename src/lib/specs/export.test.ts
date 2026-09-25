@@ -19,6 +19,7 @@ import {
   type SpecReviewRepo,
 } from "@/lib/state-store/spec-review-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
+import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import {
   computeSpecElementPayloadHash,
@@ -46,6 +47,15 @@ import {
   assumptionCitationSnapshot,
   questionAuditSnapshot,
 } from "./attention-records";
+import {
+  serializeSubjectFingerprint,
+  subjectFingerprint,
+  type ApprovalSubject,
+} from "./approval-applicability";
+import { createSpecEventsPublisher } from "./events";
+import { revisionReviewHash } from "./review-hash";
+import { createReviewService } from "./review-service";
+import { toDiffCitations, toDiffRows } from "./revision-diff-projections";
 
 const PROJECT_PATH = "/repos/native-sdd-export";
 const CREATED_AT = "2026-07-18T16:00:00.000Z";
@@ -58,6 +68,30 @@ let delivery: SpecDeliveryRepo;
 let exportDeps: Parameters<typeof loadSpecExportState>[0];
 let specId: string;
 let revisionId: string;
+
+/**
+ * The fingerprint a content approval records, computed the way the review
+ * service computes it over the revision the approval names.
+ */
+async function serializedFingerprint(
+  approvalRevisionId: string,
+  subject: ApprovalSubject,
+): Promise<string> {
+  const snapshot = await specs.getRevisionSnapshot(approvalRevisionId);
+  if (snapshot === null) {
+    throw new Error(`missing snapshot ${approvalRevisionId}`);
+  }
+  const fingerprint = subjectFingerprint(toDiffRows(snapshot), subject, {
+    citationContractVersion: snapshot.revision.citationContractVersion,
+    citations: toDiffCitations(snapshot),
+  });
+  if (fingerprint === null) {
+    throw new Error(
+      `revision ${approvalRevisionId} does not carry the subject`,
+    );
+  }
+  return serializeSubjectFingerprint(fingerprint);
+}
 
 beforeEach(async () => {
   db = _createTestDb({ inMemory: true });
@@ -164,10 +198,6 @@ beforeEach(async () => {
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
   });
-  await specs.proposeRevision({
-    revisionId,
-    proposedAt: "2026-07-18T16:01:00.000Z",
-  });
   await specs.approveRevision({
     revisionId,
     approvedAt: "2026-07-18T16:02:00.000Z",
@@ -181,6 +211,10 @@ beforeEach(async () => {
     approver: "alex",
     granted_at: "2026-07-18T16:01:30.000Z",
     validity: "valid",
+    subject_fingerprint_json: await serializedFingerprint(revisionId, {
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+    }),
   });
   review.insertQuestion({
     id: "question-1",
@@ -238,7 +272,7 @@ describe("canonical spec export and verification", () => {
       }),
     ]);
     expect(JSON.parse(first.manifest)).toMatchObject({
-      formatVersion: 4,
+      formatVersion: 5,
       elementOrdering: {
         scope: "revision",
         sortKeys: ["position", "elementId"],
@@ -310,19 +344,19 @@ describe("canonical spec export and verification", () => {
     expect(compareCanonicalSpecBundles(current, older)).toEqual({
       ok: false,
       code: "bundle_format_mismatch",
-      currentFormatVersion: 4,
+      currentFormatVersion: 5,
       againstFormatVersion: 2,
-      message: "canonical bundle format 2 differs from current format 4",
+      message: "canonical bundle format 2 differs from current format 5",
       instruction:
         "Export a fresh canonical bundle, then verify against that file.",
       issue: {
         path: "bundle.manifest.formatVersion",
-        message: "expected current format 4, found 2",
+        message: "expected current format 5, found 2",
       },
     });
   });
 
-  it("strictly decodes and re-renders an intact format-4 bundle", async () => {
+  it("strictly decodes and re-renders an intact format-5 bundle", async () => {
     const bundle = renderCanonicalBundle(
       await loadSpecExportState(exportDeps, specId),
     );
@@ -561,7 +595,7 @@ describe("canonical spec export and verification", () => {
     );
     const olderManifest = {
       formatVersion: 3,
-      obsoleteAttentionRecords: "not a format-4 manifest",
+      obsoleteAttentionRecords: "not a format-5 manifest",
     };
 
     expect(
@@ -572,15 +606,35 @@ describe("canonical spec export and verification", () => {
     ).toEqual({
       ok: false,
       code: "bundle_format_mismatch",
-      currentFormatVersion: 4,
+      currentFormatVersion: 5,
       againstFormatVersion: 3,
-      message: "canonical bundle format 3 differs from current format 4",
+      message: "canonical bundle format 3 differs from current format 5",
       instruction:
         "Export a fresh canonical bundle, then verify against that file.",
       issue: {
         path: "bundle.manifest.formatVersion",
-        message: "expected current format 4, found 3",
+        message: "expected current format 5, found 3",
       },
+    });
+  });
+
+  it("refuses a format-4 bundle, which could carry proposed revisions and unfingerprinted approvals", async () => {
+    const bundle = renderCanonicalBundle(
+      await loadSpecExportState(exportDeps, specId),
+    );
+    const manifest = JSON.parse(bundle.manifest) as Record<string, unknown>;
+    manifest.formatVersion = 4;
+
+    expect(
+      decodeCanonicalSpecBundle({
+        ...bundle,
+        manifest: `${stableStringify(manifest)}\n`,
+      }),
+    ).toMatchObject({
+      ok: false,
+      code: "bundle_format_mismatch",
+      currentFormatVersion: 5,
+      againstFormatVersion: 4,
     });
   });
 
@@ -599,20 +653,20 @@ describe("canonical spec export and verification", () => {
     ).toEqual({
       ok: false,
       code: "bundle_format_mismatch",
-      currentFormatVersion: 4,
+      currentFormatVersion: 5,
       againstFormatVersion: null,
       message:
-        "canonical bundle format is missing or invalid; current format is 4",
+        "canonical bundle format is missing or invalid; current format is 5",
       instruction:
         "Export a fresh canonical bundle, then verify against that file.",
       issue: {
         path: "bundle.manifest.formatVersion",
-        message: "expected current format 4, found missing or invalid format",
+        message: "expected current format 5, found missing or invalid format",
       },
     });
   });
 
-  it.each(["4", 4.5])(
+  it.each(["5", 5.5])(
     "reports invalid format marker %j as a format mismatch",
     async (formatVersion) => {
       const bundle = renderCanonicalBundle(
@@ -629,7 +683,7 @@ describe("canonical spec export and verification", () => {
       ).toMatchObject({
         ok: false,
         code: "bundle_format_mismatch",
-        currentFormatVersion: 4,
+        currentFormatVersion: 5,
         againstFormatVersion: null,
         issue: { path: "bundle.manifest.formatVersion" },
       });
@@ -662,7 +716,7 @@ describe("canonical spec export and verification", () => {
     });
   });
 
-  it("exports a frozen withdrawn authoring draft without pretending it was proposed", async () => {
+  it("exports a withdrawn authoring draft without pretending it was signed off", async () => {
     const exportState = await loadSpecExportState(exportDeps, specId);
     const snapshot = exportState.revisions[0]!.snapshot;
     const bundle = renderCanonicalBundle({
@@ -697,11 +751,18 @@ describe("canonical spec export and verification", () => {
       expectedPath: "contentHash",
     },
     {
-      state: "proposed" as const,
+      state: "draft" as const,
       contentHash: null,
       proposedAt: CREATED_AT,
       approvedAt: null,
-      expectedPath: "contentHash",
+      expectedPath: "proposedAt",
+    },
+    {
+      state: "approved" as const,
+      contentHash: "valid" as const,
+      proposedAt: null,
+      approvedAt: CREATED_AT,
+      expectedPath: "proposedAt",
     },
     {
       state: "approved" as const,
@@ -718,7 +779,7 @@ describe("canonical spec export and verification", () => {
       expectedPath: "contentHash",
     },
   ])(
-    "rejects an impossible $state revision lifecycle",
+    "rejects an impossible $state revision lifecycle at $expectedPath",
     async ({ state, contentHash, proposedAt, approvedAt, expectedPath }) => {
       const exportState = await loadSpecExportState(exportDeps, specId);
       const snapshot = exportState.revisions[0]!.snapshot;
@@ -806,7 +867,32 @@ describe("canonical spec export and verification", () => {
     });
   });
 
-  it.each(["proposed", "approved", "withdrawn"] as const)(
+  it("refuses a bundle revision in the retired proposed state", async () => {
+    const bundle = renderCanonicalBundle(
+      await loadSpecExportState(exportDeps, specId),
+    );
+    const manifest = JSON.parse(bundle.manifest) as {
+      revisions: Array<{ state: string; approvedAt: string | null }>;
+    };
+    manifest.revisions = manifest.revisions.map((revision) => ({
+      ...revision,
+      state: "proposed",
+      approvedAt: null,
+    }));
+
+    expect(
+      decodeCanonicalSpecBundle({
+        ...bundle,
+        manifest: `${stableStringify(manifest)}\n`,
+      }),
+    ).toMatchObject({
+      ok: false,
+      code: "integrity_mismatch",
+      issue: { path: "bundle.manifest.revisions[0].state" },
+    });
+  });
+
+  it.each(["approved", "withdrawn"] as const)(
     "preserves a frozen legacy %s revision under citation contract 1",
     async (stateName) => {
       const state = await loadSpecExportState(exportDeps, specId);
@@ -1342,20 +1428,50 @@ describe("canonical spec export and verification", () => {
     }
   });
 
-  it("binds approval subject kinds to their canonical subject shape", async () => {
+  it("binds approval subject kinds to their canonical subject shape and fingerprint", async () => {
     const bundle = renderCanonicalBundle(
       await loadSpecExportState(exportDeps, specId),
     );
-    const cases = ["revision", "decision"] as const;
+    const cases = [
+      {
+        subjectKind: "revision",
+        keepFingerprint: false,
+        expectedPath: "element_id",
+      },
+      {
+        subjectKind: "decision",
+        keepFingerprint: true,
+        expectedPath: "element_id",
+      },
+      // A sign-off admits a revision, not a piece of its content, so it
+      // records no fingerprint; a content approval always records one.
+      {
+        subjectKind: "revision",
+        keepFingerprint: true,
+        expectedPath: "subject_fingerprint_json",
+      },
+      {
+        subjectKind: "requirement",
+        keepFingerprint: false,
+        expectedPath: "subject_fingerprint_json",
+      },
+    ] as const;
 
-    for (const subjectKind of cases) {
+    for (const { subjectKind, keepFingerprint, expectedPath } of cases) {
       const manifest = JSON.parse(bundle.manifest) as {
         approvals: Array<{
           subject_kind: "requirement" | "decision" | "revision" | "plan";
           element_id: string | null;
+          subject_fingerprint_json: string | null;
         }>;
       };
-      manifest.approvals[0]!.subject_kind = subjectKind;
+      manifest.approvals = manifest.approvals.map((approval) => ({
+        ...approval,
+        subject_kind: subjectKind,
+        subject_fingerprint_json: keepFingerprint
+          ? approval.subject_fingerprint_json
+          : null,
+      }));
 
       expect(
         decodeCanonicalSpecBundle({
@@ -1366,15 +1482,21 @@ describe("canonical spec export and verification", () => {
         ok: false,
         code: "integrity_mismatch",
         issue: {
-          path: "bundle.manifest.approvals[0].element_id",
+          path: `bundle.manifest.approvals[0].${expectedPath}`,
         },
       });
     }
   });
 
-  it("binds approvals to a frozen revision lifecycle and the matching authoring stage", async () => {
+  it("binds sign-off approvals to an approved revision and plan approvals to the plan stage", async () => {
     const state = await loadSpecExportState(exportDeps, specId);
     const snapshot = state.revisions[0]!.snapshot;
+    const signOff = {
+      ...state.approvals[0]!,
+      subject_kind: "revision" as const,
+      element_id: null,
+      subject_fingerprint_json: null,
+    };
     const cases = [
       {
         revision: {
@@ -1384,7 +1506,7 @@ describe("canonical spec export and verification", () => {
           proposedAt: null,
           approvedAt: null,
         },
-        approval: state.approvals[0]!,
+        approval: signOff,
         expectedPath: "revision_id",
       },
       {
@@ -1406,14 +1528,10 @@ describe("canonical spec export and verification", () => {
       {
         revision: {
           ...snapshot.revision,
-          state: "proposed" as const,
+          state: "withdrawn" as const,
           approvedAt: null,
         },
-        approval: {
-          ...state.approvals[0]!,
-          subject_kind: "revision" as const,
-          element_id: null,
-        },
+        approval: signOff,
         expectedPath: "revision_id",
       },
     ];
@@ -1516,6 +1634,7 @@ describe("canonical spec export and verification", () => {
           ...state.approvals[0]!,
           subject_kind: "revision",
           element_id: null,
+          subject_fingerprint_json: null,
         },
       ],
       gateAdmissions: [admission],
@@ -1537,6 +1656,7 @@ describe("canonical spec export and verification", () => {
           ...state.approvals[0]!,
           subject_kind: "revision",
           element_id: null,
+          subject_fingerprint_json: null,
         },
       ],
       revisions: [
@@ -2864,6 +2984,77 @@ describe("canonical spec export and verification", () => {
     });
   });
 
+  it("verifies and exports a spec whose open draft carries a human approval", async () => {
+    const draftRevisionId = "revision-export-2";
+    await specs.createDraftFromBase({
+      id: draftRevisionId,
+      specId,
+      baseRevisionId: revisionId,
+      authoringStage: "plan",
+      createdAt: "2026-07-19T10:00:00.000Z",
+    });
+    const baseVersion = await specs.findElementVersion(
+      draftRevisionId,
+      "requirement-1",
+    );
+    if (baseVersion === null) throw new Error("expected R1 on the draft");
+    await specs.updateDraftElement({
+      revisionId: draftRevisionId,
+      elementId: "requirement-1",
+      expectedElementVersion: baseVersion.elementVersion,
+      payload: {
+        kind: "requirement",
+        statement: "The export is deterministic and amendable.",
+        priority: "must",
+        risk: "high",
+      },
+      updatedAt: "2026-07-19T10:01:00.000Z",
+    });
+    const specEvents = createSpecEventsRepo(db);
+    const reviewing = createReviewService({
+      specs,
+      review,
+      delivery,
+      links: createSpecLinksRepo(db),
+      events: createSpecEventsPublisher({
+        appendInTransaction: specEvents.appendInTransaction,
+        publish: () => ({ delivered: true }),
+      }),
+      attention: specEvents,
+      now: () => "2026-07-19T10:02:00.000Z",
+    });
+    const draft = await specs.getRevisionSnapshot(draftRevisionId);
+    if (draft === null) throw new Error("expected the open draft");
+
+    // Review happens on the open draft, so the approval names the draft.
+    await expect(
+      reviewing.approveItem({
+        specId,
+        revisionId: draftRevisionId,
+        subjectKind: "requirement",
+        elementId: "requirement-1",
+        approver: "alex",
+        actor: { kind: "human" },
+        expectedReviewHash: revisionReviewHash(draft),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { revision_id: draftRevisionId },
+    });
+
+    const state = await loadSpecExportState(exportDeps, specId);
+    expect(verifyExportState(state)).toMatchObject({
+      ok: true,
+      checkedRevisionIds: [revisionId, draftRevisionId],
+      mismatches: [],
+    });
+    const bundle = renderVerifiedCanonicalBundle(state);
+    expect(decodeCanonicalSpecBundle(bundle)).toEqual({
+      ok: true,
+      value: bundle,
+    });
+  });
+
   it("rejects contradictory question and assumption lifecycle rows", async () => {
     const state = await loadSpecExportState(exportDeps, specId);
     const malformedQuestion = {
@@ -3017,7 +3208,7 @@ describe("canonical spec export and verification", () => {
   });
 
   /**
-   * Within canonical format 4, an undeclared optional executionLane carries no
+   * Within one canonical format, an undeclared optional executionLane carries no
    * trace in the bundle. Declaring the field remains ordinary content drift;
    * cross-format compatibility is covered by the version-mismatch contract.
    */

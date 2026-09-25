@@ -23,11 +23,7 @@ import {
   isTerminalStatus,
 } from "@/lib/workflow-graph/lifecycle-classifier";
 
-import type {
-  SpecExecutionCleanupPhase,
-  SpecExecutionRow,
-  SpecRevision,
-} from "./schemas";
+import type { SpecExecutionCleanupPhase, SpecExecutionRow } from "./schemas";
 import {
   approveAndSignOffSpine,
   authorSpineDraft,
@@ -442,255 +438,19 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     expect(result.stderr).toContain(specExecutionId);
     expect(result.stderr).toContain("cctl spec abandon");
   });
-});
 
-/**
- * Ticket #50's dead end as `cctl spec verify` reports it: which live proposals
- * are stranded, and — per proposal — the act that actually disposes of THAT
- * one. A remedy the dismiss act would refuse is worse than no remedy, so
- * eligibility comes from the shared supersession predicate and every remedy the
- * report names is run here against the production route.
- */
-describe("spec verify reports proposal-integrity consistency findings", () => {
-  let world: SpecSpineWorld;
-
-  beforeEach(() => {
-    resetJobQueue();
-
-    world = createSpecSpineWorld();
-    setPublicationBroadcastForTesting(() => ({ delivered: true }));
-  });
-
-  afterEach(() => {
-    resetJobQueue();
-
-    _resetPublicationForTesting();
-  });
-
-  async function report(): Promise<IntegrityReport> {
-    const response = await world.getRoute("getSpecVerifyGET", { slug: SLUG });
-    expect(response.status).toBe(200);
-    return integrityReportSchema.parse(await response.json());
-  }
-
-  function proposalFindings(
-    value: IntegrityReport,
-  ): Extract<SpecConsistencyFinding, { family: "proposal-integrity" }>[] {
-    return value.consistencyFindings.filter(
-      (finding) => finding.family === "proposal-integrity",
-    );
-  }
-
-  /** Clone `base` into a new revision and propose it, at the repository. */
-  async function proposeFromBase(
-    specId: string,
-    id: string,
-    baseRevisionId: string,
-    at: string,
-  ): Promise<SpecRevision> {
-    await world.repos.specs.createDraftFromBase({
-      id,
-      specId,
-      baseRevisionId,
-      authoringStage: "plan",
-      createdAt: at,
-    });
-    return world.repos.specs.proposeRevision({
-      revisionId: id,
-      proposedAt: at,
-    });
-  }
-
-  /**
-   * #50's live shape, built at the repository because the propose guard now
-   * prevents the routes from producing it: a proposed revision, and a revision
-   * cloned off its approved BASE approved above it.
-   */
-  async function strandedSpec(): Promise<{
-    specId: string;
-    stranded: SpecRevision;
-    superseding: SpecRevision;
-    approvedBase: string;
-  }> {
-    const authored = await authorSpineDraft(world, SLUG);
-    await proposeSpineRevision(world, SLUG, authored);
-    const approvedBase = authored.designRevisionId;
-    await proposeFromBase(
-      authored.specId,
-      "revision-superseding",
-      approvedBase,
-      "2026-08-06T09:00:00.000Z",
-    );
-    const superseding = await world.repos.specs.approveRevision({
-      revisionId: "revision-superseding",
-      approvedAt: "2026-08-06T09:00:02.000Z",
-    });
-    const stranded = await world.repos.specs.findRevision(
-      authored.draftRevisionId,
-    );
-    if (stranded === null) throw new Error("fixture revision missing");
-    return { specId: authored.specId, stranded, superseding, approvedBase };
-  }
-
-  it("reports a superseded live proposal with the dismiss remedy, and the production dismiss act clears it", async () => {
-    const { stranded, superseding } = await strandedSpec();
-
-    const findings = proposalFindings(await report());
-    expect(findings).toHaveLength(1);
-    expect(findings.at(0)).toMatchObject({
-      code: "superseded_proposal",
-      revisionId: stranded.id,
-      revisionNumber: stranded.number,
-      supersededByRevisionId: superseding.id,
-    });
-    // The remedy names the act AND both revision ids a reader has to reconcile.
-    expect(findings.at(0)?.remedy).toContain("Dismiss");
-    expect(findings.at(0)?.remedy).toContain(stranded.id);
-    expect(findings.at(0)?.detail).toContain(superseding.id);
-
-    const dismissed = await world.postAction(
-      SLUG,
-      "dismiss-superseded",
-      {
-        revisionId: stranded.id,
-        reason: "The design base was approved above it.",
-      },
-      "human",
-    );
-    expect(dismissed.status).toBe(200);
-
-    expect(proposalFindings(await report())).toEqual([]);
-  });
-
-  it("does not report a proposal that a later approval descends from", async () => {
-    const authored = await authorSpineDraft(world, SLUG);
-    await proposeSpineRevision(world, SLUG, authored);
-    // Approved DESCENDANT: the proposal's content is carried forward, so
-    // nothing was forked past and nothing is stranded.
-    await proposeFromBase(
-      authored.specId,
-      "revision-descendant",
-      authored.draftRevisionId,
-      "2026-08-06T09:05:00.000Z",
-    );
-    await world.repos.specs.approveRevision({
-      revisionId: "revision-descendant",
-      approvedAt: "2026-08-06T09:05:02.000Z",
-    });
-
-    expect(proposalFindings(await report())).toEqual([]);
-  });
-
-  it("reports one finding per live proposal with a per-proposal remedy, dismissing only where the predicate passes", async () => {
-    const { specId, stranded, superseding } = await strandedSpec();
-    const competing = await proposeFromBase(
-      specId,
-      "revision-successor",
-      superseding.id,
-      "2026-08-06T09:10:00.000Z",
-    );
-
-    const findings = proposalFindings(await report());
-    expect(findings).toHaveLength(2);
-    const bySupersession = findings.find(
-      (finding) => finding.revisionId === stranded.id,
-    );
-    const byReview = findings.find(
-      (finding) => finding.revisionId === competing.id,
-    );
-    expect(bySupersession).toMatchObject({
-      code: "superseded_proposal",
-      supersededByRevisionId: superseding.id,
-    });
-    expect(bySupersession?.remedy).toContain("Dismiss");
-    // Nothing forked past the successor, so offering dismissal on it would name
-    // an act the dismiss route refuses. It gets the human review acts instead.
-    expect(byReview).toMatchObject({
-      code: "competing_live_proposal",
-      supersededByRevisionId: null,
-    });
-    expect(byReview?.remedy).not.toContain("Dismiss superseded proposal");
-    expect(byReview?.remedy).toContain("Request Changes");
-    expect(byReview?.remedy).toContain(competing.id);
-    // Sign-off is NOT offered: a competing finding means a live sibling exists,
-    // and the sign-off recheck refuses whenever the target forks past one — the
-    // same "remedy the act would refuse" failure this family exists to avoid.
-    expect(byReview?.remedy.toLowerCase()).not.toContain("sign");
-    // Nor Withdraw: the act exists on the route, but Studio ships no control
-    // for it, so naming it would send a reader to a surface with no button.
-    expect(byReview?.remedy).not.toContain("Withdraw");
-  });
-
-  /**
-   * The finding clears on either human disposal, run through the production
-   * route. Only `request-changes` is NAMED as the remedy — it is the one with
-   * a Studio control — but `withdraw` must clear it too, or the report would
-   * keep accusing a proposal an operator already ended.
-   */
-  for (const act of ["request-changes", "withdraw"] as const) {
-    it(`clears the competing proposal through the ${act} act, leaving the superseded one reported`, async () => {
-      const { specId, stranded, superseding } = await strandedSpec();
-      const competing = await proposeFromBase(
-        specId,
-        "revision-successor",
-        superseding.id,
-        "2026-08-06T09:10:00.000Z",
-      );
-
-      const concluded = await world.postAction(
-        SLUG,
-        act,
-        { revisionId: competing.id },
-        "human",
-      );
-      expect(concluded.status).toBe(200);
-
-      const findings = proposalFindings(await report());
-      expect(findings).toHaveLength(1);
-      expect(findings.at(0)).toMatchObject({
-        code: "superseded_proposal",
-        revisionId: stranded.id,
-      });
-    });
-  }
-
-  it("carries both families in one report shape with no parallel section", async () => {
-    const authored = await authorSpineDraft(world, SLUG);
-    await proposeSpineRevision(world, SLUG, authored);
-    await approveAndSignOffSpine(world, SLUG, authored);
-    const started = await startSpineExecution(world, SLUG, authored);
-    await startSpineWorkflowThroughProductionGate(world, started);
+  it("carries its findings in the one report shape with no parallel section", async () => {
+    await liveExecution();
     world.cleanupFaults.beforeOp = (op) => {
       if (op === "abort") throw new Error("injected abort fault");
     };
-    await world.postAction(
-      SLUG,
-      "abandon-execution",
-      { executionId: SPINE_WORKFLOW_EXECUTION_ID, reason: "replanned" },
-      "agent",
-    );
-    const proposal = await proposeFromBase(
-      authored.specId,
-      "revision-parallel-proposal",
-      authored.draftRevisionId,
-      "2026-08-06T09:20:00.000Z",
-    );
-    await proposeFromBase(
-      authored.specId,
-      "revision-parallel-superseding",
-      authored.draftRevisionId,
-      "2026-08-06T09:21:00.000Z",
-    );
-    await world.repos.specs.approveRevision({
-      revisionId: "revision-parallel-superseding",
-      approvedAt: "2026-08-06T09:21:02.000Z",
-    });
+    await abandon();
 
     const response = await world.getRoute("getSpecVerifyGET", { slug: SLUG });
     const payload: unknown = await response.json();
     // One report shape: the strict schema accepts it, and the report carries no
-    // key beyond the four the single schema declares — a second family cannot
-    // arrive as a parallel section.
+    // key beyond the four the single schema declares, so a finding family
+    // cannot arrive as a parallel section.
     const value = integrityReportSchema.parse(payload);
     expect(Object.keys(payload as Record<string, unknown>).sort()).toEqual([
       "checkedRevisionIds",
@@ -698,25 +458,14 @@ describe("spec verify reports proposal-integrity consistency findings", () => {
       "mismatches",
       "ok",
     ]);
-    expect(
-      value.consistencyFindings.map((finding) => finding.family).sort(),
-    ).toEqual(["execution-lifecycle", "proposal-integrity"]);
+    const families = value.consistencyFindings.map(({ family }) => family);
+    expect(families).toEqual(["execution-lifecycle"]);
     expect(
       value.consistencyFindings.every(
         (finding) => finding.remedy.length > 0 && finding.detail.length > 0,
       ),
     ).toBe(true);
-    expect(
-      value.consistencyFindings.some(
-        (finding) =>
-          finding.family === "proposal-integrity" &&
-          finding.revisionId === proposal.id,
-      ),
-    ).toBe(true);
 
-    // One renderer, not one per family: a single `cctl spec verify` prints both
-    // families' findings with their remedies, so neither family can drift into
-    // a section of its own.
     const rendered = await runCcWithHost(
       ["spec", "verify", SLUG],
       cliEnv,
@@ -724,7 +473,6 @@ describe("spec verify reports proposal-integrity consistency findings", () => {
     );
     expect(rendered.exitCode).not.toBe(0);
     for (const finding of value.consistencyFindings) {
-      expect(rendered.stderr).toContain(finding.family);
       expect(rendered.stderr).toContain(finding.remedy);
     }
   });

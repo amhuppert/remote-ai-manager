@@ -166,7 +166,7 @@ export interface PolicyChangeContext {
   currentPolicy: SpecGatePolicy;
   proposedPolicy: SpecGatePolicy;
   hardConfirmed: boolean;
-  /** Absent when no draft is open; a proposed or approved revision is never one. */
+  /** Absent when no draft is open; an approved revision is never one. */
   openDraft?: OpenDraftSnapshot;
 }
 
@@ -332,13 +332,17 @@ export function advanceAuthoringStage(
   );
 }
 
-function blockingFindings(
+/**
+ * Sign-off freezes the draft, so it owes every blocking finding: the ones
+ * that also stop the author's review request and the ones only a frozen
+ * revision cannot carry.
+ */
+function signOffBlockingFindings(
   draft: RevisionSnapshot,
   records: SpecRecords,
-  severity: LintFinding["severity"],
 ): LintFinding[] {
   return lint(draft, records).filter(
-    (finding) => finding.severity === severity,
+    (finding) => finding.severity !== "advisory",
   );
 }
 
@@ -493,7 +497,7 @@ function signOffPreconditions(
   review: SignOffReviewSnapshot,
   approvalApplies: ApprovalApplicability,
 ): TransitionDecision {
-  const signOffFindings = blockingFindings(draft, records, "blocks_signoff");
+  const signOffFindings = signOffBlockingFindings(draft, records);
   const threadConditions = unresolvedThreadConditions(review.blockingThreads);
   const approvalConditions = approvalUnmetConditions({
     policy,
@@ -549,6 +553,11 @@ function proposeDials(
   ).map((gate) => resolveDial(policy, gate));
 }
 
+/**
+ * The author's review request. It changes no state: the draft stays editable
+ * and reviewable. Only when every consulted gate is Notify or Off does it
+ * freeze the draft itself, because no human act follows to do it.
+ */
 export function propose(context: ProposeContext): TransitionDecision {
   if (context.revisionState !== "draft") {
     return refused(
@@ -604,11 +613,11 @@ export function approveElement(
     );
   }
 
-  if (context.revisionState !== "proposed") {
+  if (context.revisionState !== "draft") {
     return refused(
       "gate_blocked",
-      ["Elements can be approved only on a proposed revision."],
-      "Propose the draft revision before approving its elements.",
+      ["Elements can be approved only on the open draft."],
+      "Open an amendment to change approved content.",
     );
   }
 
@@ -619,11 +628,11 @@ export function signOffRevision(context: SignOffContext): TransitionDecision {
   if (context.revisionState === "approved") {
     return allowed();
   }
-  if (context.revisionState !== "proposed") {
+  if (context.revisionState !== "draft") {
     return refused(
       "gate_blocked",
-      ["Only a proposed revision can be signed off."],
-      "Propose the draft revision before signing it off.",
+      ["Only the open draft can be signed off."],
+      "Open an amendment to change approved content.",
     );
   }
 
@@ -797,7 +806,7 @@ export function changePolicy(context: PolicyChangeContext): TransitionDecision {
         [
           `Revision ${draft.revisionNumber} is open at the ${draft.authoringStage} stage and the proposed policy does not state what ${undecided.join(", ")} would conclude with.`,
         ],
-        `Propose or abandon revision ${draft.revisionNumber} before changing the policy.`,
+        `Sign off or withdraw revision ${draft.revisionNumber} before changing the policy.`,
       );
     }
   }

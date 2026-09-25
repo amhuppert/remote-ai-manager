@@ -59,7 +59,6 @@ export default function SpecDetailViews({
   overviewHeader,
   overviewBanner,
   highlightedChangeId = null,
-  addressedRevisionId = null,
   targetHandle = null,
   onReviewComplete,
   children,
@@ -71,7 +70,6 @@ export default function SpecDetailViews({
   overviewHeader?: ReactNode;
   overviewBanner?: ReactNode;
   highlightedChangeId?: string | null;
-  addressedRevisionId?: string | null;
   targetHandle?: string | null;
   onReviewComplete?(message: string): void;
   children: ReactNode;
@@ -112,7 +110,6 @@ export default function SpecDetailViews({
           detail={detail}
           projectName={projectName}
           highlightedChangeId={highlightedChangeId}
-          addressedRevisionId={addressedRevisionId}
           targetHandle={targetHandle}
           onReviewComplete={onReviewComplete}
         />
@@ -122,7 +119,6 @@ export default function SpecDetailViews({
           detail={detail}
           projectName={projectName}
           highlightedChangeId={highlightedChangeId}
-          addressedRevisionId={addressedRevisionId}
           onReviewComplete={onReviewComplete}
         />
       )}
@@ -177,14 +173,12 @@ function RequirementsSurface({
   detail,
   projectName,
   highlightedChangeId,
-  addressedRevisionId,
   targetHandle,
   onReviewComplete,
 }: {
   detail: SpecDetailView;
   projectName: string;
   highlightedChangeId: string | null;
-  addressedRevisionId: string | null;
   targetHandle: string | null;
   onReviewComplete?: (message: string) => void;
 }): React.JSX.Element {
@@ -234,16 +228,14 @@ function RequirementsSurface({
 
   return (
     <div className="mt-lg grid gap-xl">
-      {snapshot?.revision.authoringStage === "requirements" &&
-        snapshot.revision.state === "proposed" && (
-          <SpecReviewMode
-            detail={detail}
-            projectName={projectName}
-            highlightedChangeId={highlightedChangeId}
-            addressedRevisionId={addressedRevisionId}
-            onComplete={onReviewComplete}
-          />
-        )}
+      {draftReviewView(detail) === "requirements" && (
+        <SpecReviewMode
+          detail={detail}
+          projectName={projectName}
+          highlightedChangeId={highlightedChangeId}
+          onComplete={onReviewComplete}
+        />
+      )}
       <SpecLintSummary
         projectName={projectName}
         slug={detail.spec.slug}
@@ -306,29 +298,24 @@ function DesignSurface({
   detail,
   projectName,
   highlightedChangeId,
-  addressedRevisionId,
   onReviewComplete,
 }: {
   detail: SpecDetailView;
   projectName: string;
   highlightedChangeId: string | null;
-  addressedRevisionId: string | null;
   onReviewComplete?: (message: string) => void;
 }): React.JSX.Element {
   const lint = useSpecLintQuery(projectName, detail.spec.slug);
-  const snapshot = detail.currentRevision ?? detail.currentApprovedRevision;
   return (
     <div className="mt-lg grid gap-xl">
-      {snapshot?.revision.authoringStage === "design" &&
-        snapshot.revision.state === "proposed" && (
-          <SpecReviewMode
-            detail={detail}
-            projectName={projectName}
-            highlightedChangeId={highlightedChangeId}
-            addressedRevisionId={addressedRevisionId}
-            onComplete={onReviewComplete}
-          />
-        )}
+      {draftReviewView(detail) === "design" && (
+        <SpecReviewMode
+          detail={detail}
+          projectName={projectName}
+          highlightedChangeId={highlightedChangeId}
+          onComplete={onReviewComplete}
+        />
+      )}
       <SpecLintSummary
         projectName={projectName}
         slug={detail.spec.slug}
@@ -343,6 +330,20 @@ function DesignSurface({
       />
     </div>
   );
+}
+
+/**
+ * The view that hosts review of the open draft: the one named by the draft's
+ * authoring stage. An abandoned spec is read-only history, so it hosts none.
+ */
+function draftReviewView(
+  detail: SpecDetailView,
+): "requirements" | "design" | null {
+  if (detail.spec.abandonedAt !== null || detail.draftReview === null) {
+    return null;
+  }
+  const stage = detail.draftReview.snapshot.revision.authoringStage;
+  return stage === "requirements" || stage === "design" ? stage : null;
 }
 
 function SurfaceIntro({

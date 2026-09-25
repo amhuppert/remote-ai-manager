@@ -22,7 +22,6 @@ import type { Db } from "@/lib/state-store/schemas";
 
 import {
   createAuthoringService,
-  SpecRevisionInReviewError,
   SpecSlugTakenError,
   StageBlockedWriteError,
   type AuthoringService,
@@ -437,12 +436,8 @@ describe("AuthoringService create and draft writes", () => {
     });
   });
 
-  it("returns a Design draft to the latest approved Requirements checkpoint", async () => {
+  it("returns a Design draft to the approved Requirements it was opened from", async () => {
     const created = await createDraft();
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T12:10:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-18T12:11:00.000Z",
@@ -529,10 +524,6 @@ describe("AuthoringService create and draft writes", () => {
 
   it("opens an amendment carrying the element when the slug names an approved spec with no draft", async () => {
     const created = await createDraft();
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T12:10:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-18T12:11:00.000Z",
@@ -543,10 +534,6 @@ describe("AuthoringService create and draft writes", () => {
       baseRevisionId: created.draft.id,
       authoringStage: "design",
       createdAt: "2026-07-18T12:12:00.000Z",
-    });
-    await specs.proposeRevision({
-      revisionId: approvedDesign.id,
-      proposedAt: "2026-07-18T12:13:00.000Z",
     });
     await specs.approveRevision({
       revisionId: approvedDesign.id,
@@ -707,10 +694,6 @@ describe("AuthoringService create and draft writes", () => {
 
   it("copies the approved snapshot into one reusable amendment draft", async () => {
     const created = await createDraft(firstElement("Approved requirement."));
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T12:10:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-18T12:11:00.000Z",
@@ -744,10 +727,6 @@ describe("AuthoringService create and draft writes", () => {
 
   it("keeps legacy Plan tasks in approved history without copying them into a design amendment", async () => {
     const created = await createDraft(firstElement("Approved requirement."));
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T12:10:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-18T12:11:00.000Z",
@@ -769,10 +748,6 @@ describe("AuthoringService create and draft writes", () => {
       payload: task("Legacy delivery work"),
       createdAt: "2026-07-18T12:13:00.000Z",
       updatedAt: "2026-07-18T12:13:00.000Z",
-    });
-    await specs.proposeRevision({
-      revisionId: legacyPlan.id,
-      proposedAt: "2026-07-18T12:14:00.000Z",
     });
     await specs.approveRevision({
       revisionId: legacyPlan.id,
@@ -807,7 +782,7 @@ describe("AuthoringService create and draft writes", () => {
   });
 });
 
-describe("AuthoringService amendment while a revision is under review", () => {
+describe("AuthoringService amendment while a draft is under review", () => {
   function countRevisions() {
     return db.prepare("SELECT COUNT(*) AS count FROM spec_revisions").get() as {
       count: number;
@@ -826,12 +801,39 @@ describe("AuthoringService amendment while a revision is under review", () => {
     };
   }
 
-  async function approvedSpecWithProposal() {
-    const created = await createDraft(firstElement("Approved requirement."));
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T12:10:00.000Z",
+  async function requestReview(specId: string, revisionId: string) {
+    const requested = await service.proposeRevision({
+      specId,
+      revisionId,
+      actor: ACTOR,
     });
+    // Under Gate dials the review request freezes nothing: the draft stays the
+    // one reviewers read and the author keeps editing.
+    expect(requested).toMatchObject({
+      ok: true,
+      absorbedSignOff: false,
+      revision: { id: revisionId, state: "draft" },
+    });
+  }
+
+  /** A requirement with a criterion is the least a review can be asked for. */
+  async function reviewableDraft(statement: string) {
+    const created = await createDraft(firstElement(statement));
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      payload: criterion("The requirement is observable."),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    return created;
+  }
+
+  async function approvedSpecWithDraftUnderReview() {
+    const created = await reviewableDraft("Approved requirement.");
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-18T12:11:00.000Z",
@@ -852,75 +854,61 @@ describe("AuthoringService amendment while a revision is under review", () => {
         title: "Amended design",
         chosenApproach: "Continue the approved requirements.",
         rejectedAlternatives: [],
-        reason: "The proposal needs review coverage.",
+        reason: "The amendment needs review coverage.",
         tracedRequirementElementIds: ["requirement-1"],
       },
       baseElementVersion: null,
       actor: ACTOR,
     });
-    await specs.proposeRevision({
-      revisionId: amendment.id,
-      proposedAt: "2026-07-18T12:20:00.000Z",
-    });
+    await requestReview(created.spec.id, amendment.id);
     return { created, amendment };
   }
 
-  it("refuses openAmendment and writes nothing while a proposal is under review", async () => {
-    const { created, amendment } = await approvedSpecWithProposal();
+  it("reuses the draft under review for openAmendment and writes nothing", async () => {
+    const { created, amendment } = await approvedSpecWithDraftUnderReview();
     const revisionsBefore = countRevisions();
     const elementsBefore = countElementVersions();
     const eventsBefore = countEvents();
     const publishedBefore = published.length;
 
-    const refusal = await service
-      .openAmendment({ specId: created.spec.id, actor: ACTOR })
-      .then(
-        () => null,
-        (error: unknown) => error,
-      );
+    const reused = await service.openAmendment({
+      specId: created.spec.id,
+      actor: ACTOR,
+    });
 
-    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
-    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
-    expect(refusal.code).toBe("revision_in_review");
-    expect(refusal.proposals.map(({ id }) => id)).toEqual([amendment.id]);
-    expect(refusal.proposals.map(({ number }) => number)).toEqual([2]);
-    expect(refusal.approvedBase?.id).toBe(created.draft.id);
-    expect(refusal.instruction).toContain("revision 2");
-    expect(refusal.instruction).toContain("Spec Studio");
-    // The verb an agent can run itself is named alongside the two human exits,
-    // so a proposer is not left waiting on a human it could unblock.
-    expect(refusal.instruction).toContain("cctl spec withdraw-proposal");
-
+    expect(reused.revision).toMatchObject({
+      id: amendment.id,
+      number: 2,
+      state: "draft",
+      basedOnRevisionId: created.draft.id,
+    });
+    expect(reused.skippedWithdrawnRevisions).toEqual([]);
     expect(countRevisions()).toEqual(revisionsBefore);
     expect(countElementVersions()).toEqual(elementsBefore);
     expect(countEvents()).toEqual(eventsBefore);
     expect(published).toHaveLength(publishedBefore);
   });
 
-  it("refuses openAmendment on a spec whose only revision is under review", async () => {
-    const created = await createDraft(firstElement("First requirement."));
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T12:10:00.000Z",
-    });
+  it("reuses a spec's only revision while it is under review", async () => {
+    const created = await reviewableDraft("First requirement.");
+    await requestReview(created.spec.id, created.draft.id);
     const revisionsBefore = countRevisions();
 
-    const refusal = await service
-      .openAmendment({ specId: created.spec.id, actor: ACTOR })
-      .then(
-        () => null,
-        (error: unknown) => error,
-      );
+    const reused = await service.openAmendment({
+      specId: created.spec.id,
+      actor: ACTOR,
+    });
 
-    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
-    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
-    expect(refusal.approvedBase).toBeNull();
-    expect(refusal.proposals.map(({ number }) => number)).toEqual([1]);
+    expect(reused.revision).toMatchObject({
+      id: created.draft.id,
+      number: 1,
+      state: "draft",
+    });
     expect(countRevisions()).toEqual(revisionsBefore);
   });
 
-  it("refuses an existing-slug create while a proposal is under review", async () => {
-    const { created } = await approvedSpecWithProposal();
+  it("refuses an existing-slug create while a draft is under review, naming the taken slug", async () => {
+    const { created } = await approvedSpecWithDraftUnderReview();
     const revisionsBefore = countRevisions();
     const elementsBefore = countElementVersions();
     const eventsBefore = countEvents();
@@ -939,9 +927,9 @@ describe("AuthoringService amendment while a revision is under review", () => {
         (error: unknown) => error,
       );
 
-    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
-    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
-    expect(refusal.specId).toBe(created.spec.id);
+    expect(refusal).toBeInstanceOf(SpecSlugTakenError);
+    if (!(refusal instanceof SpecSlugTakenError)) throw refusal;
+    expect(refusal.existingSpecId).toBe(created.spec.id);
     expect(countRevisions()).toEqual(revisionsBefore);
     expect(countElementVersions()).toEqual(elementsBefore);
     expect(countEvents()).toEqual(eventsBefore);
@@ -952,10 +940,10 @@ describe("AuthoringService amendment while a revision is under review", () => {
     ).toEqual({ count: 0 });
   });
 
-  it("names the taken slug when a create collides with a spec that carries both a draft and a proposal", async () => {
-    const { created } = await approvedSpecWithProposal();
+  it("names the taken slug when a create collides with a spec that carries two drafts", async () => {
+    const { created } = await approvedSpecWithDraftUnderReview();
     // An execution's scope capture opens a draft on the pinned approved
-    // revision, so a draft and a proposal legitimately coexist here.
+    // revision, so it legitimately coexists with the draft under review.
     await specs.createDraftFromBase({
       id: "revision-capture",
       specId: created.spec.id,

@@ -404,9 +404,9 @@ export interface StartSpecExecutionInput {
   projectName?: string;
   parameters?: Record<string, unknown>;
   /**
-   * Hold a proposed or approved candidate for spec-side prelaunch review
-   * instead of launching it. No workflow execution is created and no session
-   * slot is taken, so a parked plan can never block session validation.
+   * Hold an approved candidate for spec-side prelaunch review instead of
+   * launching it. No workflow execution is created and no session slot is
+   * taken, so a parked plan can never block session validation.
    */
   park?: boolean;
 }
@@ -443,7 +443,7 @@ export interface ParkedDeliveryPlanResult {
 export interface ExecutionService {
   start(input: StartSpecExecutionInput): Promise<StartSpecExecutionResult>;
   /**
-   * Hold a proposed or approved candidate for spec-side prelaunch review.
+   * Hold an approved candidate for spec-side prelaunch review.
    * Deliberately NOT an arm of `start`: parking launches nothing, so a result
    * that had to be narrowed before every `execution` read would make every
    * caller pay for a state most of them never reach.
@@ -2315,7 +2315,7 @@ async function startWithinQueue(
     return done({ ok: false, refusal });
   }
   const planLaunch = await deps.deliveryPlanLaunch.resolveLaunch({ spec });
-  if (planLaunch.kind === "refused" || planLaunch.kind === "unapproved") {
+  if (planLaunch.kind === "refused") {
     const refusal = asTransitionRefusal(planLaunch.refusal);
     recordStartRefusal(deps, spec.id, input.actor, refusal);
     return done({ ok: false, refusal });
@@ -2348,7 +2348,7 @@ function unavailableDeliveryPlanPortRefusal(
 }
 
 /**
- * `spec start --park`: the approved (or merely proposed) candidate is held for
+ * `spec start --park`: the signed candidate is held for
  * spec-side prelaunch review. Nothing else happens — no workflow definition is
  * written, no `spec_executions` row is inserted, and no graph-workflow
  * execution or session slot is taken, which is exactly what makes a parked
@@ -2374,16 +2374,12 @@ async function parkWithinQueue(
     recordStartRefusal(deps, spec.id, input.actor, refusal);
     return { ok: false, refusal };
   }
-  // An unapproved candidate parks too: prelaunch review is precisely where the
-  // approval it lacks gets decided, so refusing here would leave the review
-  // with nowhere to happen.
-  const target =
-    resolved.kind === "ready"
-      ? {
-          attemptId: resolved.value.attemptId,
-          candidate: resolved.value.candidate,
-        }
-      : { attemptId: resolved.attemptId, candidate: resolved.candidate };
+  // Only a signed candidate parks: review happens on the draft, so there is
+  // no unapproved candidate left for prelaunch review to decide.
+  const target = {
+    attemptId: resolved.value.attemptId,
+    candidate: resolved.value.candidate,
+  };
   const parked = await planPort.park({
     spec,
     reason: null,
@@ -2500,7 +2496,7 @@ async function startFromDeliveryPlan(
         unmetConditions: [
           `The stored candidate bytes hash to ${persistedHash}, but the approved candidate identity is ${launch.candidate.candidateHash}.`,
         ],
-        instruction: `Nothing was started. Re-read the approved candidate with \`cctl spec plan preview ${spec.slug} --stage proposed\`, then re-run \`cctl spec plan propose ${spec.slug}\` and sign the fresh candidate off.`,
+        instruction: `Nothing was started. Re-read the approved candidate with \`cctl spec plan preview ${spec.slug} --stage approved\`, then reopen it with \`cctl spec plan reopen ${spec.slug} --reason <why>\` and have the repaired draft signed off.`,
       },
     });
   }
@@ -2836,7 +2832,7 @@ async function seededDeliveryPlanInstruction(
     abandonWorkflowExecutionId === undefined
       ? ""
       : `Abandon execution ${abandonWorkflowExecutionId} with \`cctl spec abandon ${target} --execution ${abandonWorkflowExecutionId} --reason <reason>\`, then `;
-  return `${abandon}open a seeded attempt with \`cctl spec plan open ${target}\`, propose and sign its candidate off, then launch it with \`cctl spec start ${target} --file .cc/temp/inputs.json\`.`;
+  return `${abandon}open a seeded attempt with \`cctl spec plan open ${target}\`, have its draft signed off, then launch it with \`cctl spec start ${target} --file .cc/temp/inputs.json\`.`;
 }
 
 function abandonReasonRefusal(): LifecycleResult<never> {

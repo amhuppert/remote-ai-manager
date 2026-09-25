@@ -106,7 +106,7 @@ describe("delivery-plan comment persistence", () => {
    * review surface can show it as an orphan rather than losing the note.
    *
    * DEFERRED, by design: anchor survival across the full production
-   * reopen → re-propose cycle is verified downstream in context `lock-reopen`,
+   * reopen → sign-off cycle is verified downstream in context `lock-reopen`,
    * which owns those transitions. What is proven here is the storage property
    * they rest on — a document edit never reaches the comment table.
    */

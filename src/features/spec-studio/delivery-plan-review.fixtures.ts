@@ -11,6 +11,10 @@ type ReviewOverrides = {
   health?: DeliveryPlanReviewView["health"];
 };
 
+/**
+ * A draft with clean health: the plan a human signs off in Workflow Builder.
+ * Candidate identity stays null until sign-off freezes it.
+ */
 export function reviewView(
   overrides: ReviewOverrides = {},
 ): DeliveryPlanReviewView {
@@ -18,13 +22,13 @@ export function reviewView(
     attempt: {
       id: "attempt-2",
       specSlug: "native-sdd",
-      status: "proposed",
+      status: "draft",
       draftRevision: 2,
       pinnedRevisionId: "revision-2",
       deltaBasisExecutionId: null,
-      proposedSnapshotId: "snapshot-2",
-      candidateId: "candidate-2",
-      candidateHash: "sha256:candidate-2",
+      proposedSnapshotId: null,
+      candidateId: null,
+      candidateHash: null,
       launchedExecutionId: null,
       workflowDefinitionId: "candidate-2",
       createdAt: "2026-08-14T00:00:00.000Z",
@@ -56,9 +60,11 @@ export function reviewView(
     unresolved: [],
     snapshots: [],
     nextAct: {
-      actor: "agent",
-      command: "cctl spec plan sign-off native-sdd",
-      reason: "Sign the finalized envelope.",
+      actor: "human",
+      command:
+        "Review and sign off in Builder: /projects/command-center/workflows?definition=candidate-2",
+      reason:
+        "Execution start requires a human to review the draft and sign it off; sign-off freezes the exact launch envelope.",
     },
     criteria: [],
     comments: [],
@@ -98,12 +104,6 @@ export function pendingReaffirmationReview(): DeliveryPlanReviewView {
     },
   ];
   return reviewView({
-    attempt: {
-      status: "draft",
-      proposedSnapshotId: null,
-      candidateHash: null,
-      candidateId: null,
-    },
     criteria,
     health: {
       total: 2,
@@ -115,7 +115,7 @@ export function pendingReaffirmationReview(): DeliveryPlanReviewView {
           ruleId: "binding/pending-reaffirmation",
           severity: "blocks_propose",
           elementHandle: handle,
-          message: `${handle} needs human reaffirmation or in-scope delivery before proposal.`,
+          message: `${handle} needs human reaffirmation or in-scope delivery before sign-off.`,
         })),
     },
     document: {

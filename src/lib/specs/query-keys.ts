@@ -51,7 +51,7 @@ export const specKeys = {
   planPreview: (
     projectName: string,
     slug: string,
-    stage: "draft" | "proposed",
+    stage: "draft" | "approved",
     expectedDraftRevision?: number,
   ) =>
     [

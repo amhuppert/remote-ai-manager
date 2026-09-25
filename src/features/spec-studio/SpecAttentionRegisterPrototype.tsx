@@ -874,10 +874,7 @@ export default function SpecAttentionRegisterPrototype({
   ).length;
   const requirementsActive =
     phase.authoringStage === "requirements" &&
-    (phase.primary === "draft" ||
-      phase.primary === "in_review" ||
-      phase.authoringFacet === "draft" ||
-      phase.authoringFacet === "in_review");
+    (phase.primary === "draft" || phase.authoringFacet === "draft");
 
   return (
     <section

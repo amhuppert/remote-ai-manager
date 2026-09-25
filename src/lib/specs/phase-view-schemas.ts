@@ -5,14 +5,13 @@ import { specAuthoringStageSchema } from "./schemas";
 export const specPhasePrimarySchema = z.enum([
   "abandoned",
   "executing",
-  "in_review",
   "draft",
   "delivered",
   "approved",
 ]);
 export type SpecPhasePrimary = z.infer<typeof specPhasePrimarySchema>;
 
-export const authoringFacetSchema = z.enum(["in_review", "draft"]);
+export const authoringFacetSchema = z.enum(["draft"]);
 export type AuthoringFacet = z.infer<typeof authoringFacetSchema>;
 
 export const specPhaseProjectionSchema = z

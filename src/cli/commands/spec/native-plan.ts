@@ -158,7 +158,7 @@ function planText(data: JsonValue): string {
       ...(attempt.candidateHash === null
         ? []
         : [
-            `live proposal: ${attempt.candidateId} at ${attempt.candidateHash}`,
+            `signed candidate: ${attempt.candidateId} at ${attempt.candidateHash}`,
           ]),
       ...(approval === null
         ? []
@@ -251,7 +251,7 @@ const previewRun = runner<
         ok: false,
         error: ccErrors.error("CC_USAGE", {
           message:
-            "--expected-draft-revision applies only to --stage draft; proposed previews read a frozen candidate.",
+            "--expected-draft-revision applies only to --stage draft; approved previews read the signed candidate.",
         }),
       } as const;
     const query = new URLSearchParams({ stage: ctx.flags.stage });

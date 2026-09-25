@@ -1,5 +1,7 @@
 # Research & Design Decisions: native-sdd
 
+> **Superseded in part (2026-09-24).** Revisions and delivery-plan attempts no longer have a Proposed state: a draft is reviewed while it stays editable, and sign-off is the only freeze. Research findings about freezing at propose and Request Changes describe the retired lifecycle. Requirement 27 in `requirements.md` and "Amendment — continuous review" in `design.md` describe the current lifecycle.
+
 - **Feature**: `native-sdd`
 - **Discovery Scope**: Complex Integration / New Feature (full discovery)
 - **Structure**: §1–7 are the gap analysis (2026-07-17, `/kiro-validate-gap`). §8–10 are the design-phase research log, synthesis decisions, and risks (2026-07-18, `/kiro-spec-design`).

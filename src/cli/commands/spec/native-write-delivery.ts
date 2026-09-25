@@ -10,7 +10,6 @@ import { z } from "zod";
 import { postLaunchPathActs } from "@/lib/specs/delivery-plan";
 import {
   deliveryPlanMutationViewSchema,
-  deliveryPlanPreviewViewSchema,
   specStartExecutionReceiptSchema,
 } from "@/lib/specs/delivery-plan-views";
 import { taskElementPayloadSchema } from "@/lib/specs/schemas";
@@ -32,11 +31,9 @@ import {
   invalidResponse,
   postValue,
   readEditContext,
-  readValue,
   refused,
   resolveWrite,
   scalar,
-  specPath,
   specRecovery,
   statusHint,
   usage,
@@ -105,47 +102,6 @@ export const planReopenHandler = scalar<typeof S.specPlanReopenSpec, JsonValue>(
           result: usage("Reopening requires a nonempty durable reason."),
         }),
 );
-export const planSignOffHandler = scalar<
-  typeof S.specPlanSignOffSpec,
-  JsonValue
->(async ({ app, ctx }) => {
-  let candidateId = ctx.flags.candidate;
-  let candidateHash = ctx.flags["candidate-hash"];
-  if ((candidateId === undefined) !== (candidateHash === undefined))
-    return {
-      effect: "not_applied",
-      result: usage(
-        "Supply both --candidate and --candidate-hash, or neither to read the frozen proposal.",
-      ),
-    };
-  if (candidateId === undefined || candidateHash === undefined) {
-    const resolved = await resolveWrite(app, ctx.args.slug);
-    if (!resolved.ok) return { effect: "not_applied", result: resolved };
-    const preview = await readValue(
-      app,
-      resolved.value,
-      `${specPath(resolved.value, ctx.args.slug)}/plan-preview?stage=proposed`,
-      deliveryPlanPreviewViewSchema,
-    );
-    if (!preview.ok) return { effect: "not_applied", result: preview };
-    if (
-      preview.value.candidateId === null ||
-      preview.value.candidateHash === null
-    )
-      return {
-        effect: "not_applied",
-        result: refused(
-          "The proposed delivery plan has no frozen candidate identity; propose the plan before signing it off.",
-        ),
-      };
-    candidateId = preview.value.candidateId;
-    candidateHash = preview.value.candidateHash;
-  }
-  return planAction(app, ctx.args.slug, "plan-sign-off", {
-    candidateId,
-    candidateHash,
-  });
-});
 const abandonedSchema = z.object({ attemptId: z.string().min(1) }).strict();
 export const planAbandonHandler = scalar<
   typeof S.specPlanAbandonSpec,
@@ -372,7 +328,7 @@ const capture: Capture = {
       const guidance =
         replacement === null
           ? `The run keeps its pinned scope. The discovery is queued for a later plan. Post-launch paths: ${paths.join("; ")}.`
-          : `Stop work on retired execution ${replacement.abandonedWorkflowExecutionId}. Review replacement attempt ${replacement.replacementAttemptId}, author its replacement graph through workflow replace, then propose and obtain human sign-off before launching it. Capture never changes the retired run's pinned scope.`;
+          : `Stop work on retired execution ${replacement.abandonedWorkflowExecutionId}. Review replacement attempt ${replacement.replacementAttemptId}, author its replacement graph through workflow replace, and have that draft signed off before launching it; spec plan status names who acts next. Capture never changes the retired run's pinned scope.`;
       return {
         effect: "applied",
         recovery,

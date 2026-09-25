@@ -4,8 +4,9 @@ import { expect, fn, userEvent, within } from "storybook/test";
 import type { SpecDetailView } from "@/lib/specs/queries";
 
 import {
-  liveProposalsFixture,
+  draftReviewFixture,
   specControlsDetailFixture,
+  subjectFingerprintFixture,
 } from "./SpecControls.fixtures";
 import SpecReviewMode from "./SpecReviewMode";
 
@@ -20,10 +21,10 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
     ...baseSnapshot.revision,
     id: "revision-2",
     number: 2,
-    state: "proposed" as const,
+    state: "draft" as const,
     basedOnRevisionId: baseSnapshot.revision.id,
     contentHash: "revision-2-hash",
-    proposedAt: NOW,
+    proposedAt: null,
     approvedAt: null,
   };
   const currentElements = baseSnapshot.elements.map((entry) => ({
@@ -96,7 +97,7 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
   return {
     ...detail,
     revisions: [baseSnapshot.revision, currentRevision],
-    liveProposals: liveProposalsFixture(
+    draftReview: draftReviewFixture(
       [baseSnapshot.revision, currentRevision],
       [baseSnapshot, currentSnapshot],
     ),
@@ -114,6 +115,8 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
             approver: "alex",
             granted_at: NOW,
             validity: "stale",
+            subject_fingerprint_json:
+              subjectFingerprintFixture("requirement-1"),
           },
         ]
       : [
@@ -126,6 +129,8 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
             approver: "alex",
             granted_at: NOW,
             validity: "valid",
+            subject_fingerprint_json:
+              subjectFingerprintFixture("requirement-1"),
           },
           {
             id: "approval-decision",
@@ -136,6 +141,7 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
             approver: "alex",
             granted_at: NOW,
             validity: "valid",
+            subject_fingerprint_json: subjectFingerprintFixture("decision-1"),
           },
           {
             id: "approval-plan",
@@ -146,6 +152,7 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
             approver: "alex",
             granted_at: NOW,
             validity: "valid",
+            subject_fingerprint_json: subjectFingerprintFixture(null),
           },
         ],
     comments: [
@@ -397,7 +404,7 @@ function deletionReviewDetailFixture(): SpecDetailView {
     ...detail,
     // The projection carries the snapshot the review renders, so a story that
     // edits the revision has to hand the edited snapshot to both.
-    liveProposals: liveProposalsFixture(detail.revisions, [
+    draftReview: draftReviewFixture(detail.revisions, [
       detail.baseRevision,
       shortened,
     ]),
@@ -406,7 +413,7 @@ function deletionReviewDetailFixture(): SpecDetailView {
 }
 
 /**
- * Ticket #58: revision 2 re-proposed over a withdrawn attempt, so R1 is
+ * Ticket #58: draft revision 2 reopened over a withdrawn attempt, so R1 is
  * unchanged against the immediate base yet never approved — the server still
  * owes its approval and the review surface must offer it individually.
  */
@@ -568,11 +575,22 @@ export const AwaitingUnchangedApproval: Story = {
   args: { detail: awaitingUnchangedDetailFixture() },
 };
 
-export const RequestChangesDialog: Story = {
-  play: async ({ canvasElement }) => {
-    await userEvent.click(
-      within(canvasElement).getByRole("button", { name: "Request changes" }),
-    );
+/** The author asked for review with a disposition of what this round did. */
+export const AuthorNotes: Story = {
+  args: {
+    detail: (() => {
+      const detail = reviewDetailFixture();
+      return detail.draftReview === null
+        ? detail
+        : {
+            ...detail,
+            draftReview: {
+              ...detail.draftReview,
+              notes:
+                "Round 2: tightened R1 to the exact selected scope and added D1 to pin scope at execution start.",
+            },
+          };
+    })(),
   },
 };
 

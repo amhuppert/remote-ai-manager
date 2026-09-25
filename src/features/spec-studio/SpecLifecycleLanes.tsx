@@ -1,23 +1,21 @@
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import type { SpecDetailView } from "@/lib/specs/queries";
+import type { SpecRevisionState } from "@/lib/specs/schemas";
 
-const revisionTone: Record<
-  "draft" | "proposed" | "approved" | "withdrawn",
-  StatusChipTone
-> = {
+import { deliveryPlanReadyForSignOff } from "./presentation";
+
+const revisionTone: Record<SpecRevisionState, StatusChipTone> = {
   draft: "cyan",
-  proposed: "amber",
   approved: "green",
   withdrawn: "neutral",
 };
 
-const stateLabel = {
+const stateLabel: Record<SpecRevisionState, string> = {
   draft: "Draft",
-  proposed: "In review",
   approved: "Approved",
   withdrawn: "Withdrawn",
-} as const;
+};
 
 export default function SpecLifecycleLanes({
   detail,
@@ -35,6 +33,10 @@ export default function SpecLifecycleLanes({
     deliveryPlan?.criteria.filter(
       ({ disposition }) => disposition === "pending_reaffirmation",
     ).length ?? 0;
+  const readyForSignOff =
+    deliveryPlan !== null &&
+    deliveryPlan !== undefined &&
+    deliveryPlanReadyForSignOff(deliveryPlan);
 
   return (
     <section
@@ -92,17 +94,17 @@ export default function SpecLifecycleLanes({
             </span>
             <StatusChip
               tone={
-                deliveryPlan.attempt.status === "draft"
-                  ? "cyan"
-                  : deliveryPlan.attempt.status === "proposed"
-                    ? "amber"
+                readyForSignOff
+                  ? "amber"
+                  : deliveryPlan.attempt.status === "draft"
+                    ? "cyan"
                     : deliveryPlan.attempt.status === "abandoned"
                       ? "neutral"
                       : "green"
               }
             >
-              {deliveryPlan.attempt.status === "proposed"
-                ? "In review"
+              {readyForSignOff
+                ? "Ready for sign-off"
                 : deliveryPlan.attempt.status}
             </StatusChip>
             {pendingReaffirmation > 0 && (

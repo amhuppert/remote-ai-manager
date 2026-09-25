@@ -41,8 +41,6 @@ export const SPEC_ACTIONS = [
   "comment",
   "reply",
   "resolve-thread",
-  "request-changes",
-  "dismiss-superseded",
   "approve-item",
   "unapprove-item",
   "sign-off",
@@ -76,7 +74,6 @@ export const SPEC_ACTIONS = [
   // exists so a browser call site cannot mistype a path.
   "plan-comment",
   "plan-open",
-  "plan-propose",
   "plan-reopen",
   "plan-abandon",
   "plan-sign-off",

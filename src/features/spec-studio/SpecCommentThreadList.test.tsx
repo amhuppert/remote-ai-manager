@@ -208,7 +208,7 @@ function ListHarness({
         slug="spec"
         specId="spec-1"
         viewedRevisionId="revision-2"
-        viewedRevisionState="proposed"
+        viewedRevisionState="draft"
         specAbandoned={false}
         humanTransport
         placements={placements()}
@@ -275,7 +275,7 @@ describe("SpecCommentThreadList", () => {
           slug="spec"
           specId="spec-1"
           viewedRevisionId="revision-2"
-          viewedRevisionState="proposed"
+          viewedRevisionState="draft"
           specAbandoned={false}
           humanTransport
           placements={nextPlacements}

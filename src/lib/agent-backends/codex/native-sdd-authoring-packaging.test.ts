@@ -32,11 +32,11 @@ const EXPECTED_SECTIONS = [
   "Exclusive Requirements and Design checkpoints",
   "Managed delivery workflow",
   "Stable-source claims and dynamic accountability",
-  "Finalized proposal, sign-off, and one-off start",
+  "Draft review, sign-off, and one-off start",
   "Ordinary live edit, capture, and replacement",
   "Removal and reintroduction symmetry",
   "Correcting obsolete questions and assumptions",
-  "Withdraw-proposal vs dismiss-superseded",
+  "Continuous review of the draft",
   "Element-id/handle/version semantics",
   "Importing a spec authored outside CC",
   "Consistency sweep and `propose --notes` protocol",
@@ -220,9 +220,9 @@ describe("native-sdd-authoring managed skill", () => {
     // author who cannot write `R3.2` in prose writes a wrong reference instead.
     expect(propose).toMatch(/backtick|fenced/i);
 
-    expect(skill).toContain(
-      "approvals on unchanged subjects carry into the reopened draft",
-    );
+    const review = sectionBody(skill, "Continuous review of the draft");
+    expect(review).toMatch(/only their sign-off freezes the revision/i);
+    expect(review).toMatch(/makes it unapproved again/i);
     const identity = sectionBody(skill, "Element-id/handle/version semantics");
     expect(identity).toMatch(/one batch can create an element and cite it/i);
     expect(identity).toContain("parent_immutable");
@@ -365,9 +365,8 @@ describe("native-sdd-authoring managed skill", () => {
     expect(planOpen).toContain("cctl workflow validate");
     expect(planOpen).toContain("cctl workflow replace");
     const planPropose = await helpText(["spec", "plan", "propose"]);
-    expect(planPropose).toContain("spec plan sign-off");
-    const planSignOff = await helpText(["spec", "plan", "sign-off"]);
-    expect(planSignOff).toContain("spec start");
+    expect(planPropose).toContain("signs it off in Builder");
+    expect(planPropose).toContain("spec start");
 
     const start = await helpText(["spec", "start"]);
     expect(start).toContain("--park");

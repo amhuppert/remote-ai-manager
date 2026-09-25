@@ -13,7 +13,7 @@ const PROVENANCE_LOCK: WorkflowLockedRegion = {
   reason:
     "The signed native SDD candidate owns provenance and approval policy.",
   instruction:
-    "Before launch, reopen and re-propose the plan; after launch, replace the execution.",
+    "Before launch, reopen the plan and have the revised draft signed off; after launch, replace the execution.",
 };
 
 function storedDraft() {

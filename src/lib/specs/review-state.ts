@@ -11,6 +11,7 @@ import type {
   SpecRecords,
 } from "./lint";
 import {
+  approvalRecordFromRow,
   createApprovalApplicability,
   type ApprovalCitationState,
   type ApprovalApplicability,
@@ -219,17 +220,17 @@ export function loadProposalState(
     baseSnapshot === null ? undefined : toLintSnapshot(spec, baseSnapshot);
   const approvals = review.findApprovalsBySpecId(spec.id);
   const approvedElements = approvals.flatMap((approval) => {
-    if (approval.element_id === null) return [];
-    const approvedSnapshot = loadSnapshot(approval.revision_id);
-    const approvedVersion = approvedSnapshot?.elements.find(
-      ({ element }) => element.id === approval.element_id,
-    )?.version;
-    return approvedVersion === undefined
+    const record = approvalRecordFromRow(approval);
+    if (record === null || approval.element_id === null) return [];
+    const approvedPair = record.fingerprint.elements.find(
+      (pair) => pair.elementId === approval.element_id,
+    );
+    return approvedPair === undefined
       ? []
       : [
           {
             elementId: approval.element_id,
-            approvedPayloadHash: approvedVersion.payloadHash,
+            approvedPayloadHash: approvedPair.payloadHash,
           },
         ];
   });
@@ -326,18 +327,10 @@ export function loadProposalState(
         handle: comment.thread_id,
         resolved: comment.resolution !== "open",
       })),
-    approvals: approvals.flatMap((approval) =>
-      approval.subject_kind === "revision"
-        ? []
-        : [
-            {
-              subjectKind: approval.subject_kind,
-              elementId: approval.element_id,
-              revisionId: approval.revision_id,
-              validity: approval.validity,
-            },
-          ],
-    ),
+    approvals: approvals.flatMap((approval) => {
+      const record = approvalRecordFromRow(approval);
+      return record === null ? [] : [record];
+    }),
   };
   return {
     draft,
@@ -349,22 +342,12 @@ export function loadProposalState(
     importBaselineCitationState,
     approvalApplies: createApprovalApplicability({
       revisionId: snapshot.revision.id,
-      basedOnRevisionId: snapshot.revision.basedOnRevisionId,
       ancestorRevisionIds: ancestorIds(revisions, snapshot.revision.id),
       revisionRows: reviewSnapshot.revisionRows,
       citationContractVersion: snapshot.revision.citationContractVersion,
       citations: toDiffCitations(snapshot),
-      stateForRevision: (revisionId) => {
-        const approved = loadSnapshot(revisionId);
-        return approved === null
-          ? null
-          : {
-              rows: toDiffRows(approved),
-              citationContractVersion:
-                approved.revision.citationContractVersion,
-              citations: toDiffCitations(approved),
-            };
-      },
+      parentCitationContractVersion:
+        baseSnapshot?.revision.citationContractVersion ?? null,
     }),
   };
 }

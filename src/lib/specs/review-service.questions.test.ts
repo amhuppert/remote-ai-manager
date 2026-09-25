@@ -26,6 +26,7 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import { revisionReviewHash } from "./review-hash";
 import { createReviewService, type ReviewService } from "./review-service";
 
 const PROJECT_PATH = "/repos/native-sdd-questions";
@@ -80,6 +81,36 @@ beforeEach(() => {
 });
 
 afterEach(() => db.close());
+
+async function reviewHash(revisionId: string): Promise<string> {
+  const snapshot = await specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) throw new Error(`revision ${revisionId} missing`);
+  return revisionReviewHash(snapshot);
+}
+
+/** Approves every consulted subject on the open draft, then signs it off. */
+async function approveAndSignOff(specId: string, revisionId: string) {
+  const approved = await reviewing.bulkApprove({
+    specId,
+    revisionId,
+    subjects: [
+      { subjectKind: "requirement", elementId: "requirement-1" },
+      { subjectKind: "decision", elementId: "decision-1" },
+      { subjectKind: "plan", elementId: null },
+    ],
+    approver: "alex",
+    expectedReviewHash: await reviewHash(revisionId),
+    actor: HUMAN,
+  });
+  if (!approved.ok) throw new Error(approved.refusal.code);
+  return reviewing.signOffRevision({
+    specId,
+    revisionId,
+    approver: "alex",
+    expectedReviewHash: await reviewHash(revisionId),
+    actor: HUMAN,
+  });
+}
 
 async function createPopulatedSpec() {
   const created = await authoring.createSpec({
@@ -408,10 +439,6 @@ describe("ReviewService questions, assumptions, and policy", () => {
     });
     expect(await specs.readRevisionCitations(created.draft.id)).toEqual([]);
 
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T16:00:00.000Z",
-    });
     const replayWithoutRevision = {
       ...supersedeInput,
       draftRevisionId: undefined,
@@ -535,10 +562,11 @@ describe("ReviewService questions, assumptions, and policy", () => {
       disposition: "confirmed",
       actor: HUMAN,
     });
-    await specs.proposeRevision({
+    await specs.approveRevision({
       revisionId: created.draft.id,
-      proposedAt: "2026-07-18T16:00:00.000Z",
+      approvedAt: "2026-07-18T16:00:00.000Z",
     });
+    expect(await specs.findDraft(created.spec.id)).toBeNull();
 
     await expect(
       reviewing.supersedeAssumption({
@@ -683,27 +711,18 @@ describe("ReviewService questions, assumptions, and policy", () => {
       value: { disposition: "confirmed" },
     });
 
-    await authoring.proposeRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: AGENT,
-    });
-    await reviewing.bulkApprove({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      subjects: [
-        { subjectKind: "requirement", elementId: "requirement-1" },
-        { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
-      ],
-      approver: "alex",
-      actor: HUMAN,
-    });
-    await reviewing.signOffRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      approver: "alex",
-      actor: HUMAN,
+    await expect(
+      authoring.proposeRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        actor: AGENT,
+      }),
+    ).resolves.toMatchObject({ ok: true, revision: { state: "draft" } });
+    await expect(
+      approveAndSignOff(created.spec.id, created.draft.id),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { revision: { state: "approved" } },
     });
 
     const changed = await reviewing.disposeAssumption({
@@ -746,29 +765,15 @@ describe("ReviewService questions, assumptions, and policy", () => {
       value: { disposition: "rejected" },
     });
 
-    await authoring.proposeRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: AGENT,
-    });
-    await reviewing.bulkApprove({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      subjects: [
-        { subjectKind: "requirement", elementId: "requirement-1" },
-        { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
-      ],
-      approver: "alex",
-      actor: HUMAN,
-    });
+    await expect(
+      authoring.proposeRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        actor: AGENT,
+      }),
+    ).resolves.toMatchObject({ ok: true, revision: { state: "draft" } });
 
-    const signOff = await reviewing.signOffRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      approver: "alex",
-      actor: HUMAN,
-    });
+    const signOff = await approveAndSignOff(created.spec.id, created.draft.id);
     expect(signOff).toMatchObject({
       ok: false,
       refusal: {
@@ -781,6 +786,9 @@ describe("ReviewService questions, assumptions, and policy", () => {
           }),
         ],
       },
+    });
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "draft",
     });
   });
 
@@ -807,27 +815,18 @@ describe("ReviewService questions, assumptions, and policy", () => {
 
   it("requires a draft for attached post-approval assumptions without backfilling frozen truth", async () => {
     const created = await createPopulatedSpec();
-    await authoring.proposeRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: AGENT,
-    });
-    await reviewing.bulkApprove({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      subjects: [
-        { subjectKind: "requirement", elementId: "requirement-1" },
-        { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
-      ],
-      approver: "alex",
-      actor: HUMAN,
-    });
-    await reviewing.signOffRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      approver: "alex",
-      actor: HUMAN,
+    await expect(
+      authoring.proposeRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        actor: AGENT,
+      }),
+    ).resolves.toMatchObject({ ok: true, revision: { state: "draft" } });
+    await expect(
+      approveAndSignOff(created.spec.id, created.draft.id),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { revision: { state: "approved" } },
     });
 
     const refused = await reviewing.proposeAssumption({
@@ -862,16 +861,16 @@ describe("ReviewService questions, assumptions, and policy", () => {
 
   it("applies a hard-confirmed human policy change prospectively without creating approvals", async () => {
     const created = await createPopulatedSpec();
-    reviewRepo.saveApproval({
-      id: "existing-approval",
-      spec_id: created.spec.id,
-      subject_kind: "requirement",
-      element_id: "requirement-1",
-      revision_id: created.draft.id,
+    const existing = await reviewing.approveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjectKind: "requirement",
+      elementId: "requirement-1",
       approver: "alex",
-      granted_at: "2026-07-18T15:20:00.000Z",
-      validity: "valid",
+      expectedReviewHash: await reviewHash(created.draft.id),
+      actor: HUMAN,
     });
+    if (!existing.ok) throw new Error(existing.refusal.code);
     const refused = await reviewing.changePolicy({
       specId: created.spec.id,
       proposedPolicy: { preset: "exploratory" },
@@ -894,7 +893,7 @@ describe("ReviewService questions, assumptions, and policy", () => {
       value: { spec: { gatePolicy: { preset: "exploratory" } } },
     });
     expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([
-      expect.objectContaining({ id: "existing-approval", validity: "valid" }),
+      expect.objectContaining({ id: existing.value.id, validity: "valid" }),
     ]);
     expect(reviewRepo.findGateAdmissionsByRevision(created.draft.id)).toEqual(
       [],

@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 
 import type { RevisionElement } from "./revision-diff";
 import type { RevisionCitation } from "./revision-diff";
-import type { SpecApprovalSubjectKind, SpecApprovalValidity } from "./schemas";
+import {
+  subjectFingerprintSchema,
+  type SpecApprovalRow,
+  type SpecApprovalSubjectKind,
+  type SpecApprovalValidity,
+} from "./schemas";
 
 /**
  * The approval subjects a human records against content. `revision` is the
@@ -21,6 +26,8 @@ export interface ApprovalRecord extends ApprovalSubject {
   /** The revision whose content the approving human read. */
   revisionId: string;
   validity: SpecApprovalValidity;
+  /** The subject as the approving human read it. */
+  fingerprint: SubjectFingerprint;
 }
 
 /**
@@ -142,8 +149,6 @@ export function sameSubjectFingerprint(
 export interface ApprovalApplicabilityContext {
   /** The revision every approval is judged against. */
   revisionId: string;
-  /** The current revision's direct lineage parent. */
-  basedOnRevisionId: string | null;
   /**
    * Ancestors of `revisionId`. The caller resolves lineage, which fails closed
    * on a broken or cross-spec parent rather than answering "no ancestors".
@@ -152,12 +157,8 @@ export interface ApprovalApplicabilityContext {
   revisionRows: readonly RevisionElement[];
   citationContractVersion: 1 | 2;
   citations: readonly RevisionCitation[];
-  /** Content and citations of another revision; null when it cannot be read. */
-  stateForRevision(
-    revisionId: string,
-  ):
-    | ({ readonly rows: readonly RevisionElement[] } & ApprovalCitationState)
-    | null;
+  /** The direct lineage parent's citation contract; null without a parent. */
+  parentCitationContractVersion: 1 | 2 | null;
 }
 
 export type ApprovalApplicability = (approval: ApprovalRecord) => boolean;
@@ -170,51 +171,24 @@ export type ApprovalApplicability = (approval: ApprovalRecord) => boolean;
  *
  * An approval applies only when all of these hold: it is still valid; its
  * revision is this revision or an ancestor of it, so it belongs to this line
- * of content rather than an abandoned branch; the subject's keyed fingerprint
- * is identical on both revisions; and every snapshot the comparison needs is
- * readable. Anything unreadable refuses — an approval that cannot be checked
- * is not an approval that has been checked.
+ * of content rather than an abandoned branch; and the subject's keyed
+ * fingerprint is identical to the one the human approved. The fingerprint is
+ * compared against the approval's own record, never re-read from the
+ * approval's revision: a draft is edited in place, so its rows no longer say
+ * what the human read.
  */
 export function createApprovalApplicability(
   context: ApprovalApplicabilityContext,
 ): ApprovalApplicability {
-  const stateByRevision = new Map<
-    string,
-    | ({ readonly rows: readonly RevisionElement[] } & ApprovalCitationState)
-    | null
-  >([
-    [
-      context.revisionId,
-      {
-        rows: context.revisionRows,
-        citationContractVersion: context.citationContractVersion,
-        citations: context.citations,
-      },
-    ],
-  ]);
   const fingerprints = new Map<string, SubjectFingerprint | null>();
-
-  const stateFor = (
-    revisionId: string,
-  ):
-    | ({ readonly rows: readonly RevisionElement[] } & ApprovalCitationState)
-    | null => {
-    if (!stateByRevision.has(revisionId)) {
-      stateByRevision.set(revisionId, context.stateForRevision(revisionId));
-    }
-    return stateByRevision.get(revisionId) ?? null;
-  };
-
-  const fingerprintFor = (
-    revisionId: string,
+  const currentFingerprint = (
     subject: ApprovalSubject,
   ): SubjectFingerprint | null => {
-    const key = `${revisionId}\u0000${subject.subjectKind}\u0000${subject.elementId ?? ""}`;
+    const key = `${subject.subjectKind}\u0000${subject.elementId ?? ""}`;
     if (!fingerprints.has(key)) {
-      const state = stateFor(revisionId);
       fingerprints.set(
         key,
-        state === null ? null : subjectFingerprint(state.rows, subject, state),
+        subjectFingerprint(context.revisionRows, subject, context),
       );
     }
     return fingerprints.get(key) ?? null;
@@ -228,21 +202,14 @@ export function createApprovalApplicability(
     ) {
       return false;
     }
-    const currentFingerprint = fingerprintFor(context.revisionId, approval);
-    const approvedFingerprint = fingerprintFor(approval.revisionId, approval);
-    const crossesCitationContractBoundary =
-      currentFingerprint?.citationContractVersion === 2 &&
-      approvedFingerprint?.citationContractVersion === 1;
-    const parentState =
-      !crossesCitationContractBoundary || context.basedOnRevisionId === null
-        ? null
-        : stateFor(context.basedOnRevisionId);
+    const current = currentFingerprint(approval);
     const allowEmptyCitationContractUpgrade =
-      crossesCitationContractBoundary &&
-      parentState?.citationContractVersion === 1;
+      current?.citationContractVersion === 2 &&
+      approval.fingerprint.citationContractVersion === 1 &&
+      context.parentCitationContractVersion === 1;
     return sameSubjectFingerprint(
-      currentFingerprint,
-      approvedFingerprint,
+      current,
+      approval.fingerprint,
       allowEmptyCitationContractUpgrade,
     );
   };
@@ -261,6 +228,33 @@ function canonicalJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
+}
+
+/** The record an applicability check reads; null for a revision sign-off. */
+export function approvalRecordFromRow(
+  row: SpecApprovalRow,
+): ApprovalRecord | null {
+  if (
+    row.subject_kind === "revision" ||
+    row.subject_fingerprint_json === null
+  ) {
+    return null;
+  }
+  return {
+    subjectKind: row.subject_kind,
+    elementId: row.element_id,
+    revisionId: row.revision_id,
+    validity: row.validity,
+    fingerprint: subjectFingerprintSchema.parse(
+      JSON.parse(row.subject_fingerprint_json),
+    ),
+  };
+}
+
+export function serializeSubjectFingerprint(
+  fingerprint: SubjectFingerprint,
+): string {
+  return canonicalJson(fingerprint);
 }
 
 export function approvalAppliesToRevision(

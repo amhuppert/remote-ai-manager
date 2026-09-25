@@ -385,8 +385,9 @@ export type SpecStatusExecution = z.infer<typeof specStatusExecutionSchema>;
 /**
  * One remaining authoring stage and the gate that concludes it (R25.5).
  * `concludedBy` is `advance` only where the stage's dial admits the transition
- * without review — every other stage ends this draft with a propose, so the
- * next stage is authored in the draft an amendment opens.
+ * without review — every other stage ends this draft with the sign-off its
+ * propose leads to, so the next stage is authored in the draft an amendment
+ * opens.
  */
 const remainingAuthoringStageSchema = z
   .object({
@@ -462,9 +463,8 @@ const specProposeApprovalRequestSchema = z
     /**
      * The durable request's stable attention id: an ask filed while one is
      * already open under the same (specId, revisionId, gate, scope: 'gate')
-     * reports that open request's id unchanged. Request Changes retires the
-     * reviewed revision's asks and opens a new revision, so the propose that
-     * follows it reports a new id. Null whenever no request exists.
+     * reports that open request's id unchanged, so asking again for review of
+     * the same draft reuses it. Null whenever no request exists.
      */
     attentionId: z.string().min(1).nullable(),
   })
@@ -475,9 +475,9 @@ export type SpecProposeApprovalRequest = z.infer<
 
 /**
  * The propose receipt. `pendingBlock` and `nextAction` are the server's
- * post-transition projection — computed after approval invalidation and after
- * the Notify/Off policy admissions — so a caller renders what still blocks the
- * revision instead of inferring a gate from its authoring stage.
+ * post-transition projection — computed after the Notify/Off policy
+ * admissions — so a caller renders what still blocks the revision instead of
+ * inferring a gate from its authoring stage.
  * `approvalRequests` is what the server already did about that block, so the
  * caller never re-files an ask the propose has just filed.
  */
@@ -944,36 +944,28 @@ export const specShowOutlineViewSchema = z
 export type SpecShowOutlineView = z.infer<typeof specShowOutlineViewSchema>;
 
 /**
- * One revision currently under review, with the verdict the shared
- * supersession predicate reached about it and the snapshots its diff needs.
- *
- * The snapshots ride the entry rather than being looked up by id against the
- * detail's other snapshot fields: a stranded proposal is by definition not the
- * lineage head, so no existing field carries it, and a surface that had to
- * assemble the pair itself is exactly the second projection ticket #50's dead
- * end came from.
+ * The open draft as a human reviews it: its content, what its diff reads
+ * against, and the token a review act echoes back. Approving and signing off
+ * work on the draft itself, so the token is what proves the human acted on
+ * the content they read rather than on whatever the agent wrote since.
  */
-export const liveProposalViewSchema = z
+export const draftReviewViewSchema = z
   .object({
-    revision: specRevisionSchema,
-    /** The approved revision that forked past it; null while it is current. */
-    supersededBy: specRevisionSchema.nullable(),
     snapshot: specRevisionSnapshotViewSchema,
     /** Its lineage parent — the content its diff is read against. */
     baseSnapshot: specRevisionSnapshotViewSchema.nullable(),
     /** The nearest approved ancestor used as the default review baseline. */
     governanceBaseSnapshot: specRevisionSnapshotViewSchema.nullable(),
     /**
-     * The author's disposition document, read-only, as it was recorded on this
-     * proposal's own propose event. It rides the projection entry so a
-     * stranded proposal's notes are as reachable as the current one's — the
-     * asymmetry is what #50's dead end was made of. Defaulted so a client
-     * newer than its server still parses the entry.
+     * The author's disposition document from the latest review request on
+     * this draft; null until the author has asked for review.
      */
-    notes: z.string().nullable().default(null),
+    notes: z.string().nullable(),
+    /** Changes whenever the draft's content or citations change. */
+    reviewHash: z.string().min(1),
   })
   .strict();
-export type LiveProposalView = z.infer<typeof liveProposalViewSchema>;
+export type DraftReviewView = z.infer<typeof draftReviewViewSchema>;
 
 /**
  * What the durable `spec_imported` event knows and nothing else: the source
@@ -1068,13 +1060,8 @@ export const specDetailViewSchema = z
     spec: specSchema,
     aliases: z.array(specAliasSchema),
     revisions: z.array(specRevisionSchema),
-    /**
-     * Every proposed revision, oldest first — not just the lineage head. The
-     * Review tab, the attention badge, the lifecycle strip, the Overview
-     * action, and History all read this one list, so a proposal cannot be
-     * actionable on one surface and invisible on another (#50).
-     */
-    liveProposals: z.array(liveProposalViewSchema).default([]),
+    /** Null exactly when no draft is open. */
+    draftReview: draftReviewViewSchema.nullable(),
     baseRevision: specRevisionSnapshotViewSchema.nullable(),
     currentRevision: specRevisionSnapshotViewSchema.nullable(),
     currentApprovedRevision: specRevisionSnapshotViewSchema.nullable(),
@@ -1131,7 +1118,7 @@ export type SpecDetailView = z.infer<typeof specDetailViewSchema>;
  * parent (`basedOnRevisionId`) — the pair Spec Studio's review cards diff, and
  * therefore the pair a reviewer signs off on. `governance` is the nearest
  * approved ancestor, which is what gate applicability is measured against and
- * can differ whenever an attempt was withdrawn or is still under review.
+ * can differ whenever an earlier draft was withdrawn.
  * `explicit` means the caller named the base itself.
  */
 export const specDiffBaselineSchema = z.enum([
@@ -1263,11 +1250,10 @@ const integrityMismatchSchema = z
  * The one consistency-finding shape `cctl spec verify` reports (design §9).
  *
  * Content hashes answer "was this spec's approved text tampered with"; they
- * cannot answer "did an act this spec started ever finish". Both unfinished-act
- * classes — a cleanup the abandon coordinator never completed, and a proposal
- * an approval forked past — land in this ONE discriminated union so a reader,
- * the CLI renderer, and Studio consume a single report rather than a second
- * parallel section per family.
+ * cannot answer "did an act this spec started ever finish". Unfinished acts —
+ * a cleanup the abandon coordinator never completed — land in this ONE
+ * discriminated union so a reader, the CLI renderer, and Studio consume a
+ * single report rather than a second parallel section per family.
  *
  * Every member carries `remedy`: the exact act that disposes of the finding,
  * with its target id, so a report never states a problem without its exit.
@@ -1298,27 +1284,8 @@ const executionLifecycleFindingSchema = z
   })
   .strict();
 
-const proposalIntegrityFindingSchema = z
-  .object({
-    family: z.literal("proposal-integrity"),
-    code: z.enum([
-      /** An approved revision forked past this live proposal (#50). */
-      "superseded_proposal",
-      /** Live alongside another proposal, but nothing forked past it. */
-      "competing_live_proposal",
-    ]),
-    revisionId: z.string().min(1),
-    revisionNumber: z.number().int().positive(),
-    /** Non-null exactly for `superseded_proposal`. */
-    supersededByRevisionId: z.string().min(1).nullable(),
-    detail: z.string().min(1),
-    remedy: z.string().min(1),
-  })
-  .strict();
-
 export const specConsistencyFindingSchema = z.discriminatedUnion("family", [
   executionLifecycleFindingSchema,
-  proposalIntegrityFindingSchema,
 ]);
 export type SpecConsistencyFinding = z.infer<
   typeof specConsistencyFindingSchema

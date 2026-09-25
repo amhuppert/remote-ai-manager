@@ -254,11 +254,11 @@ describe("spec reference chips", () => {
 
   it("renders the prototype live revision, preset, counts, and approval progress", async () => {
     const user = userEvent.setup();
-    const liveSummary = summary("in_review");
+    const liveSummary = summary("draft");
     liveSummary.currentRevision = {
       ...liveSummary.currentRevision!,
       number: 4,
-      state: "proposed",
+      state: "draft",
     };
     liveSummary.counts = {
       requirements: 11,
@@ -277,13 +277,13 @@ describe("spec reference chips", () => {
     });
     render(<SpecRefTranscriptChip attrs={specAttrs} />);
 
-    const chip = screen.getByRole("link", { name: /Native SDD.*In review/ });
+    const chip = screen.getByRole("link", { name: /Native SDD.*Draft/ });
     expect(within(chip).getByText("native-sdd")).toBeVisible();
     await user.hover(chip);
 
     const peek = await screen.findByLabelText("Spec summary");
     expect(
-      within(peek).getByText("native-sdd · rev 4 proposed · Contract-bearing"),
+      within(peek).getByText("native-sdd · rev 4 draft · Contract-bearing"),
     ).toBeVisible();
     expect(within(peek).getByLabelText("11 req")).toBeVisible();
     expect(within(peek).getByLabelText("4 dec")).toBeVisible();
@@ -361,6 +361,14 @@ describe("spec reference chips", () => {
         approver: "alex",
         granted_at: "2026-07-18T00:00:00Z",
         validity: "stale",
+        subject_fingerprint_json: JSON.stringify({
+          elements: [
+            { elementId: "requirement-5", payloadHash: "observed-hash" },
+          ],
+          citationContractVersion: 2,
+          citationCount: 0,
+          citationSubhash: "a".repeat(64),
+        }),
       },
     ];
     const { SpecElementRefTranscriptChip } = createSpecRefChips({

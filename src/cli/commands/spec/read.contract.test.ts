@@ -16,7 +16,16 @@ import {
 import { lint } from "@/lib/specs/lint";
 import { computeSpecMeasuresReport } from "@/lib/specs/measures";
 import { diffRevisions } from "@/lib/specs/revision-diff";
-import { toDiffRows, toLintSnapshot } from "@/lib/specs/review-state";
+import {
+  serializeSubjectFingerprint,
+  subjectFingerprint,
+  type ApprovalSubject,
+} from "@/lib/specs/approval-applicability";
+import {
+  toDiffCitations,
+  toDiffRows,
+  toLintSnapshot,
+} from "@/lib/specs/review-state";
 import {
   specDetailViewSchema,
   specDiffViewSchema,
@@ -326,6 +335,21 @@ const settledBaseSnapshot: SpecRevisionSnapshot = {
   ),
 };
 
+/** The subject as read on this snapshot, in the form an approval stores. */
+function recordedFingerprint(
+  source: SpecRevisionSnapshot,
+  subject: ApprovalSubject,
+): string {
+  const fingerprint = subjectFingerprint(toDiffRows(source), subject, {
+    citationContractVersion: source.revision.citationContractVersion,
+    citations: toDiffCitations(source),
+  });
+  if (fingerprint === null) {
+    throw new Error(`${source.revision.id} does not carry the subject`);
+  }
+  return serializeSubjectFingerprint(fingerprint);
+}
+
 /** A human approval of R1 granted on the predecessor, not on the amendment. */
 const carriedRequirementApproval: SpecApprovalRow = {
   id: "approval-1",
@@ -336,6 +360,10 @@ const carriedRequirementApproval: SpecApprovalRow = {
   approver: "alex",
   granted_at: CREATED_AT,
   validity: "valid",
+  subject_fingerprint_json: recordedFingerprint(settledBaseSnapshot, {
+    subjectKind: "requirement",
+    elementId: "requirement-1",
+  }),
 };
 
 /** The admission that makes the predecessor an import baseline. */
@@ -642,15 +670,15 @@ const siblingSnapshot: SpecRevisionSnapshot = {
 };
 
 /**
- * A three-revision lineage for the diff verb: an approved base, a proposal
- * above it, and a draft above that. The draft's immediate review base (the
- * proposal) and its governance base (the approved ancestor) disagree about the
- * criterion, so a diff that silently swapped one base for the other shows up as
- * a different class rather than as identical output.
+ * A three-revision lineage for the diff verb: an approved base, a withdrawn
+ * revision above it, and a draft above that. The draft's immediate review base
+ * (the withdrawn revision) and its governance base (the approved ancestor)
+ * disagree about the criterion, so a diff that silently swapped one base for
+ * the other shows up as a different class rather than as identical output.
  */
 const LINEAGE_REVISION_IDS = {
   approved: "lineage-revision-1",
-  proposed: "lineage-revision-2",
+  withdrawn: "lineage-revision-2",
   draft: "lineage-revision-3",
 } as const;
 
@@ -672,17 +700,17 @@ const lineageRevisions: [SpecRevision, SpecRevision, SpecRevision] = [
     createdAt: CREATED_AT,
   },
   {
-    id: LINEAGE_REVISION_IDS.proposed,
+    id: LINEAGE_REVISION_IDS.withdrawn,
     specId: spec.id,
     number: 2,
-    state: "proposed",
+    state: "withdrawn",
     authoringStage: "design",
     basedOnRevisionId: LINEAGE_REVISION_IDS.approved,
-    contentHash: "lineage-hash-2",
+    contentHash: null,
     citationContractVersion: 2,
     citationVersion: 1,
     citationHash: "2".repeat(64),
-    proposedAt: CREATED_AT,
+    proposedAt: null,
     approvedAt: null,
     externalDelivery: null,
     createdAt: CREATED_AT,
@@ -693,7 +721,7 @@ const lineageRevisions: [SpecRevision, SpecRevision, SpecRevision] = [
     number: 3,
     state: "draft",
     authoringStage: "plan",
-    basedOnRevisionId: LINEAGE_REVISION_IDS.proposed,
+    basedOnRevisionId: LINEAGE_REVISION_IDS.withdrawn,
     contentHash: null,
     citationContractVersion: 2,
     citationVersion: 1,
@@ -819,20 +847,20 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
     },
   ],
   [
-    LINEAGE_REVISION_IDS.proposed,
+    LINEAGE_REVISION_IDS.withdrawn,
     {
       revision: lineageRevisions[1],
       assumptionCitations: [],
       elements: [
         lineageRow(
-          LINEAGE_REVISION_IDS.proposed,
+          LINEAGE_REVISION_IDS.withdrawn,
           LINEAGE_ELEMENTS.requirement,
           0,
           LINEAGE_REQUIREMENT_PAYLOAD,
           "lineage-requirement-hash",
         ),
         lineageRow(
-          LINEAGE_REVISION_IDS.proposed,
+          LINEAGE_REVISION_IDS.withdrawn,
           LINEAGE_ELEMENTS.criterion,
           1,
           lineageCriterionPayload(
@@ -841,7 +869,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
           "lineage-criterion-hash-b",
         ),
         lineageRow(
-          LINEAGE_REVISION_IDS.proposed,
+          LINEAGE_REVISION_IDS.withdrawn,
           LINEAGE_ELEMENTS.task,
           2,
           LINEAGE_TASK_PAYLOAD,
@@ -1046,7 +1074,7 @@ function makeHost(
     /** Point the seeded plan at a depended-on task id the revision lost. */
     orphanedDependency?: boolean;
     /**
-     * Seed the approved -> proposed -> draft lineage the diff verb reads, so
+     * Seed the approved -> withdrawn -> draft lineage the diff verb reads, so
      * the immediate review base and the governance base are different rows.
      */
     lineage?: boolean;
@@ -1551,7 +1579,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
             command:
               "author .cc/temp/plan.json with the graph-workflow-planning skill, then cctl workflow validate --file .cc/temp/plan.json --definition managed-wf",
             reason:
-              "A managed draft is authored as an ordinary plan.json; the preflight reports everything that refuses propose before you replace it.",
+              "A managed draft is authored as an ordinary plan.json; the preflight reports everything that blocks sign-off before you replace it.",
           },
         },
       }),
@@ -1863,6 +1891,17 @@ describe("cctl spec read verbs against seeded read routes", () => {
         approvalLedger: { importSettled: 1 },
       },
     });
+    // The predecessor's approval recorded R1 as the human read it; the
+    // amendment carries R1 unchanged, so that approval still settles it.
+    const approved = await readData(
+      ["status", "native-sdd"],
+      makeHost({ settled: "approval" }),
+    );
+    expect(approved.data).toMatchObject({
+      status: {
+        approvalLedger: { carried: 1, importSettled: 0 },
+      },
+    });
     const host = makeHost({
       extraRequirementCount: 10,
       questionCount: 14,
@@ -1986,13 +2025,15 @@ describe("cctl spec read verbs against seeded read routes", () => {
   );
 
   it("addresses historical reads by explicit revision ids or numbers and preserves the selected revision", async () => {
-    for (const revisionToken of ["2", LINEAGE_REVISION_IDS.proposed]) {
+    for (const revisionToken of ["2", LINEAGE_REVISION_IDS.withdrawn]) {
       const { data, host } = await readData(
         ["get", "native-sdd/T1", "--revision", revisionToken],
         makeHost({ lineage: true }),
       );
       expect(data).toMatchObject({
-        element: { revision: { id: LINEAGE_REVISION_IDS.proposed, number: 2 } },
+        element: {
+          revision: { id: LINEAGE_REVISION_IDS.withdrawn, number: 2 },
+        },
       });
       expect(
         new URL(host.requests[0]?.url ?? "").searchParams.get(
@@ -2119,7 +2160,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
       const view = await readDiff([], makeHost({ lineage: true }));
       expect(view).toMatchObject({
         to: { number: 3, state: "draft" },
-        from: { number: 2, state: "proposed" },
+        from: { number: 2, state: "withdrawn" },
         elements: expect.arrayContaining([
           {
             elementId: LINEAGE_ELEMENTS.decision.id,
@@ -2254,7 +2295,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
       const review = await readDiff([], host);
       const governance = await readDiff(["--baseline", "governance"], host);
 
-      expect(review.from?.revisionId).toBe(LINEAGE_REVISION_IDS.proposed);
+      expect(review.from?.revisionId).toBe(LINEAGE_REVISION_IDS.withdrawn);
       expect(classesByElement(review)[LINEAGE_ELEMENTS.criterion.id]).toEqual({
         classification: "unchanged",
         summary: null,
@@ -2273,15 +2314,15 @@ describe("cctl spec read verbs against seeded read routes", () => {
       ).toMatchObject({ classification: "modified", directlyChanged: false });
     });
 
-    it("compares explicit revision ids for draft, proposed, and approved targets", async () => {
+    it("compares explicit revision ids for draft, withdrawn, and approved targets", async () => {
       const host = makeHost({ lineage: true });
 
-      const toProposed = await readDiff(
+      const toWithdrawn = await readDiff(
         [
           "--from",
           LINEAGE_REVISION_IDS.approved,
           "--to",
-          LINEAGE_REVISION_IDS.proposed,
+          LINEAGE_REVISION_IDS.withdrawn,
         ],
         host,
       );
@@ -2294,10 +2335,10 @@ describe("cctl spec read verbs against seeded read routes", () => {
         host,
       );
 
-      expect(toProposed.baseline).toBe("explicit");
-      expect(toProposed.to.state).toBe("proposed");
+      expect(toWithdrawn.baseline).toBe("explicit");
+      expect(toWithdrawn.to.state).toBe("withdrawn");
       expect(
-        classesByElement(toProposed)[LINEAGE_ELEMENTS.criterion.id],
+        classesByElement(toWithdrawn)[LINEAGE_ELEMENTS.criterion.id],
       ).toMatchObject({ classification: "modified" });
       // The root of the lineage has no base at all, so everything it carries
       // is added rather than silently compared against nothing.
@@ -2395,7 +2436,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
         ...bundle,
         manifest: `${stableStringify({
           ...JSON.parse(bundle.manifest),
-          formatVersion: 3,
+          formatVersion: 4,
         })}\n`,
       },
     },
@@ -2407,7 +2448,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
         ...bundle,
         manifest: `${stableStringify({
           ...JSON.parse(bundle.manifest),
-          formatVersion: 5,
+          formatVersion: 6,
         })}\n`,
       },
     },
@@ -2885,7 +2926,7 @@ describe("cctl spec verify --against across migration 0009", () => {
   ): CanonicalSpecBundle {
     const legacyContentHash = contentHashOf(AFFECTED_ELEMENTS);
     const manifest = manifestShapeSchema.parse(JSON.parse(current.manifest));
-    expect(manifest.formatVersion).toBe(4);
+    expect(manifest.formatVersion).toBe(5);
     const revision = manifest.revisions[0];
     if (revision === undefined) throw new Error("manifest revision missing");
     const migratedContentHash = revision.contentHash;
@@ -2982,7 +3023,7 @@ describe("cctl spec verify --against across migration 0009", () => {
       manifestShapeSchema.parse(
         JSON.parse(bundleShapeSchema.parse(JSON.parse(oldCleanRaw)).manifest),
       ).formatVersion,
-    ).toBe(4);
+    ).toBe(5);
     await expect(
       loadSpecExportState(
         {

@@ -82,7 +82,6 @@ function metaLine(
 
 const MANAGED_LIFECYCLE_LABEL = {
   draft: "Draft",
-  in_review: "In review",
   approved: "Approved",
   launched: "Launched",
   superseded: "Superseded",

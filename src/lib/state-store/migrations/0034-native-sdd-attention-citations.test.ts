@@ -130,7 +130,10 @@ function createSchema10Db(): Db {
       revision_id TEXT NOT NULL,
       approver TEXT NOT NULL,
       granted_at TEXT NOT NULL,
-      validity TEXT NOT NULL
+      validity TEXT NOT NULL,
+      -- The open-time additive-column pass adds this before any migration
+      -- runs, so it is present when 0034 sees a schema-10 database.
+      subject_fingerprint_json TEXT
     );
     CREATE TABLE spec_gate_admissions (
       id TEXT PRIMARY KEY,
@@ -437,6 +440,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0054-graph-workflow-continuous-conversations",
       "0055-graph-workflow-validator-conversations",
       "0056-close-withdrawn-revision-approval-requests",
+      "0057-continuous-spec-review",
     ]);
   });
 
@@ -734,7 +738,7 @@ describe("0034-native-sdd-attention-citations", () => {
     }
   });
 
-  it("replays after a post-cutover contract-2 revision is proposed and approved", async () => {
+  it("replays after a post-cutover contract-2 draft is frozen by approval", async () => {
     const db = createSchema10Db();
     try {
       seedRevision(db, {
@@ -746,17 +750,6 @@ describe("0034-native-sdd-attention-citations", () => {
       await runMigration(db);
 
       const specsRepo = createSpecsRepo(db, createWriteQueue());
-      await expect(
-        specsRepo.proposeRevision({
-          revisionId: "revision-post-cutover",
-          proposedAt: "2026-08-23T10:04:00.000Z",
-        }),
-      ).resolves.toMatchObject({
-        state: "proposed",
-        citationContractVersion: 2,
-      });
-      await expect(runMigration(db)).resolves.toBeUndefined();
-
       await expect(
         specsRepo.approveRevision({
           revisionId: "revision-post-cutover",

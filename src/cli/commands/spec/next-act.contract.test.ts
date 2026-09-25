@@ -12,7 +12,7 @@ describe("server-authored spec start continuations", () => {
         workflowDefinitionId: "workflow-one",
         builderHref: "/projects/project-one/workflows?definition=workflow-one",
         signOffRequiresHuman: true,
-        parkedApproved: true,
+        draftReady: true,
       });
       const fixture = createCcRuntimeFixture({
         files: { ".cc/temp/inputs.json": "{}" },

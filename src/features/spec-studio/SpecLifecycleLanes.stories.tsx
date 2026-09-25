@@ -48,8 +48,10 @@ export const DesignReview: Story = {
       if (!detail.currentRevision) return detail;
       detail.currentRevision.revision = {
         ...detail.currentRevision.revision,
-        state: "proposed",
+        state: "draft",
         authoringStage: "design",
+        proposedAt: null,
+        approvedAt: null,
       };
       return detail;
     })(),

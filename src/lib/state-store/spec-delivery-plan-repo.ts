@@ -154,7 +154,12 @@ export class DeliveryPlanReaffirmationStateError extends Error {
  * is written inside the same transaction so a proposal can never exist without
  * the candidate a human would approve.
  */
-export interface ProposeDeliveryPlanInput {
+/**
+ * Sign-off: freezes the draft's finalized candidate and approves it in one
+ * transaction. There is no reviewable state between the two — the draft is
+ * what the human reviewed.
+ */
+export interface ApproveDeliveryPlanCandidateInput {
   readonly attemptId: string;
   readonly expectedDraftRevision: number;
   readonly snapshotId: string;
@@ -162,11 +167,11 @@ export interface ProposeDeliveryPlanInput {
     readonly record: DeliveryPlanCandidateRecord;
     readonly candidateHash: string;
   };
-  readonly proposedAt: string;
+  readonly approvedAt: string;
   readonly actor: ActorProvenance;
 }
 
-export interface ProposeDeliveryPlanResult {
+export interface ApproveDeliveryPlanCandidateResult {
   readonly attempt: SpecDeliveryPlanAttemptRow;
   readonly snapshot: SpecDeliveryPlanSnapshotRow;
 }
@@ -179,7 +184,7 @@ export class FinalizedDeliveryPlanCandidateMismatchError extends Error {
     readonly reason: string,
   ) {
     super(
-      `delivery plan attempt ${attemptId} cannot freeze the finalized candidate: ${reason}. Nothing was written. Re-run \`cctl spec plan propose\` from the current draft.`,
+      `delivery plan attempt ${attemptId} cannot freeze the finalized candidate: ${reason}. Nothing was written. Re-read the draft and sign it off again.`,
     );
     this.name = "FinalizedDeliveryPlanCandidateMismatchError";
   }
@@ -207,13 +212,13 @@ export interface ReopenDeliveryPlanResult {
  * status write can never be separated, whichever later context asks for the
  * move.
  *
- * `approve`, `park`, and `launch` all state the candidate identity they act
- * on rather than reading "whatever is proposed now": the transaction re-reads
- * the live snapshot and candidate and refuses a mismatch, so a re-propose
- * racing an approval cannot slide different bytes under it (`exact-approval`).
+ * `park` and `launch` both state the candidate identity they act on rather
+ * than reading "whatever is signed now": the transaction re-reads the stored
+ * snapshot and candidate and refuses a mismatch, so a reopen and fresh
+ * sign-off racing the act cannot slide different bytes under it
+ * (`exact-approval`).
  */
 export type DeliveryPlanTransition =
-  | ({ readonly kind: "approve" } & FinalizedDeliveryPlanCandidateIdentity)
   | ({
       readonly kind: "park";
       readonly reason: string | null;
@@ -234,8 +239,8 @@ export class FinalizedDeliveryPlanApprovalIdentityMismatchError extends Error {
   ) {
     super(
       stored === null
-        ? `delivery plan attempt ${attemptId} has no finalized proposal snapshot to act on. Nothing was written. Re-run \`cctl spec plan propose\`, then sign the candidate it stores.`
-        : `delivery plan attempt ${attemptId} stores candidate ${stored.candidateId} at ${stored.candidateHash}, not candidate ${stated.candidateId} at ${stated.candidateHash}. Nothing was written. Re-read the proposed snapshot and sign exactly those immutable bytes.`,
+        ? `delivery plan attempt ${attemptId} has no signed candidate to act on. Nothing was written. Sign off the draft first.`
+        : `delivery plan attempt ${attemptId} stores candidate ${stored.candidateId} at ${stored.candidateHash}, not candidate ${stated.candidateId} at ${stated.candidateHash}. Nothing was written. Re-read the signed candidate and act on exactly those immutable bytes.`,
     );
     this.name = "FinalizedDeliveryPlanApprovalIdentityMismatchError";
   }
@@ -288,7 +293,9 @@ export interface SpecDeliveryPlanRepo {
   reaffirmDraftBatch(
     input: ReaffirmDeliveryPlanDraftBatchInput,
   ): SpecDeliveryPlanAttemptRow;
-  propose(input: ProposeDeliveryPlanInput): ProposeDeliveryPlanResult;
+  approveCandidate(
+    input: ApproveDeliveryPlanCandidateInput,
+  ): ApproveDeliveryPlanCandidateResult;
   reopen(input: ReopenDeliveryPlanInput): ReopenDeliveryPlanResult;
   recordTransition(input: {
     readonly attemptId: string;
@@ -613,85 +620,109 @@ export function createSpecDeliveryPlanRepo(
     },
   );
 
-  const proposeTx = db.transaction((input: ProposeDeliveryPlanInput) => {
-    const attempt = requireAttempt(input.attemptId);
-    requireDraft(attempt, input.expectedDraftRevision);
-    const document = deliveryPlanDocumentSchema.parse(
-      JSON.parse(attempt.content_json),
-    );
-    const record = input.candidate.record;
-    const candidate = finalizedDeliveryPlanCandidateIdentitySchema.parse({
-      candidateId: record.candidateId,
-      candidateHash: input.candidate.candidateHash,
-    });
-    const mismatchedField =
-      record.specId !== attempt.spec_id
-        ? "specId does not match the attempt"
-        : record.attemptId !== attempt.id
-          ? "attemptId does not match the attempt"
-          : record.pinnedRevisionId !== attempt.pinned_revision_id
-            ? "pinnedRevisionId does not match the attempt"
-            : record.draftRevision !== attempt.draft_revision
-              ? "draftRevision does not match the attempt"
-              : record.candidateId !== record.workflowDefinition.id
-                ? "candidateId does not match the workflow definition"
-                : record.workflowDefinition.id !==
-                    attempt.workflow_definition_id
-                  ? "workflow definition does not match the attempt"
-                  : record.bindingHash !==
-                      deliveryPlanBindingHash(record.binding)
-                    ? "bindingHash does not match the canonical binding bytes"
-                    : stableStringify(record.binding) !==
-                        stableStringify(document.binding)
-                      ? "binding does not match the editable draft"
-                      : deliveryPlanCandidateHash(record) !==
-                          candidate.candidateHash
-                        ? "candidateHash does not match the canonical candidate bytes"
-                        : null;
-    if (mismatchedField !== null) {
-      throw new FinalizedDeliveryPlanCandidateMismatchError(
-        attempt.id,
-        mismatchedField,
+  const approveCandidateTx = db.transaction(
+    (input: ApproveDeliveryPlanCandidateInput) => {
+      const attempt = requireAttempt(input.attemptId);
+      requireDraft(attempt, input.expectedDraftRevision);
+      const document = deliveryPlanDocumentSchema.parse(
+        JSON.parse(attempt.content_json),
       );
-    }
-    const snapshot = specDeliveryPlanSnapshotRowSchema.parse({
-      id: input.snapshotId,
-      attempt_id: attempt.id,
-      candidate_id: candidate.candidateId,
-      candidate_hash: candidate.candidateHash,
-      draft_revision: attempt.draft_revision,
-      content_json: canonicalDeliveryPlanCandidateBytes(record),
-      pinned_revision_id: attempt.pinned_revision_id,
-      proposed_at: input.proposedAt,
-      proposed_by_json: stableStringify(input.actor),
-      workflow_definition_id: record.workflowDefinition.id,
-      workflow_definition_revision: record.workflowDefinition.revision,
-      workflow_definition_hash: record.workflowDefinition.definitionHash,
-      binding_hash: record.bindingHash,
-    });
-    insertSnapshotStmt.run(snapshot);
-    const next: SpecDeliveryPlanAttemptRow = {
-      ...attempt,
-      status: "proposed",
-      proposed_snapshot_id: snapshot.id,
-      updated_at: input.proposedAt,
-    };
-    updateAttemptStmt.run(next);
-    appendPlanEvent(
-      next,
-      input.proposedAt,
-      input.actor,
-      "spec-delivery-plan-proposed",
-      {
+      const record = input.candidate.record;
+      const candidate = finalizedDeliveryPlanCandidateIdentitySchema.parse({
+        candidateId: record.candidateId,
+        candidateHash: input.candidate.candidateHash,
+      });
+      const mismatchedField =
+        record.specId !== attempt.spec_id
+          ? "specId does not match the attempt"
+          : record.attemptId !== attempt.id
+            ? "attemptId does not match the attempt"
+            : record.pinnedRevisionId !== attempt.pinned_revision_id
+              ? "pinnedRevisionId does not match the attempt"
+              : record.draftRevision !== attempt.draft_revision
+                ? "draftRevision does not match the attempt"
+                : record.candidateId !== record.workflowDefinition.id
+                  ? "candidateId does not match the workflow definition"
+                  : record.workflowDefinition.id !==
+                      attempt.workflow_definition_id
+                    ? "workflow definition does not match the attempt"
+                    : record.bindingHash !==
+                        deliveryPlanBindingHash(record.binding)
+                      ? "bindingHash does not match the canonical binding bytes"
+                      : stableStringify(record.binding) !==
+                          stableStringify(document.binding)
+                        ? "binding does not match the editable draft"
+                        : deliveryPlanCandidateHash(record) !==
+                            candidate.candidateHash
+                          ? "candidateHash does not match the canonical candidate bytes"
+                          : null;
+      if (mismatchedField !== null) {
+        throw new FinalizedDeliveryPlanCandidateMismatchError(
+          attempt.id,
+          mismatchedField,
+        );
+      }
+      const snapshot = specDeliveryPlanSnapshotRowSchema.parse({
+        id: input.snapshotId,
+        attempt_id: attempt.id,
+        candidate_id: candidate.candidateId,
+        candidate_hash: candidate.candidateHash,
+        draft_revision: attempt.draft_revision,
+        content_json: canonicalDeliveryPlanCandidateBytes(record),
+        pinned_revision_id: attempt.pinned_revision_id,
+        proposed_at: input.approvedAt,
+        proposed_by_json: stableStringify(input.actor),
+        workflow_definition_id: record.workflowDefinition.id,
+        workflow_definition_revision: record.workflowDefinition.revision,
+        workflow_definition_hash: record.workflowDefinition.definitionHash,
+        binding_hash: record.bindingHash,
+      });
+      insertSnapshotStmt.run(snapshot);
+      const approval: FinalizedDeliveryPlanApproval = {
         snapshotId: snapshot.id,
         candidateId: candidate.candidateId,
         candidateHash: candidate.candidateHash,
-        draftRevision: snapshot.draft_revision,
-        pinnedRevisionId: snapshot.pinned_revision_id,
-      },
-    );
-    return { attempt: next, snapshot };
-  });
+        approvedAt: input.approvedAt,
+        approvedBy: input.actor,
+      };
+      const next: SpecDeliveryPlanAttemptRow = {
+        ...attempt,
+        status: "approved",
+        proposed_snapshot_id: snapshot.id,
+        approval_json: stableStringify(
+          finalizedDeliveryPlanApprovalSchema.parse(approval),
+        ),
+        updated_at: input.approvedAt,
+      };
+      updateAttemptStmt.run(next);
+      insertCandidateApprovalStmt.run({
+        snapshot_id: snapshot.id,
+        candidate_id: candidate.candidateId,
+        candidate_hash: candidate.candidateHash,
+        approved_at: input.approvedAt,
+        approved_by_json: stableStringify(input.actor),
+      });
+      appendPlanEvent(
+        next,
+        input.approvedAt,
+        input.actor,
+        "spec-delivery-plan-transitioned",
+        {
+          from: attempt.status,
+          to: next.status,
+          transition: {
+            kind: "approve",
+            candidateId: candidate.candidateId,
+            candidateHash: candidate.candidateHash,
+          },
+          snapshotId: snapshot.id,
+          draftRevision: snapshot.draft_revision,
+          pinnedRevisionId: snapshot.pinned_revision_id,
+        },
+      );
+      return { attempt: next, snapshot };
+    },
+  );
 
   const reopenTx = db.transaction((input: ReopenDeliveryPlanInput) => {
     const attempt = requireAttempt(input.attemptId);
@@ -774,7 +805,7 @@ export function createSpecDeliveryPlanRepo(
   });
 
   /**
-   * The candidate identity the attempt's live proposal actually carries, read
+   * The candidate identity the attempt's signed snapshot actually carries, read
    * inside the transaction that is about to act on it. Null when the attempt
    * has frozen nothing, or when the snapshot's candidate row is missing —
    * neither is recoverable by recompiling, so both refuse.
@@ -830,18 +861,6 @@ export function createSpecDeliveryPlanRepo(
       }
       const next = applyTransition(attempt, input);
       updateAttemptStmt.run(next);
-      if (
-        input.transition.kind === "approve" &&
-        next.proposed_snapshot_id !== null
-      ) {
-        insertCandidateApprovalStmt.run({
-          snapshot_id: next.proposed_snapshot_id,
-          candidate_id: input.transition.candidateId,
-          candidate_hash: input.transition.candidateHash,
-          approved_at: input.occurredAt,
-          approved_by_json: stableStringify(input.actor),
-        });
-      }
       appendPlanEvent(
         next,
         input.occurredAt,
@@ -918,12 +937,12 @@ export function createSpecDeliveryPlanRepo(
         () => reaffirmDraftBatchTx(input),
       );
     },
-    propose(input) {
+    approveCandidate(input) {
       return timed(
-        "propose",
+        "approve_candidate",
         "spec_delivery_plan_attempt",
         input.attemptId,
-        () => proposeTx(input),
+        () => approveCandidateTx(input),
       );
     },
     reopen(input) {
@@ -1014,23 +1033,6 @@ export function createSpecDeliveryPlanRepo(
   };
 }
 
-/**
- * The snapshot an approval names. The identity check in `recordTransition`
- * has already refused an attempt with no live proposal, so reaching here with
- * a null snapshot id would mean the two disagree — a bug, not a caller error.
- */
-function requireProposedSnapshotId(
-  attempt: SpecDeliveryPlanAttemptRow,
-): string {
-  const snapshotId = attempt.proposed_snapshot_id;
-  if (snapshotId === null) {
-    throw new Error(
-      `delivery plan attempt ${attempt.id} passed the candidate identity check with no proposed snapshot`,
-    );
-  }
-  return snapshotId;
-}
-
 function applyTransition(
   attempt: SpecDeliveryPlanAttemptRow,
   input: {
@@ -1040,36 +1042,12 @@ function applyTransition(
   },
 ): SpecDeliveryPlanAttemptRow {
   const transition = input.transition;
-  if (transition.kind === "approve") {
-    if (attempt.status !== "proposed" && attempt.status !== "parked") {
-      throw new DeliveryPlanStatusConflictError(
-        attempt.id,
-        attempt.status,
-        "Only a live proposal can be approved. Propose the draft with `cctl spec plan propose` first.",
-      );
-    }
-    const approval: FinalizedDeliveryPlanApproval = {
-      snapshotId: requireProposedSnapshotId(attempt),
-      candidateId: transition.candidateId,
-      candidateHash: transition.candidateHash,
-      approvedAt: input.occurredAt,
-      approvedBy: input.actor,
-    };
-    return {
-      ...attempt,
-      status: "approved",
-      approval_json: stableStringify(
-        finalizedDeliveryPlanApprovalSchema.parse(approval),
-      ),
-      updated_at: input.occurredAt,
-    };
-  }
   if (transition.kind === "park") {
-    if (attempt.status !== "proposed" && attempt.status !== "approved") {
+    if (attempt.status !== "approved") {
       throw new DeliveryPlanStatusConflictError(
         attempt.id,
         attempt.status,
-        "Only a proposed or approved attempt can be parked for prelaunch review. Propose the draft with `cctl spec plan propose` first.",
+        "Only a signed-off attempt can be parked for prelaunch review. Sign off the draft first.",
       );
     }
     const prelaunch: FinalizedDeliveryPlanPrelaunch = {
@@ -1080,7 +1058,6 @@ function applyTransition(
         candidateId: transition.candidateId,
         candidateHash: transition.candidateHash,
       },
-      approvedAtPark: attempt.status === "approved",
     };
     return {
       ...attempt,
@@ -1101,7 +1078,7 @@ function applyTransition(
         attempt.status,
         attempt.status === "launched" || attempt.status === "abandoned"
           ? "Open a fresh attempt with `cctl spec plan open`."
-          : "Only an approved candidate launches. Sign the proposal off with `cctl spec plan sign-off` first.",
+          : "Only a signed-off candidate launches. Sign off the draft first.",
       );
     }
     return {

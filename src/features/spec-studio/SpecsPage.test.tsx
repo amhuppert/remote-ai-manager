@@ -25,6 +25,7 @@ import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 import type { SpecCommentView } from "@/lib/specs/view-schemas";
 import { specDetailViewSchema } from "@/lib/specs/queries";
 
+import { subjectFingerprintFixture } from "./SpecControls.fixtures";
 import SpecDetailPage from "./SpecDetailPage";
 import {
   _blockAnnotatableTextForTesting,
@@ -110,6 +111,8 @@ vi.mock("next/link", () => ({
 }));
 
 const NOW = "2026-07-18T12:00:00.000Z";
+/** The token the detail route stamps on the open draft's review. */
+const REVIEW_HASH = "review-hash-4";
 
 function spec(slug: string, name: string) {
   return {
@@ -131,14 +134,14 @@ const detailRevision = {
   id: "revision-4",
   specId: executingSpec.id,
   number: 4,
-  state: "proposed",
+  state: "draft",
   authoringStage: "requirements",
   basedOnRevisionId: "revision-3",
   contentHash: "revision-4-hash",
   citationContractVersion: 2,
   citationVersion: 1,
   citationHash: "a".repeat(64),
-  proposedAt: NOW,
+  proposedAt: null,
   approvedAt: null,
   createdAt: NOW,
 } as const;
@@ -401,6 +404,7 @@ function detailPayload(
         approver: "alex",
         granted_at: NOW,
         validity: "valid",
+        subject_fingerprint_json: subjectFingerprintFixture("requirement-1"),
       },
     ],
     comments: [
@@ -471,7 +475,7 @@ function detailPayload(
       slug: "native-sdd",
       phase: {
         primary: "executing",
-        authoringFacet: "in_review",
+        authoringFacet: "draft",
         authoringStage: "requirements",
       },
       gates: [
@@ -535,8 +539,20 @@ function detailPayload(
     },
     importRecord: null,
   };
-  specDetailViewSchema.parse(payload);
-  return payload;
+  // The revision is the open draft, so the route emits its review. This
+  // payload has no approved ancestor to diff against.
+  const withReview = {
+    ...payload,
+    draftReview: {
+      snapshot: payload.currentRevision,
+      baseSnapshot: null,
+      governanceBaseSnapshot: null,
+      notes: null,
+      reviewHash: REVIEW_HASH,
+    },
+  };
+  specDetailViewSchema.parse(withReview);
+  return withReview;
 }
 
 function reviewDetailPayload() {
@@ -615,19 +631,15 @@ function reviewDetailPayload() {
   return {
     ...payload,
     revisions: [baseRevision, detailRevision],
-    // What the detail route emits for a revision under review: the proposal,
-    // the verdict that nothing has forked past it, and the snapshots its diff
-    // is read from.
-    liveProposals: [
-      {
-        revision: detailRevision,
-        supersededBy: null,
-        snapshot: payload.currentRevision,
-        baseSnapshot,
-        governanceBaseSnapshot: baseSnapshot,
-        notes: null,
-      },
-    ],
+    // What the detail route emits for the open draft: its content, the
+    // snapshots its diff is read from, and the token a review act echoes.
+    draftReview: {
+      snapshot: payload.currentRevision,
+      baseSnapshot,
+      governanceBaseSnapshot: baseSnapshot,
+      notes: null,
+      reviewHash: REVIEW_HASH,
+    },
     approvals: payload.approvals.map((approval) => ({
       ...approval,
       revision_id: baseRevision.id,
@@ -711,18 +723,15 @@ function initialReviewDetailPayload() {
   return {
     ...payload,
     revisions: [initialRevision],
-    // The first proposal has no base: the projection carries a null
+    // The first draft has no base: the projection carries a null
     // baseSnapshot, and the review reads every element as added.
-    liveProposals: [
-      {
-        revision: initialRevision,
-        supersededBy: null,
-        snapshot,
-        baseSnapshot: null,
-        governanceBaseSnapshot: null,
-        notes: null,
-      },
-    ],
+    draftReview: {
+      snapshot,
+      baseSnapshot: null,
+      governanceBaseSnapshot: null,
+      notes: null,
+      reviewHash: REVIEW_HASH,
+    },
     baseRevision: null,
     currentRevision: snapshot,
     status: {
@@ -833,6 +842,7 @@ describe("Spec Studio detail routes", () => {
         },
       ],
       revisions: [],
+      draftReview: null,
       baseRevision: null,
       currentRevision: null,
       currentApprovedRevision: null,
@@ -848,7 +858,7 @@ describe("Spec Studio detail routes", () => {
         specId: executingSpec.id,
         currentRevision: null,
         slug: "native-sdd",
-        phase: { primary: "executing", authoringFacet: "in_review" },
+        phase: { primary: "executing" },
         gates: [],
         pendingApprovals: [],
         approvalLedger: ledgerOf([]),
@@ -1214,7 +1224,7 @@ describe("Spec Studio detail routes", () => {
     });
     api.reply("POST", "/api/specs/command-center/native-sdd/actions/comment", {
       status: 409,
-      json: { error: "Revision is no longer proposed" },
+      json: { error: "Revision is no longer a draft" },
     });
     const user = userEvent.setup();
     const { container } = renderWithQuery(<SpecDetailPage />);
@@ -1234,7 +1244,7 @@ describe("Spec Studio detail routes", () => {
     await user.click(screen.getByRole("button", { name: "Add comment" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Revision is no longer proposed",
+      "Revision is no longer a draft",
     );
     expect(note).toHaveValue("Keep this exact operator draft.");
     expect(note).toHaveAttribute("aria-invalid", "true");
@@ -1242,10 +1252,9 @@ describe("Spec Studio detail routes", () => {
   });
 
   it.each([
-    { label: "draft", state: "draft" as const, abandoned: false },
     { label: "approved", state: "approved" as const, abandoned: false },
     { label: "withdrawn", state: "withdrawn" as const, abandoned: false },
-    { label: "abandoned", state: "proposed" as const, abandoned: true },
+    { label: "abandoned", state: "draft" as const, abandoned: true },
   ])(
     "does not offer prose root composition for a $label revision",
     async ({ state, abandoned }) => {
@@ -1428,7 +1437,7 @@ describe("Spec Studio detail routes", () => {
             state: abandoned ? current.revision.state : "approved",
           },
         },
-        liveProposals: [],
+        draftReview: null,
         comments: [structuredRoot],
       };
       specDetailViewSchema.parse(response);
@@ -1536,7 +1545,7 @@ describe("Spec Studio detail routes", () => {
     );
   });
 
-  it("reviews the first proposal as additions against an empty baseline", async () => {
+  it("reviews the first draft as additions against an empty baseline", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
@@ -1556,7 +1565,7 @@ describe("Spec Studio detail routes", () => {
         name: "Review requirements-stage revision 1",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/initial proposal/i)).toBeInTheDocument();
+    expect(screen.getByText(/initial revision/i)).toBeInTheDocument();
     const requirement = screen.getByTestId("review-change-requirement-1");
     expect(within(requirement).getAllByText("Added")).not.toHaveLength(0);
     // The fixture carries a valid approval for this requirement, so the card
@@ -1614,64 +1623,6 @@ describe("Spec Studio detail routes", () => {
     );
   });
 
-  it("request changes ends review and opens the follow-up draft", async () => {
-    pathname = "/specs/command-center/native-sdd";
-    window.history.replaceState(
-      {},
-      "",
-      "/specs/command-center/native-sdd?view=requirements",
-    );
-    api.json(
-      "GET",
-      "/api/specs/command-center/native-sdd",
-      reviewDetailPayload(),
-    );
-    api.json(
-      "POST",
-      "/api/specs/command-center/native-sdd/actions/request-changes",
-      {
-        withdrawn: { ...detailRevision, state: "withdrawn" },
-        draft: {
-          ...detailRevision,
-          id: "revision-5",
-          number: 5,
-          state: "draft",
-          basedOnRevisionId: detailRevision.id,
-          proposedAt: null,
-        },
-        // The reopened draft's account: R1 is unchanged, so the approval a
-        // human granted on the revision this act withdrew still stands.
-        approvalLedger: ledgerOf([
-          {
-            gate: "requirements",
-            subject: "R1",
-            elementId: "requirement-1",
-            classification: "carried",
-          },
-        ]),
-      },
-    );
-    const user = userEvent.setup();
-    renderWithQuery(<SpecDetailPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Request changes" }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "End review — open draft" }),
-    );
-
-    expect(
-      await screen.findByText("Draft revision 5 opened"),
-    ).toBeInTheDocument();
-    expect(
-      api.requestsTo(
-        "POST",
-        "/api/specs/command-center/native-sdd/actions/request-changes",
-      )[0]?.jsonBody,
-    ).toEqual({ revisionId: detailRevision.id });
-  });
-
   it("presents a thread whose original element was removed as orphaned", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
@@ -1717,6 +1668,7 @@ describe("Spec Studio detail routes", () => {
         approver: "alex",
         granted_at: NOW,
         validity: "valid",
+        subject_fingerprint_json: subjectFingerprintFixture("decision-1"),
       },
       {
         id: "approval-plan",
@@ -1727,6 +1679,7 @@ describe("Spec Studio detail routes", () => {
         approver: "alex",
         granted_at: NOW,
         validity: "valid",
+        subject_fingerprint_json: subjectFingerprintFixture(null),
       },
     ];
     const base = reviewDetailPayload();
@@ -1755,6 +1708,7 @@ describe("Spec Studio detail routes", () => {
       approver: "alex",
       granted_at: NOW,
       validity: "valid",
+      subject_fingerprint_json: subjectFingerprintFixture("requirement-1"),
     };
     api.json("GET", "/api/specs/command-center/native-sdd", reviewPayload);
     // Raw persisted row, matching what the comment write path returns; the
@@ -1799,6 +1753,7 @@ describe("Spec Studio detail routes", () => {
           id: "approval-revision-4",
           subject_kind: "revision",
           element_id: null,
+          subject_fingerprint_json: null,
         },
         subjectApprovals: [requirementApproval],
       },
@@ -1844,6 +1799,7 @@ describe("Spec Studio detail routes", () => {
         revisionId: detailRevision.id,
         subjectKind: "requirement",
         elementId: "requirement-1",
+        expectedReviewHash: REVIEW_HASH,
       }),
     );
 
@@ -1864,7 +1820,10 @@ describe("Spec Studio detail routes", () => {
           "POST",
           "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
         )[0]?.jsonBody,
-      ).toEqual({ revisionId: detailRevision.id }),
+      ).toEqual({
+        revisionId: detailRevision.id,
+        expectedReviewHash: REVIEW_HASH,
+      }),
     );
   });
 });

@@ -276,31 +276,33 @@ describe("native spec writes", () => {
     ).toBe(true);
   });
 
-  it("withdraws the explicitly named proposal without replacing its concurrency token", async () => {
-    const test = createCcRuntimeFixture({ respond: () => refused() });
-    const result = await test.run([
-      "spec",
-      "withdraw-proposal",
-      "native-sdd",
-      "--revision",
-      "proposal-seen",
-    ]);
-    expect(body(test.requests[0])).toEqual({ revisionId: "proposal-seen" });
-    expect(test.requests).toHaveLength(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      effect: "not_applied",
-      instruction: "Open Spec Studio to record this decision.",
-    });
-  });
+  // Review happens on the open draft, so there is no frozen proposal left for
+  // an agent to withdraw or a superseded one to dismiss.
+  it.each([
+    ["withdraw-proposal", ["--revision", "revision-one"]],
+    ["dismiss-superseded", ["--revision", "revision-one", "--reason", "old"]],
+  ] as const)(
+    "offers no spec %s command and never contacts the server",
+    async (verb, flags) => {
+      const test = createCcRuntimeFixture({
+        respond: () => {
+          throw new Error("must not contact server");
+        },
+      });
+      const result = await test.run(["spec", verb, "native-sdd", ...flags]);
+      expect(result.exitCode, result.stdout || result.stderr).toBe(2);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.error.code).toBe("KERNEL_USAGE");
+      const help = await test.run(["spec", "--help"], "text");
+      expect(help.exitCode, help.stderr).toBe(0);
+      expect(help.stdout).toContain("spec propose");
+      expect(help.stdout).not.toContain(verb);
+      expect(test.requests).toHaveLength(0);
+    },
+  );
 
   it.each([
     ["amend", [], "open-amendment", {}],
-    [
-      "dismiss-superseded",
-      ["--revision", "old", "--reason", "superseded"],
-      "dismiss-superseded",
-      { revisionId: "old", reason: "superseded" },
-    ],
     ["rename", ["--to", "renamed"], "rename", { slug: "renamed" }],
     [
       "abandon",
@@ -376,8 +378,15 @@ describe("native spec writes", () => {
     });
   });
 
-  it("uses the proposed candidate's exact id and hash for plan sign-off", async () => {
-    const test = createCcRuntimeFixture({ respond: () => refused() });
+  // A human signs the delivery-plan draft off in Workflow Builder; the agent's
+  // path is `spec plan propose`, which freezes the draft itself only under a
+  // Notify or Off execution-start dial.
+  it("offers no spec plan sign-off command and never contacts the server", async () => {
+    const test = createCcRuntimeFixture({
+      respond: () => {
+        throw new Error("must not contact server");
+      },
+    });
     const result = await test.run([
       "spec",
       "plan",
@@ -388,29 +397,13 @@ describe("native spec writes", () => {
       "--candidate-hash",
       "hash-seen",
     ]);
-    expect(test.requests).toHaveLength(1);
-    expect(body(test.requests[0])).toEqual({
-      candidateId: "candidate-seen",
-      candidateHash: "hash-seen",
-    });
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      effect: "not_applied",
-      instruction: expect.stringContaining("Spec Studio"),
-    });
-  });
-
-  it("requires both explicit plan candidate fields before contacting the server", async () => {
-    const test = createCcRuntimeFixture({ respond: () => refused() });
-    const result = await test.run([
-      "spec",
-      "plan",
-      "sign-off",
-      "native-sdd",
-      "--candidate",
-      "candidate-seen",
-    ]);
-    expect(result.exitCode).toBe(2);
-    expect(test.requests).toEqual([]);
+    expect(result.exitCode, result.stdout || result.stderr).toBe(2);
+    expect(JSON.parse(result.stdout).error.code).toBe("KERNEL_USAGE");
+    const help = await test.run(["spec", "plan", "--help"], "text");
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).toContain("spec plan propose");
+    expect(help.stdout).not.toContain("spec plan sign-off");
+    expect(test.requests).toHaveLength(0);
   });
 
   it("previews imports without committing and refuses legacy dryRun:true on the write", async () => {
@@ -688,7 +681,7 @@ describe("native spec writes", () => {
 
   it("renders the server's actual pending gate and filed approval requests after propose", async () => {
     const proposal = {
-      revision: { ...revision, authoringStage: "design", state: "proposed" },
+      revision: { ...revision, authoringStage: "design" },
       diff: { classifications: [], changeList: [], planStale: false },
       absorbedSignOff: false,
       pendingBlock: {

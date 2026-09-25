@@ -4,7 +4,10 @@ import {
   detailStatePresentation,
   resolveRequestedDetailView,
 } from "./SpecDetailPage";
-import { pendingReaffirmationReview } from "./delivery-plan-review.fixtures";
+import {
+  pendingReaffirmationReview,
+  reviewView,
+} from "./delivery-plan-review.fixtures";
 import { initialDetailViewForDeepLink } from "./SpecDetailViews";
 
 describe("Spec Studio surface reachability", () => {
@@ -26,6 +29,58 @@ describe("Spec Studio surface reachability", () => {
       });
     },
   );
+  it("sends a delivery plan ready for sign-off straight to Workflow Builder", () => {
+    expect(
+      detailStatePresentation("approved", [], "design", reviewView()),
+    ).toMatchObject({
+      tone: "amber",
+      banner: "Delivery plan ready for sign-off",
+      action: "Review and sign off",
+      href: "/projects/command-center/workflows?definition=candidate-2",
+    });
+  });
+  it("keeps a draft plan with blocking findings in draft", () => {
+    const blocked = reviewView({
+      health: {
+        total: 1,
+        blocking: 1,
+        counts: [{ severity: "blocks_propose", count: 1 }],
+        findings: [
+          {
+            ruleId: "coverage/selected-criterion-uncovered",
+            severity: "blocks_propose",
+            elementHandle: "R1.1",
+            message: "R1.1 is selected but no context claims it.",
+          },
+        ],
+      },
+    });
+    const presentation = detailStatePresentation(
+      "approved",
+      [],
+      "design",
+      blocked,
+    );
+    expect(presentation).toMatchObject({
+      banner: "Delivery plan in draft",
+      action: "Open delivery",
+      view: "delivery",
+    });
+    expect(presentation.href).toBeUndefined();
+  });
+  it.each([
+    ["requirements", "requirements"],
+    ["design", "design"],
+  ] as const)(
+    "sends an open %s draft's primary action to the %s review",
+    (stage, view) => {
+      expect(detailStatePresentation("draft", [], stage)).toMatchObject({
+        action: "Review changes",
+        view,
+      });
+    },
+  );
+
   it.each([
     ["R1", "requirements"],
     ["R1.1", "requirements"],

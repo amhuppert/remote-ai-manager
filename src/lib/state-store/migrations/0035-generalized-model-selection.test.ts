@@ -505,6 +505,10 @@ function seedDeliveryPlanDocuments(
   const specId = "spec-model-selection-migration";
   const revisionId = "revision-model-selection-migration";
   const actor = '{"kind":"agent","conversationId":"migration-test"}';
+  // The floor DDL no longer admits the `proposed` attempt status; the schema
+  // this migration ran against did, and 0057 later retires such attempts. The
+  // migration rewrites those rows too, so the relaxation outlives the seed.
+  db.pragma("ignore_check_constraints = ON");
   db.prepare(
     `INSERT INTO specs (
        id, project_path, slug, name, gate_policy_json, created_at, updated_at

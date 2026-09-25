@@ -33,7 +33,6 @@ import type { Db } from "@/lib/state-store/schemas";
 
 import {
   createAuthoringService,
-  SpecRevisionInReviewError,
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
@@ -429,7 +428,7 @@ describe("LinksService entry paths and read-through", () => {
     expect(updateTicketCalls).toBe(0);
   });
 
-  it("refuses to reserve an entry on a spec whose revision is under review", async () => {
+  it("graduates a ticket into the draft under review instead of forking past it", async () => {
     const created = await authoring.createSpec({
       projectPath: PROJECT_PATH,
       slug: "graduated-ticket",
@@ -449,47 +448,65 @@ describe("LinksService entry paths and read-through", () => {
       },
       actor: AGENT,
     });
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T17:10:00.000Z",
-    });
-    await specs.approveRevision({
-      revisionId: created.draft.id,
-      approvedAt: "2026-07-18T17:11:00.000Z",
-    });
-    const { revision: amendment } = await authoring.openAmendment({
+    // A requirement with a criterion is the least a review can be asked for.
+    await authoring.upsertDraftElement({
       specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      payload: {
+        kind: "criterion",
+        text: "A graduated ticket lands in the open draft.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      baseElementVersion: null,
       actor: AGENT,
     });
-    await specs.proposeRevision({
-      revisionId: amendment.id,
-      proposedAt: "2026-07-18T17:12:00.000Z",
+    const requested = await authoring.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: AGENT,
+    });
+    expect(requested).toMatchObject({
+      ok: true,
+      revision: { id: created.draft.id, state: "draft" },
     });
     const revisionsBefore = db
       .prepare("SELECT COUNT(*) AS count FROM spec_revisions")
       .get() as { count: number };
 
-    const refusal = await service
-      .graduateTicket({
-        ticket: { projectName: PROJECT_NAME, number: 1 },
-        slug: "graduated-ticket",
-        name: "Graduated ticket",
-        gatePolicy: { preset: "contract-bearing" },
-        actor: AGENT,
-      })
-      .then(
-        () => null,
-        (error: unknown) => error,
-      );
+    const graduated = await service.graduateTicket({
+      ticket: { projectName: PROJECT_NAME, number: 1 },
+      slug: "graduated-ticket",
+      name: "Graduated ticket",
+      gatePolicy: { preset: "contract-bearing" },
+      actor: AGENT,
+    });
 
-    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
-    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
-    expect(refusal.proposals.map(({ id }) => id)).toEqual([amendment.id]);
-    expect(refusal.approvedBase?.id).toBe(created.draft.id);
+    expect(graduated.spec.id).toBe(created.spec.id);
+    expect(graduated.draft.id).toBe(created.draft.id);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM spec_revisions").get(),
     ).toEqual(revisionsBefore);
-    expect(linksRepo.findBySpecId(created.spec.id)).toEqual([]);
+    const snapshot = await specs.getRevisionSnapshot(created.draft.id);
+    expect(snapshot?.revision.state).toBe("draft");
+    expect(snapshot?.elements.map(({ version }) => version.payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "requirement" }),
+        expect.objectContaining({
+          kind: "section",
+          role: "intent_problem",
+          body: expect.stringContaining("Ticket description becomes intent."),
+        }),
+      ]),
+    );
+    expect(linksRepo.findBySpecId(created.spec.id)).toEqual([
+      expect.objectContaining({
+        category: "graduated_from",
+        object_kind: "ticket",
+      }),
+    ]);
     expect(updateTicketCalls).toBe(0);
   });
 

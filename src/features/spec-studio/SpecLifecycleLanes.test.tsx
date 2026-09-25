@@ -23,6 +23,22 @@ describe("SpecLifecycleLanes", () => {
       ).getByText("Reaffirmation needed · 2"),
     ).toBeVisible();
   });
+  it("marks a draft plan without blockers ready for sign-off", () => {
+    render(
+      <SpecLifecycleLanes
+        detail={specControlsDetailFixture()}
+        deliveryPlan={reviewView()}
+      />,
+    );
+    const deliveryLane = screen.getByRole("group", {
+      name: "Delivery lifecycle",
+    });
+    expect(
+      within(deliveryLane).getByText("Ready for sign-off"),
+    ).toHaveAttribute("data-tone", "amber");
+    expect(within(deliveryLane).queryByText(/in review/i)).toBeNull();
+  });
+
   it("shows an older execution alongside a newer requirements extension", () => {
     const detail = specControlsDetailFixture("running");
     const approved = detail.currentApprovedRevision;
@@ -60,16 +76,16 @@ describe("SpecLifecycleLanes", () => {
     );
   });
 
-  it("does not present requirements as approved while its proposal is in review", () => {
+  it("does not present requirements as approved while its draft is under review", () => {
     const detail = specControlsDetailFixture();
     if (!detail.currentRevision) throw new Error("fixture needs a revision");
-    detail.currentRevision.revision.state = "proposed";
+    detail.currentRevision.revision.state = "draft";
     detail.currentRevision.revision.authoringStage = "requirements";
 
     render(<SpecLifecycleLanes detail={detail} deliveryPlan={null} />);
 
     const specLane = screen.getByRole("group", { name: "Spec lifecycle" });
-    expect(within(specLane).getByText("In review")).toBeVisible();
+    expect(within(specLane).getByText("Draft")).toBeVisible();
     expect(within(specLane).queryByText("Requirements approved")).toBeNull();
   });
 });

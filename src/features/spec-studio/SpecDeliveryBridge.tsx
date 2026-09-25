@@ -19,6 +19,7 @@ import {
   type DeliveryPlanMutationView,
 } from "@/lib/specs/delivery-plan-views";
 import SpecPlanReaffirmation from "./SpecPlanReaffirmation";
+import { deliveryPlanReadyForSignOff } from "./presentation";
 
 const logger = createClientLogger("spec-studio-delivery-plan");
 
@@ -29,7 +30,6 @@ const lifecycleTone: Record<
   StatusChipTone
 > = {
   draft: "cyan",
-  proposed: "amber",
   approved: "green",
   parked: "amber",
   launched: "cyan",
@@ -48,9 +48,9 @@ function planBlocker(detail: SpecDetailView): string | null {
   if (
     current &&
     current.number > approved.number &&
-    (current.state === "draft" || current.state === "proposed")
+    current.state === "draft"
   ) {
-    return `${current.authoringStage} revision ${current.number} is ${current.state}. Settle or withdraw it before planning delivery.`;
+    return `${current.authoringStage} revision ${current.number} is an open draft. Sign it off or discard it before planning delivery.`;
   }
   return null;
 }
@@ -154,6 +154,7 @@ export default function SpecDeliveryBridge({
   const pinnedRevision = detail.revisions.find(
     (revision) => revision.id === review.attempt.pinnedRevisionId,
   );
+  const readyForSignOff = deliveryPlanReadyForSignOff(review);
   return (
     <section
       aria-label="Delivery plan"
@@ -172,13 +173,15 @@ export default function SpecDeliveryBridge({
                   : launchedExecution?.state === "abandoned" ||
                       launchedExecution?.state === "abandoning"
                     ? "neutral"
-                    : lifecycleTone[review.attempt.status]
+                    : readyForSignOff
+                      ? "amber"
+                      : lifecycleTone[review.attempt.status]
               }
             >
               {launchedExecution
                 ? launchedExecution.state.replaceAll("_", " ")
-                : review.attempt.status === "proposed"
-                  ? "In review"
+                : readyForSignOff
+                  ? "Ready for sign-off"
                   : review.attempt.status}
             </StatusChip>
           </div>
@@ -186,10 +189,12 @@ export default function SpecDeliveryBridge({
             {launchedExecution?.state === "running"
               ? "Execution is running with its pinned scope."
               : needsReaffirmation
-                ? "Reaffirm pending acceptance criteria below before plan review."
+                ? "Reaffirm pending acceptance criteria below before sign-off."
                 : review.attempt.status === "launched"
                   ? "Inspect execution outcomes and remaining scope below."
-                  : "Configure and review this plan in Workflow Builder."}
+                  : readyForSignOff
+                    ? "Review this plan and sign it off in Workflow Builder."
+                    : "Configure and review this plan in Workflow Builder."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-sm">

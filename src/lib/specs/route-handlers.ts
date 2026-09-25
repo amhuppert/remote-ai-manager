@@ -53,7 +53,6 @@ import {
 import { projectAttentionAuditEvents } from "./attention-audit-events";
 import {
   SpecDraftUnavailableError,
-  SpecRevisionInReviewError,
   SpecSlugTakenError,
   StageBlockedWriteError,
   createAuthoringService,
@@ -166,7 +165,7 @@ import {
   type RequirementStatusInput,
   type SpecPhaseProjection,
 } from "./phase";
-import { liveProposalProjection } from "./proposal-integrity";
+import { revisionReviewHash } from "./review-hash";
 import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import { proposalNotes } from "./proposal-notes";
 import {
@@ -182,7 +181,6 @@ import {
   unapproveItemInputSchema,
   bulkApproveInputSchema,
   changeSpecPolicyInputSchema,
-  dismissSupersededProposalInputSchema,
   disposeAssumptionInputSchema,
   editAttentionRecordInputSchema,
   openQuestionInputSchema,
@@ -190,7 +188,7 @@ import {
   mutateAssumptionCitationInputSchema,
   requestApprovalInputSchema,
   grantGateApprovalInputSchema,
-  requestChangesInputSchema,
+  withdrawDraftInputSchema,
   replyToReviewThreadInputSchema,
   resolveReviewThreadInputSchema,
   reviewCommentInputSchema,
@@ -198,7 +196,6 @@ import {
   signOffRevisionInputSchema,
   supersedeAssumptionInputSchema,
   withdrawAttentionRecordInputSchema,
-  withdrawProposalInputSchema,
   type ReviewService,
 } from "./review-service";
 import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
@@ -210,7 +207,7 @@ import {
 } from "./comment-threads";
 import type {
   CriterionDeliveryProjection,
-  LiveProposalView,
+  DraftReviewView,
   RemainingAuthoringSequence,
   SpecAssumptionView,
   SpecCommentsView,
@@ -286,8 +283,8 @@ export interface SpecRouteDeps {
   findCommentsByRevision(revisionId: string): SpecCommentRow[];
   /**
    * The spec's durable events, oldest first. The detail view reads them for
-   * the disposition document each proposal was proposed with — the notes live
-   * on the propose event, so nothing else can answer for them.
+   * the disposition document each review request carried — the notes live on
+   * the propose event, so nothing else can answer for them.
    */
   findEventsBySpecId(specId: string): SpecEventRow[];
   findGateAdmissionsBySpecId(specId: string): SpecGateAdmissionRow[];
@@ -623,59 +620,22 @@ async function loadCurrentState(
   };
 }
 
-/**
- * The approval authority for the current revision. Approvals accumulate
- * without bound while the revisions they name do not, so the snapshots are
- * read once per distinct revision rather than once per approval.
- */
-async function loadApprovalApplicability(
-  deps: SpecRouteDeps,
+/** The approval authority for the current revision. */
+function loadApprovalApplicability(
   state: CurrentSpecState,
-  approvals: readonly SpecApprovalRow[],
-): Promise<ApprovalApplicability> {
+): ApprovalApplicability {
   const current = state.currentSnapshot;
   if (current === null) {
     return () => false;
   }
-  const known = new Map(
-    [state.currentSnapshot, state.baseSnapshot, state.governanceBaseSnapshot]
-      .filter((snapshot): snapshot is SpecRevisionSnapshot => snapshot !== null)
-      .map((snapshot) => [snapshot.revision.id, snapshot]),
-  );
-  const unread = [
-    ...new Set(approvals.map((approval) => approval.revision_id)),
-  ].filter((revisionId) => !known.has(revisionId));
-  for (const [revisionId, snapshot] of await Promise.all(
-    unread.map(
-      async (revisionId) =>
-        [revisionId, await deps.getRevisionSnapshot(revisionId)] as const,
-    ),
-  )) {
-    if (snapshot !== null) known.set(revisionId, snapshot);
-  }
-  const rows = new Map(
-    [...known].map(([revisionId, snapshot]) => [
-      revisionId,
-      toDiffRows(snapshot),
-    ]),
-  );
   return createApprovalApplicability({
     revisionId: current.revision.id,
-    basedOnRevisionId: current.revision.basedOnRevisionId,
     ancestorRevisionIds: ancestorIds(state.revisions, current.revision.id),
-    revisionRows: rows.get(current.revision.id) ?? toDiffRows(current),
+    revisionRows: toDiffRows(current),
     citationContractVersion: current.revision.citationContractVersion,
     citations: toDiffCitations(current),
-    stateForRevision: (revisionId) => {
-      const snapshot = known.get(revisionId);
-      return snapshot === undefined
-        ? null
-        : {
-            rows: rows.get(revisionId) ?? toDiffRows(snapshot),
-            citationContractVersion: snapshot.revision.citationContractVersion,
-            citations: toDiffCitations(snapshot),
-          };
-    },
+    parentCitationContractVersion:
+      state.baseSnapshot?.revision.citationContractVersion ?? null,
   });
 }
 
@@ -1623,7 +1583,7 @@ async function buildStatus(
   );
   const admissions =
     loadedAdmissions ?? deps.findGateAdmissionsBySpecId(spec.id);
-  const applies = await loadApprovalApplicability(deps, state, approvals);
+  const applies = loadApprovalApplicability(state);
   // The revision an import created, read even when it is no longer the
   // governance base: the elements nobody has touched since the import are
   // still admitted by it alone, and the status read must owe exactly what
@@ -1650,9 +1610,9 @@ async function buildStatus(
   const health = draftHealth(
     revisionId === null ? [] : await deps.lintDraft(spec.id, revisionId),
   );
-  const signOffFindings =
-    health.groups.find((group) => group.severity === "blocks_signoff")
-      ?.findings ?? [];
+  const signOffFindings = health.ordered.filter(
+    (finding) => finding.severity !== "advisory",
+  );
   const statusHandles =
     state.currentSnapshot === null
       ? new Map<string, string>()
@@ -1706,12 +1666,16 @@ async function buildStatus(
         resolved: !thread.open,
       })),
     signOffFindings,
-    openComments: openCommentThreads.map((thread) => ({
-      threadId: thread.threadId,
-      elementId: thread.root.elementId,
-      handle: thread.root.handle,
-      blocking: thread.blocking,
-    })),
+    // Only the current revision's threads decide who acts next: a thread
+    // left open on an earlier revision can no longer be answered there.
+    openComments: openCommentThreads
+      .filter((thread) => thread.root.revisionId === revisionId)
+      .map((thread) => ({
+        threadId: thread.threadId,
+        elementId: thread.root.elementId,
+        handle: thread.root.handle,
+        blocking: thread.blocking,
+      })),
     specSlug: spec.slug,
   });
   const criteria = deliveryCriteria(
@@ -2071,7 +2035,7 @@ async function buildOutline(
         approval.element_id !== null &&
         selectedApprovalElementIds.has(approval.element_id),
     );
-  const applies = await loadApprovalApplicability(deps, state, approvals);
+  const applies = loadApprovalApplicability(state);
   const taskStatuses = buildElementStatuses(
     deps,
     { ...snapshot, elements: taskEntries.map(({ row }) => row) },
@@ -2293,65 +2257,39 @@ async function snapshotForRevisionId(
 }
 
 /**
- * Every revision under review, with the verdict the shared supersession
- * predicate reached and the snapshots its diff needs.
- *
- * The verdict is read from `liveProposalProjection`, never from a rule
- * restated here: the surfaces that render this list must offer exactly the
- * dismissals the review service would accept, and a second copy of the
- * ancestry test is how they would drift apart.
+ * The open draft as a human reviews it, with the snapshots its diff reads
+ * against and the review hash every review act echoes back. Null when the
+ * current revision is not a draft.
  */
-async function buildLiveProposals(
+async function buildDraftReview(
   deps: SpecRouteDeps,
   revisions: readonly SpecRevision[],
+  current: SpecRevisionSnapshot | null,
   loadedSnapshots: ReadonlyMap<string, SpecRevisionSnapshot>,
-  specId: string,
   events: readonly SpecEventRow[],
-): Promise<LiveProposalView[]> {
-  const cache = new Map(loadedSnapshots);
+): Promise<DraftReviewView | null> {
+  if (current === null || current.revision.state !== "draft") return null;
   const read = async (
     revisionId: string | null,
-  ): Promise<SpecRevisionSnapshot | null> => {
-    if (revisionId === null) return null;
-    const cached = cache.get(revisionId);
-    if (cached !== undefined) return cached;
-    const loaded = await deps.getRevisionSnapshot(revisionId);
-    if (loaded !== null) cache.set(revisionId, loaded);
-    return loaded;
-  };
-
-  const entries = await Promise.all(
-    liveProposalProjection(revisions).map(async (entry) => {
-      const snapshot = await read(entry.revision.id);
-      if (snapshot === null) {
-        // A proposed revision row with no snapshot is broken storage. Say so
-        // rather than dropping it: an unlisted proposal is the dead end this
-        // projection exists to end (#50).
-        logger.warn("specs.routes.live_proposal.snapshot_missing", {
-          specId,
-          revisionId: entry.revision.id,
-        });
-        return null;
-      }
-      const baseSnapshot = await read(entry.revision.basedOnRevisionId);
-      const governanceBaseSnapshot = await read(
-        governanceBaseRevisionId(revisions, entry.revision),
-      );
-      return {
-        revision: entry.revision,
-        supersededBy: entry.supersededBy,
-        snapshot: toSnapshotView(snapshot),
-        baseSnapshot:
-          baseSnapshot === null ? null : toSnapshotView(baseSnapshot),
-        governanceBaseSnapshot:
-          governanceBaseSnapshot === null
-            ? null
-            : toSnapshotView(governanceBaseSnapshot),
-        notes: proposalNotes(events, entry.revision.id),
-      };
-    }),
+  ): Promise<SpecRevisionSnapshot | null> =>
+    revisionId === null
+      ? null
+      : (loadedSnapshots.get(revisionId) ??
+        (await deps.getRevisionSnapshot(revisionId)));
+  const baseSnapshot = await read(current.revision.basedOnRevisionId);
+  const governanceBaseSnapshot = await read(
+    governanceBaseRevisionId(revisions, current.revision),
   );
-  return entries.filter((entry): entry is LiveProposalView => entry !== null);
+  return {
+    snapshot: toSnapshotView(current),
+    baseSnapshot: baseSnapshot === null ? null : toSnapshotView(baseSnapshot),
+    governanceBaseSnapshot:
+      governanceBaseSnapshot === null
+        ? null
+        : toSnapshotView(governanceBaseSnapshot),
+    notes: proposalNotes(events, current.revision.id),
+    reviewHash: revisionReviewHash(current),
+  };
 }
 
 async function latestContainingElement(
@@ -2657,11 +2595,11 @@ export function createSpecRouteHandlers(
       resolved.value.spec,
       state.revisions,
     );
-    const liveProposals = await buildLiveProposals(
+    const draftReview = await buildDraftReview(
       deps,
       state.revisions,
+      state.currentSnapshot,
       snapshotsByRevisionId,
-      resolved.value.spec.id,
       specEvents,
     );
     const executionById = new Map(
@@ -2709,7 +2647,7 @@ export function createSpecRouteHandlers(
       spec: resolved.value.spec,
       aliases,
       revisions: state.revisions,
-      liveProposals,
+      draftReview,
       baseRevision: baseRevision === null ? null : toSnapshotView(baseRevision),
       currentRevision:
         state.currentSnapshot === null
@@ -3780,24 +3718,10 @@ const resolveThreadBodySchema = resolveReviewThreadInputSchema.omit({
   specId: true,
   actor: true,
 });
-const requestChangesBodySchema = requestChangesInputSchema.omit({
+const withdrawDraftBodySchema = withdrawDraftInputSchema.omit({
   specId: true,
   actor: true,
 });
-// The revision id stays required rather than defaulting to the current
-// proposal: it is the caller's compare-and-swap token, and inferring it would
-// let a replacement proposal be withdrawn by an agent that never saw it.
-const withdrawProposalBodySchema = withdrawProposalInputSchema.omit({
-  specId: true,
-  actor: true,
-});
-// The reason is required, not defaulted: the row it lands in is the only
-// place a later reader learns why reviewed work was disposed of (#50).
-const dismissSupersededProposalBodySchema =
-  dismissSupersededProposalInputSchema.omit({
-    specId: true,
-    actor: true,
-  });
 const approveItemBodySchema = approveItemInputSchema.omit({
   specId: true,
   actor: true,
@@ -3918,7 +3842,7 @@ const startExecutionBodySchema = z
     scope: executionScopeSchema.nullable().optional(),
     sessionName: z.string().min(1).nullable(),
     parameters: z.record(z.string(), z.unknown()).optional(),
-    /** Hold a proposed or approved candidate for prelaunch review. */
+    /** Hold an approved candidate for prelaunch review. */
     park: z.boolean().optional(),
   })
   .strict();
@@ -4113,11 +4037,6 @@ const HUMAN_ONLY_ACTIONS = new Map<string, string>([
   // surface. Abandoning a single run ("abandon-execution") stays agent
   // reachable because stopping one run is ordinary agent work.
   ["abandon-spec", BROWSER_SESSION_REMEDY],
-  // "dismiss-superseded" is deliberately absent: its refusal must name the
-  // target revision, which only exists in the parsed body, and this gate runs
-  // before the body is read. The service refuses it as its first act after
-  // schema parse — no state read, no mutation — so the agent still gets a
-  // typed human_act_required, and that one names the revision it refused.
 ]);
 
 function humanActRequiredResponse(action: string): Response {
@@ -4240,17 +4159,6 @@ function routeFailure(
   }
   if (error instanceof SpecRevisionImmutableError) {
     return specRefusalResponse(immutableRevisionRefusal(error));
-  }
-  if (error instanceof SpecRevisionInReviewError) {
-    return specRefusalResponse({
-      code: error.code,
-      unmetConditions: [error.message],
-      instruction: error.instruction,
-      details: {
-        proposals: error.proposals.map(({ id, number }) => ({ id, number })),
-        approvedBaseRevisionId: error.approvedBase?.id ?? null,
-      },
-    });
   }
   if (
     error instanceof SpecDraftUnavailableError ||
@@ -4534,10 +4442,6 @@ export function createSpecWriteRouteHandlers(
           return invokeAction(request, resolveThreadBodySchema, (input) =>
             services.review.resolveThread(withReviewIdentity(input)),
           );
-        case "request-changes":
-          return invokeAction(request, requestChangesBodySchema, (input) =>
-            services.review.requestChanges(withReviewIdentity(input)),
-          );
         case "approve-item":
           return invokeAction(request, approveItemBodySchema, (input) =>
             services.review.approveItem({
@@ -4600,21 +4504,8 @@ export function createSpecWriteRouteHandlers(
             }),
           );
         case "withdraw":
-          return invokeAction(request, requestChangesBodySchema, (input) =>
+          return invokeAction(request, withdrawDraftBodySchema, (input) =>
             services.review.withdraw(withReviewIdentity(input)),
-          );
-        case "withdraw-proposal":
-          return invokeAction(request, withdrawProposalBodySchema, (input) =>
-            services.review.withdrawProposal(withReviewIdentity(input)),
-          );
-        case "dismiss-superseded":
-          return invokeAction(
-            request,
-            dismissSupersededProposalBodySchema,
-            (input) =>
-              services.review.dismissSupersededProposal(
-                withReviewIdentity(input),
-              ),
           );
         case "bulk-approve":
           return invokeAction(request, bulkApproveBodySchema, (input) =>
@@ -4780,7 +4671,7 @@ export function createSpecWriteRouteHandlers(
                     unmetConditions: [
                       "Execution scope documents are retired; the approved delivery plan is the execution graph.",
                     ],
-                    instruction: `Nothing was started. Open an authored delivery attempt with \`cctl spec plan open ${resolved.value.spec.slug}\`, then propose and sign off that candidate before rerunning \`cctl spec start ${resolved.value.spec.slug} --file .cc/temp/inputs.json\`.`,
+                    instruction: `Nothing was started. Open an authored delivery attempt with \`cctl spec plan open ${resolved.value.spec.slug}\`, then have its draft signed off before rerunning \`cctl spec start ${resolved.value.spec.slug} --file .cc/temp/inputs.json\`.`,
                   },
                 };
               }
@@ -4904,10 +4795,11 @@ export function createSpecWriteRouteHandlers(
               actor: actor.value,
             }),
           );
-        // The one default approval: it binds the candidate identity the caller
-        // read and admits `execution_start` in the same act. Human attribution
-        // rides the transport actor, so a Studio sign-off is a human act and an
-        // agent's is refused whenever the dial says a human decides.
+        // The one default approval: it freezes the draft the caller read into
+        // the candidate and admits `execution_start` in the same act. Human
+        // attribution rides the transport actor, so a Builder sign-off is a
+        // human act and an agent's is refused whenever the dial says a human
+        // decides.
         case "plan-sign-off":
           return invokeAction(request, planSignOffBodySchema, (input) =>
             services.deliveryPlan.signOff({
@@ -5014,8 +4906,8 @@ export function createSpecWriteRouteHandlers(
   /**
    * The semantic diff between two of the attempt's frozen snapshots. A read,
    * mounted beside the plan mutations for the same reason the others are: the
-   * snapshots it compares are written by propose, and one owner is what keeps
-   * a diff from ever describing bytes no proposal froze.
+   * snapshots it compares are written by sign-off, and one owner is what keeps
+   * a diff from ever describing bytes no sign-off froze.
    */
   async function specPlanDiffGET(
     request: Request,
@@ -5050,8 +4942,8 @@ export function createSpecWriteRouteHandlers(
   /**
    * The delivery-plan preview. A read, but mounted here beside the plan
    * mutations for the same reason `specPlanGET` is: previewing a draft reads
-   * the document proposal finalizes, and one owner keeps the preview and
-   * proposal on the same authored bytes.
+   * the document sign-off finalizes, and one owner keeps the preview and
+   * sign-off on the same authored bytes.
    */
   async function specPlanPreviewGET(
     request: Request,
@@ -5062,14 +4954,14 @@ export function createSpecWriteRouteHandlers(
     const url = new URL(request.url);
     const rawExpected = url.searchParams.get("expectedDraftRevision");
     const parsed = deliveryPlanPreviewRequestSchema.safeParse({
-      stage: url.searchParams.get("stage") ?? "proposed",
+      stage: url.searchParams.get("stage") ?? "approved",
       ...(rawExpected === null
         ? {}
         : { expectedDraftRevision: Number(rawExpected) }),
     });
     if (!parsed.success) {
       return jsonError(
-        `Invalid plan preview request. Pass ?stage=draft or ?stage=proposed, and an optional integer ?expectedDraftRevision, then re-run cctl spec plan preview ${resolved.value.spec.slug} --stage <draft|proposed>.`,
+        `Invalid plan preview request. Pass ?stage=draft or ?stage=approved, and an optional integer ?expectedDraftRevision, then re-run cctl spec plan preview ${resolved.value.spec.slug} --stage <draft|approved>.`,
         400,
         "plan_preview_invalid_request",
       );

@@ -1,7 +1,8 @@
 import type { AuthoringReviewProjection } from "./authoring-review-projection";
-import type {
-  ApprovalApplicability,
-  ApprovalSubjectKind,
+import {
+  approvalRecordFromRow,
+  type ApprovalApplicability,
+  type ApprovalSubjectKind,
 } from "./approval-applicability";
 import { dialRequiresHumanApproval } from "./policy";
 import { elementHandleInSnapshot } from "./review-state";
@@ -37,8 +38,8 @@ export const EXECUTION_SCOPED_GATES: ReadonlySet<string> = new Set([
 
 /**
  * The revision every read projection calls "current": the highest-numbered
- * one, whatever its state. A proposed revision under review is current, and so
- * is the latest approved one once no draft is open.
+ * one, whatever its state. An open draft is current, and so is the latest
+ * approved one once no draft is open.
  */
 export function latestRevision(
   revisions: readonly SpecRevision[],
@@ -69,16 +70,8 @@ export function approvalHeld(
   for (const approval of approvals) {
     if (approval.subject_kind !== subjectKind) continue;
     if (approval.element_id !== elementId) continue;
-    if (
-      !applies({
-        subjectKind,
-        elementId: approval.element_id,
-        revisionId: approval.revision_id,
-        validity: approval.validity,
-      })
-    ) {
-      continue;
-    }
+    const record = approvalRecordFromRow(approval);
+    if (record === null || !applies(record)) continue;
     if (
       held === null ||
       approval.granted_at > held.granted_at ||
@@ -304,18 +297,6 @@ export function validateApprovalRequest(
       "Read the spec status; this gate is no longer blocking.",
     );
   }
-  // Approval, sign-off, Request Changes and withdrawal all refuse on a draft,
-  // so an authoring ask filed here is an entry whose only exit is the agent
-  // proposing the revision. The draft owes a propose before it owes anything
-  // to a human, which is what the projection's next action already says.
-  if (authoringScoped && context.snapshot?.revision.state === "draft") {
-    return refuse(
-      "gate_not_applicable",
-      `Revision ${context.currentRevisionId} is still a draft, so no human act can be recorded against its ${context.gate} gate.`,
-      "Propose the revision for review, then request the gate.",
-    );
-  }
-
   const forGate = context.projection.pendingApprovals.filter(
     (candidate) => candidate.gate === context.gate,
   );

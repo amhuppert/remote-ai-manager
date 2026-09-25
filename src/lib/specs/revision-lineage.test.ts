@@ -120,7 +120,7 @@ describe("nearestApprovedAncestor", () => {
       revision({
         id: "rev-3",
         number: 3,
-        state: "proposed",
+        state: "draft",
         basedOnRevisionId: "rev-2",
       }),
     ];
@@ -140,7 +140,7 @@ describe("nearestApprovedAncestor", () => {
       revision({
         id: "rev-3",
         number: 3,
-        state: "proposed",
+        state: "draft",
         basedOnRevisionId: "rev-1",
       }),
     ];
@@ -149,7 +149,7 @@ describe("nearestApprovedAncestor", () => {
   });
 
   it("returns null when no ancestor was ever approved", () => {
-    const revisions = [revision({ id: "rev-1", number: 1, state: "proposed" })];
+    const revisions = [revision({ id: "rev-1", number: 1 })];
 
     expect(nearestApprovedAncestor(revisions, "rev-1")).toBeNull();
   });
@@ -167,7 +167,7 @@ describe("nearestApprovedAncestor", () => {
       revision({
         id: "rev-b",
         number: 2,
-        state: "proposed",
+        state: "draft",
         basedOnRevisionId: "rev-a",
       }),
     ];
@@ -181,7 +181,7 @@ describe("nearestApprovedAncestor", () => {
       revision({
         id: "rev-b",
         number: 2,
-        state: "proposed",
+        state: "draft",
         basedOnRevisionId: "rev-a",
       }),
     ];
@@ -205,7 +205,7 @@ describe("selectOrdinaryContinuation", () => {
     });
   });
 
-  it("reuses the open draft when nothing is under review", () => {
+  it("reuses the open draft over the approved revision it amends", () => {
     const approved = revision({ id: "rev-1", number: 1, state: "approved" });
     const draft = revision({
       id: "rev-2",
@@ -289,91 +289,19 @@ describe("selectOrdinaryContinuation", () => {
     });
   });
 
-  it("blocks on a proposal and names its approved base", () => {
+  // Naming what the clone leaves behind walks each withdrawn revision's
+  // lineage; a broken walk cannot say whether the drop happened, so it throws
+  // rather than reporting an empty list.
+  it("fails closed when a withdrawn revision's lineage is broken", () => {
     const approved = revision({ id: "rev-1", number: 1, state: "approved" });
-    const proposed = revision({
-      id: "rev-2",
-      number: 2,
-      state: "proposed",
-      basedOnRevisionId: "rev-1",
-    });
-
-    expect(selectOrdinaryContinuation([approved, proposed])).toEqual({
-      kind: "blocked_by_proposal",
-      proposals: [proposed],
-      approved,
-    });
-  });
-
-  // Execution scope capture legitimately drafts against the pinned revision
-  // while a later revision is under review, so a coexisting draft cannot be
-  // read as an ordinary authoring line: the proposal still blocks.
-  it("blocks on the proposal even when a capture-style draft coexists", () => {
-    const approved = revision({ id: "rev-1", number: 1, state: "approved" });
-    const proposed = revision({
-      id: "rev-2",
-      number: 2,
-      state: "proposed",
-      basedOnRevisionId: "rev-1",
-    });
-    const captureDraft = revision({
+    const orphaned = revision({
       id: "rev-3",
       number: 3,
-      basedOnRevisionId: "rev-1",
+      state: "withdrawn",
+      basedOnRevisionId: "rev-2",
     });
 
-    expect(
-      selectOrdinaryContinuation([approved, proposed, captureDraft]),
-    ).toEqual({
-      kind: "blocked_by_proposal",
-      proposals: [proposed],
-      approved,
-    });
-  });
-
-  it("blocks with every outstanding proposal ordered by revision number", () => {
-    const approved = revision({ id: "rev-1", number: 1, state: "approved" });
-    const laterProposal = revision({
-      id: "rev-3",
-      number: 3,
-      state: "proposed",
-      basedOnRevisionId: "rev-1",
-    });
-    const earlierProposal = revision({
-      id: "rev-2",
-      number: 2,
-      state: "proposed",
-      basedOnRevisionId: "rev-1",
-    });
-
-    expect(
-      selectOrdinaryContinuation([approved, laterProposal, earlierProposal]),
-    ).toEqual({
-      kind: "blocked_by_proposal",
-      proposals: [earlierProposal, laterProposal],
-      approved,
-    });
-  });
-
-  it("blocks with a null approved base when the first revision is under review", () => {
-    const proposed = revision({ id: "rev-1", number: 1, state: "proposed" });
-
-    expect(selectOrdinaryContinuation([proposed])).toEqual({
-      kind: "blocked_by_proposal",
-      proposals: [proposed],
-      approved: null,
-    });
-  });
-
-  it("fails closed when the proposal's lineage is broken", () => {
-    const proposed = revision({
-      id: "rev-2",
-      number: 2,
-      state: "proposed",
-      basedOnRevisionId: "rev-1",
-    });
-
-    expect(() => selectOrdinaryContinuation([proposed])).toThrow(
+    expect(() => selectOrdinaryContinuation([approved, orphaned])).toThrow(
       SpecRevisionLineageError,
     );
   });

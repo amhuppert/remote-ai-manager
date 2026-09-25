@@ -19,12 +19,12 @@ import type {
 /**
  * The execution-start gate's half of a delivery-plan sign-off (design §5).
  *
- * The plan sign-off is the one default human approval: it approves the stored
- * candidate AND admits `execution_start`, so no second human act stands between
- * a proposal and its launch. This module writes that admission, and it writes
- * it with a null `execution_id` because the whole point of the slot-free
- * prelaunch path is that no execution exists yet — the admission is addressed
- * by the pinned revision and the attempt it approved.
+ * The plan sign-off is the one default human approval: it freezes and approves
+ * the candidate AND admits `execution_start`, so no second human act stands
+ * between the signed plan and its launch. This module writes that admission,
+ * and it writes it with a null `execution_id` because the whole point of the
+ * slot-free prelaunch path is that no execution exists yet — the admission is
+ * addressed by the pinned revision and the attempt it approved.
  *
  * It mirrors `policy-admissions.ts` rather than reusing it: that module's
  * dedupe and addressing are both keyed on a `SpecExecutionRow`, which is
@@ -93,6 +93,7 @@ export function admitExecutionStartForAttemptInTransaction(
       approver: input.approver,
       granted_at: input.occurredAt,
       validity: "valid",
+      subject_fingerprint_json: null,
     };
     deps.reviewRepo.saveApproval(approval);
   }

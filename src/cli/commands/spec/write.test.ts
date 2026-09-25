@@ -3,17 +3,10 @@ import { z } from "zod";
 
 import type { SpecGatePreset } from "@/lib/specs/schemas";
 import type { SpecProposeApprovalRequest } from "@/lib/specs/view-schemas";
-import { revisionInReviewInstruction } from "@/lib/specs/authoring-service";
 import { inlineDataOf, runCcWithHost } from "../../testing/domain-runtime";
 import type { CliEnv, CliHost, FetchInit } from "../../transport";
 
 const CREATED_AT = "2026-07-18T00:00:00.000Z";
-// Built from the server's own instruction builder: a hand-copied string here
-// would let the CLI test keep passing after the recovery it teaches changed.
-const REVISION_IN_REVIEW_INSTRUCTION = revisionInReviewInstruction(
-  [2],
-  "amendment",
-);
 const SPEC_FILE = "/tmp/spec-element.json";
 const DRAFT_FILE = "/tmp/spec-draft-element.json";
 const BATCH_FILE = "/tmp/spec-elements.json";
@@ -277,8 +270,7 @@ function makeHost(
       | "rename"
       | "capture-scope-amendment"
       | "abandon-spec"
-      | "answer-question"
-      | "open-amendment";
+      | "answer-question";
     approved?: boolean;
     /** Drives the execution_start dial the CLI resolves locally. */
     preset?: SpecGatePreset;
@@ -559,22 +551,6 @@ function makeHost(
               "Perform this action from the authenticated browser session.",
           },
           403,
-        );
-      }
-      if (options.refusal === "open-amendment" && action === "open-amendment") {
-        return response(
-          {
-            code: "revision_in_review",
-            unmetConditions: [
-              "Revision 2 of spec spec-1 is proposed and under review, so an amendment would fork past it",
-            ],
-            instruction: REVISION_IN_REVIEW_INSTRUCTION,
-            details: {
-              proposals: [{ id: "revision-2", number: 2 }],
-              approvedBaseRevisionId: "revision-1",
-            },
-          },
-          409,
         );
       }
       if (
@@ -861,12 +837,11 @@ function makeHost(
           return response({
             // The revision sits at the plan stage while the gate it still owes
             // is requirements — the shape ticket #42 reported, so any rendering
-            // that reads the stage names the wrong gate.
+            // that reads the stage names the wrong gate. Asking for review
+            // leaves the revision an editable draft.
             revision: {
               ...revision(),
               authoringStage: "plan",
-              state: "proposed",
-              proposedAt: CREATED_AT,
             },
             diff: { classifications: [], changeList: [], planStale: false },
             absorbedSignOff: false,
@@ -1169,26 +1144,6 @@ function makeHost(
                   ]
                 : [],
           });
-        case "withdraw-proposal":
-          return response({
-            withdrawn: {
-              ...revision(),
-              id: "revision-proposed",
-              number: 2,
-              state: "withdrawn",
-              authoringStage: "plan",
-            },
-            draft: {
-              ...revision(),
-              id: "revision-follow-up",
-              number: 3,
-              authoringStage: "plan",
-              basedOnRevisionId: "revision-proposed",
-            },
-            // Computed against the reopened draft: what the withdrawal cost is
-            // exactly what the ledger of the draft that now exists says.
-            approvalLedger,
-          });
         case "abandon-spec":
           return response({
             ...spec,
@@ -1370,7 +1325,7 @@ describe("cctl spec write verbs", () => {
       );
       expect(result.exitCode, result.stdout).toBe(0);
       expect(inlineDataOf(result)).toMatchObject({
-        revision: { state: "proposed", authoringStage: "plan" },
+        revision: { state: "draft", authoringStage: "plan" },
         approvalRequests: [request],
         pendingBlock: { actsNext: "human" },
         approvalLedger: {
@@ -1798,90 +1753,6 @@ describe("cctl spec write verbs", () => {
       revision: { id: "revision-amendment", number: 3 },
       skippedWithdrawnRevisions: [{ id: "revision-withdrawn", number: 2 }],
     });
-  });
-
-  it("renders the revision_in_review refusal when an amendment would fork past a review", async () => {
-    const host = makeHost({ approved: true, refusal: "open-amendment" });
-
-    const text = await runCcWithHost(
-      ["spec", "amend", "native-sdd"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(1);
-    expect(text.stderr).toContain("Revision 2");
-    expect(text.stderr).toContain(
-      `instruction: ${REVISION_IN_REVIEW_INSTRUCTION}`,
-    );
-    // The agent-side exit is one of the three recoveries the server teaches,
-    // so a rendering that drops it leaves the agent waiting on a human.
-    expect(text.stderr).toContain("cctl spec withdraw-proposal");
-
-    const json = await runCcWithHost(
-      ["spec", "amend", "native-sdd", "--json"],
-      baseEnv,
-      makeHost({ approved: true, refusal: "open-amendment" }),
-    );
-
-    expect(json.exitCode).toBe(1);
-    expect(JSON.parse(json.stdout)).toMatchObject({
-      ok: false,
-      instruction: expect.stringContaining("sign off revision 2"),
-      error: {
-        details: {
-          serverCode: "revision_in_review",
-          serverDetails: { proposals: [{ id: "revision-2", number: 2 }] },
-        },
-      },
-    });
-  });
-
-  it("withdraws the caller's own proposal and names the draft it reopened", async () => {
-    const host = makeHost();
-    const result = await runCcWithHost(
-      [
-        "spec",
-        "withdraw-proposal",
-        "native-sdd",
-        "--revision",
-        "revision-proposed",
-        "--json",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    const request = actionRequests(host)[0];
-    expect(new URL(request?.url ?? "").pathname).toBe(
-      "/api/specs/demo/native-sdd/actions/withdraw-proposal",
-    );
-    // The token travels exactly as given: the CLI never substitutes the
-    // server's current proposal for the one the caller named.
-    expect(JSON.parse(request?.init.body ?? "null")).toEqual({
-      revisionId: "revision-proposed",
-    });
-    expect(request?.init.headers["x-cc-conversation-id"]).toBe(
-      "conversation-1",
-    );
-    expect(inlineDataOf(result)).toMatchObject({
-      withdrawn: { id: "revision-proposed", state: "withdrawn" },
-      draft: { id: "revision-follow-up", number: 3 },
-    });
-
-    const text = await runCcWithHost(
-      [
-        "spec",
-        "withdraw-proposal",
-        "native-sdd",
-        "--revision",
-        "revision-proposed",
-      ],
-      baseEnv,
-      makeHost(),
-    );
-    expect(text.exitCode).toBe(0);
   });
 
   it("opens a question with a resolved element attachment", async () => {
@@ -3095,7 +2966,7 @@ describe("cctl spec plan abandon", () => {
 
 describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
   function planView(
-    status: "draft" | "proposed",
+    status: "draft" | "approved",
     draftRevision: number,
   ): unknown {
     return {
@@ -3106,9 +2977,9 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
         draftRevision,
         pinnedRevisionId: "revision-approved",
         deltaBasisExecutionId: null,
-        proposedSnapshotId: status === "proposed" ? "snapshot-1" : null,
-        candidateId: status === "proposed" ? "candidate-1" : null,
-        candidateHash: status === "proposed" ? "sha256:candidate" : null,
+        proposedSnapshotId: status === "approved" ? "snapshot-1" : null,
+        candidateId: status === "approved" ? "candidate-1" : null,
+        candidateHash: status === "approved" ? "sha256:candidate" : null,
         launchedExecutionId: null,
         workflowDefinitionId: "wf-1",
         createdAt: CREATED_AT,

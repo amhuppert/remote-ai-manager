@@ -462,10 +462,6 @@ describe("AuthoringService.upsertDraftElements", () => {
 
   it("preserves the rationale when a removal is blocked by the current stage", async () => {
     const created = await createDraft();
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-25T13:00:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-25T13:01:00.000Z",
@@ -499,10 +495,6 @@ describe("AuthoringService.upsertDraftElements", () => {
       actor: ACTOR,
     });
     expect(designed.ok).toBe(true);
-    await specs.proposeRevision({
-      revisionId: design.id,
-      proposedAt: "2026-07-25T13:03:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: design.id,
       approvedAt: "2026-07-25T13:04:00.000Z",
@@ -538,16 +530,31 @@ describe("AuthoringService.upsertDraftElements", () => {
   });
 
   /**
-   * Sending a batch into a revision under review to an amendment draft names a
-   * recovery `spec amend` refuses for the same reason. The two halves of that
-   * pair have to name one recovery, so the state the revision is in picks the
-   * code.
+   * Asking for review leaves the draft open: reviewers read it while its author
+   * keeps revising, so a write after the request lands like any other.
    */
-  it("names the review, not an amendment, when the batch targets a proposed revision", async () => {
+  it("lands a batch on the draft after its author asked for review", async () => {
     const created = await createDraft();
-    await specs.proposeRevision({
+    // A requirement with a criterion is the least a review can be asked for.
+    await service.upsertDraftElement({
+      specId: created.spec.id,
       revisionId: created.draft.id,
-      proposedAt: "2026-07-25T13:00:00.000Z",
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      payload: criterion("The batch lands whole or not at all."),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    const proposed = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+    expect(proposed).toMatchObject({
+      ok: true,
+      absorbedSignOff: false,
+      revision: { id: created.draft.id, state: "draft" },
     });
 
     const result = await service.upsertDraftElements({
@@ -559,6 +566,50 @@ describe("AuthoringService.upsertDraftElements", () => {
           kind: "requirement",
           parentElementId: null,
           payload: requirement("Written while the revision is under review."),
+          baseElementVersion: null,
+        },
+      ],
+      actor: ACTOR,
+    });
+
+    expect(result.ok).toBe(true);
+    const snapshot = await specs.getRevisionSnapshot(created.draft.id);
+    expect(snapshot?.revision.state).toBe("draft");
+    expect(snapshot?.elements.map(({ element }) => element.id).sort()).toEqual([
+      "criterion-1",
+      "requirement-1",
+      "requirement-2",
+    ]);
+  });
+
+  /**
+   * Withdrawn content is frozen for the same reason approved content is, so it
+   * earns the same code and the same recovery rather than a state-specific one.
+   */
+  it("directs a batch into a withdrawn draft at an amendment and writes nothing", async () => {
+    const created = await createDraft();
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-25T13:01:00.000Z",
+    });
+    const discarded = await specs.createDraftFromBase({
+      id: "revision-discarded",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "design",
+      createdAt: "2026-07-25T13:02:00.000Z",
+    });
+    await specs.withdrawAuthoringRevision({ revisionId: discarded.id });
+
+    const result = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: discarded.id,
+      elements: [
+        {
+          elementId: "requirement-2",
+          kind: "requirement",
+          parentElementId: null,
+          payload: requirement("Written into discarded content."),
           baseElementVersion: null,
         },
       ],
@@ -571,80 +622,19 @@ describe("AuthoringService.upsertDraftElements", () => {
       expect.objectContaining({
         index: 0,
         elementId: "requirement-2",
-        code: "revision_in_review",
+        code: "amendment_required",
+        instruction:
+          "Open an amendment draft before changing approved content.",
       }),
     ]);
-    expect(result.refusals[0]?.instruction).not.toContain(
-      "Open an amendment draft",
-    );
-    expect(result.refusals[0]?.instruction).toContain("Spec Studio");
-    // The agent's own exit is named, but the amendment verb is not: amending
-    // is exactly what this refusal refused.
-    expect(result.refusals[0]?.instruction).toContain(
-      "cctl spec withdraw-proposal",
-    );
-
-    const snapshot = await specs.getRevisionSnapshot(created.draft.id);
-    expect(snapshot?.elements).toHaveLength(1);
-  });
-
-  /**
-   * The refusal a write earns and the refusal an amendment earns name the same
-   * revision the same way, so an agent reading both cannot conclude they are
-   * about different objects. The revision id is deliberately not a number here.
-   */
-  it("names the revision by number and the refused act as a write", async () => {
-    const created = await createDraft();
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-25T13:00:00.000Z",
-    });
-    await specs.approveRevision({
-      revisionId: created.draft.id,
-      approvedAt: "2026-07-25T13:01:00.000Z",
-    });
-    const amendment = await specs.createDraftFromBase({
-      id: "revision-under-review",
-      specId: created.spec.id,
-      baseRevisionId: created.draft.id,
-      authoringStage: "design",
-      createdAt: "2026-07-25T13:02:00.000Z",
-    });
-    await specs.proposeRevision({
-      revisionId: amendment.id,
-      proposedAt: "2026-07-25T13:03:00.000Z",
-    });
-    expect(amendment.number).toBe(2);
-
-    const result = await service.upsertDraftElements({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      elements: [
-        {
-          elementId: "requirement-2",
-          kind: "requirement",
-          parentElementId: null,
-          payload: requirement("Written while the revision is under review."),
-          baseElementVersion: null,
-        },
-      ],
-      actor: ACTOR,
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("batch should have been refused");
-    expect(result.refusals[0]?.instruction).toBe(
-      "Revision 2 is under review. Conclude that review before editing it: sign off revision 2 in Spec Studio, have a human request changes on it, or — if this conversation proposed it and no human has acted on it yet — run `cctl spec withdraw-proposal <slug> --revision <revision-id>` to take it back and continue in the draft it reopens. Writing into it now would change content a reviewer is reading.",
-    );
-    expect(result.refusals[0]?.instruction).not.toContain(amendment.id);
+    const snapshot = await specs.getRevisionSnapshot(discarded.id);
+    expect(snapshot?.elements.map(({ element }) => element.id)).toEqual([
+      "requirement-1",
+    ]);
   });
 
   it("keeps directing an approved-revision batch at the amendment draft", async () => {
     const created = await createDraft();
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-25T13:00:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-25T13:01:00.000Z",

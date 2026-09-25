@@ -26,6 +26,7 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import { revisionReviewHash } from "./review-hash";
 import { createReviewService, type ReviewService } from "./review-service";
 import type { SpecGatePreset } from "./schemas";
 
@@ -82,8 +83,14 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
-/** A design-stage proposal carrying one requirement and one decision. */
-async function proposedSpec(preset: SpecGatePreset, slug = `spec-${preset}`) {
+/**
+ * A design-stage draft under review, carrying an approved requirement and two
+ * new decisions.
+ */
+async function reviewableDraft(
+  preset: SpecGatePreset,
+  slug = `spec-${preset}`,
+) {
   const created = await authoring.createSpec({
     projectPath: PROJECT_PATH,
     slug,
@@ -117,10 +124,6 @@ async function proposedSpec(preset: SpecGatePreset, slug = `spec-${preset}`) {
     },
     baseElementVersion: null,
     actor: AGENT,
-  });
-  await specs.proposeRevision({
-    revisionId: created.draft.id,
-    proposedAt: "2026-08-08T08:58:00.000Z",
   });
   await specs.approveRevision({
     revisionId: created.draft.id,
@@ -163,7 +166,15 @@ async function proposedSpec(preset: SpecGatePreset, slug = `spec-${preset}`) {
     actor: AGENT,
   });
   if (!proposed.ok) throw new Error("the fixture propose was refused");
+  expect(proposed.revision.state).toBe("draft");
   return { specId: created.spec.id, revisionId: design.revision.id, slug };
+}
+
+/** The token a human review act echoes: the draft's content as read now. */
+async function reviewHash(revisionId: string): Promise<string> {
+  const snapshot = await specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) throw new Error(`revision ${revisionId} is gone`);
+  return revisionReviewHash(snapshot);
 }
 
 function subjectRows(specId: string) {
@@ -183,32 +194,14 @@ async function stateOf(revisionId: string) {
   return revision.state;
 }
 
-/** A revision cloned off `baseRevisionId` and driven straight to `proposed`. */
-async function proposeSibling(
-  specId: string,
-  baseRevisionId: string,
-  id: string,
-) {
-  await specs.createDraftFromBase({
-    id,
-    specId,
-    baseRevisionId,
-    authoringStage: "design",
-    createdAt: "2026-08-08T08:00:00.000Z",
-  });
-  return specs.proposeRevision({
-    revisionId: id,
-    proposedAt: "2026-08-08T08:00:01.000Z",
-  });
-}
-
 describe("approveRemainingAndSignOff", () => {
   it("writes every remaining subject approval and the sign-off in one act", async () => {
-    const { specId, revisionId } = await proposedSpec("contract-bearing");
+    const { specId, revisionId } = await reviewableDraft("contract-bearing");
 
     const result = await reviewing.approveRemainingAndSignOff({
       specId,
       revisionId,
+      expectedReviewHash: await reviewHash(revisionId),
       approver: "alex",
       actor: HUMAN,
     });
@@ -234,7 +227,7 @@ describe("approveRemainingAndSignOff", () => {
   });
 
   it("leaves nothing applied when a write faults between the subject approvals", async () => {
-    const { specId, revisionId } = await proposedSpec("contract-bearing");
+    const { specId, revisionId } = await reviewableDraft("contract-bearing");
     let writes = 0;
     const faulted = buildReviewService({
       ...reviewRepo,
@@ -249,6 +242,7 @@ describe("approveRemainingAndSignOff", () => {
       faulted.approveRemainingAndSignOff({
         specId,
         revisionId,
+        expectedReviewHash: await reviewHash(revisionId),
         approver: "alex",
         actor: HUMAN,
       }),
@@ -258,42 +252,59 @@ describe("approveRemainingAndSignOff", () => {
     // the transaction, so a non-atomic act would leave that row behind.
     expect(writes).toBeGreaterThan(1);
     expect(reviewRepo.findApprovalsBySpecId(specId)).toEqual([]);
-    expect(await stateOf(revisionId)).toBe("proposed");
+    expect(await stateOf(revisionId)).toBe("draft");
   });
 
-  it("inherits the live-sibling guard, writing zero approvals and no sign-off", async () => {
-    const { specId, revisionId } = await proposedSpec("contract-bearing");
-    await specs.approveRevision({
+  it("refuses a review hash the author's later edit made stale, writing zero approvals and no sign-off", async () => {
+    const { specId, revisionId, slug } =
+      await reviewableDraft("contract-bearing");
+    const readHash = await reviewHash(revisionId);
+    const decision = await specs.findElementVersion(
       revisionId,
-      approvedAt: "2026-08-08T08:30:00.000Z",
+      `${slug}-decision-2`,
+    );
+    if (decision === null) throw new Error("expected the second decision");
+    await authoring.upsertDraftElement({
+      specId,
+      revisionId,
+      elementId: `${slug}-decision-2`,
+      kind: "decision",
+      payload: {
+        kind: "decision",
+        title: "Transactional act 2",
+        chosenApproach: "The server writes approvals, then signs off.",
+        rejectedAlternatives: [],
+        reason: "Two round trips can half-apply.",
+        tracedRequirementElementIds: [`${slug}-requirement-1`],
+      },
+      baseElementVersion: decision.elementVersion,
+      actor: AGENT,
     });
-    const stranded = await proposeSibling(specId, revisionId, "rev-stranded");
-    const successor = await proposeSibling(specId, revisionId, "rev-successor");
 
     const result = await reviewing.approveRemainingAndSignOff({
       specId,
-      revisionId: successor.id,
+      revisionId,
+      expectedReviewHash: readHash,
       approver: "alex",
       actor: HUMAN,
     });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected the combined act to refuse");
-    expect(result.refusal.code).toBe("revision_in_review");
-    expect(result.refusal.unmetConditions.join(" ")).toContain(stranded.id);
-    expect(result.refusal.instruction).toContain("Dismiss superseded proposal");
-    expect(result.refusal.instruction).toContain(stranded.id);
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: { code: "stale_review" },
+    });
     expect(reviewRepo.findApprovalsBySpecId(specId)).toEqual([]);
-    expect(await stateOf(successor.id)).toBe("proposed");
-    expect(await stateOf(stranded.id)).toBe("proposed");
+    expect(reviewRepo.findGateAdmissionsByRevision(revisionId)).toEqual([]);
+    expect(await stateOf(revisionId)).toBe("draft");
   });
 
   it("produces the identical durable outcome exactly once under the combined dial", async () => {
-    const { specId, revisionId } = await proposedSpec("fast-path");
+    const { specId, revisionId } = await reviewableDraft("fast-path");
 
     const result = await reviewing.approveRemainingAndSignOff({
       specId,
       revisionId,
+      expectedReviewHash: await reviewHash(revisionId),
       approver: "alex",
       actor: HUMAN,
     });
@@ -318,6 +329,7 @@ describe("approveRemainingAndSignOff", () => {
     const again = await reviewing.approveRemainingAndSignOff({
       specId,
       revisionId,
+      expectedReviewHash: await reviewHash(revisionId),
       approver: "alex",
       actor: HUMAN,
     });
@@ -327,11 +339,12 @@ describe("approveRemainingAndSignOff", () => {
   });
 
   it("refuses an agent caller before any approval is written", async () => {
-    const { specId, revisionId } = await proposedSpec("contract-bearing");
+    const { specId, revisionId } = await reviewableDraft("contract-bearing");
 
     const result = await reviewing.approveRemainingAndSignOff({
       specId,
       revisionId,
+      expectedReviewHash: await reviewHash(revisionId),
       approver: "agent",
       actor: AGENT,
     });
@@ -340,6 +353,6 @@ describe("approveRemainingAndSignOff", () => {
     if (result.ok) throw new Error("expected the combined act to refuse");
     expect(result.refusal.code).toBe("human_act_required");
     expect(reviewRepo.findApprovalsBySpecId(specId)).toEqual([]);
-    expect(await stateOf(revisionId)).toBe("proposed");
+    expect(await stateOf(revisionId)).toBe("draft");
   });
 });

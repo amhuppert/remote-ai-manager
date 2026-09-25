@@ -225,7 +225,6 @@ export const finalizedDeliveryPlanPrelaunchSchema = z
     parkedBy: actorProvenanceSchema,
     reason: z.string().max(2000).nullable(),
     candidate: finalizedDeliveryPlanCandidateIdentitySchema,
-    approvedAtPark: z.boolean(),
   })
   .strict();
 export type FinalizedDeliveryPlanPrelaunch = z.infer<

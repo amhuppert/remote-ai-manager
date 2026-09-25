@@ -108,7 +108,7 @@ export interface ManagedWorkflowDefinitionService {
   }): Promise<ManagedWorkflowDefinitionRecord>;
   /**
    * Rewrite a managed definition at the given stage as its next revision:
-   * `candidate` freezes the charter a proposal binds, `draft` hands it back to
+   * `candidate` freezes the charter a sign-off binds, `draft` hands it back to
    * the authoring surfaces. The identity (id, origin) never changes.
    */
   restage(input: {

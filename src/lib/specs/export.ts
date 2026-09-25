@@ -18,7 +18,6 @@ import type {
   SpecGateAdmissionRow,
   SpecQuestionRow,
   SpecReviewRecordMutatedEventPayload,
-  SpecRevision,
   SpecRevisionElement,
   SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
@@ -60,12 +59,6 @@ import type {
   SpecWorkflowCleanupObservation,
   SpecWorkflowCleanupTarget,
 } from "./execution-service";
-import {
-  DISMISS_SUPERSEDED_SURFACE,
-  HUMAN_REVIEW_SURFACE,
-  liveProposals,
-  supersedingRevision,
-} from "./proposal-integrity";
 import { validateCanonicalAuditHistory } from "./canonical-audit-history";
 import { toLintSnapshot } from "./review-state";
 import type { IntegrityReport, SpecConsistencyFinding } from "./view-schemas";
@@ -120,7 +113,11 @@ export interface CanonicalSpecBundle {
   readonly manifest: string;
 }
 
-export const CURRENT_CANONICAL_SPEC_BUNDLE_FORMAT_VERSION = 4;
+/**
+ * Format 5: content approvals carry the subject fingerprint they approved, and
+ * revisions are only draft, approved, or withdrawn.
+ */
+export const CURRENT_CANONICAL_SPEC_BUNDLE_FORMAT_VERSION = 5;
 
 /**
  * The ordering contract the repository enforces, stated in the export so a
@@ -274,17 +271,15 @@ const canonicalManifestRevisionSchema = z
           "contentHash is null exactly while the revision remains a draft",
       });
     }
-    const reviewTimestampRequired =
-      revision.state === "proposed" || revision.state === "approved";
     if (
-      (reviewTimestampRequired && revision.proposedAt === null) ||
+      (revision.state === "approved" && revision.proposedAt === null) ||
       (revision.state === "draft" && revision.proposedAt !== null)
     ) {
       context.addIssue({
         code: "custom",
         path: ["proposedAt"],
         message:
-          "proposedAt is present for revisions that entered review; a withdrawn authoring draft may not have entered review",
+          "proposedAt records when content froze: present for an approved revision, absent for a draft",
       });
     }
     if ((revision.approvedAt !== null) !== (revision.state === "approved")) {
@@ -767,12 +762,6 @@ function assertCanonicalManifestIntegrity(
       );
     }
     const approvalRevision = revisionsById.get(approval.revision_id);
-    if (approvalRevision?.state === "draft") {
-      throw new SpecExportIntegrityError(
-        `approvals[${index}].revision_id`,
-        "approvals cannot belong to an editable draft",
-      );
-    }
     const approvalRevisionElements = elementIdsByRevision.get(
       approval.revision_id,
     );
@@ -966,7 +955,7 @@ function assertCanonicalManifestIntegrity(
       ) {
         throw new SpecExportIntegrityError(
           `revisions[${revisionIndex}].assumptionCitations[${citationIndex}].snapshot.createdAt`,
-          "legacy citation backfills cannot postdate revision proposal",
+          "legacy citation backfills cannot postdate the revision's freeze",
         );
       }
     }
@@ -1698,10 +1687,7 @@ export function verifyExportState(state: SpecExportState): IntegrityReport {
     ok: mismatches.length === 0,
     checkedRevisionIds,
     mismatches,
-    consistencyFindings: [
-      ...executionLifecycleFindings(state),
-      ...proposalIntegrityFindings(state),
-    ],
+    consistencyFindings: [...executionLifecycleFindings(state)],
   };
 }
 
@@ -2408,57 +2394,4 @@ function executionLifecycleFindings(
     });
   }
   return findings;
-}
-
-/**
- * Ticket #50's dead end, reported until it is disposed of. Eligibility comes
- * from the shared supersession predicate, so verify can never offer a dismissal
- * the dismiss act would refuse — or stay silent on one it would accept.
- *
- * A lone live proposal nothing has forked past is the ordinary "awaiting
- * review" state and is not a finding; a second live proposal is, because one of
- * the two has to be disposed of before either can be signed off.
- */
-function proposalIntegrityFindings(
-  state: SpecExportState,
-): SpecConsistencyFinding[] {
-  const revisions: SpecRevision[] = state.revisions.map(
-    ({ snapshot }) => snapshot.revision,
-  );
-  const live = liveProposals(revisions);
-  return live.flatMap((proposal): SpecConsistencyFinding[] => {
-    const superseding = supersedingRevision(revisions, proposal.id);
-    if (superseding !== null) {
-      return [
-        {
-          family: "proposal-integrity",
-          code: "superseded_proposal",
-          revisionId: proposal.id,
-          revisionNumber: proposal.number,
-          supersededByRevisionId: superseding.id,
-          detail: `Revision ${proposal.number} (${proposal.id}) is still proposed, but approved revision ${superseding.number} (${superseding.id}) forked past it`,
-          remedy: `Dismiss revision ${proposal.id} from ${DISMISS_SUPERSEDED_SURFACE}`,
-        },
-      ];
-    }
-    if (live.length < 2) return [];
-    return [
-      {
-        family: "proposal-integrity",
-        code: "competing_live_proposal",
-        revisionId: proposal.id,
-        revisionNumber: proposal.number,
-        supersededByRevisionId: null,
-        detail: `Revision ${proposal.number} (${proposal.id}) is one of ${live.length} live proposals on this lineage; nothing has forked past it, so it cannot be dismissed as superseded`,
-        // Request Changes, and only it. Sign-off is refused here by definition
-        // — this finding exists only where a live sibling does, and the
-        // sign-off recheck refuses a target that would fork past one. The
-        // agent's `withdraw-proposal` is admitted only for the proposing
-        // conversation before a human engages. The human Withdraw act would
-        // fit, but Studio ships no control for it, and a remedy pointing at a
-        // surface with no button is the same dead end one layer out.
-        remedy: `Conclude its review in ${HUMAN_REVIEW_SURFACE}: Request Changes on revision ${proposal.id}, which sends it back to its author as a draft`,
-      },
-    ];
-  });
 }

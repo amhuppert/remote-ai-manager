@@ -28,13 +28,7 @@ interface OwnershipRow {
   pinned_revision_id: string;
   pinned_revision_number: number;
   delta_basis_execution_id: string | null;
-  status:
-    | "draft"
-    | "proposed"
-    | "approved"
-    | "parked"
-    | "launched"
-    | "abandoned";
+  status: "draft" | "approved" | "parked" | "launched" | "abandoned";
   current_workflow_definition_id: string;
   draft_revision: number;
   content_json: string;
@@ -88,7 +82,6 @@ function lifecycle(row: OwnershipRow): ManagedWorkflowDefinitionLifecycle {
     row.workflow_definition_id === row.current_workflow_definition_id;
   if (!current) return "superseded";
   if (row.status === "draft") return "draft";
-  if (row.status === "proposed") return "in_review";
   if (row.status === "approved" || row.status === "parked") return "approved";
   return row.status;
 }
@@ -377,10 +370,8 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
         }),
       );
       const refusals: Record<string, string> = {};
-      if (state !== "draft")
-        refusals["propose"] = "Only a draft can be proposed.";
-      if (state !== "in_review") {
-        refusals["signOff"] = "Only an in-review candidate can be signed off.";
+      if (state !== "draft") {
+        refusals["signOff"] = "Only the current draft can be signed off.";
       }
       if (state !== "approved") refusals["launch"] = "Sign off before launch.";
       const detail: NativeSddWorkflowManagementDetail = {
@@ -397,14 +388,12 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
         comments,
         nextAct:
           state === "draft"
-            ? "propose"
-            : state === "in_review"
-              ? "sign_off"
-              : state === "approved"
-                ? "launch"
-                : state === "launched"
-                  ? "open_execution"
-                  : null,
+            ? "sign_off"
+            : state === "approved"
+              ? "launch"
+              : state === "launched"
+                ? "open_execution"
+                : null,
         currentCandidate,
         currentCandidateHash: row.snapshot_candidate_hash,
         currentApproval: approval,
@@ -449,9 +438,8 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
               stableStringify(claims),
         },
         capabilities: {
-          canPropose: state === "draft",
-          canSignOff: state === "in_review",
-          canReopen: state === "in_review" || state === "approved",
+          canSignOff: state === "draft",
+          canReopen: state === "approved",
           canAbandon: !["superseded", "abandoned", "launched"].includes(state),
           canLaunch: state === "approved",
           refusals,

@@ -229,9 +229,9 @@ export const specRemoveCommand = ccCommands.defineCommand(specRemoveSpec, {
 
 export const specProposeSpec = {
   path: "spec propose",
-  summary: "Propose the current revision for review",
+  summary: "Ask for review of the current draft",
   description:
-    "Bind the current revision, preserve the server approval ledger and pending block, and respect human-only review instructions. Notes accept inline text or --notes-file.",
+    "Files the Needs You approval request and leaves the draft editable: a human can approve or comment while you keep working, and an edit to an approved subject makes it unapproved again. Under Notify or Off dials it freezes the draft instead. Notes accept inline text or --notes-file.",
   related: [
     {
       path: "spec request-approval",
@@ -248,68 +248,13 @@ export const specProposeCommand = ccCommands.defineCommand(specProposeSpec, {
   examples: [
     {
       args: { slug: "native-sdd" },
-      why: "Propose the current revision for review",
+      why: "Ask for review of the current draft",
     },
   ],
   handler: async () => ({
     default: (await import("./native-write-scalar")).proposeHandler,
   }),
 });
-
-export const specWithdrawProposalSpec = {
-  path: "spec withdraw-proposal",
-  summary: "Withdraw the exact proposal previously read",
-  description:
-    "The explicit revision is the concurrency token; this command never replaces it with a newer proposal.",
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: { revision },
-} as const;
-export const specWithdrawProposalCommand = ccCommands.defineCommand(
-  specWithdrawProposalSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        flags: { revision: "revision-one" },
-        why: "Withdraw the exact proposal previously read",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-write-scalar")).withdrawProposalHandler,
-    }),
-  },
-);
-
-export const specDismissSupersededSpec = {
-  path: "spec dismiss-superseded",
-  summary: "Request dismissal of a superseded proposal",
-  description:
-    "The server enforces human-only disposition in Spec Studio; a CLI attempt preserves that refusal and its required next act.",
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: { revision, reason },
-} as const;
-export const specDismissSupersededCommand = ccCommands.defineCommand(
-  specDismissSupersededSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        flags: {
-          revision: "revision-one",
-          reason: "Superseded by approved work",
-        },
-        why: "Request dismissal of a superseded proposal",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-write-scalar")).dismissSupersededHandler,
-    }),
-  },
-);
 
 export const specAdvanceSpec = {
   path: "spec advance",
@@ -344,7 +289,7 @@ export const specReturnToRequirementsSpec = {
   path: "spec return-to-requirements",
   summary: "Return design work to an editable requirements revision",
   description:
-    "The CLI reads the current revision and binds it as expectedRevisionId. The server withdraws that design revision and records the reason.",
+    "Use it when an amendment must change a requirement or criterion. The CLI reads the current revision and binds it as expectedRevisionId. The server withdraws that design draft, records the reason, and opens a requirements draft from the revision it amended: the approved design carries, the withdrawn draft's design edits do not.",
   requires: "cc",
   effects: "write",
   args: [slug],
@@ -872,13 +817,17 @@ export const specPlanOpenCommand = ccCommands.defineCommand(specPlanOpenSpec, {
 
 export const specPlanProposeSpec = {
   path: "spec plan propose",
-  summary: "Freeze a delivery plan candidate for review",
+  summary: "Ask for review of the delivery plan draft",
   description:
-    "The receipt names the canonical candidate id and hash that approval and launch must bind to.",
+    "Checks the draft against the sign-off gate. When execution start needs a human, nothing changes: the human reviews the draft and signs it off in Builder. Under Notify or Off it freezes and signs the launch envelope, and the receipt names the candidate id and hash that launch binds to.",
   related: [
     {
-      path: "spec plan sign-off",
-      description: "Human review of the frozen candidate",
+      path: "spec plan status",
+      description: "Read who acts next and the Builder review link",
+    },
+    {
+      path: "spec start",
+      description: "Launch the signed candidate with input parameters",
     },
   ],
   requires: "cc",
@@ -892,51 +841,11 @@ export const specPlanProposeCommand = ccCommands.defineCommand(
     examples: [
       {
         args: { slug: "native-sdd" },
-        why: "Freeze a delivery plan candidate for review",
+        why: "Ask for review of the delivery plan draft",
       },
     ],
     handler: async () => ({
       default: (await import("./native-write-delivery")).planProposeHandler,
-    }),
-  },
-);
-
-export const specPlanSignOffSpec = {
-  path: "spec plan sign-off",
-  summary: "Sign off the exact proposed candidate",
-  description:
-    "Records approval or policy admission; it does not request human review. Supply both candidate fields or neither to bind the frozen proposal. Under human-required policy, hand off to the Builder URL in spec plan status; the server refuses agent sign-off.",
-  related: [
-    {
-      path: "spec start",
-      description: "Launch an approved candidate with input parameters",
-    },
-  ],
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: {
-    candidate: {
-      description: "Exact proposed candidate id",
-      value: { kind: "string", minLength: 1 },
-    },
-    "candidate-hash": {
-      description: "Exact hash of the proposed candidate bytes",
-      value: { kind: "string", minLength: 1 },
-    },
-  },
-} as const;
-export const specPlanSignOffCommand = ccCommands.defineCommand(
-  specPlanSignOffSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        why: "Sign off the frozen candidate when the execution-start policy permits the caller",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-write-delivery")).planSignOffHandler,
     }),
   },
 );
@@ -1001,8 +910,6 @@ export const specWriteCommands = [
   specDraftCommand,
   specRemoveCommand,
   specProposeCommand,
-  specWithdrawProposalCommand,
-  specDismissSupersededCommand,
   specAdvanceCommand,
   specReturnToRequirementsCommand,
   specReplyCommand,
@@ -1021,7 +928,6 @@ export const specWriteCommands = [
   specAbandonCommand,
   specPlanOpenCommand,
   specPlanProposeCommand,
-  specPlanSignOffCommand,
   specPlanReopenCommand,
   specPlanAbandonCommand,
 ] as const;

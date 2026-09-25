@@ -82,7 +82,7 @@ export default function SpecPlanReaffirmation({
           <p className="m-0 font-mono text-[0.72rem] leading-relaxed text-text-secondary">
             Requirements or design changed after these criteria were delivered.
             Review the updated spec, then confirm which criteria are still
-            satisfied by that earlier delivery. The plan cannot be proposed or
+            satisfied by that earlier delivery. The plan cannot be signed off or
             started until these are resolved.
           </p>
           <div className="flex flex-wrap gap-md font-mono text-[0.72rem]">

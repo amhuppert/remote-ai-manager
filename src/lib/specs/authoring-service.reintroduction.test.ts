@@ -29,6 +29,11 @@ import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { Db } from "@/lib/state-store/schemas";
 
 import {
+  approvalRecordFromRow,
+  serializeSubjectFingerprint,
+  subjectFingerprint,
+} from "./approval-applicability";
+import {
   StageBlockedWriteError,
   createAuthoringService,
   historicalElementRefusal,
@@ -36,6 +41,7 @@ import {
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
 import { diffRevisions } from "./revision-diff";
+import { toDiffCitations } from "./revision-diff-projections";
 import { loadProposalState, toDiffRows } from "./review-state";
 import type {
   CriterionElementPayload,
@@ -107,6 +113,27 @@ function criterion(text: string): CriterionElementPayload {
   };
 }
 
+/** The requirement subject as a human reading `revisionId` approved it. */
+async function requirementFingerprintJson(
+  revisionId: string,
+  elementId: string,
+): Promise<string> {
+  const snapshot = await specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) throw new Error(`revision ${revisionId} is missing`);
+  const fingerprint = subjectFingerprint(
+    toDiffRows(snapshot),
+    { subjectKind: "requirement", elementId },
+    {
+      citationContractVersion: snapshot.revision.citationContractVersion,
+      citations: toDiffCitations(snapshot),
+    },
+  );
+  if (fingerprint === null) {
+    throw new Error(`revision ${revisionId} does not carry ${elementId}`);
+  }
+  return serializeSubjectFingerprint(fingerprint);
+}
+
 async function refusalOf(act: Promise<unknown>) {
   try {
     await act;
@@ -152,11 +179,11 @@ function revivedElementIdsPerEvent(specId: string): unknown[] {
 
 /**
  * The reported dead zone, reproduced through the real authoring surface: an
- * element authored on a revision a human then ended by requesting changes. Its
- * identity survives, but every version of it lives outside the revision the
- * author is now writing into.
+ * element authored on a draft a human then discarded. Its identity survives,
+ * but every version of it lives outside the revision the author is now
+ * writing into.
  */
-async function orphanThroughRequestedChanges(
+async function orphanThroughDiscardedDraft(
   attemptElements: (revisionId: string) => Promise<void> = async (
     revisionId,
   ) => {
@@ -187,10 +214,6 @@ async function orphanThroughRequestedChanges(
     actor: ACTOR,
   });
   specId = created.spec.id;
-  await specs.proposeRevision({
-    revisionId: created.draft.id,
-    proposedAt: "2026-07-31T10:00:00.000Z",
-  });
   await specs.approveRevision({
     revisionId: created.draft.id,
     approvedAt: "2026-07-31T10:01:00.000Z",
@@ -199,10 +222,6 @@ async function orphanThroughRequestedChanges(
   const designCheckpoint = await service.openAmendment({
     specId,
     actor: ACTOR,
-  });
-  await specs.proposeRevision({
-    revisionId: designCheckpoint.revision.id,
-    proposedAt: "2026-07-31T10:01:10.000Z",
   });
   await specs.approveRevision({
     revisionId: designCheckpoint.revision.id,
@@ -220,12 +239,8 @@ async function orphanThroughRequestedChanges(
         })
       : openedAttempt;
   await attemptElements(attempt.revision.id);
-  await specs.proposeRevision({
-    revisionId: attempt.revision.id,
-    proposedAt: "2026-07-31T10:02:00.000Z",
-  });
-  // The human read the proposal and requested changes, which ends the revision.
-  await specs.withdrawRevision({ revisionId: attempt.revision.id });
+  // The human read the draft and discarded it, which ends the revision.
+  await specs.withdrawAuthoringRevision({ revisionId: attempt.revision.id });
 
   const openedFollowUp = await service.openAmendment({ specId, actor: ACTOR });
   const followUp =
@@ -250,7 +265,7 @@ async function orphanThroughRequestedChanges(
 
 describe("historical element reintroduction (ticket #42)", () => {
   it("refuses an orphaned element id without the marker and names the retry that revives it", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
 
     const error = await errorOf(
       service.upsertDraftElement({
@@ -294,7 +309,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("revives the orphaned element with its number, handle, and the caller's content", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
     const restated = requirement("Restored, and rewritten by the author.");
 
     const written = await service.upsertDraftElement({
@@ -333,7 +348,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("refuses an element id owned by another spec even with the marker", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
     const other = await service.createSpec({
       projectPath: PROJECT_PATH,
       slug: "other-spec",
@@ -370,7 +385,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("refuses a reintroduction that would change the element's kind", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
     db.prepare(
       "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
     ).run(world.followUp.id);
@@ -408,7 +423,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("refuses a reintroduction that would change the element's parent", async () => {
-    const world = await orphanThroughRequestedChanges(async (revisionId) => {
+    const world = await orphanThroughDiscardedDraft(async (revisionId) => {
       await service.upsertDraftElement({
         specId,
         revisionId,
@@ -460,7 +475,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("reports the ordinary stale-create conflict when the element is live in the draft", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
 
     const error = await errorOf(
       service.upsertDraftElement({
@@ -484,7 +499,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("refuses reviving a criterion whose requirement the final revision does not carry", async () => {
-    const world = await orphanThroughRequestedChanges(async (revisionId) => {
+    const world = await orphanThroughDiscardedDraft(async (revisionId) => {
       await service.upsertDraftElement({
         specId,
         revisionId,
@@ -538,7 +553,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("revives a requirement and its criterion together in one batch", async () => {
-    const world = await orphanThroughRequestedChanges(async (revisionId) => {
+    const world = await orphanThroughDiscardedDraft(async (revisionId) => {
       await service.upsertDraftElement({
         specId,
         revisionId,
@@ -626,7 +641,7 @@ describe("historical element reintroduction (ticket #42)", () => {
       reason: "Exercise first-save revival in a Design amendment.",
       tracedRequirementElementIds: [KEPT_ID],
     };
-    const world = await orphanThroughRequestedChanges(async (revisionId) => {
+    const world = await orphanThroughDiscardedDraft(async (revisionId) => {
       await service.upsertDraftElement({
         specId,
         revisionId,
@@ -640,10 +655,6 @@ describe("historical element reintroduction (ticket #42)", () => {
     }, "design");
     // The follow-up amendment has to be concluded before a create can continue
     // the spec: a create lands on the amendment path only with no draft open.
-    await specs.proposeRevision({
-      revisionId: world.followUp.id,
-      proposedAt: "2026-07-31T10:04:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: world.followUp.id,
       approvedAt: "2026-07-31T10:05:00.000Z",
@@ -672,7 +683,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("names the reintroduction retry when the write carries a base version for an orphaned identity", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
 
     // The agent replays the version it read on the attempt that ended.
     const error = await errorOf(
@@ -698,7 +709,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("refuses the marker paired with a base version instead of ignoring it", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
 
     const error = await errorOf(
       service.upsertDraftElement({
@@ -722,7 +733,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("names the reintroduction retry for a batch that replays base versions from the ended attempt", async () => {
-    const world = await orphanThroughRequestedChanges();
+    const world = await orphanThroughDiscardedDraft();
 
     const result = await service.upsertDraftElements({
       specId: world.specId,
@@ -838,7 +849,7 @@ describe("historical element reintroduction (ticket #42)", () => {
 
   it("does not let an approval recorded on the ended attempt satisfy the revived element", async () => {
     const restated = requirement("Identical content, on a forked branch.");
-    const world = await orphanThroughRequestedChanges(async (revisionId) => {
+    const world = await orphanThroughDiscardedDraft(async (revisionId) => {
       await service.upsertDraftElement({
         specId,
         revisionId,
@@ -861,6 +872,10 @@ describe("historical element reintroduction (ticket #42)", () => {
       approver: "alex",
       granted_at: "2026-07-31T10:03:00.000Z",
       validity: "valid",
+      subject_fingerprint_json: await requirementFingerprintJson(
+        world.attempt.id,
+        ORPHAN_ID,
+      ),
     });
     review.saveApproval({
       id: "approval-on-approved-base",
@@ -871,7 +886,19 @@ describe("historical element reintroduction (ticket #42)", () => {
       approver: "alex",
       granted_at: "2026-07-31T10:00:30.000Z",
       validity: "valid",
+      subject_fingerprint_json: await requirementFingerprintJson(
+        world.approved.id,
+        KEPT_ID,
+      ),
     });
+    const approvalRecord = (approvalId: string) => {
+      const row = review
+        .findApprovalsBySpecId(world.specId)
+        .find(({ id }) => id === approvalId);
+      const record = row === undefined ? null : approvalRecordFromRow(row);
+      if (record === null) throw new Error(`approval ${approvalId} is missing`);
+      return record;
+    };
 
     await service.upsertDraftElement({
       specId: world.specId,
@@ -895,18 +922,12 @@ describe("historical element reintroduction (ticket #42)", () => {
         }
         const loaded = loadProposalState(repo, review, links, spec, snapshot);
         return {
-          orphanBranch: loaded.approvalApplies({
-            subjectKind: "requirement",
-            elementId: ORPHAN_ID,
-            revisionId: world.attempt.id,
-            validity: "valid",
-          }),
-          approvedAncestor: loaded.approvalApplies({
-            subjectKind: "requirement",
-            elementId: KEPT_ID,
-            revisionId: world.approved.id,
-            validity: "valid",
-          }),
+          orphanBranch: loaded.approvalApplies(
+            approvalRecord("approval-on-attempt"),
+          ),
+          approvedAncestor: loaded.approvalApplies(
+            approvalRecord("approval-on-approved-base"),
+          ),
           changeList: diffRevisions(
             loaded.governanceBaseSnapshot === null
               ? []
@@ -931,7 +952,7 @@ describe("historical element reintroduction (ticket #42)", () => {
   });
 
   it("leaves evidence and waivers pinned to the revision they were recorded against", async () => {
-    const world = await orphanThroughRequestedChanges(async (revisionId) => {
+    const world = await orphanThroughDiscardedDraft(async (revisionId) => {
       await service.upsertDraftElement({
         specId,
         revisionId,

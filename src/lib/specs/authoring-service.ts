@@ -70,10 +70,6 @@ import { specSlugSchema } from "./handles";
 import { lint, type LintFinding } from "./lint";
 import type { SpecMeasureEventPayload } from "./measures";
 import { authoringApprovalsCollapseIntoSignOff, resolveDial } from "./policy";
-import {
-  liveSiblingProposals,
-  proposalAlreadyLiveRefusal,
-} from "./proposal-integrity";
 import { oversizedProposalNotesRefusal } from "./proposal-notes";
 import {
   LATER_STAGE_RATIONALE,
@@ -89,7 +85,6 @@ import {
 import {
   nearestApprovedAncestor,
   selectOrdinaryContinuation,
-  type BlockedByProposal,
   type OrdinaryContinuation,
 } from "./revision-lineage";
 import {
@@ -376,6 +371,12 @@ export type OpenAmendmentInput = z.infer<typeof openAmendmentInputSchema>;
 /** Why a Design ask ends when its revision returns to Requirements. */
 const RETURNED_TO_REQUIREMENTS_REASON =
   "the revision it asked about was returned to Requirements";
+/**
+ * A Notify/Off propose freezes the draft itself, so an ask filed while the
+ * policy still wanted a human has nothing left to ask for.
+ */
+const FROZEN_BY_POLICY_REASON =
+  "the revision was frozen under its Notify or Off policy";
 
 export const returnToRequirementsInputSchema = z
   .object({
@@ -536,9 +537,8 @@ export interface ProposeSuccess {
   readonly diff: RevisionDiffResult;
   readonly absorbedSignOff: boolean;
   /**
-   * What the proposed revision still owes, read from the server's projection
-   * after invalidation and the policy admissions. Null when the transition
-   * left nothing outstanding. A caller renders this; deriving a blocker from
+   * What the revision still owes, read from the server's projection after
+   * any policy admissions. Null when nothing is outstanding. A caller renders this; deriving a blocker from
    * the revision's authoring stage names the wrong gate.
    */
   readonly pendingBlock: AuthoringPendingBlock | null;
@@ -568,9 +568,9 @@ export type ProposeResult = ProposeSuccess | ProposeRefused;
 /**
  * The transaction's answer, before the post-commit coordinator files anything.
  * The asks are deliberately outside the transaction: a durable request is a
- * second act on a revision the freeze has already committed, and rolling the
- * freeze back because an ask failed would lose the proposal a human is waiting
- * to review.
+ * second act after the review request has committed, and rolling the request
+ * back because an ask failed would lose the review round a human is asked to
+ * act on.
  */
 type ProposeTransitionResult =
   | Omit<ProposeSuccess, "approvalRequests">
@@ -636,63 +636,14 @@ export class SpecDraftUnavailableError extends Error {
   }
 }
 
-/** Revisions are addressed by number, so the joiner speaks only numbers. */
-function joinRevisionNumbers(numbers: readonly number[]): string {
-  if (numbers.length <= 2) return numbers.join(" and ");
-  return `${numbers.slice(0, -1).join(", ")}, and ${numbers.at(-1) ?? ""}`;
-}
-
-/**
- * The act a caller was refused, which decides the verb and the consequence the
- * instruction names. Telling an element write to "conclude the review before
- * amending" describes an act its caller never attempted.
- */
-export type RefusedRevisionAct = "amendment" | "element_write";
-
-/**
- * The one recovery every surface teaches when a revision is under review, so a
- * refused write and a refused amendment cannot point at each other. Revisions
- * are addressed by number on every surface, so the reader is never handed an
- * id where the UI, the CLI, and the other refusals all say a number — the
- * withdrawal's compare-and-swap token stays a placeholder for that reason.
- *
- * Names only verbs that exist today: sign-off happens in Spec Studio, a human
- * requesting changes ends the review from the other side, and the conversation
- * that proposed the revision takes it back itself while no human has acted.
- */
-export function revisionInReviewInstruction(
-  revisionNumbers: readonly number[],
-  act: RefusedRevisionAct,
-): string {
-  const plural = revisionNumbers.length > 1;
-  const joined = joinRevisionNumbers(revisionNumbers);
-  const refusedAct =
-    act === "amendment" ? "amending" : `editing ${plural ? "them" : "it"}`;
-  const consequence =
-    act === "amendment"
-      ? "Amending now would fork past the reviewed content."
-      : `Writing into ${plural ? "them" : "it"} now would change content a reviewer is reading.`;
-  return `${plural ? "Revisions" : "Revision"} ${joined} ${plural ? "are" : "is"} under review. Conclude that review before ${refusedAct}: sign off ${plural ? "revisions" : "revision"} ${joined} in Spec Studio, have a human request changes on ${plural ? "them" : "it"}, or — if this conversation proposed ${plural ? "them" : "it"} and no human has acted on ${plural ? "them" : "it"} yet — run \`cctl spec withdraw-proposal <slug> --revision <revision-id>\` to take ${plural ? "them" : "it"} back and continue in the draft ${plural ? "each" : "it"} reopens. ${consequence}`;
-}
-
-/**
- * A write into a non-draft revision splits by the state that made it
- * immutable. Approved and withdrawn content is continued by opening an
- * amendment draft; a proposed revision is not, because the amendment itself
- * refuses until the review concludes. One code for both states would point the
- * caller at a recovery that refuses for the same reason.
- */
+/** A write into approved or withdrawn content continues in an amendment. */
 export function immutableRevisionRefusal(
   error: SpecRevisionImmutableError,
 ): Pick<TransitionRefusal, "code" | "unmetConditions" | "instruction"> {
   return {
-    code:
-      error.state === "proposed" ? "revision_in_review" : "amendment_required",
+    code: "amendment_required",
     unmetConditions: [error.message],
-    instruction:
-      error.state === "proposed"
-        ? revisionInReviewInstruction([error.revisionNumber], "element_write")
-        : "Open an amendment draft before changing approved content.",
+    instruction: "Open an amendment draft before changing approved content.",
   };
 }
 
@@ -844,34 +795,6 @@ export function elementContainmentRefusal(input: {
 }
 
 /**
- * An ordinary authoring continuation refuses while a revision is under review.
- * Continuing from the approved base would number the new revision above the
- * proposed one while carrying none of its content, so the revision the
- * reviewer is reading is forked past and its element IDs are orphaned.
- */
-export class SpecRevisionInReviewError extends Error {
-  readonly code = "revision_in_review" as const;
-  readonly proposals: readonly SpecRevision[];
-  readonly approvedBase: SpecRevision | null;
-  readonly instruction: string;
-
-  constructor(
-    readonly specId: string,
-    blocked: BlockedByProposal,
-  ) {
-    const numbers = blocked.proposals.map(({ number }) => number);
-    const plural = numbers.length > 1;
-    super(
-      `${plural ? "Revisions" : "Revision"} ${joinRevisionNumbers(numbers)} of spec ${specId} ${plural ? "are" : "is"} proposed and under review, so an amendment would fork past ${plural ? "them" : "it"}`,
-    );
-    this.name = "SpecRevisionInReviewError";
-    this.proposals = blocked.proposals;
-    this.approvedBase = blocked.approved;
-    this.instruction = revisionInReviewInstruction(numbers, "amendment");
-  }
-}
-
-/**
  * Slugs are unique per project; a create for a slug whose spec already has an
  * editable draft is refused rather than silently reused, so the collision
  * surfaces on the very first save (R4.1) instead of merging two intents.
@@ -890,20 +813,12 @@ export class SpecSlugTakenError extends Error {
   }
 }
 
-/**
- * Every ordinary authoring continuation resolves its base here, before it
- * writes anything, so a revision under review refuses on the first read
- * instead of forking a new revision off the approved base.
- */
+/** Every ordinary authoring continuation resolves its base here. */
 export function continueOrdinaryAuthoring(
   repo: SpecsRepoTransaction,
   specId: string,
-): Exclude<OrdinaryContinuation, BlockedByProposal> {
-  const selection = selectOrdinaryContinuation(repo.listRevisions(specId));
-  if (selection.kind === "blocked_by_proposal") {
-    throw new SpecRevisionInReviewError(specId, selection);
-  }
-  return selection;
+): OrdinaryContinuation {
+  return selectOrdinaryContinuation(repo.listRevisions(specId));
 }
 
 function requireSpec(
@@ -1198,19 +1113,18 @@ function writtenElementHandle(
 
 /**
  * Files the gate-scoped ask each consulted authoring gate owes after a
- * proposal commits (R10.13), and reports what happened per gate.
+ * review request commits (R10.13), and reports what happened per gate.
  *
  * The ask carries no subject on purpose: it is the request a gate with a dozen
  * outstanding subjects can make and the only one that still means the same
  * thing once they are all approved. Its durable identity
  * (`specId, revisionId, gate, scope: "gate"`) dedupes a second ask onto the
- * one still open under that identity rather than opening a second row. Request
- * Changes retires the reviewed revision's asks and opens a new revision, so
- * the propose that follows it files a fresh ask under the new revision id.
+ * one still open under that identity rather than opening a second row, so an
+ * author who asks again for review of the same draft lands on the open ask.
  *
- * Nothing here can fail the proposal. A filing failure and a delivery failure
- * are reported apart because only the second leaves a durable request behind,
- * and `request-approval` repairs one but files the other.
+ * Nothing here can fail the review request. A filing failure and a delivery
+ * failure are reported apart because only the second leaves a durable request
+ * behind, and `request-approval` repairs one but files the other.
  */
 async function fileProposalApprovalRequests(
   port: ApprovalRequestPort | undefined,
@@ -1515,7 +1429,7 @@ export function createAuthoringService(
               );
             }
             // With no draft to collide with, the create continues the spec as
-            // an amendment, so it answers to the review guard.
+            // an amendment of its approved revision.
             const continuation = continueOrdinaryAuthoring(repo, existing.id);
             if (continuation.kind !== "clone_approved") {
               throw new SpecDraftUnavailableError(existing.id);
@@ -1707,6 +1621,7 @@ export function createAuthoringService(
               prepared: [] as PreparedSpecEventPublication[],
               policyNotices: [] as SpecPolicyAdmissionNotice[],
               gateAsk: null,
+              endedAttentionIds: [] as string[],
             };
           }
           const spec = requireSpec(repo, parsed.specId);
@@ -1753,26 +1668,7 @@ export function createAuthoringService(
               prepared: [] as PreparedSpecEventPublication[],
               policyNotices: [] as SpecPolicyAdmissionNotice[],
               gateAsk: null,
-            };
-          }
-
-          // Ticket #50: at most one live proposal per lineage. Read inside the
-          // transaction so two proposes racing for the same lineage cannot
-          // both pass a check taken before either wrote — the write queue
-          // serializes them and the second sees the first's committed row.
-          const liveProposal = liveSiblingProposals(
-            repo.listRevisions(parsed.specId),
-            revision.id,
-          )[0];
-          if (liveProposal !== undefined) {
-            return {
-              result: {
-                ok: false,
-                refusal: proposalAlreadyLiveRefusal(liveProposal),
-              } satisfies ProposeTransitionResult,
-              prepared: [] as PreparedSpecEventPublication[],
-              policyNotices: [] as SpecPolicyAdmissionNotice[],
-              gateAsk: null,
+              endedAttentionIds: [] as string[],
             };
           }
 
@@ -1780,51 +1676,11 @@ export function createAuthoringService(
             loaded.reviewBaseSnapshot === null
               ? []
               : toDiffRows(loaded.reviewBaseSnapshot);
-          const draftRows = toDiffRows(snapshot);
           const diff = diffRevisions(
             baseRows,
-            draftRows,
+            toDiffRows(snapshot),
             toCitationDiffContext(loaded.reviewBaseSnapshot, snapshot),
           );
-          const classificationById = new Map(
-            diff.classifications.map((classification) => [
-              classification.elementId,
-              classification.classification,
-            ]),
-          );
-          let approvalValidityChanged = false;
-          const staleSubjectIds: string[] = [];
-          for (const approval of deps.review.findApprovalsBySpecId(spec.id)) {
-            let validity = approval.validity;
-            if (
-              approval.validity === "valid" &&
-              (approval.subject_kind === "requirement" ||
-                approval.subject_kind === "decision") &&
-              approval.element_id !== null
-            ) {
-              const classification = classificationById.get(
-                approval.element_id,
-              );
-              if (classification === "removed") validity = "closed";
-              if (classification === "modified") validity = "stale";
-            }
-            if (
-              approval.validity === "valid" &&
-              approval.subject_kind === "plan" &&
-              diff.planStale
-            ) {
-              validity = "stale";
-            }
-            if (validity === approval.validity) continue;
-            deps.review.saveApproval({ ...approval, validity });
-            approvalValidityChanged = true;
-            if (validity === "stale") {
-              staleSubjectIds.push(
-                approval.element_id ?? approval.subject_kind,
-              );
-            }
-          }
-
           const changedIntentElementIds = diff.classifications
             .filter(
               ({ kind, classification }) =>
@@ -1845,10 +1701,6 @@ export function createAuthoringService(
                 ]
               : [];
 
-          let proposed = repo.proposeRevision({
-            revisionId: revision.id,
-            proposedAt: occurredAt,
-          });
           const proposeGates = consultedAuthoringGates(
             revision.authoringStage,
             loaded.reviewSnapshot.governanceBaseRevisionRows,
@@ -1868,48 +1720,85 @@ export function createAuthoringService(
             gate,
             dial: resolveDial(spec.gatePolicy, gate),
           }));
-          const policyNotices: SpecPolicyAdmissionNotice[] = [];
-          for (const { gate, dial } of resolvedGates) {
-            if (dial !== "notify" && dial !== "off") continue;
-            const admissionId = newId("admission");
-            deps.review.insertGateAdmission({
-              id: admissionId,
-              spec_id: spec.id,
-              gate,
-              basis: dial === "notify" ? "notify_policy" : "off_policy",
-              approval_id: null,
-              revision_id: revision.id,
-              execution_id: null,
-              actor_json: stableStringify(parsed.actor),
-              created_at: occurredAt,
-            });
-            if (dial === "notify") {
-              // R11.2: the transition proceeded under Notify — surface the
-              // admission to the human post hoc (never a Needs You request).
-              policyNotices.push({
-                specId: spec.id,
-                specSlug: spec.slug,
-                specName: spec.name,
-                projectPath: spec.projectPath,
-                gate,
-                basis: "notify_policy",
-                admissionId,
-                revisionId: revision.id,
-                executionId: null,
-                occurredAt,
-              });
-            }
-          }
+          // Every consulted gate is Notify or Off, so no human act follows and
+          // the review request freezes the draft itself. Its preconditions are
+          // the sign-off's, which `propose` already refused on; nothing is
+          // written unless they hold.
           const absorbsSignOff = resolvedGates.every(
             ({ dial }) => dial === "notify" || dial === "off",
           );
-          const absorbedRefusal = !decision.ok ? decision.refusal : null;
+          if (!decision.ok) {
+            // The refusal carries the sign-off's conditions, but here the
+            // author froze nothing and its next act is another propose.
+            return {
+              result: {
+                ok: false,
+                refusal: {
+                  ...decision.refusal,
+                  instruction: `Nothing was frozen. Resolve the conditions above in the draft, then run \`cctl spec propose ${spec.slug}\` again.`,
+                },
+              } satisfies ProposeTransitionResult,
+              prepared: [] as PreparedSpecEventPublication[],
+              policyNotices: [] as SpecPolicyAdmissionNotice[],
+              gateAsk: null,
+              endedAttentionIds: [] as string[],
+            };
+          }
+          let current = revision;
+          const policyNotices: SpecPolicyAdmissionNotice[] = [];
           const stalePrepared: PreparedSpecEventPublication[] = [];
-          if (absorbsSignOff && absorbedRefusal === null) {
-            proposed = repo.approveRevision({
+          const endedRequests = absorbsSignOff
+            ? openAuthoringRequestsForRevision(
+                deps.attention.listOpenApprovalRequests(spec.id),
+                revision.id,
+              )
+            : [];
+          if (absorbsSignOff) {
+            current = repo.approveRevision({
               revisionId: revision.id,
               approvedAt: occurredAt,
             });
+            stalePrepared.push(
+              ...endedRequests.map((request) =>
+                prepareApprovalRequestRetirement(deps.events, {
+                  spec,
+                  actor: parsed.actor,
+                  occurredAt,
+                  attentionId: request.attentionId,
+                  reason: FROZEN_BY_POLICY_REASON,
+                }),
+              ),
+            );
+            for (const { gate, dial } of resolvedGates) {
+              const admissionId = newId("admission");
+              deps.review.insertGateAdmission({
+                id: admissionId,
+                spec_id: spec.id,
+                gate,
+                basis: dial === "notify" ? "notify_policy" : "off_policy",
+                approval_id: null,
+                revision_id: revision.id,
+                execution_id: null,
+                actor_json: stableStringify(parsed.actor),
+                created_at: occurredAt,
+              });
+              if (dial === "notify") {
+                // R11.2: the transition proceeded under Notify — surface the
+                // admission to the human post hoc (never a Needs You request).
+                policyNotices.push({
+                  specId: spec.id,
+                  specSlug: spec.slug,
+                  specName: spec.name,
+                  projectPath: spec.projectPath,
+                  gate,
+                  basis: "notify_policy",
+                  admissionId,
+                  revisionId: revision.id,
+                  executionId: null,
+                  occurredAt,
+                });
+              }
+            }
             if (deps.waivers !== undefined) {
               stalePrepared.push(
                 ...markWaiversStaleAtSignOffInTransaction({
@@ -1926,12 +1815,11 @@ export function createAuthoringService(
             }
           }
 
-          // Read AFTER approval invalidation and after the Notify/Off policy
-          // admissions land, so the receipt states the position the caller is
-          // actually in rather than the one the transition started from.
+          // Read after the Notify/Off admissions land, so the receipt states
+          // the position the caller is actually in.
           const projection = authoringReviewProjection({
             policy: spec.gatePolicy,
-            snapshot: { ...snapshot, revision: proposed },
+            snapshot: { ...snapshot, revision: current },
             governanceBaseSnapshot: loaded.governanceBaseSnapshot,
             importBaselineRows: loaded.importBaselineRows,
             importBaselineCitationState: loaded.importBaselineCitationState,
@@ -1948,7 +1836,7 @@ export function createAuthoringService(
             applies: loaded.approvalApplies,
             blockingThreads: loaded.reviewSnapshot.blockingThreads,
             signOffFindings: panelFindings.filter(
-              (finding) => finding.severity === "blocks_signoff",
+              (finding) => finding.severity !== "advisory",
             ),
           });
 
@@ -1958,8 +1846,8 @@ export function createAuthoringService(
               revision.id,
               parsed.actor,
               occurredAt,
-              proposed.state === "approved" ? "approved" : "proposed",
-              proposed.state === "approved"
+              absorbsSignOff ? "approved" : "proposed",
+              absorbsSignOff
                 ? [
                     ...revisionMeasureEvents,
                     {
@@ -1975,46 +1863,10 @@ export function createAuthoringService(
             ),
             ...stalePrepared,
           ];
-          if (approvalValidityChanged) {
-            prepared.push(
-              deps.events.appendInTransaction({
-                actor: parsed.actor,
-                durableEventType: "spec-approval-changed",
-                durablePayload: {
-                  kind: "approval-validity-updated",
-                  revisionId: revision.id,
-                  measureEvents: staleSubjectIds.sort().map((subjectId) => ({
-                    kind: "approval-staled" as const,
-                    subjectId,
-                  })),
-                },
-                sseEvent: {
-                  type: "spec-approval-changed",
-                  kind: "approval-validity-updated",
-                  projectPath: spec.projectPath,
-                  specId: spec.id,
-                  specSlug: spec.slug,
-                  occurredAt,
-                  revisionId: revision.id,
-                },
-              }),
-            );
-          }
-          if (absorbedRefusal !== null) {
-            return {
-              result: {
-                ok: false,
-                refusal: absorbedRefusal,
-              } satisfies ProposeTransitionResult,
-              prepared,
-              policyNotices,
-              gateAsk: null,
-            };
-          }
           return {
             result: {
               ok: true,
-              revision: proposed,
+              revision: current,
               diff,
               absorbedSignOff: absorbsSignOff,
               pendingBlock: projection.pendingBlock,
@@ -2023,29 +1875,50 @@ export function createAuthoringService(
             } satisfies ProposeTransitionResult,
             prepared,
             policyNotices,
-            gateAsk: {
-              consulted: proposeGates,
-              // The projection is read after the admissions land, so an
-              // absorbed or already-admitted gate is absent from it and owes
-              // no ask.
-              pending: new Set(
-                (projection.pendingBlock?.gates ?? [])
-                  .filter((entry) => entry.state === "pending")
-                  .map((entry) => entry.gate)
-                  .filter(isAuthoringGate),
-              ),
-              collapsed: authoringApprovalsCollapseIntoSignOff(
-                spec.gatePolicy,
-                revision.authoringStage,
-              ),
-            } satisfies ProposalGateAsk,
+            gateAsk: absorbsSignOff
+              ? null
+              : ({
+                  consulted: proposeGates,
+                  pending: new Set(
+                    (projection.pendingBlock?.gates ?? [])
+                      .filter((entry) => entry.state === "pending")
+                      .map((entry) => entry.gate)
+                      .filter(isAuthoringGate),
+                  ),
+                  collapsed: authoringApprovalsCollapseIntoSignOff(
+                    spec.gatePolicy,
+                    revision.authoringStage,
+                  ),
+                } satisfies ProposalGateAsk),
+            endedAttentionIds: endedRequests.map(
+              (request) => request.attentionId,
+            ),
           };
         },
       );
       for (const prepared of transactionResult.prepared) publish(prepared);
-      // The admission rows are committed even when an absorbed sign-off
-      // surfaced a refusal — the Notify-dial propose itself proceeded, so the
-      // post-hoc notices fire either way.
+      // Announcement work: the retirements are durable, so a notifier failure
+      // leaves a stale queue row behind and is logged, never charged back to
+      // the caller whose propose did land.
+      if (transactionResult.endedAttentionIds.length > 0) {
+        try {
+          deps.notifier?.approvalRequestsClosed({
+            specId: parsed.specId,
+            attentionIds: transactionResult.endedAttentionIds,
+            reason: FROZEN_BY_POLICY_REASON,
+            occurredAt,
+          });
+        } catch (error) {
+          logger.warn(
+            "specs.authoring.propose_revision.requests_closed_notify_failed",
+            {
+              specId: parsed.specId,
+              revisionId: parsed.revisionId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+        }
+      }
       for (const notice of transactionResult.policyNotices) {
         try {
           deps.policyNotifier?.policyAdmitted(notice);
@@ -2696,9 +2569,9 @@ export function createAuthoringService(
             };
           }
 
-          const checkpoint = repo.proposeRevision({
+          const checkpoint = repo.approveRevision({
             revisionId: current.id,
-            proposedAt: occurredAt,
+            approvedAt: occurredAt,
           });
           const dial = resolveDial(spec.gatePolicy, parsed.expectedStage);
           const basis =
@@ -2716,10 +2589,6 @@ export function createAuthoringService(
             execution_id: null,
             actor_json: stableStringify(parsed.actor),
             created_at: occurredAt,
-          });
-          repo.approveRevision({
-            revisionId: checkpoint.id,
-            approvedAt: occurredAt,
           });
           const revision = repo.createDraftFromBase({
             id: newId("revision"),
@@ -3062,9 +2931,8 @@ export function createAuthoringService(
             target === null ||
             target.specId !== spec.id ||
             target.authoringStage !== "design" ||
-            (target.state !== "draft" && target.state !== "proposed") ||
-            (target.state === "draft" && currentDraft?.id !== target.id) ||
-            (target.state === "proposed" && currentDraft !== null)
+            target.state !== "draft" ||
+            currentDraft?.id !== target.id
           ) {
             throw new StaleStageConflictError(
               spec.id,
@@ -3073,18 +2941,13 @@ export function createAuthoringService(
               currentDraft,
             );
           }
-          const revisions = repo.listRevisions(spec.id);
-          // Imports admit Requirements and Design in one approved baseline.
-          // Reuse that settled content when no separate checkpoint exists,
-          // never the unapproved Design attempt being returned from.
-          const requirementsCheckpoint =
-            revisions
-              .filter(
-                (revision) =>
-                  revision.state === "approved" &&
-                  revision.authoringStage === "requirements",
-              )
-              .at(-1) ?? nearestApprovedAncestor(revisions, target.id);
+          // The Design attempt's approved base is the settled content to
+          // return to: approved Requirements, and on an amendment the approved
+          // Design too, never the unapproved edits being returned from.
+          const requirementsCheckpoint = nearestApprovedAncestor(
+            repo.listRevisions(spec.id),
+            target.id,
+          );
           if (requirementsCheckpoint === null) {
             throw new StageBlockedWriteError({
               code: "stage_blocked",
@@ -3099,9 +2962,9 @@ export function createAuthoringService(
           const withdrawnRevision = repo.withdrawAuthoringRevision({
             revisionId: target.id,
           });
-          // The withdrawn revision's asks end with it, as they do under
-          // Request Changes: no later sign-off names this revision, so an ask
-          // left open here is a Needs You entry nothing can ever answer.
+          // The withdrawn revision's asks end with it: no later sign-off names
+          // this revision, so an ask left open here is a Needs You entry
+          // nothing can ever answer.
           const endedRequests = openAuthoringRequestsForRevision(
             deps.attention.listOpenApprovalRequests(spec.id),
             target.id,

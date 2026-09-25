@@ -26,6 +26,7 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import { revisionReviewHash } from "./review-hash";
 import { createReviewService, type ReviewService } from "./review-service";
 import { shouldMarkWaiverStale } from "./waiver-staleness";
 
@@ -220,6 +221,12 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
     return amendment.id;
   }
 
+  async function reviewHash(revisionId: string): Promise<string> {
+    const snapshot = await specs.getRevisionSnapshot(revisionId);
+    if (snapshot === null) throw new Error(`revision ${revisionId} missing`);
+    return revisionReviewHash(snapshot);
+  }
+
   function reloadWaiver(waiverId: string) {
     // A fresh repo instance proves the flip survives serialization, not just
     // an in-memory object mutation.
@@ -299,8 +306,8 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       created.draft.id,
     );
 
-    // Tighten so propose leaves revision 2 in review, then loosen back so the
-    // human sign-off proceeds under the Notify policy.
+    // Tighten so the review request leaves revision 2 an open draft, then
+    // loosen back so the human sign-off proceeds under the Notify policy.
     const tightened = await reviewing.changePolicy({
       specId: created.spec.id,
       proposedPolicy: { preset: "contract-bearing" },
@@ -317,7 +324,11 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       revisionId: revision2,
       actor: AGENT,
     });
-    expect(proposed).toMatchObject({ ok: true, absorbedSignOff: false });
+    expect(proposed).toMatchObject({
+      ok: true,
+      absorbedSignOff: false,
+      revision: { state: "draft" },
+    });
     const loosened = await reviewing.changePolicy({
       specId: created.spec.id,
       proposedPolicy: { preset: "exploratory" },
@@ -330,6 +341,7 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       specId: created.spec.id,
       revisionId: revision2,
       approver: "operator",
+      expectedReviewHash: await reviewHash(revision2),
       actor: HUMAN,
     });
     expect(signed).toMatchObject({
@@ -360,6 +372,7 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       specId: created.spec.id,
       revisionId: created.draft.id,
       approver: "operator",
+      expectedReviewHash: await reviewHash(created.draft.id),
       actor: HUMAN,
     });
     expect(first.ok).toBe(true);
@@ -384,6 +397,7 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       specId: created.spec.id,
       revisionId: revision2,
       approver: "operator",
+      expectedReviewHash: await reviewHash(revision2),
       actor: HUMAN,
     });
     expect(second).toMatchObject({
@@ -401,5 +415,79 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
         laterRevisionId: revision2,
       },
     ]);
+  });
+
+  it("a sign-off refused for a stale review hash stales no waiver", async () => {
+    const created = await createSpecWithContent("fast-path", "stale-review");
+    const first = await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      approver: "operator",
+      expectedReviewHash: await reviewHash(created.draft.id),
+      actor: HUMAN,
+    });
+    expect(first.ok).toBe(true);
+    grantWaiverRow(
+      "waiver-stale-review",
+      created.spec.id,
+      "criterion-1",
+      created.draft.id,
+    );
+
+    const revision2 = await amendCriterion(
+      created.spec.id,
+      "The waived behavior changed once.",
+    );
+    const readHash = await reviewHash(revision2);
+    const snapshot = await specs.getRevisionSnapshot(revision2);
+    const criterion = snapshot?.elements.find(
+      ({ element }) => element.id === "criterion-1",
+    );
+    if (criterion === undefined) throw new Error("criterion-1 missing");
+    await authoring.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: revision2,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      position: criterion.version.position,
+      payload: {
+        kind: "criterion",
+        text: "The waived behavior changed again after it was read.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      baseElementVersion: criterion.version.elementVersion,
+      actor: AGENT,
+    });
+
+    const refused = await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: revision2,
+      approver: "operator",
+      expectedReviewHash: readHash,
+      actor: HUMAN,
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      refusal: { code: "stale_review" },
+    });
+    expect(await specs.findRevision(revision2)).toMatchObject({
+      state: "draft",
+    });
+    expect(reloadWaiver("waiver-stale-review")).toMatchObject({ stale: 0 });
+    expect(waiverStaledEvents(created.spec.id)).toEqual([]);
+
+    const signed = await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: revision2,
+      approver: "operator",
+      expectedReviewHash: await reviewHash(revision2),
+      actor: HUMAN,
+    });
+    expect(signed).toMatchObject({
+      ok: true,
+      value: { revision: { state: "approved" } },
+    });
+    expect(reloadWaiver("waiver-stale-review")).toMatchObject({ stale: 1 });
   });
 });

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createApprovalApplicability } from "./approval-applicability";
+import {
+  createApprovalApplicability,
+  serializeSubjectFingerprint,
+  subjectFingerprint,
+} from "./approval-applicability";
 import { authoringReviewProjection } from "./authoring-review-projection";
 import { importBaselineRevisionId } from "./import-baseline";
 import type { LintFinding } from "./lint";
@@ -23,14 +27,14 @@ function revision(
 ): SpecRevision {
   return {
     specId: SPEC_ID,
-    state: "proposed",
+    state: "draft",
     authoringStage: "design",
     basedOnRevisionId: null,
     contentHash: null,
     citationContractVersion: 2,
     citationVersion: 1,
     citationHash: "a".repeat(64),
-    proposedAt: AT,
+    proposedAt: null,
     approvedAt: null,
     externalDelivery: null,
     createdAt: AT,
@@ -142,10 +146,19 @@ function criterion(
   };
 }
 
+/**
+ * An approval row whose fingerprint, when omitted, is the subject as the
+ * approving human read it on `revision_id` — `project` computes it from the
+ * chain the way the review service does at the act.
+ */
+type ApprovalFixture = Omit<SpecApprovalRow, "subject_fingerprint_json"> & {
+  subject_fingerprint_json?: string | null;
+};
+
 function approval(
   overrides: Pick<SpecApprovalRow, "id" | "revision_id" | "subject_kind"> &
     Partial<SpecApprovalRow>,
-): SpecApprovalRow {
+): ApprovalFixture {
   return {
     spec_id: SPEC_ID,
     element_id: null,
@@ -154,6 +167,25 @@ function approval(
     granted_at: AT,
     ...overrides,
   };
+}
+
+function fingerprintJson(
+  read: SpecRevisionSnapshot,
+  row: Pick<SpecApprovalRow, "subject_kind" | "element_id">,
+): string | null {
+  if (row.subject_kind === "revision") return null;
+  const fingerprint = subjectFingerprint(
+    toDiffRows(read),
+    { subjectKind: row.subject_kind, elementId: row.element_id },
+    {
+      citationContractVersion: read.revision.citationContractVersion,
+      citations: toDiffCitations(read),
+    },
+  );
+  if (fingerprint === null) {
+    throw new Error(`${read.revision.id} does not carry the approved subject`);
+  }
+  return serializeSubjectFingerprint(fingerprint);
 }
 
 function admission(
@@ -177,8 +209,8 @@ interface Chain {
 }
 
 /**
- * The D3 shape: an approved revision 1, an attempt at revision 2 that a human
- * ended with Request Changes, and a revision 3 whose only edit is a decision.
+ * The D3 shape: an approved revision 1, an attempt at revision 2 that was
+ * withdrawn, and a draft revision 3 whose only edit is a decision.
  * Revision 3 matches its immediate parent on requirements and differs from the
  * last approved ancestor.
  */
@@ -337,7 +369,7 @@ function nativeAmendmentChain(editedStatement: string): Chain {
 }
 
 /** The three subject approvals a human granted on the approved revision 1. */
-const ancestorApprovals = (): SpecApprovalRow[] => [
+const ancestorApprovals = (): ApprovalFixture[] => [
   approval({
     id: "approval-1",
     revision_id: "revision-1",
@@ -392,7 +424,7 @@ function project(
   chain: Chain,
   options: {
     policy?: SpecGatePolicy;
-    approvals?: SpecApprovalRow[];
+    approvals?: ApprovalFixture[];
     admissions?: SpecGateAdmissionRow[];
     blockingThreads?: Array<{ handle: string; resolved: boolean }>;
     signOffFindings?: LintFinding[];
@@ -410,17 +442,23 @@ function project(
     chain.snapshots.find(
       ({ revision: candidate }) => candidate.state === "approved",
     ) ?? null;
-  const stateById = new Map(
-    chain.snapshots.map((candidate) => [
-      candidate.revision.id,
-      {
-        rows: toDiffRows(candidate),
-        citationContractVersion: candidate.revision.citationContractVersion,
-        citations: toDiffCitations(candidate),
-      },
-    ]),
+  const snapshotById = new Map(
+    chain.snapshots.map((candidate) => [candidate.revision.id, candidate]),
   );
-  const approvals = options.approvals ?? [];
+  const approvals = (options.approvals ?? []).map((row): SpecApprovalRow => {
+    if (row.subject_fingerprint_json !== undefined) {
+      return { ...row, subject_fingerprint_json: row.subject_fingerprint_json };
+    }
+    const read = snapshotById.get(row.revision_id);
+    if (read === undefined) {
+      throw new Error(`no snapshot for approval revision ${row.revision_id}`);
+    }
+    return { ...row, subject_fingerprint_json: fingerprintJson(read, row) };
+  });
+  const parent =
+    snapshot.revision.basedOnRevisionId === null
+      ? undefined
+      : snapshotById.get(snapshot.revision.basedOnRevisionId);
   const admissions = options.admissions ?? [];
   // Derived exactly as production does: the import baseline is whichever
   // revision the import-basis admissions name, not simply the governance base.
@@ -453,12 +491,12 @@ function project(
     ),
     applies: createApprovalApplicability({
       revisionId: snapshot.revision.id,
-      basedOnRevisionId: snapshot.revision.basedOnRevisionId,
       ancestorRevisionIds: ancestorIds(chain.revisions, snapshot.revision.id),
       revisionRows: toDiffRows(snapshot),
       citationContractVersion: snapshot.revision.citationContractVersion,
       citations: toDiffCitations(snapshot),
-      stateForRevision: (revisionId) => stateById.get(revisionId) ?? null,
+      parentCitationContractVersion:
+        parent?.revision.citationContractVersion ?? null,
     }),
     blockingThreads: options.blockingThreads ?? [],
     signOffFindings: options.signOffFindings ?? [],
@@ -512,6 +550,9 @@ describe("authoringReviewProjection", () => {
         ["requirements", ["R1"]],
         ["design", []],
       ]);
+      // A human owes the outstanding approval, so the block names the same
+      // actor as the next action even though sign-off is not yet possible.
+      expect(projection.nextAction.actsNext).toBe("human");
       expect(projection.pendingBlock?.actsNext).toBe("human");
     });
 
@@ -775,7 +816,10 @@ describe("authoringReviewProjection", () => {
       outstandingSubjectCount: 0,
       unmetConditions: [],
     });
-    expect(projection.nextAction.kind).toBe("sign_off_revision");
+    expect(projection.nextAction).toMatchObject({
+      kind: "sign_off_revision",
+      actsNext: "human",
+    });
     expect(projection.pendingBlock).not.toBeNull();
     expect(projection.pendingBlock?.signOff?.state).toBe("ready");
   });
@@ -859,22 +903,25 @@ describe("authoringReviewProjection", () => {
       "Blocking thread thread-1 is unresolved.",
       "R1.1 has no validation strategy.",
     ]);
-    expect(projection.nextAction.kind).toBe("resolve_conditions");
-    // The block carries every unmet condition, not just the subject count.
+    expect(projection.nextAction).toMatchObject({
+      kind: "resolve_conditions",
+      actsNext: "agent",
+    });
+    // The block carries every unmet condition, not just the subject count,
+    // and hands the draft back to its author, who is the one able to act.
     expect(projection.pendingBlock?.unmetConditions).toEqual(
       projection.revisionSignOff?.unmetConditions,
     );
+    expect(projection.pendingBlock?.actsNext).toBe("agent");
   });
 
   /**
-   * The review loop's feedback half (#60): with open comments on an in-review
-   * revision, "ask a human to approve" points the wrong way — the reviewer is
-   * waiting on answers, and repairs cannot land until a human Requests
-   * Changes. The projection must say so instead of steering at approvals the
-   * commenter is withholding.
+   * The review loop's feedback half (#60). A draft is reviewed while its
+   * author keeps editing it, so open comments are the author's move: repair
+   * or answer them in the draft before anything else is asked of a human.
    */
   describe("open review comments", () => {
-    it("rolls up open comments and reroutes the approve instruction at the comments and Request Changes", () => {
+    it("rolls up open comments and routes the next act to the author's repair", () => {
       const projection = project(
         withdrawnAttemptChain("Gates survive a withdrawn attempt."),
         {
@@ -909,19 +956,54 @@ describe("authoringReviewProjection", () => {
         openBlockingThreadCount: 1,
         subjects: ["R1", "element-gone"],
       });
-      expect(projection.nextAction.kind).toBe("approve_subject");
-      expect(projection.nextAction.actsNext).toBe("human");
+      expect(projection.nextAction).toMatchObject({
+        kind: "propose",
+        actsNext: "agent",
+        gate: null,
+        subject: null,
+      });
       expect(projection.nextAction.instruction).toContain(
         "Open review threads on R1, element-gone await a response",
       );
       expect(projection.nextAction.instruction).toContain(
         "cctl spec comments native-sdd --open",
       );
-      expect(projection.nextAction.instruction).toContain("Request Changes");
-      expect(projection.pendingBlock?.instruction).toContain("Request Changes");
+      expect(projection.nextAction.instruction).toContain(
+        "then propose it again",
+      );
+      // What a human still owes stays listed beside the repair.
+      expect(projection.pendingApprovals.map(({ subject }) => subject)).toEqual(
+        ["R1", "D1"],
+      );
+      expect(projection.pendingBlock?.actsNext).toBe("agent");
+      expect(projection.pendingBlock?.instruction).toContain(
+        "Repair or answer them in the draft",
+      );
       expect(projection.pendingBlock?.display).toContain(
         "2 open threads await a response",
       );
+    });
+
+    it("never asks a repair of a frozen revision's open threads", () => {
+      const projection = project(
+        withCurrentState(
+          withdrawnAttemptChain("Gates survive a withdrawn attempt."),
+          "approved",
+        ),
+        {
+          specSlug: "native-sdd",
+          openComments: [
+            {
+              threadId: "thread-left-open",
+              elementId: "requirement-1",
+              handle: "R1",
+              blocking: false,
+            },
+          ],
+        },
+      );
+
+      expect(projection.nextAction.kind).not.toBe("propose");
     });
 
     it("projects no rollup and keeps the plain instructions when no comments are open", () => {
@@ -935,43 +1017,7 @@ describe("authoringReviewProjection", () => {
       );
     });
 
-    it("steers a reopened draft at addressing its comments before re-proposing", () => {
-      const projection = project(
-        withCurrentState(
-          withdrawnAttemptChain("Gates survive a withdrawn attempt."),
-          "draft",
-        ),
-        {
-          specSlug: "native-sdd",
-          openComments: [
-            {
-              threadId: "thread-1",
-              elementId: "requirement-1",
-              handle: "R1",
-              blocking: false,
-            },
-          ],
-        },
-      );
-
-      expect(projection.openComments).toEqual({
-        count: 1,
-        blockingCount: 0,
-        openThreadCount: 1,
-        openBlockingThreadCount: 0,
-        subjects: ["R1"],
-      });
-      expect(projection.nextAction.kind).toBe("propose");
-      expect(projection.nextAction.actsNext).toBe("agent");
-      expect(projection.nextAction.instruction).toContain(
-        "Open review threads on R1 await a response",
-      );
-      expect(projection.nextAction.instruction).toContain(
-        "then propose it again",
-      );
-    });
-
-    it("leads the sign-off ask with the open comments when nothing else is pending", () => {
+    it("puts the open comments ahead of a sign-off that is otherwise ready", () => {
       const projection = project(
         withdrawnAttemptChain("Gates survive a withdrawn attempt."),
         {
@@ -1001,15 +1047,15 @@ describe("authoringReviewProjection", () => {
         },
       );
 
-      expect(projection.revisionSignOff?.state).toBe("ready");
-      expect(projection.nextAction.kind).toBe("sign_off_revision");
+      expect(projection.nextAction).toMatchObject({
+        kind: "propose",
+        actsNext: "agent",
+      });
       expect(projection.nextAction.instruction).toContain(
         "Open review threads on D1 await a response",
       );
-      expect(projection.nextAction.instruction).toContain(
-        "cctl spec comments native-sdd --open",
-      );
-      expect(projection.nextAction.instruction).toContain("sign revision 3");
+      expect(projection.revisionSignOff?.state).toBe("ready");
+      expect(projection.pendingBlock?.actsNext).toBe("agent");
     });
   });
 
@@ -1108,6 +1154,103 @@ describe("authoringReviewProjection", () => {
     });
     expect(projection.pendingBlock?.outstandingSubjects).toEqual([]);
     expect(projection.pendingBlock?.display).toContain("sign-off");
+  });
+
+  /**
+   * Under Notify and Off dials no human act follows the review request, so a
+   * draft owes nobody anything: the author's propose is what freezes it.
+   */
+  it("hands a draft with nothing human-owed back to its author to propose", () => {
+    const projection = project(
+      nativeAmendmentChain("Gates are durable and legible."),
+      { policy: { preset: "exploratory" } },
+    );
+
+    expect(projection.pendingApprovals).toEqual([]);
+    expect(projection.pendingBlock).toBeNull();
+    expect(projection.nextAction).toEqual({
+      kind: "propose",
+      actsNext: "agent",
+      gate: null,
+      subject: null,
+      elementId: null,
+      instruction: "Propose the draft revision when it is ready.",
+    });
+  });
+
+  /**
+   * The draft is edited in place while it is reviewed, so an approval granted
+   * on it holds only while the subject still reads as the human read it.
+   */
+  describe("an approval granted on the open draft", () => {
+    const EDITED_STATEMENT = "Gates are durable and legible.";
+
+    /** Revision 2 as it read before the author's latest edit. */
+    function readBeforeEdit(
+      edit: (elements: SpecRevisionElement[]) => SpecRevisionElement[],
+    ): SpecRevisionSnapshot {
+      const chain = nativeAmendmentChain(EDITED_STATEMENT);
+      const current = chain.snapshots[1]!;
+      return { ...current, elements: edit(current.elements) };
+    }
+
+    function approvedR1(read: SpecRevisionSnapshot): ApprovalFixture {
+      const row = approval({
+        id: "approval-draft-r1",
+        revision_id: "revision-2",
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+      });
+      return { ...row, subject_fingerprint_json: fingerprintJson(read, row) };
+    }
+
+    it("is owed again once the author edits the approved subject", () => {
+      const read = readBeforeEdit((elements) => [
+        requirement(
+          "revision-2",
+          "requirement-1",
+          1,
+          "Gates are durable across restarts.",
+          0,
+        ),
+        ...elements.slice(1),
+      ]);
+
+      const projection = project(nativeAmendmentChain(EDITED_STATEMENT), {
+        approvals: [...ancestorApprovals(), approvedR1(read)],
+      });
+
+      expect(projection.pendingApprovals).toEqual([
+        { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+      ]);
+      expect(projection.nextAction).toMatchObject({
+        kind: "approve_subject",
+        subject: "R1",
+        actsNext: "human",
+      });
+    });
+
+    it("still holds after the author edits an unrelated element", () => {
+      const read = readBeforeEdit((elements) => [
+        ...elements.slice(0, 2),
+        decision("revision-2", "decision-1", 1, "A prompt owns gates.", 2),
+      ]);
+
+      const projection = project(nativeAmendmentChain(EDITED_STATEMENT), {
+        approvals: [...ancestorApprovals(), approvedR1(read)],
+      });
+
+      expect(projection.pendingApprovals).toEqual([]);
+      expect(
+        projection.approvalLedger.subjects.map(
+          ({ subject, classification }) => [subject, classification],
+        ),
+      ).toEqual([
+        ["R1", "current_revision"],
+        ["R2", "carried"],
+        ["D1", "carried"],
+      ]);
+    });
   });
 
   /**

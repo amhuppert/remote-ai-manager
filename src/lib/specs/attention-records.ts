@@ -18,9 +18,10 @@ import {
 
 /**
  * Requests that end without ever being answered: the revision they belong to
- * was withdrawn or sent back, the request predates request scope and has
- * been retired, or the run's gate proceeded under a policy dial and no human
- * act was ever recorded. They close, they do not report a grant.
+ * was withdrawn, returned to Requirements, or frozen under a Notify or Off
+ * policy, the request predates request scope and has been retired, or the
+ * run's gate proceeded under a policy dial and no human act was ever
+ * recorded. They close, they do not report a grant.
  */
 export interface SpecApprovalRequestsClosedNotice {
   specId: string;
@@ -33,9 +34,10 @@ export interface SpecApprovalRequestsClosedNotice {
  * The open asks a revision-scoped act can answer or end: the ones filed
  * against that revision by its review, not by a run. A run's own gates
  * outlive the revision (R3.6), so an execution-scoped ask — by run identity
- * or by gate — is never one of them. Every act that ends a revision (request
- * changes, withdraw, dismiss, return to Requirements) selects with this one
- * rule, so no act can strand an ask another would have retired.
+ * or by gate — is never one of them. Every act that answers or ends a
+ * revision's asks (sign-off, a Notify/Off propose, withdraw, return to
+ * Requirements) selects with this one rule, so no act can strand an ask
+ * another would have retired.
  */
 export function openAuthoringRequestsForRevision(
   requests: readonly OpenApprovalRequest[],

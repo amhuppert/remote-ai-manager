@@ -7,7 +7,6 @@ import {
   deliveryPlanCriterionDispositionSchema,
   deliveryPlanDocumentSchema,
   finalizedDeliveryPlanApprovalSchema,
-  finalizedDeliveryPlanCandidateIdentitySchema,
 } from "./delivery-plan";
 import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 import { managedDefinitionPreflightSummarySchema } from "@/lib/workflows/managed-definition-preflight-contract";
@@ -45,14 +44,7 @@ export const deliveryPlanAttemptViewSchema = z
   .object({
     id: z.string().min(1),
     specSlug: z.string().min(1),
-    status: z.enum([
-      "draft",
-      "proposed",
-      "approved",
-      "parked",
-      "launched",
-      "abandoned",
-    ]),
+    status: z.enum(["draft", "approved", "parked", "launched", "abandoned"]),
     draftRevision: z.number().int().positive(),
     pinnedRevisionId: z.string().min(1),
     deltaBasisExecutionId: z.string().min(1).nullable(),
@@ -89,7 +81,6 @@ export const deliveryPlanPrelaunchViewSchema = z
       .object({ kind: z.enum(["human", "agent", "system"]) })
       .passthrough(),
     reason: z.string().nullable(),
-    approvedAtPark: z.boolean(),
     parkedCandidateId: z.string().min(1),
     parkedCandidateHash: z.string().min(1),
     currentCandidateId: z.string().min(1).nullable(),
@@ -214,8 +205,16 @@ export const deliveryPlanReopenRequestSchema = z
 export const deliveryPlanAbandonRequestSchema = z
   .object({ reason: z.string().min(1) })
   .strict();
-export const deliveryPlanSignOffRequestSchema =
-  finalizedDeliveryPlanCandidateIdentitySchema;
+/**
+ * Sign-off names the draft the reviewer read: its binding revision and its
+ * managed definition revision. Either one moving refuses the act.
+ */
+export const deliveryPlanSignOffRequestSchema = z
+  .object({
+    expectedDraftRevision: z.number().int().positive(),
+    expectedDefinitionRevision: z.number().int().positive(),
+  })
+  .strict();
 export const deliveryPlanReaffirmBatchRequestSchema = z
   .object({
     expectedDraftRevision: z.number().int().positive(),
@@ -234,7 +233,8 @@ export const deliveryPlanCommentRequestSchema = z
     body: z.string().min(1).max(4000),
   })
   .strict();
-export const deliveryPlanPreviewStageSchema = z.enum(["draft", "proposed"]);
+/** `approved` reads the signed candidate; a draft has none until sign-off. */
+export const deliveryPlanPreviewStageSchema = z.enum(["draft", "approved"]);
 export type DeliveryPlanPreviewStage = z.infer<
   typeof deliveryPlanPreviewStageSchema
 >;

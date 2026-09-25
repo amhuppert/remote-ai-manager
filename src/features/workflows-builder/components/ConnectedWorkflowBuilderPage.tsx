@@ -168,12 +168,6 @@ export default function ConnectedWorkflowBuilderPage({
   const deleteMutation = useScopedDeleteWorkflowDefinitionMutation(scope);
   const managedSlug = selectedRecord.data?.item.management?.specSlug ?? "";
   const managedProjectName = projectName ?? "";
-  const proposePlan = useSpecActionMutation<Record<string, never>, unknown>(
-    managedProjectName,
-    managedSlug,
-    "plan-propose",
-    deliveryPlanMutationViewSchema,
-  );
   const reopenPlan = useSpecActionMutation<{ reason: string }, unknown>(
     managedProjectName,
     managedSlug,
@@ -190,7 +184,7 @@ export default function ConnectedWorkflowBuilderPage({
     z.object({ attemptId: z.string().min(1) }).strict(),
   );
   const signOffPlan = useSpecActionMutation<
-    { candidateId: string; candidateHash: string },
+    { expectedDraftRevision: number; expectedDefinitionRevision: number },
     unknown
   >(
     managedProjectName,
@@ -344,6 +338,26 @@ export default function ConnectedWorkflowBuilderPage({
     }
   }
 
+  function handleSignOff(): void {
+    const item = selectedRecord.data?.item;
+    const management = item?.management;
+    if (!item || !management) return;
+    // Sign-off approves the saved definition revision and leaves the approved
+    // candidate read-only, so edits still on screen would be stranded.
+    if (draftDirty || outputSchemaBlocks.length > 0) {
+      setManagedError(
+        "Save the draft before signing off; sign-off approves the saved revision.",
+      );
+      return;
+    }
+    void runManagedAction("sign-off", () =>
+      signOffPlan.mutateAsync({
+        expectedDraftRevision: management.bindingRevision,
+        expectedDefinitionRevision: item.revision,
+      }),
+    );
+  }
+
   return (
     <div
       className="app"
@@ -441,30 +455,7 @@ export default function ConnectedWorkflowBuilderPage({
                       definitionRevision={selectedRecord.data.item.revision}
                       pendingAction={pendingManagedAction}
                       error={managedError}
-                      onPropose={() =>
-                        void runManagedAction("propose", () =>
-                          proposePlan.mutateAsync({}),
-                        )
-                      }
-                      onSignOff={() => {
-                        const management = selectedRecord.data.item.management;
-                        if (
-                          !management?.currentCandidate ||
-                          !management.currentCandidateHash
-                        ) {
-                          setManagedError(
-                            "The frozen candidate identity is unavailable. Re-read this definition before signing off.",
-                          );
-                          return;
-                        }
-                        void runManagedAction("sign-off", () =>
-                          signOffPlan.mutateAsync({
-                            candidateId:
-                              management.currentCandidate!.candidateId,
-                            candidateHash: management.currentCandidateHash!,
-                          }),
-                        );
-                      }}
+                      onSignOff={handleSignOff}
                       onReopen={() =>
                         void runManagedAction("reopen", () =>
                           reopenPlan.mutateAsync({

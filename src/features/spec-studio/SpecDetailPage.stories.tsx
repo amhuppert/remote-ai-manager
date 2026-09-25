@@ -19,6 +19,7 @@ import type {
 
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
+  draftReviewFixture,
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
 import {
@@ -356,7 +357,8 @@ function revisionFor(
     authoringStage,
     basedOnRevisionId: number === 1 ? null : `revision-${number - 1}`,
     contentHash: `revision-${number}-hash`,
-    proposedAt: state === "draft" ? null : SPEC_CONTROLS_FIXTURE_NOW,
+    // Content freezes at sign-off, so only an approved revision has frozen.
+    proposedAt: state === "approved" ? SPEC_CONTROLS_FIXTURE_NOW : null,
     approvedAt: state === "approved" ? SPEC_CONTROLS_FIXTURE_NOW : null,
   };
 }
@@ -381,10 +383,8 @@ function snapshotFor(
   };
 }
 
-function authoringDetail(
-  base: SpecDetailView,
-  state: "draft" | "proposed",
-): SpecDetailView {
+/** Approved requirements with a design draft open for review over them. */
+function authoringDetail(base: SpecDetailView): SpecDetailView {
   const source = base.currentRevision;
   const template = base.revisions[0];
   if (source === null || template === undefined) return parsedDetail(base);
@@ -395,13 +395,18 @@ function authoringDetail(
     AUTHORING_STAGES[0],
     "approved",
   );
-  const design = revisionFor(template, 2, AUTHORING_STAGES[1], state);
+  const design = revisionFor(template, 2, AUTHORING_STAGES[1], "draft");
   const requirementsSnapshot = snapshotFor(source, requirements, false);
   const designSnapshot = snapshotFor(source, design, false);
+  const revisions = [requirements, design];
 
   return parsedDetail({
     ...base,
-    revisions: [requirements, design],
+    revisions,
+    draftReview: draftReviewFixture(revisions, [
+      requirementsSnapshot,
+      designSnapshot,
+    ]),
     baseRevision: requirementsSnapshot,
     currentRevision: designSnapshot,
     currentApprovedRevision: requirementsSnapshot,
@@ -409,9 +414,43 @@ function authoringDetail(
     approvals: [],
     status: {
       ...base.status,
+      phase: { primary: "draft", authoringStage: "design" },
+    },
+  });
+}
+
+/**
+ * A requirements draft opened over the approved revision an execution runs
+ * against: the phase stays `executing`, and the draft rides as its authoring
+ * facet.
+ */
+function withOpenDraft(detail: SpecDetailView): SpecDetailView {
+  const approved = detail.currentApprovedRevision;
+  if (approved === null) return detail;
+  const draftRevision = revisionFor(
+    approved.revision,
+    approved.revision.number + 1,
+    "requirements",
+    "draft",
+  );
+  const draft = snapshotFor(
+    approved,
+    { ...draftRevision, basedOnRevisionId: approved.revision.id },
+    true,
+  );
+  const revisions = [...detail.revisions, draft.revision];
+  return parsedDetail({
+    ...detail,
+    revisions,
+    draftReview: draftReviewFixture(revisions, [approved, draft]),
+    baseRevision: approved,
+    currentRevision: draft,
+    status: {
+      ...detail.status,
       phase: {
-        primary: state === "draft" ? "draft" : "in_review",
-        authoringStage: "design",
+        primary: "executing",
+        authoringFacet: "draft",
+        authoringStage: "requirements",
       },
     },
   });
@@ -633,9 +672,7 @@ function detailFor(
       phase === "executing" || phase === "delivered" ? "running" : "none",
     ),
   );
-  if (phase === "draft" || phase === "in_review") {
-    return authoringDetail(base, phase === "draft" ? "draft" : "proposed");
-  }
+  if (phase === "draft") return authoringDetail(base);
   const snapshot = base.currentRevision;
   if (snapshot === null) return parsedDetail(base);
   const revision = {
@@ -657,12 +694,7 @@ function detailFor(
     currentApprovedRevision: { ...snapshot, revision },
     status: {
       ...base.status,
-      phase: {
-        primary: phase,
-        ...(phase === "executing"
-          ? { authoringFacet: "in_review" as const }
-          : {}),
-      },
+      phase: { primary: phase },
       delivery:
         phase === "delivered"
           ? {
@@ -790,13 +822,9 @@ export const ExpandedStructureRail: Story = {
   },
 };
 
-export const InReview: Story = {
-  args: { detail: detailFor("in_review") },
-};
-
 export const OverviewReviewThreads: Story = {
   args: {
-    detail: withOverviewReviewThreads(detailFor("in_review")),
+    detail: withOverviewReviewThreads(detailFor("draft")),
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -811,7 +839,7 @@ export const OverviewReviewThreads: Story = {
 
 export const OverviewGroupedThreads: Story = {
   args: {
-    detail: withOverviewReviewThreads(detailFor("in_review"), true),
+    detail: withOverviewReviewThreads(detailFor("draft"), true),
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -830,7 +858,7 @@ export const OverviewGroupedThreads: Story = {
 
 export const OverviewReviewThreadsMobile: Story = {
   args: {
-    detail: withOverviewReviewThreads(detailFor("in_review")),
+    detail: withOverviewReviewThreads(detailFor("draft")),
   },
   parameters: {
     viewport: {
@@ -850,8 +878,31 @@ export const DraftBlocked: Story = {
   args: { detail: detailFor("draft") },
 };
 
+/**
+ * An open draft's approvals are actionable while the agent keeps editing it:
+ * the banner links them to the review, and the primary action opens it.
+ */
+export const DraftUnderReview: Story = {
+  args: {
+    detail: (() => {
+      const draft = detailFor("draft");
+      return parsedDetail({
+        ...draft,
+        status: {
+          ...draft.status,
+          pendingApprovals: ["D1", "D2", "D3"].map((subject) => ({
+            gate: "design" as const,
+            subject,
+            elementId: null,
+          })),
+        },
+      });
+    })(),
+  },
+};
+
 export const ExecutingWithReview: Story = {
-  args: { detail: detailFor("executing") },
+  args: { detail: withOpenDraft(detailFor("executing")) },
 };
 
 export const Delivered: Story = {
@@ -875,15 +926,17 @@ export const JustCreated: Story = {
     detail: (() => {
       const detail = detailFor("draft");
       const snapshot = detail.currentRevision;
-      if (snapshot === null) return detail;
+      if (snapshot === null || detail.draftReview === null) return detail;
+      const sectionsOnly = {
+        ...snapshot,
+        elements: snapshot.elements.filter(
+          (entry) => entry.version.payload.kind === "section",
+        ),
+      };
       return parsedDetail({
         ...detail,
-        currentRevision: {
-          ...snapshot,
-          elements: snapshot.elements.filter(
-            (entry) => entry.version.payload.kind === "section",
-          ),
-        },
+        draftReview: { ...detail.draftReview, snapshot: sectionsOnly },
+        currentRevision: sectionsOnly,
         elementStatuses: { requirements: [], tasks: [] },
       });
     })(),
@@ -923,14 +976,14 @@ export const GatePolicy: Story = {
 export const QuestionsAndAssumptions: Story = {
   args: {
     view: "requirements",
-    detail: withQuestionsAndAssumptions(detailFor("in_review")),
+    detail: withQuestionsAndAssumptions(detailFor("draft")),
   },
 };
 
 export const QuestionsAndAssumptionsMobile: Story = {
   args: {
     view: "requirements",
-    detail: withQuestionsAndAssumptions(detailFor("in_review")),
+    detail: withQuestionsAndAssumptions(detailFor("draft")),
   },
   parameters: { viewport: { defaultViewport: "mobile1" } },
 };

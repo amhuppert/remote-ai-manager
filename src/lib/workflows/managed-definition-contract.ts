@@ -3,7 +3,6 @@ import { deliveryPlanCandidateRecordSchema } from "@/lib/specs/delivery-plan";
 
 export const managedWorkflowDefinitionLifecycleSchema = z.enum([
   "draft",
-  "in_review",
   "approved",
   "launched",
   "superseded",
@@ -132,7 +131,6 @@ export const nativeSddWorkflowManagementDetailSchema =
       .strict(),
     capabilities: z
       .object({
-        canPropose: z.boolean(),
         canSignOff: z.boolean(),
         canReopen: z.boolean(),
         canAbandon: z.boolean(),

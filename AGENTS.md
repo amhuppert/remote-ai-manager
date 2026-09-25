@@ -69,7 +69,7 @@ New specifications use `cctl spec`; `.kiro/specs/` retains legacy governed work.
 
 - Before creating a spec, run `cctl spec list` and `cctl spec search --all <query>` to find existing work. Use `cctl spec status <slug>` to check phase and gates for governed changes.
 - Author Requirements → Design → delivery plan, within the server's stage boundaries. `cctl spec propose` and `cctl spec plan propose` submit concrete artifacts for review.
-- Approvals, plan sign-off, and assumption disposition are human-only Spec Studio actions; an agent cannot perform them on Alex's behalf.
+- Approvals and assumption disposition are human-only Spec Studio actions, and delivery-plan sign-off is a human-only Workflow Builder action; an agent cannot perform them on Alex's behalf.
 - Write spec artifacts in the spec's configured language. Ordinary repository documentation and responses use English unless requested otherwise.
 
 ## Canonical architecture boundaries

@@ -18,7 +18,14 @@ import type {
   SpecRevisionSnapshot,
   SpecWaiverRow,
 } from "./schemas";
+import {
+  serializeSubjectFingerprint,
+  subjectFingerprint,
+  type ApprovalSubject,
+} from "./approval-applicability";
 import { lint } from "./lint";
+import { revisionReviewHash } from "./review-hash";
+import { toDiffCitations, toDiffRows } from "./revision-diff-projections";
 import {
   createSpecRouteHandlers,
   SPEC_OUTLINE_CRITERIA_PER_REQUIREMENT_LIMIT,
@@ -218,6 +225,31 @@ const assumption: SpecAssumptionRow = {
 function routeContext(params: Record<string, string>) {
   return { params: Promise.resolve(params) };
 }
+
+/**
+ * The fingerprint an approval row records: the subject as the approving human
+ * read it in `approved`. Computed by the production fingerprint, so these rows
+ * apply or stop applying exactly as a written approval would.
+ */
+function fingerprintIn(
+  approved: SpecRevisionSnapshot,
+  subject: ApprovalSubject,
+): string {
+  const fingerprint = subjectFingerprint(toDiffRows(approved), subject, {
+    citationContractVersion: approved.revision.citationContractVersion,
+    citations: toDiffCitations(approved),
+  });
+  if (fingerprint === null) {
+    throw new Error(
+      `${subject.elementId ?? "the plan"} is not carried by ${approved.revision.id}`,
+    );
+  }
+  return serializeSubjectFingerprint(fingerprint);
+}
+
+const R1 = { subjectKind: "requirement", elementId: "requirement-1" } as const;
+const D1 = { subjectKind: "decision", elementId: "decision-1" } as const;
+const PLAN = { subjectKind: "plan", elementId: null } as const;
 
 function execution(
   overrides: Partial<SpecExecutionRow> = {},
@@ -599,6 +631,7 @@ describe("spec read route handlers", () => {
         approver: "alex",
         granted_at: revision.createdAt,
         validity: "valid",
+        subject_fingerprint_json: fingerprintIn(approvedSnapshot, R1),
       },
       {
         id: "approval-decision",
@@ -609,6 +642,7 @@ describe("spec read route handlers", () => {
         approver: "alex",
         granted_at: revision.createdAt,
         validity: "valid",
+        subject_fingerprint_json: fingerprintIn(approvedSnapshot, D1),
       },
     ];
     const handlers = createSpecRouteHandlers(
@@ -646,6 +680,7 @@ describe("spec read route handlers", () => {
         approver: "alex",
         granted_at: revision.createdAt,
         validity: "stale",
+        subject_fingerprint_json: fingerprintIn(snapshot, R1),
       },
       {
         id: "approval-decision-closed",
@@ -656,6 +691,7 @@ describe("spec read route handlers", () => {
         approver: "alex",
         granted_at: revision.createdAt,
         validity: "closed",
+        subject_fingerprint_json: fingerprintIn(snapshot, D1),
       },
     ];
     const handlers = createSpecRouteHandlers(
@@ -1018,6 +1054,7 @@ describe("spec read route handlers", () => {
       approver: "alex",
       granted_at: revision.createdAt,
       validity: "valid",
+      subject_fingerprint_json: fingerprintIn(snapshot, R1),
     };
     const comment: SpecCommentRow = {
       id: "comment-1",
@@ -1753,11 +1790,12 @@ describe("spec read route handlers", () => {
     ]);
   });
 
-  it("projects every live proposal with its supersession verdict and the snapshots its diff needs", async () => {
-    // Ticket #50's shape: revision 3 was approved from revision 1's content,
-    // forking past the still-proposed revision 2. The lineage head is
-    // approved, so a surface keyed off the newest revision alone reports
-    // nothing awaiting review while revision 2 sits stranded.
+  /**
+   * Revision 1 approved and revision 2 the open draft amending it: the shape a
+   * human reviews while the author keeps editing, with R1 reworded in the draft
+   * so the draft's review hash and its baseline's cannot coincide.
+   */
+  function withOpenAmendmentDraft(events: SpecEventRow[] = []) {
     const approvedBase: SpecRevision = {
       ...revision,
       state: "approved",
@@ -1765,44 +1803,110 @@ describe("spec read route handlers", () => {
       proposedAt: revision.createdAt,
       approvedAt: revision.createdAt,
     };
-    const stranded: SpecRevision = {
+    const draft: SpecRevision = {
       ...revision,
       id: "revision-2",
       number: 2,
-      state: "proposed",
       basedOnRevisionId: approvedBase.id,
-      contentHash: "revision-2-hash",
-      proposedAt: "2026-07-18T02:00:00.000Z",
     };
-    const forkedPast: SpecRevision = {
-      ...revision,
-      id: "revision-3",
-      number: 3,
-      state: "approved",
-      basedOnRevisionId: approvedBase.id,
-      contentHash: "revision-3-hash",
-      proposedAt: "2026-07-18T03:00:00.000Z",
-      approvedAt: "2026-07-18T03:30:00.000Z",
-    };
-    const snapshotFor = (target: SpecRevision): SpecRevisionSnapshot => ({
-      revision: target,
+    const approvedSnapshot: SpecRevisionSnapshot = {
+      revision: approvedBase,
       elements: snapshot.elements.map((entry) => ({
         ...entry,
-        version: { ...entry.version, revisionId: target.id },
+        version: { ...entry.version, revisionId: approvedBase.id },
       })),
       assumptionCitations: [],
-    });
-    const snapshotsById = new Map(
-      [approvedBase, stranded, forkedPast].map((target) => [
-        target.id,
-        snapshotFor(target),
-      ]),
+    };
+    const draftSnapshot: SpecRevisionSnapshot = {
+      revision: draft,
+      elements: snapshot.elements.map((entry) => ({
+        ...entry,
+        version: {
+          ...entry.version,
+          revisionId: draft.id,
+          ...(entry.element.id === "requirement-1"
+            ? {
+                payload: {
+                  kind: "requirement" as const,
+                  statement: "The route resolves renamed and retired specs",
+                  priority: "must" as const,
+                  risk: "medium" as const,
+                },
+                payloadHash: "reworded-requirement-hash",
+                elementVersion: 2,
+              }
+            : {}),
+        },
+      })),
+      assumptionCitations: [],
+    };
+    const snapshotsById = new Map([
+      [approvedBase.id, approvedSnapshot],
+      [draft.id, draftSnapshot],
+    ]);
+    return {
+      approvedSnapshot,
+      draftSnapshot,
+      handlers: createSpecRouteHandlers(
+        createDeps({
+          listRevisions: async () => [approvedBase, draft],
+          getRevisionSnapshot: async (revisionId) =>
+            snapshotsById.get(revisionId) ?? null,
+          findEventsBySpecId: () => events,
+        }),
+      ),
+    };
+  }
+
+  it("returns the open draft for review with the hash a review act echoes", async () => {
+    const { handlers, approvedSnapshot, draftSnapshot } =
+      withOpenAmendmentDraft();
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
     );
+
+    expect(response.status).toBe(200);
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.draftReview).toMatchObject({
+      snapshot: { revision: { id: draftSnapshot.revision.id, state: "draft" } },
+      baseSnapshot: { revision: { id: approvedSnapshot.revision.id } },
+      governanceBaseSnapshot: {
+        revision: { id: approvedSnapshot.revision.id },
+      },
+      notes: null,
+      reviewHash: revisionReviewHash(draftSnapshot),
+    });
+    // The human reads the draft's own content, and the hash they echo names
+    // that content rather than the baseline the diff is read against.
+    expect(
+      detail.draftReview?.snapshot.elements.find(
+        ({ element }) => element.id === "requirement-1",
+      )?.version.payload,
+    ).toMatchObject({
+      statement: "The route resolves renamed and retired specs",
+    });
+    expect(detail.draftReview?.reviewHash).not.toBe(
+      revisionReviewHash(approvedSnapshot),
+    );
+  });
+
+  it("reports no draft review once the current revision is approved", async () => {
+    const approved: SpecRevision = {
+      ...revision,
+      state: "approved",
+      contentHash: "revision-1-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
     const handlers = createSpecRouteHandlers(
       createDeps({
-        listRevisions: async () => [approvedBase, stranded, forkedPast],
+        listRevisions: async () => [approved],
         getRevisionSnapshot: async (revisionId) =>
-          snapshotsById.get(revisionId) ?? null,
+          revisionId === approved.id
+            ? { ...snapshot, revision: approved }
+            : null,
       }),
     );
 
@@ -1813,87 +1917,35 @@ describe("spec read route handlers", () => {
 
     expect(response.status).toBe(200);
     const detail = specDetailViewSchema.parse(await response.json());
-    expect(detail.currentRevision?.revision.id).toBe(forkedPast.id);
-    expect(
-      detail.liveProposals.map((entry) => [
-        entry.revision.id,
-        entry.supersededBy?.id ?? null,
-        entry.snapshot.revision.id,
-        entry.baseSnapshot?.revision.id ?? null,
-      ]),
-    ).toEqual([[stranded.id, forkedPast.id, stranded.id, approvedBase.id]]);
+    expect(detail.currentRevision?.revision.state).toBe("approved");
+    expect(detail.draftReview).toBeNull();
   });
 
   /**
-   * The review surface exposes each proposal's disposition document read-only,
-   * on the same projection entry that carries its supersession verdict — a
-   * stranded proposal's notes are exactly what a human needs to decide whether
-   * to dismiss it, so they cannot be reachable only for the current one.
+   * The author's disposition document rides the review request, read-only, on
+   * the draft it describes. An author may ask for review again after further
+   * edits; the reviewer reads the latest request's notes.
    */
-  it("exposes each live proposal's notes from its own propose event", async () => {
-    const approvedBase: SpecRevision = {
-      ...revision,
-      state: "approved",
-      contentHash: "revision-1-hash",
-      proposedAt: revision.createdAt,
-      approvedAt: revision.createdAt,
-    };
-    const stranded: SpecRevision = {
-      ...revision,
-      id: "revision-2",
-      number: 2,
-      state: "proposed",
-      basedOnRevisionId: approvedBase.id,
-      contentHash: "revision-2-hash",
-      proposedAt: "2026-07-18T02:00:00.000Z",
-    };
-    const forkedPast: SpecRevision = {
-      ...revision,
-      id: "revision-3",
-      number: 3,
-      state: "approved",
-      basedOnRevisionId: approvedBase.id,
-      contentHash: "revision-3-hash",
-      proposedAt: "2026-07-18T03:00:00.000Z",
-      approvedAt: "2026-07-18T03:30:00.000Z",
-    };
-    const snapshotsById = new Map(
-      [approvedBase, stranded, forkedPast].map((target) => [
-        target.id,
-        {
-          revision: target,
-          elements: snapshot.elements.map((entry) => ({
-            ...entry,
-            version: { ...entry.version, revisionId: target.id },
-          })),
-          assumptionCitations: [],
-        } satisfies SpecRevisionSnapshot,
-      ]),
-    );
-    const handlers = createSpecRouteHandlers(
-      createDeps({
-        listRevisions: async () => [approvedBase, stranded, forkedPast],
-        getRevisionSnapshot: async (revisionId) =>
-          snapshotsById.get(revisionId) ?? null,
-        findEventsBySpecId: () => [
-          {
-            id: 1,
-            spec_id: spec.id,
-            occurred_at: "2026-07-18T02:00:00.000Z",
-            event_type: "spec-revision-changed",
-            actor_json: JSON.stringify({
-              kind: "agent",
-              conversationId: "conversation-1",
-            }),
-            payload_json: JSON.stringify({
-              kind: "proposed",
-              revisionId: stranded.id,
-              notes: "## Disposition\n\nRewrote R1 after the reviewer's F3.",
-            }),
-          },
-        ],
+  it("exposes the notes of the latest review request on the open draft", async () => {
+    const reviewRequest = (id: number, notes: string): SpecEventRow => ({
+      id,
+      spec_id: spec.id,
+      occurred_at: `2026-07-18T0${id}:00:00.000Z`,
+      event_type: "spec-revision-changed",
+      actor_json: JSON.stringify({
+        kind: "agent",
+        conversationId: "conversation-1",
       }),
-    );
+      payload_json: JSON.stringify({
+        kind: "proposed",
+        revisionId: "revision-2",
+        notes,
+      }),
+    });
+    const { handlers } = withOpenAmendmentDraft([
+      reviewRequest(1, "## Disposition\n\nFirst pass."),
+      reviewRequest(2, "## Disposition\n\nRewrote R1 after the reviewer's F3."),
+    ]);
 
     const response = await handlers.getSpecGET(
       new Request("http://cc.test/api/specs/demo/current-slug"),
@@ -1901,9 +1953,9 @@ describe("spec read route handlers", () => {
     );
 
     const detail = specDetailViewSchema.parse(await response.json());
-    expect(detail.liveProposals.map((entry) => entry.notes)).toEqual([
+    expect(detail.draftReview?.notes).toBe(
       "## Disposition\n\nRewrote R1 after the reviewer's F3.",
-    ]);
+    );
   });
 
   it("answers the edit context a write needs without transferring the spec", async () => {
@@ -2757,7 +2809,7 @@ describe("spec read route handlers", () => {
     });
   });
 
-  it("returns the proposed revision base snapshot for review mode", async () => {
+  it("returns the open draft's base snapshot for review mode", async () => {
     const approvedRevision: SpecRevision = {
       ...revision,
       id: "revision-approved",
@@ -2765,14 +2817,11 @@ describe("spec read route handlers", () => {
       contentHash: "approved-hash",
       approvedAt: revision.createdAt,
     };
-    const proposedRevision: SpecRevision = {
+    const draftRevision: SpecRevision = {
       ...revision,
-      id: "revision-proposed",
+      id: "revision-draft",
       number: 2,
-      state: "proposed",
       basedOnRevisionId: approvedRevision.id,
-      contentHash: "proposed-hash",
-      proposedAt: revision.createdAt,
     };
     const snapshotFor = (candidate: SpecRevision): SpecRevisionSnapshot => ({
       revision: candidate,
@@ -2783,7 +2832,7 @@ describe("spec read route handlers", () => {
       assumptionCitations: [],
     });
     const approvedSnapshot = snapshotFor(approvedRevision);
-    const proposedSnapshot = snapshotFor(proposedRevision);
+    const draftSnapshot = snapshotFor(draftRevision);
     const activeExecution = execution({
       revision_id: approvedRevision.id,
       state: "definition_review",
@@ -2819,10 +2868,10 @@ describe("spec read route handlers", () => {
     };
     const handlers = createSpecRouteHandlers(
       createDeps({
-        listRevisions: async () => [approvedRevision, proposedRevision],
+        listRevisions: async () => [approvedRevision, draftRevision],
         getRevisionSnapshot: async (revisionId) => {
           if (revisionId === approvedRevision.id) return approvedSnapshot;
-          if (revisionId === proposedRevision.id) return proposedSnapshot;
+          if (revisionId === draftRevision.id) return draftSnapshot;
           return null;
         },
         findExecutionsBySpecId: () => [activeExecution],
@@ -2841,7 +2890,11 @@ describe("spec read route handlers", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       baseRevision: { revision: { id: approvedRevision.id, number: 1 } },
-      currentRevision: { revision: { id: proposedRevision.id, number: 2 } },
+      currentRevision: { revision: { id: draftRevision.id, number: 2 } },
+      draftReview: {
+        snapshot: { revision: { id: draftRevision.id } },
+        baseSnapshot: { revision: { id: approvedRevision.id } },
+      },
       waivers: [approvedWaiver],
     });
 
@@ -3090,23 +3143,22 @@ describe("spec read route handlers", () => {
       contentHash: "approved-hash",
       approvedAt: revision.createdAt,
     };
-    const proposedRevision: SpecRevision = {
+    const draftRevision: SpecRevision = {
       ...revision,
-      id: "revision-proposed",
+      id: "revision-draft",
       number: 2,
-      state: "proposed",
       basedOnRevisionId: approvedRevision.id,
-      contentHash: "proposed-hash",
-      proposedAt: revision.createdAt,
     };
-    const proposedSnapshot: SpecRevisionSnapshot = {
-      revision: proposedRevision,
+    const snapshotOf = (target: SpecRevision): SpecRevisionSnapshot => ({
+      revision: target,
       elements: snapshot.elements.map((entry) => ({
         ...entry,
-        version: { ...entry.version, revisionId: proposedRevision.id },
+        version: { ...entry.version, revisionId: target.id },
       })),
       assumptionCitations: [],
-    };
+    });
+    const approvedSnapshot = snapshotOf(approvedRevision);
+    const draftSnapshot = snapshotOf(draftRevision);
     const carriedApprovals: SpecApprovalRow[] = [
       {
         id: "approval-requirement",
@@ -3117,6 +3169,7 @@ describe("spec read route handlers", () => {
         approver: "alex",
         granted_at: revision.createdAt,
         validity: "valid",
+        subject_fingerprint_json: fingerprintIn(approvedSnapshot, R1),
       },
       {
         id: "approval-decision",
@@ -3127,6 +3180,7 @@ describe("spec read route handlers", () => {
         approver: "alex",
         granted_at: revision.createdAt,
         validity: "valid",
+        subject_fingerprint_json: fingerprintIn(approvedSnapshot, D1),
       },
       {
         id: "approval-plan",
@@ -3137,13 +3191,18 @@ describe("spec read route handlers", () => {
         approver: "alex",
         granted_at: revision.createdAt,
         validity: "valid",
+        subject_fingerprint_json: fingerprintIn(approvedSnapshot, PLAN),
       },
     ];
     const handlers = createSpecRouteHandlers(
       createDeps({
-        listRevisions: async () => [approvedRevision, proposedRevision],
+        listRevisions: async () => [approvedRevision, draftRevision],
         getRevisionSnapshot: async (revisionId) =>
-          revisionId === proposedRevision.id ? proposedSnapshot : snapshot,
+          revisionId === draftRevision.id
+            ? draftSnapshot
+            : revisionId === approvedRevision.id
+              ? approvedSnapshot
+              : null,
         findApprovalsBySpecId: () => carriedApprovals,
       }),
     );
@@ -3182,17 +3241,14 @@ describe("spec read route handlers", () => {
       basedOnRevisionId: approvedRevision.id,
       contentHash: "abandoned-hash",
     };
-    const proposedRevision: SpecRevision = {
+    const draftRevision: SpecRevision = {
       ...revision,
-      id: "revision-proposed",
+      id: "revision-draft",
       number: 3,
-      state: "proposed",
       // The requirements gate is the current stage's own gate here, so the
       // only question the assertion asks is whose approval satisfies it.
       authoringStage: "requirements",
       basedOnRevisionId: approvedRevision.id,
-      contentHash: "proposed-hash",
-      proposedAt: revision.createdAt,
     };
     const snapshotOf = (target: SpecRevision): SpecRevisionSnapshot => ({
       revision: target,
@@ -3207,11 +3263,11 @@ describe("spec read route handlers", () => {
         listRevisions: async () => [
           approvedRevision,
           abandonedRevision,
-          proposedRevision,
+          draftRevision,
         ],
         getRevisionSnapshot: async (revisionId) =>
           snapshotOf(
-            [approvedRevision, abandonedRevision, proposedRevision].find(
+            [approvedRevision, abandonedRevision, draftRevision].find(
               (candidate) => candidate.id === revisionId,
             ) ?? revision,
           ),
@@ -3225,6 +3281,12 @@ describe("spec read route handlers", () => {
             approver: "alex",
             granted_at: revision.createdAt,
             validity: "valid",
+            // The fingerprint matches the current draft's R1, so lineage is
+            // the only thing that can keep this approval from applying.
+            subject_fingerprint_json: fingerprintIn(
+              snapshotOf(abandonedRevision),
+              R1,
+            ),
           },
         ],
       }),
@@ -3282,6 +3344,43 @@ describe("spec read route handlers", () => {
     await expect(statusFor([])).resolves.toEqual([]);
   });
 
+  /** Every consulted subject of the seeded draft, approved as it reads now. */
+  const everySubjectApproved: SpecApprovalRow[] = [
+    {
+      id: "approval-requirement",
+      spec_id: spec.id,
+      subject_kind: "requirement",
+      element_id: "requirement-1",
+      revision_id: revision.id,
+      approver: "alex",
+      validity: "valid",
+      granted_at: "2026-07-18T02:00:00.000Z",
+      subject_fingerprint_json: fingerprintIn(snapshot, R1),
+    },
+    {
+      id: "approval-decision",
+      spec_id: spec.id,
+      subject_kind: "decision",
+      element_id: "decision-1",
+      revision_id: revision.id,
+      approver: "alex",
+      validity: "valid",
+      granted_at: "2026-07-18T02:00:00.000Z",
+      subject_fingerprint_json: fingerprintIn(snapshot, D1),
+    },
+    {
+      id: "approval-plan",
+      spec_id: spec.id,
+      subject_kind: "plan",
+      element_id: null,
+      revision_id: revision.id,
+      approver: "alex",
+      validity: "valid",
+      granted_at: "2026-07-18T02:00:00.000Z",
+      subject_fingerprint_json: fingerprintIn(snapshot, PLAN),
+    },
+  ];
+
   /**
    * The contradiction ticket #42 reported: status read subject approvals from
    * a consulted-filtered source and gate state from an admission-only source,
@@ -3289,51 +3388,11 @@ describe("spec read route handlers", () => {
    * act named anywhere. Sign-off is the missing item, and it is its own.
    */
   it("names the outstanding revision sign-off once every consulted subject is approved", async () => {
-    const proposed: SpecRevision = {
-      ...revision,
-      state: "proposed",
-      proposedAt: "2026-07-18T01:00:00.000Z",
-    };
-    const approvals: SpecApprovalRow[] = [
-      {
-        id: "approval-requirement",
-        spec_id: spec.id,
-        subject_kind: "requirement",
-        element_id: "requirement-1",
-        revision_id: proposed.id,
-        approver: "alex",
-        validity: "valid",
-        granted_at: "2026-07-18T02:00:00.000Z",
-      },
-      {
-        id: "approval-decision",
-        spec_id: spec.id,
-        subject_kind: "decision",
-        element_id: "decision-1",
-        revision_id: proposed.id,
-        approver: "alex",
-        validity: "valid",
-        granted_at: "2026-07-18T02:00:00.000Z",
-      },
-      {
-        id: "approval-plan",
-        spec_id: spec.id,
-        subject_kind: "plan",
-        element_id: null,
-        revision_id: proposed.id,
-        approver: "alex",
-        validity: "valid",
-        granted_at: "2026-07-18T02:00:00.000Z",
-      },
-    ];
     const handlers = createSpecRouteHandlers(
       createDeps({
-        listRevisions: async () => [proposed],
-        getRevisionSnapshot: async (revisionId) =>
-          revisionId === proposed.id
-            ? { ...snapshot, revision: proposed }
-            : null,
-        findApprovalsBySpecId: () => approvals,
+        findApprovalsBySpecId: () => everySubjectApproved,
+        // A clean draft: lint cannot be what holds the sign-off.
+        lintDraft: async () => [],
       }),
     );
 
@@ -3356,8 +3415,8 @@ describe("spec read route handlers", () => {
         .map((gate) => gate.gate),
     ).toEqual(["requirements", "design", "plan"]);
     expect(status.revisionSignOff).toMatchObject({
-      revisionId: proposed.id,
-      revisionNumber: proposed.number,
+      revisionId: revision.id,
+      revisionNumber: revision.number,
       state: "ready",
       outstandingSubjectCount: 0,
       unmetConditions: [],
@@ -3365,6 +3424,44 @@ describe("spec read route handlers", () => {
     expect(status.nextAction?.kind).toBe("sign_off_revision");
     expect(status.pendingBlock?.signOff?.state).toBe("ready");
     expect(status.pendingBlock?.display).toContain("sign-off");
+  });
+
+  /**
+   * Sign-off freezes the draft, so it owes every blocking lint finding — the
+   * ones that also stop a review request, not only the sign-off tier. Status
+   * must say so rather than offer a sign-off the act would refuse.
+   */
+  it("keeps the sign-off blocked on a propose-blocking lint finding once every subject is approved", async () => {
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        findApprovalsBySpecId: () => everySubjectApproved,
+        lintDraft: async () => [
+          {
+            ruleId: "uncovered_criterion",
+            severity: "blocks_propose",
+            elementHandle: "R1.1",
+            message: "R1.1 must be covered",
+          },
+        ],
+      }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.pendingApprovals).toEqual([]);
+    expect(status.revisionSignOff).toMatchObject({
+      revisionId: revision.id,
+      state: "blocked",
+      unmetConditions: ["R1.1 must be covered"],
+    });
+    expect(status.nextAction).toMatchObject({
+      kind: "resolve_conditions",
+      actsNext: "agent",
+    });
   });
 
   it("reads an earlier gate unchanged since the governance base as not required, with its admission as history", async () => {
@@ -3850,9 +3947,6 @@ describe("spec read route handlers", () => {
     const requirementsRevision: SpecRevision = {
       ...revision,
       authoringStage: "requirements",
-      state: "proposed",
-      proposedAt: revision.createdAt,
-      contentHash: "requirements-review-hash",
     };
     const requirementsSnapshot: SpecRevisionSnapshot = {
       revision: requirementsRevision,
@@ -3876,8 +3970,9 @@ describe("spec read route handlers", () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
+    // The draft is reviewed in place: there is no separate review phase.
     expect(body.phase).toEqual({
-      primary: "in_review",
+      primary: "draft",
       authoringStage: "requirements",
     });
     expect(body.pendingApprovals).toEqual([
@@ -4195,6 +4290,7 @@ describe("spec read route handlers", () => {
       approver: "operator",
       granted_at: revision.createdAt,
       validity: "valid",
+      subject_fingerprint_json: fingerprintIn(snapshot, PLAN),
     };
     const evidence: SpecEvidenceRow = {
       id: "evidence-1",
@@ -4871,9 +4967,7 @@ describe("spec comments route handler", () => {
       ...revision,
       id: "revision-current",
       number: 2,
-      state: "proposed",
       basedOnRevisionId: historicalRevision.id,
-      proposedAt: "2026-08-12T00:00:00.000Z",
     };
     const snapshotFor = (candidate: SpecRevision): SpecRevisionSnapshot => ({
       revision: candidate,
@@ -4991,14 +5085,12 @@ describe("spec diff route handler", () => {
     authoringStage: "requirements",
     approvedAt: "2026-07-18T01:00:00.000Z",
   };
-  const proposedAmendment: SpecRevision = {
+  const draftAmendment: SpecRevision = {
     ...revision,
     id: "amendment-revision",
     number: 2,
-    state: "proposed",
     authoringStage: "design",
     basedOnRevisionId: approvedBase.id,
-    proposedAt: "2026-07-19T00:00:00.000Z",
   };
   const requirementRow = {
     element: {
@@ -5035,7 +5127,7 @@ describe("spec diff route handler", () => {
       createdAt: revision.createdAt,
     },
     version: {
-      revisionId: proposedAmendment.id,
+      revisionId: draftAmendment.id,
       elementId: "decision-new",
       position: 1,
       payload: {
@@ -5070,7 +5162,7 @@ describe("spec diff route handler", () => {
     updatedAt: "2026-07-19T00:00:00.000Z",
   };
   const citationOn = (elementId: string) => ({
-    revisionId: proposedAmendment.id,
+    revisionId: draftAmendment.id,
     specId: spec.id,
     elementId,
     assumptionId: assumption.id,
@@ -5084,7 +5176,7 @@ describe("spec diff route handler", () => {
     assumptionCitations: [],
   };
   const amendmentSnapshot: SpecRevisionSnapshot = {
-    revision: proposedAmendment,
+    revision: draftAmendment,
     elements: [requirementRow, addedDecisionRow],
     assumptionCitations: [
       citationOn("decision-new"),
@@ -5093,11 +5185,11 @@ describe("spec diff route handler", () => {
   };
   const diffDeps = () =>
     createDeps({
-      listRevisions: async () => [approvedBase, proposedAmendment],
+      listRevisions: async () => [approvedBase, draftAmendment],
       getRevisionSnapshot: async (revisionId) =>
         revisionId === approvedBase.id
           ? baseSnapshot
-          : revisionId === proposedAmendment.id
+          : revisionId === draftAmendment.id
             ? amendmentSnapshot
             : null,
     });
@@ -5119,7 +5211,7 @@ describe("spec diff route handler", () => {
     if (!parsed.success) return;
     expect(parsed.data.baseline).toBe("review");
     expect(parsed.data.from).toMatchObject({ revisionId: approvedBase.id });
-    expect(parsed.data.to).toMatchObject({ revisionId: proposedAmendment.id });
+    expect(parsed.data.to).toMatchObject({ revisionId: draftAmendment.id });
     const byId = new Map(
       parsed.data.elements.map((element) => [element.elementId, element]),
     );

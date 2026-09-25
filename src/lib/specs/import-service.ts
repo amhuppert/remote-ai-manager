@@ -719,14 +719,9 @@ export function createImportService(deps: ImportServiceDeps): ImportService {
             );
           }
 
-          // Propose then approve, through the same statements ordinary authoring
-          // uses: propose is what computes the content hash the approval is
-          // pinned to, so an imported revision hashes exactly like an authored
-          // one and every integrity check reads it the same way.
-          repo.proposeRevision({
-            revisionId: created.revision.id,
-            proposedAt: occurredAt,
-          });
+          // Frozen through the same statement ordinary sign-off uses, so an
+          // imported revision hashes exactly like an authored one and every
+          // integrity check reads it the same way.
           const approved = repo.approveRevision({
             revisionId: created.revision.id,
             approvedAt: occurredAt,

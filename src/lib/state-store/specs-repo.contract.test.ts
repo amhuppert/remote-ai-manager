@@ -16,7 +16,6 @@ import {
   specElementSchema,
   specElementVersionSchema,
   specRevisionSchema,
-  specRevisionSupersessionSchema,
   specSchema,
   type SpecAssumptionCitationSnapshot,
   type CriterionElementPayload,
@@ -32,6 +31,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import {
+  computeSpecRevisionContentHash,
   SpecElementIdTakenError,
   SpecRevisionImmutableError,
   StaleElementConflictError,
@@ -394,13 +394,9 @@ describe("maximal persistence contracts", () => {
     });
   });
 
-  it("round-trips every persisted revision field through draft, propose, and approve", async () => {
+  it("round-trips every persisted revision field through draft and approval", async () => {
     const created = await createSpec({ id: "spec-revision-maximal" });
     await addRequirement(created.spec.id, created.revision.id);
-    await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
     await repo.approveRevision({
       revisionId: created.revision.id,
       approvedAt: APPROVED_AT,
@@ -417,11 +413,11 @@ describe("maximal persistence contracts", () => {
           state: "approved",
           authoringStage: "design",
           basedOnRevisionId: created.revision.id,
-          contentHash: "derived-by-propose",
+          contentHash: "derived-by-approval",
           citationContractVersion: 2,
           citationVersion: 1,
           citationHash: citationHash(2, []),
-          proposedAt: PROPOSED_AT,
+          proposedAt: APPROVED_AT,
           approvedAt: APPROVED_AT,
           externalDelivery: {
             at: APPROVED_AT,
@@ -441,10 +437,6 @@ describe("maximal persistence contracts", () => {
           authoringStage: maximal.authoringStage,
           createdAt: maximal.createdAt,
         });
-        await repo.proposeRevision({
-          revisionId: maximal.id,
-          proposedAt: requireFixtureString(maximal.proposedAt, "proposedAt"),
-        });
         await repo.approveRevision({
           revisionId: maximal.id,
           approvedAt: requireFixtureString(maximal.approvedAt, "approvedAt"),
@@ -458,7 +450,12 @@ describe("maximal persistence contracts", () => {
         });
       },
       reload: (expected) => repo.findRevision(expected.id),
-      fieldPolicies: { contentHash: "derived-on-write" },
+      // Approval is the freeze: it hashes the content and records the moment
+      // the content froze as `proposedAt`, so neither is written from input.
+      fieldPolicies: {
+        contentHash: "derived-on-write",
+        proposedAt: "derived-on-write",
+      },
     });
   });
 
@@ -492,60 +489,6 @@ describe("maximal persistence contracts", () => {
     expect(
       (await repo.findRevision(created.revision.id))?.externalDelivery,
     ).toBeNull();
-  });
-
-  it("round-trips every persisted supersession-marker field through a dismissal", async () => {
-    // The marker cannot ride the revision fixture above: a revision is either
-    // approved or dismissed-as-superseded, never both, so its own maximal
-    // round trip is the only way every marker field stays contract-backed.
-    const created = await createSpec({ id: "spec-supersession-maximal" });
-    await addRequirement(created.spec.id, created.revision.id);
-    await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
-    await repo.approveRevision({
-      revisionId: created.revision.id,
-      approvedAt: APPROVED_AT,
-    });
-
-    await assertRoundTripDurability({
-      label: "spec-revision-supersessions",
-      schema: specRevisionSupersessionSchema,
-      buildMaximalFixture: () =>
-        specRevisionSupersessionSchema.parse({
-          revisionId: "revision-superseded-maximal",
-          specId: created.spec.id,
-          supersededByRevisionId: created.revision.id,
-          reason: "Revision 2 forked past this proposal and was approved.",
-          actor: { kind: "agent", conversationId: "conversation-dismiss" },
-          dismissedAt: UPDATED_AT,
-        }),
-      persist: async (maximal) => {
-        await repo.createDraftFromBase({
-          id: maximal.revisionId,
-          specId: maximal.specId,
-          baseRevisionId: maximal.supersededByRevisionId,
-          authoringStage: "design",
-          createdAt: CREATED_AT,
-        });
-        await repo.proposeRevision({
-          revisionId: maximal.revisionId,
-          proposedAt: PROPOSED_AT,
-        });
-        const result = await repo.supersedeRevision({
-          revisionId: maximal.revisionId,
-          supersededByRevisionId: maximal.supersededByRevisionId,
-          reason: maximal.reason,
-          actor: maximal.actor,
-          dismissedAt: maximal.dismissedAt,
-        });
-        expect(result.revision.state).toBe("withdrawn");
-        return result.supersession;
-      },
-      reload: (expected) => repo.findSupersession(expected.revisionId),
-      fieldPolicies: {},
-    });
   });
 
   it("round-trips every persisted element-version field", async () => {
@@ -660,6 +603,20 @@ describe("revision snapshots and aliases", () => {
     ).toEqual([requirement.element.id]);
   });
 
+  it("refuses to withdraw an approved revision and leaves it approved", async () => {
+    const created = await createSpec();
+    await addRequirement(created.spec.id, created.revision.id);
+    const approved = await repo.approveRevision({
+      revisionId: created.revision.id,
+      approvedAt: APPROVED_AT,
+    });
+
+    await expect(
+      repo.withdrawAuthoringRevision({ revisionId: created.revision.id }),
+    ).rejects.toThrow();
+    expect(await repo.findRevision(created.revision.id)).toEqual(approved);
+  });
+
   it("advances the identified draft stage conditionally and is idempotent", async () => {
     const created = await createSpec();
 
@@ -682,11 +639,7 @@ describe("revision snapshots and aliases", () => {
 
   it("returns a typed stale-stage conflict when the current draft was replaced", async () => {
     const created = await createSpec();
-    await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
-    await repo.withdrawRevision({ revisionId: created.revision.id });
+    await repo.withdrawAuthoringRevision({ revisionId: created.revision.id });
     const replacement = await repo.createDraftFromBase({
       id: "replacement-revision",
       specId: created.spec.id,
@@ -721,10 +674,6 @@ describe("revision snapshots and aliases", () => {
       created.revision.id,
       requirement.element.id,
     );
-    await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
     await repo.approveRevision({
       revisionId: created.revision.id,
       approvedAt: APPROVED_AT,
@@ -753,34 +702,82 @@ describe("revision snapshots and aliases", () => {
     ]);
   });
 
-  it("freezes the exact proposed snapshot behind a canonical content hash", async () => {
+  it("freezes an approved draft behind the canonical content hash of its snapshot", async () => {
     const created = await createSpec();
     await addRequirement(created.spec.id, created.revision.id);
-
-    const proposed = await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
+    const draftSnapshot = await repo.getRevisionSnapshot(created.revision.id);
+    if (draftSnapshot === null) throw new Error("draft snapshot is missing");
+    expect(draftSnapshot.revision).toMatchObject({
+      state: "draft",
+      contentHash: null,
+      proposedAt: null,
+      approvedAt: null,
     });
-    const verification = await repo.verifyRevision(created.revision.id);
 
-    expect(proposed.state).toBe("proposed");
-    expect(proposed.contentHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(verification).toEqual({
+    await repo.approveRevision({
+      revisionId: created.revision.id,
+      approvedAt: APPROVED_AT,
+    });
+
+    const reloaded = await repo.findRevision(created.revision.id);
+    expect(reloaded).toMatchObject({
+      state: "approved",
+      contentHash: computeSpecRevisionContentHash(
+        draftSnapshot.revision.authoringStage,
+        draftSnapshot.elements,
+      ),
+      proposedAt: APPROVED_AT,
+      approvedAt: APPROVED_AT,
+    });
+    expect(reloaded?.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(await repo.findDraft(created.spec.id)).toBeNull();
+    expect(await repo.verifyRevision(created.revision.id)).toEqual({
       ok: true,
-      expectedContentHash: proposed.contentHash,
-      actualContentHash: proposed.contentHash,
-      expectedCitationHash: proposed.citationHash,
-      actualCitationHash: proposed.citationHash,
+      expectedContentHash: reloaded?.contentHash,
+      actualContentHash: reloaded?.contentHash,
+      expectedCitationHash: draftSnapshot.revision.citationHash,
+      actualCitationHash: draftSnapshot.revision.citationHash,
       mismatchedElementIds: [],
     });
+  });
+
+  it("refuses to approve a revision that is no longer a draft and leaves it unchanged", async () => {
+    const approvedSpec = await createSpec();
+    await addRequirement(approvedSpec.spec.id, approvedSpec.revision.id);
+    const approved = await repo.approveRevision({
+      revisionId: approvedSpec.revision.id,
+      approvedAt: APPROVED_AT,
+    });
+
+    const withdrawnSpec = await createSpec();
+    await addRequirement(withdrawnSpec.spec.id, withdrawnSpec.revision.id);
+    const withdrawn = await repo.withdrawAuthoringRevision({
+      revisionId: withdrawnSpec.revision.id,
+    });
+
+    for (const settled of [approved, withdrawn]) {
+      await expect(
+        repo.approveRevision({
+          revisionId: settled.id,
+          approvedAt: UPDATED_AT,
+        }),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<SpecRevisionImmutableError>>({
+          name: "SpecRevisionImmutableError",
+          revisionId: settled.id,
+          state: settled.state,
+        }),
+      );
+      expect(await repo.findRevision(settled.id)).toEqual(settled);
+    }
   });
 
   it("includes the declared authoring stage in the canonical content hash", async () => {
     const created = await createSpec();
     await addRequirement(created.spec.id, created.revision.id);
-    await repo.proposeRevision({
+    await repo.approveRevision({
       revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
+      approvedAt: APPROVED_AT,
     });
 
     fixture.db
@@ -796,7 +793,7 @@ describe("revision snapshots and aliases", () => {
     });
   });
 
-  it("keeps a proposed revision frozen when any approval integrity witness is corrupt", async () => {
+  it("refuses to freeze a draft whose element or citation integrity witness is corrupt", async () => {
     const elementHashCorruption = await createSpec({
       id: "spec-approval-element-hash-corruption",
     });
@@ -804,10 +801,6 @@ describe("revision snapshots and aliases", () => {
       elementHashCorruption.spec.id,
       elementHashCorruption.revision.id,
     );
-    await repo.proposeRevision({
-      revisionId: elementHashCorruption.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
     fixture.db
       .prepare(
         `UPDATE spec_element_versions
@@ -815,36 +808,9 @@ describe("revision snapshots and aliases", () => {
          WHERE revision_id = ? AND element_id = ?`,
       )
       .run(
-        stableStringify(requirementPayload("Tampered after proposal.")),
+        stableStringify(requirementPayload("Tampered outside the repository.")),
         elementHashCorruption.revision.id,
         elementHashRequirement.element.id,
-      );
-
-    const contentHashCorruption = await createSpec({
-      id: "spec-approval-content-hash-corruption",
-    });
-    const contentHashRequirement = await addRequirement(
-      contentHashCorruption.spec.id,
-      contentHashCorruption.revision.id,
-    );
-    await repo.proposeRevision({
-      revisionId: contentHashCorruption.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
-    const tamperedPayload = requirementPayload("Tampered coherently.");
-    fixture.db
-      .prepare(
-        `UPDATE spec_element_versions
-         SET payload_json = ?, payload_hash = ?
-         WHERE revision_id = ? AND element_id = ?`,
-      )
-      .run(
-        stableStringify(tamperedPayload),
-        createHash("sha256")
-          .update(stableStringify(tamperedPayload))
-          .digest("hex"),
-        contentHashCorruption.revision.id,
-        contentHashRequirement.element.id,
       );
 
     const citationHashCorruption = await createSpec({
@@ -873,11 +839,6 @@ describe("revision snapshots and aliases", () => {
       ],
       updatedAt: UPDATED_AT,
     });
-    await repo.proposeRevision({
-      revisionId: citationHashCorruption.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
-    fixture.db.exec("DROP TRIGGER spec_revision_citations_frozen_update");
     fixture.db
       .prepare(
         `UPDATE spec_revision_assumption_citations
@@ -893,14 +854,15 @@ describe("revision snapshots and aliases", () => {
 
     for (const revisionId of [
       elementHashCorruption.revision.id,
-      contentHashCorruption.revision.id,
       citationHashCorruption.revision.id,
     ]) {
       await expect(
         repo.approveRevision({ revisionId, approvedAt: APPROVED_AT }),
       ).rejects.toThrow();
       await expect(repo.findRevision(revisionId)).resolves.toMatchObject({
-        state: "proposed",
+        state: "draft",
+        contentHash: null,
+        proposedAt: null,
         approvedAt: null,
       });
     }
@@ -1092,11 +1054,11 @@ describe("revision-owned assumption citations", () => {
       revision: { citationHash: citationHash(2, citations) },
     });
     await expect(
-      repo.proposeRevision({
+      repo.approveRevision({
         revisionId: created.revision.id,
-        proposedAt: PROPOSED_AT,
+        approvedAt: APPROVED_AT,
       }),
-    ).resolves.toMatchObject({ state: "proposed" });
+    ).resolves.toMatchObject({ state: "approved" });
   });
 
   it("reads citations in snapshot code-unit order when SQLite byte order differs", async () => {
@@ -1377,9 +1339,9 @@ describe("revision-owned assumption citations", () => {
       reason: "revision_spec_mismatch",
     });
 
-    await repo.proposeRevision({
+    await repo.approveRevision({
       revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
+      approvedAt: APPROVED_AT,
     });
     await expect(
       repo.mutateDraftCitation({
@@ -1394,7 +1356,7 @@ describe("revision-owned assumption citations", () => {
       }),
     ).resolves.toMatchObject({
       kind: "illegal_lifecycle",
-      state: "proposed",
+      state: "approved",
     });
   });
 
@@ -1419,10 +1381,6 @@ describe("revision-owned assumption citations", () => {
       expectedCitationVersion: 1,
       snapshot,
       updatedAt: UPDATED_AT,
-    });
-    await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
     });
     await repo.approveRevision({
       revisionId: created.revision.id,
@@ -1593,10 +1551,6 @@ describe("draft compare-and-swap", () => {
 
   it("refuses content writes after a revision is approved", async () => {
     const { created, first } = await createTwoCriteria();
-    await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
     await repo.approveRevision({
       revisionId: created.revision.id,
       approvedAt: APPROVED_AT,
@@ -1904,10 +1858,6 @@ describe("historical element reintroduction", () => {
   async function orphanElement() {
     const created = await createSpec();
     await addRequirement(created.spec.id, created.revision.id, "Kept.");
-    await repo.proposeRevision({
-      revisionId: created.revision.id,
-      proposedAt: PROPOSED_AT,
-    });
     await repo.approveRevision({
       revisionId: created.revision.id,
       approvedAt: APPROVED_AT,
@@ -1930,11 +1880,7 @@ describe("historical element reintroduction", () => {
       createdAt: CREATED_AT,
       updatedAt: UPDATED_AT,
     });
-    await repo.proposeRevision({
-      revisionId: attempt.id,
-      proposedAt: PROPOSED_AT,
-    });
-    await repo.withdrawRevision({ revisionId: attempt.id });
+    await repo.withdrawAuthoringRevision({ revisionId: attempt.id });
 
     const followUp = await repo.createDraftFromBase({
       id: `${created.spec.id}-revision-3`,

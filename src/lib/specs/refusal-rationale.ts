@@ -35,10 +35,10 @@ export const PARENT_IMMUTABLE_RATIONALE =
   "containment is identity: a moved element would retroactively change what every frozen revision contained";
 
 /**
- * Why a seed charter cannot be proposed. The charter is not documentation of
- * the plan — it is the text every lane agent is governed by — so a stub that
- * survives propose is frozen into the signed candidate and read by every
- * implementer and validator of the run (#98).
+ * Why a seed charter cannot be proposed or signed off. The charter is not
+ * documentation of the plan — it is the text every lane agent is governed by —
+ * so a stub that survives sign-off is frozen into the signed candidate and read
+ * by every implementer and validator of the run (#98).
  */
 export const CHARTER_UNAUTHORED_RATIONALE =
   "the charter is the governance every implementer and validator reads, and a seed stub would freeze into the signed candidate (#98)";
@@ -51,12 +51,13 @@ export const CHARTER_UNAUTHORED_RATIONALE =
 export const CRITERION_MUST_RUN_RATIONALE =
   "a claimed criterion must be covered on every path so a skipped branch can never waive it silently";
 
-/** Why the proposing agent cannot withdraw an attempt a human has touched. */
-export const WITHDRAW_AFTER_ENGAGEMENT_RATIONALE =
-  "an attempt a human has acted on ends on their terms, not by the author erasing it";
+/** Why an approval refuses once the draft moved under the reviewer. */
+export const STALE_REVIEW_RATIONALE =
+  "an approval records the content a human read, and the author changed the draft after they read it";
 
 const RATIONALE_BY_CODE: Partial<Record<RefusalCode, string>> = {
   human_act_required: HUMAN_ACT_REQUIRED_RATIONALE,
+  stale_review: STALE_REVIEW_RATIONALE,
 };
 
 /**

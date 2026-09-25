@@ -46,10 +46,10 @@ export type DeliveryPlanSeedBasisResult =
  * candidate. A criterion the last delivery proved and nothing has invalidated
  * auto-proposes `delivered_elsewhere` against the execution that proved it; one
  * whose governing content moved becomes `pending_reaffirmation`, which a draft
- * may carry and a proposal may not; a criterion whose own text moved, one never
- * delivered, and one the last plan deferred are selected again; an honoured
- * waiver stays waived. A criterion the compared delivery never saw is new work
- * and is selected.
+ * may carry and a signed candidate may not; a criterion whose own text moved,
+ * one never delivered, and one the last plan deferred are selected again; an
+ * honoured waiver stays waived. A criterion the compared delivery never saw is
+ * new work and is selected.
  */
 export function seedDispositionsFromDelivery(input: {
   readonly basis: DeliveryPlanSeedBasis;

@@ -72,9 +72,9 @@ describe("0008-add-spec-authoring-stage", () => {
       createdAt: CREATED_AT,
       updatedAt: CREATED_AT,
     });
-    await fixture.specs.proposeRevision({
+    await fixture.specs.approveRevision({
       revisionId: created.revision.id,
-      proposedAt: CREATED_AT,
+      approvedAt: CREATED_AT,
     });
     const snapshot = await fixture.specs.getRevisionSnapshot(
       created.revision.id,

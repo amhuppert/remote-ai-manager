@@ -124,7 +124,7 @@ function citationSnapshot(row: SpecAssumptionRow) {
 
 describe("projectAttentionRecords", () => {
   it("partitions current truth from history and derives active, mutation, lineage, citations, and human capability", () => {
-    const frozen = revision("revision-1", 1, "proposed");
+    const frozen = revision("revision-1", 1, "approved");
     const open = {
       ...question("question-open", 2, "open"),
       record_version: 2,

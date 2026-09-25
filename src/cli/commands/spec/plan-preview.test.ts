@@ -23,8 +23,9 @@ const PREVIEW = {
   candidateHash: null,
   snapshotId: null,
   candidateId: null,
-  approvable: false,
-  approvability: "A draft attempt is never approvable.",
+  approvable: true,
+  approvability:
+    "Draft bytes are what a human reviews; sign-off freezes and approves them.",
   launch: LAUNCH,
   binding: { dispositions: [] },
 };

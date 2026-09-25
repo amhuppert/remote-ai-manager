@@ -15,7 +15,11 @@ import type { MarkdownAnnotationTarget } from "@/components/document-viewer/anno
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import { specKeys } from "@/lib/specs/query-keys";
-import { specCommentRowSchema, type SpecCommentRow } from "@/lib/specs/schemas";
+import {
+  specCommentRowSchema,
+  type SpecCommentRow,
+  type SpecRevision,
+} from "@/lib/specs/schemas";
 
 import SpecCommentThread from "./SpecCommentThread";
 import { logInvalidSpecCommentThread } from "./spec-comment-observability";
@@ -32,7 +36,7 @@ export interface SpecCommentThreadListProps {
   slug: string;
   specId: string;
   viewedRevisionId: string;
-  viewedRevisionState: "draft" | "proposed" | "approved" | "withdrawn";
+  viewedRevisionState: SpecRevision["state"];
   specAbandoned: boolean;
   humanTransport: boolean;
   placements: readonly PlacedSpecCommentThread[];
@@ -211,7 +215,7 @@ const SpecCommentThreadList = forwardRef<
     const canResolve =
       canReply &&
       humanTransport &&
-      viewedRevisionState === "proposed" &&
+      viewedRevisionState === "draft" &&
       placement.thread.root.revisionId === viewedRevisionId;
     return (
       <div

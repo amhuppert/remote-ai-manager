@@ -127,25 +127,33 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     forbidden: [/plan adds tasks/i, /opens directly at plan stage/i],
   },
   {
-    id: "an active stage is concluded by propose, or requirements advances under a Notify/Off dial",
+    id: "the draft is reviewed while editable, propose asks for review, and only sign-off freezes it",
     required: [
       /`cctl spec propose <slug>`/,
       /`cctl spec advance <slug> --from requirements`/,
       /Notify or Off/,
-      /dial is Gate/,
+      /only their sign-off freezes it/,
+      /unapproved again/,
     ],
-    forbidden: [/--from <requirements\|design>/],
+    // The retired model: an agent that believes propose freezes the draft
+    // stops editing and waits, or thinks the human cannot act until it does.
+    forbidden: [
+      /--from <requirements\|design>/,
+      /propose[^.]{0,40}freezes the\s+editable/i,
+    ],
   },
   {
     id: "an approved spec continues through an amendment",
     required: [
       /`cctl spec amend <slug>`/,
-      /An amendment opens at requirements/,
-      /`cctl spec return-to-requirements <slug>/,
+      /An amendment opens at design/,
+      /changes a requirement[^.]*`cctl spec return-to-requirements <slug>/,
+      /keeping the approved design/,
       /legacy Plan revisions remain readable as history/,
     ],
     forbidden: [
-      /An amendment opens at design/,
+      /An amendment opens at requirements/,
+      /latest approved requirements checkpoint/i,
       /approved plan-stage revision opens at plan stage/i,
     ],
   },
@@ -154,12 +162,11 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     required: [
       /`schemaVersion: 4`/,
       /`acceptanceCriteria\[\]\.covers`/,
-      /binding dispositions only/,
+      /`cctl spec plan open <slug>` seeds the binding's dispositions/,
       /derives claims from graph coverage/,
       /managed workflow definition/i,
       /`cctl workflow replace <definitionId>`/,
       /`references\/native-spec-delivery\.md`/,
-      /`cctl spec plan edit <slug> --file <plan\.json>`/,
       /`binding`/,
       /stable source/i,
       /dynamic context/i,
@@ -171,6 +178,8 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     forbidden: [
       /`schemaVersion: 2`/,
       /\{ launch, binding \}/,
+      // Deleted in #109 (decision D-F): no agent write of the binding remains.
+      /spec plan edit/,
       // The retired authoring path (#80 design 3.6): a managed draft is
       // authored as an ordinary plan.json, and naming `workflow edit` here is
       // how it became a second path in the first place.

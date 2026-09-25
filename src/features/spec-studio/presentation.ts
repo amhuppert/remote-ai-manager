@@ -1,4 +1,5 @@
 import type { StatusChipTone } from "@/components/ui/StatusChip";
+import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import type { DeliveryDisplay, SpecPhasePrimary } from "@/lib/specs/phase";
 import type { SpecGate } from "@/lib/specs/schemas";
 import type { SpecGateAdmissionView } from "@/lib/specs/view-schemas";
@@ -16,7 +17,6 @@ export const gateLabels: Record<SpecGate, string> = {
 export const phaseLabels: Record<SpecPhasePrimary, string> = {
   abandoned: "Abandoned",
   executing: "Executing",
-  in_review: "In review",
   draft: "Draft",
   delivered: "Delivered",
   approved: "Approved",
@@ -37,6 +37,16 @@ export function deliveryTone(delivery: DeliveryDisplay): StatusChipTone {
   if (delivery.allWaived) return "amber";
   if (delivery.totalInScope === 0) return "neutral";
   return delivery.deliveredCount === delivery.totalInScope ? "green" : "cyan";
+}
+
+/**
+ * A draft plan with no blocking finding is the one a human reviews and signs
+ * off in Workflow Builder; sign-off is the act that freezes and approves it.
+ */
+export function deliveryPlanReadyForSignOff(
+  plan: Pick<DeliveryPlanReviewView, "attempt" | "health">,
+): boolean {
+  return plan.attempt.status === "draft" && plan.health.blocking === 0;
 }
 
 /**

@@ -76,7 +76,14 @@ export function managedDeliveryStory(
     ],
     claims: candidate.binding.claims,
     comments: [],
-    nextAct: lifecycle === "draft" ? "propose" : null,
+    nextAct:
+      lifecycle === "draft"
+        ? "sign_off"
+        : lifecycle === "approved"
+          ? "launch"
+          : lifecycle === "launched"
+            ? "open_execution"
+            : null,
     currentCandidate:
       lifecycle === "draft" || lifecycle === "abandoned" ? null : candidate,
     currentCandidateHash:
@@ -108,10 +115,9 @@ export function managedDeliveryStory(
       claims: false,
     },
     capabilities: {
-      canPropose: lifecycle === "draft",
-      canSignOff: lifecycle === "in_review",
-      canReopen: lifecycle === "in_review" || lifecycle === "approved",
-      canAbandon: ["draft", "in_review", "approved"].includes(lifecycle),
+      canSignOff: lifecycle === "draft",
+      canReopen: lifecycle === "approved",
+      canAbandon: ["draft", "approved"].includes(lifecycle),
       canLaunch: lifecycle === "approved",
       refusals: {},
     },

@@ -1,5 +1,7 @@
 # Technical Design — native-sdd
 
+> **Superseded in part (2026-09-24).** Revisions and delivery-plan attempts no longer have a Proposed state: a draft is reviewed while it stays editable, and sign-off is the only freeze. Passages here that describe proposing as a freeze, Request Changes, proposal withdrawal or supersession, or an In review phase are history. See "Amendment — continuous review" at the end of this document.
+
 ## Overview
 
 **Purpose**: Native SDD makes spec-driven development a first-class Command Center domain: specs become durable product objects with stable identity, immutable approved revisions, granular human approvals, server-enforced gates, criterion-level evidence with proof verdicts, execution compilation to graph workflows, and scoped delivery gates. This design translates the 21 approved requirements into architecture; product semantics come from `docs/design/native-sdd/01-product-design.md` rev 5 and are not re-decided here.
@@ -227,6 +229,8 @@ All tables are additive floor DDL (`CREATE TABLE IF NOT EXISTS` in `state-db.ts`
 
 ### State Machines
 
+> **Superseded in part (2026-09-24).** A revision now moves Draft → Approved (sign-off) or Draft → Withdrawn (human discard); Proposed and Request Changes are retired. See "Amendment — continuous review" at the end of this document.
+
 ```mermaid
 stateDiagram-v2
     state Revision {
@@ -247,6 +251,8 @@ stateDiagram-v2
 Transitions are validated exclusively by `transitions.ts` predicates (3.3, 3.5); every transition appends `spec_events` rows and publishes SSE. Proposing freezes content (hash stored); sign-off is the only entry to Approved (3.4); **request-changes ends the review attempt by marking the proposed revision `withdrawn`** — content and hash preserved immutably — **and opening a new draft revision `based_on` it** (3.3, 8.5): the reviewed snapshot survives for comment-thread anchors (8.6), the 10.5 side-by-side re-approval diff, and the 20.1 re-approval-loop measure, and RevisionDiff shows exactly what changed since the last review attempt. Delivered is entered only from the merge success callback (18.6); Abandoned records a reason and is terminal (3.10). Draft revisions carry an **authoring stage** — requirements → design → plan (R22): draft-write admissibility is stage-only (later-stage element kinds refuse with `stage_blocked`; dials never gate writes, only phrase the instruction), and the stage advances through a recorded transition — sign-off of a stage's revision under a Gate dial, or an explicit revision-scoped `advance` under Notify/Off recorded as a gate admission. Open-draft stage rule: no base → requirements (plan when all three authoring dials resolve combined); based_on approved → next stage capped at plan; based_on withdrawn (request-changes) → the withdrawn revision's stage.
 
 ### Transition Ownership
+
+> **Superseded in part (2026-09-24).** Propose now requests review and freezes only when every consulted dial is Notify or Off; the Request changes row is retired, and Withdraw discards an open draft. See "Amendment — continuous review" at the end of this document.
 
 Every transition names its initiator, authorization, predicate, transaction, and idempotency — lifecycle correctness never depends on implementer inference (3.3–3.5, 10.2–10.4, 16.1–16.9, 18.6).
 
@@ -270,6 +276,8 @@ Every transition names its initiator, authorization, predicate, transaction, and
 
 ### Derived Projections (`phase.ts`)
 
+> **Superseded in part (2026-09-24).** The In review phase and the `in_review` authoring facet are retired; an editable draft reports Draft whether or not review was requested. See "Amendment — continuous review" at the end of this document.
+
 | Projection | Formula |
 |---|---|
 | Spec phase — primary (3.1, 3.2) | Explicit precedence, first match wins: `Abandoned` (stored) → `Executing` (an execution in definition_review/running — 16.2's "active") → `In review` (a proposed revision exists) → `Draft` (an editable draft revision exists) → `Delivered` (every non-removed criterion of the current approved revision proven-and-merged or waived, no delivery pending — 3.7) → `Approved`. Authoring states outrank Delivered/Approved — proposing changes against an approved or delivered spec returns the primary to Draft/In review (3.9), symmetric across both cases |
@@ -282,6 +290,8 @@ Every transition names its initiator, authorization, predicate, transaction, and
 ## System Flows
 
 ### Authoring → Review → Sign-off
+
+> **Superseded in part (2026-09-24).** Propose no longer freezes or classifies the draft for review; the human reviews the editable draft and sign-off freezes it. See "Amendment — continuous review" at the end of this document.
 
 ```mermaid
 sequenceDiagram
@@ -1173,6 +1183,8 @@ the frozen premise snapshot.
 
 ### Citation integrity and revision behavior
 
+> **Superseded in part (2026-09-24).** Citations stay mutable on a draft under review and freeze at sign-off; the Request Changes and Proposal rows describe the retired lifecycle. See "Amendment — continuous review" at the end of this document.
+
 Canonical citation order is `(elementId, assumptionId)`. The citation hash is:
 
 ```ts
@@ -1586,6 +1598,8 @@ keep their exact meaning.
 
 ### Refusal rationale (24.20)
 
+> **Superseded in part (2026-09-24).** The withdraw-after-engagement refusal no longer exists. See "Amendment — continuous review" at the end of this document.
+
 `refusalSchema` gains optional `rationale: string`; the CLI renders it as a
 `why:` line between unmet conditions and instruction, and `why:` joins the
 enumerated guidance prefixes with its arch test. Populated in this slice:
@@ -1629,6 +1643,8 @@ withdraw-and-reopen, and a forced notifier failure recovered by
 
 ## Amendment — exclusive checkpoints and managed delivery definitions (2026-08-31)
 
+> **Superseded in part (2026-09-24).** An extension now opens at Design and returns to Requirements only for a requirement change, from the revision it amended; delivery-plan sign-off, not proposal, freezes the candidate. See "Amendment — continuous review" at the end of this document.
+
 Requirements and Design use exact-stage write admission. An extension opens at
 Requirements, records its own approved checkpoint, and only then advances into
 Design. `return-to-requirements` withdraws the active Design revision and
@@ -1659,3 +1675,54 @@ and History. Criterion evidence and stage-local lint are inline. Delivery is a
 deep-link bridge to the managed definition and launched execution. Workflow
 Builder groups managed definitions by spec and adds lifecycle actions plus
 Config, Scope, and Changes inspector tabs; it remains the only graph editor.
+
+## Amendment — continuous review (2026-09-24)
+
+Requirement 27 (command-center#160) removes the Proposed state from spec
+revisions and delivery-plan attempts.
+
+**Spec revisions.** States are `draft`, `approved`, and `withdrawn`. Review
+happens on the editable draft. A content approval stores the subject
+fingerprint it approved (`spec_approvals.subject_fingerprint_json`), and
+`approval-applicability.ts` treats it as applicable only while the subject's
+current fingerprint matches; the ancestor rule is unchanged. Human review acts
+carry `expectedReviewHash`, the `review-hash.ts` hash of the content hash,
+citation contract version, and citation hash of the draft the human read. A
+mismatch refuses with `stale_review`.
+
+`propose` runs the lint gate and files approval requests, leaving the draft
+editable. When every consulted dial is Notify or Off, it freezes and approves
+the draft, records the policy admissions, and retires open approval requests
+for that revision. Sign-off is the only other freeze. It requires every
+consulted Gate subject approved on the current content, no blocking lint
+finding, and no unresolved blocking comment thread. Comments and resolution
+work on drafts, and review feedback routes to the latest agent that changed
+the revision (`revision-author.ts`). Request Changes, agent
+withdraw-proposal, dismiss-superseded, the `spec_revision_supersessions`
+table, and the `in_review` phase are removed. Human `withdraw` discards the
+open draft.
+
+An amendment opens at Design (`openDraftAuthoringStage`).
+`return-to-requirements` withdraws the Design draft and opens a Requirements
+draft from its nearest approved ancestor. On an amendment, that ancestor
+already carries the approved Design, so only the withdrawn draft's edits are
+dropped.
+
+**Delivery-plan attempts.** Statuses are `draft`, `approved`, `parked`,
+`launched`, and `abandoned`. The human signs the draft off in Workflow Builder
+with `{ expectedDraftRevision, expectedDefinitionRevision }`.
+`delivery-plan-service.ts` `freezeAndApprove` restages the definition to its
+candidate. One SQLite transaction then approves the candidate
+(`spec-delivery-plan-repo.ts` `approveCandidate`) and admits execution start.
+Any failure thaws the definition. `plan propose` requests that review, or runs
+the same freeze under a Notify or Off execution-start dial. The CLI
+`plan sign-off` verb is removed, parking requires an approved attempt, and the
+managed-definition lifecycle loses `in_review`.
+
+**Migration.** `0057-continuous-spec-review` (schema version 23) back-fills
+fingerprints on existing content approvals from the revision each was granted
+on. It reopens each proposed revision as its spec's draft, or withdraws it when
+a draft exists, and runs the 0056 repair for requests left open. It also drops
+the supersession table, abandons proposed attempts and attempts parked without
+a sign-off, and strips `approvedAtPark`. The canonical export bundle format is
+5.

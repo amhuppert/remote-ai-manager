@@ -103,7 +103,7 @@ export function gateLines(gates: readonly ProjectedGate[]): string[] {
  * subject list is not an answer to "is anything outstanding".
  */
 export function signOffLines(signOff: RevisionSignOff): string[] {
-  if (signOff === null) return ["  none — no revision is under review"];
+  if (signOff === null) return ["  none — no sign-off is owed"];
   const revision = `rev ${signOff.revisionNumber}`;
   switch (signOff.state) {
     case "signed_off":

@@ -51,12 +51,9 @@ export const NoPlan: Story = {
     <BridgeState detail={specControlsDetailFixture()} review={null} />
   ),
 };
-export const Draft: Story = {
+export const ReadyForSignOff: Story = {
   render: () => (
-    <BridgeState
-      detail={specControlsDetailFixture()}
-      review={reviewView({ attempt: { status: "draft" } })}
-    />
+    <BridgeState detail={specControlsDetailFixture()} review={reviewView()} />
   ),
 };
 export const NeedsReaffirmation: Story = {
@@ -67,9 +64,12 @@ export const NeedsReaffirmation: Story = {
     />
   ),
 };
-export const InReview: Story = {
+export const Approved: Story = {
   render: () => (
-    <BridgeState detail={specControlsDetailFixture()} review={reviewView()} />
+    <BridgeState
+      detail={specControlsDetailFixture()}
+      review={reviewView({ attempt: { status: "approved" } })}
+    />
   ),
 };
 export const Launched: Story = {

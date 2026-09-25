@@ -275,7 +275,7 @@ export interface SpecSpineWorld {
   reviewNotifications: {
     requested: SpecApprovalRequestNotice[];
     granted: SpecApprovalGrantNotice[];
-    /** Requests that ended unanswered: a revision withdrawn or sent back. */
+    /** Requests that ended unanswered, such as those of a withdrawn draft. */
     closed: SpecApprovalRequestsClosedNotice[];
     /** Notify-dial policy admissions surfaced for post-hoc review (R11.2). */
     policyAdmitted: SpecPolicyAdmissionNotice[];
@@ -1966,6 +1966,11 @@ export async function authorSpineDraft(
       "agent",
     ),
   );
+  const requirementsReviewHash = await readSpineReviewHash(
+    world,
+    slug,
+    requirementsRevisionId,
+  );
   await postJson(
     world.postAction(
       slug,
@@ -1974,6 +1979,7 @@ export async function authorSpineDraft(
         revisionId: requirementsRevisionId,
         subjectKind: "requirement",
         elementId: ids.requirementId,
+        expectedReviewHash: requirementsReviewHash,
       },
       "human",
     ),
@@ -1982,7 +1988,10 @@ export async function authorSpineDraft(
     world.postAction(
       slug,
       "sign-off",
-      { revisionId: requirementsRevisionId },
+      {
+        revisionId: requirementsRevisionId,
+        expectedReviewHash: requirementsReviewHash,
+      },
       "human",
     ),
   );
@@ -2022,6 +2031,11 @@ export async function authorSpineDraft(
       "agent",
     ),
   );
+  const designReviewHash = await readSpineReviewHash(
+    world,
+    slug,
+    designRevision.revision.id,
+  );
   await postJson(
     world.postAction(
       slug,
@@ -2030,6 +2044,7 @@ export async function authorSpineDraft(
         revisionId: designRevision.revision.id,
         subjectKind: "decision",
         elementId: ids.decisionId,
+        expectedReviewHash: designReviewHash,
       },
       "human",
     ),
@@ -2038,7 +2053,10 @@ export async function authorSpineDraft(
     world.postAction(
       slug,
       "sign-off",
-      { revisionId: designRevision.revision.id },
+      {
+        revisionId: designRevision.revision.id,
+        expectedReviewHash: designReviewHash,
+      },
       "human",
     ),
   );
@@ -2132,12 +2150,42 @@ export async function proposeSpineRevision(
   return { ...authored, proposeResponse };
 }
 
+/**
+ * The review hash a human echoes on every content review act, read the way
+ * Spec Studio reads it: from the detail route's open-draft review. Refuses when
+ * the open draft is not the revision the caller means to review.
+ */
+export async function readSpineReviewHash(
+  world: SpecSpineWorld,
+  slug: string,
+  revisionId: string,
+): Promise<string> {
+  const detail = await postJson<{
+    draftReview: {
+      snapshot: { revision: { id: string } };
+      reviewHash: string;
+    } | null;
+  }>(world.getRoute("getSpecGET", { slug }));
+  const reviewed = detail.draftReview?.snapshot.revision.id ?? null;
+  if (detail.draftReview === null || reviewed !== revisionId) {
+    throw new Error(
+      `Spec ${slug} has no open draft ${revisionId} to review (open draft: ${reviewed ?? "none"}).`,
+    );
+  }
+  return detail.draftReview.reviewHash;
+}
+
 /** Human review through the routes: item approvals, plan approval, sign-off. */
 export async function approveAndSignOffSpine(
   world: SpecSpineWorld,
   slug: string,
   authored: AuthoredSpineSpec,
 ): Promise<void> {
+  const expectedReviewHash = await readSpineReviewHash(
+    world,
+    slug,
+    authored.draftRevisionId,
+  );
   await postJson(
     world.postAction(
       slug,
@@ -2145,6 +2193,7 @@ export async function approveAndSignOffSpine(
       {
         revisionId: authored.draftRevisionId,
         subjects: [{ subjectKind: "plan", elementId: null }],
+        expectedReviewHash,
       },
       "human",
     ),
@@ -2155,6 +2204,7 @@ export async function approveAndSignOffSpine(
       "sign-off",
       {
         revisionId: authored.draftRevisionId,
+        expectedReviewHash,
       },
       "human",
     ),

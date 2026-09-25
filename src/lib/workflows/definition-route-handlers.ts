@@ -470,7 +470,7 @@ const SERVER_OWNED_REGION_RATIONALE =
  * The region_locked refusal for a managed definition, stage-aware: on a draft,
  * a server-owned path was never the author's to write, so the remedy is to
  * omit it from the plan and the reason is stated; any other lock keeps the
- * escape its declarer wrote (the charter lock's reopen-and-re-propose line).
+ * escape its declarer wrote (the charter lock's reopen-and-sign-off line).
  */
 function regionLockedRefusal(
   routeLog: Logger,

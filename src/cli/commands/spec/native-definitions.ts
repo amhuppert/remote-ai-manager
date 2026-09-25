@@ -238,16 +238,16 @@ export const specPlanStatusSpec = {
 } as const;
 export const specPlanPreviewSpec = {
   path: "spec plan preview",
-  summary: "Read the authored or frozen launch candidate",
+  summary: "Read the authored draft or the signed launch candidate",
   description:
-    "Draft reads editable content and is never approvable. Proposed reads the immutable candidate that a human approval binds to. Outline returns a navigation map of its graph.",
+    "Draft reads the editable content a human reviews and signs off. Approved reads the immutable candidate that sign-off froze and launch binds to. Outline returns a navigation map of its graph.",
   requires: "cc",
   effects: "read",
   args: [slug],
   flags: {
     stage: {
-      description: "Editable draft or frozen proposed candidate",
-      value: { kind: "enum", values: ["draft", "proposed"] },
+      description: "Editable draft or signed candidate",
+      value: { kind: "enum", values: ["draft", "approved"] },
       required: true,
     },
     "expected-draft-revision": {
@@ -320,7 +320,7 @@ export const specLintCommand = ccCommands.defineCommand(specLintSpec, {
   examples: [
     {
       args: { slug: "native-sdd" },
-      why: "Inspect findings before proposing a revision",
+      why: "Inspect findings before asking for review",
     },
   ],
   handler: async () => ({

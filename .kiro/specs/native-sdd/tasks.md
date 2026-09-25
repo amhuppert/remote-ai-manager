@@ -1,4 +1,7 @@
 # Implementation Plan
+
+> **Superseded in part (2026-09-24).** Revisions and delivery-plan attempts no longer have a Proposed state: a draft is reviewed while it stays editable, and sign-off is the only freeze. Tasks that build proposing as a freeze, Request Changes, proposal withdrawal or supersession, or the In review phase record completed work on the retired lifecycle. Requirement 27 in `requirements.md` and "Amendment — continuous review" in `design.md` describe the current lifecycle.
+
 - [x] 1. Foundation: spec domain schemas and database floor
 - [x] 1.1 Define the spec domain schemas
   - Author the domain schema module covering all persisted row shapes for the 19 spec tables, the kind-discriminated element payload union (section, requirement, criterion, decision, task), gate policy (preset plus sparse per-gate overrides), evidence kinds with the evaluated-state shape, actor provenance, refusal codes with the shared refusal shape, and the durable event-type catalog

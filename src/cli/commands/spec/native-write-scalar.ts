@@ -10,11 +10,9 @@ import {
   specCommentRowSchema,
   specExecutionRowSchema,
   specRevisionSchema,
-  specRevisionSupersessionSchema,
   specSchema,
 } from "@/lib/specs/schemas";
 import {
-  approvalLedgerSchema,
   specAssumptionViewSchema,
   specProposeResultViewSchema,
   specQuestionViewSchema,
@@ -50,19 +48,6 @@ const amendSchema = z
   .object({
     revision: specRevisionSchema,
     skippedWithdrawnRevisions: z.array(specRevisionSchema),
-  })
-  .strict();
-const withdrawSchema = z
-  .object({
-    withdrawn: specRevisionSchema,
-    draft: specRevisionSchema,
-    approvalLedger: approvalLedgerSchema,
-  })
-  .strict();
-const dismissSchema = z
-  .object({
-    withdrawn: specRevisionSchema,
-    supersession: specRevisionSupersessionSchema,
   })
   .strict();
 const advancedSchema = z.object({ revision: specRevisionSchema }).strict();
@@ -104,69 +89,6 @@ export const amendHandler = scalar<
         effect: "applied",
         recovery: recoveryFacts([
           { kind: "spec-revision", id: response.value.revision.id },
-        ]),
-        result: {
-          ok: true,
-          data: response.value,
-          hint: statusHint(app, ctx.args.slug),
-        },
-      }
-    : response.report;
-});
-
-export const withdrawProposalHandler = scalar<
-  typeof S.specWithdrawProposalSpec,
-  z.infer<typeof withdrawSchema>
->(async ({ app, ctx }) => {
-  const resolved = await resolveWrite(app, ctx.args.slug);
-  if (!resolved.ok) return { effect: "not_applied", result: resolved };
-  const response = await postValue(
-    app,
-    resolved.value,
-    actionPath(resolved.value, ctx.args.slug, "withdraw-proposal"),
-    { revisionId: ctx.flags.revision },
-    withdrawSchema,
-    recoveryFacts([{ kind: "spec-revision", id: ctx.flags.revision }]),
-  );
-  return response.ok
-    ? {
-        effect: "applied",
-        recovery: recoveryFacts([
-          { kind: "spec-revision", id: response.value.draft.id },
-        ]),
-        result: {
-          ok: true,
-          data: response.value,
-          hint: statusHint(app, ctx.args.slug),
-        },
-      }
-    : response.report;
-});
-
-export const dismissSupersededHandler = scalar<
-  typeof S.specDismissSupersededSpec,
-  z.infer<typeof dismissSchema>
->(async ({ app, ctx }) => {
-  const resolved = await resolveWrite(app, ctx.args.slug);
-  if (!resolved.ok) return { effect: "not_applied", result: resolved };
-  if (!ctx.flags.reason.trim())
-    return {
-      effect: "not_applied",
-      result: usage("The dismissal reason must not be empty."),
-    };
-  const response = await postValue(
-    app,
-    resolved.value,
-    actionPath(resolved.value, ctx.args.slug, "dismiss-superseded"),
-    { revisionId: ctx.flags.revision, reason: ctx.flags.reason },
-    dismissSchema,
-    recoveryFacts([{ kind: "spec-revision", id: ctx.flags.revision }]),
-  );
-  return response.ok
-    ? {
-        effect: "applied",
-        recovery: recoveryFacts([
-          { kind: "spec-revision", id: response.value.withdrawn.id },
         ]),
         result: {
           ok: true,
@@ -253,7 +175,7 @@ export const proposeHandler = scalar<
     if (ctx.flags.notes !== undefined && !ctx.flags.notes.trim())
       return {
         effect: "not_applied",
-        result: usage("Proposal notes must not be empty."),
+        result: usage("Review notes must not be empty."),
       };
     const resolved = await resolveWrite(app, ctx.args.slug);
     if (!resolved.ok) return { effect: "not_applied", result: resolved };
@@ -307,7 +229,9 @@ export const proposeHandler = scalar<
     });
     return (
       [
-        `proposed revision ${view.revision.number} (${view.revision.id}) — ${view.revision.state}`,
+        view.absorbedSignOff
+          ? `revision ${view.revision.number} (${view.revision.id}) signed off by policy — ${view.revision.state}`
+          : `review requested for revision ${view.revision.number} (${view.revision.id}) — ${view.revision.state}`,
         `acts next: ${repairs.length ? "agent" : (block?.actsNext ?? "agent")}${block ? ` — ${block.display}` : ""}`,
         ...approvalLedgerLines(view.approvalLedger),
         ...(block ? pendingBlockLines(block) : []),

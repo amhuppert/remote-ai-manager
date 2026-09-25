@@ -1,7 +1,8 @@
-import type {
-  ApprovalApplicability,
-  ApprovalCitationState,
-  ApprovalSubjectKind,
+import {
+  approvalRecordFromRow,
+  type ApprovalApplicability,
+  type ApprovalCitationState,
+  type ApprovalSubjectKind,
 } from "./approval-applicability";
 import {
   APPROVAL_CARRY_RULE,
@@ -257,7 +258,7 @@ export interface AuthoringReviewProjectionInput {
   revisionNumberById: ReadonlyMap<string, number>;
   applies: ApprovalApplicability;
   blockingThreads: readonly ReviewThreadSnapshot[];
-  /** The revision's lint findings whose severity blocks sign-off. */
+  /** The revision's non-advisory lint findings: every one blocks sign-off. */
   signOffFindings: readonly LintFinding[];
   /**
    * Open review comments on the projected revision. Optional display
@@ -595,14 +596,16 @@ function projectPendingApprovals(
 function projectSignOff(
   input: AuthoringReviewProjectionInput,
   outstandingSubjectCount: number,
+  humanSignOffOwed: boolean,
 ): RevisionSignOffProjection | null {
   const snapshot = input.snapshot;
-  // A draft owes a propose before it owes a sign-off, and a withdrawn revision
-  // is terminal: neither has a sign-off outstanding.
+  // A withdrawn revision is terminal, and a draft whose consulted gates are
+  // all Notify or Off is frozen by its author's propose: neither owes a human
+  // sign-off.
   if (
     snapshot === null ||
-    snapshot.revision.state === "draft" ||
-    snapshot.revision.state === "withdrawn"
+    snapshot.revision.state === "withdrawn" ||
+    (snapshot.revision.state === "draft" && !humanSignOffOwed)
   ) {
     return null;
   }
@@ -646,18 +649,10 @@ function projectSignOff(
                 snapshot.revision.citationContractVersion,
               citations: toDiffCitations(snapshot),
             },
-            approvals: input.approvals.flatMap((candidate) =>
-              candidate.subject_kind === "revision"
-                ? []
-                : [
-                    {
-                      subjectKind: candidate.subject_kind,
-                      elementId: candidate.element_id,
-                      revisionId: candidate.revision_id,
-                      validity: candidate.validity,
-                    },
-                  ],
-            ),
+            approvals: input.approvals.flatMap((candidate) => {
+              const record = approvalRecordFromRow(candidate);
+              return record === null ? [] : [record];
+            }),
             handles: new Map(
               snapshot.elements.map((row) => [
                 row.element.id,
@@ -741,9 +736,6 @@ function projectPendingBlock(
     first === undefined
       ? 0
       : pending.filter((subject) => subject.gate === first.gate).length;
-  // An open draft owes a propose before it owes anything to a human: the
-  // subjects below are what the review will ask for, not what it is waiting on.
-  const draft = input.snapshot?.revision.state === "draft";
   // R11.5: with the approvals collapsed, no subject was ever approved
   // individually, so saying they all were would describe acts that never
   // happened.
@@ -751,9 +743,8 @@ function projectPendingBlock(
     input.policy,
     input.snapshot?.revision.authoringStage,
   );
-  const display = draft
-    ? `${revisionLabel} is an open draft; proposing it opens the review its consulted gates ask for`
-    : first === undefined
+  const display =
+    first === undefined
       ? signOff?.state === "blocked"
         ? `${revisionLabel} cannot be signed off yet: ${signOff.unmetConditions.length} unmet condition${signOff.unmetConditions.length === 1 ? "" : "s"}`
         : collapsed
@@ -765,21 +756,23 @@ function projectPendingBlock(
             ? `${revisionLabel} has every consulted subject settled — ${importCarried.length} carried forward from the import rather than approved by a human — and awaits explicit human sign-off`
             : `${revisionLabel} has every consulted subject approved and awaits explicit human sign-off`
       : `${revisionLabel} needs ${pending.length} human approval${pending.length === 1 ? "" : "s"} — ${subjectSentence(pending)}`;
-  const instruction = draft
-    ? "Propose the draft revision when it is ready for review."
-    : first === undefined
+  const instruction =
+    first === undefined
       ? signOff?.state === "blocked"
-        ? `Resolve the unmet sign-off conditions, then sign ${revisionLabel} off in Spec Studio.`
+        ? `Resolve the unmet sign-off conditions, then ask a human to sign ${revisionLabel} off in Spec Studio.`
         : `Ask a human to sign ${revisionLabel} off in Spec Studio; approving the last subject does not sign it off.`
       : nextGateSubjectCount > 1
         ? `Ask a human to approve all ${nextGateSubjectCount} outstanding subjects at the ${first.gate} gate in Spec Studio, or request the ${first.gate} gate without a subject.`
         : `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio, or request it with gate ${first.gate} and subject ${first.subject}.`;
-  // A draft cannot carry review comments — commenting refuses outside a
-  // proposed revision — so the lead only decorates the in-review block, where
-  // a human weighing "approve or Request Changes" is exactly who reads it.
-  const open = draft ? null : projectOpenComments(input);
+  const open = projectOpenComments(input);
   return {
-    actsNext: draft ? "agent" : "human",
+    // Missing approvals also block sign-off, but those are the human's to
+    // give; only conditions left once every subject is approved are the
+    // author's.
+    actsNext:
+      open !== null || (pending.length === 0 && signOff?.state === "blocked")
+        ? "agent"
+        : "human",
     gates: blockGates,
     outstandingSubjects: [...pending],
     signOff,
@@ -791,7 +784,7 @@ function projectPendingBlock(
     instruction:
       open === null
         ? instruction
-        : `${openCommentLead(open, input.specSlug)} A human must approve what remains in Spec Studio or use Request Changes to reopen the draft before repairs can land.`,
+        : `${openCommentLead(open, input.specSlug)} Repair or answer them in the draft; a human can still approve what remains in Spec Studio.`,
   };
 }
 
@@ -870,24 +863,21 @@ function projectNextAction(
     };
   }
   const open = projectOpenComments(input);
-  // Element approval is refused on a draft, so naming a subject here would
-  // send the caller at an act the transition cannot accept. The subjects stay
-  // listed — they are what the review will ask for — but the act is propose.
-  // A draft carrying open comments is the Request Changes repair loop: the
-  // reviewer's feedback is what the next propose must answer.
-  if (input.snapshot?.revision.state === "draft") {
+  // Open review threads on the draft are the repair loop: the author answers
+  // them before anything else, since a blocking one holds sign-off. A frozen
+  // revision's threads can no longer be answered by a repair.
+  if (open !== null && input.snapshot?.revision.state === "draft") {
     return {
       kind: "propose",
       actsNext: "agent",
       gate: null,
       subject: null,
       elementId: null,
-      instruction:
-        open === null
-          ? "Propose the draft revision when it is ready for review."
-          : `${openCommentLead(open, input.specSlug)} Repair or answer them in the draft, then propose it again.`,
+      instruction: `${openCommentLead(open, input.specSlug)} Repair or answer them in the draft, then propose it again.`,
     };
   }
+  // A human can approve the draft's subjects at any time; the author's
+  // propose is what files the Needs You request asking them to.
   const orderedPending = inGateOrder(pending);
   const first = orderedPending[0];
   if (first !== undefined) {
@@ -901,10 +891,7 @@ function projectNextAction(
         gate: first.gate,
         subject: null,
         elementId: null,
-        instruction:
-          open === null
-            ? `Ask a human to approve all ${gateSubjects.length} outstanding subjects at the ${first.gate} gate in Spec Studio.`
-            : `${openCommentLead(open, input.specSlug)} A human must approve the remaining subjects in Spec Studio or use Request Changes to reopen the draft before repairs can land.`,
+        instruction: `Ask a human to approve all ${gateSubjects.length} outstanding subjects at the ${first.gate} gate in Spec Studio.`,
       };
     }
     return {
@@ -913,10 +900,7 @@ function projectNextAction(
       gate: first.gate,
       subject: first.subject,
       elementId: first.elementId,
-      instruction:
-        open === null
-          ? `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio.`
-          : `${openCommentLead(open, input.specSlug)} A human must approve the remaining subjects in Spec Studio or use Request Changes to reopen the draft before repairs can land.`,
+      instruction: `Ask a human to approve ${first.subject} at the ${first.gate} gate in Spec Studio.`,
     };
   }
   if (signOff?.state === "blocked") {
@@ -927,7 +911,7 @@ function projectNextAction(
       subject: null,
       elementId: null,
       instruction:
-        "Resolve the unmet sign-off conditions, then sign the revision off.",
+        "Resolve the unmet sign-off conditions, then ask for sign-off again.",
     };
   }
   if (signOff?.state === "ready") {
@@ -937,10 +921,19 @@ function projectNextAction(
       gate: null,
       subject: null,
       elementId: null,
-      instruction:
-        open === null
-          ? `Ask a human to sign revision ${signOff.revisionNumber} off in Spec Studio.`
-          : `${openCommentLead(open, input.specSlug)} A human can still sign revision ${signOff.revisionNumber} off in Spec Studio, or use Request Changes to reopen the draft for repairs.`,
+      instruction: `Ask a human to sign revision ${signOff.revisionNumber} off in Spec Studio.`,
+    };
+  }
+  // Nothing here waits on a human, so the author's propose is the act that
+  // freezes the draft under the Notify and Off dials.
+  if (input.snapshot?.revision.state === "draft") {
+    return {
+      kind: "propose",
+      actsNext: "agent",
+      gate: null,
+      subject: null,
+      elementId: null,
+      instruction: "Propose the draft revision when it is ready.",
     };
   }
   return {
@@ -988,6 +981,9 @@ export function authoringReviewProjection(
   const signOff = projectSignOff(
     input,
     pending.filter((subject) => isAuthoringGate(subject.gate)).length,
+    [...consulted].some((gate) =>
+      dialRequiresHumanApproval(resolveDial(input.policy, gate)),
+    ),
   );
   return {
     applicableGates,

@@ -187,30 +187,77 @@ describe("native SDD managed workflow definition policy", () => {
   });
 });
 
+function insertAttempt(status: "draft" | "approved") {
+  db.prepare(
+    `INSERT INTO spec_delivery_plan_attempts (
+       id, spec_id, pinned_revision_id, status, draft_revision, content_json,
+       workflow_definition_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?)`,
+  ).run(
+    "attempt-1",
+    SPEC_ID,
+    PINNED_REVISION_ID,
+    status,
+    stableStringify({
+      schemaVersion: 3,
+      binding: { dispositions: [], claims: [] },
+    }),
+    "definition-current",
+    "2026-08-31T10:00:00.000Z",
+    "2026-08-31T10:00:00.000Z",
+  );
+}
+
+// The draft is what a human reviews and signs off; the signed candidate is
+// what launches or reopens. No state sits between the two.
+describe("native SDD managed workflow definition policy: lifecycle acts", () => {
+  it("offers sign-off on the current draft and nothing that needs a signed candidate", async () => {
+    insertAttempt("draft");
+    const policy = createNativeSddManagedWorkflowDefinitionPolicy({
+      db,
+      resolveProjectName: () => "repo",
+    });
+
+    const detail = await policy.get(PROJECT_PATH, "definition-current");
+
+    expect(detail).toMatchObject({
+      lifecycle: "draft",
+      editable: true,
+      nextAct: "sign_off",
+      capabilities: {
+        canSignOff: true,
+        canReopen: false,
+        canLaunch: false,
+        refusals: { launch: "Sign off before launch." },
+      },
+    });
+    expect(detail?.capabilities.refusals).not.toHaveProperty("signOff");
+  });
+
+  it("offers launch and reopen on a signed candidate and refuses a second sign-off", async () => {
+    insertAttempt("approved");
+    const policy = createNativeSddManagedWorkflowDefinitionPolicy({
+      db,
+      resolveProjectName: () => "repo",
+    });
+
+    const detail = await policy.get(PROJECT_PATH, "definition-current");
+
+    expect(detail).toMatchObject({
+      lifecycle: "approved",
+      editable: false,
+      nextAct: "launch",
+      capabilities: {
+        canSignOff: false,
+        canReopen: true,
+        canLaunch: true,
+        refusals: { signOff: "Only the current draft can be signed off." },
+      },
+    });
+  });
+});
+
 describe("native SDD managed workflow definition policy: propose gate", () => {
-  const binding = {
-    schemaVersion: 3,
-    binding: { dispositions: [], claims: [] },
-  };
-
-  function insertAttempt(status: "draft" | "proposed") {
-    db.prepare(
-      `INSERT INTO spec_delivery_plan_attempts (
-         id, spec_id, pinned_revision_id, status, draft_revision, content_json,
-         workflow_definition_id, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?)`,
-    ).run(
-      "attempt-1",
-      SPEC_ID,
-      PINNED_REVISION_ID,
-      status,
-      stableStringify(binding),
-      "definition-current",
-      "2026-08-31T10:00:00.000Z",
-      "2026-08-31T10:00:00.000Z",
-    );
-  }
-
   function specSlug(): string {
     const row = db.prepare("SELECT slug FROM specs WHERE id = ?").get(SPEC_ID);
     if (
@@ -242,8 +289,8 @@ describe("native SDD managed workflow definition policy: propose gate", () => {
     expect(reads).toEqual([[PROJECT_PATH, specSlug()]]);
   });
 
-  it("reports null for an unmanaged id, a proposed candidate, and without a reader", async () => {
-    insertAttempt("proposed");
+  it("reports null for an unmanaged id, a signed candidate, and without a reader", async () => {
+    insertAttempt("approved");
     const reads: string[] = [];
     const policy = createNativeSddManagedWorkflowDefinitionPolicy({
       db,

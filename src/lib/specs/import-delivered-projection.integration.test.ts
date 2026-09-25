@@ -7,6 +7,7 @@ import {
   authorSpineDraft,
   createSpecSpineWorld,
   postJson,
+  readSpineReviewHash,
   SPINE_PROJECT_PATH,
   type SpecSpineWorld,
 } from "./spine-test-fixture";
@@ -324,7 +325,14 @@ describe("the spec views expose import provenance without a human approver (R9.1
       world.postAction(
         SLUG,
         "approve-remaining-and-sign-off",
-        { revisionId: requirementsCheckpoint.revision.id },
+        {
+          revisionId: requirementsCheckpoint.revision.id,
+          expectedReviewHash: await readSpineReviewHash(
+            world,
+            SLUG,
+            requirementsCheckpoint.revision.id,
+          ),
+        },
         "human",
       ),
     );
@@ -358,7 +366,14 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
       world.postAction(
         SLUG,
         "approve-remaining-and-sign-off",
-        { revisionId: requirementsCheckpoint.revision.id },
+        {
+          revisionId: requirementsCheckpoint.revision.id,
+          expectedReviewHash: await readSpineReviewHash(
+            world,
+            SLUG,
+            requirementsCheckpoint.revision.id,
+          ),
+        },
         "human",
       ),
     );
@@ -398,7 +413,14 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
       world.postAction(
         SLUG,
         "approve-remaining-and-sign-off",
-        { revisionId: designAmendment.revision.id },
+        {
+          revisionId: designAmendment.revision.id,
+          expectedReviewHash: await readSpineReviewHash(
+            world,
+            SLUG,
+            designAmendment.revision.id,
+          ),
+        },
         "human",
       ),
     );

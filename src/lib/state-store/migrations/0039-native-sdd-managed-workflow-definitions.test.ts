@@ -310,6 +310,9 @@ describe("0039-native-sdd-managed-workflow-definitions", () => {
     const attemptId = "attempt-proposed";
     const snapshotId = "snapshot-proposed";
     const candidateId = "candidate-proposed";
+    // The floor DDL no longer admits `proposed`; the schema this migration
+    // ran against did, and 0057 later retires such attempts.
+    db.pragma("ignore_check_constraints = ON");
     insertAttempt(db, {
       id: attemptId,
       status: "proposed",
@@ -373,6 +376,7 @@ describe("0039-native-sdd-managed-workflow-definitions", () => {
     );
 
     await runMigration(db, configDir);
+    db.pragma("ignore_check_constraints = OFF");
 
     const snapshot = db
       .prepare("SELECT * FROM spec_delivery_plan_snapshots WHERE id = ?")

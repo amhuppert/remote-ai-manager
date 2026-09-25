@@ -16,6 +16,7 @@ import {
 import { authoringReviewProjection } from "./authoring-review-projection";
 import { createSpecEventsPublisher } from "./events";
 import { createImportService, type ImportService } from "./import-service";
+import { revisionReviewHash } from "./review-hash";
 import { loadProposalState } from "./review-state";
 import { createReviewService, type ReviewService } from "./review-service";
 import type { Spec, SpecRevision } from "./schemas";
@@ -138,6 +139,13 @@ async function importedSpec(): Promise<{
     elementIdByStatement,
     criterionIdByText,
   };
+}
+
+/** The review hash of the draft as it stands, echoed by a human review act. */
+async function currentReviewHash(revisionId: string): Promise<string> {
+  const snapshot = await harness.fixture.specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) throw new Error("expected a revision snapshot");
+  return revisionReviewHash(snapshot);
 }
 
 /**
@@ -354,6 +362,7 @@ describe("amending an imported spec", () => {
         elementId: changedElementId,
         approver: "alex",
         actor: HUMAN,
+        expectedReviewHash: await currentReviewHash(amendment.revision.id),
       }),
     ).resolves.toMatchObject({ ok: true });
 
@@ -387,8 +396,12 @@ describe("amending an imported spec", () => {
         revisionId: amendment.revision.id,
         approver: "alex",
         actor: HUMAN,
+        expectedReviewHash: await currentReviewHash(amendment.revision.id),
       }),
-    ).resolves.toMatchObject({ ok: true });
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { revision: { state: "approved" } },
+    });
   });
 
   /**

@@ -1,6 +1,5 @@
 import { emptyApprovalLedger } from "@/lib/specs/approval-ledger";
 import { remainingAuthoringSequence } from "@/lib/specs/authoring-sequence";
-import { liveProposalProjection } from "@/lib/specs/proposal-integrity";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import { toDiffRows } from "@/lib/specs/revision-diff-projections";
 import { consultedAuthoringGates } from "@/lib/specs/authoring-gates";
@@ -9,7 +8,7 @@ import {
   specDetailViewSchema,
   specExecutionViewSchema,
   specGateAdmissionViewSchema,
-  type LiveProposalView,
+  type DraftReviewView,
   type SpecExecutionView,
   type SpecGateAdmissionView,
   type SpecRevisionSnapshotView,
@@ -96,105 +95,65 @@ export function executionViewFixture(
 }
 
 /**
- * The live-proposals projection the detail route computes, rebuilt over a
- * fixture's own revisions and snapshots.
- *
- * It calls the shared predicate rather than restating "which proposal is
- * stranded" in fixture code: a fixture that could disagree with the server
- * would let a surface pass its test while showing the operator a review state
- * the lineage does not support (#50).
+ * The `subject_fingerprint_json` a content approval records: the element
+ * payload hashes and citation digest the human approved. Studio never reads
+ * inside it, so one well-formed value per subject is enough for a fixture.
  */
-export function liveProposalsFixture(
-  revisions: readonly SpecRevision[],
-  snapshots: readonly SpecRevisionSnapshotView[],
-  /** The disposition document each proposal was proposed with, by revision id. */
-  notesByRevisionId: Readonly<Record<string, string>> = {},
-): LiveProposalView[] {
-  const byRevisionId = new Map(
-    snapshots.map((snapshot) => [snapshot.revision.id, snapshot]),
-  );
-  return liveProposalProjection(revisions).flatMap((entry) => {
-    const snapshot = byRevisionId.get(entry.revision.id);
-    if (snapshot === undefined) return [];
-    return [
-      {
-        revision: entry.revision,
-        supersededBy: entry.supersededBy,
-        snapshot,
-        baseSnapshot:
-          entry.revision.basedOnRevisionId === null
-            ? null
-            : (byRevisionId.get(entry.revision.basedOnRevisionId) ?? null),
-        governanceBaseSnapshot: (() => {
-          let revisionId = entry.revision.basedOnRevisionId;
-          while (revisionId !== null) {
-            const candidate = revisions.find(
-              (revision) => revision.id === revisionId,
-            );
-            if (candidate === undefined) return null;
-            if (candidate.state === "approved") {
-              return byRevisionId.get(candidate.id) ?? null;
-            }
-            revisionId = candidate.basedOnRevisionId;
-          }
-          return null;
-        })(),
-        notes: notesByRevisionId[entry.revision.id] ?? null,
-      },
-    ];
+export function subjectFingerprintFixture(elementId: string | null): string {
+  return JSON.stringify({
+    elements:
+      elementId === null
+        ? []
+        : [{ elementId, payloadHash: `${elementId}-hash` }],
+    citationContractVersion: 2,
+    citationCount: 0,
+    citationSubhash: "a".repeat(64),
   });
 }
 
 /**
- * Ticket #50's live shape: revision 3 was approved from revision 1's content,
- * forking past the still-proposed revision 2. The lineage head is approved, so
- * a surface keyed off the newest revision reports nothing awaiting review
- * while revision 2 sits with no reachable act.
+ * The draft-review projection the detail route computes, rebuilt over a
+ * fixture's own revisions and snapshots: null unless a draft is open, its
+ * lineage parent as the diff base, and its nearest approved ancestor as the
+ * governance baseline.
  */
-export function strandedProposalDetailFixture(): SpecDetailView {
-  const base = specControlsDetailFixture();
-  const approved = base.revisions[0];
-  const elements = base.currentRevision?.elements;
-  if (approved === undefined || elements === undefined) {
-    throw new Error("Stranded fixture is missing its revision snapshot");
+export function draftReviewFixture(
+  revisions: readonly SpecRevision[],
+  snapshots: readonly SpecRevisionSnapshotView[],
+  {
+    notes = null,
+    reviewHash = "review-hash-1",
+  }: { notes?: string | null; reviewHash?: string } = {},
+): DraftReviewView | null {
+  const draft = revisions.find((revision) => revision.state === "draft");
+  if (draft === undefined) return null;
+  const byRevisionId = new Map(
+    snapshots.map((snapshot) => [snapshot.revision.id, snapshot]),
+  );
+  const snapshot = byRevisionId.get(draft.id);
+  if (snapshot === undefined) {
+    throw new Error(`Draft review fixture is missing ${draft.id}'s snapshot`);
   }
-  const stranded: SpecRevision = {
-    ...approved,
-    id: "revision-2",
-    number: 2,
-    state: "proposed",
-    authoringStage: "requirements",
-    basedOnRevisionId: approved.id,
-    approvedAt: null,
-  };
-  const forkedPast: SpecRevision = {
-    ...approved,
-    id: "revision-3",
-    number: 3,
-    state: "approved",
-    basedOnRevisionId: approved.id,
-  };
-  const revisions = [approved, stranded, forkedPast];
+  let governanceBaseSnapshot: SpecRevisionSnapshotView | null = null;
+  let ancestorId = draft.basedOnRevisionId;
+  while (ancestorId !== null) {
+    const ancestor = revisions.find((revision) => revision.id === ancestorId);
+    if (ancestor === undefined) break;
+    if (ancestor.state === "approved") {
+      governanceBaseSnapshot = byRevisionId.get(ancestor.id) ?? null;
+      break;
+    }
+    ancestorId = ancestor.basedOnRevisionId;
+  }
   return {
-    ...base,
-    revisions,
-    liveProposals: liveProposalsFixture(revisions, [
-      { revision: approved, elements, assumptionCitations: [] },
-      { revision: stranded, elements, assumptionCitations: [] },
-      { revision: forkedPast, elements, assumptionCitations: [] },
-    ]),
-    baseRevision: { revision: approved, elements, assumptionCitations: [] },
-    currentRevision: {
-      revision: forkedPast,
-      elements,
-      assumptionCitations: [],
-    },
-    currentApprovedRevision: {
-      revision: forkedPast,
-      elements,
-      assumptionCitations: [],
-    },
-    executionRevisionSnapshots: [],
+    snapshot,
+    baseSnapshot:
+      draft.basedOnRevisionId === null
+        ? null
+        : (byRevisionId.get(draft.basedOnRevisionId) ?? null),
+    governanceBaseSnapshot,
+    notes,
+    reviewHash,
   };
 }
 
@@ -322,8 +281,8 @@ export function specControlsDetailFixture(
     aliases: [],
     revisions: [revision],
     attentionAuditEvents: [],
-    // The fixture's one revision is approved, so nothing is under review.
-    liveProposals: [],
+    // The fixture's one revision is approved, so no draft is open to review.
+    draftReview: null,
     baseRevision: null,
     currentRevision: { revision, elements, assumptionCitations: [] },
     currentApprovedRevision: { revision, elements, assumptionCitations: [] },
@@ -879,6 +838,7 @@ export function importedThenAmendedSpecDetailFixture(): SpecDetailView {
       approver: "alex",
       granted_at: AMENDMENT_APPROVED_AT,
       validity: "valid",
+      subject_fingerprint_json: null,
     },
   ];
   detail.gateAdmissions = [
@@ -926,6 +886,7 @@ export function draftingSpecControlsDetailFixture(
     assumptionCitations: approved.assumptionCitations,
   };
   detail.revisions = [approved.revision, draft.revision];
+  detail.draftReview = draftReviewFixture(detail.revisions, [approved, draft]);
   detail.baseRevision = approved;
   detail.currentRevision = draft;
   detail.status.phase = { primary: "draft" };

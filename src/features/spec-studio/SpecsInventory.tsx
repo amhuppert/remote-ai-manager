@@ -32,7 +32,6 @@ const logger = createClientLogger("spec-studio-inventory");
 
 const phaseFilters = [
   "draft",
-  "in_review",
   "approved",
   "executing",
   "delivered",
@@ -44,7 +43,6 @@ export type SpecPhaseFilter = "all" | SpecPhasePrimary;
 const phaseAccent: Record<SpecPhasePrimary, string> = {
   abandoned: "bg-red",
   executing: "bg-cyan",
-  in_review: "bg-amber",
   draft: "bg-text-tertiary",
   delivered: "bg-green",
   approved: "bg-green",
@@ -53,7 +51,6 @@ const phaseAccent: Record<SpecPhasePrimary, string> = {
 const phaseText: Record<SpecPhasePrimary, string> = {
   abandoned: "text-red",
   executing: "text-cyan",
-  in_review: "text-amber",
   draft: "text-text-tertiary",
   delivered: "text-green",
   approved: "text-green",

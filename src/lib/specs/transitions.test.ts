@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   createApprovalApplicability,
+  subjectFingerprint,
   type ApprovalApplicability,
+  type ApprovalRecord,
+  type ApprovalSubject,
 } from "./approval-applicability";
 import type { RevisionElement as LintRevisionElement } from "./lint";
 import type { RevisionElement as DiffRevisionElement } from "./revision-diff";
@@ -152,6 +155,22 @@ const emptyCitationDiff = {
   draftCitations: [],
 };
 
+/**
+ * An approval as the review service records it: the subject's fingerprint over
+ * the rows the human read, which may since have been edited in place.
+ */
+function approvalRecord(
+  subject: ApprovalSubject,
+  revisionId: string,
+  readRows: readonly DiffRevisionElement[] = revisionRows(),
+): ApprovalRecord {
+  const fingerprint = subjectFingerprint(readRows, subject, emptyCitationState);
+  if (fingerprint === null) {
+    throw new Error(`the read rows do not carry ${subject.subjectKind}`);
+  }
+  return { ...subject, revisionId, validity: "valid", fingerprint };
+}
+
 function reviewSnapshot(): SignOffReviewSnapshot {
   return {
     revisionId: "revision-2",
@@ -165,24 +184,15 @@ function reviewSnapshot(): SignOffReviewSnapshot {
     importBaselineCitationState: null,
     blockingThreads: [],
     approvals: [
-      {
-        subjectKind: "requirement" as const,
-        elementId: "requirement-1",
-        revisionId: "revision-1",
-        validity: "valid" as const,
-      },
-      {
-        subjectKind: "decision" as const,
-        elementId: "decision-1",
-        revisionId: "revision-1",
-        validity: "valid" as const,
-      },
-      {
-        subjectKind: "plan" as const,
-        elementId: null,
-        revisionId: "revision-1",
-        validity: "valid" as const,
-      },
+      approvalRecord(
+        { subjectKind: "requirement", elementId: "requirement-1" },
+        "revision-1",
+      ),
+      approvalRecord(
+        { subjectKind: "decision", elementId: "decision-1" },
+        "revision-1",
+      ),
+      approvalRecord({ subjectKind: "plan", elementId: null }, "revision-1"),
     ],
   };
 }
@@ -194,26 +204,16 @@ function reviewSnapshot(): SignOffReviewSnapshot {
  */
 function applicabilityFor(
   review: SignOffReviewSnapshot,
-  overrides: {
-    ancestorRevisionIds?: ReadonlySet<string>;
-    rowsByRevision?: Record<string, DiffRevisionElement[]>;
-  } = {},
+  overrides: { ancestorRevisionIds?: ReadonlySet<string> } = {},
 ): ApprovalApplicability {
-  const rowsByRevision = overrides.rowsByRevision ?? {
-    "revision-1": review.governanceBaseRevisionRows,
-  };
   return createApprovalApplicability({
     revisionId: review.revisionId,
-    basedOnRevisionId: "revision-1",
     ancestorRevisionIds:
-      overrides.ancestorRevisionIds ?? new Set(Object.keys(rowsByRevision)),
+      overrides.ancestorRevisionIds ?? new Set(["revision-1"]),
     revisionRows: review.revisionRows,
     citationContractVersion: review.citationContractVersion,
     citations: review.citations,
-    stateForRevision: (revisionId) => {
-      const rows = rowsByRevision[revisionId];
-      return rows === undefined ? null : { rows, ...emptyCitationState };
-    },
+    parentCitationContractVersion: 2,
   });
 }
 
@@ -232,7 +232,7 @@ function signOffContext(
   const review = overrides.review ?? reviewSnapshot();
   return {
     actor: human,
-    revisionState: "proposed",
+    revisionState: "draft",
     authoringStage,
     policy: contractPolicy,
     draft: {
@@ -632,10 +632,42 @@ describe("transition predicates", () => {
       });
     });
 
-    it("refuses proposing a non-draft revision", () => {
+    it.each(["approved", "withdrawn"] as const)(
+      "refuses proposing a %s revision",
+      (revisionState) => {
+        expect(
+          propose({
+            revisionState,
+            authoringStage: "plan",
+            policy: contractPolicy,
+            draft: {
+              specHandle: "native-sdd",
+              authoringStage: "plan",
+              elements: lintElements(),
+            },
+            records: {},
+            ...proposeReview(),
+          }),
+        ).toMatchObject({
+          ok: false,
+          refusal: { code: "gate_blocked" },
+        });
+      },
+    );
+
+    /**
+     * A Gate dial means a human act follows the review request, so propose
+     * owes none of the sign-off's preconditions: the human approves and signs
+     * off the same draft later.
+     */
+    it("allows a review request under a Gate dial while sign-off conditions are still unmet", () => {
+      const review = reviewSnapshot();
+      review.approvals = [];
+      review.blockingThreads.push({ handle: "thread-1", resolved: false });
+
       expect(
         propose({
-          revisionState: "proposed",
+          revisionState: "draft",
           authoringStage: "plan",
           policy: contractPolicy,
           draft: {
@@ -644,12 +676,9 @@ describe("transition predicates", () => {
             elements: lintElements(),
           },
           records: {},
-          ...proposeReview(),
+          ...proposeReview(review),
         }),
-      ).toMatchObject({
-        ok: false,
-        refusal: { code: "gate_blocked" },
-      });
+      ).toEqual({ ok: true });
     });
 
     it.each([
@@ -720,7 +749,7 @@ describe("transition predicates", () => {
       expect(
         approveElement({
           actor: agent,
-          revisionState: "proposed",
+          revisionState: "draft",
           subjectKind: "requirement",
         }),
       ).toEqual({
@@ -734,21 +763,103 @@ describe("transition predicates", () => {
       });
     });
 
-    it("refuses element approval outside review", () => {
+    it("allows a human to approve an element on the open draft", () => {
       expect(
         approveElement({
           actor: human,
           revisionState: "draft",
           subjectKind: "requirement",
         }),
-      ).toMatchObject({
-        ok: false,
-        refusal: { code: "gate_blocked" },
-      });
+      ).toEqual({ ok: true });
     });
+
+    it.each(["approved", "withdrawn"] as const)(
+      "refuses element approval on a %s revision",
+      (revisionState) => {
+        expect(
+          approveElement({
+            actor: human,
+            revisionState,
+            subjectKind: "requirement",
+          }),
+        ).toMatchObject({
+          ok: false,
+          refusal: { code: "gate_blocked" },
+        });
+      },
+    );
   });
 
   describe("signOffRevision", () => {
+    it("signs off the open draft once its preconditions hold", () => {
+      expect(signOffRevision(signOffContext())).toEqual({ ok: true });
+    });
+
+    /**
+     * Sign-off is the only act that freezes content, so repeating it on the
+     * revision it froze answers the same way rather than refusing a retry.
+     */
+    it("treats a repeated sign-off of an approved revision as already done", () => {
+      const review = reviewSnapshot();
+      review.approvals = [];
+      review.blockingThreads.push({ handle: "thread-1", resolved: false });
+
+      expect(
+        signOffRevision(signOffContext({ revisionState: "approved", review })),
+      ).toEqual({ ok: true });
+    });
+
+    it("refuses signing off a withdrawn revision", () => {
+      expect(
+        signOffRevision(signOffContext({ revisionState: "withdrawn" })),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          unmetConditions: ["Only the open draft can be signed off."],
+        },
+      });
+    });
+
+    /**
+     * The author's review request refuses on a `blocks_propose` finding, but a
+     * human can sign off without one ever being filed. Sign-off freezes the
+     * draft, so it owes every non-advisory finding itself.
+     */
+    it("refuses while a propose-blocking lint finding exists", () => {
+      const elements = lintElements();
+      elements[0] = lintElement("requirement-1", "R1", {
+        ...requirementPayload,
+        statement: "Transitions cannot bypass the floor described in R12.2.",
+      });
+
+      expect(
+        signOffRevision(
+          signOffContext({
+            draft: {
+              specHandle: "native-sdd",
+              authoringStage: "plan",
+              elements,
+            },
+          }),
+        ),
+      ).toEqual({
+        ok: false,
+        refusal: expect.objectContaining({
+          code: "lint_blocked",
+          unmetConditions: [
+            "R1 prose references unknown handle R12.2 in statement.",
+          ],
+          findings: [
+            expect.objectContaining({
+              ruleId: "9.6.dangling-handle",
+              severity: "blocks_propose",
+            }),
+          ],
+        }),
+      });
+    });
+
     it("refuses unresolved blocking threads", () => {
       const review = reviewSnapshot();
       review.blockingThreads.push({ handle: "thread-1", resolved: false });
@@ -904,14 +1015,10 @@ describe("transition predicates", () => {
           signOffContext({
             authoringStage: "requirements",
             review,
+            // The sibling approval's fingerprint is identical, so only its
+            // absence from this revision's lineage can refuse it.
             approvalApplies: applicabilityFor(review, {
               ancestorRevisionIds: new Set(["revision-1"]),
-              rowsByRevision: {
-                "revision-1": review.governanceBaseRevisionRows,
-                // The sibling's content is readable and identical, so only its
-                // absence from this revision's lineage can refuse it.
-                "revision-sibling": review.governanceBaseRevisionRows,
-              },
             }),
           }),
         ),
@@ -926,21 +1033,36 @@ describe("transition predicates", () => {
       });
     });
 
-    it("refuses an approval whose own revision can no longer be read", () => {
-      const review = reviewSnapshot();
-      // A revision with no approved ancestor owes every authoring gate, so all
-      // three subjects are consulted here.
-      review.governanceBaseRevisionId = null;
-      review.governanceBaseRevisionRows = [];
+    /**
+     * A draft is edited in place while it is reviewed, so an approval granted
+     * on it is judged by the fingerprint the human read, never by the rows the
+     * draft carries now. Editing the approved subject unapproves it; editing
+     * anything else leaves it approved.
+     */
+    it("unapproves a subject edited on the draft after its approval and keeps it through an unrelated edit", () => {
+      const readRows = revisionRows();
+      const approvedOnDraft = (): SignOffReviewSnapshot => {
+        const review = reviewSnapshot();
+        review.approvals = [
+          approvalRecord(
+            { subjectKind: "requirement", elementId: "requirement-1" },
+            "revision-2",
+            readRows,
+          ),
+        ];
+        return review;
+      };
 
+      const editedSubject = approvedOnDraft();
+      editedSubject.revisionRows[0] = {
+        ...editedSubject.revisionRows[0]!,
+        payloadHash: "requirement-1-edited-after-approval",
+      };
       expect(
         signOffRevision(
           signOffContext({
-            review,
-            approvalApplies: applicabilityFor(review, {
-              ancestorRevisionIds: new Set(["revision-1"]),
-              rowsByRevision: {},
-            }),
+            authoringStage: "requirements",
+            review: editedSubject,
           }),
         ),
       ).toMatchObject({
@@ -949,11 +1071,23 @@ describe("transition predicates", () => {
           code: "gate_blocked",
           unmetConditions: [
             "Requirement R1 needs a valid approval for revision-2.",
-            "Decision D1 needs a valid approval for revision-2.",
-            "Execution plan needs a valid approval for revision-2.",
           ],
         },
       });
+
+      const editedElsewhere = approvedOnDraft();
+      editedElsewhere.revisionRows[2] = {
+        ...editedElsewhere.revisionRows[2]!,
+        payloadHash: "decision-1-edited-after-approval",
+      };
+      expect(
+        signOffRevision(
+          signOffContext({
+            authoringStage: "requirements",
+            review: editedElsewhere,
+          }),
+        ),
+      ).toEqual({ ok: true });
     });
 
     /**
@@ -977,10 +1111,6 @@ describe("transition predicates", () => {
                 "revision-withdrawn",
                 "revision-1",
               ]),
-              rowsByRevision: {
-                "revision-withdrawn": review.governanceBaseRevisionRows,
-                "revision-1": review.governanceBaseRevisionRows,
-              },
             }),
           }),
         ),
@@ -1015,6 +1145,15 @@ describe("transition predicates", () => {
       const review = reviewSnapshot();
       const replaced = review.revisionRows[0]!;
       review.revisionRows[0] = { ...replaced, elementId: "requirement-2" };
+      review.revisionRows[1] = {
+        ...review.revisionRows[1]!,
+        parentElementId: "requirement-2",
+      };
+      // Sign-off owes every blocking finding, so the replacement is complete:
+      // everything that traced the removed requirement traces its successor.
+      const tracesReplacement = {
+        tracedRequirementElementIds: ["requirement-2"],
+      };
 
       expect(
         signOffRevision(
@@ -1023,11 +1162,23 @@ describe("transition predicates", () => {
             draft: {
               specHandle: "native-sdd",
               authoringStage: "plan",
-              elements: lintElements().map((element) =>
-                element.id === "requirement-1"
-                  ? { ...element, id: "requirement-2", handle: "R2" }
-                  : element,
-              ),
+              elements: [
+                lintElement("requirement-2", "R2", requirementPayload),
+                lintElement(
+                  "criterion-1",
+                  "R2.1",
+                  criterionPayload,
+                  "requirement-2",
+                ),
+                lintElement("decision-1", "D1", {
+                  ...decisionPayload,
+                  ...tracesReplacement,
+                }),
+                lintElement("task-1", "T1", {
+                  ...taskPayload,
+                  ...tracesReplacement,
+                }),
+              ],
             },
           }),
         ),
@@ -1078,7 +1229,7 @@ describe("transition predicates", () => {
     it("refuses an unapproved revision", () => {
       expect(
         startExecution(
-          startContext(contractPolicy, { revisionState: "proposed" }),
+          startContext(contractPolicy, { revisionState: "draft" }),
         ),
       ).toMatchObject({
         ok: false,
@@ -1433,15 +1584,11 @@ describe("transition predicates", () => {
         handles,
         approvalApplies: createApprovalApplicability({
           revisionId: "revision-2",
-          basedOnRevisionId: "revision-1",
           ancestorRevisionIds: new Set(["revision-1"]),
           revisionRows,
           citationContractVersion: 2,
           citations: [],
-          stateForRevision: (revisionId) =>
-            revisionId === "revision-1"
-              ? { rows: importedRows(), ...emptyCitationState }
-              : null,
+          parentCitationContractVersion: 2,
         }),
         importBaselineRows,
         importBaselineCitationState:
@@ -1538,7 +1685,7 @@ describe("transition predicates", () => {
       advanceAuthoringStage("requirements", contractPolicy),
       approveElement({
         actor: agent,
-        revisionState: "proposed",
+        revisionState: "draft",
         subjectKind: "requirement",
       }),
       signOffRevision(

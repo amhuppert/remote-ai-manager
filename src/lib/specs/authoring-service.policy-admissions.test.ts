@@ -264,12 +264,11 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
       overrides: { requirements: "notify" },
     });
 
+    // The absorbed sign-off froze the revision, so no gate is left to ask.
     expect(proposed).toMatchObject({
       ok: true,
       revision: { id: created.draft.id, state: "approved" },
-      approvalRequests: [
-        { gate: "requirements", outcome: "not-needed", attentionId: null },
-      ],
+      approvalRequests: [],
     });
     expect(await specs.findRevision(created.draft.id)).toMatchObject({
       state: "approved",

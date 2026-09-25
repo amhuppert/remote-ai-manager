@@ -327,6 +327,64 @@ async function openClean(world: World) {
   return edited.value;
 }
 
+/** Execution start under Notify: the author's propose freezes and signs. */
+const NOTIFY_SPEC: Spec = { ...SPEC, gatePolicy: { preset: "exploratory" } };
+
+/**
+ * The draft identity a Builder reviewer reads before signing off: the binding
+ * revision and the managed definition revision.
+ */
+async function reviewedDraft(world: World, spec: Spec = SPEC) {
+  const read = await world.service.read({ spec });
+  if (!read.ok) throw new Error(read.refusal.unmetConditions.join(" "));
+  return {
+    expectedDraftRevision: read.value.attempt.draftRevision,
+    expectedDefinitionRevision: read.value.workflowDefinition.revision,
+  };
+}
+
+/** A human signs off the draft just read, freezing its candidate. */
+async function signOffDraft(world: World) {
+  const signed = await world.service.signOff({
+    spec: SPEC,
+    actor: HUMAN,
+    approver: "Alex",
+    ...(await reviewedDraft(world)),
+  });
+  if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+  const { candidateId, candidateHash } = signed.value.attempt;
+  if (candidateId === null || candidateHash === null) {
+    throw new Error("Sign-off did not freeze a candidate");
+  }
+  return { view: signed.value, candidate: { candidateId, candidateHash } };
+}
+
+/**
+ * Everything a sign-off writes, read back from SQLite and the definition
+ * store, so a refused act can be shown to have written none of it.
+ */
+async function durableSignOffState(world: World, attemptId: string) {
+  const attempt = world.repos.plans.findAttemptById(attemptId);
+  if (attempt === null || attempt.workflow_definition_id === null) {
+    throw new Error(`Attempt ${attemptId} has no managed definition`);
+  }
+  const definition = await world.managedDefinitions.get({
+    projectPath: PROJECT_PATH,
+    workflowDefinitionId: attempt.workflow_definition_id,
+  });
+  return {
+    status: attempt.status,
+    approval: attempt.approval_json,
+    snapshots: world.repos.plans.findSnapshotsByAttemptId(attemptId).length,
+    admissions: world.repos.review.findGateAdmissionsBySpecId(SPEC_ID).length,
+    definitionRevision: definition?.revision,
+    charterLocked:
+      definition?.definition.lockedRegions?.some((lock) =>
+        lock.paths.includes("/charter"),
+      ) ?? false,
+  };
+}
+
 /**
  * Abandon transitions durably recorded against one attempt. Counted from the
  * audit rows rather than the attempt status because an idempotent retirement
@@ -365,7 +423,7 @@ describe("delivery-plan service v4 lifecycle", () => {
 
   afterEach(() => db.close());
 
-  it.each(["draft", "proposed", "approved", "parked"] as const)(
+  it.each(["draft", "approved", "parked"] as const)(
     "requires an unlaunched v3 %s to reopen into v4 while preserving candidate history",
     async (status) => {
       const world = createWorld(db);
@@ -374,13 +432,8 @@ describe("delivery-plan service v4 lifecycle", () => {
       let snapshotId: string | null = null;
       let historicalBytes: string | null = null;
       if (status !== "draft") {
-        const proposed = await world.service.propose({
-          spec: SPEC,
-          actor: AGENT,
-        });
-        if (!proposed.ok)
-          throw new Error(proposed.refusal.unmetConditions.join(" "));
-        snapshotId = proposed.value.attempt.proposedSnapshotId;
+        const signed = await signOffDraft(world);
+        snapshotId = signed.view.attempt.proposedSnapshotId;
         if (!snapshotId)
           throw new Error("fixture requires a candidate snapshot");
         const snapshot = world.repos.plans.findSnapshotById(snapshotId);
@@ -407,18 +460,14 @@ describe("delivery-plan service v4 lifecycle", () => {
         db.prepare(
           "UPDATE spec_delivery_plan_snapshots SET content_json = ?, candidate_hash = ? WHERE id = ?",
         ).run(historicalBytes, candidateHash, snapshotId);
-        if (status === "approved" || status === "parked") {
-          world.repos.plans.recordTransition({
-            attemptId: opened.attempt.id,
-            occurredAt: NOW,
-            actor: HUMAN,
-            transition: {
-              kind: "approve",
-              candidateId: legacy.candidateId,
-              candidateHash,
-            },
-          });
-        }
+        // The sign-off approved the v4 bytes; a v3 attempt's approval names
+        // the v3 candidate it froze.
+        db.prepare(
+          "UPDATE spec_delivery_plan_candidate_approvals SET candidate_hash = ? WHERE snapshot_id = ?",
+        ).run(candidateHash, snapshotId);
+        db.prepare(
+          "UPDATE spec_delivery_plan_attempts SET approval_json = json_set(approval_json, '$.candidateHash', ?) WHERE id = ?",
+        ).run(candidateHash, opened.attempt.id);
         if (status === "parked") {
           world.repos.plans.recordTransition({
             attemptId: opened.attempt.id,
@@ -468,7 +517,7 @@ describe("delivery-plan service v4 lifecycle", () => {
   );
 
   it.each(["approved", "changes_requested"] as const)(
-    "shows an advisory %s review on proposal and sign-off",
+    "shows an advisory %s review on the review request and sign-off",
     async (verdict) => {
       const world = createWorld(db);
       const opened = await openClean(world);
@@ -492,14 +541,12 @@ describe("delivery-plan service v4 lifecycle", () => {
       if (!proposed.ok)
         throw new Error(proposed.refusal.unmetConditions.join(" "));
       expect(proposed.value).toHaveProperty("reviewStatus.state", verdict);
-      const { candidateId, candidateHash } = proposed.value.attempt;
-      if (!candidateId || !candidateHash) throw new Error("Missing candidate");
       const signed = await world.service.signOff({
         spec: SPEC,
         actor: HUMAN,
         approver: "Alex",
-        candidateId,
-        candidateHash,
+        expectedDraftRevision: proposed.value.attempt.draftRevision,
+        expectedDefinitionRevision: proposed.value.workflowDefinition.revision,
       });
       expect(signed).toMatchObject({
         ok: true,
@@ -508,7 +555,7 @@ describe("delivery-plan service v4 lifecycle", () => {
     },
   );
 
-  it("keeps proposal advisory when the review lookup throws", async () => {
+  it("keeps the review request advisory when the review lookup throws", async () => {
     const world = createWorld(db, {
       planReviews: {
         findLatestTerminalReview() {
@@ -670,11 +717,9 @@ describe("delivery-plan service v4 lifecycle", () => {
       workflowDefinitionId: opened.value.workflowDefinition.id,
       launch: makeLaunchDocument(definition),
     });
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    expect(proposed.ok).toBe(true);
-    if (!proposed.ok) return;
+    const { view: signed } = await signOffDraft(world);
     const snapshot = world.repos.plans.findSnapshotsByAttemptId(
-      proposed.value.attempt.id,
+      signed.attempt.id,
     )[0];
     expect(snapshot).toBeDefined();
     const manifest: unknown = JSON.parse(snapshot?.content_json ?? "null");
@@ -691,7 +736,7 @@ describe("delivery-plan service v4 lifecycle", () => {
     expect(manifest).not.toHaveProperty("binding.claims");
     const frozen = await world.managedDefinitions.get({
       projectPath: PROJECT_PATH,
-      workflowDefinitionId: proposed.value.workflowDefinition.id,
+      workflowDefinitionId: signed.workflowDefinition.id,
     });
     const documents = frozen?.definition.seededDocuments;
     expect(
@@ -1025,7 +1070,7 @@ describe("delivery-plan service v4 lifecycle", () => {
     );
   });
 
-  it("returns the identical finding set through validate preflight, status, and propose", async () => {
+  it("returns the identical finding set through validate preflight, status, propose, and sign-off", async () => {
     const world = createWorld(db);
     const opened = await world.service.open({ spec: SPEC, actor: AGENT });
     if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
@@ -1055,13 +1100,32 @@ describe("delivery-plan service v4 lifecycle", () => {
     const status = await world.service.read({ spec: SPEC });
     if (!status.ok) throw new Error(status.refusal.unmetConditions.join(" "));
     const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      actor: HUMAN,
+      approver: "Alex",
+      expectedDraftRevision: status.value.attempt.draftRevision,
+      expectedDefinitionRevision: status.value.workflowDefinition.revision,
+    });
 
     expect(preflight.ok).toBe(true);
     if (!preflight.ok) return;
     expect(preflight.findings).toEqual(status.value.health.findings);
+    expect(status.value.health.blocking).toBeGreaterThan(0);
     expect(proposed.ok).toBe(false);
     if (proposed.ok) return;
     expect(proposed.refusal.findings).toEqual(status.value.health.findings);
+    // A human cannot sign off what the author could not ask to have reviewed.
+    expect(signed.ok).toBe(false);
+    if (signed.ok) return;
+    expect(signed.refusal).toMatchObject({
+      code: proposed.refusal.code,
+      unmetConditions: proposed.refusal.unmetConditions,
+      findings: status.value.health.findings,
+    });
+    expect(
+      await durableSignOffState(world, opened.value.attempt.id),
+    ).toMatchObject({ status: "draft", snapshots: 0, admissions: 0 });
   });
 
   it.each([
@@ -1111,12 +1175,10 @@ describe("delivery-plan service v4 lifecycle", () => {
     },
   );
 
-  it("refuses a proposed attempt with the reopen instruction and rationale", async () => {
+  it("refuses to preflight a signed attempt with the reopen instruction and rationale", async () => {
     const world = createWorld(db);
     const clean = await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    await signOffDraft(world);
     const definition = await world.managedDefinitions.get({
       projectPath: PROJECT_PATH,
       workflowDefinitionId: clean.attempt.workflowDefinitionId,
@@ -1228,42 +1290,300 @@ describe("delivery-plan service v4 lifecycle", () => {
     ).toBe(true);
   });
 
-  it("edits only binding bytes and proposes the frozen definition identity", async () => {
+  it("signs off a ready draft by freezing its candidate and approving it in one act", async () => {
     const world = createWorld(db);
     const edited = await openClean(world);
 
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok) {
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    }
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      actor: HUMAN,
+      approver: "Alex",
+      expectedDraftRevision: edited.attempt.draftRevision,
+      expectedDefinitionRevision: edited.workflowDefinition.revision,
+    });
+    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
 
-    expect(proposed.value.attempt.status).toBe("proposed");
-    expect(proposed.value.document.binding).toEqual(deferredBinding());
-    expect(proposed.value.workflowDefinition).toMatchObject({
+    const { attempt } = signed.value;
+    expect(attempt.status).toBe("approved");
+    expect(signed.value.document.binding).toEqual(deferredBinding());
+    expect(signed.value.workflowDefinition).toMatchObject({
       id: edited.workflowDefinition.id,
       revision: edited.workflowDefinition.revision + 1,
     });
+    if (
+      attempt.proposedSnapshotId === null ||
+      attempt.candidateId === null ||
+      attempt.candidateHash === null
+    ) {
+      throw new Error("Sign-off did not freeze a candidate");
+    }
     const snapshot = world.repos.plans.findSnapshotById(
-      proposed.value.attempt.proposedSnapshotId!,
+      attempt.proposedSnapshotId,
     );
     expect(JSON.parse(snapshot?.content_json ?? "null")).toMatchObject({
       protocol: "native-sdd-delivery-candidate/v4",
       candidateId: edited.workflowDefinition.id,
+      draftRevision: edited.attempt.draftRevision,
       workflowDefinition: {
         id: edited.workflowDefinition.id,
         revision: edited.workflowDefinition.revision + 1,
       },
     });
     expect(snapshot?.content_json).not.toContain('"launch"');
+    expect(snapshot).toMatchObject({
+      candidate_id: attempt.candidateId,
+      candidate_hash: attempt.candidateHash,
+    });
+    expect(signed.value.approval).toMatchObject({
+      snapshotId: attempt.proposedSnapshotId,
+      candidateId: attempt.candidateId,
+      candidateHash: attempt.candidateHash,
+      approvedBy: HUMAN,
+    });
+    expect(
+      world.repos.plans.findCandidateApprovalBySnapshotId(
+        attempt.proposedSnapshotId,
+      ),
+    ).toMatchObject({
+      candidate_id: attempt.candidateId,
+      candidate_hash: attempt.candidateHash,
+    });
+    const admissions = world.repos.review.findGateAdmissionsBySpecId(SPEC_ID);
+    expect(admissions).toEqual([
+      expect.objectContaining({
+        gate: "execution_start",
+        basis: "human_approval",
+        revision_id: PINNED_REVISION_ID,
+        execution_id: null,
+      }),
+    ]);
+    expect(signed.value.executionStartAdmission).toEqual({
+      dial: "gate",
+      basis: "human_approval",
+      admissionId: admissions[0]?.id,
+      approvalId: admissions[0]?.approval_id,
+    });
+    expect(
+      world.repos.review.findApprovalById(admissions[0]?.approval_id ?? ""),
+    ).toMatchObject({
+      subject_kind: "revision",
+      revision_id: PINNED_REVISION_ID,
+      approver: "Alex",
+      validity: "valid",
+    });
+    expect(
+      world.repos.readEventPayload("spec-delivery-plan-transitioned"),
+    ).toMatchObject({
+      attemptId: attempt.id,
+      from: "draft",
+      to: "approved",
+    });
+    expect(signed.value.nextAct.command).toBe(
+      `cctl spec start ${SPEC.slug} --file .cc/temp/inputs.json`,
+    );
+    const launch = await world.service.resolveLaunch({ spec: SPEC });
+    expect(launch).toMatchObject({
+      kind: "ready",
+      value: {
+        candidate: {
+          candidateId: attempt.candidateId,
+          candidateHash: attempt.candidateHash,
+        },
+      },
+    });
+  });
+
+  it.each([
+    {
+      moved: "binding",
+      async move(world: World) {
+        const read = await world.service.read({ spec: SPEC });
+        if (!read.ok) throw new Error(read.refusal.unmetConditions.join(" "));
+        const edited = await world.service.edit({
+          spec: SPEC,
+          expectedDraftRevision: read.value.attempt.draftRevision,
+          binding: {
+            dispositions: deferredBinding().dispositions.map((entry) =>
+              entry.criterionElementId === "criterion-two"
+                ? { ...entry, disposition: "in_scope" as const }
+                : entry,
+            ),
+          },
+          actor: AGENT,
+        });
+        if (!edited.ok)
+          throw new Error(edited.refusal.unmetConditions.join(" "));
+      },
+    },
+    {
+      moved: "managed definition",
+      async move(world: World) {
+        const read = await world.service.read({ spec: SPEC });
+        if (!read.ok) throw new Error(read.refusal.unmetConditions.join(" "));
+        await replaceWithAuthoredCharter(
+          world,
+          read.value.workflowDefinition.id,
+          { mission: "A mission the reviewer never read." },
+        );
+      },
+    },
+  ])(
+    "refuses a sign-off whose reviewed $moved revision moved, writing nothing",
+    async ({ move }) => {
+      const world = createWorld(db);
+      const edited = await openClean(world);
+      const reviewed = await reviewedDraft(world);
+      await move(world);
+      const before = await durableSignOffState(world, edited.attempt.id);
+
+      const signed = await world.service.signOff({
+        spec: SPEC,
+        actor: HUMAN,
+        approver: "Alex",
+        ...reviewed,
+      });
+
+      expect(signed.ok).toBe(false);
+      if (signed.ok) return;
+      expect(signed.refusal.code).toBe("stale_plan_draft");
+      expect(await durableSignOffState(world, edited.attempt.id)).toEqual(
+        before,
+      );
+      expect(before).toMatchObject({
+        status: "draft",
+        approval: null,
+        snapshots: 0,
+        admissions: 0,
+        charterLocked: false,
+      });
+    },
+  );
+
+  it("refuses an agent sign-off when execution start requires a human", async () => {
+    const world = createWorld(db);
+    const edited = await openClean(world);
+    const before = await durableSignOffState(world, edited.attempt.id);
+
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      actor: AGENT,
+      approver: "agent",
+      ...(await reviewedDraft(world)),
+    });
+
+    expect(signed.ok).toBe(false);
+    if (signed.ok) return;
+    expect(signed.refusal.code).toBe("human_act_required");
+    expect(await durableSignOffState(world, edited.attempt.id)).toEqual(before);
+  });
+
+  it("asks for review without changing anything when execution start requires a human", async () => {
+    const world = createWorld(db);
+    const edited = await openClean(world);
+    const before = await durableSignOffState(world, edited.attempt.id);
+
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    expect(proposed.value.attempt).toMatchObject({
+      status: "draft",
+      draftRevision: edited.attempt.draftRevision,
+      proposedSnapshotId: null,
+      candidateId: null,
+      candidateHash: null,
+    });
+    expect(proposed.value.executionStartAdmission).toBeNull();
+    expect(proposed.value.nextAct).toEqual({
+      actor: "human",
+      command: `Review and sign off in Builder: ${edited.workflowDefinition.builderHref}`,
+      reason: expect.any(String),
+    });
+    expect(await durableSignOffState(world, edited.attempt.id)).toEqual(before);
+  });
+
+  it("freezes and approves the draft on propose when execution start is Notify", async () => {
+    const world = createWorld(db);
+    await openClean(world);
+
+    const proposed = await world.service.propose({
+      spec: NOTIFY_SPEC,
+      actor: AGENT,
+    });
+
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const { attempt } = proposed.value;
+    expect(attempt.status).toBe("approved");
+    expect(attempt.candidateId).not.toBeNull();
+    expect(attempt.candidateHash).not.toBeNull();
+    expect(proposed.value.approval).toMatchObject({
+      candidateId: attempt.candidateId,
+      candidateHash: attempt.candidateHash,
+      approvedBy: AGENT,
+    });
+    expect(proposed.value.executionStartAdmission).toMatchObject({
+      dial: "notify",
+      basis: "notify_policy",
+      approvalId: null,
+    });
+    expect(world.repos.review.findGateAdmissionsBySpecId(SPEC_ID)).toEqual([
+      expect.objectContaining({
+        gate: "execution_start",
+        basis: "notify_policy",
+        approval_id: null,
+      }),
+    ]);
+    expect(world.repos.review.findApprovalsBySpecId(SPEC_ID)).toEqual([]);
+    const launch = await world.service.resolveLaunch({ spec: NOTIFY_SPEC });
+    expect(launch.kind).toBe("ready");
+  });
+
+  it("refuses to park a draft and parks a signed candidate", async () => {
+    const world = createWorld(db);
+    const edited = await openClean(world);
+
+    const refused = await world.service.park({
+      spec: SPEC,
+      candidateId: edited.workflowDefinition.id,
+      candidateHash: edited.workflowDefinition.definitionHash,
+      reason: "Review launch inputs.",
+      actor: AGENT,
+    });
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.code).toBe("plan_status_conflict");
+    expect(world.repos.plans.findAttemptById(edited.attempt.id)).toMatchObject({
+      status: "draft",
+      prelaunch_json: null,
+    });
+
+    const { candidate } = await signOffDraft(world);
+    const parked = await world.service.park({
+      spec: SPEC,
+      ...candidate,
+      reason: "Review launch inputs.",
+      actor: AGENT,
+    });
+
+    if (!parked.ok) throw new Error(parked.refusal.unmetConditions.join(" "));
+    expect(parked.value.attempt.status).toBe("parked");
+    expect(parked.value.prelaunch).toMatchObject({
+      reason: "Review launch inputs.",
+      parkedCandidateId: candidate.candidateId,
+      parkedCandidateHash: candidate.candidateHash,
+      candidateChanged: false,
+    });
+    const launch = await world.service.resolveLaunch({ spec: SPEC });
+    expect(launch).toMatchObject({ kind: "ready", value: { candidate } });
   });
 
   it("reopens by cloning the frozen definition and retains the prior candidate", async () => {
     const world = createWorld(db);
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const frozenId = proposed.value.workflowDefinition.id;
+    const { view: signed } = await signOffDraft(world);
+    const frozenId = signed.workflowDefinition.id;
 
     const reopened = await world.service.reopen({
       spec: SPEC,
@@ -1297,9 +1617,7 @@ describe("delivery-plan service v4 lifecycle", () => {
       },
     });
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    await signOffDraft(world);
 
     const reopened = await world.service.reopen({
       spec: SPEC,
@@ -1322,14 +1640,12 @@ describe("delivery-plan service v4 lifecycle", () => {
     const stored = createManagedDefinitionTestService();
     const world = createWorld(db, { managedDefinitions: stored });
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const sourceDefinitionId = proposed.value.workflowDefinition.id;
+    const { view: signed } = await signOffDraft(world);
+    const sourceDefinitionId = signed.workflowDefinition.id;
     const orphan = await stored.clone({
       spec: SPEC,
       pinnedRevisionId: PINNED_REVISION_ID,
-      attemptId: proposed.value.attempt.id,
+      attemptId: signed.attempt.id,
       sourceDefinitionId,
       cloneDefinitionId: "orphan-reopen",
     });
@@ -1351,53 +1667,27 @@ describe("delivery-plan service v4 lifecycle", () => {
     expect(reopened.value.workflowDefinition.id).toBe(orphan.id);
   });
 
-  it("refuses sign-off and launch when the frozen definition identity no longer matches", async () => {
+  it("refuses launch when the frozen definition identity no longer matches", async () => {
     const stored = createManagedDefinitionTestService();
     let rejectExactRead = false;
     const guarded: TestManagedDefinitionService = {
       ...stored,
       getExact: async (input) => {
         if (rejectExactRead) {
-          throw new Error("stored definition hash does not match the proposal");
+          throw new Error(
+            "stored definition hash does not match the candidate",
+          );
         }
         return stored.getExact(input);
       },
     };
     const world = createWorld(db, { managedDefinitions: guarded });
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
+    await signOffDraft(world);
     rejectExactRead = true;
 
-    const signed = await world.service.signOff({
-      spec: SPEC,
-      candidateId,
-      candidateHash,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    rejectExactRead = false;
-    const approved = await world.service.signOff({
-      spec: SPEC,
-      candidateId,
-      candidateHash,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    if (!approved.ok) {
-      throw new Error(approved.refusal.unmetConditions.join(" "));
-    }
-    rejectExactRead = true;
     const launch = await world.service.resolveLaunch({ spec: SPEC });
 
-    expect(signed.ok).toBe(false);
-    if (!signed.ok) expect(signed.refusal.code).toBe("integrity_mismatch");
     expect(launch.kind).toBe("refused");
     if (launch.kind === "refused") {
       expect(launch.refusal.code).toBe("integrity_mismatch");
@@ -1449,7 +1739,7 @@ describe("delivery-plan service v4 lifecycle", () => {
         revisionId: "requirements-extension",
         revisionNumber: 3,
         stage: "requirements",
-        state: "proposed",
+        state: "draft",
       }),
     });
 
@@ -1477,22 +1767,7 @@ describe("delivery-plan service v4 lifecycle", () => {
             },
     });
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
-    const candidate = { candidateId, candidateHash };
-    const signed = await world.service.signOff({
-      spec: SPEC,
-      ...candidate,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const { candidate } = await signOffDraft(world);
     const launched = await world.service.recordLaunch({
       spec: SPEC,
       executionId: LAUNCHED_EXECUTION_ID,
@@ -1518,22 +1793,7 @@ describe("delivery-plan service v4 lifecycle", () => {
       launchedExecutionState: () => "delivered",
     });
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
-    const candidate = { candidateId, candidateHash };
-    const signed = await world.service.signOff({
-      spec: SPEC,
-      ...candidate,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const { candidate } = await signOffDraft(world);
     const launched = await world.service.recordLaunch({
       spec: SPEC,
       executionId: LAUNCHED_EXECUTION_ID,
@@ -1553,22 +1813,7 @@ describe("delivery-plan service v4 lifecycle", () => {
   it("routes a retired launched attempt to `spec plan open`, not to sign-off", async () => {
     const world = createWorld(db);
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
-    const candidate = { candidateId, candidateHash };
-    const signed = await world.service.signOff({
-      spec: SPEC,
-      ...candidate,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const { candidate } = await signOffDraft(world);
     const launched = await world.service.recordLaunch({
       spec: SPEC,
       executionId: LAUNCHED_EXECUTION_ID,
@@ -1611,22 +1856,7 @@ describe("delivery-plan service v4 lifecycle", () => {
   it("refuses an edit of a launched attempt without naming the spec-side row id", async () => {
     const world = createWorld(db);
     const opened = await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
-    const candidate = { candidateId, candidateHash };
-    const signed = await world.service.signOff({
-      spec: SPEC,
-      ...candidate,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const { candidate } = await signOffDraft(world);
     const launched = await world.service.recordLaunch({
       spec: SPEC,
       executionId: LAUNCHED_EXECUTION_ID,
@@ -1659,22 +1889,7 @@ describe("delivery-plan service v4 lifecycle", () => {
   it("retires a launched attempt idempotently, recording one abandon transition", async () => {
     const world = createWorld(db);
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
-    const candidate = { candidateId, candidateHash };
-    const signed = await world.service.signOff({
-      spec: SPEC,
-      ...candidate,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const { candidate } = await signOffDraft(world);
     const launched = await world.service.recordLaunch({
       spec: SPEC,
       executionId: LAUNCHED_EXECUTION_ID,
@@ -1715,25 +1930,22 @@ describe("delivery-plan service v4 lifecycle", () => {
         },
       },
     });
-    await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
-    const candidate = { candidateId, candidateHash };
+    const edited = await openClean(world);
+    const reviewed = await reviewedDraft(world);
     lockKeys.length = 0;
 
     const signed = await world.service.signOff({
       spec: SPEC,
-      ...candidate,
+      ...reviewed,
       actor: HUMAN,
       approver: "Alex",
     });
     if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const { candidateId, candidateHash } = signed.value.attempt;
+    if (candidateId === null || candidateHash === null) {
+      throw new Error("Sign-off did not freeze a candidate");
+    }
+    const candidate = { candidateId, candidateHash };
     const parked = await world.service.park({
       spec: SPEC,
       ...candidate,
@@ -1761,6 +1973,7 @@ describe("delivery-plan service v4 lifecycle", () => {
       throw new Error(abandoned.refusal.unmetConditions.join(" "));
     }
 
+    expect(candidateId).toBe(edited.workflowDefinition.id);
     expect(lockKeys).toEqual(Array(5).fill(candidateId));
   });
 
@@ -1790,9 +2003,7 @@ describe("delivery-plan service v4 lifecycle", () => {
       charterEdit.mission,
     );
 
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    await signOffDraft(world);
     const reopened = await world.service.reopen({
       spec: SPEC,
       reason: "Author the real charter.",
@@ -1821,13 +2032,11 @@ describe("delivery-plan service v4 lifecycle", () => {
     ).toHaveLength(1);
   });
 
-  it("freezes the charter into the definition revision the candidate names at propose", async () => {
+  it("freezes the charter into the definition revision the candidate names at sign-off", async () => {
     const world = createWorld(db);
     const edited = await openClean(world);
 
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const { view: signed } = await signOffDraft(world);
 
     const frozen = await world.managedDefinitions.get({
       projectPath: PROJECT_PATH,
@@ -1837,7 +2046,7 @@ describe("delivery-plan service v4 lifecycle", () => {
     expect(frozen?.definition.lockedRegions?.map((lock) => lock.paths)).toEqual(
       [["/charter"], ["/origin", "/approvalRequired"]],
     );
-    expect(proposed.value.workflowDefinition).toMatchObject({
+    expect(signed.workflowDefinition).toMatchObject({
       id: frozen!.id,
       revision: frozen!.revision,
       definitionHash: workflowDefinitionHash(frozen!),
@@ -1852,30 +2061,48 @@ describe("delivery-plan service v4 lifecycle", () => {
     expect(locked.issues[0]?.code).toBe("region_locked");
   });
 
-  it("thaws the frozen definition when the proposal commit fails", async () => {
+  /**
+   * The definition is restaged to the candidate stage before the SQLite
+   * transaction opens. A failure inside the transaction — here the
+   * execution-start admission, after the attempt row was already written —
+   * rolls the rows back, and the definition must thaw with them.
+   */
+  it("thaws the frozen definition when the sign-off transaction fails", async () => {
     const stored = createManagedDefinitionTestService();
-    const plans = createDeliveryPlanTestRepos(db).plans;
+    const review = createDeliveryPlanTestRepos(db).review;
     const world = createWorld(db, {
       managedDefinitions: stored,
-      plans: {
-        ...plans,
-        propose: () => {
+      reviewRepo: {
+        ...review,
+        insertGateAdmission: () => {
           throw new Error("database write failed");
         },
       },
     });
     const edited = await openClean(world);
 
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      actor: HUMAN,
+      approver: "Alex",
+      ...(await reviewedDraft(world)),
+    });
 
-    expect(proposed.ok).toBe(false);
+    expect(signed.ok).toBe(false);
+    expect(await durableSignOffState(world, edited.attempt.id)).toMatchObject({
+      status: "draft",
+      approval: null,
+      snapshots: 0,
+      admissions: 0,
+      // Restaged to the candidate stage, then back to draft.
+      definitionRevision: edited.workflowDefinition.revision + 2,
+      charterLocked: false,
+    });
+    expect(world.repos.review.findApprovalsBySpecId(SPEC_ID)).toEqual([]);
     const definition = await stored.get({
       projectPath: PROJECT_PATH,
       workflowDefinitionId: edited.workflowDefinition.id,
     });
-    expect(
-      definition?.definition.lockedRegions?.flatMap((lock) => lock.paths),
-    ).not.toContain("/charter");
     expect(
       applyDefinitionEdits(
         definition!,
@@ -1883,6 +2110,11 @@ describe("delivery-plan service v4 lifecycle", () => {
         createTestGraphExecutionContract(),
       ).ok,
     ).toBe(true);
+    const retried = await world.service.read({ spec: SPEC });
+    if (!retried.ok) throw new Error(retried.refusal.unmetConditions.join(" "));
+    expect(retried.value.nextAct.command).toBe(
+      `Review and sign off in Builder: ${edited.workflowDefinition.builderHref}`,
+    );
   });
 });
 
@@ -1989,68 +2221,62 @@ describe("delivery-plan planning telemetry", () => {
     });
   });
 
-  it("reports coverage at freeze", async () => {
-    const world = createWorld(db);
-    const edited = await openClean(world);
-    // The seeded draft carries no execution contexts; give it the fixture
-    // graph so `contexts` reports a count the definition actually has.
-    const shape = createWorkflowDefinition();
-    const existing = await world.managedDefinitions.get({
-      projectPath: PROJECT_PATH,
-      workflowDefinitionId: edited.workflowDefinition.id,
-    });
-    if (existing === null) throw new Error("definition missing");
-    world.managedDefinitions.replaceLaunch({
-      workflowDefinitionId: edited.workflowDefinition.id,
-      launch: {
-        name: existing.name,
-        description: existing.description,
-        definition: {
-          ...existing.definition,
-          executionContexts: shape.executionContexts,
-          tasks: shape.tasks,
-          edges: shape.edges,
+  // Every successful `spec plan propose` reports coverage: the review request
+  // a human dial answers in Builder, and the freeze a Notify dial performs.
+  it.each([
+    { dial: "Gate", spec: SPEC, status: "draft" },
+    { dial: "Notify", spec: NOTIFY_SPEC, status: "approved" },
+  ] as const)(
+    "reports coverage on a successful $dial-dial propose",
+    async ({ spec, status }) => {
+      const world = createWorld(db);
+      const edited = await openClean(world);
+      // The seeded draft carries no execution contexts; give it the fixture
+      // graph so `contexts` reports a count the definition actually has.
+      const shape = createWorkflowDefinition();
+      const existing = await world.managedDefinitions.get({
+        projectPath: PROJECT_PATH,
+        workflowDefinitionId: edited.workflowDefinition.id,
+      });
+      if (existing === null) throw new Error("definition missing");
+      world.managedDefinitions.replaceLaunch({
+        workflowDefinitionId: edited.workflowDefinition.id,
+        launch: {
+          name: existing.name,
+          description: existing.description,
+          definition: {
+            ...existing.definition,
+            executionContexts: shape.executionContexts,
+            tasks: shape.tasks,
+            edges: shape.edges,
+          },
+          layout: existing.layout,
         },
-        layout: existing.layout,
-      },
-    });
+      });
 
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
+      const proposed = await world.service.propose({ spec, actor: AGENT });
+      if (!proposed.ok)
+        throw new Error(proposed.refusal.unmetConditions.join(" "));
 
-    expect(shape.executionContexts.length).toBeGreaterThan(0);
-    expect(fieldsOf("spec.plan.propose.accepted")).toEqual([
-      {
-        slug: "delivery-plan",
-        covered: 0,
-        selected: 0,
-        contexts: shape.executionContexts.length,
-      },
-    ]);
-  });
+      expect(proposed.value.attempt.status).toBe(status);
+      expect(shape.executionContexts.length).toBeGreaterThan(0);
+      expect(fieldsOf("spec.plan.propose.accepted")).toEqual([
+        {
+          slug: "delivery-plan",
+          covered: 0,
+          selected: 0,
+          contexts: shape.executionContexts.length,
+        },
+      ]);
+    },
+  );
 
   it("records every attempt transition with the states either side and the actor kind", async () => {
     const world = createWorld(db, {
       launchedExecutionState: () => "delivered",
     });
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
-    const candidate = { candidateId, candidateHash };
-    const signed = await world.service.signOff({
-      spec: SPEC,
-      ...candidate,
-      actor: HUMAN,
-      approver: "Alex",
-    });
-    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const { candidate } = await signOffDraft(world);
     const launched = await world.service.recordLaunch({
       spec: SPEC,
       executionId: LAUNCHED_EXECUTION_ID,
@@ -2069,13 +2295,7 @@ describe("delivery-plan planning telemetry", () => {
 
     expect(fieldsOf("spec.plan.attempt.transition")).toEqual([
       { slug: "delivery-plan", from: "none", to: "draft", actor: "agent" },
-      { slug: "delivery-plan", from: "draft", to: "proposed", actor: "agent" },
-      {
-        slug: "delivery-plan",
-        from: "proposed",
-        to: "approved",
-        actor: "human",
-      },
+      { slug: "delivery-plan", from: "draft", to: "approved", actor: "human" },
       {
         slug: "delivery-plan",
         from: "approved",
@@ -2094,18 +2314,10 @@ describe("delivery-plan planning telemetry", () => {
   it("records the park and reopen transitions", async () => {
     const world = createWorld(db);
     await openClean(world);
-    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("Proposal did not freeze a candidate");
-    }
+    const { candidate } = await signOffDraft(world);
     const parked = await world.service.park({
       spec: SPEC,
-      candidateId,
-      candidateHash,
+      ...candidate,
       reason: "Waiting on review",
       actor: AGENT,
     });
@@ -2119,7 +2331,7 @@ describe("delivery-plan planning telemetry", () => {
       throw new Error(reopened.refusal.unmetConditions.join(" "));
 
     expect(fieldsOf("spec.plan.attempt.transition").slice(-2)).toEqual([
-      { slug: "delivery-plan", from: "proposed", to: "parked", actor: "agent" },
+      { slug: "delivery-plan", from: "approved", to: "parked", actor: "agent" },
       { slug: "delivery-plan", from: "parked", to: "draft", actor: "agent" },
     ]);
   });

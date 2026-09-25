@@ -11,13 +11,13 @@ const plan: DeliveryPlanView = {
   attempt: {
     id: "attempt-one",
     specSlug: "native-sdd",
-    status: "proposed",
+    status: "draft",
     draftRevision: 4,
     pinnedRevisionId: "approved-three",
     deltaBasisExecutionId: null,
-    proposedSnapshotId: "snapshot-one",
-    candidateId: "candidate-one",
-    candidateHash: "candidate-hash",
+    proposedSnapshotId: null,
+    candidateId: null,
+    candidateHash: null,
     launchedExecutionId: null,
     workflowDefinitionId: "managed-one",
     createdAt: "2026-09-23T00:00:00Z",
@@ -48,12 +48,12 @@ const plan: DeliveryPlanView = {
   nextAct: {
     actor: "human",
     command: `Review and sign off in Builder: ${builderHref}`,
-    reason: "Execution start requires human approval.",
+    reason: "Execution start requires a human to review the draft.",
   },
 };
 
 describe("delivery plan operational receipts", () => {
-  it.each(["open", "propose", "reopen", "sign-off"])(
+  it.each(["open", "propose", "reopen"])(
     "keeps the plan at the read location for %s",
     async (action) => {
       const mutation = {
@@ -64,17 +64,7 @@ describe("delivery plan operational receipts", () => {
       const fixture = createCcRuntimeFixture({
         respond: () => jsonReply({ ...plan, ...mutation }),
       });
-      const flags =
-        action === "reopen"
-          ? ["--reason", "Revise the plan"]
-          : action === "sign-off"
-            ? [
-                "--candidate",
-                "candidate-one",
-                "--candidate-hash",
-                "candidate-hash",
-              ]
-            : [];
+      const flags = action === "reopen" ? ["--reason", "Revise the plan"] : [];
       const result = await fixture.run([
         "spec",
         "plan",
@@ -135,7 +125,7 @@ describe("delivery plan operational receipts", () => {
   it("projects operational status from the canonical plan without confusing its two revision guards", () => {
     expect(deliveryPlanStatus(plan)).toEqual({
       attemptId: "attempt-one",
-      status: "proposed",
+      status: "draft",
       pinnedRevisionId: "approved-three",
       draftRevision: 4,
       workflowDefinition: { id: "managed-one", revision: 7, builderHref },
@@ -144,8 +134,58 @@ describe("delivery plan operational receipts", () => {
     });
   });
 
-  it.each(["proposed", "parked"] as const)(
-    "hands a human-required %s candidate to Builder",
+  it("hands a ready draft to Builder when execution start requires a human", () => {
+    const next = deliveryPlanNextAct({
+      status: "draft",
+      specSlug: "native-sdd",
+      workflowDefinitionId: "managed-one",
+      builderHref,
+      signOffRequiresHuman: true,
+      draftReady: true,
+    });
+    expect(next).toEqual({
+      actor: "human",
+      command: `Review and sign off in Builder: ${builderHref}`,
+      reason: expect.any(String),
+    });
+  });
+
+  it("lets the agent's propose freeze a ready draft under a Notify or Off dial", () => {
+    const next = deliveryPlanNextAct({
+      status: "draft",
+      specSlug: "native-sdd",
+      workflowDefinitionId: "managed-one",
+      builderHref,
+      signOffRequiresHuman: false,
+      draftReady: true,
+    });
+    expect(next).toMatchObject({
+      actor: "agent",
+      command: "cctl spec plan propose native-sdd",
+    });
+  });
+
+  it.each([true, false])(
+    "keeps an unready draft with its author whether or not a human signs off (human dial: %s)",
+    (signOffRequiresHuman) => {
+      const next = deliveryPlanNextAct({
+        status: "draft",
+        specSlug: "native-sdd",
+        workflowDefinitionId: "managed-one",
+        builderHref,
+        signOffRequiresHuman,
+        draftReady: false,
+      });
+      expect(next.actor).toBe("agent");
+      expect(next.command).toContain(
+        "cctl workflow validate --file .cc/temp/plan.json --definition managed-one",
+      );
+      expect(next.command).not.toContain(builderHref);
+    },
+  );
+
+  it.each(["approved", "parked"] as const)(
+    "starts a signed %s candidate without another sign-off",
     (status) => {
       const next = deliveryPlanNextAct({
         status,
@@ -153,28 +193,14 @@ describe("delivery plan operational receipts", () => {
         workflowDefinitionId: "managed-one",
         builderHref,
         signOffRequiresHuman: true,
-        parkedApproved: false,
+        draftReady: false,
       });
-      expect(next.actor).toBe("human");
-      expect(next.command).toContain(builderHref);
-      expect(next.command).not.toContain("cctl spec plan sign-off");
+      expect(next).toMatchObject({
+        actor: "agent",
+        command: "cctl spec start native-sdd --file .cc/temp/inputs.json",
+      });
     },
   );
-
-  it("retains policy-supported agent sign-off", () => {
-    const next = deliveryPlanNextAct({
-      status: "proposed",
-      specSlug: "native-sdd",
-      workflowDefinitionId: "managed-one",
-      builderHref,
-      signOffRequiresHuman: false,
-      parkedApproved: false,
-    });
-    expect(next).toMatchObject({
-      actor: "agent",
-      command: "cctl spec plan sign-off native-sdd",
-    });
-  });
 
   it("distinguishes structural mapping from the recorded semantic review", async () => {
     const fixture = createCcRuntimeFixture({ respond: () => jsonReply(plan) });

@@ -170,10 +170,10 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
   const saveApprovalStmt = db.prepare(
     `INSERT INTO spec_approvals (
        id, spec_id, subject_kind, element_id, revision_id, approver,
-       granted_at, validity
+       granted_at, validity, subject_fingerprint_json
      ) VALUES (
        @id, @spec_id, @subject_kind, @element_id, @revision_id, @approver,
-       @granted_at, @validity
+       @granted_at, @validity, @subject_fingerprint_json
      )
      ON CONFLICT(id) DO UPDATE SET
        spec_id = excluded.spec_id,
@@ -182,7 +182,8 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
        revision_id = excluded.revision_id,
        approver = excluded.approver,
        granted_at = excluded.granted_at,
-       validity = excluded.validity`,
+       validity = excluded.validity,
+       subject_fingerprint_json = excluded.subject_fingerprint_json`,
   );
   const deleteApprovalStmt = db.prepare(
     "DELETE FROM spec_approvals WHERE id = ?",

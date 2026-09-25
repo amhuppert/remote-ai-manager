@@ -91,8 +91,8 @@ export function isServerOwnedDeliveryPlanSource(source: {
  * The sources an author owns, with the rank gaps the server-owned entries leave
  * closed so authored relative order survives. Finalization re-injects the
  * server-owned entries around the result, which is what keeps a launch that
- * already carries them — a reopened candidate, a re-proposed draft — from
- * accumulating duplicate entries per hop.
+ * already carries them — a reopened candidate, a draft restaged at sign-off —
+ * from accumulating duplicate entries per hop.
  */
 export function authoredDeliveryPlanSources<
   T extends {
@@ -161,7 +161,7 @@ export function finalizeDeliveryPlanLaunch(
     sourceUri,
     reason: "The signed native SDD candidate owns workflow governance.",
     instruction:
-      "Before launch, reopen and re-propose the plan; during a run, use the audited charter-amendment act.",
+      "Before launch, reopen the plan and have the revised draft signed off; during a run, use the audited charter-amendment act.",
   };
   const provenanceLock = {
     paths: ["/origin", "/approvalRequired"],
@@ -169,7 +169,7 @@ export function finalizeDeliveryPlanLaunch(
     reason:
       "The signed native SDD candidate owns provenance and approval policy.",
     instruction:
-      "Before launch, reopen and re-propose the plan; after launch, replace the execution.",
+      "Before launch, reopen the plan and have the revised draft signed off; after launch, replace the execution.",
   };
 
   return workflowDefinitionMutationSchema.parse({

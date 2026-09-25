@@ -44,7 +44,7 @@ Within inline show data, `spec` is the identity and `counts` or
 provides `elementId`, `kind`, and `elementVersion` there. Use those identities
 rather than traversing the durable snapshot row.
 
-Plan reads and open/propose/reopen/sign-off receipts keep the plan at
+Plan reads and open/propose/reopen receipts keep the plan at
 `payload.data.plan`. Abandon returns only the retired attempt's ID.
 For example, this extracts selected plan fields from a successful read while
 handling inline output, automatic spill, and explicit JSON `--out`:
@@ -78,7 +78,7 @@ return bounded collections by default. Follow omission commands or choose
 
 Revision fields answer different questions. `baseRevision` is the immediate
 parent named by the current revision's `basedOnRevisionId`. `currentRevision`
-is the spec's latest revision, whether draft, proposed, or approved.
+is the spec's latest revision, whether draft, approved, or withdrawn.
 `currentApprovedRevision` is the latest revision whose state is approved and
 may therefore differ from both. Inspect
 the machine-readable envelope map and these semantics offline with

@@ -144,7 +144,7 @@ export interface DeliveryPlanServiceDeps {
     revisionId: string;
     revisionNumber: number;
     stage: "requirements" | "design";
-    state: "draft" | "proposed" | "approved";
+    state: "draft" | "approved";
   } | null>;
   revisionSnapshot(revisionId: string): Promise<SpecRevisionSnapshot | null>;
   /**
@@ -229,10 +229,17 @@ export interface PreviewDeliveryPlanServiceInput {
   stage: DeliveryPlanPreviewStage;
   expectedDraftRevision?: number;
 }
-export interface SignOffDeliveryPlanServiceInput extends FinalizedDeliveryPlanCandidateIdentity {
+/**
+ * Sign-off names the draft the reviewer read: the binding revision and the
+ * managed definition revision. The candidate those bytes freeze into does not
+ * exist until this act creates it.
+ */
+export interface SignOffDeliveryPlanServiceInput {
   spec: Spec;
   actor: ActorProvenance;
   approver: string;
+  expectedDraftRevision: number;
+  expectedDefinitionRevision: number;
 }
 export interface ParkDeliveryPlanServiceInput extends FinalizedDeliveryPlanCandidateIdentity {
   spec: Spec;
@@ -264,12 +271,6 @@ export interface DeliveryPlanLaunchCandidate {
 
 export type DeliveryPlanLaunchResolution =
   | { readonly kind: "ready"; readonly value: DeliveryPlanLaunchCandidate }
-  | {
-      readonly kind: "unapproved";
-      readonly attemptId: string;
-      readonly candidate: FinalizedDeliveryPlanCandidateIdentity;
-      readonly refusal: Refusal;
-    }
   | { readonly kind: "refused"; readonly refusal: Refusal };
 
 export interface DeliveryPlanService {
@@ -346,7 +347,7 @@ function coverageUpgradeRefusal(
     unmetConditions: [
       "This v3 attempt must be reopened into v4 so its claims derive from criterion coverage; any signed candidate needs fresh sign-off.",
     ],
-    instruction: `Run \`cctl spec plan reopen ${slug} --reason <why>\`, author covers through workflow replace, then propose and sign off the v4 candidate.`,
+    instruction: `Run \`cctl spec plan reopen ${slug} --reason <why>\`, author covers through workflow replace, then have the v4 draft signed off.`,
   };
 }
 
@@ -439,7 +440,197 @@ export function createDeliveryPlanService(
   }
 
   /**
-   * A proposal that failed to commit would otherwise leave the definition
+   * Sign-off's one freeze: the propose gate, then the candidate-stage restage
+   * of the definition the reviewer read, then the snapshot, its approval, and
+   * the execution-start admission in one transaction. The definition file is
+   * written before the transaction, so any failure after it thaws the file
+   * back to draft rather than leaving a locked definition under a draft
+   * attempt. Runs inside the definition's exclusive section.
+   */
+  async function freezeAndApprove(input: {
+    spec: Spec;
+    attempt: SpecDeliveryPlanAttemptRow;
+    actor: ActorProvenance;
+    approver: string;
+    /** The revision the reviewer read; null when the author freezes it. */
+    expectedDefinitionRevision: number | null;
+    /** A Notify/Off propose reports the coverage it froze. */
+    origin: "propose" | "sign_off";
+  }): Promise<PlanResult<DeliveryPlanMutationView>> {
+    const { spec, attempt } = input;
+    const document = deliveryPlanDocumentSchema.parse(
+      JSON.parse(attempt.content_json),
+    );
+    const health = await healthOf(attempt, spec, document, "propose");
+    const blocked = proposeRefusal(spec, attempt, health);
+    if (blocked) return blocked;
+    const definition = await workingDefinition(attempt, spec);
+    if (definition === null) {
+      return {
+        ok: false,
+        refusal: missingDraftDefinition(spec.slug),
+      };
+    }
+    if (
+      input.expectedDefinitionRevision !== null &&
+      definition.revision !== input.expectedDefinitionRevision
+    ) {
+      return staleDefinition(
+        spec.slug,
+        definition.revision,
+        input.expectedDefinitionRevision,
+      );
+    }
+    try {
+      const pinnedRevision = await pinned(attempt, spec);
+      if (!pinnedRevision.ok) return pinnedRevision;
+      const claims = deriveDeliveryPlanClaims(
+        document.binding,
+        definition.definition,
+      );
+      const selected = new Set(
+        document.binding.dispositions
+          .filter((entry) => entry.disposition === "in_scope")
+          .map((entry) => entry.criterionElementId),
+      );
+      const seededDocuments = [
+        buildPinnedSpecDocument(spec, pinnedRevision.value),
+        ...definition.definition.executionContexts.map((context) =>
+          buildContextSpecDocument(
+            spec,
+            pinnedRevision.value,
+            context.id,
+            criterionRecordsOf(context.acceptanceCriteria).flatMap((record) =>
+              (record.covers ?? []).filter((id) => selected.has(id)),
+            ),
+          ),
+        ),
+        buildSpecExecutionClaimsDocument(
+          buildSpecOwnershipProjection(
+            {
+              candidateId: definition.id,
+              pinnedRevisionId: attempt.pinned_revision_id,
+              dispositions: document.binding.dispositions,
+              claims,
+            },
+            pinnedRevision.value,
+            undefined,
+            definition.definition.executionContexts.map(
+              (context) => context.id,
+            ),
+          ),
+        ),
+      ];
+      const frozen = await deps.managedDefinitions.restage({
+        spec,
+        pinnedRevisionId: attempt.pinned_revision_id,
+        attemptId: attempt.id,
+        workflowDefinitionId: definition.id,
+        expectedRevision: definition.revision,
+        stage: "candidate",
+        seededDocuments,
+      });
+      const candidateRecord: DeliveryPlanCandidateRecord = {
+        protocol: "native-sdd-delivery-candidate/v4",
+        schemaVersion: 4,
+        specId: spec.id,
+        attemptId: attempt.id,
+        candidateId: frozen.id,
+        pinnedRevisionId: attempt.pinned_revision_id,
+        draftRevision: attempt.draft_revision,
+        workflowDefinition: {
+          id: frozen.id,
+          revision: frozen.revision,
+          definitionHash: workflowDefinitionHash(frozen),
+        },
+        binding: deliveryPlanBindingSchema.parse(document.binding),
+        claims,
+        bindingHash: deliveryPlanBindingHash(document.binding),
+      };
+      const candidateHash = deliveryPlanCandidateHash(candidateRecord);
+      const candidate = {
+        candidateId: candidateRecord.candidateId,
+        candidateHash,
+      };
+      let outcome: {
+        approved: SpecDeliveryPlanAttemptRow;
+        admission: ReturnType<
+          typeof admitExecutionStartForAttemptInTransaction
+        >;
+      };
+      try {
+        outcome = deps.runInTransaction(() => {
+          const approved = deps.plans.approveCandidate({
+            attemptId: attempt.id,
+            expectedDraftRevision: attempt.draft_revision,
+            snapshotId: deps.nextId(),
+            approvedAt: deps.now(),
+            actor: input.actor,
+            candidate: { record: candidateRecord, candidateHash },
+          }).attempt;
+          const admission = admitExecutionStartForAttemptInTransaction(
+            {
+              reviewRepo: deps.reviewRepo,
+              events: deps.events,
+              nextId: deps.nextId,
+            },
+            {
+              spec,
+              pinnedRevisionId: approved.pinned_revision_id,
+              attemptId: approved.id,
+              candidate,
+              actor: input.actor,
+              approver: input.approver,
+              occurredAt: deps.now(),
+            },
+          );
+          return { approved, admission };
+        });
+      } catch (error) {
+        await thawAfterFailedProposal(spec, attempt, frozen);
+        throw error;
+      }
+      deps.events.publishAfterCommit(outcome.admission.prepared);
+      if (outcome.admission.notice !== null)
+        deps.policyNotifier?.policyAdmitted(outcome.admission.notice);
+      if (input.origin === "propose") {
+        const accepted = specPlanProposeAcceptedEvent({
+          slug: spec.slug,
+          covered: health.claims.claimed,
+          selected: health.claims.selected,
+          contexts: frozen.definition.executionContexts.length,
+        });
+        logger.info(accepted.event, accepted.fields);
+      }
+      logger.info("specs.delivery-plan.signed-off", {
+        specId: spec.id,
+        attemptId: attempt.id,
+        candidateId: candidate.candidateId,
+        candidateHash,
+        workflowDefinitionRevision: frozen.revision,
+        seededDocumentCount: frozen.definition.seededDocuments?.length ?? 0,
+      });
+      logAttemptTransition({
+        slug: spec.slug,
+        from: attempt.status,
+        to: outcome.approved.status,
+        actor: input.actor,
+      });
+      const view = await project(outcome.approved, spec);
+      publishPlanChange(spec, view, "signed-off");
+      return mutation(
+        view,
+        healthTotals(health),
+        null,
+        admissionView(outcome.admission),
+      );
+    } catch (error) {
+      return planFailure(error, spec.slug);
+    }
+  }
+
+  /**
+   * A sign-off that failed to commit would otherwise leave the definition
    * frozen under a draft attempt — a charter nobody can author. Restoring the
    * draft stage keeps the attempt editable; a failure here is logged rather
    * than raised so the commit error stays the one the caller sees.
@@ -471,10 +662,10 @@ export function createDeliveryPlanService(
   }
 
   /**
-   * What the draft still owes, read through the projection `propose` refuses
-   * on. A frozen attempt owes nothing: its bytes were admitted and linted at
-   * proposal and cannot change, so re-admitting them would only report the same
-   * verdict against a launch nobody can still edit.
+   * What the draft still owes, read through the projection `propose` and
+   * sign-off refuse on. A frozen attempt owes nothing: its bytes were admitted
+   * and linted at sign-off and cannot change, so re-admitting them would only
+   * report the same verdict against a launch nobody can still edit.
    */
   async function healthOf(
     attempt: SpecDeliveryPlanAttemptRow,
@@ -626,7 +817,10 @@ export function createDeliveryPlanService(
       // The code and instruction the caller already handles, over the
       // projection's own condition: the refusal names the definition status
       // reported, not a second sentence about the same absence.
-      return reasoned({ ...invalidCandidate(spec.slug), unmetConditions });
+      return reasoned({
+        ...missingDraftDefinition(spec.slug),
+        unmetConditions,
+      });
     }
     if (ruleIds.has(LAUNCH_NOT_ADMISSIBLE_RULE_ID)) {
       return reasoned(admissionRefusal(spec.slug, unmetConditions));
@@ -641,7 +835,7 @@ export function createDeliveryPlanService(
       code: "lint_blocked",
       unmetConditions,
       instruction:
-        "Correct coverage and charter findings with cctl workflow replace; settle human dispositions in Spec Studio, then propose again.",
+        "Correct coverage and charter findings with cctl workflow replace and settle human dispositions in Spec Studio; the draft can be signed off once none remain.",
     });
   }
 
@@ -734,7 +928,6 @@ export function createDeliveryPlanService(
               parkedAt: prelaunch.parkedAt,
               parkedBy: prelaunch.parkedBy,
               reason: prelaunch.reason,
-              approvedAtPark: prelaunch.approvedAtPark,
               parkedCandidateId: prelaunch.candidate.candidateId,
               parkedCandidateHash: prelaunch.candidate.candidateHash,
               currentCandidateId: current?.candidateId ?? null,
@@ -772,7 +965,7 @@ export function createDeliveryPlanService(
       dispositionCounts: dispositionCounts(document.binding),
       unresolved: [...health.unresolved],
       snapshots: snapshots(attempt),
-      nextAct: nextAct(attempt, spec, builderHref),
+      nextAct: nextAct(attempt, spec, builderHref, health),
     };
   }
 
@@ -862,9 +1055,7 @@ export function createDeliveryPlanService(
         };
       }
       if (attempt.status !== "draft") {
-        const reopenable = ["proposed", "approved", "parked"].includes(
-          attempt.status,
-        );
+        const reopenable = ["approved", "parked"].includes(attempt.status);
         return {
           ok: false,
           refusal: {
@@ -1082,6 +1273,12 @@ export function createDeliveryPlanService(
       }
     },
 
+    /**
+     * The author's review request. Under a human execution-start dial it
+     * changes nothing: the human reviews the draft and signs it off. Under
+     * Notify or Off no human act follows, so it freezes and approves the draft
+     * itself.
+     */
     async propose(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
@@ -1095,22 +1292,32 @@ export function createDeliveryPlanService(
       if (attempt.workflow_definition_id === null) {
         return {
           ok: false,
-          refusal: invalidCandidate(
+          refusal: missingDraftDefinition(
             input.spec.slug,
             "The managed workflow definition is missing.",
           ),
         };
       }
-      const sourceDefinitionId = attempt.workflow_definition_id;
+      if (attempt.status !== "draft") return notDraft(input.spec.slug, attempt);
       return deps.managedDefinitions.runExclusive(
-        sourceDefinitionId,
+        attempt.workflow_definition_id,
         async () => {
+          const dial = resolveDial(input.spec.gatePolicy, "execution_start");
+          if (!dialRequiresHumanApproval(dial)) {
+            return freezeAndApprove({
+              spec: input.spec,
+              attempt,
+              actor: input.actor,
+              approver: "policy",
+              expectedDefinitionRevision: null,
+              origin: "propose",
+            });
+          }
           const document = deliveryPlanDocumentSchema.parse(
             JSON.parse(attempt.content_json),
           );
-          // The refusal and `plan status` read the same projection through the
-          // same entry, so a draft that reads proposable cannot refuse here and
-          // a refusal always shows up on the next status.
+          // The refusal and `plan status` read the same projection through
+          // the same entry, so a draft that reads ready cannot refuse here.
           const health = await healthOf(
             attempt,
             input.spec,
@@ -1120,128 +1327,15 @@ export function createDeliveryPlanService(
           const blocked = proposeRefusal(input.spec, attempt, health);
           if (blocked) return blocked;
           const definition = await workingDefinition(attempt, input.spec);
-          if (definition === null) {
-            return {
-              ok: false,
-              refusal: invalidCandidate(
-                input.spec.slug,
-                "The managed workflow definition is missing.",
-              ),
-            };
-          }
-          try {
-            // The freeze is the lock. The draft definition keeps its charter
-            // authorable; proposing writes the candidate-stage revision a
-            // sign-off binds, so the manifest names the frozen bytes.
-            const pinnedRevision = await pinned(attempt, input.spec);
-            if (!pinnedRevision.ok) return pinnedRevision;
-            const claims = deriveDeliveryPlanClaims(
-              document.binding,
-              definition.definition,
-            );
-            const selected = new Set(
-              document.binding.dispositions
-                .filter((entry) => entry.disposition === "in_scope")
-                .map((entry) => entry.criterionElementId),
-            );
-            const seededDocuments = [
-              buildPinnedSpecDocument(input.spec, pinnedRevision.value),
-              ...definition.definition.executionContexts.map((context) =>
-                buildContextSpecDocument(
-                  input.spec,
-                  pinnedRevision.value,
-                  context.id,
-                  criterionRecordsOf(context.acceptanceCriteria).flatMap(
-                    (record) =>
-                      (record.covers ?? []).filter((id) => selected.has(id)),
-                  ),
-                ),
-              ),
-              buildSpecExecutionClaimsDocument(
-                buildSpecOwnershipProjection(
-                  {
-                    candidateId: definition.id,
-                    pinnedRevisionId: attempt.pinned_revision_id,
-                    dispositions: document.binding.dispositions,
-                    claims,
-                  },
-                  pinnedRevision.value,
-                  undefined,
-                  definition.definition.executionContexts.map(
-                    (context) => context.id,
-                  ),
-                ),
-              ),
-            ];
-            const frozen = await deps.managedDefinitions.restage({
-              spec: input.spec,
-              pinnedRevisionId: attempt.pinned_revision_id,
-              attemptId: attempt.id,
-              workflowDefinitionId: definition.id,
-              expectedRevision: definition.revision,
-              stage: "candidate",
-              seededDocuments,
-            });
-            const candidateRecord: DeliveryPlanCandidateRecord = {
-              protocol: "native-sdd-delivery-candidate/v4",
-              schemaVersion: 4,
-              specId: input.spec.id,
-              attemptId: attempt.id,
-              candidateId: frozen.id,
-              pinnedRevisionId: attempt.pinned_revision_id,
-              draftRevision: attempt.draft_revision,
-              workflowDefinition: {
-                id: frozen.id,
-                revision: frozen.revision,
-                definitionHash: workflowDefinitionHash(frozen),
-              },
-              binding: deliveryPlanBindingSchema.parse(document.binding),
-              claims,
-              bindingHash: deliveryPlanBindingHash(document.binding),
-            };
-            const candidateHash = deliveryPlanCandidateHash(candidateRecord);
-            let proposed: ReturnType<SpecDeliveryPlanRepo["propose"]>;
-            try {
-              proposed = deps.plans.propose({
-                attemptId: attempt.id,
-                expectedDraftRevision: attempt.draft_revision,
-                snapshotId: deps.nextId(),
-                proposedAt: deps.now(),
-                actor: input.actor,
-                candidate: { record: candidateRecord, candidateHash },
-              });
-            } catch (error) {
-              await thawAfterFailedProposal(input.spec, attempt, frozen);
-              throw error;
-            }
-            logger.info("specs.delivery-plan.proposed", {
-              specId: input.spec.id,
-              attemptId: attempt.id,
-              candidateId: candidateRecord.candidateId,
-              candidateHash,
-              workflowDefinitionRevision: frozen.revision,
-              seededDocumentCount:
-                frozen.definition.seededDocuments?.length ?? 0,
-            });
-            logAttemptTransition({
-              slug: input.spec.slug,
-              from: attempt.status,
-              to: proposed.attempt.status,
-              actor: input.actor,
-            });
-            const accepted = specPlanProposeAcceptedEvent({
-              slug: input.spec.slug,
-              covered: health.claims.claimed,
-              selected: health.claims.selected,
-              contexts: frozen.definition.executionContexts.length,
-            });
-            logger.info(accepted.event, accepted.fields);
-            const view = await project(proposed.attempt, input.spec);
-            publishPlanChange(input.spec, view, "proposed");
-            return mutation(view, healthTotals(health), null);
-          } catch (error) {
-            return planFailure(error, input.spec.slug);
-          }
+          const accepted = specPlanProposeAcceptedEvent({
+            slug: input.spec.slug,
+            covered: health.claims.claimed,
+            selected: health.claims.selected,
+            contexts: definition?.definition.executionContexts.length ?? 0,
+          });
+          logger.info(accepted.event, accepted.fields);
+          const view = await project(attempt, input.spec);
+          return mutation(view, healthTotals(health), null);
         },
       );
     },
@@ -1464,10 +1558,7 @@ export function createDeliveryPlanService(
         if (definition === null) {
           return {
             ok: false,
-            refusal: invalidCandidate(
-              input.spec.slug,
-              "The managed workflow definition is missing.",
-            ),
+            refusal: missingDraftDefinition(input.spec.slug),
           };
         }
         return {
@@ -1494,7 +1585,7 @@ export function createDeliveryPlanService(
       return {
         ok: true,
         value: {
-          stage: "proposed",
+          stage: "approved",
           attemptId: attempt.id,
           specSlug: input.spec.slug,
           draftRevision: attempt.draft_revision,
@@ -1502,11 +1593,9 @@ export function createDeliveryPlanService(
           candidateHash: stored.identity.candidateHash,
           snapshotId: stored.snapshot.id,
           candidateId: stored.identity.candidateId,
-          approvable:
-            attempt.status === "proposed" ||
-            attempt.status === "approved" ||
-            attempt.status === "parked",
-          approvability: "This is the stored finalized launch envelope.",
+          approvable: false,
+          approvability:
+            "This is the signed launch envelope; it is already approved.",
           launch: await deps.managedDefinitions.getExact({
             projectPath: input.spec.projectPath,
             workflowDefinitionId: stored.record.workflowDefinition.id,
@@ -1526,12 +1615,13 @@ export function createDeliveryPlanService(
       if (attempt.workflow_definition_id === null) {
         return {
           ok: false,
-          refusal: invalidCandidate(
+          refusal: missingDraftDefinition(
             input.spec.slug,
             "The attempt has no managed workflow definition to sign off.",
           ),
         };
       }
+      if (attempt.status !== "draft") return notDraft(input.spec.slug, attempt);
       return deps.managedDefinitions.runExclusive(
         attempt.workflow_definition_id,
         async () => {
@@ -1540,86 +1630,23 @@ export function createDeliveryPlanService(
             attempt.pinned_revision_id,
           );
           if (unsettled) return { ok: false, refusal: unsettled };
-          const candidate = statedCandidate(input);
-          const stored = candidateIdentity(attempt);
-          if (stored === null || !sameCandidate(candidate, stored))
-            return staleCandidate(input.spec.slug, attempt, candidate, stored);
-          const candidateSnapshot = storedCandidate(attempt, deps.plans);
-          if (candidateSnapshot === null) {
-            return { ok: false, refusal: noCandidate(input.spec.slug) };
-          }
-          const integrity = candidateIntegrityFailure(
-            attempt,
-            candidateSnapshot,
-          );
-          if (integrity !== null) {
-            return {
-              ok: false,
-              refusal: invalidCandidate(input.spec.slug, integrity),
-            };
-          }
-          try {
-            await deps.managedDefinitions.getExact({
-              projectPath: input.spec.projectPath,
-              workflowDefinitionId:
-                candidateSnapshot.record.workflowDefinition.id,
-              revision: candidateSnapshot.record.workflowDefinition.revision,
-              definitionHash:
-                candidateSnapshot.record.workflowDefinition.definitionHash,
-            });
-          } catch (error) {
-            return {
-              ok: false,
-              refusal: invalidCandidate(
-                input.spec.slug,
-                error instanceof Error ? error.message : String(error),
-              ),
-            };
-          }
           const dial = resolveDial(input.spec.gatePolicy, "execution_start");
           if (dialRequiresHumanApproval(dial) && input.actor.kind !== "human")
             return humanSignoff(input.spec.slug);
-          try {
-            const outcome = deps.runInTransaction(() => {
-              const approved = deps.plans.recordTransition({
-                attemptId: attempt.id,
-                transition: { kind: "approve", ...candidate },
-                occurredAt: deps.now(),
-                actor: input.actor,
-              });
-              const admission = admitExecutionStartForAttemptInTransaction(
-                {
-                  reviewRepo: deps.reviewRepo,
-                  events: deps.events,
-                  nextId: deps.nextId,
-                },
-                {
-                  spec: input.spec,
-                  pinnedRevisionId: approved.pinned_revision_id,
-                  attemptId: approved.id,
-                  candidate,
-                  actor: input.actor,
-                  approver: input.approver,
-                  occurredAt: deps.now(),
-                },
-              );
-              return { approved, admission };
-            });
-            deps.events.publishAfterCommit(outcome.admission.prepared);
-            if (outcome.admission.notice !== null)
-              deps.policyNotifier?.policyAdmitted(outcome.admission.notice);
-            logAttemptTransition({
-              slug: input.spec.slug,
-              from: attempt.status,
-              to: outcome.approved.status,
-              actor: input.actor,
-            });
-            const view = await project(outcome.approved, input.spec);
-            publishPlanChange(input.spec, view, "signed-off");
-            return mutation(view, null, null, admissionView(outcome.admission));
-          } catch (error) {
-            return planFailure(error, input.spec.slug);
-          }
+          if (attempt.draft_revision !== input.expectedDraftRevision)
+            return stalePreview(
+              input.spec.slug,
+              attempt,
+              input.expectedDraftRevision,
+            );
+          return freezeAndApprove({
+            spec: input.spec,
+            attempt,
+            actor: input.actor,
+            approver: input.approver,
+            expectedDefinitionRevision: input.expectedDefinitionRevision,
+            origin: "sign_off",
+          });
         },
       );
     },
@@ -1692,17 +1719,14 @@ export function createDeliveryPlanService(
             return { kind: "refused", refusal: unsettled };
           }
           const candidate = candidateIdentity(attempt);
-          if (candidate === null)
-            return { kind: "refused", refusal: noCandidate(input.spec.slug) };
           const approval = parseApproval(attempt);
           if (
+            candidate === null ||
             (attempt.status !== "approved" && attempt.status !== "parked") ||
             approval === null
           ) {
             return {
-              kind: "unapproved",
-              attemptId: attempt.id,
-              candidate,
+              kind: "refused",
               refusal: notApproved(input.spec.slug, attempt),
             };
           }
@@ -1722,7 +1746,7 @@ export function createDeliveryPlanService(
               kind: "refused",
               refusal: invalidCandidate(
                 input.spec.slug,
-                "The proposed snapshot does not contain a finalized candidate record.",
+                "The signed snapshot does not contain a finalized candidate record.",
               ),
             };
           const integrity = candidateIntegrityFailure(attempt, stored);
@@ -2103,6 +2127,7 @@ function nextAct(
   attempt: SpecDeliveryPlanAttemptRow,
   spec: Spec,
   builderHref: string,
+  health: DeliveryPlanDraftHealth,
 ): DeliveryPlanNextAct {
   const upgrade = coverageUpgradeRefusal(attempt, spec.slug);
   if (upgrade !== null)
@@ -2119,7 +2144,7 @@ function nextAct(
     signOffRequiresHuman: dialRequiresHumanApproval(
       resolveDial(spec.gatePolicy, "execution_start"),
     ),
-    parkedApproved: parseApproval(attempt) !== null,
+    draftReady: draftHealth([...health.findings]).blocking === 0,
   });
 }
 interface StoredDeliveryPlanCandidate {
@@ -2237,8 +2262,9 @@ function previewView(input: {
     candidateHash: null,
     snapshotId: null,
     candidateId: null,
-    approvable: false,
-    approvability: "Draft bytes must be proposed before approval.",
+    approvable: true,
+    approvability:
+      "Draft bytes are what a human reviews; sign-off freezes and approves them.",
     launch: input.launch,
     binding: input.document.binding,
   };
@@ -2371,7 +2397,7 @@ function noApprovedRevision(slug: string): PlanResult<never> {
     refusal: {
       code: "gate_blocked",
       unmetConditions: ["A delivery plan must pin an approved spec revision."],
-      instruction: `Propose and sign off the current spec revision with \`cctl spec propose ${slug}\` before opening a delivery plan.`,
+      instruction: `Get the current spec revision signed off before opening a delivery plan: \`cctl spec propose ${slug}\` asks a human to sign it off in Spec Studio, or signs it off itself under Notify or Off.`,
     },
   };
 }
@@ -2403,8 +2429,8 @@ function previewFailure(
 function noCandidate(slug: string): Refusal {
   return {
     code: "plan_status_conflict",
-    unmetConditions: ["The plan has no finalized candidate."],
-    instruction: `Propose the authored launch with \`cctl spec plan propose ${slug}\`.`,
+    unmetConditions: ["The plan has no signed candidate."],
+    instruction: `Sign off the draft for ${slug} in Builder, or run \`cctl spec plan propose ${slug}\` when execution start is Notify or Off.`,
   };
 }
 function notDraft(
@@ -2418,7 +2444,7 @@ function notDraft(
       unmetConditions: [
         `Attempt ${attempt.id} is ${attempt.status}, not draft.`,
       ],
-      instruction: `Read the finalized candidate with \`cctl spec plan preview ${slug} --stage proposed\`.`,
+      instruction: `Read the signed candidate with \`cctl spec plan preview ${slug} --stage approved\`.`,
     },
   };
 }
@@ -2438,6 +2464,22 @@ function stalePreview(
     },
   };
 }
+function staleDefinition(
+  slug: string,
+  current: number,
+  expected: number,
+): PlanResult<never> {
+  return {
+    ok: false,
+    refusal: {
+      code: "stale_plan_draft",
+      unmetConditions: [
+        `The managed workflow definition is at revision ${current}, not the revision ${expected} that was reviewed.`,
+      ],
+      instruction: `Nothing was signed off. Re-read the draft for ${slug} and review it again.`,
+    },
+  };
+}
 function unknownSnapshots(slug: string): Refusal {
   return {
     code: "not_found",
@@ -2454,7 +2496,21 @@ function invalidCandidate(
   return {
     code: "integrity_mismatch",
     unmetConditions: [detail],
-    instruction: `Reopen and propose a new candidate with \`cctl spec plan reopen ${slug}\`.`,
+    instruction: `Reopen the plan with \`cctl spec plan reopen ${slug}\`, then sign off the repaired draft.`,
+  };
+}
+/**
+ * A draft whose managed definition is gone. Reopen applies only to a signed
+ * plan, so the recovery is a fresh attempt.
+ */
+function missingDraftDefinition(
+  slug: string,
+  detail = "The managed workflow definition is missing.",
+): Refusal {
+  return {
+    code: "integrity_mismatch",
+    unmetConditions: [detail],
+    instruction: `Retire this attempt with \`cctl spec plan abandon ${slug} --reason <why>\`, then open a fresh one with \`cctl spec plan open ${slug}\`.`,
   };
 }
 function approvalIntegrityFailure(
@@ -2465,9 +2521,9 @@ function approvalIntegrityFailure(
   return {
     code: "integrity_mismatch",
     unmetConditions: [
-      `The stored approval names candidate ${approval.candidateId} at ${approval.candidateHash}, but the proposed snapshot names ${candidate.candidateId} at ${candidate.candidateHash}.`,
+      `The stored approval names candidate ${approval.candidateId} at ${approval.candidateHash}, but the signed snapshot names ${candidate.candidateId} at ${candidate.candidateHash}.`,
     ],
-    instruction: `Nothing was started. Reopen and propose a new candidate with \`cctl spec plan reopen ${slug}\`.`,
+    instruction: `Nothing was started. Reopen the plan with \`cctl spec plan reopen ${slug}\`, then sign off the repaired draft.`,
   };
 }
 function notApproved(
@@ -2479,7 +2535,7 @@ function notApproved(
     unmetConditions: [
       `Attempt ${attempt.id} is ${attempt.status} and not signed off.`,
     ],
-    instruction: `Sign the candidate with \`cctl spec plan sign-off ${slug}\`.`,
+    instruction: `Sign off the draft for ${slug} in Builder, or run \`cctl spec plan propose ${slug}\` when execution start is Notify or Off.`,
   };
 }
 function staleCandidate(
@@ -2509,7 +2565,7 @@ function humanSignoff(slug: string): PlanResult<never> {
         "The execution-start policy requires a human sign-off.",
       ],
       rationale: HUMAN_ACT_REQUIRED_RATIONALE,
-      instruction: `Sign off the candidate in Spec Studio before starting ${slug}.`,
+      instruction: `Ask a human to review and sign off the draft for ${slug} in Builder.`,
     },
   };
 }

@@ -27,6 +27,7 @@ import {
   createSpecSpineWorld,
   postJson,
   proposeSpineRevision,
+  readSpineReviewHash,
   runSpineWorkflowToEvidence,
   startSpineExecution,
   SPINE_BEARER_TOKEN,
@@ -40,16 +41,6 @@ import {
 const SLUG = "spec-spine";
 const SCOPE_FILE = "/tmp/spine-refusal-scope.json";
 const ELEMENT_FILE = "/tmp/spine-refusal-element.json";
-
-/**
- * The plan revision the spine proposes is revision 3: requirements and design
- * were signed off ahead of it. Both refusals address it by that number, and
- * both teach the same three exits, including the agent's own.
- */
-const AMEND_INSTRUCTION =
-  "Revision 3 is under review. Conclude that review before amending: sign off revision 3 in Spec Studio, have a human request changes on it, or — if this conversation proposed it and no human has acted on it yet — run `cctl spec withdraw-proposal <slug> --revision <revision-id>` to take it back and continue in the draft it reopens. Amending now would fork past the reviewed content.";
-const ELEMENT_WRITE_INSTRUCTION =
-  "Revision 3 is under review. Conclude that review before editing it: sign off revision 3 in Spec Studio, have a human request changes on it, or — if this conversation proposed it and no human has acted on it yet — run `cctl spec withdraw-proposal <slug> --revision <revision-id>` to take it back and continue in the draft it reopens. Writing into it now would change content a reviewer is reading.";
 
 const cliEnv: CliEnv = {
   CC_SERVER_URL: "http://cc.test",
@@ -393,10 +384,6 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
         "agent",
       ),
     );
-    await world.repos.specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-31T10:00:00.000Z",
-    });
     await world.repos.specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-31T10:01:00.000Z",
@@ -404,10 +391,6 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     const design = await postJson<{ revision: { id: string } }>(
       world.postAction(slug, "open-amendment", {}, "agent"),
     );
-    await world.repos.specs.proposeRevision({
-      revisionId: design.revision.id,
-      proposedAt: "2026-07-31T10:01:10.000Z",
-    });
     await world.repos.specs.approveRevision({
       revisionId: design.revision.id,
       approvedAt: "2026-07-31T10:01:20.000Z",
@@ -449,15 +432,16 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
         )
       ).status,
     ).toBe(200);
-    await world.repos.specs.proposeRevision({
-      revisionId: attempt.revision.id,
-      proposedAt: "2026-07-31T10:02:00.000Z",
-    });
-    // The human requested changes, which ends the revision and strands the
+    // The human withdraws the draft, which ends the revision and strands the
     // element id it introduced.
-    await world.repos.specs.withdrawRevision({
-      revisionId: attempt.revision.id,
-    });
+    await postJson(
+      world.postAction(
+        slug,
+        "withdraw",
+        { revisionId: attempt.revision.id },
+        "human",
+      ),
+    );
     const reopened = await postJson<{ revision: { id: string } }>(
       world.postAction(slug, "open-amendment", {}, "agent"),
     );
@@ -520,219 +504,90 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(interventionRows(world, created.spec.id)).toEqual([]);
   });
 
-  it("refuses an amendment and an element write against a revision under review through route and CLI", async () => {
+  it("keeps a draft under review editable, and refuses a sign-off over content changed after it was read", async () => {
     const authored = await authorSpineDraft(world, SLUG);
     await proposeSpineRevision(world, SLUG, authored);
+    const readHash = await readSpineReviewHash(
+      world,
+      SLUG,
+      authored.draftRevisionId,
+    );
     const revisionsBefore = await world.repos.specs.listRevisions(
       authored.specId,
     );
 
-    // Route surface: continuing authoring from the approved base would fork
-    // past the revision the reviewer is reading, so the amendment refuses.
-    const routeResponse = await world.postAction(
-      SLUG,
-      "open-amendment",
-      {},
-      "agent",
+    // Asking for review froze nothing: an amendment continues in the draft
+    // under review rather than forking past it...
+    const amendment = await postJson<{ revision: { id: string } }>(
+      world.postAction(SLUG, "open-amendment", {}, "agent"),
     );
-    expect(routeResponse.status).toBe(409);
-    const refusal = (await routeResponse.json()) as {
-      code: string;
-      unmetConditions: string[];
-      instruction: string;
-      details: {
-        proposals: Array<{ id: string; number: number }>;
-        approvedBaseRevisionId: string | null;
-      };
-    };
-    expect(refusal.code).toBe("revision_in_review");
-    expect(refusal.instruction).toBe(AMEND_INSTRUCTION);
-    expect(refusal.details).toEqual({
-      proposals: [{ id: authored.draftRevisionId, number: 3 }],
-      approvedBaseRevisionId: authored.designRevisionId,
-    });
+    expect(amendment.revision.id).toBe(authored.draftRevisionId);
 
-    // CLI surface: the same server throw, rendered by the real CLI in both
-    // modes — no hand-written body stands between them.
-    const cliJson = await runCcWithHost(
-      ["spec", "amend", SLUG, "--json"],
-      cliEnv,
-      bridgeHost(world),
-    );
-    expect(cliJson.exitCode).toBe(1);
-    expect(JSON.parse(cliJson.stdout)).toMatchObject({
-      ok: false,
-      effect: "not_applied",
-      instruction: AMEND_INSTRUCTION,
-      error: {
-        details: {
-          serverCode: "revision_in_review",
-          serverDetails: {
-            proposals: [{ id: authored.draftRevisionId, number: 3 }],
-            approvedBaseRevisionId: authored.designRevisionId,
-          },
-        },
-      },
-    });
-    const cliText = await runCcWithHost(
-      ["spec", "amend", SLUG],
-      cliEnv,
-      bridgeHost(world),
-    );
-    expect(cliText.exitCode).toBe(1);
-    expect(cliText.stderr).toContain(`instruction: ${AMEND_INSTRUCTION}`);
-
-    // The write half of the pair: an element write into the proposed revision
-    // names the same revision the same way, and names the act it refused.
+    // ...and the author's task write lands in it through the real CLI.
     const elementWrite = await runCcWithHost(
       ["spec", "draft", SLUG, "--file", ELEMENT_FILE],
       cliEnv,
       bridgeHost(world, {
         [ELEMENT_FILE]: JSON.stringify({
-          elementId: "element-requirement-late",
-          kind: "requirement",
+          elementId: "element-task-late",
+          kind: "task",
           parentElementId: null,
           baseElementVersion: null,
           payload: {
-            kind: "requirement",
-            statement: "Late requirements wait for the review to conclude.",
-            priority: "must",
-            risk: "low",
+            kind: "task",
+            title: "Land the late follow-up",
+            instructions: "Written while the draft is under review.",
+            tracedRequirementElementIds: [authored.requirementId],
+            tracedDecisionElementIds: [],
+            coveredCriterionElementIds: [authored.criterionOneId],
+            dependsOnTaskElementIds: [],
           },
         }),
       }),
     );
-    expect(elementWrite.exitCode).toBe(1);
-    expect(elementWrite.stderr).toContain(
-      `instruction: ${ELEMENT_WRITE_INSTRUCTION}`,
-    );
+    expect(elementWrite.exitCode, elementWrite.stderr).toBe(0);
 
-    // The refusals blocked every transition: no revision was forked and the
-    // reviewed revision still carries exactly the proposed content.
+    // The human signs off on the content they read, which is no longer the
+    // draft's content, so the sign-off refuses.
+    const staleSignOff = await world.postAction(
+      SLUG,
+      "sign-off",
+      { revisionId: authored.draftRevisionId, expectedReviewHash: readHash },
+      "human",
+    );
+    expect(staleSignOff.status).toBe(409);
+    await expect(staleSignOff.json()).resolves.toMatchObject({
+      code: "stale_review",
+    });
+
+    // The refusal wrote nothing: no revision was forked or frozen, no
+    // sign-off row exists, and the draft carries the late task under a new
+    // review hash.
     expect(
       (await world.repos.specs.listRevisions(authored.specId)).map(
-        ({ id }) => id,
+        ({ id, state }) => ({ id, state }),
       ),
-    ).toEqual(revisionsBefore.map(({ id }) => id));
+    ).toEqual(revisionsBefore.map(({ id, state }) => ({ id, state })));
+    expect(
+      revisionsBefore.find(({ id }) => id === authored.draftRevisionId)?.state,
+    ).toBe("draft");
+    expect(
+      world.repos.review
+        .findApprovalsBySpecId(authored.specId)
+        .filter(
+          (approval) =>
+            approval.subject_kind === "revision" &&
+            approval.revision_id === authored.draftRevisionId,
+        ),
+    ).toEqual([]);
     expect(
       (
         await world.repos.specs.getRevisionSnapshot(authored.draftRevisionId)
       )?.elements.map(({ element }) => element.id),
-    ).not.toContain("element-requirement-late");
-  });
-
-  it("lets the proposing agent take its own proposal back, and refuses every other caller, through route and CLI", async () => {
-    const authored = await authorSpineDraft(world, SLUG);
-    await proposeSpineRevision(world, SLUG, authored);
-
-    // The revision id is the caller's compare-and-swap token, so the CLI
-    // refuses locally at exit 2 rather than inferring the current proposal.
-    const missingToken = await runCcWithHost(
-      ["spec", "withdraw-proposal", SLUG, "--json"],
-      cliEnv,
-      bridgeHost(world),
-    );
-    expect(missingToken.exitCode).toBe(2);
-    expect(JSON.parse(missingToken.stdout)).toMatchObject({
-      error: {
-        issues: [
-          expect.objectContaining({
-            code: "invalid_value",
-            path: ["flags", "revision"],
-          }),
-        ],
-      },
-    });
-
-    // A human transport is not the author: the refusal names the two exits
-    // Spec Studio actually offers instead of the agent verb.
-    const humanCaller = await world.postAction(
-      SLUG,
-      "withdraw-proposal",
-      { revisionId: authored.draftRevisionId },
-      "human",
-    );
-    expect(humanCaller.status).toBe(409);
-    const humanRefusal = (await humanCaller.json()) as {
-      code: string;
-      instruction: string;
-    };
-    expect(humanRefusal.code).toBe("proposal_not_owned");
-    expect(humanRefusal.instruction).toContain("Request Changes");
-
-    // A stale token — a revision this spec approved earlier — carries no
-    // proposal, so the CAS check refuses rather than withdrawing something.
-    const staleToken = await runCcWithHost(
-      [
-        "spec",
-        "withdraw-proposal",
-        SLUG,
-        "--revision",
-        authored.designRevisionId,
-        "--json",
-      ],
-      cliEnv,
-      bridgeHost(world),
-    );
-    expect(staleToken.exitCode).toBe(1);
-    expect(JSON.parse(staleToken.stdout)).toMatchObject({
-      ok: false,
-      effect: "not_applied",
-      error: { details: { serverCode: "gate_blocked" } },
-    });
-
-    // The proposing conversation's own exit, through the real CLI: the
-    // revision the amend refusal named is taken back and reopened as a draft.
-    const withdrawn = await runCcWithHost(
-      [
-        "spec",
-        "withdraw-proposal",
-        SLUG,
-        "--revision",
-        authored.draftRevisionId,
-        "--json",
-      ],
-      cliEnv,
-      bridgeHost(world),
-    );
-    expect(withdrawn.exitCode).toBe(0);
-    const receipt = JSON.parse(withdrawn.stdout).payload.data as {
-      withdrawn: { id: string; state: string };
-      draft: { id: string; state: string; basedOnRevisionId: string };
-    };
-    expect(receipt).toMatchObject({
-      withdrawn: { id: authored.draftRevisionId, state: "withdrawn" },
-      draft: { state: "draft", basedOnRevisionId: authored.draftRevisionId },
-    });
-
-    const reloaded = await world.repos.specs.listRevisions(authored.specId);
-    expect(
-      reloaded.filter((revision) => revision.state === "draft"),
-    ).toMatchObject([{ id: receipt.draft.id }]);
-    // The follow-up carries evergreen reviewed content forward. Legacy task
-    // elements remain readable on the withdrawn Plan revision and are not
-    // copied into the design draft that replaces it.
-    const withdrawnElements = (
-      await world.repos.specs.getRevisionSnapshot(authored.draftRevisionId)
-    )?.elements.map(({ element }) => element.id);
-    const replacementElements = (
-      await world.repos.specs.getRevisionSnapshot(receipt.draft.id)
-    )?.elements.map(({ element }) => element.id);
-    expect(withdrawnElements).toEqual(
-      expect.arrayContaining([authored.taskOneId, authored.taskTwoId]),
-    );
-    expect(
-      replacementElements?.some(
-        (elementId) =>
-          elementId === authored.taskOneId || elementId === authored.taskTwoId,
-      ),
-    ).toBe(false);
-    expect(replacementElements).toEqual(
-      withdrawnElements?.filter(
-        (elementId) =>
-          elementId !== authored.taskOneId && elementId !== authored.taskTwoId,
-      ),
-    );
+    ).toContain("element-task-late");
+    await expect(
+      readSpineReviewHash(world, SLUG, authored.draftRevisionId),
+    ).resolves.not.toBe(readHash);
     expect(interventionRows(world, authored.specId)).toEqual([]);
   });
 
@@ -1031,8 +886,10 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
 
   /**
    * rev1 (requirements) approved → rev2 (design) restates the requirement and
-   * adds the decision → the decision is approved and a human requests changes →
-   * rev3 carries both, unchanged against rev2.
+   * adds the decision → the decision is approved and a human withdraws the
+   * draft → rev3 carries both, unchanged against rev2. The retired Request
+   * Changes act reopened withdrawn content as a draft on top of it; the
+   * lineages it left behind persist, so rev3 is opened on rev2 directly.
    */
   async function withdrawnAttempt(slug: string): Promise<WithdrawnAttempt> {
     const created = await postJson<{
@@ -1092,6 +949,11 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
         "agent",
       ),
     );
+    const approvedReviewHash = await readSpineReviewHash(
+      world,
+      slug,
+      approvedRevisionId,
+    );
     await postJson(
       world.postAction(
         slug,
@@ -1100,6 +962,7 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
           revisionId: approvedRevisionId,
           subjectKind: "requirement",
           elementId: `${slug}-element-requirement-1`,
+          expectedReviewHash: approvedReviewHash,
         },
         "human",
       ),
@@ -1108,7 +971,10 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       world.postAction(
         slug,
         "sign-off",
-        { revisionId: approvedRevisionId },
+        {
+          revisionId: approvedRevisionId,
+          expectedReviewHash: approvedReviewHash,
+        },
         "human",
       ),
     );
@@ -1187,23 +1053,35 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
           revisionId: withdrawnRevisionId,
           subjectKind: "decision",
           elementId: `${slug}-element-decision-1`,
+          expectedReviewHash: await readSpineReviewHash(
+            world,
+            slug,
+            withdrawnRevisionId,
+          ),
         },
         "human",
       ),
     );
-    const changesRequested = await postJson<{ draft: { id: string } }>(
+    await postJson(
       world.postAction(
         slug,
-        "request-changes",
+        "withdraw",
         { revisionId: withdrawnRevisionId },
         "human",
       ),
     );
+    const followUp = await world.repos.specs.createDraftFromBase({
+      id: `${slug}-revision-follow-up`,
+      specId,
+      baseRevisionId: withdrawnRevisionId,
+      authoringStage: "design",
+      createdAt: world.now(),
+    });
     return {
       specId,
       approvedRevisionId,
       withdrawnRevisionId,
-      followUpRevisionId: changesRequested.draft.id,
+      followUpRevisionId: followUp.id,
     };
   }
 
@@ -1273,7 +1151,7 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
     );
 
     // A second spec in the same shape, because the propose above already
-    // consumed the first one's draft.
+    // filed the first one's approval requests.
     const textSlug = "withdrawn-attempt-text";
     await withdrawnAttempt(textSlug);
     const text = await runCcWithHost(
@@ -1312,6 +1190,11 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
           revisionId: attempt.followUpRevisionId,
           subjectKind: "requirement",
           elementId: `${slug}-element-requirement-1`,
+          expectedReviewHash: await readSpineReviewHash(
+            world,
+            slug,
+            attempt.followUpRevisionId,
+          ),
         },
         "human",
       ),

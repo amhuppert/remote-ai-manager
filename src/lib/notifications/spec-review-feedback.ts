@@ -1,13 +1,15 @@
 /**
- * Delivers spec review feedback to the PROPOSING conversation as passive,
- * durable notices (#60): a transcript notice the human sees immediately and a
- * pending agent notice the agent reads at its NEXT turn. Never an auto-wake —
- * nothing here prompts, resumes, or otherwise starts a turn.
+ * Delivers spec review feedback to the conversation that AUTHORED the draft
+ * as passive, durable notices (#60): a transcript notice the human sees
+ * immediately and a pending agent notice the agent reads at its NEXT turn.
+ * Never an auto-wake — nothing here prompts, resumes, or otherwise starts a
+ * turn.
  *
- * The review service resolves WHO proposed (from the durable propose event)
- * and hands it over in the notice; this module owns only the delivery
- * consequences. A delivery failure is logged and swallowed: the review act
- * already committed, and a notification must never fail it retroactively.
+ * The review service resolves the draft's latest agent author (from the
+ * durable event log) and hands it over in the notice; this module owns only
+ * the delivery consequences. A delivery failure is logged and swallowed: the
+ * review act already committed, and a notification must never fail it
+ * retroactively.
  */
 
 import { createLogger } from "@/lib/logging";
@@ -18,10 +20,6 @@ import {
 import { findConversationById } from "@/lib/conversations/cross-project-list";
 import { appendNotice } from "@/lib/prompt/transcript";
 import { getErrorMessage } from "@/lib/shared/errors";
-import {
-  approvalLedgerSentence,
-  REOPEN_CARRY_NOTE,
-} from "@/lib/specs/approval-ledger";
 import type { SpecReviewFeedbackNotice } from "@/lib/specs/review-service";
 import { mutateConversation } from "@/lib/state-store";
 import { appendPendingAgentNotice as appendPendingAgentConversationNotice } from "@/lib/workflows/conversation/pre-turn/notices-drain";
@@ -67,32 +65,16 @@ export interface SpecReviewFeedbackNotifier {
 }
 
 /**
- * What the reopen cost, in the words `spec status` and the receipts use — the
- * counts come from the ledger's one renderer so no surface can price the same
- * reopen differently. Empty when the act carried no ledger, which is every
- * kind that reopens nothing.
- */
-function carrySentence(notice: SpecReviewFeedbackNotice): string {
-  const ledger = notice.approvalLedger;
-  if (ledger === null) return "";
-  return ` ${approvalLedgerSentence(ledger)} — ${REOPEN_CARRY_NOTE}.`;
-}
-
-/**
- * What the proposer reads. Each line names the spec, what happened, and — when
+ * What the draft's author reads. Each line names the spec, what happened, and — when
  * there is something to act on — the exact next read.
  */
 function feedbackText(notice: SpecReviewFeedbackNotice): string {
   const readComments = `cctl spec comments ${notice.specSlug} --open`;
   switch (notice.kind) {
     case "commented":
-      return `Review feedback on spec ${notice.specSlug}: a human commented on ${notice.subject ?? "the proposal"}. Read it with ${readComments}.`;
-    case "changes_requested":
-      // The agent that must repair the draft is the one that reads a reopen as
-      // having lost every approval, so the carry is stated to it directly.
-      return `Changes requested on spec ${notice.specSlug}: the draft is reopened. Read the comments with ${readComments}, repair the draft, then propose again.${carrySentence(notice)}`;
+      return `Review feedback on spec ${notice.specSlug}: a human commented on ${notice.subject ?? "the draft"}. Read it with ${readComments}.`;
     case "signed_off":
-      return `Spec ${notice.specSlug}: the proposed revision was signed off.`;
+      return `Spec ${notice.specSlug}: a human signed off the draft; it is now approved.`;
   }
 }
 

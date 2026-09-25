@@ -32,11 +32,6 @@ export class SpecRevisionLineageError extends Error {
 }
 
 export type OrdinaryContinuation =
-  | {
-      readonly kind: "blocked_by_proposal";
-      readonly proposals: readonly SpecRevision[];
-      readonly approved: SpecRevision | null;
-    }
   | { readonly kind: "reuse_draft"; readonly draft: SpecRevision }
   | {
       readonly kind: "clone_approved";
@@ -51,11 +46,6 @@ export type OrdinaryContinuation =
       readonly skippedWithdrawn: readonly SpecRevision[];
     }
   | { readonly kind: "unavailable" };
-
-export type BlockedByProposal = Extract<
-  OrdinaryContinuation,
-  { kind: "blocked_by_proposal" }
->;
 
 function index(revisions: readonly SpecRevision[]): Map<string, SpecRevision> {
   return new Map(revisions.map((revision) => [revision.id, revision]));
@@ -126,8 +116,8 @@ export function ancestorIds(
 
 /**
  * The closest approved revision above `revisionId`, following lineage rather
- * than revision numbers: a revision under review is based on the revision it
- * amends, which is not always the highest-numbered approved revision.
+ * than revision numbers: a draft is based on the revision it amends, which is
+ * not always the highest-numbered approved revision.
  */
 export function nearestApprovedAncestor(
   revisions: readonly SpecRevision[],
@@ -163,30 +153,13 @@ export function governanceBaseRevisionId(
 
 /**
  * Chooses the base for an ordinary authoring continuation (`spec amend`, a
- * create against an existing slug, a link reservation).
- *
- * The proposal check precedes draft reuse on purpose. A proposed revision and
- * a draft legitimately coexist while an execution captures discovered scope
- * against its pinned revision, so an open draft alone does not prove this spec
- * has an ordinary authoring line to continue. Continuing from the approved
- * base while a later revision is under review forks past that revision: its
- * content is absent from the new revision, which is numbered above it.
+ * create against an existing slug, a link reservation). A spec carries one
+ * editable revision, so an open draft is always the one to continue.
  */
 export function selectOrdinaryContinuation(
   revisions: readonly SpecRevision[],
 ): OrdinaryContinuation {
   const byNumber = [...revisions].sort((a, b) => a.number - b.number);
-  const latestProposal = byNumber.findLast(
-    (revision) => revision.state === "proposed",
-  );
-  if (latestProposal !== undefined) {
-    return {
-      kind: "blocked_by_proposal",
-      proposals: byNumber.filter((revision) => revision.state === "proposed"),
-      approved: nearestApprovedAncestor(revisions, latestProposal.id),
-    };
-  }
-
   const draft = byNumber.findLast((revision) => revision.state === "draft");
   if (draft !== undefined) return { kind: "reuse_draft", draft };
 

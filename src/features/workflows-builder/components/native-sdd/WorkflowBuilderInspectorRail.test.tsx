@@ -83,7 +83,7 @@ const management: NativeSddWorkflowManagementDetail = {
       orphaned: false,
     },
   ],
-  nextAct: "propose",
+  nextAct: "sign_off",
   currentCandidate: null,
   currentCandidateHash: null,
   currentApproval: null,
@@ -108,8 +108,7 @@ const management: NativeSddWorkflowManagementDetail = {
     claims: false,
   },
   capabilities: {
-    canPropose: true,
-    canSignOff: false,
+    canSignOff: true,
     canReopen: false,
     canAbandon: true,
     canLaunch: false,

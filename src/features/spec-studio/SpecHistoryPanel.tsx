@@ -504,37 +504,6 @@ export function buildSpecHistory(
       continue;
     }
 
-    if (revision.proposedAt !== null) {
-      events.push({
-        id: `${revision.id}:proposed`,
-        kind: "revision",
-        emphasis: "system",
-        tone: "amber",
-        label: `${revisionLabel} proposed`,
-        detail: "The revision entered semantic review.",
-        occurredAt: revision.proposedAt,
-        // History is where a reader meets a proposal they cannot see anywhere
-        // else, so the row is the way back to the surface that can act on it
-        // (#50) — not a dead line of text. Only while it is still live: Review
-        // selects out of the live-proposals projection, so a row linked after
-        // the proposal was dismissed or sent back would land on a different
-        // proposal or on an empty tab. A link that lies is the #50 shape
-        // again, so an ended proposal keeps its row and loses its link.
-        href: detail.liveProposals.some(
-          (entry) => entry.revision.id === revision.id,
-        )
-          ? reviewHref(
-              projectName,
-              detail.spec.slug,
-              revision.id,
-              revision.authoringStage,
-            )
-          : null,
-        priority: 20,
-      });
-      continue;
-    }
-
     events.push({
       id: `${revision.id}:created`,
       kind: "revision",
@@ -543,7 +512,13 @@ export function buildSpecHistory(
       label: `${revisionLabel} created`,
       detail: "Revision content was captured as a durable snapshot.",
       occurredAt: revision.createdAt,
-      href: null,
+      // The open draft is reviewable, so its row leads to the surface that can
+      // act on it. Only while it is open: a withdrawn or signed-off revision is
+      // no longer what Review shows, and a link there would land elsewhere.
+      href:
+        detail.draftReview?.snapshot.revision.id === revision.id
+          ? reviewHref(projectName, detail.spec.slug, revision.authoringStage)
+          : null,
       priority: 10,
     });
   }
@@ -707,12 +682,7 @@ function attentionHistoryEvent(
     occurredAt: event.occurredAt,
     href:
       changedHandles[0] === undefined
-        ? reviewHref(
-            projectName,
-            detail.spec.slug,
-            event.payload.revisionId,
-            revision?.authoringStage,
-          )
+        ? reviewHref(projectName, detail.spec.slug, revision?.authoringStage)
         : attentionHref(projectName, detail.spec.slug, changedHandles[0]),
     priority: 54,
     audit: {
@@ -1112,17 +1082,16 @@ function projectNameFor(detail: SpecDetailView): string {
   return detail.spec.projectPath.split("/").filter(Boolean).at(-1) ?? "project";
 }
 
-/** The Review entry for one revision — the surface that can act on it. */
+/** The view that reviews a revision of this authoring stage. */
 function reviewHref(
   projectName: string,
   slug: string,
-  revisionId: string,
   authoringStage:
     | SpecDetailView["revisions"][number]["authoringStage"]
     | undefined,
 ): string | null {
   if (authoringStage === undefined || authoringStage === "plan") return null;
-  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=${authoringStage}&revision=${encodeURIComponent(revisionId)}`;
+  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=${authoringStage}`;
 }
 
 function elementHref(

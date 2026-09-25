@@ -272,14 +272,11 @@ export function PolicyImpactPreview({
             <dt className={termClass}>Next transition</dt>
             <dd className="m-0 grid gap-xs">
               <p className={valueClass}>
-                {sequence.nextTransition.action === "advance"
-                  ? "Advance"
-                  : "Propose"}{" "}
-                the {gateLabels[sequence.nextTransition.stage]} stage —{" "}
                 {sequence.nextTransition.requiresHumanSignOff
-                  ? "human sign-off required"
-                  : "the agent may proceed"}
-                .
+                  ? `A human signs off the ${gateLabels[sequence.nextTransition.stage]} stage.`
+                  : sequence.nextTransition.action === "advance"
+                    ? `The agent advances the ${gateLabels[sequence.nextTransition.stage]} stage.`
+                    : `The agent's propose concludes the ${gateLabels[sequence.nextTransition.stage]} stage.`}
               </p>
               <ChipList
                 label="Gates the next transition consults"

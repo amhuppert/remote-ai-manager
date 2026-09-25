@@ -56,12 +56,11 @@ design narrative and decisions only. Settle Requirements before entering
 Design; do not author both stages in one revision or batch. After Requirements
 approval, `cctl spec amend <slug>` opens the Design draft. An amendment of an
 approved Design also opens at Design, preserving unchanged Requirements and
-their approvals. If the contract needs to change, run
+their approvals. If the amendment changes a requirement or criterion, run
 `cctl spec return-to-requirements <slug> --reason <why>` from the Design draft; this
-withdraws the Design attempt and reopens from the latest approved Requirements
-checkpoint, or the approved imported baseline when no separate checkpoint
-exists. It does not copy unapproved design choices backward.
-Approve the changed Requirements, then use `amend` again to open Design.
+withdraws the Design draft and reopens at Requirements from the revision it
+amended, keeping the approved Design but none of the withdrawn draft's design
+edits. Approve the changed Requirements, then use `amend` again to open Design.
 `advance` concludes an open Requirements draft only when its policy does not
 require human sign-off; it does not open a draft after an approval.
 Inspect stage and return-path contracts with `cctl spec status --help`,
@@ -69,9 +68,9 @@ Inspect stage and return-path contracts with `cctl spec status --help`,
 
 ## Managed delivery workflow
 
-A delivery attempt (`cctl spec plan open <slug>`) owns one real project workflow definition. That definition is authored as an ordinary graph `plan.json` and written with `cctl workflow replace <definitionId>`, using the definition revision as its compare-and-swap token. What is specific to a spec delivery — the pinned revision, how criteria reach contexts, phase-scoped authoring, and the preflight that reports what would refuse a propose — is owned by [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md). Every receipt on this path names the act that follows it, so follow the hint rather than a sequence restated here. Workflow Builder is the human's review surface: the managed definition is reviewed there before sign-off, and pending reaffirmations are cleared there in one batch. The charter (mission, invariants, conventions, sources) is part of that same plan while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the server-owned pinned-spec, context-excerpt and claims sources are re-injected at propose, so leave them out of what you author. `cctl spec plan propose` freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
+A delivery attempt (`cctl spec plan open <slug>`) owns one real project workflow definition. That definition is authored as an ordinary graph `plan.json` and written with `cctl workflow replace <definitionId>`, using the definition revision as its compare-and-swap token. What is specific to a spec delivery — the pinned revision, how criteria reach contexts, phase-scoped authoring, and the preflight that reports what would refuse a propose — is owned by [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md). Every receipt on this path names the act that follows it, so follow the hint rather than a sequence restated here. Workflow Builder is the human's review surface: the managed definition is reviewed there before sign-off, and pending reaffirmations are cleared there in one batch. The charter (mission, invariants, conventions, sources) is part of that same plan while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the server-owned pinned-spec, context-excerpt and claims sources are re-injected at sign-off, so leave them out of what you author. Sign-off freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
 
-The version-4 binding contains dispositions only. Read its summary with `cctl spec plan get <slug>` and the complete document with `--full`. Author criterion coverage in the linked workflow definition; [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md) owns that contract. Keep payloads under `.cc/temp/`. Human disposition decisions stay on the review surface. Graph and binding revisions are independent; re-read the surface whose write was refused. Every unlaunched version-3 candidate must reopen, re-propose and receive fresh sign-off; historical snapshots remain readable.
+The version-4 binding contains dispositions only. Read its summary with `cctl spec plan get <slug>` and the complete document with `--full`. Author criterion coverage in the linked workflow definition; [the native delivery reference](../graph-workflow-planning/references/native-spec-delivery.md) owns that contract. Keep payloads under `.cc/temp/`. Human disposition decisions stay on the review surface. Graph and binding revisions are independent; re-read the surface whose write was refused. Every unlaunched version-3 candidate must reopen and receive fresh sign-off; historical snapshots remain readable.
 
 Every open derives its scope from the delivery delta. A criterion the last delivery accepted and nothing invalidated becomes `delivered_elsewhere`; one whose governing content moved becomes `pending_reaffirmation`; undelivered, hard-stale, and deferred criteria are selected again. Only a human clears pending reaffirmations, as one batch on that review surface, against the binding revision they read.
 
@@ -81,7 +80,7 @@ Inspect the managed plan contract with `cctl spec schema guidance`.
 
 ## Stable-source claims and dynamic accountability
 
-Proposal freezes coverage-derived claims against stable authored contexts. Dynamic contexts, expansion, must-run coverage and execution outcomes remain owned by graph semantics. Inspect the binding and lifecycle with `cctl spec plan get --help` and `cctl spec schema guidance`; proposal and sign-off also report the advisory review for the authored plan revision.
+Sign-off freezes coverage-derived claims against stable authored contexts. Dynamic contexts, expansion, must-run coverage and execution outcomes remain owned by graph semantics. Inspect the binding and lifecycle with `cctl spec plan get --help` and `cctl spec schema guidance`; plan status and sign-off also report the advisory review for the authored plan revision.
 
 ### Recovering claimant validation failures
 
@@ -95,15 +94,15 @@ The delivery review supports individual, selected, unresolved, and all-criterion
 
 Merge initiation assesses delivery before validation and conflict resolution. Follow the pinned delivery-review link and report all known blockers together. The human can approve and continue merge, including a combined waiver of remaining evidence with one reason. Publication rechecks the scope and decisions; a failed merge does not record delivery.
 
-## Finalized proposal, sign-off, and one-off start
+## Draft review, sign-off, and one-off start
 
-Review the managed definition and the binding with `cctl spec plan get` before proposing. `cctl spec plan propose <slug>` freezes the exact definition id, revision, definition hash, binding hash, candidate id, and candidate hash. A draft never has a candidate identity. A proposed definition is read-only; `cctl spec plan reopen <slug> --reason <why>` clones it to a new editable definition and preserves the frozen candidate as history.
+The human reviews the delivery-plan draft in Builder and signs it off there. Read the managed definition and the binding with `cctl spec plan get` before asking for that review. The request itself is `cctl spec plan propose <slug>`: under a human execution-start dial it changes nothing and its receipt names the Builder link; under Notify or Off it freezes and signs the plan itself. Sign-off freezes the exact definition id, revision, definition hash, binding hash, candidate id, and candidate hash; a draft never has a candidate identity. A signed definition is read-only; `cctl spec plan reopen <slug> --reason <why>` clones it to a new editable definition and preserves the frozen candidate as history.
 
-Only a human can sign off. `cctl spec start <slug> --file .cc/temp/inputs.json` is the one-off start of an approved attempt; the file is the exact JSON object sent to the shared graph start boundary for ordinary input validation. `--park` is only prelaunch review and creates no execution. Read `cctl spec start --help` and `cctl spec schema guidance` before launch.
+Only a human can sign off when execution start is a Gate. `cctl spec start <slug> --file .cc/temp/inputs.json` is the one-off start of an approved attempt; the file is the exact JSON object sent to the shared graph start boundary for ordinary input validation. `--park` holds a signed plan for prelaunch review and creates no execution. Read `cctl spec start --help` and `cctl spec schema guidance` before launch.
 
 ## Ordinary live edit, capture, and replacement
 
-A running execution's working copy is edited through the ordinary `cctl workflow live edit` surface. It never changes the immutable approved candidate. Use `cctl spec capture` for discovered delivery work: without `--blocking-reason` it records follow-up work; with that reason it abandons the run and opens a replacement attempt. Before launch, edit a draft or reopen the proposed attempt instead of trying to capture work.
+A running execution's working copy is edited through the ordinary `cctl workflow live edit` surface. It never changes the immutable approved candidate. Use `cctl spec capture` for discovered delivery work: without `--blocking-reason` it records follow-up work; with that reason it abandons the run and opens a replacement attempt. Before launch, edit the draft or reopen the signed attempt instead of trying to capture work.
 
 A pause is safe at any point after start, including before any lane has been provisioned: a run paused that early resumes into its first dispatch rather than stalling. After an abandoned launch, `cctl spec plan open <slug>` opens a replacement attempt when another managed run is useful; the human can also continue through session delivery from Spec Studio.
 
@@ -129,15 +128,13 @@ The division of labour is fixed: you correct the record, and the human answers a
 
 Inspect the compare-and-swap tokens each verb takes with `cctl spec attention --help`.
 
-## Withdraw-proposal vs dismiss-superseded
+## Continuous review of the draft
 
-Use `cctl spec withdraw-proposal` only to take back a proposal authored by the current conversation before a human has acted. It ends that revision and opens its content as a follow-up draft for repair.
+The human reviews the open draft while it stays editable. They can approve subjects, comment, and resolve threads at any time; only their sign-off freezes the revision. `cctl spec propose` is the request for that review: it files the Needs You entry and leaves the draft editable under a Gate dial, so keep repairing while review is in progress. When every consulted gate is Notify or Off, no human act follows, so propose freezes the draft itself.
 
-Use dismiss-superseded only for a stranded proposal that a later approved lineage forked past. This is a human act, records the superseding revision and reason, and opens no draft. Never substitute withdrawal when stale content must stay closed.
+An approval records the content the human read. Editing an approved subject — a requirement, one of its criteria, a decision, or a citation it carries — makes it unapproved again; unrelated edits leave it approved. `cctl spec status` and the propose receipt report both sides of that ledger — satisfied, split into carried, current-revision, import-settled, and combined-act, beside pending — together with its carry rule. Price a repair round off that ledger rather than re-litigating settled content, and avoid churning approved subjects you did not mean to change.
 
-Reopening costs far less than a pending count suggests: approvals on unchanged subjects carry into the reopened draft under the same applicable gate, and only edited subjects need re-approval. `cctl spec status`, the propose and withdrawal receipts, and the Request Changes notice report both sides of that ledger — satisfied, split into carried, current-revision, import-settled, and combined-act, beside pending — together with its carry rule. Price a repair round off that ledger rather than re-litigating settled content.
-
-Inspect the distinct guards and outcomes with `cctl spec withdraw-proposal --help` and `cctl spec dismiss-superseded --help`.
+Answer review threads in the draft (`cctl spec reply`), then propose again so the reviewer knows the repair landed. A blocking thread holds sign-off until the reviewer resolves it.
 
 ## Element-id/handle/version semantics
 
@@ -183,7 +180,7 @@ Inspect the current lint and diff surfaces with `cctl spec lint --help` and `cct
 
 ## Designed friction versus a defect
 
-Parts of this surface resist you on purpose. Staged authoring, human-only acts, the withdraw-after-engagement guard, frozen revisions, stable handles, immutable parents, and strict validation-strategy rules are the product working: each protects a human judgment or an audit property that would be worth nothing if an agent could route around it. Absorb that friction, follow the refusal's named next act, and read the `why:` line a designed-constraint refusal prints — it states the rule rather than apologising for it.
+Parts of this surface resist you on purpose. Staged authoring, human-only acts, approvals that lapse when their content changes, frozen approved revisions, stable handles, immutable parents, and strict validation-strategy rules are the product working: each protects a human judgment or an audit property that would be worth nothing if an agent could route around it. Absorb that friction, follow the refusal's named next act, and read the `why:` line a designed-constraint refusal prints — it states the rule rather than apologising for it.
 
 The rest is not the product. A read path that answers the wrong question, a message that names no recovery, a verb that does not exist, or a refusal you cannot act on is a defect: report it to the user plainly instead of inventing a workaround around it.
 

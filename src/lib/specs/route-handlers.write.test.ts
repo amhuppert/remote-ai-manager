@@ -1,16 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { PersistenceError } from "@/lib/shared/errors";
+import type { Db } from "@/lib/state-store/schemas";
+import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
+import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
+import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import {
+  createSpecsRepo,
   SpecRevisionImmutableError,
   StaleStageConflictError,
 } from "@/lib/state-store/specs-repo";
+import { _createTestDb } from "@/lib/state-store/state-db";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 import {
-  SpecRevisionInReviewError,
+  createAuthoringService,
   StageBlockedWriteError,
 } from "./authoring-service";
+import { createSpecEventsPublisher } from "./events";
+import { createReviewService } from "./review-service";
+import { revisionReviewHash } from "./review-hash";
 import type { Spec, SpecAssumptionRow, SpecRevision } from "./schemas";
 import {
   createSpecWriteRouteHandlers,
@@ -181,7 +192,6 @@ function createServices() {
         },
       })),
       resolveThread: vi.fn(),
-      requestChanges: vi.fn(),
       approveItem: vi.fn(async () => ({
         ok: true as const,
         value: { id: "approval-1" },
@@ -636,50 +646,6 @@ describe("spec write route handlers", () => {
     expect(instruction).not.toContain("Read the current draft");
   });
 
-  it("refuses an amendment that would fork past a revision under review", async () => {
-    const services = createServices();
-    vi.mocked(services.authoring.openAmendment).mockRejectedValueOnce(
-      new SpecRevisionInReviewError(spec.id, {
-        kind: "blocked_by_proposal",
-        proposals: [
-          revision({ id: "revision-2", number: 2, state: "proposed" }),
-        ],
-        approved: revision({ id: "revision-1", number: 1, state: "approved" }),
-      }),
-    );
-    const handlers = createSpecWriteRouteHandlers(createDeps(services));
-
-    const response = await handlers.specActionPOST(
-      postRequest(
-        {},
-        {
-          authorization: "Bearer valid",
-          "x-cc-conversation-id": "conversation-agent",
-        },
-      ),
-      routeContext("open-amendment"),
-    );
-
-    expect(response.status).toBe(409);
-    const refusal: unknown = await response.json();
-    expect(refusal).toMatchObject({
-      code: "revision_in_review",
-      unmetConditions: [expect.stringContaining("Revision 2")],
-      details: {
-        proposals: [{ id: "revision-2", number: 2 }],
-        approvedBaseRevisionId: "revision-1",
-      },
-    });
-    const instruction = instructionOf(refusal);
-    expect(instruction).toContain("revision 2");
-    expect(instruction).toContain("Spec Studio");
-    expect(instruction).toContain("request changes");
-    // The proposing agent's own exit is the third recovery; telling the reader
-    // to open an amendment is the instruction `spec amend` itself refuses.
-    expect(instruction).toContain("cctl spec withdraw-proposal");
-    expect(instruction).not.toContain("Open an amendment draft");
-  });
-
   it("returns an exact Design revision to Requirements for human or agent callers", async () => {
     const services = createServices();
     const handlers = createSpecWriteRouteHandlers(createDeps(services));
@@ -701,56 +667,38 @@ describe("spec write route handlers", () => {
     });
   });
 
-  it.each([
-    ["proposed", "revision_in_review"],
-    ["approved", "amendment_required"],
-  ] as const)(
-    "refuses a write into a %s revision with the %s code",
-    async (state, code) => {
-      const services = createServices();
-      vi.mocked(services.authoring.upsertDraftElement).mockRejectedValueOnce(
-        new SpecRevisionImmutableError("revision-3", 2, state),
-      );
-      const handlers = createSpecWriteRouteHandlers(createDeps(services));
+  it("refuses a write into an approved revision with the amendment_required code", async () => {
+    const services = createServices();
+    vi.mocked(services.authoring.upsertDraftElement).mockRejectedValueOnce(
+      new SpecRevisionImmutableError("revision-3", 2, "approved"),
+    );
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
 
-      const response = await handlers.specActionPOST(
-        postRequest(
-          {
-            revisionId: "revision-3",
-            elementId: "requirement-1",
-            kind: "requirement",
-            parentElementId: null,
-            payload: firstElement.payload,
-            baseElementVersion: 1,
-          },
-          {
-            authorization: "Bearer valid",
-            "x-cc-conversation-id": "conversation-agent",
-          },
-        ),
-        routeContext("draft-upsert"),
-      );
+    const response = await handlers.specActionPOST(
+      postRequest(
+        {
+          revisionId: "revision-3",
+          elementId: "requirement-1",
+          kind: "requirement",
+          parentElementId: null,
+          payload: firstElement.payload,
+          baseElementVersion: 1,
+        },
+        {
+          authorization: "Bearer valid",
+          "x-cc-conversation-id": "conversation-agent",
+        },
+      ),
+      routeContext("draft-upsert"),
+    );
 
-      expect(response.status).toBe(409);
-      const refusal: unknown = await response.json();
-      expect(refusal).toMatchObject({ code });
-      const instruction = instructionOf(refusal);
-      if (code === "amendment_required") {
-        expect(instruction).toBe(
-          "Open an amendment draft before changing approved content.",
-        );
-      } else {
-        // Pointing a write against a revision under review at `spec amend`
-        // contradicts itself: that command refuses for the same reason. The
-        // revision is named by number, as every other surface names it, and
-        // the refused act is the write the caller actually attempted.
-        expect(instruction).toBe(
-          "Revision 2 is under review. Conclude that review before editing it: sign off revision 2 in Spec Studio, have a human request changes on it, or — if this conversation proposed it and no human has acted on it yet — run `cctl spec withdraw-proposal <slug> --revision <revision-id>` to take it back and continue in the draft it reopens. Writing into it now would change content a reviewer is reading.",
-        );
-        expect(instruction).not.toContain("revision-3");
-      }
-    },
-  );
+    expect(response.status).toBe(409);
+    const refusal: unknown = await response.json();
+    expect(refusal).toMatchObject({ code: "amendment_required" });
+    expect(instructionOf(refusal)).toBe(
+      "Open an amendment draft before changing approved content.",
+    );
+  });
 
   it("derives and records actor provenance from both transports", async () => {
     const services = createServices();
@@ -1229,4 +1177,292 @@ describe("spec write route handlers", () => {
       });
     },
   );
+});
+
+/**
+ * The content review acts at the HTTP boundary over real repositories. A human
+ * reviews the open draft while its author keeps editing it, so each act echoes
+ * the review hash of the content the human read; the database afterwards is
+ * the evidence of what the act did or did not write.
+ */
+describe("content review acts on the open draft", () => {
+  const author = {
+    kind: "agent",
+    conversationId: "conversation-author",
+  } as const;
+  const agentHeaders = {
+    authorization: "Bearer valid",
+    "x-cc-conversation-id": author.conversationId,
+  };
+  let db: Db;
+  let specs: ReturnType<typeof createSpecsRepo>;
+  let reviewRepo: ReturnType<typeof createSpecReviewRepo>;
+  let eventsRepo: ReturnType<typeof createSpecEventsRepo>;
+  let authoring: ReturnType<typeof createAuthoringService>;
+  let handlers: ReturnType<typeof createSpecWriteRouteHandlers>;
+  let specId: string;
+  let draftId: string;
+
+  beforeEach(async () => {
+    db = _createTestDb({ inMemory: true });
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
+      spec.projectPath,
+    );
+    specs = createSpecsRepo(db, createWriteQueue());
+    reviewRepo = createSpecReviewRepo(db);
+    eventsRepo = createSpecEventsRepo(db);
+    const linksRepo = createSpecLinksRepo(db);
+    const deliveryRepo = createSpecDeliveryRepo(db);
+    const events = createSpecEventsPublisher({
+      appendInTransaction: eventsRepo.appendInTransaction,
+      publish: () => ({ delivered: true }),
+    });
+    const review = createReviewService({
+      specs,
+      review: reviewRepo,
+      delivery: deliveryRepo,
+      links: linksRepo,
+      events,
+      attention: eventsRepo,
+    });
+    authoring = createAuthoringService({
+      attention: eventsRepo,
+      specs,
+      review: reviewRepo,
+      links: linksRepo,
+      events,
+      waivers: deliveryRepo,
+      approvalRequests: {
+        requestApproval: (input) => review.requestApproval(input),
+      },
+    });
+    // Only authoring and review actions are exercised here.
+    const services = { authoring, review } as unknown as SpecMutationServices;
+    handlers = createSpecWriteRouteHandlers({
+      auth,
+      resolveProjectPath: async (name) =>
+        name === "demo" ? spec.projectPath : null,
+      resolveSpec: (projectPath, slug) => specs.resolve(projectPath, slug),
+      getServices: async () => services,
+      listRevisions: (id) => specs.listRevisions(id),
+      getRevisionSnapshot: (id) => specs.getRevisionSnapshot(id),
+      findQuestionsBySpecId: (id) => reviewRepo.findQuestionsBySpecId(id),
+      findAssumptionsBySpecId: (id) => reviewRepo.findAssumptionsBySpecId(id),
+      findEventsBySpecId: (id) => eventsRepo.findBySpecId(id),
+    });
+
+    const created = await authoring.createSpec({
+      projectPath: spec.projectPath,
+      slug: spec.slug,
+      name: spec.name,
+      gatePolicy: spec.gatePolicy,
+      initialElement: firstElement,
+      actor: author,
+    });
+    specId = created.spec.id;
+    draftId = created.draft.id;
+    await authoring.upsertDraftElement({
+      specId,
+      revisionId: draftId,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      position: 1,
+      payload: {
+        kind: "criterion",
+        text: "A spec exists once its first draft element is saved.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      baseElementVersion: null,
+      actor: author,
+    });
+  });
+
+  afterEach(() => db.close());
+
+  /** The hash Spec Studio shows for the draft exactly as it now stands. */
+  async function currentReviewHash(): Promise<string> {
+    const snapshot = await specs.getRevisionSnapshot(draftId);
+    if (snapshot === null) throw new Error(`draft ${draftId} has no snapshot`);
+    return revisionReviewHash(snapshot);
+  }
+
+  /** The author keeps working on the draft while it is under review. */
+  async function authorEditsRequirement(statement: string): Promise<void> {
+    const snapshot = await specs.getRevisionSnapshot(draftId);
+    const current = snapshot?.elements.find(
+      ({ element }) => element.id === firstElement.elementId,
+    );
+    if (current === undefined) throw new Error("requirement-1 is missing");
+    await authoring.upsertDraftElement({
+      specId,
+      revisionId: draftId,
+      elementId: firstElement.elementId,
+      kind: "requirement",
+      parentElementId: null,
+      position: 0,
+      payload: { ...firstElement.payload, statement },
+      baseElementVersion: current.version.elementVersion,
+      actor: author,
+    });
+  }
+
+  async function revisionStates(): Promise<Array<[string, string]>> {
+    return (await specs.listRevisions(specId)).map(({ id, state }) => [
+      id,
+      state,
+    ]);
+  }
+
+  function approveRequirement(expectedReviewHash?: string): Promise<Response> {
+    return handlers.specActionPOST(
+      postRequest({
+        revisionId: draftId,
+        subjectKind: "requirement",
+        elementId: firstElement.elementId,
+        ...(expectedReviewHash === undefined ? {} : { expectedReviewHash }),
+      }),
+      routeContext("approve-item"),
+    );
+  }
+
+  function signOff(expectedReviewHash?: string): Promise<Response> {
+    return handlers.specActionPOST(
+      postRequest({
+        revisionId: draftId,
+        ...(expectedReviewHash === undefined ? {} : { expectedReviewHash }),
+      }),
+      routeContext("sign-off"),
+    );
+  }
+
+  it("refuses approve-item that does not say which content the human read", async () => {
+    const response = await approveRequirement();
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "validation",
+      issues: [expect.objectContaining({ path: "expectedReviewHash" })],
+    });
+    expect(reviewRepo.findApprovalsBySpecId(specId)).toEqual([]);
+  });
+
+  it("refuses approve-item against content the author changed since it was read, writing nothing", async () => {
+    const readHash = await currentReviewHash();
+    await authorEditsRequirement("Specs are born from the first saved draft.");
+
+    const response = await approveRequirement(readHash);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stale_review",
+    });
+    expect(reviewRepo.findApprovalsBySpecId(specId)).toEqual([]);
+    expect(await revisionStates()).toEqual([[draftId, "draft"]]);
+  });
+
+  it("approves the requirement on the draft when the hash names the content as it stands", async () => {
+    const response = await approveRequirement(await currentReviewHash());
+
+    expect(response.status).toBe(200);
+    const approvals = reviewRepo.findApprovalsBySpecId(specId);
+    expect(approvals).toMatchObject([
+      {
+        subject_kind: "requirement",
+        element_id: firstElement.elementId,
+        revision_id: draftId,
+        validity: "valid",
+      },
+    ]);
+    // A content approval records what it approved, so a later edit can
+    // unapprove it without re-reading a revision that was edited in place.
+    expect(approvals[0]?.subject_fingerprint_json).not.toBeNull();
+    // Approving an item freezes nothing: the draft stays editable.
+    expect(await revisionStates()).toEqual([[draftId, "draft"]]);
+  });
+
+  it("refuses sign-off that does not say which content the human read", async () => {
+    expect((await approveRequirement(await currentReviewHash())).status).toBe(
+      200,
+    );
+
+    const response = await signOff();
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "validation",
+      issues: [expect.objectContaining({ path: "expectedReviewHash" })],
+    });
+    expect(await revisionStates()).toEqual([[draftId, "draft"]]);
+    expect(
+      reviewRepo
+        .findApprovalsBySpecId(specId)
+        .filter((approval) => approval.subject_kind === "revision"),
+    ).toEqual([]);
+  });
+
+  it("refuses sign-off against content the author changed since it was read, leaving the draft open", async () => {
+    const readHash = await currentReviewHash();
+    expect((await approveRequirement(readHash)).status).toBe(200);
+    await authorEditsRequirement("Specs are born from the first saved draft.");
+
+    const response = await signOff(readHash);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stale_review",
+    });
+    expect(await revisionStates()).toEqual([[draftId, "draft"]]);
+    expect(
+      reviewRepo
+        .findApprovalsBySpecId(specId)
+        .filter((approval) => approval.subject_kind === "revision"),
+    ).toEqual([]);
+    expect(reviewRepo.findGateAdmissionsBySpecId(specId)).toEqual([]);
+  });
+
+  it("signs off and freezes the draft when the hash names the content as it stands", async () => {
+    const reviewHash = await currentReviewHash();
+    expect((await approveRequirement(reviewHash)).status).toBe(200);
+
+    const response = await signOff(reviewHash);
+
+    expect(response.status).toBe(200);
+    expect(await revisionStates()).toEqual([[draftId, "approved"]]);
+    expect(
+      reviewRepo
+        .findApprovalsBySpecId(specId)
+        .filter((approval) => approval.subject_kind === "revision"),
+    ).toMatchObject([{ revision_id: draftId, validity: "valid" }]);
+  });
+
+  it("no longer serves the retired proposal actions from either transport, and they change nothing", async () => {
+    const revisionsBefore = await specs.listRevisions(specId);
+    const eventCountBefore = eventsRepo.findBySpecId(specId).length;
+
+    for (const [action, body] of [
+      ["request-changes", { revisionId: draftId }],
+      ["withdraw-proposal", { revisionId: draftId }],
+      [
+        "dismiss-superseded",
+        { revisionId: draftId, reason: "An approved revision replaced it." },
+      ],
+    ] as const) {
+      for (const headers of [{}, agentHeaders]) {
+        const response = await handlers.specActionPOST(
+          postRequest(body, headers),
+          routeContext(action),
+        );
+
+        expect(response.status, action).toBe(404);
+        await expect(response.json()).resolves.toEqual({
+          error: "Spec action not found",
+        });
+      }
+    }
+
+    expect(await specs.listRevisions(specId)).toEqual(revisionsBefore);
+    expect(eventsRepo.findBySpecId(specId)).toHaveLength(eventCountBefore);
+    expect(reviewRepo.findApprovalsBySpecId(specId)).toEqual([]);
+  });
 });

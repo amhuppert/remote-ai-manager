@@ -21,6 +21,7 @@ import { createAuthoredContextOutcomeService } from "@/lib/workflow-graph/author
 import { createSpecEventsPublisher } from "./events";
 import { createImportService, type ImportService } from "./import-service";
 import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
+import { revisionReviewHash } from "./review-hash";
 import { createReviewService, type ReviewService } from "./review-service";
 import type { Spec, SpecRevision } from "./schemas";
 
@@ -211,6 +212,13 @@ beforeEach(() => {
 
 afterEach(() => harness.fixture.close());
 
+/** The review hash of the draft as it stands, echoed by a sign-off. */
+async function currentReviewHash(revisionId: string): Promise<string> {
+  const snapshot = await harness.fixture.specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) throw new Error("expected a revision snapshot");
+  return revisionReviewHash(snapshot);
+}
+
 /**
  * The two claims the whole import feature rests on: nothing it writes lets an
  * agent conclude a review, and nothing it writes satisfies the delivery gate.
@@ -256,6 +264,7 @@ describe("an imported spec keeps every human gate", () => {
       revisionId: amendment.revision.id,
       approver: "the importing agent",
       actor: AGENT,
+      expectedReviewHash: await currentReviewHash(amendment.revision.id),
     });
 
     expect(importedRefusal).toEqual({
@@ -277,7 +286,7 @@ describe("an imported spec keeps every human gate", () => {
     );
     expect(
       revisions.find(({ id }) => id === amendment.revision.id)?.state,
-    ).toBe("proposed");
+    ).toBe("draft");
     expect(harness.review.findApprovalsBySpecId(imported.spec.id)).toEqual([]);
   });
 
@@ -464,5 +473,6 @@ async function nativeAgentSignOffRefusal() {
     revisionId: created.draft.id,
     approver: "the authoring agent",
     actor: AGENT,
+    expectedReviewHash: await currentReviewHash(created.draft.id),
   });
 }

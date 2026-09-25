@@ -11,7 +11,7 @@ function fixture(
   phase: SpecPhasePrimary,
   index: number,
   overrides: {
-    authoringFacet?: "draft" | "in_review";
+    authoringFacet?: "draft";
     exploratory?: boolean;
     /** Criteria delivered outside this system, on an import's testimony. */
     deliveredExternally?: number;
@@ -77,11 +77,10 @@ function fixture(
 }
 
 const allPhaseFixtures = [
-  fixture("draft", 1),
-  fixture("in_review", 2, { pendingApprovals: 3 }),
+  fixture("draft", 1, { pendingApprovals: 3 }),
   fixture("approved", 3),
   fixture("executing", 4, {
-    authoringFacet: "in_review",
+    authoringFacet: "draft",
     pendingApprovals: 1,
     proven: 7,
     scope: 12,

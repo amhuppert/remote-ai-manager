@@ -284,6 +284,34 @@ describe("measures", () => {
     });
   });
 
+  // Every review request on the same amendment draft records the measure
+  // again; the rework belongs to the revision, so it counts once.
+  it("counts a post-approval revision once across repeated review requests", () => {
+    const repeated: SpecMeasureEvent[] = [
+      ...specEvents,
+      {
+        id: 19,
+        specId,
+        occurredAt: "2026-07-18T14:00:00.000Z",
+        eventType: "spec-revision-changed",
+        payload: {
+          kind: "post-approval-revision-created",
+          revisionId: "revision-2",
+          nonTrivial: true,
+          changedIntentElementIds: ["requirement-1", "requirement-2"],
+        },
+      },
+    ];
+
+    expect(computeRequirementCausedRework(repeated)).toEqual({
+      reopenedClaimCount: 1,
+      postApprovalRevisionCount: 1,
+      totalReworkEventCount: 2,
+      claimIds: ["claim-1"],
+      revisionIds: ["revision-2"],
+    });
+  });
+
   it("computes approval friction from active action spans and excludes idle waiting", () => {
     expect(computeApprovalFriction(specEvents)).toEqual({
       activeReviewTimeMs: 540_000,

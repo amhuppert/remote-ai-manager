@@ -9,7 +9,7 @@ const linkedSpec = {
   slug: "native-sdd",
   name: "Native spec-driven development",
   revision: 4,
-  phase: { primary: "executing", authoringFacet: "in_review" },
+  phase: { primary: "executing", authoringFacet: "draft" },
   criteriaProgress: { proven: 9, total: 12 },
   linkedTasks: [
     {

@@ -243,21 +243,20 @@ describe("draftAuthoringSequence", () => {
     ]);
   });
 
-  it("reports no sequence for a revision that is not a draft", () => {
-    expect(
-      draftAuthoringSequence({
-        policy: { preset: "contract-bearing" },
-        snapshot: {
-          revision: revision({
-            id: "revision-1",
-            number: 1,
-            state: "proposed",
-          }),
-          elements: [],
-          assumptionCitations: [],
-        },
-        governanceBaseSnapshot: null,
-      }),
-    ).toBeNull();
-  });
+  it.each(["approved", "withdrawn"] as const)(
+    "reports no sequence for a %s revision",
+    (state) => {
+      expect(
+        draftAuthoringSequence({
+          policy: { preset: "contract-bearing" },
+          snapshot: {
+            revision: revision({ id: "revision-1", number: 1, state }),
+            elements: [],
+            assumptionCitations: [],
+          },
+          governanceBaseSnapshot: null,
+        }),
+      ).toBeNull();
+    },
+  );
 });

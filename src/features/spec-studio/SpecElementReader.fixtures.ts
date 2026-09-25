@@ -3,6 +3,7 @@ import { specDetailViewSchema, type SpecDetailView } from "@/lib/specs/queries";
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
   specControlsDetailFixture,
+  subjectFingerprintFixture,
 } from "./SpecControls.fixtures";
 
 export function specElementReaderDetailFixture(): SpecDetailView {
@@ -106,6 +107,7 @@ export function specElementReaderDetailFixture(): SpecDetailView {
         approver: "alex",
         granted_at: SPEC_CONTROLS_FIXTURE_NOW,
         validity: "valid",
+        subject_fingerprint_json: subjectFingerprintFixture("requirement-1"),
       },
       {
         id: "approval-decision-1",
@@ -116,6 +118,7 @@ export function specElementReaderDetailFixture(): SpecDetailView {
         approver: "alex",
         granted_at: SPEC_CONTROLS_FIXTURE_NOW,
         validity: "valid",
+        subject_fingerprint_json: subjectFingerprintFixture("decision-1"),
       },
     ],
     elementStatuses: {

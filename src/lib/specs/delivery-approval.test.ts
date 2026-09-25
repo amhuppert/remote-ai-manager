@@ -79,7 +79,6 @@ beforeEach(async () => {
         updatedAt: NOW,
       });
     }
-    repo.proposeRevision({ revisionId: REVISION, proposedAt: NOW });
     repo.approveRevision({ revisionId: REVISION, approvedAt: NOW });
   });
   const snapshot = await fixture.specs.getRevisionSnapshot(REVISION);

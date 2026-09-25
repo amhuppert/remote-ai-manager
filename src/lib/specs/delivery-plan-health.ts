@@ -192,7 +192,7 @@ export function selectedDeliveryPlanCriterionIds(
 }
 
 /**
- * The claims of a frozen attempt. Propose refuses on every binding finding,
+ * The claims of a frozen attempt. Sign-off refuses on every binding finding,
  * including an unstable claimant and an unclaimed selection, so the selection a
  * candidate froze IS the claim set the gate certified — and re-deriving it
  * would need an admission of bytes nobody can still change.
@@ -347,8 +347,8 @@ function rationaleFor(code: DeliveryPlanBindingLintIssueCode): {
 /**
  * The governance rule (design 3.5). A draft whose mission is still the text the
  * server seeded, or whose charter names nothing beyond the entries the server
- * injects, has been planned but not governed — and propose is the last moment
- * anyone can say so, because the candidate freezes the charter it carries.
+ * injects, has been planned but not governed — and sign-off is the last
+ * moment anyone can say so, because it freezes the charter into the candidate.
  *
  * Both halves report under one code and one reason, addressed at the charter
  * field that fails, so a planner correcting one is not told twice about it.

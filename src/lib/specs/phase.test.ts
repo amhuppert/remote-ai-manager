@@ -54,14 +54,10 @@ describe("spec phase projection", () => {
     ).toEqual({ primary: "draft", authoringStage: "plan" });
   });
 
-  it("3.2 projects the ordinary Draft, In review, Approved, and Executing states", () => {
+  it("3.2 projects the ordinary Draft, Approved, and Executing states", () => {
     expect(
       projectSpecPhase(phaseInput({ revisions: [revision("draft")] })).primary,
     ).toBe("draft");
-    expect(
-      projectSpecPhase(phaseInput({ revisions: [revision("proposed")] }))
-        .primary,
-    ).toBe("in_review");
     expect(projectSpecPhase(phaseInput()).primary).toBe("approved");
     expect(
       projectSpecPhase(phaseInput({ executionStates: ["definition_review"] }))
@@ -69,12 +65,22 @@ describe("spec phase projection", () => {
     ).toBe("executing");
   });
 
-  it("3.3 gives a proposed revision precedence over an editable draft", () => {
+  // A draft under review is still the open draft: review happens on it, so
+  // asking for review does not move the spec out of Draft. A withdrawn
+  // revision ended without approval and holds no authoring state.
+  it("3.3 keeps a draft under review in Draft and ignores withdrawn revisions", () => {
     expect(
       projectSpecPhase(
-        phaseInput({ revisions: [revision("draft"), revision("proposed")] }),
+        phaseInput({ revisions: [revision("withdrawn"), revision("draft")] }),
       ),
-    ).toEqual({ primary: "in_review", authoringStage: "plan" });
+    ).toEqual({ primary: "draft", authoringStage: "plan" });
+    expect(
+      projectSpecPhase(
+        phaseInput({
+          revisions: [revision("approved"), revision("withdrawn")],
+        }),
+      ),
+    ).toEqual({ primary: "approved" });
   });
 
   it("3.4 reports Approved from an approved revision when no higher state matches", () => {
@@ -96,15 +102,23 @@ describe("spec phase projection", () => {
     ).toBe("approved");
   });
 
-  it("3.6 keeps Executing primary and exposes concurrent review as an authoring facet", () => {
+  it("3.6 keeps Executing primary and exposes a concurrent draft as an authoring facet", () => {
     expect(
       projectSpecPhase(
         phaseInput({
-          revisions: [revision("approved"), revision("proposed")],
+          revisions: [revision("approved"), revision("draft")],
           executionStates: ["running"],
         }),
       ),
-    ).toEqual({ primary: "executing", authoringFacet: "in_review" });
+    ).toEqual({ primary: "executing", authoringFacet: "draft" });
+    expect(
+      projectSpecPhase(
+        phaseInput({
+          revisions: [revision("approved"), revision("withdrawn")],
+          executionStates: ["running"],
+        }),
+      ),
+    ).toEqual({ primary: "executing" });
   });
 
   it("3.7 reports Delivered only when every current criterion is satisfied and no delivery is pending", () => {
@@ -139,7 +153,7 @@ describe("spec phase projection", () => {
     });
   });
 
-  it("3.9 returns amendments against Approved or Delivered to Draft and In review", () => {
+  it("3.9 returns amendments against Approved or Delivered to Draft", () => {
     const deliverySets: DeliveryCriterion[][] = [
       [{ state: "pending" }],
       [{ state: "proven_and_merged" }],
@@ -154,14 +168,6 @@ describe("spec phase projection", () => {
           }),
         ).primary,
       ).toBe("draft");
-      expect(
-        projectSpecPhase(
-          phaseInput({
-            revisions: [revision("approved"), revision("proposed")],
-            deliveryCriteria,
-          }),
-        ).primary,
-      ).toBe("in_review");
     }
   });
 
@@ -172,7 +178,7 @@ describe("spec phase projection", () => {
           abandoned: true,
           revisions: [
             revision("approved"),
-            revision("proposed"),
+            revision("withdrawn"),
             revision("draft"),
           ],
           executionStates: ["running"],

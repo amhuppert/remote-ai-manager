@@ -50,10 +50,9 @@ function management(
       claims: false,
     },
     capabilities: {
-      canPropose: lifecycle === "draft",
-      canSignOff: lifecycle === "in_review",
-      canReopen: lifecycle === "in_review" || lifecycle === "approved",
-      canAbandon: ["draft", "in_review", "approved"].includes(lifecycle),
+      canSignOff: lifecycle === "draft",
+      canReopen: lifecycle === "approved",
+      canAbandon: ["draft", "approved"].includes(lifecycle),
       canLaunch: lifecycle === "approved",
       refusals: {},
     },
@@ -61,15 +60,15 @@ function management(
 }
 
 describe("ManagedDeliveryWorkflowHeader", () => {
-  it("offers proposal and abandonment for a draft without generic deletion", async () => {
+  it("offers sign-off and abandonment for a draft without proposal or generic deletion", async () => {
     const user = userEvent.setup();
-    const onPropose = vi.fn();
+    const onSignOff = vi.fn();
     const onAbandon = vi.fn();
     render(
       <ManagedDeliveryWorkflowHeader
         management={management("draft")}
         definitionRevision={3}
-        onPropose={onPropose}
+        onSignOff={onSignOff}
         onAbandon={onAbandon}
       />,
     );
@@ -83,22 +82,19 @@ describe("ManagedDeliveryWorkflowHeader", () => {
       screen.getByText(/spec r8 · definition r3 · attempt attempt-2/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /propose/i })).toBeNull();
+    expect(screen.queryByText(/in review/i)).toBeNull();
 
-    await user.click(
-      screen.getByRole("button", { name: "Propose for review" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Sign off" }));
     await user.click(screen.getByRole("button", { name: "Abandon plan" }));
-    expect(onPropose).toHaveBeenCalledTimes(1);
+    expect(onSignOff).toHaveBeenCalledTimes(1);
     expect(onAbandon).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ["in_review", ["Sign off", "Reopen", "Abandon plan"]],
-    ["approved", ["Launch", "Reopen", "Abandon plan"]],
-  ] as const)("offers the %s lifecycle actions", (lifecycle, actions) => {
+  it("offers launch, reopen and abandonment for an approved candidate", () => {
     render(
       <ManagedDeliveryWorkflowHeader
-        management={management(lifecycle)}
+        management={management("approved")}
         definitionRevision={3}
         onSignOff={vi.fn()}
         onReopen={vi.fn()}
@@ -106,9 +102,11 @@ describe("ManagedDeliveryWorkflowHeader", () => {
         launchControl={<button type="button">Launch</button>}
       />,
     );
-    for (const action of actions) {
+    expect(screen.getByText("Approved")).toHaveAttribute("data-tone", "green");
+    for (const action of ["Launch", "Reopen", "Abandon plan"]) {
       expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
     }
+    expect(screen.queryByRole("button", { name: "Sign off" })).toBeNull();
     expect(screen.getByText(/Read-only/)).toBeInTheDocument();
   });
 

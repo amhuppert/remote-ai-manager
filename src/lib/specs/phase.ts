@@ -226,9 +226,6 @@ export function projectTaskWorkStatus(
 function resolveAuthoringFacet(
   revisions: SpecPhaseInput["revisions"],
 ): AuthoringFacet | undefined {
-  if (revisions.some(({ state }) => state === "proposed")) {
-    return "in_review";
-  }
   if (revisions.some(({ state }) => state === "draft")) {
     return "draft";
   }
@@ -248,7 +245,7 @@ function resolveAuthoringStage(
     return undefined;
   }
 
-  for (const state of ["proposed", "draft", "approved"] as const) {
+  for (const state of ["draft", "approved"] as const) {
     const revision = revisions
       .toReversed()
       .find((candidate) => candidate.state === state);

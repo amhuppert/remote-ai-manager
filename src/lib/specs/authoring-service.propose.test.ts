@@ -28,9 +28,15 @@ import {
   type ApprovalRequestPort,
   type AuthoringService,
 } from "./authoring-service";
+import {
+  serializeSubjectFingerprint,
+  subjectFingerprint,
+  type ApprovalSubject,
+} from "./approval-applicability";
 import { assumptionCitationSnapshot } from "./attention-records";
 import { createSpecEventsPublisher } from "./events";
 import type { ApprovalRequestReceipt, ReviewResult } from "./review-service";
+import { toDiffCitations, toDiffRows } from "./revision-diff-projections";
 import type { SpecGate } from "./schemas";
 import {
   PROPOSAL_NOTES_MAX_CHARACTERS,
@@ -154,6 +160,23 @@ async function createSpec(
   return created;
 }
 
+/** The fingerprint the review service records for a content approval. */
+async function serializedFingerprint(
+  revisionId: string,
+  subject: ApprovalSubject,
+): Promise<string> {
+  const snapshot = await specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) throw new Error(`missing snapshot ${revisionId}`);
+  const fingerprint = subjectFingerprint(toDiffRows(snapshot), subject, {
+    citationContractVersion: snapshot.revision.citationContractVersion,
+    citations: toDiffCitations(snapshot),
+  });
+  if (fingerprint === null) {
+    throw new Error(`revision ${revisionId} does not carry the subject`);
+  }
+  return serializeSubjectFingerprint(fingerprint);
+}
+
 async function addCleanContent(specId: string, revisionId: string) {
   db.prepare(
     "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
@@ -197,27 +220,62 @@ async function addCleanContent(specId: string, revisionId: string) {
   });
 }
 
+/** The durable review-request and absorbed sign-off events of a spec. */
+function proposeEvents(specId: string) {
+  return events
+    .findBySpecId(specId)
+    .filter((row) => row.event_type === "spec-revision-changed")
+    .map((row) => JSON.parse(row.payload_json) as Record<string, unknown>)
+    .filter(
+      (payload) => payload.kind === "proposed" || payload.kind === "approved",
+    );
+}
+
+function admissionCount(): unknown {
+  return db.prepare("SELECT COUNT(*) AS count FROM spec_gate_admissions").get();
+}
+
 describe("AuthoringService propose transaction", () => {
-  it("freezes, hashes, and classifies a clean draft while a gate dial leaves it Proposed", async () => {
+  /**
+   * Propose is the author's review request. Under a Gate dial a human act
+   * follows it, so it freezes nothing: the human approves and signs off the
+   * same draft the author can keep editing.
+   */
+  it("records a review request under a Gate dial and leaves the revision an editable draft", async () => {
     const created = await createSpec("contract-bearing");
     await addCleanContent(created.spec.id, created.draft.id);
+    const notes = "## Ready for review\n\nR1 and its plan are complete.";
 
     const result = await service.proposeRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
       actor: ACTOR,
+      notes,
     });
 
     expect(result).toMatchObject({
       ok: true,
       absorbedSignOff: false,
-      revision: {
-        id: created.draft.id,
-        state: "proposed",
-        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-      },
+      revision: { id: created.draft.id, state: "draft", contentHash: null },
     });
     if (!result.ok) throw new Error("expected successful proposal");
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "draft",
+      contentHash: null,
+      approvedAt: null,
+    });
+    expect(proposeEvents(created.spec.id)).toEqual([
+      { kind: "proposed", revisionId: created.draft.id, notes },
+    ]);
+    expect(approvalRequestCalls.map(({ gate }) => gate)).toEqual([
+      "requirements",
+      "plan",
+    ]);
+    expect(result.approvalRequests.map(({ outcome }) => outcome)).toEqual([
+      "filed",
+      "filed",
+    ]);
+    expect(admissionCount()).toEqual({ count: 0 });
     expect(result.diff.classifications).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -234,12 +292,53 @@ describe("AuthoringService propose transaction", () => {
         }),
       ]),
     );
-    expect(await specs.verifyRevision(created.draft.id)).toMatchObject({
-      ok: true,
+  });
+
+  /**
+   * Review runs on the open draft, so asking for it must not cost the author
+   * the ability to repair what the reviewer finds.
+   */
+  it("keeps the draft writable after a review request", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    const proposed = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+    expect(proposed.ok).toBe(true);
+
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "task-1",
+      kind: "task",
+      parentElementId: null,
+      position: 2,
+      payload: {
+        kind: "task",
+        title: "Implement transition",
+        instructions: "Implement the server predicate and its refusal.",
+        tracedRequirementElementIds: ["requirement-1"],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: ["criterion-1"],
+        dependsOnTaskElementIds: [],
+      },
+      baseElementVersion: 1,
+      actor: ACTOR,
+    });
+
+    const snapshot = await specs.getRevisionSnapshot(created.draft.id);
+    expect(snapshot?.revision).toMatchObject({
+      id: created.draft.id,
+      state: "draft",
     });
     expect(
-      db.prepare("SELECT COUNT(*) AS count FROM spec_gate_admissions").get(),
-    ).toEqual({ count: 0 });
+      snapshot?.elements.find(({ element }) => element.id === "task-1")?.version
+        .payload,
+    ).toMatchObject({
+      instructions: "Implement the server predicate and its refusal.",
+    });
   });
 
   /**
@@ -297,12 +396,15 @@ describe("AuthoringService propose transaction", () => {
       state: "blocked",
       outstandingSubjectCount: 2,
     });
+    // A human owes the outstanding approvals, so the block names the same
+    // actor as the next action even though sign-off is not yet possible.
     expect(result.pendingBlock?.actsNext).toBe("human");
     // The subject a request needs is in the block, so the caller never has to
     // guess it from the stage.
     expect(result.pendingBlock?.instruction).toContain("R1");
     expect(result.nextAction).toMatchObject({
       kind: "approve_subject",
+      actsNext: "human",
       gate: "requirements",
       subject: "R1",
     });
@@ -492,6 +594,21 @@ describe("AuthoringService propose transaction", () => {
       absorbedSignOff: true,
       revision: { state: "approved" },
     });
+    // No human act follows, so the review request is the freeze itself.
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "approved",
+      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      approvedAt: expect.any(String),
+    });
+    expect(await specs.verifyRevision(created.draft.id)).toMatchObject({
+      ok: true,
+    });
+    expect(proposeEvents(created.spec.id)).toEqual([
+      expect.objectContaining({
+        kind: "approved",
+        revisionId: created.draft.id,
+      }),
+    ]);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM spec_approvals").get(),
     ).toEqual({ count: 0 });
@@ -507,7 +624,13 @@ describe("AuthoringService propose transaction", () => {
     ]);
   });
 
-  it("commits Proposed but surfaces a failed absorbed-sign-off precondition", async () => {
+  /**
+   * The absorbed sign-off freezes the draft, so its preconditions are the
+   * sign-off's. When they fail the review request writes nothing at all: an
+   * admission recorded for a revision that never froze would claim a gate
+   * passed that did not.
+   */
+  it("writes nothing when the absorbed sign-off's preconditions fail", async () => {
     const created = await createSpec("exploratory");
     await addCleanContent(created.spec.id, created.draft.id);
     review.saveComment({
@@ -539,15 +662,22 @@ describe("AuthoringService propose transaction", () => {
         unmetConditions: ["Blocking thread thread-1 is unresolved."],
       }),
     });
-    expect((await specs.findRevision(created.draft.id))?.state).toBe(
-      "proposed",
-    );
-    expect((await specs.findRevision(created.draft.id))?.contentHash).toMatch(
-      /^[a-f0-9]{64}$/,
-    );
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "draft",
+      contentHash: null,
+      approvedAt: null,
+    });
+    expect(admissionCount()).toEqual({ count: 0 });
+    expect(proposeEvents(created.spec.id)).toEqual([]);
   });
 
-  it("carries unchanged approvals and marks directly modified or removed subjects stale or closed", async () => {
+  /**
+   * A draft is edited in place while it is reviewed, so whether an approval
+   * still counts is decided at read time from the fingerprint it recorded.
+   * The review request therefore rewrites no approval row and publishes no
+   * validity change.
+   */
+  it("leaves every approval row as granted when a changed amendment is proposed", async () => {
     const created = await createSpec("exploratory");
     await addCleanContent(created.spec.id, created.draft.id);
     db.prepare(
@@ -602,6 +732,13 @@ describe("AuthoringService propose transaction", () => {
         ...approval,
         spec_id: created.spec.id,
         revision_id: created.draft.id,
+        subject_fingerprint_json: await serializedFingerprint(
+          created.draft.id,
+          {
+            subjectKind: approval.subject_kind,
+            elementId: approval.element_id,
+          },
+        ),
         approver: "alex",
         granted_at: "2026-07-18T13:30:00.000Z",
         validity: "valid",
@@ -676,13 +813,22 @@ describe("AuthoringService propose transaction", () => {
         .findApprovalsBySpecId(created.spec.id)
         .map(({ id, validity }) => ({ id, validity })),
     ).toEqual([
-      { id: "approval-decision", validity: "closed" },
+      { id: "approval-decision", validity: "valid" },
       { id: "approval-plan", validity: "valid" },
-      { id: "approval-requirement", validity: "stale" },
+      { id: "approval-requirement", validity: "valid" },
     ]);
+    expect(
+      events
+        .findBySpecId(created.spec.id)
+        .filter((row) => row.event_type === "spec-approval-changed"),
+    ).toEqual([]);
   });
 
-  it("refuses proposing a non-draft revision", async () => {
+  /**
+   * The author may ask again after repairing what a reviewer found; each ask
+   * is recorded and the draft stays the one under review.
+   */
+  it("accepts a repeated review request on the same draft", async () => {
     const created = await createSpec("contract-bearing");
     await addCleanContent(created.spec.id, created.draft.id);
     await service.proposeRevision({
@@ -696,10 +842,39 @@ describe("AuthoringService propose transaction", () => {
       revisionId: created.draft.id,
       actor: ACTOR,
     });
+
+    expect(repeated).toMatchObject({
+      ok: true,
+      absorbedSignOff: false,
+      revision: { id: created.draft.id, state: "draft" },
+    });
+    expect(proposeEvents(created.spec.id)).toEqual([
+      { kind: "proposed", revisionId: created.draft.id },
+      { kind: "proposed", revisionId: created.draft.id },
+    ]);
+  });
+
+  it("refuses proposing a revision that is already approved", async () => {
+    const created = await createSpec("exploratory");
+    await addCleanContent(created.spec.id, created.draft.id);
+    const absorbed = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+    expect(absorbed).toMatchObject({ ok: true, absorbedSignOff: true });
+
+    const repeated = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
     expect(repeated).toEqual({
       ok: false,
       refusal: expect.objectContaining({ code: "gate_blocked" }),
     });
+    expect(proposeEvents(created.spec.id)).toHaveLength(1);
   });
 });
 
@@ -711,16 +886,6 @@ describe("AuthoringService propose transaction", () => {
  */
 describe("AuthoringService propose notes", () => {
   const NOTES = "## Disposition\n\nClosed F3 by rebinding the loop exit.";
-
-  function proposeEvents(specId: string) {
-    return events
-      .findBySpecId(specId)
-      .filter((row) => row.event_type === "spec-revision-changed")
-      .map((row) => JSON.parse(row.payload_json) as Record<string, unknown>)
-      .filter(
-        (payload) => payload.kind === "proposed" || payload.kind === "approved",
-      );
-  }
 
   it("persists the notes on the durable propose event in the propose transaction", async () => {
     const created = await createSpec("contract-bearing");
@@ -823,164 +988,6 @@ describe("AuthoringService propose notes", () => {
     expect(
       proposalNotes(events.findBySpecId(created.spec.id), created.draft.id),
     ).toBe(atCap);
-  });
-});
-
-/**
- * Ticket #50: a lineage carrying two live proposals is how a reviewed
- * revision gets forked past and stranded. A draft legitimately coexists with a
- * proposal (execution capture opens one), so the guard belongs at propose —
- * the moment the second review attempt would begin.
- */
-describe("AuthoringService propose one-live-proposal guard", () => {
-  async function proposedSpecWithSecondDraft() {
-    const created = await createSpec("contract-bearing");
-    await addCleanContent(created.spec.id, created.draft.id);
-    const first = await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: ACTOR,
-    });
-    if (!first.ok) throw new Error("expected the first proposal to commit");
-    const second = await specs.createDraftFromBase({
-      id: "revision-second",
-      specId: created.spec.id,
-      baseRevisionId: created.draft.id,
-      authoringStage: "plan",
-      createdAt: "2026-07-18T13:05:00.000Z",
-    });
-    return { created, proposal: first.revision, second };
-  }
-
-  it("refuses a second proposal, naming the live one by id and number", async () => {
-    const { created, proposal, second } = await proposedSpecWithSecondDraft();
-
-    const result = await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: second.id,
-      actor: ACTOR,
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected the second proposal to refuse");
-    expect(result.refusal.code).toBe("revision_in_review");
-    expect(result.refusal.unmetConditions.join(" ")).toContain(proposal.id);
-    expect(result.refusal.unmetConditions.join(" ")).toContain(
-      `revision ${proposal.number}`,
-    );
-    expect(result.refusal.instruction).toContain("sign off");
-    expect(result.refusal.instruction).toContain("Dismiss superseded proposal");
-  });
-
-  it("leaves the live proposal untouched when it refuses", async () => {
-    const { created, proposal, second } = await proposedSpecWithSecondDraft();
-
-    await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: second.id,
-      actor: ACTOR,
-    });
-
-    expect(await specs.findRevision(proposal.id)).toMatchObject({
-      state: "proposed",
-    });
-    expect(await specs.findRevision(second.id)).toMatchObject({
-      state: "draft",
-    });
-  });
-
-  it("commits exactly one of two concurrent proposals and names the winner in the loser's refusal", async () => {
-    const created = await createSpec("contract-bearing");
-    await addCleanContent(created.spec.id, created.draft.id);
-    const rival = await specs.createDraftFromBase({
-      id: "revision-rival",
-      specId: created.spec.id,
-      baseRevisionId: created.draft.id,
-      authoringStage: "plan",
-      createdAt: "2026-07-18T13:05:00.000Z",
-    });
-
-    const [first, second] = await Promise.all([
-      service.proposeRevision({
-        specId: created.spec.id,
-        revisionId: created.draft.id,
-        actor: ACTOR,
-      }),
-      service.proposeRevision({
-        specId: created.spec.id,
-        revisionId: rival.id,
-        actor: ACTOR,
-      }),
-    ]);
-
-    const committed = [first, second].filter((result) => result.ok);
-    const refused = [first, second].filter((result) => !result.ok);
-    expect(committed).toHaveLength(1);
-    expect(refused).toHaveLength(1);
-    const winner = committed[0];
-    const loser = refused[0];
-    if (winner === undefined || !winner.ok) {
-      throw new Error("expected one proposal to commit");
-    }
-    if (loser === undefined || loser.ok) {
-      throw new Error("expected one proposal to refuse");
-    }
-    expect(loser.refusal.code).toBe("revision_in_review");
-    expect(loser.refusal.unmetConditions.join(" ")).toContain(
-      winner.revision.id,
-    );
-    expect(
-      (await specs.listRevisions(created.spec.id)).filter(
-        (revision) => revision.state === "proposed",
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("disposes of no sibling revision when a proposal commits", async () => {
-    const created = await createSpec("contract-bearing");
-    await addCleanContent(created.spec.id, created.draft.id);
-    await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: ACTOR,
-    });
-    await specs.approveRevision({
-      revisionId: created.draft.id,
-      approvedAt: "2026-07-18T13:06:00.000Z",
-    });
-    const abandoned = await specs.createDraftFromBase({
-      id: "revision-abandoned",
-      specId: created.spec.id,
-      baseRevisionId: created.draft.id,
-      authoringStage: "plan",
-      createdAt: "2026-07-18T13:07:00.000Z",
-    });
-    await specs.proposeRevision({
-      revisionId: abandoned.id,
-      proposedAt: "2026-07-18T13:08:00.000Z",
-    });
-    await specs.withdrawRevision({ revisionId: abandoned.id });
-    const next = await specs.createDraftFromBase({
-      id: "revision-next",
-      specId: created.spec.id,
-      baseRevisionId: created.draft.id,
-      authoringStage: "plan",
-      createdAt: "2026-07-18T13:09:00.000Z",
-    });
-
-    const result = await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: next.id,
-      actor: ACTOR,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(await specs.findRevision(created.draft.id)).toMatchObject({
-      state: "approved",
-    });
-    expect(await specs.findRevision(abandoned.id)).toMatchObject({
-      state: "withdrawn",
-    });
   });
 });
 
@@ -1102,10 +1109,8 @@ describe("propose approval-request coordinator", () => {
     if (!result.ok) throw new Error("expected successful proposal");
     expect(result.absorbedSignOff).toBe(true);
     expect(approvalRequestCalls).toEqual([]);
-    expect(result.approvalRequests).toEqual([
-      { gate: "requirements", outcome: "not-needed", attentionId: null },
-      { gate: "plan", outcome: "not-needed", attentionId: null },
-    ]);
+    // The revision froze in the same act, so no gate is left to ask about.
+    expect(result.approvalRequests).toEqual([]);
   });
 
   it("reports not-needed when the gate refuses the ask as already satisfied", async () => {
@@ -1178,15 +1183,15 @@ describe("propose approval-request coordinator", () => {
     });
 
     if (!result.ok) throw new Error("expected successful proposal");
-    expect(result.revision.state).toBe("proposed");
+    expect(result.revision.state).toBe("draft");
     expect(result.approvalRequests).toEqual([
       { gate: "requirements", outcome: "not-filed", attentionId: null },
       { gate: "plan", outcome: "not-filed", attentionId: null },
     ]);
-    // The frozen revision is durable whatever the coordinator managed.
-    expect(await specs.findRevision(created.draft.id)).toMatchObject({
-      state: "proposed",
-    });
+    // The review request is durable whatever the coordinator managed.
+    expect(proposeEvents(created.spec.id)).toEqual([
+      { kind: "proposed", revisionId: created.draft.id },
+    ]);
   });
 
   it("reports not-filed when the request is refused for any other reason", async () => {

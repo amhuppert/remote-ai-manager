@@ -223,22 +223,20 @@ describe("spec abandon --execution retires the launched attempt", () => {
       actor: AGENT,
     });
     if (!edited.ok) throw new Error(edited.refusal.unmetConditions.join(" "));
-    const proposed = await plans.propose({ spec, actor: AGENT });
-    if (!proposed.ok)
-      throw new Error(proposed.refusal.unmetConditions.join(" "));
-    const candidateId = proposed.value.attempt.candidateId;
-    const candidateHash = proposed.value.attempt.candidateHash;
-    if (candidateId === null || candidateHash === null) {
-      throw new Error("the proposal froze no candidate");
-    }
-    const candidate = { candidateId, candidateHash };
     const signed = await plans.signOff({
       spec,
-      ...candidate,
+      expectedDraftRevision: edited.value.attempt.draftRevision,
+      expectedDefinitionRevision: edited.value.workflowDefinition.revision,
       actor: HUMAN,
       approver: "Alex",
     });
     if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const candidateId = signed.value.attempt.candidateId;
+    const candidateHash = signed.value.attempt.candidateHash;
+    if (candidateId === null || candidateHash === null) {
+      throw new Error("the sign-off froze no candidate");
+    }
+    const candidate = { candidateId, candidateHash };
     const launched = await plans.recordLaunch({
       spec,
       executionId: started.specExecutionId,

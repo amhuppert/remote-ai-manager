@@ -22,7 +22,6 @@ import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import {
   computeSpecElementPayloadHash,
   computeSpecRevisionCitationHash,
-  computeSpecRevisionContentHashFromCanonical,
   createSpecsRepo,
 } from "@/lib/state-store/specs-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
@@ -30,13 +29,17 @@ import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 import { createSpecEventsPublisher } from "./events";
 import { createReviewService, type ReviewService } from "./review-service";
+import { revisionReviewHash } from "./review-hash";
+import type { SpecElementPayload } from "./schemas";
 
 type Db = InstanceType<typeof Database>;
 
 const PROJECT_PATH = "/repos/gate-scoped-requests";
 const PROJECT_NAME = "gate-scoped-requests-project";
 const SPEC_ID = "spec-gate-scoped";
-const REVISION_ID = "revision-proposed";
+const REVISION_ID = "revision-draft";
+const CRITERION_ELEMENT_ID = "element-criterion-1";
+const TASK_ELEMENT_ID = "element-task-1";
 const EXECUTION_ID = "spec-execution-1";
 const REQUIREMENT_COUNT = 12;
 const NOW = "2026-08-02T09:00:00.000Z";
@@ -66,6 +69,7 @@ function requirementHandles(): string[] {
 describe("gate-scoped approval requests", () => {
   let db: Db;
   let service: ReviewService;
+  let specs: ReturnType<typeof createSpecsRepo>;
   let eventsRepo: ReturnType<typeof createSpecEventsRepo>;
   let notificationsRepo: ReturnType<typeof createNotificationsRepo>;
 
@@ -74,6 +78,7 @@ describe("gate-scoped approval requests", () => {
     db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
     seed(db);
     let idSequence = 0;
+    specs = createSpecsRepo(db, createWriteQueue());
     eventsRepo = createSpecEventsRepo(db);
     notificationsRepo = createNotificationsRepo(db);
     const notifications = createNotificationsService({
@@ -91,7 +96,7 @@ describe("gate-scoped approval requests", () => {
       getProjectDisplayName: () => PROJECT_NAME,
     });
     service = createReviewService({
-      specs: createSpecsRepo(db, createWriteQueue()),
+      specs,
       review: createSpecReviewRepo(db),
       delivery: createSpecDeliveryRepo(db),
       links: createSpecLinksRepo(db),
@@ -135,7 +140,14 @@ describe("gate-scoped approval requests", () => {
     });
   }
 
-  function approveRequirement(number: number) {
+  /** The token a human who just read the draft echoes back. */
+  async function reviewHash(): Promise<string> {
+    const snapshot = await specs.getRevisionSnapshot(REVISION_ID);
+    if (snapshot === null) throw new Error("the draft has no snapshot");
+    return revisionReviewHash(snapshot);
+  }
+
+  async function approveRequirement(number: number) {
     return service.approveItem({
       specId: SPEC_ID,
       revisionId: REVISION_ID,
@@ -143,6 +155,28 @@ describe("gate-scoped approval requests", () => {
       elementId: requirementElementId(number),
       approver: "operator",
       actor: HUMAN,
+      expectedReviewHash: await reviewHash(),
+    });
+  }
+
+  async function approvePlan() {
+    return service.bulkApprove({
+      specId: SPEC_ID,
+      revisionId: REVISION_ID,
+      subjects: [{ subjectKind: "plan", elementId: null }],
+      approver: "operator",
+      actor: HUMAN,
+      expectedReviewHash: await reviewHash(),
+    });
+  }
+
+  async function signOff() {
+    return service.signOffRevision({
+      specId: SPEC_ID,
+      revisionId: REVISION_ID,
+      approver: "operator",
+      actor: HUMAN,
+      expectedReviewHash: await reviewHash(),
     });
   }
 
@@ -229,13 +263,7 @@ describe("gate-scoped approval requests", () => {
     const requested = await requestGate("requirements");
     if (!requested.ok) throw new Error("the gate request was refused");
     await approveAllRequirements();
-    const planApproved = await service.bulkApprove({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      subjects: [{ subjectKind: "plan", elementId: null }],
-      approver: "operator",
-      actor: HUMAN,
-    });
+    const planApproved = await approvePlan();
     expect(planApproved.ok).toBe(true);
     // Every subject is approved and only the sign-off is left: the gate holds
     // no admission, so its request is still the thing a human must answer.
@@ -243,12 +271,7 @@ describe("gate-scoped approval requests", () => {
       1,
     );
 
-    const signedOff = await service.signOffRevision({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      approver: "operator",
-      actor: HUMAN,
-    });
+    const signedOff = await signOff();
     expect(signedOff).toMatchObject({
       ok: true,
       value: { revision: { state: "approved" } },
@@ -272,13 +295,7 @@ describe("gate-scoped approval requests", () => {
     if (!requested.ok) throw new Error("the gate request was refused");
     expect(requested.value).toMatchObject({ scope: "gate", subject: "plan" });
 
-    const planApproved = await service.bulkApprove({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      subjects: [{ subjectKind: "plan", elementId: null }],
-      approver: "operator",
-      actor: HUMAN,
-    });
+    const planApproved = await approvePlan();
     expect(planApproved.ok).toBe(true);
 
     // The gate is admitted by the revision sign-off, never by approving the
@@ -291,12 +308,7 @@ describe("gate-scoped approval requests", () => {
     );
 
     await approveAllRequirements();
-    const signedOff = await service.signOffRevision({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      approver: "operator",
-      actor: HUMAN,
-    });
+    const signedOff = await signOff();
     expect(signedOff.ok).toBe(true);
     expect(
       specRows().filter((row) => row.type === "spec-approval-granted"),
@@ -325,13 +337,7 @@ describe("gate-scoped approval requests", () => {
       2,
     );
 
-    const planApproved = await service.bulkApprove({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      subjects: [{ subjectKind: "plan", elementId: null }],
-      approver: "operator",
-      actor: HUMAN,
-    });
+    const planApproved = await approvePlan();
     expect(planApproved.ok).toBe(true);
 
     const remaining = deriveNotificationOutcomes(specRows(), []).needsAction;
@@ -410,30 +416,6 @@ describe("gate-scoped approval requests", () => {
     expect(deriveNotificationOutcomes(specRows(), []).needsAction).toHaveLength(
       1,
     );
-  });
-
-  it("clears authoring requests for the revision Request Changes ended, never the run's", async () => {
-    const authoring = await requestGate("requirements");
-    const delivery = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      gate: "delivery",
-      actor: AGENT,
-    });
-    if (!authoring.ok || !delivery.ok) throw new Error("a request was refused");
-
-    const changes = await service.requestChanges({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      actor: HUMAN,
-    });
-    expect(changes.ok).toBe(true);
-
-    const openIds = openRequestIds(specRows());
-    expect(openIds).toEqual([delivery.value.attentionId]);
-    expect(
-      specRows().filter((row) => row.type === "spec-attention-resolved"),
-    ).toMatchObject([{ gateRequestId: authoring.value.attentionId }]);
   });
 
   it("clears the withdrawn revision's authoring requests, never the run's", async () => {
@@ -590,23 +572,66 @@ function openRequestIds(rows: readonly SpecNotification[]): string[] {
     .map((row) => row.gateRequestId);
 }
 
+/**
+ * A plan-stage draft with twelve requirements, lint-clean so a human can sign
+ * it off: sign-off refuses on any blocking finding, so R1 carries a criterion
+ * and one task covers it.
+ */
+interface SeedElement {
+  elementId: string;
+  kind: SpecElementPayload["kind"];
+  number: number;
+  parentElementId: string | null;
+  position: number;
+  payload: SpecElementPayload;
+}
+
 function seed(db: Db): void {
-  const elements = Array.from({ length: REQUIREMENT_COUNT }, (_, index) => {
-    const number = index + 1;
-    return {
-      elementId: requirementElementId(number),
-      kind: "requirement" as const,
-      number,
-      parentElementId: null,
-      position: number,
-      payload: requirementPayload(number),
-    };
-  });
-  const contentHash = computeSpecRevisionContentHashFromCanonical(
-    "plan",
-    elements,
+  const requirements = Array.from(
+    { length: REQUIREMENT_COUNT },
+    (_, index): SeedElement => {
+      const number = index + 1;
+      return {
+        elementId: requirementElementId(number),
+        kind: "requirement",
+        number,
+        parentElementId: null,
+        position: number,
+        payload: requirementPayload(number),
+      };
+    },
   );
-  const citationHash = computeSpecRevisionCitationHash(2, []);
+  const elements: SeedElement[] = [
+    ...requirements,
+    {
+      elementId: CRITERION_ELEMENT_ID,
+      kind: "criterion",
+      number: 1,
+      parentElementId: requirementElementId(1),
+      position: REQUIREMENT_COUNT + 1,
+      payload: {
+        kind: "criterion",
+        text: "Requirement 1 is observably met.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+    },
+    {
+      elementId: TASK_ELEMENT_ID,
+      kind: "task",
+      number: 1,
+      parentElementId: null,
+      position: REQUIREMENT_COUNT + 2,
+      payload: {
+        kind: "task",
+        title: "Meet requirement 1",
+        instructions: "Implement and test requirement 1.",
+        tracedRequirementElementIds: [requirementElementId(1)],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: [CRITERION_ELEMENT_ID],
+        dependsOnTaskElementIds: [],
+      },
+    },
+  ];
 
   db.prepare(
     `INSERT INTO specs (
@@ -627,13 +652,20 @@ function seed(db: Db): void {
        id, spec_id, number, state, authoring_stage, based_on_revision_id,
        content_hash, citation_contract_version, citation_hash,
        proposed_at, approved_at, created_at
-     ) VALUES (?, ?, 1, 'proposed', 'plan', NULL, ?, 2, ?, ?, NULL, ?)`,
-  ).run(REVISION_ID, SPEC_ID, contentHash, citationHash, NOW, NOW);
+     ) VALUES (?, ?, 1, 'draft', 'plan', NULL, NULL, 2, ?, NULL, NULL, ?)`,
+  ).run(REVISION_ID, SPEC_ID, computeSpecRevisionCitationHash(2, []), NOW);
   for (const element of elements) {
     db.prepare(
       `INSERT INTO spec_elements (id, spec_id, kind, number, parent_element_id, created_at)
-       VALUES (?, ?, 'requirement', ?, NULL, ?)`,
-    ).run(element.elementId, SPEC_ID, element.number, NOW);
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      element.elementId,
+      SPEC_ID,
+      element.kind,
+      element.number,
+      element.parentElementId,
+      NOW,
+    );
     db.prepare(
       `INSERT INTO spec_element_versions (
          revision_id, element_id, position, payload_json, payload_hash,

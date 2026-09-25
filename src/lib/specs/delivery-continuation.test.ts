@@ -94,7 +94,6 @@ beforeEach(async () => {
       createdAt: NOW,
       updatedAt: NOW,
     });
-    repo.proposeRevision({ revisionId: "revision", proposedAt: NOW });
     repo.approveRevision({ revisionId: "revision", approvedAt: NOW });
   });
   let sequence = 0;

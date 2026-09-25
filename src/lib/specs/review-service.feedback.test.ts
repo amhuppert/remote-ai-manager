@@ -24,6 +24,7 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import { revisionReviewHash } from "./review-hash";
 import {
   createReviewService,
   type ReviewService,
@@ -33,6 +34,10 @@ import {
 
 const PROJECT_PATH = "/repos/review-feedback";
 const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
+const SECOND_AGENT = {
+  kind: "agent",
+  conversationId: "conversation-2",
+} as const;
 const HUMAN = { kind: "human" } as const;
 
 let db: Db;
@@ -88,8 +93,17 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
-/** A Design checkpoint proposed by `proposer`, with no review comments. */
-async function proposedSpec(proposer: ActorProvenance) {
+/**
+ * A Design draft opened and written by `author`, with no review comments. The
+ * review request is filed by `proposer`, or not at all when it is null.
+ */
+async function reviewableDraft({
+  author,
+  proposer,
+}: {
+  author: ActorProvenance;
+  proposer: ActorProvenance | null;
+}) {
   const created = await authoring.createSpec({
     projectPath: PROJECT_PATH,
     slug: "review-feedback",
@@ -102,7 +116,7 @@ async function proposedSpec(proposer: ActorProvenance) {
       position: 0,
       payload: {
         kind: "requirement" as const,
-        statement: "The proposing conversation hears about review feedback.",
+        statement: "The authoring conversation hears about review feedback.",
         priority: "must" as const,
         risk: "high" as const,
       },
@@ -118,15 +132,11 @@ async function proposedSpec(proposer: ActorProvenance) {
     position: 1,
     payload: {
       kind: "criterion",
-      text: "A feedback notice reaches the proposer's conversation.",
+      text: "A feedback notice reaches the author's conversation.",
       validationStrategy: { kinds: ["test_run"] },
     },
     baseElementVersion: null,
     actor: AGENT,
-  });
-  await specs.proposeRevision({
-    revisionId: created.draft.id,
-    proposedAt: "2026-08-12T09:58:00.000Z",
   });
   await specs.approveRevision({
     revisionId: created.draft.id,
@@ -134,7 +144,7 @@ async function proposedSpec(proposer: ActorProvenance) {
   });
   const design = await authoring.openAmendment({
     specId: created.spec.id,
-    actor: AGENT,
+    actor: author,
   });
   await authoring.upsertDraftElement({
     specId: created.spec.id,
@@ -143,24 +153,37 @@ async function proposedSpec(proposer: ActorProvenance) {
     kind: "decision",
     parentElementId: null,
     position: 2,
-    payload: {
-      kind: "decision",
-      title: "Passive delivery",
-      chosenApproach: "Durable notices, never an auto-wake.",
-      rejectedAlternatives: [],
-      reason: "The proposer reads feedback on its own next turn.",
-      tracedRequirementElementIds: ["fb-r1"],
-    },
+    payload: decisionPayload("Durable notices, never an auto-wake."),
     baseElementVersion: null,
-    actor: AGENT,
+    actor: author,
   });
-  const proposed = await authoring.proposeRevision({
-    specId: created.spec.id,
-    revisionId: design.revision.id,
-    actor: proposer,
-  });
-  if (!proposed.ok) throw new Error("the fixture propose was refused");
+  if (proposer !== null) {
+    const proposed = await authoring.proposeRevision({
+      specId: created.spec.id,
+      revisionId: design.revision.id,
+      actor: proposer,
+    });
+    if (!proposed.ok) throw new Error("the fixture propose was refused");
+    expect(proposed.revision.state).toBe("draft");
+  }
   return { specId: created.spec.id, revisionId: design.revision.id };
+}
+
+function decisionPayload(chosenApproach: string) {
+  return {
+    kind: "decision" as const,
+    title: "Passive delivery",
+    chosenApproach,
+    rejectedAlternatives: [],
+    reason: "The author reads feedback on its own next turn.",
+    tracedRequirementElementIds: ["fb-r1"],
+  };
+}
+
+async function reviewHash(revisionId: string): Promise<string> {
+  const snapshot = await specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) throw new Error(`revision ${revisionId} is gone`);
+  return revisionReviewHash(snapshot);
 }
 
 async function humanComment(specId: string, revisionId: string) {
@@ -189,9 +212,12 @@ async function humanComment(specId: string, revisionId: string) {
   return commented.value;
 }
 
-describe("review feedback notices to the proposing conversation", () => {
-  it("notifies the proposer once when a human comments on an agent-proposed revision", async () => {
-    const { specId, revisionId } = await proposedSpec(AGENT);
+describe("review feedback notices to the authoring conversation", () => {
+  it("notifies the author once when a human comments on the draft it proposed", async () => {
+    const { specId, revisionId } = await reviewableDraft({
+      author: AGENT,
+      proposer: AGENT,
+    });
 
     await humanComment(specId, revisionId);
 
@@ -208,8 +234,54 @@ describe("review feedback notices to the proposing conversation", () => {
     });
   });
 
+  it("notifies the conversation that last wrote the draft, not the one that proposed it", async () => {
+    const { specId, revisionId } = await reviewableDraft({
+      author: AGENT,
+      proposer: AGENT,
+    });
+    const decision = await specs.findElementVersion(revisionId, "fb-d1");
+    if (decision === null) throw new Error("expected the decision");
+    await authoring.upsertDraftElement({
+      specId,
+      revisionId,
+      elementId: "fb-d1",
+      kind: "decision",
+      payload: decisionPayload("Durable notices the author reads next turn."),
+      baseElementVersion: decision.elementVersion,
+      actor: SECOND_AGENT,
+    });
+
+    await humanComment(specId, revisionId);
+
+    expect(feedbackNotices).toHaveLength(1);
+    expect(feedbackNotices[0]).toMatchObject({
+      kind: "commented",
+      revisionId,
+      proposer: { kind: "agent", conversationId: "conversation-2" },
+    });
+  });
+
+  it("notifies the writing conversation of a draft nobody asked to have reviewed", async () => {
+    const { specId, revisionId } = await reviewableDraft({
+      author: SECOND_AGENT,
+      proposer: null,
+    });
+
+    await humanComment(specId, revisionId);
+
+    expect(feedbackNotices).toHaveLength(1);
+    expect(feedbackNotices[0]).toMatchObject({
+      kind: "commented",
+      revisionId,
+      proposer: { kind: "agent", conversationId: "conversation-2" },
+    });
+  });
+
   it("skips the agent's own reply and notifies on a human reply", async () => {
-    const { specId, revisionId } = await proposedSpec(AGENT);
+    const { specId, revisionId } = await reviewableDraft({
+      author: AGENT,
+      proposer: AGENT,
+    });
     await humanComment(specId, revisionId);
     feedbackNotices.length = 0;
 
@@ -239,80 +311,17 @@ describe("review feedback notices to the proposing conversation", () => {
     });
   });
 
-  it("reports changes_requested when the draft reopens", async () => {
-    const { specId, revisionId } = await proposedSpec(AGENT);
-    await humanComment(specId, revisionId);
-    feedbackNotices.length = 0;
-
-    const reopened = await reviewing.requestChanges({
-      specId,
-      revisionId,
-      actor: HUMAN,
-    });
-    expect(reopened.ok).toBe(true);
-
-    expect(feedbackNotices).toHaveLength(1);
-    expect(feedbackNotices[0]).toMatchObject({
-      kind: "changes_requested",
-      specSlug: "review-feedback",
-      revisionId,
-      subject: null,
-      threadId: null,
-      proposer: { kind: "agent", conversationId: "conversation-1" },
-    });
-  });
-
-  /**
-   * The agent that has to act on the feedback is the one that mistakes a
-   * reopen for a loss, so the carry travels in the notice it reads — not only
-   * in the response the acting human sees.
-   */
-  it("carries the reopened draft's ledger and the carry rule into the feedback the proposer reads", async () => {
-    const { specId, revisionId } = await proposedSpec(AGENT);
-    const approved = await reviewing.approveItem({
-      specId,
-      revisionId,
-      subjectKind: "decision",
-      elementId: "fb-d1",
-      approver: "alex",
-      actor: HUMAN,
-    });
-    expect(approved.ok).toBe(true);
-    feedbackNotices.length = 0;
-
-    const reopened = await reviewing.requestChanges({
-      specId,
-      revisionId,
-      actor: HUMAN,
-    });
-
-    if (!reopened.ok) throw new Error("the request for changes was refused");
-    // D1 is unchanged, so the approval a human granted on the withdrawn
-    // Design revision still stands for the draft that replaced it.
-    expect(reopened.value.approvalLedger).toMatchObject({
-      satisfied: 1,
-      carried: 1,
-      currentRevision: 0,
-      carryRule: "unchanged subject content under the same applicable gate",
-    });
-    expect(
-      reopened.value.approvalLedger.subjects.map(
-        ({ subject, classification }) => [subject, classification],
-      ),
-    ).toEqual([["D1", "carried"]]);
-    expect(feedbackNotices).toHaveLength(1);
-    expect(feedbackNotices[0]?.approvalLedger).toEqual(
-      reopened.value.approvalLedger,
-    );
-  });
-
   it("reports signed_off once, not again on the idempotent repeat", async () => {
-    const { specId, revisionId } = await proposedSpec(AGENT);
+    const { specId, revisionId } = await reviewableDraft({
+      author: AGENT,
+      proposer: AGENT,
+    });
     feedbackNotices.length = 0;
 
     const signedOff = await reviewing.approveRemainingAndSignOff({
       specId,
       revisionId,
+      expectedReviewHash: await reviewHash(revisionId),
       actor: HUMAN,
       approver: "alex",
     });
@@ -330,6 +339,7 @@ describe("review feedback notices to the proposing conversation", () => {
     const repeated = await reviewing.signOffRevision({
       specId,
       revisionId,
+      expectedReviewHash: await reviewHash(revisionId),
       actor: HUMAN,
       approver: "alex",
     });
@@ -337,8 +347,11 @@ describe("review feedback notices to the proposing conversation", () => {
     expect(feedbackNotices).toHaveLength(1);
   });
 
-  it("stays silent for a human-proposed revision", async () => {
-    const { specId, revisionId } = await proposedSpec(HUMAN);
+  it("stays silent when no agent conversation wrote or proposed the draft", async () => {
+    const { specId, revisionId } = await reviewableDraft({
+      author: HUMAN,
+      proposer: HUMAN,
+    });
 
     await humanComment(specId, revisionId);
 

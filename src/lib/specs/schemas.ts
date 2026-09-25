@@ -345,12 +345,6 @@ export const refusalCodeSchema = z.enum([
   "unresolvable_evidence",
   "invalid_scope",
   "revision_not_approved",
-  // An ordinary authoring continuation was asked for while a revision is
-  // proposed and under review. Distinct from `revision_not_approved`, which
-  // diagnoses an execution pinned to an unapproved revision: that code tells
-  // the reader to get the revision approved, this one tells them to conclude
-  // the review before opening the next revision.
-  "revision_in_review",
   "execution_active",
   "human_act_required",
   "amendment_required",
@@ -378,12 +372,11 @@ export const refusalCodeSchema = z.enum([
   // sweep over content that is already committed: this one refuses the write
   // itself, so a fork can never be authored against in the first place.
   "dangling_reference",
-  // A proposal withdrawal asked for by anyone other than the conversation the
-  // durable propose event names as the author — a human, a successor
-  // conversation, or a propose whose provenance cannot be read at all. It fails
-  // closed: there is no takeover flag, because a conversation that did not
-  // write the proposal cannot know what the review is mid-way through.
-  "proposal_not_owned",
+  // A review act (approve, sign off) whose review hash no longer matches the
+  // draft: the author changed it after the human read it. Distinct from
+  // `stale_element`, which guards an agent's element write; this one protects
+  // a human from approving content they have not seen.
+  "stale_review",
   // Approval-request refusals (R10.9, R24.1). A request that names a revision
   // the gate is no longer evaluated against, a gate the policy does not gate
   // on or the draft has not reached, a subject with nothing outstanding, or an
@@ -400,8 +393,8 @@ export const refusalCodeSchema = z.enum([
   // element.
   "stale_plan_draft",
   // A delivery-plan act asked for in an attempt status that cannot serve it —
-  // editing a proposal, reopening a launched run, opening a second attempt.
-  // Every one names the act that IS available from that status.
+  // editing a signed candidate, reopening a launched run, opening a second
+  // attempt. Every one names the act that IS available from that status.
   "plan_status_conflict",
   "authoring_unsettled",
   // A launch whose spec-side records committed but whose workflow start did
@@ -549,9 +542,13 @@ export const specElementKindSchema = z.enum([
 ]);
 export type SpecElementKind = z.infer<typeof specElementKindSchema>;
 
+/**
+ * A draft is editable and reviewable at the same time; sign-off freezes it.
+ * There is no separate review state: a human can approve whatever the draft
+ * currently holds, and an approval stops applying when that content changes.
+ */
 export const specRevisionStateSchema = z.enum([
   "draft",
-  "proposed",
   "approved",
   "withdrawn",
 ]);
@@ -1323,15 +1320,6 @@ export const specRevisionRowSchema = z.object({
   created_at: timestampSchema,
 });
 
-export const specRevisionSupersessionRowSchema = z.object({
-  revision_id: idSchema,
-  spec_id: idSchema,
-  superseded_by_revision_id: idSchema,
-  reason: z.string().min(1),
-  actor_json: jsonColumnSchema,
-  dismissed_at: timestampSchema,
-});
-
 export const specElementVersionRowSchema = z.object({
   revision_id: idSchema,
   element_id: idSchema,
@@ -1427,27 +1415,6 @@ export const specRevisionSchema = z
   .strict();
 export type SpecRevision = z.infer<typeof specRevisionSchema>;
 
-/**
- * The durable marker a dismissed superseded proposal leaves behind (#50). It
- * is a satellite of the revision rather than columns on it: `withdrawn` stays
- * the one lifecycle state, and the reader that asks "why did this attempt
- * end?" gets the superseding revision, the human who dismissed it, and their
- * reason from one row.
- */
-export const specRevisionSupersessionSchema = z
-  .object({
-    revisionId: idSchema,
-    specId: idSchema,
-    supersededByRevisionId: idSchema,
-    reason: z.string().min(1),
-    actor: actorProvenanceSchema,
-    dismissedAt: timestampSchema,
-  })
-  .strict();
-export type SpecRevisionSupersession = z.infer<
-  typeof specRevisionSupersessionSchema
->;
-
 export const specElementVersionSchema = z
   .object({
     revisionId: idSchema,
@@ -1529,16 +1496,54 @@ export const specRevisionSnapshotSchema = z
   });
 export type SpecRevisionSnapshot = z.infer<typeof specRevisionSnapshotSchema>;
 
-export const specApprovalRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  subject_kind: specApprovalSubjectKindSchema,
-  element_id: nullableIdSchema,
-  revision_id: idSchema,
-  approver: z.string().min(1),
-  granted_at: timestampSchema,
-  validity: specApprovalValiditySchema,
-});
+/**
+ * What a human approved when they approved a content subject: its elements'
+ * keyed payload hashes and a digest of the assumption citations they carry.
+ * Recorded on the approval because a draft is edited in place, so the
+ * approved revision's rows cannot answer it later.
+ */
+export const subjectFingerprintSchema = z
+  .object({
+    elements: z.array(
+      z
+        .object({ elementId: idSchema, payloadHash: z.string().min(1) })
+        .strict(),
+    ),
+    citationContractVersion: z.union([z.literal(1), z.literal(2)]),
+    citationCount: z.number().int().nonnegative(),
+    citationSubhash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const specApprovalRowSchema = z
+  .object({
+    id: idSchema,
+    spec_id: idSchema,
+    subject_kind: specApprovalSubjectKindSchema,
+    element_id: nullableIdSchema,
+    revision_id: idSchema,
+    approver: z.string().min(1),
+    granted_at: timestampSchema,
+    validity: specApprovalValiditySchema,
+    /**
+     * JSON of `subjectFingerprintSchema`; null exactly for a `revision`
+     * sign-off, which admits a revision rather than a piece of its content.
+     */
+    subject_fingerprint_json: z.string().min(1).nullable(),
+  })
+  .superRefine((row, ctx) => {
+    if (
+      (row.subject_kind === "revision") !==
+      (row.subject_fingerprint_json === null)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "a content approval records its subject fingerprint; a revision sign-off records none",
+        path: ["subject_fingerprint_json"],
+      });
+    }
+  });
 export type SpecApprovalRow = z.infer<typeof specApprovalRowSchema>;
 
 export const specGateAdmissionRowSchema = z.object({
@@ -1816,13 +1821,13 @@ export const specLinkRowSchema = z.object({
 export type SpecLinkRow = z.infer<typeof specLinkRowSchema>;
 
 /**
- * A `DeliveryPlanAttempt`'s lifecycle. The three unlaunched states a reopen
- * has to return to draft are `proposed`, `approved`, and `parked`; `launched`
- * is the one that refuses, because the compiled candidate is already running.
+ * A `DeliveryPlanAttempt`'s lifecycle. A human reviews the draft and signs it
+ * off, which freezes the candidate and approves it in one act. The unlaunched
+ * states a reopen returns to draft are `approved` and `parked`; `launched` is
+ * the one that refuses, because the compiled candidate is already running.
  */
 export const deliveryPlanAttemptStatusSchema = z.enum([
   "draft",
-  "proposed",
   "approved",
   "parked",
   "launched",
@@ -1848,7 +1853,7 @@ export const specDeliveryPlanAttemptRowSchema = z.object({
   /** Compare-and-swap token for draft edits; bumped by every edit and reopen. */
   draft_revision: z.number().int().positive(),
   content_json: jsonColumnSchema,
-  /** The frozen snapshot the live proposal points at; null while drafting. */
+  /** The snapshot sign-off froze; null while drafting. */
   proposed_snapshot_id: nullableIdSchema,
   approval_json: jsonColumnSchema.nullable(),
   /**
@@ -1867,12 +1872,12 @@ export type SpecDeliveryPlanAttemptRow = z.infer<
 >;
 
 /**
- * An immutable proposal snapshot. Nothing ever updates a row here: a reopen
+ * An immutable candidate snapshot. Nothing ever updates a row here: a reopen
  * bumps the attempt's draft revision and clears its approval, and the prior
- * snapshots stay readable exactly as proposed.
+ * snapshots stay readable exactly as signed.
  */
 /**
- * The immutable proposal snapshot. `content_json` carries the canonical frozen
+ * The immutable candidate snapshot. `content_json` carries the canonical frozen
  * candidate record itself — the finalized launch, binding, pinned revision and
  * draft revision — so `candidate_hash` addresses exactly the bytes sign-off
  * approves and start launches, with no second candidate artifact to drift

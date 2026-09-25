@@ -179,7 +179,7 @@ function managedDetail(
     criterionRows: [],
     claims: [],
     comments: [],
-    nextAct: lifecycle === "draft" ? "propose" : "sign_off",
+    nextAct: lifecycle === "draft" ? "sign_off" : null,
     currentCandidate: null,
     currentCandidateHash: null,
     currentApproval: null,
@@ -194,57 +194,12 @@ function managedDetail(
       claims: false,
     },
     capabilities: {
-      canPropose: lifecycle === "draft",
-      canSignOff: lifecycle === "in_review",
-      canReopen: lifecycle === "in_review",
+      canSignOff: lifecycle === "draft",
+      canReopen: lifecycle === "approved",
       canAbandon: true,
       canLaunch: false,
       refusals: {},
     },
-  };
-}
-
-function proposedDeliveryPlanResponse(): Record<string, unknown> {
-  return {
-    attempt: {
-      id: "attempt-1",
-      specSlug: "checkout",
-      status: "proposed",
-      draftRevision: 2,
-      pinnedRevisionId: "revision-8",
-      deltaBasisExecutionId: null,
-      proposedSnapshotId: "snapshot-1",
-      candidateId: record.id,
-      candidateHash: "sha256:candidate",
-      launchedExecutionId: null,
-      workflowDefinitionId: record.id,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-    },
-    approval: null,
-    prelaunch: null,
-    document: {
-      schemaVersion: 3,
-      binding: { dispositions: [] },
-    },
-    workflowDefinition: {
-      id: record.id,
-      revision: record.revision,
-      definitionHash: "sha256:definition",
-      builderHref: `/projects/test-project/workflows?definition=${record.id}`,
-    },
-    health: { total: 0, blocking: 0, counts: [], findings: [] },
-    dispositionCounts: [],
-    unresolved: [],
-    snapshots: [],
-    nextAct: {
-      actor: "human",
-      command: "Review the managed definition",
-      reason: "The delivery plan is ready for review.",
-    },
-    previousHealth: null,
-    invalidatedApproval: null,
-    executionStartAdmission: null,
   };
 }
 
@@ -577,6 +532,10 @@ describe("ConnectedWorkflowBuilderPage — managed delivery definitions", () => 
 
   afterEach(() => api.restore());
 
+  // The detail revision differs from the binding revision so a request that
+  // swapped or conflated the two compare-and-swap tokens cannot pass.
+  const managedDefinitionRevision = 5;
+
   function selectManaged(
     lifecycle: NativeSddWorkflowManagementDetail["lifecycle"],
   ): void {
@@ -586,35 +545,81 @@ describe("ConnectedWorkflowBuilderPage — managed delivery definitions", () => 
         id: record.id,
         name: record.name,
         description: record.description,
-        revision: record.revision,
+        revision: managedDefinitionRevision,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         management,
       },
     ];
     workflowQueryState.detail = {
-      item: { ...record, management },
+      item: { ...record, revision: managedDefinitionRevision, management },
       resolved: resolveWorkflowDefinition(fullConfig.config, record.definition),
     };
   }
 
-  it("routes draft proposal through the managed plan mutation and removes generic delete", async () => {
+  it("signs off the draft against the binding and definition revisions it shows", async () => {
     selectManaged("draft");
-    api.json(
-      "POST",
-      "/api/specs/test-project/checkout/actions/plan-propose",
-      proposedDeliveryPlanResponse(),
-    );
+    api.pending("POST", /actions\/plan-sign-off/);
     const view = renderPage();
 
     expect(view.getByRole("link", { name: "Checkout" })).toBeInTheDocument();
     expect(view.queryByRole("button", { name: "Delete" })).toBeNull();
-    fireEvent.click(view.getByRole("button", { name: "Propose for review" }));
+    expect(view.queryByRole("button", { name: /propose/i })).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Sign off" }));
+
     await vi.waitFor(() =>
       expect(
-        api.requestsTo("POST", /actions\/plan-propose/)[0]?.jsonBody,
-      ).toEqual({}),
+        api.requestsTo("POST", /actions\/plan-sign-off/)[0]?.pathname,
+      ).toBe("/api/specs/test-project/checkout/actions/plan-sign-off"),
     );
+    expect(
+      api.requestsTo("POST", /actions\/plan-sign-off/)[0]?.jsonBody,
+    ).toEqual({
+      expectedDraftRevision: 2,
+      expectedDefinitionRevision: managedDefinitionRevision,
+    });
+  });
+
+  it("shows a stale-draft sign-off refusal in the managed header", async () => {
+    selectManaged("draft");
+    api.reply("POST", /actions\/plan-sign-off/, {
+      status: 409,
+      json: {
+        code: "stale_plan_draft",
+        unmetConditions: [
+          "The managed workflow definition is at revision 6, not the revision 5 that was reviewed.",
+        ],
+        instruction:
+          "Nothing was signed off. Re-read the draft for checkout and review it again.",
+      },
+    });
+    const view = renderPage();
+
+    fireEvent.click(view.getByRole("button", { name: "Sign off" }));
+
+    expect(
+      await view.findByText(
+        /The managed workflow definition is at revision 6, not the revision 5 that was reviewed\./,
+      ),
+    ).toHaveAttribute("role", "alert");
+  });
+
+  // Sign-off approves the saved revision; unsaved edits on screen would be
+  // lost behind the read-only approved candidate.
+  it("refuses to sign off while the draft has unsaved edits", () => {
+    selectManaged("draft");
+    const view = renderPage();
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+
+    fireEvent.click(view.getByRole("button", { name: "Sign off" }));
+
+    expect(view.getByText(/Save the draft before signing off/)).toHaveAttribute(
+      "role",
+      "alert",
+    );
+    expect(api.requestsTo("POST", /actions\/plan-sign-off/)).toHaveLength(0);
   });
 
   it("saves an editable managed draft against the displayed definition revision", async () => {
@@ -628,15 +633,20 @@ describe("ConnectedWorkflowBuilderPage — managed delivery definitions", () => 
 
     await vi.waitFor(() =>
       expect(workflowMutationState.update).toHaveBeenCalledWith(
-        expect.objectContaining({ expectedRevision: record.revision }),
+        expect.objectContaining({
+          expectedRevision: managedDefinitionRevision,
+        }),
       ),
     );
   });
 
-  it("makes an in-review candidate read-only while preserving graph inspection", () => {
-    selectManaged("in_review");
+  it("makes an approved candidate read-only while preserving graph inspection", () => {
+    selectManaged("approved");
     const view = renderPage();
 
+    expect(view.getByText("Approved")).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "Sign off" })).toBeNull();
     expect(view.getAllByText(/Read-only/).length).toBeGreaterThan(0);
     expect(view.queryByRole("button", { name: "Add Context" })).toBeNull();
     expect(view.queryByRole("button", { name: "Save Draft" })).toBeNull();

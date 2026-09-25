@@ -75,8 +75,8 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
-/** A proposed revision carrying one human review comment on R1. */
-async function proposedSpecWithComment() {
+/** A Design draft under review carrying one human review comment on R1. */
+async function draftWithComment() {
   const created = await authoring.createSpec({
     projectPath: PROJECT_PATH,
     slug: "review-reply",
@@ -110,10 +110,6 @@ async function proposedSpecWithComment() {
     },
     baseElementVersion: null,
     actor: AGENT,
-  });
-  await specs.proposeRevision({
-    revisionId: created.draft.id,
-    proposedAt: "2026-08-12T09:58:00.000Z",
   });
   await specs.approveRevision({
     revisionId: created.draft.id,
@@ -177,14 +173,14 @@ async function proposedSpecWithComment() {
 }
 
 describe("replyToThread", () => {
-  it("lets the proposing agent answer a reviewer's thread in place", async () => {
-    const { specId, revisionId, root } = await proposedSpecWithComment();
+  it("lets the authoring agent answer a reviewer's thread in place", async () => {
+    const { specId, revisionId, root } = await draftWithComment();
 
     const replied = await reviewing.replyToThread({
       specId,
       actor: AGENT,
       threadId: "thread-1",
-      body: "Repairs land after you Request Changes; answering here meanwhile.",
+      body: "Repairing the draft now; answering here meanwhile.",
     });
 
     expect(replied).toMatchObject({
@@ -213,27 +209,43 @@ describe("replyToThread", () => {
     ]);
   });
 
-  it("keeps the repair loop alive after Request Changes reopens the draft", async () => {
-    const { specId, revisionId } = await proposedSpecWithComment();
-    const reopened = await reviewing.requestChanges({
+  it("keeps the repair loop alive while the author revises the commented draft in place", async () => {
+    const { specId, revisionId } = await draftWithComment();
+    const decision = await specs.findElementVersion(revisionId, "reply-d1");
+    if (decision === null) throw new Error("expected the decision");
+    await authoring.upsertDraftElement({
       specId,
       revisionId,
-      actor: HUMAN,
+      elementId: "reply-d1",
+      kind: "decision",
+      payload: {
+        kind: "decision",
+        title: "Thread ownership",
+        chosenApproach: "Replies join the reviewer's thread on the draft.",
+        rejectedAlternatives: [],
+        reason: "The reviewer reads answers where they asked.",
+        tracedRequirementElementIds: ["reply-r1"],
+      },
+      baseElementVersion: decision.elementVersion,
+      actor: AGENT,
     });
-    expect(reopened.ok).toBe(true);
 
     const replied = await reviewing.replyToThread({
       specId,
       actor: AGENT,
       threadId: "thread-1",
-      body: "Reworded R1 in the reopened draft as asked.",
+      body: "Reworded D1 in the draft as asked.",
     });
 
-    expect(replied.ok).toBe(true);
+    expect(replied).toMatchObject({
+      ok: true,
+      value: { thread_id: "thread-1", revision_id: revisionId },
+    });
+    expect((await specs.findRevision(revisionId))?.state).toBe("draft");
   });
 
   it("lets a human continue the thread too", async () => {
-    const { specId } = await proposedSpecWithComment();
+    const { specId } = await draftWithComment();
 
     const replied = await reviewing.replyToThread({
       specId,
@@ -246,7 +258,7 @@ describe("replyToThread", () => {
   });
 
   it("refuses an unknown thread with the read that lists real ones", async () => {
-    const { specId } = await proposedSpecWithComment();
+    const { specId } = await draftWithComment();
 
     const replied = await reviewing.replyToThread({
       specId,
@@ -264,7 +276,7 @@ describe("replyToThread", () => {
   });
 
   it("refuses to reopen an ended thread", async () => {
-    const { specId, revisionId } = await proposedSpecWithComment();
+    const { specId, revisionId } = await draftWithComment();
     const resolved = await reviewing.resolveThread({
       specId,
       revisionId,

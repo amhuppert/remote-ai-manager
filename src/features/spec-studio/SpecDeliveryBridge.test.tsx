@@ -364,7 +364,7 @@ describe("SpecDeliveryBridge", () => {
 
   it("does not offer reaffirmation outside an editable draft", async () => {
     const review = pendingReaffirmationReview();
-    review.attempt.status = "proposed";
+    review.attempt.status = "approved";
     api.json("GET", "/api/specs/command-center/native-sdd/plan/review", review);
     renderWithQuery(
       <SpecDeliveryBridge
@@ -415,6 +415,65 @@ describe("SpecDeliveryBridge", () => {
         "/projects/command-center/workflows?definition=candidate-2",
       ),
     );
+  });
+
+  it("says a draft without blockers is ready for sign-off in Workflow Builder", async () => {
+    api.json(
+      "GET",
+      "/api/specs/command-center/native-sdd/plan/review",
+      reviewView(),
+    );
+    renderWithQuery(
+      <SpecDeliveryBridge
+        detail={specControlsDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    expect(await screen.findByText("Ready for sign-off")).toBeVisible();
+    expect(screen.getByText(/sign it off in Workflow Builder/)).toBeVisible();
+    expect(screen.queryByText(/in review/i)).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open in Workflow Builder" }),
+    ).toHaveAttribute(
+      "href",
+      "/projects/command-center/workflows?definition=candidate-2",
+    );
+  });
+
+  it("does not call a draft with blocking findings ready for sign-off", async () => {
+    api.json(
+      "GET",
+      "/api/specs/command-center/native-sdd/plan/review",
+      reviewView({
+        health: {
+          total: 1,
+          blocking: 1,
+          counts: [{ severity: "blocks_propose", count: 1 }],
+          findings: [
+            {
+              ruleId: "coverage/selected-criterion-uncovered",
+              severity: "blocks_propose",
+              elementHandle: "R1.1",
+              message: "R1.1 is selected but no context claims it.",
+            },
+          ],
+        },
+      }),
+    );
+    renderWithQuery(
+      <SpecDeliveryBridge
+        detail={specControlsDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Configure and review this plan in Workflow Builder.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("Ready for sign-off")).toBeNull();
   });
 
   it("shows the advisory review verdict and a way to read the findings", async () => {

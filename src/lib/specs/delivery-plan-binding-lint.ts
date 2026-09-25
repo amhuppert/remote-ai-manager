@@ -101,7 +101,7 @@ export function lintDeliveryPlanBinding(
         code: "binding/pending-reaffirmation",
         path: ["dispositions", index, "disposition"],
         criterionElementId: criterionId,
-        message: `Criterion ${JSON.stringify(criterionId)} needs human reaffirmation or in-scope delivery before proposal.`,
+        message: `Criterion ${JSON.stringify(criterionId)} needs human reaffirmation or in-scope delivery before sign-off.`,
       });
     }
     if (

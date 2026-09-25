@@ -220,10 +220,6 @@ describe("createSpec reference guard", () => {
       position: 0,
       payload: requirement("A decision may remain independent."),
     });
-    await specs.proposeRevision({
-      revisionId: created.draft.id,
-      proposedAt: "2026-07-18T12:00:00.000Z",
-    });
     await specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-18T12:00:01.000Z",

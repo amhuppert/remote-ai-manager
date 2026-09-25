@@ -172,7 +172,7 @@ describe("delivery-plan candidate finalization", () => {
         sourceUri,
         reason: "The signed native SDD candidate owns workflow governance.",
         instruction:
-          "Before launch, reopen and re-propose the plan; during a run, use the audited charter-amendment act.",
+          "Before launch, reopen the plan and have the revised draft signed off; during a run, use the audited charter-amendment act.",
       },
       {
         paths: ["/origin", "/approvalRequired"],
@@ -180,7 +180,7 @@ describe("delivery-plan candidate finalization", () => {
         reason:
           "The signed native SDD candidate owns provenance and approval policy.",
         instruction:
-          "Before launch, reopen and re-propose the plan; after launch, replace the execution.",
+          "Before launch, reopen the plan and have the revised draft signed off; after launch, replace the execution.",
       },
     ]);
   });

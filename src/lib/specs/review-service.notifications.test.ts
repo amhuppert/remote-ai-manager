@@ -30,6 +30,7 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 import { createSpecEventsPublisher } from "./events";
+import { revisionReviewHash } from "./review-hash";
 import {
   createReviewService,
   type ReviewService,
@@ -43,9 +44,11 @@ const PROJECT_NAME = "review-notifications-project";
 const SPEC_ID = "spec-review-notifications";
 const APPROVED_REVISION_ID = "revision-approved";
 const EXECUTION_ID = "spec-execution-1";
-const PROPOSED_REVISION_ID = "revision-proposed";
+const DRAFT_REVISION_ID = "revision-draft";
 const REQUIREMENT_ELEMENT_ID = "element-requirement-1";
 const TASK_ELEMENT_ID = "element-task-1";
+const CRITERION_ELEMENT_ID = "element-criterion-1";
+const DRAFT_TASK_ELEMENT_ID = "element-task-2";
 const NOW = "2026-07-19T09:00:00.000Z";
 
 const requirementPayload: Extract<SpecElementPayload, { kind: "requirement" }> =
@@ -121,6 +124,12 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
 
   function specRows() {
     return notificationsRepo.findSpecNotificationsBySpecId(SPEC_ID);
+  }
+
+  async function reviewHash(revisionId: string): Promise<string> {
+    const snapshot = await serviceDeps.specs.getRevisionSnapshot(revisionId);
+    if (snapshot === null) throw new Error(`revision ${revisionId} missing`);
+    return revisionReviewHash(snapshot);
   }
 
   it("requestApproval creates a spec-approval-requested notification that surfaces as a Needs You item", async () => {
@@ -334,10 +343,10 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
   });
 
   it("approving the exact requested element clears its Needs You request even though the request stored the handle", async () => {
-    seedProposedRequirement(db);
+    seedDraftRequirement(db);
     const requested = await service.requestApproval({
       specId: SPEC_ID,
-      revisionId: PROPOSED_REVISION_ID,
+      revisionId: DRAFT_REVISION_ID,
       gate: "requirements",
       subject: "R1",
       actor: { kind: "agent", conversationId: "conversation-1" },
@@ -346,10 +355,11 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
 
     const approved = await service.approveItem({
       specId: SPEC_ID,
-      revisionId: PROPOSED_REVISION_ID,
+      revisionId: DRAFT_REVISION_ID,
       subjectKind: "requirement",
       elementId: REQUIREMENT_ELEMENT_ID,
       approver: "operator",
+      expectedReviewHash: await reviewHash(DRAFT_REVISION_ID),
       actor: { kind: "human" },
     });
 
@@ -407,60 +417,53 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
   });
 
   it("11.2 a sign-off after the dials were loosened to Notify fires one post-hoc notice per admission it inserts", async () => {
-    seedProposedRequirement(db);
+    seedDraftRequirement(db);
     db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
       '{"preset":"exploratory"}',
       SPEC_ID,
     );
-    // A propose-time admission already exists for the requirements gate: the
-    // sign-off must not duplicate its row or its notice.
-    reviewRepo.insertGateAdmission({
-      id: "admission-propose-requirements",
-      spec_id: SPEC_ID,
-      gate: "requirements",
-      basis: "notify_policy",
-      approval_id: null,
-      revision_id: PROPOSED_REVISION_ID,
-      execution_id: null,
-      actor_json: '{"kind":"agent","conversationId":"conversation-1"}',
-      created_at: NOW,
-    });
 
     const signed = await service.signOffRevision({
       specId: SPEC_ID,
-      revisionId: PROPOSED_REVISION_ID,
+      revisionId: DRAFT_REVISION_ID,
       approver: "operator",
+      expectedReviewHash: await reviewHash(DRAFT_REVISION_ID),
       actor: { kind: "human" },
     });
     expect(signed).toMatchObject({
       ok: true,
-      value: { revision: { state: "approved" } },
+      value: { revision: { state: "approved" }, approval: null },
     });
 
     const rows = specRows();
     expect(rows.every((row) => row.type === "spec-policy-admitted")).toBe(true);
-    expect(rows.map((row) => row.gate)).toEqual(["plan"]);
-    const insertedAdmissionIds = reviewRepo
-      .findGateAdmissionsByRevision(PROPOSED_REVISION_ID)
-      .filter(
-        (admission) =>
-          admission.basis === "notify_policy" &&
-          admission.id !== "admission-propose-requirements",
-      )
-      .map((admission) => admission.id);
+    const admissions =
+      reviewRepo.findGateAdmissionsByRevision(DRAFT_REVISION_ID);
+    expect(admissions.map((admission) => admission.basis)).toEqual(
+      admissions.map(() => "notify_policy"),
+    );
+    expect(admissions.map((admission) => admission.gate).sort()).toEqual([
+      "plan",
+      "requirements",
+    ]);
+    expect(rows.map((row) => row.gate).sort()).toEqual([
+      "plan",
+      "requirements",
+    ]);
     expect(new Set(rows.map((row) => row.gateRequestId))).toEqual(
-      new Set(insertedAdmissionIds),
+      new Set(admissions.map((admission) => admission.id)),
     );
     expect(deriveNotificationOutcomes(rows, []).needsAction).toHaveLength(0);
 
     // Signing off the already-approved revision is a no-op: no new notices.
     await service.signOffRevision({
       specId: SPEC_ID,
-      revisionId: PROPOSED_REVISION_ID,
+      revisionId: DRAFT_REVISION_ID,
       approver: "operator",
+      expectedReviewHash: await reviewHash(DRAFT_REVISION_ID),
       actor: { kind: "human" },
     });
-    expect(specRows()).toHaveLength(1);
+    expect(specRows()).toHaveLength(2);
   });
 
   it("11.2 policyAdmitted notifies the human post hoc without opening a Needs You item, once per admission", () => {
@@ -499,17 +502,11 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
   });
 });
 
-function seedProposedRequirement(db: Db): void {
-  const contentHash = computeSpecRevisionContentHashFromCanonical("plan", [
-    {
-      elementId: REQUIREMENT_ELEMENT_ID,
-      kind: "requirement",
-      number: 1,
-      parentElementId: null,
-      position: 0,
-      payload: requirementPayload,
-    },
-  ]);
+/**
+ * An open draft carrying a lint-clean plan — a requirement, its criterion, and
+ * a task covering it — so a human can sign it off without further authoring.
+ */
+function seedDraftRequirement(db: Db): void {
   const citationHash = computeSpecRevisionCitationHash(2, []);
 
   db.prepare(
@@ -517,25 +514,68 @@ function seedProposedRequirement(db: Db): void {
        id, spec_id, number, state, based_on_revision_id, content_hash,
        citation_contract_version, citation_hash, proposed_at, approved_at,
        created_at
-     ) VALUES (?, ?, 2, 'proposed', NULL, ?, 2, ?, ?, NULL, ?)`,
-  ).run(PROPOSED_REVISION_ID, SPEC_ID, contentHash, citationHash, NOW, NOW);
-  db.prepare(
-    `INSERT INTO spec_elements (id, spec_id, kind, number, parent_element_id, created_at)
-     VALUES (?, ?, 'requirement', 1, NULL, ?)`,
-  ).run(REQUIREMENT_ELEMENT_ID, SPEC_ID, NOW);
-  db.prepare(
-    `INSERT INTO spec_element_versions (
-       revision_id, element_id, position, payload_json, payload_hash,
-       element_version, created_at, updated_at
-     ) VALUES (?, ?, 0, ?, ?, 1, ?, ?)`,
-  ).run(
-    PROPOSED_REVISION_ID,
-    REQUIREMENT_ELEMENT_ID,
-    JSON.stringify(requirementPayload),
-    computeSpecElementPayloadHash(requirementPayload),
-    NOW,
-    NOW,
-  );
+     ) VALUES (?, ?, 2, 'draft', NULL, NULL, 2, ?, NULL, NULL, ?)`,
+  ).run(DRAFT_REVISION_ID, SPEC_ID, citationHash, NOW);
+  const elements: {
+    id: string;
+    number: number;
+    parentElementId: string | null;
+    payload: SpecElementPayload;
+  }[] = [
+    {
+      id: REQUIREMENT_ELEMENT_ID,
+      number: 1,
+      parentElementId: null,
+      payload: requirementPayload,
+    },
+    {
+      id: CRITERION_ELEMENT_ID,
+      number: 1,
+      parentElementId: REQUIREMENT_ELEMENT_ID,
+      payload: {
+        kind: "criterion",
+        text: "A granted approval survives a restart.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+    },
+    {
+      id: DRAFT_TASK_ELEMENT_ID,
+      number: 2,
+      parentElementId: null,
+      payload: {
+        ...taskPayload,
+        tracedRequirementElementIds: [REQUIREMENT_ELEMENT_ID],
+        coveredCriterionElementIds: [CRITERION_ELEMENT_ID],
+      },
+    },
+  ];
+  for (const [position, element] of elements.entries()) {
+    db.prepare(
+      `INSERT INTO spec_elements (id, spec_id, kind, number, parent_element_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      element.id,
+      SPEC_ID,
+      element.payload.kind,
+      element.number,
+      element.parentElementId,
+      NOW,
+    );
+    db.prepare(
+      `INSERT INTO spec_element_versions (
+         revision_id, element_id, position, payload_json, payload_hash,
+         element_version, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+    ).run(
+      DRAFT_REVISION_ID,
+      element.id,
+      position,
+      JSON.stringify(element.payload),
+      computeSpecElementPayloadHash(element.payload),
+      NOW,
+      NOW,
+    );
+  }
 }
 
 function seed(db: Db): void {

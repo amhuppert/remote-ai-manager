@@ -5,7 +5,7 @@ import type { SpecDetailView } from "@/lib/specs/queries";
 
 import {
   DraftBlocked,
-  InReview,
+  DraftUnderReview,
   OverviewGroupedThreads,
   OverviewReviewThreads,
   OverviewReviewThreadsMobile,
@@ -22,7 +22,7 @@ function storyDetail(story: {
 
 describe("Spec detail story fixtures", () => {
   it.each([
-    ["in-review", InReview],
+    ["draft-under-review", DraftUnderReview],
     ["questions", QuestionsAndAssumptions],
     ["draft", DraftBlocked],
   ])(
@@ -33,7 +33,8 @@ describe("Spec detail story fixtures", () => {
       const approved = detail.currentApprovedRevision?.revision;
 
       expect(current?.authoringStage).toBe("design");
-      expect(["draft", "proposed"]).toContain(current?.state);
+      expect(current?.state).toBe("draft");
+      expect(detail.draftReview?.snapshot.revision.id).toBe(current?.id);
       expect(approved).toMatchObject({
         authoringStage: "requirements",
         state: "approved",
@@ -67,7 +68,7 @@ describe("Spec detail story fixtures", () => {
         ({ parentCommentId }) => parentCommentId === null,
       );
 
-      expect(current?.state).toBe("proposed");
+      expect(current?.state).toBe("draft");
       expect(roots).toHaveLength(1);
       expect(detail.comments).toHaveLength(2);
       expect(new Set(detail.comments.map(({ threadId }) => threadId))).toEqual(

@@ -9,7 +9,6 @@ import type { NativeSddWorkflowManagementDetail } from "@/lib/workflow-graph/man
 
 const LIFECYCLE = {
   draft: { label: "Draft", tone: "cyan" },
-  in_review: { label: "In review", tone: "amber" },
   approved: { label: "Approved", tone: "green" },
   launched: { label: "Launched", tone: "green" },
   superseded: { label: "Superseded", tone: "neutral" },
@@ -22,7 +21,6 @@ const LIFECYCLE = {
 interface ManagedDeliveryWorkflowHeaderProps {
   management: NativeSddWorkflowManagementDetail;
   definitionRevision: number;
-  onPropose?: () => void;
   onSignOff?: () => void;
   onReopen?: () => void;
   onAbandon?: () => void;
@@ -34,7 +32,6 @@ interface ManagedDeliveryWorkflowHeaderProps {
 export default function ManagedDeliveryWorkflowHeader({
   management,
   definitionRevision,
-  onPropose,
   onSignOff,
   onReopen,
   onAbandon,
@@ -78,17 +75,6 @@ export default function ManagedDeliveryWorkflowHeader({
       )}
 
       <div className="flex flex-wrap items-center gap-xs">
-        {management.capabilities.canPropose && onPropose && (
-          <Button
-            type="button"
-            size="sm"
-            variant="primary"
-            loading={pendingAction === "propose"}
-            onClick={onPropose}
-          >
-            Propose for review
-          </Button>
-        )}
         {management.capabilities.canSignOff && onSignOff && (
           <Button
             type="button"

@@ -7,10 +7,11 @@ import type { SpecDetailView } from "@/lib/specs/queries";
 
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
+  draftingSpecControlsDetailFixture,
   importedDeliveredSpecDetailFixture,
   policyAdmissionViewFixture,
   specControlsDetailFixture,
-  strandedProposalDetailFixture,
+  subjectFingerprintFixture,
 } from "./SpecControls.fixtures";
 import SpecHistoryPanel, { buildSpecHistory } from "./SpecHistoryPanel";
 
@@ -29,6 +30,7 @@ describe("buildSpecHistory", () => {
           approver: "alex",
           granted_at: "2026-07-18T12:03:00.000Z",
           validity: "valid",
+          subject_fingerprint_json: subjectFingerprintFixture("requirement-1"),
         },
       ],
       gateAdmissions: [
@@ -81,30 +83,6 @@ describe("buildSpecHistory", () => {
     expect(admission).toMatchObject({ emphasis: "policy", tone: "amber" });
     expect(admission?.label).toContain("import");
     expect(admission?.label).not.toContain("approval");
-  });
-
-  it("does not duplicate a creation timestamp when a revision is proposed at creation", () => {
-    const detail = specControlsDetailFixture();
-    const snapshot = detail.currentRevision;
-    if (snapshot === null) throw new Error("Fixture revision missing");
-    const proposedAtCreation = {
-      ...snapshot.revision,
-      state: "proposed" as const,
-      approvedAt: null,
-      proposedAt: SPEC_CONTROLS_FIXTURE_NOW,
-    };
-
-    const events = buildSpecHistory({
-      ...detail,
-      revisions: [proposedAtCreation],
-      currentRevision: { ...snapshot, revision: proposedAtCreation },
-      currentApprovedRevision: null,
-    });
-
-    expect(events.map((event) => event.label)).toEqual([
-      "Revision 1 proposed",
-      "Spec created",
-    ]);
   });
 
   it("builds attention history only from typed durable mutation events", () => {
@@ -518,63 +496,53 @@ describe("buildSpecHistory", () => {
     }
   });
 
-  it("links a proposal row to the Review entry that can act on it", () => {
+  it("links the open draft's row to the Review entry that can act on it", () => {
     const events = buildSpecHistory(
-      strandedProposalDetailFixture(),
+      draftingSpecControlsDetailFixture("requirements"),
       "command-center",
     );
 
-    // History is where a reader meets a stranded proposal; a row that reads as
-    // plain text leaves them where #50 left them — informed and stuck.
     expect(
-      events.find((event) => event.id === "revision-2:proposed")?.href,
-    ).toBe(
-      "/specs/command-center/native-sdd?view=requirements&revision=revision-2",
-    );
+      events.find((event) => event.id === "revision-2:created")?.href,
+    ).toBe("/specs/command-center/native-sdd?view=requirements");
   });
 
-  it("drops the link once the proposal is no longer live", () => {
-    const detail = strandedProposalDetailFixture();
-    // The dismissal this context added ends the proposal: the row stays as the
-    // durable record, but Review selects out of liveProposals, so keeping the
-    // link would send a reader to a different proposal or an empty tab.
-    const dismissed = {
+  it("drops the link once the draft is no longer open", () => {
+    const detail = draftingSpecControlsDetailFixture("requirements");
+    // A withdrawn draft leaves the draft-review projection: the row stays as
+    // the durable record, but Review no longer shows that revision.
+    const withdrawn = {
       ...detail,
       revisions: detail.revisions.map((revision) =>
         revision.id === "revision-2"
           ? { ...revision, state: "withdrawn" as const }
           : revision,
       ),
-      liveProposals: [],
+      draftReview: null,
     };
 
-    const events = buildSpecHistory(dismissed, "command-center");
+    const events = buildSpecHistory(withdrawn, "command-center");
 
-    const row = events.find((event) => event.id === "revision-2:proposed");
+    const row = events.find((event) => event.id === "revision-2:created");
     expect(row).toBeDefined();
     expect(row?.href).toBeNull();
   });
 
-  it("renders the stranded proposal row as a link a reader can follow", () => {
+  it("renders the open draft's row as a link a reader can follow", () => {
     render(
       <SpecHistoryPanel
-        detail={strandedProposalDetailFixture()}
+        detail={draftingSpecControlsDetailFixture("design")}
         projectName="command-center"
       />,
     );
 
-    // The projection carrying an href only helps if the row actually renders
-    // one — the reachability #50 lacked is the rendered anchor, not the field.
-    const row = screen.getByText("Revision 2 proposed").closest("li");
+    const row = screen.getByText("Revision 2 created").closest("li");
     if (!(row instanceof HTMLElement)) {
-      throw new Error("the proposal row did not render as a feed item");
+      throw new Error("the draft row did not render as a feed item");
     }
     expect(
       within(row).getByRole("link", { name: /Open subject/i }),
-    ).toHaveAttribute(
-      "href",
-      "/specs/command-center/native-sdd?view=requirements&revision=revision-2",
-    );
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=design");
   });
 
   it("uses one flat chronological feed instead of a card for every event", () => {

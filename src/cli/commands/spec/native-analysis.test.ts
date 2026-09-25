@@ -136,13 +136,17 @@ describe("spec analysis", () => {
 
   it("returns an unresolved consistency finding as a failed verification with its remedy", async () => {
     const finding = {
-      family: "proposal-integrity",
-      code: "superseded_proposal",
-      revisionId: "r1",
-      revisionNumber: 1,
-      supersededByRevisionId: "r2",
-      detail: "A later approval superseded this proposal",
-      remedy: "cctl spec withdraw native-sdd --revision r1",
+      family: "execution-lifecycle",
+      code: "abandon_cleanup_unfinished",
+      specExecutionId: "execution-1",
+      cleanupPhase: "abort_workflow",
+      workflowExecutionId: "workflow-1",
+      workflowStatus: "running",
+      ownsExecutionSlot: true,
+      detail:
+        "Spec execution execution-1 stopped mid-abandonment at the abort_workflow phase",
+      remedy:
+        "cctl spec abandon native-sdd --execution workflow-1 --reason <reason>",
     };
     const fixture = createCcRuntimeFixture({
       respond: () =>
@@ -196,8 +200,9 @@ describe("spec analysis", () => {
           candidateHash: null,
           snapshotId: null,
           candidateId: null,
-          approvable: false,
-          approvability: "A draft attempt is never approvable.",
+          approvable: true,
+          approvability:
+            "Draft bytes are what a human reviews; sign-off freezes and approves them.",
           launch,
           binding: { dispositions: [] },
         }),
@@ -208,7 +213,7 @@ describe("spec analysis", () => {
       "preview",
       "native-sdd",
       "--stage",
-      "proposed",
+      "approved",
       "--expected-draft-revision",
       "4",
     ]);

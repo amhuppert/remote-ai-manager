@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import { z } from "zod";
 
 import {
@@ -13,9 +11,10 @@ import {
   type MemoryNote,
 } from "../schemas";
 import type { MemoryService } from "../service";
+import corpusJson from "./memory-eval-corpus.json";
 
 /**
- * The committed evaluation corpus (`docs/fixtures/memory-eval-corpus.json`):
+ * The committed evaluation corpus (`memory-eval-corpus.json` beside this file):
  * fifteen representative notes drawn from the operator's real memory library,
  * the ten named recall queries that are R7.1's acceptance targets, and the
  * stale-status specimen R2.1 withholds.
@@ -91,19 +90,13 @@ export const memoryEvalCorpusSchema = z
 
 export type MemoryEvalCorpus = z.infer<typeof memoryEvalCorpusSchema>;
 
-const CORPUS_URL = new URL(
-  "../../../../docs/fixtures/memory-eval-corpus.json",
-  import.meta.url,
-);
-
 /**
  * Parse the committed corpus. Validation is the point: a fixture edit that
  * drops a slug or renames a field fails here rather than silently shrinking
  * the evaluation.
  */
 export function loadMemoryEvalCorpus(): MemoryEvalCorpus {
-  const raw: unknown = JSON.parse(readFileSync(CORPUS_URL, "utf8"));
-  return memoryEvalCorpusSchema.parse(raw);
+  return memoryEvalCorpusSchema.parse(corpusJson);
 }
 
 export interface SeedMemoryEvalCorpusOptions {

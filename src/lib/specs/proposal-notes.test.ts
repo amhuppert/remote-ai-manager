@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { proposalAuthor } from "./proposal-withdrawal";
 import {
   PROPOSAL_NOTES_MAX_CHARACTERS,
   oversizedProposalNotesRefusal,
   proposalNotes,
 } from "./proposal-notes";
+import { revisionAuthor } from "./revision-author";
 import type { SpecEventRow } from "./schemas";
 
 const ACTOR = JSON.stringify({
@@ -58,7 +58,7 @@ describe("proposalNotes", () => {
     ];
 
     expect(proposalNotes(legacy, "revision-2")).toBeNull();
-    expect(proposalAuthor(legacy, "revision-2")).toMatchObject({
+    expect(revisionAuthor(legacy, "revision-2")).toMatchObject({
       kind: "agent",
       conversationId: "conversation-1",
     });
@@ -74,7 +74,7 @@ describe("proposalNotes", () => {
       }),
     ];
 
-    expect(proposalAuthor(events, "revision-2")).toMatchObject({
+    expect(revisionAuthor(events, "revision-2")).toMatchObject({
       conversationId: "conversation-1",
     });
   });

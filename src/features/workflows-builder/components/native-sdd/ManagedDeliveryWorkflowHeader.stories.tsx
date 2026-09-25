@@ -13,7 +13,6 @@ const meta = {
   args: {
     management: managedDeliveryStory("draft"),
     definitionRevision: 3,
-    onPropose: fn(),
     onSignOff: fn(),
     onReopen: fn(),
     onAbandon: fn(),
@@ -29,8 +28,11 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Draft: Story = {};
-export const InReview: Story = {
-  args: { management: managedDeliveryStory("in_review") },
+export const SignOffRefused: Story = {
+  args: {
+    error:
+      "The managed workflow definition is at revision 4, not the revision 3 that was reviewed. Nothing was signed off. Re-read the draft for native-sdd and review it again.",
+  },
 };
 export const Approved: Story = {
   args: { management: managedDeliveryStory("approved") },

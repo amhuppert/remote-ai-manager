@@ -122,10 +122,6 @@ async function authoredSpec(slug: string, gatePolicy: SpecGatePolicy) {
 
 async function authoredDesignSpec(slug: string, gatePolicy: SpecGatePolicy) {
   const created = await authoredSpec(slug, gatePolicy);
-  await specs.proposeRevision({
-    revisionId: created.draft.id,
-    proposedAt: "2026-07-25T08:58:00.000Z",
-  });
   await specs.approveRevision({
     revisionId: created.draft.id,
     approvedAt: "2026-07-25T08:58:01.000Z",
@@ -223,14 +219,52 @@ describe("R25 policy-change staging semantics", () => {
     expect(reviewRepo.findGateAdmissionsBySpecId(created.spec.id)).toEqual([]);
   });
 
-  it("never restages a proposed revision and reports no sequence for it", async () => {
-    const created = await authoredSpec("no-restage", { preset: "fast-path" });
-    const proposed = await authoring.proposeRevision({
+  it("keeps pinning a draft that was asked for review and reports the sequence it still owes", async () => {
+    const created = await authoredSpec("review-requested", {
+      preset: "fast-path",
+    });
+    const requested = await authoring.proposeRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
       actor: AGENT,
     });
-    expect(proposed.ok).toBe(true);
+    expect(requested).toMatchObject({
+      ok: true,
+      absorbedSignOff: false,
+      revision: { state: "draft" },
+    });
+
+    const result = await reviewing.changePolicy({
+      specId: created.spec.id,
+      proposedPolicy: { preset: "contract-bearing" },
+      hardConfirmed: true,
+      actor: HUMAN,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.authoringSequence).toMatchObject({
+      revisionId: created.draft.id,
+      pinnedStage: "requirements",
+      nextTransition: {
+        stage: "requirements",
+        action: "propose",
+        requiresHumanSignOff: true,
+        consultedGates: [{ gate: "requirements", dial: "gate" }],
+      },
+    });
+    const revisions = await specs.listRevisions(created.spec.id);
+    expect(
+      revisions.map((revision) => [revision.state, revision.authoringStage]),
+    ).toEqual([["draft", "requirements"]]);
+  });
+
+  it("never restages an approved revision and reports no sequence without an open draft", async () => {
+    const created = await authoredSpec("no-restage", { preset: "fast-path" });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-25T08:58:01.000Z",
+    });
 
     const result = await reviewing.changePolicy({
       specId: created.spec.id,
@@ -243,10 +277,9 @@ describe("R25 policy-change staging semantics", () => {
     if (!result.ok) return;
     expect(result.value.authoringSequence).toBeNull();
     const revisions = await specs.listRevisions(created.spec.id);
-    expect(revisions.map((revision) => revision.authoringStage)).toEqual([
-      "requirements",
-    ]);
-    expect(revisions[0]?.state).toBe("proposed");
+    expect(
+      revisions.map((revision) => [revision.state, revision.authoringStage]),
+    ).toEqual([["approved", "requirements"]]);
   });
 
   it("records the previous policy, the resulting policy, and the pinned stage on the policy event", async () => {

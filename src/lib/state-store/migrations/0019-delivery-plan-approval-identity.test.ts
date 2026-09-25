@@ -234,7 +234,11 @@ describe("0019-delivery-plan-approval-identity", () => {
          NULL, '2026-08-07T09:00:00.000Z', '2026-08-07T09:00:00.000Z')`,
     ).run("attempt-real", SPEC_ID, PINNED_REVISION_ID, LEGACY_APPROVAL);
 
+    // The floor DDL no longer admits the `proposed` status this migration
+    // writes; the schema it ran against did, and 0057 later retires it.
+    db.pragma("ignore_check_constraints = ON");
     await runMigration(db);
+    db.pragma("ignore_check_constraints = OFF");
 
     expect(attempt(db, "attempt-real")).toEqual({
       status: "proposed",

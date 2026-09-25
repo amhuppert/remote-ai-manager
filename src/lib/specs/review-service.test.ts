@@ -32,6 +32,7 @@ import {
 import { createSpecEventsPublisher } from "./events";
 import { authoringReviewProjection } from "./authoring-review-projection";
 import { assumptionCitationSnapshot } from "./attention-records";
+import { revisionReviewHash } from "./review-hash";
 import { loadProposalState } from "./review-state";
 import {
   createReviewService,
@@ -39,7 +40,7 @@ import {
   type ReviewService,
   type ReviewServiceDeps,
 } from "./review-service";
-import type { Spec } from "./schemas";
+import type { Spec, SpecElementPayload } from "./schemas";
 
 const PROJECT_PATH = "/repos/native-sdd-review";
 const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
@@ -106,7 +107,11 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
-async function proposedSpec(
+/**
+ * A plan-stage draft its author has asked to have reviewed. The review request
+ * leaves it an editable draft; every human review act below lands on it.
+ */
+async function reviewableDraft(
   preset: "contract-bearing" | "fast-path" = "contract-bearing",
 ) {
   const created = await authoring.createSpec({
@@ -189,15 +194,46 @@ async function proposedSpec(
       updatedAt: "2026-07-18T14:00:00.500Z",
     });
   }
-  await authoring.proposeRevision({
-    specId: created.spec.id,
-    revisionId: created.draft.id,
-    actor: AGENT,
-  });
+  await expect(
+    authoring.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: AGENT,
+    }),
+  ).resolves.toMatchObject({ ok: true, revision: { state: "draft" } });
   return {
     ...created,
     spec: { ...created.spec, gatePolicy: { preset } },
   };
+}
+
+/** The token a human review act echoes: the draft's content as read now. */
+async function reviewHash(revisionId: string): Promise<string> {
+  const snapshot = await specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) {
+    throw new Error(`expected a snapshot for ${revisionId}`);
+  }
+  return revisionReviewHash(snapshot);
+}
+
+/** The authoring agent rewrites an existing element of the draft in place. */
+async function agentEdits(
+  specId: string,
+  revisionId: string,
+  elementId: string,
+  payload: SpecElementPayload,
+): Promise<void> {
+  const current = await specs.findElementVersion(revisionId, elementId);
+  if (current === null) throw new Error(`expected ${elementId} on the draft`);
+  await authoring.upsertDraftElement({
+    specId,
+    revisionId,
+    elementId,
+    kind: payload.kind,
+    payload,
+    baseElementVersion: current.elementVersion,
+    actor: AGENT,
+  });
 }
 
 /**
@@ -285,6 +321,7 @@ describe("ReviewService", () => {
       reviewing.bulkApprove({
         specId: created.spec.id,
         revisionId: created.draft.id,
+        expectedReviewHash: await reviewHash(created.draft.id),
         subjects: [{ subjectKind: "plan", elementId: null }],
         approver: "alex",
         actor: HUMAN,
@@ -296,6 +333,7 @@ describe("ReviewService", () => {
     await reviewing.approveItem({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjectKind: "requirement",
       elementId: "requirements-stage-r1",
       approver: "alex",
@@ -306,6 +344,7 @@ describe("ReviewService", () => {
       reviewing.signOffRevision({
         specId: created.spec.id,
         revisionId: created.draft.id,
+        expectedReviewHash: await reviewHash(created.draft.id),
         approver: "alex",
         actor: HUMAN,
       }),
@@ -326,8 +365,8 @@ describe("ReviewService", () => {
     ).resolves.toMatchObject({ revision: { authoringStage: "design" } });
   });
 
-  it("comments without unfreezing and request-changes preserves the withdrawn snapshot while opening a based-on draft", async () => {
-    const created = await proposedSpec();
+  it("comments on and resolves a thread on the open draft without freezing it", async () => {
+    const created = await reviewableDraft();
     const before = await specs.getRevisionSnapshot(created.draft.id);
 
     const comment = await reviewing.comment({
@@ -341,34 +380,40 @@ describe("ReviewService", () => {
       blocking: true,
       actor: HUMAN,
     });
-    expect(comment.ok).toBe(true);
-    expect((await specs.findRevision(created.draft.id))?.state).toBe(
-      "proposed",
-    );
-
-    const result = await reviewing.requestChanges({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: HUMAN,
-    });
-    expect(result).toMatchObject({
+    expect(comment).toMatchObject({
       ok: true,
       value: {
-        withdrawn: { id: created.draft.id, state: "withdrawn" },
-        draft: {
-          state: "draft",
-          basedOnRevisionId: created.draft.id,
-          authoringStage: "design",
-        },
+        revision_id: created.draft.id,
+        thread_id: "thread-1",
+        blocking: 1,
+        resolution: "open",
       },
     });
-    const after = await specs.getRevisionSnapshot(created.draft.id);
-    expect(after?.revision.contentHash).toBe(before?.revision.contentHash);
-    expect(after?.elements).toEqual(before?.elements);
+    const commented = await specs.getRevisionSnapshot(created.draft.id);
+    expect(commented?.revision).toMatchObject({
+      state: "draft",
+      contentHash: null,
+    });
+    expect(commented?.elements).toEqual(before?.elements);
+
+    const resolved = await reviewing.resolveThread({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      threadId: "thread-1",
+      resolution: "resolved",
+      actor: HUMAN,
+    });
+    expect(resolved.ok).toBe(true);
+    expect(
+      reviewRepo
+        .findCommentsByRevision(created.draft.id)
+        .map(({ thread_id, resolution }) => ({ thread_id, resolution })),
+    ).toEqual([{ thread_id: "thread-1", resolution: "resolved" }]);
+    expect((await specs.findRevision(created.draft.id))?.state).toBe("draft");
   });
 
   it("refuses non-root, invalid-anchor, and blank root comment payloads before persistence", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     const valid = {
       specId: created.spec.id,
       revisionId: created.draft.id,
@@ -410,8 +455,8 @@ describe("ReviewService", () => {
     ).toEqual([root.value.id]);
   });
 
-  it("refuses a root comment when the proposed revision does not carry its element", async () => {
-    const created = await proposedSpec();
+  it("refuses a root comment when the open draft does not carry its element", async () => {
+    const created = await reviewableDraft();
 
     const result = await reviewing.comment({
       specId: created.spec.id,
@@ -432,30 +477,32 @@ describe("ReviewService", () => {
     expect(reviewRepo.findCommentsByRevision(created.draft.id)).toEqual([]);
   });
 
-  it.each(["draft", "approved", "withdrawn", "abandoned"] as const)(
+  it.each(["approved", "withdrawn", "abandoned"] as const)(
     "refuses a root comment on a %s target",
     async (targetState) => {
-      const created = await proposedSpec(
+      const created = await reviewableDraft(
         targetState === "approved" ? "fast-path" : "contract-bearing",
       );
-      let revisionId = created.draft.id;
+      const revisionId = created.draft.id;
       if (targetState === "approved") {
-        await reviewing.signOffRevision({
-          specId: created.spec.id,
-          revisionId,
-          approver: "alex",
-          actor: HUMAN,
-        });
+        await expect(
+          reviewing.signOffRevision({
+            specId: created.spec.id,
+            revisionId,
+            expectedReviewHash: await reviewHash(revisionId),
+            approver: "alex",
+            actor: HUMAN,
+          }),
+        ).resolves.toMatchObject({ ok: true });
       }
-      if (targetState === "draft" || targetState === "withdrawn") {
-        const changed = await reviewing.requestChanges({
-          specId: created.spec.id,
-          revisionId,
-          actor: HUMAN,
-        });
-        if (!changed.ok) throw new Error("request changes fixture was refused");
-        revisionId =
-          targetState === "draft" ? changed.value.draft.id : revisionId;
+      if (targetState === "withdrawn") {
+        await expect(
+          reviewing.withdraw({
+            specId: created.spec.id,
+            revisionId,
+            actor: HUMAN,
+          }),
+        ).resolves.toMatchObject({ ok: true, value: { state: "withdrawn" } });
       }
       if (targetState === "abandoned") {
         await specs.abandon({
@@ -486,8 +533,8 @@ describe("ReviewService", () => {
     },
   );
 
-  it("rechecks proposal state inside the transaction before admitting a root", async () => {
-    const created = await proposedSpec();
+  it("rechecks draft state inside the transaction before admitting a root", async () => {
+    const created = await reviewableDraft();
     const racedSpecs: SpecsRepo = {
       ...specs,
       async transaction<T>(
@@ -512,7 +559,7 @@ describe("ReviewService", () => {
       threadId: "thread-race",
       parentCommentId: null,
       anchor: COMMENT_ANCHOR,
-      body: "The proposal moved before this write.",
+      body: "The draft moved before this write.",
       blocking: false,
       actor: HUMAN,
     });
@@ -525,16 +572,17 @@ describe("ReviewService", () => {
   });
 
   /**
-   * Withdraw ends a review without opening a follow-up draft, so the next
-   * amendment continues from the approved base and cannot carry what the
-   * withdrawn revision held. That drop is terminal — refusing it would leave
+   * A human withdraw discards the open draft without opening a follow-up, so
+   * the next amendment continues from the approved base and cannot carry what
+   * the withdrawn revision held. That drop is terminal — refusing it would leave
    * no exit — so the amendment has to report it instead.
    */
   it("names the withdrawn revision an amendment leaves behind after a human withdraw", async () => {
-    const created = await proposedSpec("fast-path");
+    const created = await reviewableDraft("fast-path");
     await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -597,18 +645,19 @@ describe("ReviewService", () => {
   });
 
   /**
-   * The D3 incident. An amendment that changed a requirement was ended by a
-   * human's Request Changes, and the follow-up revision changed only a
+   * The D3 incident. An amendment that changed a requirement was ended by an
+   * older build's Request Changes, and the follow-up revision changed only a
    * decision. Against its immediate parent the follow-up shows no requirement
    * change, but against the nearest APPROVED ancestor the requirement is still
    * unadmitted — so the requirements gate still owes this revision an
    * admission, and sign-off must earn one.
    */
   it("keeps the requirements gate applicable when the requirement change arrived through a withdrawn ancestor", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -621,6 +670,7 @@ describe("ReviewService", () => {
       reviewing.signOffRevision({
         specId: created.spec.id,
         revisionId: created.draft.id,
+        expectedReviewHash: await reviewHash(created.draft.id),
         approver: "alex",
         actor: HUMAN,
       }),
@@ -646,18 +696,19 @@ describe("ReviewService", () => {
       expectedElementVersion: requirementVersion?.elementVersion ?? 1,
       updatedAt: "2026-07-18T14:00:11.000Z",
     });
-    await authoring.proposeRevision({
-      specId: created.spec.id,
+    // The lineage an older build's Request Changes left behind, which
+    // persisted specs still carry: the amendment withdrawn, and a design-stage
+    // draft continuing from it rather than from the approved base.
+    await specs.withdrawAuthoringRevision({
       revisionId: amendment.revision.id,
-      actor: AGENT,
     });
-    const changesRequested = await reviewing.requestChanges({
+    const followUp = await specs.createDraftFromBase({
+      id: "revision-follow-up",
       specId: created.spec.id,
-      revisionId: amendment.revision.id,
-      actor: HUMAN,
+      baseRevisionId: amendment.revision.id,
+      authoringStage: "design",
+      createdAt: "2026-07-18T14:00:11.500Z",
     });
-    if (!changesRequested.ok) throw new Error("request changes refused");
-    const followUp = changesRequested.value.draft;
     expect(followUp.basedOnRevisionId).toBe(amendment.revision.id);
 
     const decisionVersion = await specs.findElementVersion(
@@ -686,6 +737,7 @@ describe("ReviewService", () => {
     await reviewing.approveItem({
       specId: created.spec.id,
       revisionId: followUp.id,
+      expectedReviewHash: await reviewHash(followUp.id),
       subjectKind: "decision",
       elementId: "decision-1",
       approver: "alex",
@@ -696,6 +748,7 @@ describe("ReviewService", () => {
       reviewing.signOffRevision({
         specId: created.spec.id,
         revisionId: followUp.id,
+        expectedReviewHash: await reviewHash(followUp.id),
         approver: "alex",
         actor: HUMAN,
       }),
@@ -712,6 +765,7 @@ describe("ReviewService", () => {
     await reviewing.approveItem({
       specId: created.spec.id,
       revisionId: followUp.id,
+      expectedReviewHash: await reviewHash(followUp.id),
       subjectKind: "requirement",
       elementId: "requirement-1",
       approver: "alex",
@@ -721,6 +775,7 @@ describe("ReviewService", () => {
       reviewing.signOffRevision({
         specId: created.spec.id,
         revisionId: followUp.id,
+        expectedReviewHash: await reviewHash(followUp.id),
         approver: "alex",
         actor: HUMAN,
       }),
@@ -759,12 +814,13 @@ describe("ReviewService", () => {
    * is what missed this.
    */
   it("reports the subjects a real fast-path sign-off settled as combined-act", async () => {
-    const created = await proposedSpec("fast-path");
+    const created = await reviewableDraft("fast-path");
 
     await expect(
       reviewing.signOffRevision({
         specId: created.spec.id,
         revisionId: created.draft.id,
+        expectedReviewHash: await reviewHash(created.draft.id),
         approver: "alex",
         actor: HUMAN,
       }),
@@ -800,14 +856,15 @@ describe("ReviewService", () => {
 
   /**
    * Approvals accumulate on a spec without bound while the revisions they name
-   * do not, so the work of loading a proposal must grow with the revisions
-   * involved rather than with the approval count.
+   * do not, so the work of loading a draft's review state must grow with the
+   * revisions involved rather than with the approval count.
    */
   it("reads each revision snapshot once however many approvals accumulate", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -819,6 +876,7 @@ describe("ReviewService", () => {
     await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -863,16 +921,17 @@ describe("ReviewService", () => {
     };
 
     const withThreeApprovals = await snapshotReads();
+    const requirementApproval = reviewRepo
+      .findApprovalsBySpecId(created.spec.id)
+      .find(({ subject_kind }) => subject_kind === "requirement");
+    if (requirementApproval === undefined) {
+      throw new Error("expected the requirement approval");
+    }
     for (let index = 0; index < 40; index += 1) {
       reviewRepo.saveApproval({
+        ...requirementApproval,
         id: `approval-bulk-${index}`,
-        spec_id: created.spec.id,
-        subject_kind: "requirement",
-        element_id: "requirement-1",
-        revision_id: created.draft.id,
-        approver: "alex",
         granted_at: "2026-07-18T14:30:00.000Z",
-        validity: "valid",
       });
     }
 
@@ -882,10 +941,11 @@ describe("ReviewService", () => {
   });
 
   it("refuses sign-off for a blocking thread, a rejected attached assumption, and missing configured approvals", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     const missingApprovals = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -894,12 +954,10 @@ describe("ReviewService", () => {
       refusal: { code: "gate_blocked" },
     });
 
-    const reopened = await reviewing.requestChanges({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: HUMAN,
-    });
-    if (!reopened.ok) throw new Error(reopened.refusal.instruction);
+    // The author keeps working on the same draft after the refusal.
+    const reviewRevisionId = created.draft.id;
+    const draft = await specs.findRevision(reviewRevisionId);
+    if (draft === null) throw new Error("expected the open draft");
     const rejectedAssumptionRow = {
       id: "assumption-1",
       spec_id: created.spec.id,
@@ -921,24 +979,20 @@ describe("ReviewService", () => {
     await specs.mutateDraftCitation({
       operation: "cite",
       specId: created.spec.id,
-      revisionId: reopened.value.draft.id,
+      revisionId: reviewRevisionId,
       assumptionId: rejectedAssumptionRow.id,
       elementId: "decision-1",
-      expectedCitationVersion: reopened.value.draft.citationVersion,
+      expectedCitationVersion: draft.citationVersion,
       snapshot: assumptionCitationSnapshot(
         rejectedAssumptionRow,
         "2026-07-18T14:20:00.000Z",
       ),
       updatedAt: "2026-07-18T14:20:00.000Z",
     });
-    await specs.proposeRevision({
-      revisionId: reopened.value.draft.id,
-      proposedAt: "2026-07-18T14:21:00.000Z",
-    });
-    const reviewRevisionId = reopened.value.draft.id;
     const rejectedAssumption = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: reviewRevisionId,
+      expectedReviewHash: await reviewHash(reviewRevisionId),
       approver: "alex",
       actor: HUMAN,
     });
@@ -966,6 +1020,7 @@ describe("ReviewService", () => {
     const blockingThread = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: reviewRevisionId,
+      expectedReviewHash: await reviewHash(reviewRevisionId),
       approver: "alex",
       actor: HUMAN,
     });
@@ -980,10 +1035,11 @@ describe("ReviewService", () => {
   });
 
   it("bulk approval persists the same durable per-subject rows and permits sign-off", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     const bulk = await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -997,10 +1053,17 @@ describe("ReviewService", () => {
     expect(rows).toHaveLength(3);
     expect(new Set(rows.map(({ granted_at }) => granted_at)).size).toBe(1);
     expect(rows.every(({ validity }) => validity === "valid")).toBe(true);
+    expect(
+      rows.every(
+        ({ revision_id, subject_fingerprint_json }) =>
+          revision_id === created.draft.id && subject_fingerprint_json !== null,
+      ),
+    ).toBe(true);
 
     const signed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -1010,11 +1073,235 @@ describe("ReviewService", () => {
     });
   });
 
-  it("treats repeated sign-off of an approved revision as a durable no-op", async () => {
-    const created = await proposedSpec();
+  it("approves an item on the open draft with the draft's current review hash", async () => {
+    const created = await reviewableDraft();
+
+    const approved = await reviewing.approveItem({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+
+    expect(approved).toMatchObject({
+      ok: true,
+      value: {
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+        revision_id: created.draft.id,
+        approver: "alex",
+        validity: "valid",
+      },
+    });
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(1);
+    expect((await specs.findRevision(created.draft.id))?.state).toBe("draft");
+    const pending = (
+      await projectionOf(created.spec, created.draft.id)
+    ).pendingApprovals.map(({ elementId }) => elementId);
+    expect(pending).toContain("decision-1");
+    expect(pending).not.toContain("requirement-1");
+  });
+
+  it("refuses approvals and sign-off against a review hash the author's later edit made stale, writing nothing", async () => {
+    // Fast path: sign-off needs no prior per-item approval, so the stale hash
+    // is the only thing that can refuse it.
+    const created = await reviewableDraft("fast-path");
+    const readHash = await reviewHash(created.draft.id);
+    await agentEdits(created.spec.id, created.draft.id, "task-1", {
+      kind: "task",
+      title: "Implement review service",
+      instructions: "Implement and test the review service end to end.",
+      tracedRequirementElementIds: ["requirement-1"],
+      tracedDecisionElementIds: ["decision-1"],
+      coveredCriterionElementIds: ["criterion-1"],
+      dependsOnTaskElementIds: [],
+    });
+    const eventsBefore = specEvents.findBySpecId(created.spec.id);
+
+    const stale = { code: "stale_review" };
+    await expect(
+      reviewing.approveItem({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedReviewHash: readHash,
+        subjectKind: "requirement",
+        elementId: "requirement-1",
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: false, refusal: stale });
+    await expect(
+      reviewing.bulkApprove({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedReviewHash: readHash,
+        subjects: [{ subjectKind: "decision", elementId: "decision-1" }],
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: false, refusal: stale });
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedReviewHash: readHash,
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: false, refusal: stale });
+
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([]);
+    expect(reviewRepo.findGateAdmissionsByRevision(created.draft.id)).toEqual(
+      [],
+    );
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "draft",
+      contentHash: null,
+    });
+    expect(specEvents.findBySpecId(created.spec.id)).toEqual(eventsBefore);
+
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedReviewHash: await reviewHash(created.draft.id),
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { revision: { state: "approved" } },
+    });
+  });
+
+  it("returns an approved requirement to pending when the author edits its criterion, leaving unrelated approvals standing", async () => {
+    const created = await authoring.createSpec({
+      projectPath: PROJECT_PATH,
+      slug: "criterion-edit-review",
+      name: "Criterion edit review",
+      gatePolicy: { preset: "contract-bearing" },
+      initialElement: {
+        elementId: "R1",
+        kind: "requirement",
+        parentElementId: null,
+        position: 0,
+        payload: {
+          kind: "requirement",
+          statement: "Review gates are durable.",
+          priority: "must",
+          risk: "high",
+        },
+      },
+      actor: AGENT,
+    });
+    for (const element of [
+      {
+        elementId: "R1-C1",
+        kind: "criterion" as const,
+        parentElementId: "R1",
+        payload: {
+          kind: "criterion" as const,
+          text: "An unapproved sign-off is refused.",
+          validationStrategy: { kinds: ["test_run" as const] },
+        },
+      },
+      {
+        elementId: "R2",
+        kind: "requirement" as const,
+        parentElementId: null,
+        payload: {
+          kind: "requirement" as const,
+          statement: "Review acts are audited.",
+          priority: "must" as const,
+          risk: "low" as const,
+        },
+      },
+      {
+        elementId: "R2-C1",
+        kind: "criterion" as const,
+        parentElementId: "R2",
+        payload: {
+          kind: "criterion" as const,
+          text: "Every review act appends an event.",
+          validationStrategy: { kinds: ["test_run" as const] },
+        },
+      },
+    ]) {
+      await authoring.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        ...element,
+        baseElementVersion: null,
+        actor: AGENT,
+      });
+    }
+    await expect(
+      reviewing.bulkApprove({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedReviewHash: await reviewHash(created.draft.id),
+        subjects: [
+          { subjectKind: "requirement", elementId: "R1" },
+          { subjectKind: "requirement", elementId: "R2" },
+        ],
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    const pendingOf = async () =>
+      (await projectionOf(created.spec, created.draft.id)).pendingApprovals.map(
+        ({ elementId }) => elementId,
+      );
+    expect(await pendingOf()).toEqual([]);
+
+    await agentEdits(created.spec.id, created.draft.id, "R1-C1", {
+      kind: "criterion",
+      text: "An unapproved sign-off is refused with the missing subject named.",
+      validationStrategy: { kinds: ["test_run"] },
+    });
+
+    expect(await pendingOf()).toEqual(["R1"]);
+    // The rows themselves are untouched: what changed is the content they
+    // were granted for.
+    expect(
+      reviewRepo
+        .findApprovalsBySpecId(created.spec.id)
+        .map(({ element_id, validity }) => ({ element_id, validity }))
+        .sort((left, right) =>
+          (left.element_id ?? "").localeCompare(right.element_id ?? ""),
+        ),
+    ).toEqual([
+      { element_id: "R1", validity: "valid" },
+      { element_id: "R2", validity: "valid" },
+    ]);
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedReviewHash: await reviewHash(created.draft.id),
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "gate_blocked" },
+    });
+  });
+
+  it("freezes the draft at sign-off and treats a repeated sign-off as a durable no-op", async () => {
+    const created = await reviewableDraft();
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "draft",
+      contentHash: null,
+      approvedAt: null,
+    });
     await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -1026,10 +1313,18 @@ describe("ReviewService", () => {
     const first = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
     if (!first.ok) throw new Error("expected initial sign-off");
+    const frozen = await specs.findRevision(created.draft.id);
+    expect(frozen).toMatchObject({
+      state: "approved",
+      contentHash: expect.any(String),
+      approvedAt: expect.any(String),
+    });
+    expect(frozen?.proposedAt).toBe(frozen?.approvedAt);
 
     const before = {
       revision: await specs.findRevision(created.draft.id),
@@ -1040,6 +1335,7 @@ describe("ReviewService", () => {
     const repeated = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "must-not-replace-alex",
       actor: AGENT,
     });
@@ -1055,18 +1351,27 @@ describe("ReviewService", () => {
     expect(specEvents.findBySpecId(created.spec.id)).toEqual(before.events);
   });
 
-  it("refuses bulk plan approval for a withdrawn legacy plan and its design follow-up", async () => {
-    const created = await proposedSpec();
-    const requested = await reviewing.requestChanges({
+  it("refuses bulk plan approval for a withdrawn plan and its design follow-up", async () => {
+    const created = await reviewableDraft();
+    await expect(
+      reviewing.withdraw({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    const followUp = await specs.createDraftFromBase({
+      id: "revision-design-follow-up",
       specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: HUMAN,
+      baseRevisionId: created.draft.id,
+      authoringStage: "design",
+      createdAt: "2026-07-18T14:10:00.000Z",
     });
-    if (!requested.ok) throw new Error("expected requested changes");
 
     const withdrawnLegacyPlan = await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [{ subjectKind: "plan", elementId: null }],
       approver: "alex",
       actor: HUMAN,
@@ -1078,7 +1383,8 @@ describe("ReviewService", () => {
 
     const designFollowUp = await reviewing.bulkApprove({
       specId: created.spec.id,
-      revisionId: requested.value.draft.id,
+      revisionId: followUp.id,
+      expectedReviewHash: await reviewHash(followUp.id),
       subjects: [{ subjectKind: "plan", elementId: null }],
       approver: "alex",
       actor: HUMAN,
@@ -1091,10 +1397,11 @@ describe("ReviewService", () => {
   });
 
   it("unapprove removes the recorded approval so the subject counts as outstanding again", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     const approved = await reviewing.approveItem({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjectKind: "requirement",
       elementId: "requirement-1",
       approver: "alex",
@@ -1142,6 +1449,7 @@ describe("ReviewService", () => {
     const reapproved = await reviewing.approveItem({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjectKind: "requirement",
       elementId: "requirement-1",
       approver: "alex",
@@ -1154,10 +1462,11 @@ describe("ReviewService", () => {
   });
 
   it("refuses unapprove once the revision is signed off", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -1169,6 +1478,7 @@ describe("ReviewService", () => {
     const signed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -1193,10 +1503,11 @@ describe("ReviewService", () => {
   });
 
   it("refreshes an item re-approval instead of duplicating its durable subject", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     const input = {
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjectKind: "requirement" as const,
       elementId: "requirement-1",
       approver: "alex",
@@ -1211,10 +1522,11 @@ describe("ReviewService", () => {
   });
 
   it("preserves prior revision sign-off approvals when a later revision is signed off", async () => {
-    const created = await proposedSpec();
+    const created = await reviewableDraft();
     await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -1226,6 +1538,7 @@ describe("ReviewService", () => {
     const first = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -1246,6 +1559,7 @@ describe("ReviewService", () => {
     const second = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: amendment.id,
+      expectedReviewHash: await reviewHash(amendment.id),
       approver: "alex-secondary",
       actor: HUMAN,
     });
@@ -1272,8 +1586,8 @@ describe("ReviewService", () => {
     }
   });
 
-  it("finishes a policy-admitted proposed revision as an agent with admissions and zero approval rows", async () => {
-    const created = await proposedSpec();
+  it("finishes a policy-admitted draft as an agent with admissions and zero approval rows", async () => {
+    const created = await reviewableDraft();
     const policy = await reviewing.changePolicy({
       specId: created.spec.id,
       proposedPolicy: { preset: "exploratory" },
@@ -1285,6 +1599,7 @@ describe("ReviewService", () => {
     const signed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "policy",
       actor: AGENT,
     });
@@ -1305,7 +1620,7 @@ describe("ReviewService", () => {
   });
 
   it("allows ordinary per-gate approval when fast-path policy has a partial override", async () => {
-    const created = await proposedSpec("fast-path");
+    const created = await reviewableDraft("fast-path");
     await reviewing.changePolicy({
       specId: created.spec.id,
       proposedPolicy: {
@@ -1318,6 +1633,7 @@ describe("ReviewService", () => {
     const bulk = await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -1331,6 +1647,7 @@ describe("ReviewService", () => {
     const signed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -1341,11 +1658,12 @@ describe("ReviewService", () => {
   });
 
   it("signs off a fast-path revision as the combined approval without a separate fast-track act", async () => {
-    const created = await proposedSpec("fast-path");
+    const created = await reviewableDraft("fast-path");
 
     const signed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -1397,10 +1715,11 @@ describe("ReviewService", () => {
   });
 
   it("signs off a fast-path revision after per-item approvals without duplicate approval rows", async () => {
-    const created = await proposedSpec("fast-path");
+    const created = await reviewableDraft("fast-path");
     const bulk = await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
@@ -1414,6 +1733,7 @@ describe("ReviewService", () => {
     const signed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -1425,11 +1745,12 @@ describe("ReviewService", () => {
   });
 
   it("refuses a fast-path sign-off by an agent", async () => {
-    const created = await proposedSpec("fast-path");
+    const created = await reviewableDraft("fast-path");
 
     const signed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "agent",
       actor: AGENT,
     });
@@ -1438,13 +1759,11 @@ describe("ReviewService", () => {
       refusal: { code: "human_act_required" },
     });
     expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([]);
-    expect((await specs.findRevision(created.draft.id))?.state).toBe(
-      "proposed",
-    );
+    expect((await specs.findRevision(created.draft.id))?.state).toBe("draft");
   });
 
   it("writes the fast-path combined approvals, sign-off, and admissions all-or-none", async () => {
-    const created = await proposedSpec("fast-path");
+    const created = await reviewableDraft("fast-path");
     await reviewing.comment({
       specId: created.spec.id,
       revisionId: created.draft.id,
@@ -1460,6 +1779,7 @@ describe("ReviewService", () => {
     const failed = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });
@@ -1471,9 +1791,7 @@ describe("ReviewService", () => {
     expect(reviewRepo.findGateAdmissionsByRevision(created.draft.id)).toEqual(
       [],
     );
-    expect((await specs.findRevision(created.draft.id))?.state).toBe(
-      "proposed",
-    );
+    expect((await specs.findRevision(created.draft.id))?.state).toBe("draft");
 
     const resolved = await reviewing.resolveThread({
       specId: created.spec.id,
@@ -1486,6 +1804,7 @@ describe("ReviewService", () => {
     const succeeded = await reviewing.signOffRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
+      expectedReviewHash: await reviewHash(created.draft.id),
       approver: "alex",
       actor: HUMAN,
     });

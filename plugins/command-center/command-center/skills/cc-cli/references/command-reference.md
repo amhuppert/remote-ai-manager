@@ -275,9 +275,6 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl spec diff` — Compare spec revisions
   - `cctl spec diff <slug> [options]`
   - Flags: `--from`, `--to`, `--baseline`, `--full`, `--out`.
-- `cctl spec dismiss-superseded` — Request dismissal of a superseded proposal
-  - `cctl spec dismiss-superseded <slug> --revision <string> (--reason <string> | --reason-file <path>) [options]`
-  - Flags: `--revision` (required), `--reason` / `--reason-file` (required), `--reason-file`.
 - `cctl spec draft` — Write draft elements with optimistic concurrency
   - `cctl spec draft <slug> --file <path> [options]`
   - Flags: `--quiet`, `--file` (required).
@@ -315,21 +312,18 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--full`, `--out`.
 - `cctl spec plan open` — Open a delta-seeded delivery attempt
   - `cctl spec plan open <slug> [options]`
-- `cctl spec plan preview` — Read the authored or frozen launch candidate
+- `cctl spec plan preview` — Read the authored draft or the signed launch candidate
   - `cctl spec plan preview <slug> --stage <enum> [options]`
   - Flags: `--stage` (required), `--expected-draft-revision`, `--outline`, `--full`, `--out`.
-- `cctl spec plan propose` — Freeze a delivery plan candidate for review
+- `cctl spec plan propose` — Ask for review of the delivery plan draft
   - `cctl spec plan propose <slug> [options]`
 - `cctl spec plan reopen` — Reopen delivery planning and invalidate candidate approval
   - `cctl spec plan reopen <slug> (--reason <string> | --reason-file <path>) [options]`
   - Flags: `--reason` / `--reason-file` (required), `--reason-file`.
-- `cctl spec plan sign-off` — Sign off the exact proposed candidate
-  - `cctl spec plan sign-off <slug> [options]`
-  - Flags: `--candidate`, `--candidate-hash`.
 - `cctl spec plan status` — Read delivery plan obligations
   - `cctl spec plan status <slug> [options]`
   - Flags: `--full`, `--out`.
-- `cctl spec propose` — Propose the current revision for review
+- `cctl spec propose` — Ask for review of the current draft
   - `cctl spec propose <slug> [options]`
   - Flags: `--notes` / `--notes-file`, `--notes-file`.
 - `cctl spec question` — Open a question for a human decision
@@ -375,9 +369,6 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl spec verify` — Verify content and lifecycle integrity
   - `cctl spec verify <slug> [options]`
   - Flags: `--against`.
-- `cctl spec withdraw-proposal` — Withdraw the exact proposal previously read
-  - `cctl spec withdraw-proposal <slug> --revision <string> [options]`
-  - Flags: `--revision` (required).
 - `cctl ticket` — Track and execute project work
   - `cctl ticket <command> [options]`
 - `cctl ticket attach` — Attach reusable work context

@@ -38,27 +38,23 @@ export function managedWorkflowReadOnlyInstruction(
   if (management.lifecycle === "launched" && management.executionHref) {
     return "Open the execution to inspect the launched candidate.";
   }
-  if (
-    management.lifecycle === "in_review" ||
-    management.lifecycle === "approved"
-  ) {
+  if (management.lifecycle === "approved") {
     return "Reopen the delivery plan before editing its workflow definition.";
   }
   return "Open the spec to inspect this delivery candidate.";
 }
 
 /**
- * The reason the read-only refusal states. A proposed, signed or launched
- * candidate is the exact bytes a sign-off approved (or will approve), so the
- * guard is the design's freeze rather than a missing capability; a superseded
- * or abandoned definition is retained history and its instruction already says
- * where to look, so it carries no rationale.
+ * The reason the read-only refusal states. A signed or launched candidate is
+ * the exact bytes a sign-off approved, so the guard is the design's freeze
+ * rather than a missing capability; a superseded or abandoned definition is
+ * retained history and its instruction already says where to look, so it
+ * carries no rationale.
  */
 export function managedWorkflowReadOnlyRationale(
   management: NativeSddWorkflowManagementCompact,
 ): string | null {
   switch (management.lifecycle) {
-    case "in_review":
     case "approved":
     case "launched":
       return "the signed candidate is immutable so sign-off approves exact bytes";

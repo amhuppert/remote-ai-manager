@@ -7,9 +7,9 @@ import type { TransitionRefusal } from "./transitions";
  * The author's disposition document for one review round: what the revision
  * changed, which prior findings it closes, and what it deliberately did not
  * touch. It lives on the durable propose event rather than in a table of its
- * own — the document describes exactly one transition, and storing it beside
- * that transition is what makes it impossible to have a proposal whose notes
- * belong to a different attempt.
+ * own — the document belongs to exactly one review request, and storing it on
+ * that request's event is what makes it impossible for a request to show
+ * notes written for another.
  *
  * Storage decision (durability-contracts): the notes ride the existing
  * `spec_events.payload_json` column as an OPTIONAL key on the propose event's
@@ -46,8 +46,8 @@ function parseJson(raw: string): unknown {
 }
 
 /**
- * The disposition document recorded with `revisionId`'s proposal, or null when
- * the author supplied none. Read from the durable event rather than from a
+ * The disposition document recorded with the latest review request on
+ * `revisionId`, or null when the author supplied none. Read from the durable event rather than from a
  * projected field so every surface — Studio, the review API, an audit — reads
  * the same bytes the propose transaction committed.
  */

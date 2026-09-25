@@ -53,7 +53,6 @@ const management: NativeSddWorkflowManagementDetail = {
     claims: false,
   },
   capabilities: {
-    canPropose: false,
     canSignOff: false,
     canReopen: true,
     canAbandon: true,

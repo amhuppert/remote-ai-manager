@@ -22,11 +22,6 @@ import {
 import { CheckIcon, ChevronDownIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { CheckboxField } from "@/components/ui/Checkbox";
-import { FormGroup, FormInput, FormLabel } from "@/components/ui/FormField";
-import {
-  SegmentedControl,
-  SegmentedControlItem,
-} from "@/components/ui/SegmentedControl";
 import {
   Collapsible,
   CollapsibleContent,
@@ -68,27 +63,19 @@ import {
   specApprovalRowSchema,
   specCommentRowSchema,
   specRevisionSchema,
-  specRevisionSupersessionSchema,
   type SpecApprovalRow,
   type SpecRevision,
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
-import {
-  approvalLedgerSchema,
-  type LiveProposalView,
-} from "@/lib/specs/view-schemas";
 import { cn } from "@/lib/ui/cn";
 
-import { strandedProposals, type ProposalSelection } from "./live-proposals";
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
 import SpecCommentThreadList from "./SpecCommentThreadList";
 import {
   partitionSpecCommentThreads,
   type PlacedSpecCommentThread,
-  type SpecCommentPlacementPartition,
 } from "./spec-comment-placement";
-import { useProposalSelection } from "./use-proposal-selection";
 import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-review");
@@ -97,16 +84,6 @@ const commentsLogger = createClientLogger("spec-studio-comments");
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-const requestChangesResponseSchema = z
-  .object({
-    withdrawn: specRevisionSchema,
-    draft: specRevisionSchema,
-    // The reopened draft's approval account. Studio re-reads its projections
-    // after the act, so it parses the field rather than rendering it here.
-    approvalLedger: approvalLedgerSchema,
-  })
-  .strict();
 
 const signOffResponseSchema = z
   .object({
@@ -118,13 +95,6 @@ const signOffResponseSchema = z
 const combinedSignOffResponseSchema = signOffResponseSchema.extend({
   subjectApprovals: z.array(specApprovalRowSchema),
 });
-
-const dismissSupersededResponseSchema = z
-  .object({
-    withdrawn: specRevisionSchema,
-    supersession: specRevisionSupersessionSchema,
-  })
-  .strict();
 
 /**
  * What a review card renders: a semantic change, or an element the revision
@@ -238,23 +208,25 @@ const reviewAssumptionStatus: Record<
   withdrawn: { label: "Withdrawn", tone: "neutral" },
 };
 
+/**
+ * Review of the open draft. The author keeps editing it while a human reads,
+ * so every act that approves content echoes the draft's review hash: the
+ * server refuses an approval of content the reviewer has not seen.
+ */
 export default function SpecReviewMode({
   detail,
   projectName,
   highlightedChangeId,
-  addressedRevisionId = null,
   onComplete,
 }: {
   detail: SpecDetailView;
   projectName: string;
   highlightedChangeId: string | null;
-  /** The proposal a History or lifecycle link addressed (`?revision=`). */
-  addressedRevisionId?: string | null;
   onComplete?(message: string): void;
 }): React.JSX.Element {
-  const selection = useProposalSelection(detail, addressedRevisionId);
-  const baseSnapshot = selection.selected?.governanceBaseSnapshot ?? null;
-  const currentSnapshot = selection.selected?.snapshot ?? null;
+  const review = detail.draftReview;
+  const baseSnapshot = review?.governanceBaseSnapshot ?? null;
+  const currentSnapshot = review?.snapshot ?? null;
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [signOffDialogOpen, setSignOffDialogOpen] = useState(false);
@@ -312,24 +284,11 @@ export default function SpecReviewMode({
     target.focus({ preventScroll: true });
   }, [diff, highlightedChangeId]);
 
-  const requestChanges = useSpecActionMutation<
-    { revisionId: string },
-    z.infer<typeof requestChangesResponseSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "request-changes",
-    requestChangesResponseSchema,
-    {
-      specId: detail.spec.id,
-      eventTypes: ["spec-revision-changed"],
-    },
-  );
   // One act for the whole convergence: the server writes every subject the
   // revision still owes and the sign-off in a single transaction, so the review
   // can no longer come to rest between "everything approved" and "signed off".
   const signOff = useSpecActionMutation<
-    { revisionId: string },
+    { revisionId: string; expectedReviewHash: string },
     z.infer<typeof combinedSignOffResponseSchema>
   >(
     projectName,
@@ -350,12 +309,8 @@ export default function SpecReviewMode({
     );
   }
 
-  // Emptiness is decided by the live-proposals projection, never by the
-  // lineage head: in ticket #50 the head was an approved revision that had
-  // forked past a proposal still under review, and keying off it reported
-  // "nothing awaiting review" over work no surface could then act on.
   if (
-    selection.selected === null ||
+    review === null ||
     currentSnapshot === null ||
     diff === null ||
     reviewCommentPlacement === null
@@ -364,8 +319,8 @@ export default function SpecReviewMode({
       <EmptyState>
         <EmptyStateTitle>Nothing awaiting review</EmptyStateTitle>
         <EmptyStateDesc>
-          There is no proposed revision. Open a draft and propose it when the
-          next change set is ready for review.
+          There is no open draft. Changes become reviewable as soon as a draft
+          is opened.
         </EmptyStateDesc>
       </EmptyState>
     );
@@ -374,25 +329,7 @@ export default function SpecReviewMode({
   const detailPath = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const currentRevision = currentSnapshot.revision;
   const revisionId = currentRevision.id;
-
-  if (selection.selected.supersededBy !== null) {
-    return (
-      <div
-        data-testid="spec-review-mode"
-        className="min-w-0 bg-bg-base pt-[14px] pb-[96px]"
-      >
-        <ProposalSelector selection={selection} />
-        <SupersededProposalReview
-          entry={selection.selected}
-          supersededBy={selection.selected.supersededBy}
-          detail={detail}
-          projectName={projectName}
-          commentPlacement={reviewCommentPlacement}
-          onComplete={onComplete}
-        />
-      </div>
-    );
-  }
+  const reviewHash = review.reviewHash;
 
   function reportError(action: string, mutationError: Error): void {
     setError(mutationError.message);
@@ -405,34 +342,11 @@ export default function SpecReviewMode({
     });
   }
 
-  function handleRequestChanges(): void {
-    setError(null);
-    setFeedback("Opening a follow-up draft…");
-    requestChanges.mutate(
-      { revisionId },
-      {
-        onSuccess: ({ draft }) => {
-          const message = `Draft revision ${draft.number} opened`;
-          setFeedback(message);
-          logger.info("spec_studio.review_action.completed", {
-            action: "request-changes",
-            specId: detail.spec.id,
-            revisionId,
-            draftRevisionId: draft.id,
-          });
-          onComplete?.(message);
-        },
-        onError: (mutationError) =>
-          reportError("request-changes", mutationError),
-      },
-    );
-  }
-
   function handleSignOff(): void {
     setError(null);
     setFeedback("Signing off revision…");
     signOff.mutate(
-      { revisionId },
+      { revisionId, expectedReviewHash: reviewHash },
       {
         onSuccess: ({ subjectApprovals }) => {
           const message = `Revision ${currentRevision.number} signed off`;
@@ -507,7 +421,6 @@ export default function SpecReviewMode({
       data-testid="spec-review-mode"
       className="min-w-0 bg-bg-base pt-[14px] pb-[96px]"
     >
-      <ProposalSelector selection={selection} />
       <TabsRoot defaultValue="semantic">
         <header className="flex items-center justify-between gap-lg border-x-0 border-t-0 border-b border-solid border-border-dim pb-[12px] max-768:flex-col max-768:items-stretch">
           <div className="min-w-0">
@@ -517,16 +430,16 @@ export default function SpecReviewMode({
                 {currentSnapshot.revision.number}
               </h1>
               <span className="font-mono text-[0.7rem] text-text-tertiary">
-                proposed
-                {currentSnapshot.revision.proposedAt === null
-                  ? ""
-                  : ` ${currentSnapshot.revision.proposedAt.slice(0, 10)}`}{" "}
-                ·{" "}
+                open draft ·{" "}
                 {baseSnapshot === null
-                  ? "initial proposal"
+                  ? "initial revision"
                   : `over approved revision ${baseSnapshot.revision.number}`}
               </span>
             </div>
+            <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
+              The author can keep editing while you review. An edited item needs
+              approval again.
+            </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-sm max-768:justify-between">
             {/* State, not an act: the remaining subjects are approved by the
@@ -549,35 +462,6 @@ export default function SpecReviewMode({
                 {remainingSubjects.length} awaiting approval
               </StatusChip>
             )}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  size="sm"
-                  touch
-                  loading={requestChanges.isPending}
-                  title="Ends this review attempt and opens a draft revision"
-                >
-                  Request changes
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent size="default">
-                <AlertDialogTitle>
-                  Request changes — end this review?
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  This ends the review attempt on revision{" "}
-                  {currentSnapshot.revision.number} and opens a follow-up draft.
-                  It is not a comment — the frozen proposal remains in history,
-                  and approvals recorded so far stay recorded.
-                </AlertDialogDescription>
-                <AlertDialogActions>
-                  <AlertDialogCancel>Keep reviewing</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleRequestChanges}>
-                    End review — open draft
-                  </AlertDialogAction>
-                </AlertDialogActions>
-              </AlertDialogContent>
-            </AlertDialog>
             <TabsList asChild layoutClassName="max-768:grow">
               <div className="flex shrink-0 items-center rounded-md border border-solid border-border-subtle bg-bg-surface p-[2px]">
                 <TabsTrigger
@@ -626,7 +510,7 @@ export default function SpecReviewMode({
           </p>
         )}
 
-        <ProposalNotes notes={selection.selected.notes} />
+        <ReviewRequestNotes notes={review.notes} />
         <RevisionPremises
           snapshot={currentSnapshot}
           baseSnapshot={baseSnapshot}
@@ -642,16 +526,13 @@ export default function SpecReviewMode({
             commentedCards.length === 0 ? (
               <EmptyState>
                 <EmptyStateTitle>No semantic changes</EmptyStateTitle>
-                <EmptyStateDesc>
-                  The proposed revision matches its base.
-                </EmptyStateDesc>
+                <EmptyStateDesc>The draft matches its base.</EmptyStateDesc>
               </EmptyState>
             ) : (
               <>
                 {diff.changeList.length === 0 ? (
                   <p className="m-0 font-mono text-[0.76rem] font-semibold text-text-primary">
-                    No semantic changes — the proposed revision matches its
-                    base.
+                    No semantic changes — the draft matches its base.
                   </p>
                 ) : (
                   <>
@@ -715,6 +596,7 @@ export default function SpecReviewMode({
                                 currentSnapshot={currentSnapshot}
                                 placements={reviewCommentPlacement.coLocated}
                                 combinedApproval={readiness.combined}
+                                reviewHash={reviewHash}
                                 onFeedback={setFeedback}
                                 onError={setError}
                               />
@@ -766,6 +648,7 @@ export default function SpecReviewMode({
                           currentSnapshot={currentSnapshot}
                           placements={reviewCommentPlacement.coLocated}
                           combinedApproval={readiness.combined}
+                          reviewHash={reviewHash}
                           onFeedback={setFeedback}
                           onError={setError}
                         />
@@ -813,6 +696,7 @@ export default function SpecReviewMode({
                           currentSnapshot={currentSnapshot}
                           placements={reviewCommentPlacement.coLocated}
                           combinedApproval={readiness.combined}
+                          reviewHash={reviewHash}
                           onFeedback={setFeedback}
                           onError={setError}
                         />
@@ -1042,16 +926,14 @@ export default function SpecReviewMode({
 }
 
 /**
- * The proposal's disposition document, as its author recorded it with the
- * propose (design §8).
+ * The author's disposition document from their latest review request
+ * (design §8).
  *
  * It sits above the change list on purpose: review converges when the reviewer
  * reads what the round claims to have changed and closed before re-deriving it
- * from the diff. It renders for whichever proposal the selection names —
- * current or stranded — because a stranded proposal's account of itself is
- * exactly what a human weighs before dismissing it.
+ * from the diff.
  */
-function ProposalNotes({
+function ReviewRequestNotes({
   notes,
 }: {
   notes: string | null;
@@ -1059,8 +941,8 @@ function ProposalNotes({
   if (notes === null) return null;
   return (
     <section
-      data-testid="proposal-notes"
-      aria-label="Proposal notes"
+      data-testid="review-request-notes"
+      aria-label="Review request notes"
       className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-surface px-md py-sm"
     >
       <h2 className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
@@ -1154,409 +1036,6 @@ function RevisionPremises({
         </div>
       )}
     </section>
-  );
-}
-
-/**
- * The picker for which live proposal the surface is showing. It appears only
- * when the lineage carries more than one: a single proposal needs no choice,
- * and the segment for a superseded one says so in its own label so a reviewer
- * does not have to open it to learn it cannot be signed off.
- */
-function ProposalSelector({
-  selection,
-}: {
-  selection: ProposalSelection;
-}): React.JSX.Element | null {
-  if (selection.proposals.length < 2) return null;
-  return (
-    <div className="mb-md flex flex-wrap items-center gap-sm">
-      <span className="font-mono text-[0.7rem] tracking-[0.08em] text-text-tertiary uppercase">
-        {selection.proposals.length} revisions under review
-      </span>
-      <SegmentedControl
-        aria-label="Proposal under review"
-        value={selection.selected?.revision.id}
-        onValueChange={(value) => selection.select(value)}
-      >
-        {selection.proposals.map((entry) => (
-          <SegmentedControlItem
-            key={entry.revision.id}
-            value={entry.revision.id}
-          >
-            Revision {entry.revision.number}
-            {entry.supersededBy === null ? "" : " — superseded"}
-          </SegmentedControlItem>
-        ))}
-      </SegmentedControl>
-    </div>
-  );
-}
-
-/**
- * A proposal an approved revision forked past (#50).
- *
- * It is read-only by construction: sign-off would fork past nothing — the
- * lineage already did — and per-item approvals against content no later
- * revision carries would record human acts on work that can never ship.
- * Dismissal is the exit, and it is offered here rather than described
- * elsewhere, because the state having no reachable act is what stranded it.
- */
-function SupersededProposalReview({
-  entry,
-  supersededBy,
-  detail,
-  projectName,
-  commentPlacement,
-  onComplete,
-}: {
-  entry: LiveProposalView;
-  supersededBy: SpecRevision;
-  detail: SpecDetailView;
-  projectName: string;
-  commentPlacement: SpecCommentPlacementPartition;
-  onComplete?(message: string): void;
-}): React.JSX.Element {
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const revision = entry.revision;
-  const diff = useMemo(
-    () =>
-      diffRevisions(
-        entry.governanceBaseSnapshot === null
-          ? []
-          : toDiffRows(entry.governanceBaseSnapshot),
-        toDiffRows(entry.snapshot),
-        revisionCitationDiffContext(
-          entry.governanceBaseSnapshot,
-          entry.snapshot,
-        ),
-      ),
-    [entry],
-  );
-  const dismiss = useSpecActionMutation<
-    { revisionId: string; reason: string },
-    z.infer<typeof dismissSupersededResponseSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "dismiss-superseded",
-    dismissSupersededResponseSchema,
-    { specId: detail.spec.id, eventTypes: ["spec-revision-changed"] },
-  );
-  const changeCards = requirementCardChanges(
-    reviewCardChanges(
-      diff.changeList,
-      entry.snapshot,
-      entry.governanceBaseSnapshot,
-    ),
-    entry.snapshot,
-    entry.governanceBaseSnapshot,
-  );
-  const commentedElementIds = new Set(
-    commentPlacement.coLocated.map(({ thread }) => thread.root.elementId),
-  );
-  for (const element of entry.snapshot.elements) {
-    if (
-      element.version.payload.kind === "criterion" &&
-      commentedElementIds.has(element.element.id) &&
-      element.element.parentElementId !== null
-    ) {
-      commentedElementIds.add(element.element.parentElementId);
-    }
-  }
-  const commentedCards = commentedUnchangedCards(
-    unchangedElementViews(diff, entry.snapshot),
-    commentedElementIds,
-    new Set(diff.changeList.map((change) => change.elementId)),
-  );
-
-  function placementsForChange(
-    change: ReviewCardChange,
-  ): readonly PlacedSpecCommentThread[] {
-    const hostedElementIds = new Set([change.elementId]);
-    if (change.kind === "requirement") {
-      for (const element of entry.snapshot.elements) {
-        if (
-          element.version.payload.kind === "criterion" &&
-          element.element.parentElementId === change.elementId
-        ) {
-          hostedElementIds.add(element.element.id);
-        }
-      }
-    }
-    return commentPlacement.coLocated.filter(({ thread }) =>
-      hostedElementIds.has(thread.root.elementId),
-    );
-  }
-
-  function renderChangeCard(change: ReviewCardChange): React.JSX.Element {
-    const base = viewForElement(entry.governanceBaseSnapshot, change.elementId);
-    const current = viewForElement(entry.snapshot, change.elementId);
-    const placements = placementsForChange(change);
-    return (
-      <article
-        key={change.elementId}
-        data-testid={`superseded-change-${change.elementId}`}
-        className="rounded-md border border-solid border-border-dim bg-bg-surface"
-      >
-        <div className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
-          <span className="font-mono text-[0.72rem] font-bold text-cyan-dim">
-            {(current ?? base)?.handle ?? change.elementId}
-          </span>
-          <StatusChip tone={changeTone[change.change]}>
-            {reviewChangeControlLabel(change)}
-          </StatusChip>
-        </div>
-        <RevisionComparison
-          base={base}
-          current={current}
-          baseRevisionNumber={
-            entry.governanceBaseSnapshot?.revision.number ?? null
-          }
-          currentRevisionNumber={revision.number}
-        />
-        {placements.length > 0 ? (
-          <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-md py-sm">
-            <SpecCommentThreadList
-              projectName={projectName}
-              slug={detail.spec.slug}
-              specId={detail.spec.id}
-              viewedRevisionId={revision.id}
-              viewedRevisionState={revision.state}
-              specAbandoned={false}
-              humanTransport
-              placements={placements}
-              label={`${(current ?? base)?.handle ?? change.elementId} review threads`}
-            />
-          </div>
-        ) : null}
-      </article>
-    );
-  }
-
-  function handleDismiss(): void {
-    const trimmed = reason.trim();
-    if (trimmed.length === 0) return;
-    setError(null);
-    setFeedback("Dismissing the superseded proposal…");
-    dismiss.mutate(
-      { revisionId: revision.id, reason: trimmed },
-      {
-        onSuccess: () => {
-          const message = `Revision ${revision.number} dismissed as superseded`;
-          setFeedback(message);
-          logger.info("spec_studio.review_action.completed", {
-            action: "dismiss-superseded",
-            specId: detail.spec.id,
-            revisionId: revision.id,
-            supersededByRevisionId: supersededBy.id,
-          });
-          onComplete?.(message);
-        },
-        onError: (mutationError: Error) => {
-          setFeedback(null);
-          setError(mutationError.message);
-          logger.warn("spec_studio.review_action.failed", {
-            action: "dismiss-superseded",
-            specId: detail.spec.id,
-            revisionId: revision.id,
-            error: mutationError.message,
-          });
-        },
-      },
-    );
-  }
-
-  return (
-    <section
-      data-testid="superseded-proposal-review"
-      aria-label={`Superseded revision ${revision.number}`}
-      className="min-w-0"
-    >
-      <header className="flex items-center justify-between gap-lg border-x-0 border-t-0 border-b border-solid border-border-dim pb-[12px] max-768:flex-col max-768:items-stretch">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-sm">
-            <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
-              Revision {revision.number} — {revision.authoringStage} stage
-            </h1>
-            <StatusChip tone="amber">Superseded</StatusChip>
-          </div>
-          <span className="font-mono text-[0.7rem] text-text-tertiary">
-            proposed
-            {revision.proposedAt === null
-              ? ""
-              : ` ${revision.proposedAt.slice(0, 10)}`}{" "}
-            ·{" "}
-            {entry.governanceBaseSnapshot === null
-              ? "initial proposal"
-              : `over approved revision ${entry.governanceBaseSnapshot.revision.number}`}
-          </span>
-        </div>
-        <SupersededDismissAction
-          revisionNumber={revision.number}
-          reason={reason}
-          onReasonChange={setReason}
-          onDismiss={handleDismiss}
-          pending={dismiss.isPending}
-        />
-      </header>
-
-      <p className="mt-md mb-0 rounded-md border border-solid border-amber-dim bg-amber-glow px-md py-sm font-mono text-[0.72rem] text-amber">
-        Revision {supersededBy.number} was approved from a base that does not
-        contain this proposal, so revision {revision.number} can no longer be
-        signed off. Dismissing it records who ended it and why; it opens no
-        draft, and the content below stays readable in history.
-      </p>
-
-      {feedback !== null && (
-        <div
-          aria-live="polite"
-          className="pt-sm font-mono text-[0.7rem] text-cyan"
-        >
-          {feedback}
-        </div>
-      )}
-      {error !== null && (
-        <p
-          role="alert"
-          className="mt-md mb-0 rounded-md border border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.72rem] text-red"
-        >
-          {error}
-        </p>
-      )}
-
-      <ProposalNotes notes={entry.notes} />
-
-      <section
-        aria-label="Superseded proposal changes"
-        className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
-      >
-        {changeCards.length === 0 && commentedCards.length === 0 ? (
-          <EmptyState>
-            <EmptyStateTitle>No semantic changes</EmptyStateTitle>
-            <EmptyStateDesc>
-              This proposal matches the revision it was based on.
-            </EmptyStateDesc>
-          </EmptyState>
-        ) : (
-          <>
-            {changeCards.length > 0 ? (
-              <div className="grid gap-sm">
-                {changeCards.map(renderChangeCard)}
-              </div>
-            ) : null}
-            {commentedCards.length > 0 ? (
-              <section
-                aria-labelledby="superseded-commented-unchanged-heading"
-                className="mt-[14px]"
-              >
-                <div className="mb-sm flex items-center gap-sm">
-                  <h2
-                    id="superseded-commented-unchanged-heading"
-                    className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
-                  >
-                    Commented unchanged
-                  </h2>
-                  <span className="h-px min-w-0 grow bg-border-dim" />
-                </div>
-                <div className="grid gap-sm">
-                  {commentedCards.map(renderChangeCard)}
-                </div>
-              </section>
-            ) : null}
-          </>
-        )}
-      </section>
-      {commentPlacement.fallback.length > 0 ? (
-        <section
-          aria-labelledby="superseded-review-fallback-threads-heading"
-          className="mt-lg rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
-        >
-          <h2
-            id="superseded-review-fallback-threads-heading"
-            className="mt-0 mb-md font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
-          >
-            Historical &amp; orphaned review threads
-          </h2>
-          <SpecCommentThreadList
-            projectName={projectName}
-            slug={detail.spec.slug}
-            specId={detail.spec.id}
-            viewedRevisionId={revision.id}
-            viewedRevisionState={revision.state}
-            specAbandoned={false}
-            humanTransport
-            placements={commentPlacement.fallback}
-            label="Historical and orphaned review threads"
-          />
-        </section>
-      ) : null}
-      <div className="h-xl" />
-    </section>
-  );
-}
-
-function SupersededDismissAction({
-  revisionNumber,
-  reason,
-  onReasonChange,
-  onDismiss,
-  pending,
-}: {
-  revisionNumber: number;
-  reason: string;
-  onReasonChange(next: string): void;
-  onDismiss(): void;
-  pending: boolean;
-}): React.JSX.Element {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button
-          size="sm"
-          touch
-          loading={pending}
-          title="Ends this proposal as superseded — no draft is opened"
-        >
-          Dismiss superseded proposal
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent size="default">
-        <AlertDialogTitle>
-          Dismiss revision {revisionNumber} as superseded?
-        </AlertDialogTitle>
-        <AlertDialogDescription>
-          This ends the review attempt on revision {revisionNumber} and records
-          the revision that forked past it. It opens no draft — the approved
-          content stays the spec&apos;s editable line — and the frozen proposal
-          remains readable in history.
-        </AlertDialogDescription>
-        <FormGroup layoutClassName="mt-lg mb-sm">
-          <FormLabel htmlFor="spec-dismiss-superseded-reason">
-            Why this proposal is being ended
-          </FormLabel>
-          <FormInput
-            id="spec-dismiss-superseded-reason"
-            aria-label="Why this proposal is being ended"
-            value={reason}
-            onChange={(event) => onReasonChange(event.currentTarget.value)}
-            placeholder="Required durable reason, kept with the dismissal"
-            autoComplete="off"
-          />
-        </FormGroup>
-        <AlertDialogActions>
-          <AlertDialogCancel>Keep reviewing</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={onDismiss}
-            disabled={reason.trim().length === 0}
-          >
-            Dismiss revision {revisionNumber}
-          </AlertDialogAction>
-        </AlertDialogActions>
-      </AlertDialogContent>
-    </AlertDialog>
   );
 }
 
@@ -1784,7 +1263,7 @@ function unchangedElementViews(
 /**
  * Unchanged elements the server still owes an approval for, shaped as review
  * cards. Unchanged against the immediate parent is not approved (#58): a
- * revision re-proposed over a withdrawn attempt carries content no human ever
+ * draft reopened over a withdrawn attempt carries content no human ever
  * approved, and each such subject must be reviewable and approvable on its
  * own rather than only through the bulk sign-off act.
  */
@@ -1992,16 +1471,9 @@ function ReviewQuestionsPanel({
 }
 
 export function reviewAttentionCount(detail: SpecDetailView): number {
-  if (detail.spec.abandonedAt !== null) return 0;
-  // Each stranded proposal is one human act the spec owes — a dismissal — and
-  // it is owed whether or not the lineage head is itself under review. Counting
-  // only the head's readiness is how #50's proposal became invisible to every
-  // "needs you" rollup.
-  const stranded = strandedProposals(detail).length;
-  if (detail.currentRevision?.revision.state !== "proposed") return stranded;
+  if (detail.spec.abandonedAt !== null || detail.draftReview === null) return 0;
   const readiness = reviewReadiness(detail);
   return (
-    stranded +
     // An import-carried subject asks nobody for anything, so it is not
     // attention owed even though no human approved it.
     (readiness.combined
@@ -2013,7 +1485,7 @@ export function reviewAttentionCount(detail: SpecDetailView): number {
 }
 
 function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
-  const snapshot = detail.currentRevision;
+  const snapshot = detail.draftReview?.snapshot ?? null;
   if (snapshot === null) {
     return {
       approved: 0,
@@ -2149,8 +1621,8 @@ export function bulkApprovalSubjects(
   detail: SpecDetailView,
   mode: "requirements" | "remaining",
 ): BulkApprovalSubject[] {
-  const snapshot = detail.currentRevision;
-  if (snapshot === null || snapshot.revision.state !== "proposed") return [];
+  const snapshot = detail.draftReview?.snapshot ?? null;
+  if (snapshot === null) return [];
 
   const consulted = consultedReviewGates(detail);
   const requiresApproval = (gate: "requirements" | "design" | "plan") => {
@@ -2306,6 +1778,7 @@ function ReviewChangeCard({
   currentSnapshot,
   placements,
   combinedApproval,
+  reviewHash,
   onFeedback,
   onError,
 }: {
@@ -2317,6 +1790,8 @@ function ReviewChangeCard({
   currentSnapshot: SpecRevisionSnapshot;
   placements: readonly PlacedSpecCommentThread[];
   combinedApproval: boolean;
+  /** The draft content the reviewer is reading; approval echoes it. */
+  reviewHash: string;
   onFeedback(feedback: string | null): void;
   onError(error: string | null): void;
 }): React.JSX.Element {
@@ -2369,6 +1844,7 @@ function ReviewChangeCard({
       revisionId: string;
       subjectKind: "requirement" | "decision";
       elementId: string;
+      expectedReviewHash: string;
     },
     z.infer<typeof specApprovalRowSchema>
   >(projectName, detail.spec.slug, "approve-item", specApprovalRowSchema, {
@@ -2457,6 +1933,7 @@ function ReviewChangeCard({
         revisionId: currentSnapshot.revision.id,
         subjectKind: approvalTarget.subjectKind,
         elementId: approvalTarget.elementId,
+        expectedReviewHash: reviewHash,
       },
       {
         onSuccess: () => {
