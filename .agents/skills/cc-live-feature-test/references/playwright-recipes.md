@@ -31,6 +31,10 @@ playwright-cli -s=x run-code "async page => { const t=Date.now(); await page.got
 ```
 
 - **Never use `waitForLoadState('networkidle')`** — CC pages hold a persistent SSE connection, so the network never goes idle; it will always time out.
+- **Never pass an `async` predicate to `waitForFunction`** — it returns a Promise, which is truthy, so the wait resolves on the first poll regardless of the condition. To wait on server state, start a page-side poller with `evaluate` that writes to `window.__x`, then `waitForFunction` on that variable with a synchronous predicate:
+  ```bash
+  playwright-cli -s=x run-code "async page => { await page.evaluate(cid => { window.__st = null; (async () => { for (let i = 0; i < 200; i++) { const r = await fetch('/api/projects/<p>/sessions/<s>/conversations'); const c = (await r.json()).find(x => x.id === cid); window.__st = c ? c.status : 'missing'; await new Promise(res => setTimeout(res, 1500)); } })(); }, '<cid>'); await page.waitForFunction(() => window.__st === 'awaiting', null, { timeout: 240000, polling: 1000 }); return window.__st; }" --raw
+  ```
 - Don't hand-roll shell poll loops. If you must, **never name a zsh variable `status`** (read-only reserved; kills the loop).
 
 ## Snapshots — one step, scoped, named

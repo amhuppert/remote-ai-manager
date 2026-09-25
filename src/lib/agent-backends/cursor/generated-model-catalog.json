@@ -7066,10 +7066,7 @@
     {
       "id": "kimi-k2.7-code",
       "label": "Kimi K2.7 Code",
-      "aliases": [
-        "kimi-latest",
-        "kimi"
-      ],
+      "aliases": [],
       "parameters": [],
       "variants": [
         {
@@ -7130,7 +7127,7 @@
   ],
   "provenance": {
     "source": "Cursor.models.list",
-    "generatedAt": "2026-09-24T03:15:57.017Z",
+    "generatedAt": "2026-09-25T16:36:42.844Z",
     "sdkVersion": "1.0.31"
   }
 }
