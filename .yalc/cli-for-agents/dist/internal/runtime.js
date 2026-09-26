@@ -7,8 +7,9 @@ import { execute, offlineExecution, usageExecution, withExecutionResult } from "
 import { checkEvaluatedGuidance } from "./guidance-rules.js";
 import { frozenJson } from "./validation.js";
 import { renderOffline } from "./help.js";
+import { validationWriteHint } from "./invocations.js";
 import { arbitrate, assembleResponse } from "./response.js";
-import { deliver, resolveArtifactPolicy, validateOutputBudget } from "./artifacts.js";
+import { captureArtifactPolicy, deliver, validateOutputBudget } from "./artifacts.js";
 const diagnostic = (code) => ({ code, message: kernelErrors[code].description });
 /** Collect independent sources while the execution owner still holds the app. */
 async function collect(registry, input, source, load) {
@@ -51,21 +52,25 @@ async function collect(registry, input, source, load) {
             }
         }
     }
+    // Capture only: filesystem preparation waits for delivery, after release. A
+    // deferred failure matters only if delivery later needs an artifact.
     let artifacts;
     try {
-        artifacts = await resolveArtifactPolicy("resolve" in source ? await source.resolve(input) : source, input.host);
+        artifacts = captureArtifactPolicy("resolve" in source ? await source.resolve(input) : source);
     }
     catch {
-        issues.push(diagnostic(input.signal.aborted ? "KERNEL_CANCELLED" : "KERNEL_OUTPUT"));
+        artifacts = { ok: false, failure: { code: input.signal.aborted ? "KERNEL_CANCELLED" : "KERNEL_OUTPUT", message: "Artifact policy could not be collected." } };
     }
-    return { issues, ...(guidance ? { guidance } : {}), ...(artifacts ? { artifacts } : {}) };
+    return { issues, ...(guidance ? { guidance } : {}), artifacts };
 }
-/** The public production caller: owners retain parsing, lifetime, arbitration and bounds. */
-export async function runProduction(cli, request) {
+/** The public production caller: owners retain parsing, lifetime, arbitration and bounds.
+ * A selected format changes only the final representation, never parsing or execution. */
+export async function runProduction(cli, request, selection = {}) {
     const options = cliConfiguration(cli);
     const registry = cliRegistry(cli);
     const resolution = resolve(registry, request.argv);
-    const json = resolution.kind === "leaf" ? resolution.invocation.json : resolution.json;
+    const json = selection.format !== undefined ? selection.format === "json"
+        : resolution.kind === "leaf" ? resolution.invocation.json : resolution.json;
     let budget;
     let execution;
     let facts;
@@ -121,10 +126,13 @@ export async function runProduction(cli, request) {
         }
     }
     execution = withExecutionResult(execution, result);
+    // A successful check may suggest its write; explicit handler and rule hints win.
+    const fallbackHint = resolution.kind === "leaf" && resolution.invocation.validation && result.ok
+        ? validationWriteHint(registry, resolution.invocation) : undefined;
     recordTestEvent(request.signal, { type: "guidance.arbitrate" });
     const guidance = await arbitrate({ commandPath: resolution.kind === "leaf" ? resolution.invocation.command.spec.path : "",
         handler: result.instruction ? { instruction: result.instruction } : result.hint ? { hint: result.hint } : {},
-        ...(facts?.guidance ? { evaluated: facts.guidance } : {}), conflictSink: async (event) => {
+        ...(facts?.guidance ? { evaluated: facts.guidance } : {}), ...(fallbackHint ? { fallbackHint } : {}), conflictSink: async (event) => {
             recordTestEvent(request.signal, event);
             await options.guidance?.conflictSink(event);
         } });
@@ -134,8 +142,12 @@ export async function runProduction(cli, request) {
                     throw new TypeError("Unknown hook failure code.");
                 return { code: issue.code, message: issue.message };
             })] });
+    // Routes that never reached the post-operation hook may use only a static policy;
+    // an application-dependent resolver runs solely while its app is alive.
+    const source = options.output.artifacts;
+    const artifacts = facts?.artifacts ?? ("resolve" in source ? undefined : captureArtifactPolicy(source));
     return deliver(assembled, { format: json ? "json" : "text", budget, host, signal: request.signal,
-        ...(facts?.artifacts ? { artifacts: facts.artifacts } : {}),
+        ...(artifacts ? { artifacts } : {}),
         ...(resolution.kind === "leaf" && resolution.invocation.input.out !== undefined ? { out: resolution.invocation.input.out } : {}) });
 }
 //# sourceMappingURL=runtime.js.map

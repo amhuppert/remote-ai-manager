@@ -8,7 +8,7 @@ import { localArtifactPolicy } from "./artifact-policy";
 it.each(["json", "text"] as const)(
   "explains a misplaced relative --out under CC's artifact policy in %s",
   async (format) => {
-    const policy = await localArtifactPolicy();
+    const policy = localArtifactPolicy();
     const transport = createCcRuntimeFixture({
       respond() {
         throw new Error("Local log analysis must not use HTTP");
@@ -16,7 +16,6 @@ it.each(["json", "text"] as const)(
     });
     const host = createTestHost({
       files: {
-        [path.join(policy.directory, ".keep")]: "",
         "/input.jsonl": JSON.stringify({
           timestamp: "2026-09-23T05:00:00Z",
           level: "info",
@@ -29,7 +28,7 @@ it.each(["json", "text"] as const)(
         }),
       },
     });
-    const cli = createCommandCenterCli(transport.host, { artifacts: policy });
+    const cli = createCommandCenterCli(transport.host);
     const result = await runForTest(
       cli,
       [

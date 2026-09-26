@@ -15,8 +15,7 @@ export async function runCcWithHost(
   host: CliHost,
   options: { kernelHost?: TestHost } = {},
 ) {
-  const kernel =
-    options.kernelHost ?? createTestHost({ files: { "/artifacts/.keep": "" } });
+  const kernel = options.kernelHost ?? createTestHost();
   const result = await runForTest(
     createCommandCenterCli(host, {
       artifacts: { directory: "/artifacts", forbiddenRoots: [] },

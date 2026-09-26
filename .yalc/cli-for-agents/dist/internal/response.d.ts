@@ -1,5 +1,5 @@
 import type { ExecutionResult } from "./execution.js";
-import type { EvaluatedGuidance, HandlerGuidance, FinalGuidance, GuidanceConflict, ConflictSink } from "../guidance/index.js";
+import type { EvaluatedGuidance, HandlerGuidance, FinalGuidance, GuidanceConflict, ConflictSink, Hint } from "../guidance/index.js";
 import type { AnyBinaryArtifactRequest } from "../disclosure.js";
 import type { Invocation } from "../commands.js";
 import type { AnyEnvelope, Issue, SecondaryFailure } from "../results.js";
@@ -9,6 +9,8 @@ export type ArbitrationInput = {
     readonly handler: HandlerGuidance;
     /** The one batch evaluated for this run, when guidance is configured. */
     readonly evaluated?: EvaluatedGuidance;
+    /** Kernel-generated advice, already rebound; handler and rule hints win over it. */
+    readonly fallbackHint?: Hint;
     readonly conflictSink: ConflictSink;
 };
 export type ArbitratedGuidance = Brand<"ArbitratedGuidance"> & {

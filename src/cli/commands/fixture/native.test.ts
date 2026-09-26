@@ -61,7 +61,7 @@ function fixture(respond: (url: string, init: FetchInit) => unknown) {
         }),
         ["fixture", ...argv],
         {
-          host: createTestHost({ files: { "/artifacts/.keep": "" } }),
+          host: createTestHost(),
           env,
           format: "json",
         },

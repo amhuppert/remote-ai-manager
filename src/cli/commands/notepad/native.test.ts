@@ -79,9 +79,7 @@ function fixture(body: unknown, status = 200) {
     platform: "darwin",
     homedir: "/Users/test",
   };
-  const runtimeHost = createTestHost({
-    files: { "/artifacts/.keep": "" },
-  });
+  const runtimeHost = createTestHost();
   return {
     requests,
     runtimeHost,

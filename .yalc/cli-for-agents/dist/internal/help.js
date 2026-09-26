@@ -79,16 +79,18 @@ export function projectHelp(cli, path) {
                 ...(spec.payload ? { payload: spec.payload } : {}), ...(spec.output ? { output: spec.output } : {}) } : {}),
         }), examples: Object.freeze(examples) });
 }
-/** One text projection serves offline runtime help and generated references. */
-export function renderHelp(cli, path) {
+/** One text projection serves offline runtime help and generated references. A
+ * reference may limit child navigation to the nodes it documents. */
+export function renderHelp(cli, path, documented) {
     const node = projectHelp(cli, path);
     const name = registryState(cliRegistry(cli)).name;
-    const lines = [node.summary, node.description, "", ...node.usage.map(usage => `Usage: ${usage}`)];
+    // Structured help keeps both fields; text omits empty or repeated prose.
+    const lines = [node.summary, ...(node.description && node.description !== node.summary ? [node.description] : []), "", ...node.usage.map(usage => `Usage: ${usage}`)];
     const section = (title, rows) => { if (rows.length)
         lines.push("", `${title}:`, ...rows); };
     if (node.effects)
         section("Effects", [node.effects]);
-    section("Commands", node.children.map(child => `${name} ${child.path} — ${child.summary}`));
+    section("Commands", node.children.filter(child => !documented || documented.has(child.path)).map(child => `${name} ${child.path} — ${child.summary}`));
     section("Arguments", node.arguments.map(arg => `${arg.name}${arg.variadic ? "..." : ""} — ${arg.description} (${arg.required ? "required" : "optional"}; ${describeValue(arg.value)}${arg.default !== undefined ? `; default: ${JSON.stringify(arg.default)}` : ""})`));
     const sharedNames = new Set(path ? projectHelp(cli, "").flags.map(flag => flag.name) : []);
     if (path)
@@ -117,9 +119,35 @@ export function renderExitCodes(cli) {
     const inventory = exitCodeInventory(cli);
     return `${inventory.exits.map(entry => `${entry.code}: ${entry.exitClass} — ${entry.description}`).join("\n")}\n\n${Object.entries(inventory.errors).map(([code, entry]) => `${code}: exit ${entry.exitCode} (${entry.exitClass}) — ${entry.description}`).join("\n")}\n`;
 }
-export function renderCommandReference(cli) {
+/** Documented paths in registry order: every node, or selected command/validation leaves
+ * plus generated twins of selected writes, their ancestors and the root. */
+export function referencePaths(cli, selection) {
+    const nodes = registryState(cliRegistry(cli)).nodes;
+    const paths = Object.keys(nodes).sort();
+    const commands = selection?.commands;
+    if (commands === undefined)
+        return paths;
+    if (!Array.isArray(commands))
+        throw new TypeError("Reference selection commands must be an array of command paths.");
+    const included = new Set([""]);
+    for (const path of commands) {
+        const node = typeof path === "string" && Object.hasOwn(nodes, path) ? nodes[path] : undefined;
+        if (!node?.model)
+            throw new TypeError(`Reference selection ${JSON.stringify(path)} is not a command or validation leaf.`);
+        const spec = node.model.spec;
+        const leaves = node.kind === "command" && spec.effects === "write" && spec.payload ? [node.path, spec.payload.validatePath] : [node.path];
+        for (const leaf of leaves) {
+            const parts = leaf.split(" ");
+            parts.forEach((_part, index) => included.add(parts.slice(0, index + 1).join(" ")));
+        }
+    }
+    return paths.filter(path => included.has(path));
+}
+export function renderCommandReference(cli, selection) {
     const state = registryState(cliRegistry(cli));
-    return `${Object.keys(state.nodes).sort().map(path => `## ${path || state.name}\n\n${renderHelp(cli, path)}`).join("\n")}\n## Exit codes\n\n${renderExitCodes(cli)}`;
+    const paths = referencePaths(cli, selection);
+    const documented = new Set(paths);
+    return `${paths.map(path => `## ${path || state.name}\n\n${renderHelp(cli, path, documented)}`).join("\n")}\n## Exit codes\n\n${renderExitCodes(cli)}`;
 }
 /** Runtime-composition calls this only for resolve()'s offline branch. */
 export async function renderOffline(cli, route, request) {

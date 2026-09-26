@@ -57,7 +57,7 @@ describe("Command Center application wiring", () => {
     const result = await runForTest(cli, ["doctor"], {
       format: "json",
       env: { CC_SERVER_URL: "http://cc.test", CC_API_TOKEN: "test-token" },
-      host: createTestHost({ files: { "/artifacts/.keep": "" } }),
+      host: createTestHost(),
     });
     expect(result.exitCode, result.stdout).toBe(0);
     expect(environments).toEqual([
@@ -90,7 +90,7 @@ describe("Command Center application wiring", () => {
       }),
       ["notify", "Build finished"],
       {
-        host: createTestHost({ files: { "/artifacts/.keep": "" } }),
+        host: createTestHost(),
         format: "json",
         env: {
           CC_SERVER_URL: "http://cc.test",

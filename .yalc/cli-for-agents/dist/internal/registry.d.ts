@@ -19,7 +19,10 @@ export type ParsedInvocation<Contexts = never, Code extends string = string, G e
     readonly validation: boolean;
     readonly json: boolean;
 };
+/** Every variant carries the parser's explicit format observation for test callers. */
 export type Resolution<Contexts = never, Code extends string = string, G extends Readonly<Record<string, Flag>> = {}> = {
+    readonly explicitJson: boolean | undefined;
+} & ({
     readonly kind: "offline";
     readonly route: "help" | "version" | "exit-codes";
     readonly path: string;
@@ -31,7 +34,7 @@ export type Resolution<Contexts = never, Code extends string = string, G extends
     readonly kind: "invalid";
     readonly issues: readonly Issue[];
     readonly json: boolean;
-};
+});
 /** Synchronous graph/shape validation only, including docs root/reference syntax. */
 export declare function register<Contexts, D extends ErrorDefinitions, G extends Readonly<Record<string, Flag>>>(options: CliOptions<Contexts, D, G>): Registry<Contexts, FamilyCode<D>, G>;
 export declare function resolve<Contexts, Code extends string, G extends Readonly<Record<string, Flag>>>(registry: Registry<Contexts, Code, G>, argv: readonly string[]): Resolution<Contexts, Code, G>;

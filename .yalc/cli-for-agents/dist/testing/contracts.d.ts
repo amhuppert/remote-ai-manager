@@ -66,6 +66,8 @@ export type DisclosureParity = {
     readonly json: RunResult;
 };
 export declare function inheritedCases<Contexts>(cli: Cli<Contexts>, fixtures: ContractFixtures): readonly ContractCase[];
+/** Checks caller-supplied field inventories and byte bounds, not the meaning of
+ * arbitrary prose. Every mismatch is reported at once, by command path. */
 export declare function expectDisclosureParity<Contexts>(cli: Cli<Contexts>, exceptions: readonly DisclosureException[], observations: readonly DisclosureParity[], options?: {
     readonly satisfiedDeletionConditions?: readonly string[];
 }): void;

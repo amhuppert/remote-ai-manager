@@ -46,9 +46,7 @@ function fixture(
     platform: "darwin",
     homedir: "/Users/test",
   };
-  const runtimeHost = createTestHost({
-    files: { "/artifacts/.keep": "", ...files },
-  });
+  const runtimeHost = createTestHost({ files });
   return {
     requests,
     runtimeHost,

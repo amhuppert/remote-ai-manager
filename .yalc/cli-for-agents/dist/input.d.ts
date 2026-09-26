@@ -267,7 +267,8 @@ export type MutationPayloadDeclaration = PayloadDeclaration & {
     /** Explicit generated validation route, reserved for payload writes. */
     readonly validatePath: string;
 };
-/** Structural Standard Schema v1 boundary, compatible with Zod 3.24 and 4. */
+/** Structural Standard Schema v1 boundary, compatible with Zod 3.24 and 4. Optional
+ * members admit explicit undefined exactly as the official v1 types declare them. */
 export interface StandardSchema<Output> {
     readonly "~standard": {
         readonly version: 1;
@@ -279,14 +280,13 @@ export type SchemaIssue = {
     readonly message: string;
     readonly path?: readonly (PropertyKey | {
         readonly key: PropertyKey;
-    })[];
+    })[] | undefined;
 };
 export type SchemaResult<T> = {
     readonly value: T;
-    readonly issues?: never;
+    readonly issues?: undefined;
 } | {
     readonly issues: readonly SchemaIssue[];
-    readonly value?: never;
 };
 /** Exact nested inventories survive assignment to intermediate variables. */
 type Keys<T> = T extends unknown ? keyof T : never;

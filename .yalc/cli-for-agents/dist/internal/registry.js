@@ -9,6 +9,8 @@ export function register(options) {
     checkFamily(options.family);
     assertText(options.name);
     assertText(options.version);
+    if (options.description !== undefined)
+        assertText(options.description);
     if (!options.contexts || typeof options.contexts !== "object" || Object.hasOwn(options.contexts, "none"))
         throw new TypeError("Invalid context providers.");
     for (const provider of Object.values(options.contexts))
@@ -21,7 +23,7 @@ export function register(options) {
     if (options.guidance && (typeof options.guidance.load !== "function" || typeof options.guidance.conflictSink !== "function"))
         throw new TypeError("Guidance requires a lazy source and conflict sink.");
     const nodes = Object.create(null);
-    nodes[""] = Object.freeze({ path: "", kind: "root", summary: options.name, description: options.name });
+    nodes[""] = Object.freeze({ path: "", kind: "root", summary: options.name, description: options.description ?? "" });
     const add = (node) => {
         if (Object.hasOwn(nodes, node.path))
             throw new TypeError("Duplicate registry path.");
@@ -82,9 +84,9 @@ export function register(options) {
 }
 export function resolve(registry, argv) {
     const state = registryState(registry);
-    let json = false;
+    let format = { json: false, explicitJson: undefined };
     try {
-        const resolved = parseTokens(state.nodes, argv, format => { json = format; });
+        const resolved = parseTokens(state.nodes, argv, observed => { format = observed; });
         if (resolved.kind === "offline")
             return resolved;
         const command = resolved.node.command;
@@ -92,12 +94,12 @@ export function resolve(registry, argv) {
         const invocation = Object.freeze({ command, input: resolved.input,
             path: resolved.node.path, validation: resolved.node.kind === "validation", json: resolved.json,
         });
-        return { kind: "leaf", invocation };
+        return { kind: "leaf", invocation, explicitJson: resolved.explicitJson };
     }
     catch (error) {
         if (!(error instanceof TypeError))
             throw error;
-        return { kind: "invalid", json, issues: [error instanceof InputValidationError ? error.issue : { code: "invalid_value", message: error.message }] };
+        return { kind: "invalid", ...format, issues: [error instanceof InputValidationError ? error.issue : { code: "invalid_value", message: error.message }] };
     }
 }
 const registryStates = new WeakMap();

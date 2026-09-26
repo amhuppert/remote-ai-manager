@@ -9,7 +9,7 @@ import { createTestHost, runForTest } from "./index.js";
 const budget = bytes(8192);
 const output = { maxBytes: budget, artifacts: { directory: "/artifacts", forbiddenRoots: [] } };
 const base = { path: "inspect", summary: "Inspect", description: "Inspect state", requires: "none", effects: "read", args: [], flags: {} };
-const host = () => createTestHost({ files: { "/artifacts/.keep": "", "/input.json": "{}" } });
+const host = () => createTestHost({ files: { "/input.json": "{}" } });
 async function json(cli, argv, injected) {
     const result = await runForTest(cli, argv, { host: injected, format: "json" });
     if (result.format !== "json")

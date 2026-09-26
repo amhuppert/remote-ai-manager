@@ -22,11 +22,13 @@ export async function main(_cli, _options) {
 }
 /** These APIs are offline: they never need a context, host or lazy handler. */
 export function helpNode(_cli, _path) { return projectHelp(_cli, _path); }
-export function commandReference(_cli) { return renderCommandReference(_cli); }
-/** Checks actual files and symlink-resolved containment within cli.documentation. */
+export function commandReference(_cli, _selection) { return renderCommandReference(_cli, _selection); }
+/** Checks actual files and symlink-resolved containment within cli.documentation,
+ * for the skills of selected nodes only; a selected twin checks its command's skills. */
 export function validateReferences(_cli, _options) { return checkReferences(_cli, _options); }
 /** Build/check entry point validates referenced documents before writing/comparing.
- * check never writes; write replaces only the caller's named generated block.
+ * check never writes; write replaces only the caller's named generated block. A document
+ * over maxBytes is refused with its exact sizes; content is never trimmed to fit.
  */
 export function writeCommandReference(_cli, _options) { return writeReference(_cli, _options); }
 /** Strictly decode untrusted JSON before treating it as a framework response. */

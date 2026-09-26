@@ -38,9 +38,7 @@ export function createCcRuntimeFixture(options: {
     platform: "darwin",
     homedir: "/Users/test",
   };
-  const kernelHost = createTestHost({
-    files: { "/artifacts/.keep": "", ...files },
-  });
+  const kernelHost = createTestHost({ files });
   const cli = createCommandCenterCli(host, {
     artifacts: { directory: "/artifacts", forbiddenRoots: [] },
   });

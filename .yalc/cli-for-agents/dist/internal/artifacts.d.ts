@@ -1,9 +1,28 @@
 import type { ArtifactPolicy, ResolvedArtifactPolicy, ArtifactManifest, AnyBinaryArtifactRequest } from "../disclosure.js";
 import type { Host, RunResult } from "../runtime/index.js";
 import type { AssembledResponse } from "./response.js";
+import type { SecondaryFailure } from "../results.js";
 import type { Bytes } from "../values.js";
-/** Resolves canonical roots, validates policy and freezes an app-free snapshot. */
-export declare function resolveArtifactPolicy(policy: ArtifactPolicy, host: Host): Promise<ResolvedArtifactPolicy>;
+/** Framework-owned policy failure; resolver and host exception text never reaches output. */
+export declare class ArtifactPolicyError extends TypeError {
+    readonly failure: SecondaryFailure;
+    constructor(failure: SecondaryFailure);
+}
+/** Detached app-free policy, or its deferred failure, captured before release.
+ * Filesystem work waits until delivery actually needs an artifact. */
+export type CapturedArtifactPolicy = {
+    readonly ok: true;
+    readonly policy: ArtifactPolicy;
+    readonly failure?: never;
+} | {
+    readonly ok: false;
+    readonly failure: SecondaryFailure;
+    readonly policy?: never;
+};
+export declare function captureArtifactPolicy(value: unknown): CapturedArtifactPolicy;
+/** Delivery-time preparation of a captured policy: canonicalize, refuse forbidden
+ * containment before creating anything, then ensure only the configured root. */
+export declare function resolveArtifactPolicy(policy: ArtifactPolicy, host: Host, signal: AbortSignal): Promise<ResolvedArtifactPolicy>;
 /** One bounded writer for automatic spill, explicit out and finite binary exports. */
 export declare function writeArtifact(request: {
     readonly bytes: Uint8Array;
@@ -32,7 +51,8 @@ export declare function measureOutput(output: {
 export declare function deliver(response: AssembledResponse, options: {
     readonly format: "text" | "json";
     readonly budget: Bytes;
-    readonly artifacts?: ResolvedArtifactPolicy;
+    /** Absent when no app-free policy exists; optional spill then omits detail inline. */
+    readonly artifacts?: CapturedArtifactPolicy;
     readonly host: Host;
     readonly signal: AbortSignal;
     readonly out?: string;

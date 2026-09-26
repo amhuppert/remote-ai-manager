@@ -1,6 +1,8 @@
+import { hint } from "../guidance/index.js";
 import { commandData } from "./declarations.js";
-import { checkCaller } from "./input-model.js";
-import { assertInvocation, assertText, frozenJson } from "./validation.js";
+import { checkCaller, scalar } from "./input-model.js";
+import { rebindInvocation, resolve } from "./registry.js";
+import { assertInvocation, assertText, frozenJson, serializedJson } from "./validation.js";
 /** An invocation is plain JSON. The registry resolves it by path when it is used,
  * so references survive JSON transport unchanged. Also used for createCli's doctor. */
 export function makeInvocation(command, input, validation) {
@@ -41,6 +43,53 @@ export function makeInvocation(command, input, validation) {
         ...(checked.passthrough !== undefined ? { passthrough: checked.passthrough } : {}) });
     assertInvocation(value);
     return value;
+}
+/** Advisory write suggested after a successful validation twin. It replays the parsed
+ * inputs, never decoded file contents or environment values, and is omitted whenever
+ * stdin, a supplied secret, passthrough tokens or the reference bound prevents a
+ * faithful replay. Rebinding and reparsing prove the write parses to the same inputs. */
+export function validationWriteHint(registry, parsed) {
+    try {
+        const { model } = commandData(parsed.command);
+        const { spec } = model;
+        const { out: _out, ...input } = parsed.input;
+        if (!parsed.validation || input.sources.some(source => source.path === "-") || input.passthrough?.length)
+            return undefined;
+        const flags = Object.create(null);
+        for (const [name, entry] of Object.entries(model.flags)) {
+            const values = entry.global ? input.globals : input.flags;
+            if (!["domain", "global"].includes(entry.help.source) || !Object.hasOwn(values, name))
+                continue;
+            if (entry.definition.secret)
+                return undefined;
+            const value = values[name];
+            // The parser restores defaults and empty repeats, so they need no tokens.
+            const defaulted = entry.definition.default !== undefined && value === scalar(entry.definition.value, entry.definition.default);
+            if (!defaulted && !(Array.isArray(value) && value.length === 0))
+                flags[name] = value;
+        }
+        for (const source of input.sources) {
+            if (source.kind !== "argument" && source.kind !== "payload" && model.flags[source.name]?.definition.fileSource)
+                flags[`${source.name}-file`] = source.path;
+        }
+        // Stop at the first omitted positional slot; parsing restores any later defaults.
+        const args = Object.create(null);
+        for (const arg of spec.args) {
+            const value = Object.hasOwn(input.args, arg.name) ? input.args[arg.name] : undefined;
+            if (value === undefined || Array.isArray(value) && value.length === 0)
+                break;
+            args[arg.name] = value;
+        }
+        const caller = { args, flags, file: input.file, ...(spec.passthrough ? { passthrough: [] } : {}) };
+        const write = rebindInvocation(registry, makeInvocation(parsed.command, caller, false));
+        const replayed = resolve(registry, invocationArgv(write));
+        if (replayed.kind !== "leaf" || serializedJson(replayed.invocation.input) !== serializedJson(input))
+            return undefined;
+        return hint(write, "Apply the validated payload");
+    }
+    catch {
+        return undefined;
+    }
 }
 /** argv construction and shell rendering share exactly these token boundaries.
  * A passthrough command always carries its passthrough tokens, possibly empty. */

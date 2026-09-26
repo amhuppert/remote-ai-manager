@@ -63,9 +63,7 @@ function fixture(
     platform: "darwin",
     homedir: "/Users/test",
   };
-  const runtimeHost = createTestHost({
-    files: { "/artifacts/.keep": "", ...files },
-  });
+  const runtimeHost = createTestHost({ files });
   return {
     requests,
     runtimeHost,
@@ -581,9 +579,7 @@ describe("native ticket commands", () => {
     expect(
       (await corrupt.run(["attachment", "get", "12", file.id])).exitCode,
     ).toBe(1);
-    expect(corrupt.runtimeHost.filesSnapshot()).toEqual({
-      "/artifacts/.keep": new Uint8Array(),
-    });
+    expect(corrupt.runtimeHost.filesSnapshot()).toEqual({});
   });
 
   it("only enriches retained list rows and returns the exact broader list command", async () => {

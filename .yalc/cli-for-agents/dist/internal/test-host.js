@@ -41,6 +41,17 @@ export function makeTestHost(options = {}) {
             throw new TypeError("Expected file bytes or text");
         return new Uint8Array(data);
     }
+    // Parents are added without checking files, so callers first rule out file ancestors.
+    function addDirectory(path) {
+        for (let current = path; !directories.has(current); current = parent(current))
+            directories.add(current);
+    }
+    const seeded = options.directories ?? [];
+    if (!Array.isArray(seeded))
+        throw new TypeError("Expected directory fixture paths");
+    // Directories precede files, so a file fixture cannot hide a directory collision.
+    for (const input of seeded)
+        addDirectory(canonical(input).replace(/(?<=.)\/$/, ""));
     for (const [input, value] of Object.entries(options.files ?? {})) {
         const path = canonical(input);
         if (path.endsWith("/"))
@@ -48,11 +59,7 @@ export function makeTestHost(options = {}) {
         if (directories.has(path) || files.has(path))
             throw collisionError();
         files.set(path, encoded(value));
-        let ancestor = parent(path);
-        while (!directories.has(ancestor)) {
-            directories.add(ancestor);
-            ancestor = parent(ancestor);
-        }
+        addDirectory(parent(path));
     }
     function bounded(data, limit) {
         if (data.length > limit)
@@ -108,6 +115,16 @@ export function makeTestHost(options = {}) {
                     throw collisionError();
                 if (!existing)
                     files.set(path, snapshot);
+            },
+            async ensureDirectory(input, signal) {
+                record({ kind: "ensureDirectory", path: input });
+                signal.throwIfAborted();
+                // Canonicalization refuses a file ancestor with ENOTDIR before any creation.
+                const path = canonical(input).replace(/(?<=.)\/$/, "");
+                if (files.has(path))
+                    throw fileError("EEXIST");
+                addDirectory(path);
+                signal.throwIfAborted();
             },
         },
         now() { record({ kind: "clock" }); return now; },

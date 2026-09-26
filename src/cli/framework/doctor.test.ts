@@ -79,7 +79,7 @@ function fixture(
       runForTest(cli, argv, {
         env: { ...env, ...overrides },
         format,
-        host: createTestHost({ files: { "/artifacts/.keep": "" } }),
+        host: createTestHost(),
       }),
   };
 }

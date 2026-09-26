@@ -373,6 +373,34 @@ describe("cctl spec import", () => {
     expect(JSON.parse(result.stdout).effect).toBe("read");
   });
 
+  it("checks admission with the rehearsal's counts and advisory findings, without committing", async () => {
+    const findings = [
+      {
+        ruleId: "9.9.thin-decision",
+        severity: "advisory",
+        elementHandle: "D1",
+        message: "D1 rejects only one alternative.",
+      },
+    ];
+    const host = makeHost({
+      body: { dryRun: true, preview: { ...PREVIEW.preview, findings } },
+    });
+    const result = await runCcWithHost(
+      ["spec", "import-check", "--file", BUNDLE_FILE, "--json"],
+      env,
+      host,
+    );
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(host.requests).toHaveLength(1);
+    expect(JSON.parse(host.requests[0]?.init.body ?? "null")).toMatchObject({
+      dryRun: true,
+    });
+    expect(inlineDataOf(result)).toMatchObject({
+      valid: true,
+      preview: { counts: RECEIPT.counts, findings },
+    });
+  });
+
   it("retains complete blocking and advisory findings in a preview and refuses the write", async () => {
     const findings = [
       {

@@ -63,7 +63,7 @@ it("cancels owned validation over the real transport after its invocation is int
       argv: ["validate", "run", "test", "--json"],
       env,
       signal: controller.signal,
-      host: createTestHost({ files: { "/artifacts/.keep": "" } }),
+      host: createTestHost(),
     });
     expect(requests.at(-1)).toEqual({
       path: "/api/projects/project/sessions/session/conversations/conversation/validation/owned-run/cancel",

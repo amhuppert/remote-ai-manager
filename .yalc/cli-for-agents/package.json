@@ -31,7 +31,8 @@
   },
   "scripts": {
     "typecheck": "./scripts/validate/typecheck.sh",
-    "build": "./scripts/validate/build.sh"
+    "build": "./scripts/validate/build.sh",
+    "prepack": "node scripts/prepack.mjs"
   },
-  "yalcSig": "fbf35faa4bb58e92a28dffcfc299f24a"
+  "yalcSig": "ecf503b148d31b447b4672b91294f7eb"
 }

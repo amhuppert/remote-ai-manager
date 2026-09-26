@@ -64,7 +64,10 @@ consumers. Domain results use a library envelope: `ok`, `effect`, optional
 is under `payload.data` with `payload.kind: "inline"`. An artifact result has
 `payload.kind: "artifact"`, a bounded `payload.summary`, and
 `payload.artifact` containing the file path, media type, byte count, and hash.
-Read that file in bounded chunks or search it locally.
+Read that file in bounded chunks or search it locally. A response too large for
+stdout is saved the same way: the receipt adds `payload.spill` with the attempted
+and allowed byte counts, and text output prints a `notice:` line before the
+`artifact:` line. This is normal delivery, not a failure.
 Check `artifact.contains` before parsing it: `response` is the complete response
 envelope, `data` is command data, and `binary` is the exported document's bytes.
 See [spec reads](references/spec-reads.md) for a JSON extraction example.
@@ -79,7 +82,10 @@ subdirectory must already exist, and an existing file is not overwritten. The
 receipt's `artifact.path` is the absolute location. Binary exports always
 return an artifact receipt. Structured input commands have a
 validation twin, such as `ask-check` or `spec draft-check`; it admits the same
-file without applying the write. Check leaf help for any server preflight.
+file without applying the write. A passing check returns `valid`, the payload
+hash, and any server preflight `preview`; when the invocation can be replayed,
+its hint names the write to run.
+Check leaf help for what the preflight covers.
 
 Redirect output to a file before parsing a potentially large response. Parse
 that complete JSON document; validation runner output is inside the result

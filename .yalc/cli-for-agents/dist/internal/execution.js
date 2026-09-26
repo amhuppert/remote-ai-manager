@@ -140,8 +140,12 @@ export async function execute(invocation, request, contexts, postOperation) {
             }
             if (!preparation.ok)
                 returned = preparation;
-            else if (invocation.validation)
-                returned = { ok: true, data: { valid: true, payloadHash: local.input.payloadHash } };
+            else if (invocation.validation) {
+                // The twin reports only framework-owned facts, the preview, and check guidance.
+                const { ok: _ok, value: _opaque, preview, ...guidance } = preparation;
+                returned = { ok: true, data: { valid: true, payloadHash: local.input.payloadHash,
+                        ...("preview" in preparation ? { preview } : {}) }, ...guidance };
+            }
             else {
                 request.signal.throwIfAborted();
                 const hash = local.input.payloadHash;

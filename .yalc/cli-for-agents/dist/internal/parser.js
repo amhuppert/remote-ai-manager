@@ -109,7 +109,10 @@ export function parseTokens(nodes, argv, retainFormat = () => { }) {
     catch (error) {
         rememberError(error);
     }
-    retainFormat(json);
+    const formats = rawFlags["json"];
+    const single = formats?.length === 1 ? formats[0] : undefined;
+    const explicitJson = single === true || single === "true" ? true : single === "false" ? false : undefined;
+    retainFormat({ json, explicitJson });
     if (scanError)
         throw scanError;
     for (const name of Object.keys(rawFlags)) {
@@ -125,7 +128,7 @@ export function parseTokens(nodes, argv, retainFormat = () => { }) {
     if (help && (version || namedOffline) || version && namedOffline && namedOffline !== "version")
         throw new TypeError("Conflicting offline routes.");
     if (help || version || namedOffline || !node.path && argv.length === 0)
-        return { kind: "offline", route: help ? "help" : namedOffline ?? (version ? "version" : "help"), path: node.path, json };
+        return { kind: "offline", route: help ? "help" : namedOffline ?? (version ? "version" : "help"), path: node.path, json, explicitJson };
     if (!node.model)
         throw new TypeError("A group requires a command or --help.");
     const callerFlags = Object.create(null);
@@ -168,6 +171,6 @@ export function parseTokens(nodes, argv, retainFormat = () => { }) {
         throw new TypeError("Unexpected positional argument.");
     if (passthrough !== undefined)
         extra.passthrough = passthrough;
-    return { kind: "leaf", node, input: checkCaller(model, { args, flags: callerFlags, ...extra }, false), json };
+    return { kind: "leaf", node, input: checkCaller(model, { args, flags: callerFlags, ...extra }, false), json, explicitJson };
 }
 //# sourceMappingURL=parser.js.map

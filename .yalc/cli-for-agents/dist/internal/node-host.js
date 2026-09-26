@@ -236,6 +236,12 @@ export async function createNodeHost() {
                     await fs.rm(temporary, { recursive: true, force: true });
                 }
             },
+            async ensureDirectory(input, signal) {
+                signal.throwIfAborted();
+                // Recursive mkdir succeeds for directories and refuses files without replacing them.
+                await fs.mkdir(input, { recursive: true });
+                signal.throwIfAborted();
+            },
         },
         now: () => Date.now(),
         async sleep(duration, signal) {

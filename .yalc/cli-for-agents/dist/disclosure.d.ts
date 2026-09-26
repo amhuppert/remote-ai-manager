@@ -51,17 +51,27 @@ type PayloadShape<Data> = {
     readonly data: Data;
     readonly artifact?: never;
     readonly summary?: never;
+    readonly spill?: never;
 } | {
     readonly kind: "artifact";
     readonly summary: JsonValue;
     readonly artifact: ArtifactManifest;
     readonly data?: never;
+    /** Present exactly for automatic spills: the attempted complete stdout plus stderr
+     * in the requested format, and the run budget it exceeded. The manifest's bytes
+     * describe the written artifact, which may use a different representation. */
+    readonly spill?: {
+        readonly format: "text" | "json";
+        readonly inlineBytes: Bytes;
+        readonly maxBytes: Bytes;
+    };
 };
 /** Preserves an application's DTO shape while excluding values JSON cannot represent. */
 export type Payload<Data> = PayloadShape<JsonData<Data>>;
 /** Framework payload with an anchored JSON value; no recursive DTO projection is needed. */
 export type AnyPayload = PayloadShape<JsonValue>;
-/** Applied to automatic spill and --out alike; canonical paths must avoid forbidden roots. */
+/** Applied to automatic spill and --out alike; canonical paths must avoid forbidden roots.
+ * The kernel creates a missing directory and its ancestors when an artifact is needed. */
 export type ArtifactPolicy = {
     readonly directory: string;
     /** Resolve roots and destination ancestors through symlinks before checking containment. */
@@ -84,7 +94,8 @@ export declare function binaryArtifact<Summary>(request: {
     readonly basename: string;
     readonly summary: JsonData<Summary>;
 }): BinaryArtifactRequest<Summary>;
-/** Immutable, canonical, app-free value retained by the post-operation hook. */
+/** Immutable, canonical, app-free value that delivery prepares from the policy captured
+ * before release, only when an artifact is actually needed. */
 export type ResolvedArtifactPolicy = Readonly<ArtifactPolicy> & Brand<"ResolvedArtifactPolicy">;
 export {};
 //# sourceMappingURL=disclosure.d.ts.map

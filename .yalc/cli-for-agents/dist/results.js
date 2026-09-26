@@ -202,7 +202,7 @@ export function decodeWireEnvelope(value) {
         if (payload["kind"] === "inline")
             assertFields(payload, ["kind", "data"]);
         else if (payload["kind"] === "artifact") {
-            assertFields(payload, ["kind", "summary", "artifact"]);
+            assertFields(payload, ["kind", "summary", "artifact"], ["spill"]);
             const artifact = payload["artifact"];
             assertRecord(artifact);
             assertFields(artifact, ["path", "format", "mediaType", "bytes", "sha256", "reason", "contains"]);
@@ -214,6 +214,20 @@ export function decodeWireEnvelope(value) {
             assertNonnegativeInteger(artifact["bytes"]);
             assertWireHash(artifact["sha256"]);
             assertSerializedLimit(artifact, protocolLimits.manifest);
+            // Automatic spills always disclose the attempted size; other artifacts never do.
+            if (artifact["reason"] === "stdout_budget_exceeded") {
+                const spill = payload["spill"];
+                assertRecord(spill);
+                assertFields(spill, ["format", "inlineBytes", "maxBytes"]);
+                assertWireEnum(spill["format"], ["text", "json"]);
+                const inlineBytes = spill["inlineBytes"], maxBytes = spill["maxBytes"];
+                assertNonnegativeInteger(inlineBytes);
+                assertNonnegativeInteger(maxBytes);
+                if (maxBytes < protocolLimits.minimumOutput || inlineBytes <= maxBytes)
+                    throw new TypeError("Invalid spill metadata.");
+            }
+            else if (Object.hasOwn(payload, "spill"))
+                throw new TypeError("Only automatic spills carry spill metadata.");
         }
         else
             throw new TypeError("Invalid payload kind.");

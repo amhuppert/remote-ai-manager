@@ -26,25 +26,29 @@ export function checkedResult(value, errors, binary) {
     }
     else
         throw new TypeError("Invalid result discriminant.");
-    if (Object.hasOwn(result, "hint") && Object.hasOwn(result, "instruction"))
-        throw new TypeError("Conflicting handler guidance.");
-    const guidance = {};
-    if (Object.hasOwn(result, "hint")) {
-        const value = result["hint"];
-        assertRecord(value);
-        assertFields(value, ["invocation", "action"]);
-        guidance.hint = hint(value["invocation"], value["action"]);
-    }
-    if (Object.hasOwn(result, "instruction")) {
-        const value = result["instruction"];
-        assertRecord(value);
-        assertFields(value, ["ownerId", "text"]);
-        guidance.instruction = instruction(value["ownerId"], value["text"]);
-    }
+    const guidance = checkedGuidance(result);
     const checked = { ...result, ...guidance, ...(binaryRequest ? { binary: binaryRequest } : {}),
         ...(result["ok"] === false ? { error: checkedError(result["error"], errors) } : {}) };
     // Exact result/effect and JSON checks above establish the erased report boundary.
     return Object.freeze(checked);
+}
+/** Handler guidance is one optional tier, rebuilt through its bounded constructor. */
+function checkedGuidance(record) {
+    if (Object.hasOwn(record, "hint") && Object.hasOwn(record, "instruction"))
+        throw new TypeError("Conflicting handler guidance.");
+    if (Object.hasOwn(record, "hint")) {
+        const value = record["hint"];
+        assertRecord(value);
+        assertFields(value, ["invocation", "action"]);
+        return { hint: hint(value["invocation"], value["action"]) };
+    }
+    if (Object.hasOwn(record, "instruction")) {
+        const value = record["instruction"];
+        assertRecord(value);
+        assertFields(value, ["ownerId", "text"]);
+        return { instruction: instruction(value["ownerId"], value["text"]) };
+    }
+    return {};
 }
 function reported(value) {
     const checked = frozenJson(value);
@@ -79,12 +83,15 @@ export function checkedWrite(value, operation, errors, binary) {
         throw new TypeError("Unapplied writes cannot succeed.");
     return result;
 }
-/** Preparation values may be opaque app objects; refusals use normal checked error/guidance fields. */
+/** Preparation values may be opaque app objects; only the preview and guidance are
+ * serialized. Refusals use normal checked error/guidance fields. */
 export function checkedPreparation(value, errors) {
     const prepared = executableRecord(value);
     if (prepared["ok"] === true) {
-        assertFields(prepared, ["ok", "value"]);
-        return { ok: true, value: prepared["value"] };
+        assertFields(prepared, ["ok", "value"], ["preview", "hint", "instruction"]);
+        const { ok: _ok, value: opaque, ...visible } = prepared;
+        const checked = frozenJson(visible);
+        return { ok: true, value: opaque, ...(Object.hasOwn(checked, "preview") ? { preview: checked["preview"] } : {}), ...checkedGuidance(checked) };
     }
     if (prepared["ok"] === false) {
         assertFields(prepared, ["ok", "error"], ["hint", "instruction"]);

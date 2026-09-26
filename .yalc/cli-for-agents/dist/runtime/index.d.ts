@@ -20,6 +20,10 @@ export interface Host {
         /** Follows canonical path checks; reference tooling distinguishes missing files. */
         readonly kind: (path: string) => Promise<"file" | "directory" | "missing">;
         readonly writeAtomic: (path: string, data: Uint8Array, collision: "reuse-identical-or-refuse") => Promise<void>;
+        /** Create a directory and missing ancestors; an existing directory succeeds. Refuse
+         * an existing file or file ancestor, and never delete, replace or change entries.
+         * Check cancellation before and after creation; created directories may remain. */
+        readonly ensureDirectory: (path: string, signal: AbortSignal) => Promise<void>;
     };
     readonly now: () => number;
     readonly sleep: (duration: Milliseconds, signal: AbortSignal) => Promise<void>;
@@ -84,6 +88,9 @@ export type PostOperationContext<Contexts> = SelectedContext<Contexts> & {
 };
 /** Loaded only for execution, while the selected app is still alive; rules run in this process. */
 export type GuidanceProvider<Contexts> = (input: PostOperationContext<Contexts>) => Promise<EvaluatedGuidance>;
+/** A resolver runs once after the operation while its app is alive; the kernel keeps
+ * only a detached snapshot. Filesystem checks and creation of the directory wait until
+ * delivery needs an artifact. Routes that never reach this hook use only a static policy. */
 export type ArtifactPolicySource<Contexts> = ArtifactPolicy | {
     readonly resolve: (input: PostOperationContext<Contexts>) => ArtifactPolicy | Promise<ArtifactPolicy>;
 };
@@ -96,6 +103,8 @@ export type ContextProviders<Contexts, D extends ErrorDefinitions, G extends Rea
 };
 export type CliOptions<Contexts, D extends ErrorDefinitions, G extends Readonly<Record<string, Flag>>> = {
     readonly name: string;
+    /** Nonempty root prose shown after the name in help and references. */
+    readonly description?: string;
     readonly version: string;
     readonly family: CommandFamily<Contexts, D, G>;
     readonly commands: readonly Command<CommandSpec, NoInfer<Contexts>, FamilyCode<NoInfer<D>>, NoInfer<G>>[];
@@ -220,7 +229,12 @@ export type HelpNode = {
 };
 /** These APIs are offline: they never need a context, host or lazy handler. */
 export declare function helpNode<Contexts>(_cli: Cli<Contexts>, _path: string): HelpNode;
-export declare function commandReference<Contexts>(_cli: Cli<Contexts>): string;
+/** Omitted commands document the whole CLI. Listed command or validation leaves bring
+ * their generated twins, ancestors and root; roots, groups and unknown paths throw. */
+export type ReferenceSelection = {
+    readonly commands?: readonly string[];
+};
+export declare function commandReference<Contexts>(_cli: Cli<Contexts>, _selection?: ReferenceSelection): string;
 export type ReferenceIssue = {
     readonly code: "missing_documentation_root" | "missing_reference" | "outside_documentation_root" | "invalid_reference";
     readonly commandPath: string;
@@ -242,25 +256,36 @@ export type ReferenceHost = {
         readonly replace?: (path: string, data: Uint8Array, signal: AbortSignal) => Promise<void>;
     };
 };
-export type ReferenceOptions = {
-    /** Bounds existing reference-file reads; defaults to 1 MiB. */
+export type ReferenceOptions = ReferenceSelection & {
+    /** Bounds existing reference-file reads and the written document; defaults to 1 MiB. */
     readonly maxBytes?: Bytes;
     /** Injected host or lazy loader; omission resolves nodeHost only when called. */
     readonly host?: ReferenceHost | (() => Promise<ReferenceHost>);
     readonly signal: AbortSignal;
 };
-/** Checks actual files and symlink-resolved containment within cli.documentation. */
+/** Checks actual files and symlink-resolved containment within cli.documentation,
+ * for the skills of selected nodes only; a selected twin checks its command's skills. */
 export declare function validateReferences<Contexts>(_cli: Cli<Contexts>, _options: ReferenceOptions): Promise<ReferenceValidation>;
+/** UTF-8 sizes after marker replacement: the inserted block with its final newline but
+ * without marker lines, the whole candidate document, and the enforced limit. Present in
+ * check and write modes after successful reference validation. */
+export type ReferenceWriteResult = ReferenceValidation & {
+    readonly changed: boolean;
+    readonly sizes?: {
+        readonly generatedBytes: Bytes;
+        readonly documentBytes: Bytes;
+        readonly maxBytes: Bytes;
+    };
+};
 /** Build/check entry point validates referenced documents before writing/comparing.
- * check never writes; write replaces only the caller's named generated block.
+ * check never writes; write replaces only the caller's named generated block. A document
+ * over maxBytes is refused with its exact sizes; content is never trimmed to fit.
  */
 export declare function writeCommandReference<Contexts>(_cli: Cli<Contexts>, _options: ReferenceOptions & {
     readonly path: string;
     readonly marker: string;
     readonly mode: "write" | "check";
-}): Promise<ReferenceValidation & {
-    readonly changed: boolean;
-}>;
+}): Promise<ReferenceWriteResult>;
 /** Strictly decode untrusted JSON before treating it as a framework response. */
 export declare function decodeEnvelope(value: unknown): AnyEnvelope;
 export declare function renderInvocation(invocation: Invocation, executable: string): import("../values.js").ShellSafe;

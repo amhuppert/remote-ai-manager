@@ -94,7 +94,7 @@ export const specImportSpec = {
   path: "spec import",
   summary: "Import a reviewed external specification",
   description:
-    "Import-check rehearses server admission. The write commits a bundle with dryRun false; use import-preview to inspect the complete rehearsal.",
+    "Import-check rehearses server admission and previews the counts and advisory findings it would import. The write commits a bundle with dryRun false; use import-preview for prospective handles and blocking findings.",
   requires: "cc",
   effects: "write",
   args: [],

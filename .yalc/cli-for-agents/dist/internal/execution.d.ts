@@ -1,7 +1,7 @@
 import type { ErrorDefinitions, FamilyCode, OperationOutcome, UnknownAcknowledgment, Issue, SecondaryFailure } from "../results.js";
 import type { ContextProviders, ResolvedRunRequest, PostOperationContext } from "../runtime/index.js";
 import type { EvaluatedGuidance } from "../guidance/index.js";
-import type { ResolvedArtifactPolicy } from "../disclosure.js";
+import type { CapturedArtifactPolicy } from "./artifacts.js";
 import type { Flag } from "../input.js";
 import type { Sha256 } from "../values.js";
 import type { Brand } from "./brand.js";
@@ -23,8 +23,8 @@ export declare function unknownAcknowledgment<Contexts, Code extends string, G e
 export type PostOperationFacts = {
     /** Missing when no guidance is configured or the provider failed. */
     readonly guidance?: EvaluatedGuidance;
-    /** Missing when policy resolution fails; collected guidance still survives. */
-    readonly artifacts?: ResolvedArtifactPolicy;
+    /** App-free snapshot or deferred failure; delivery prepares it only when needed. */
+    readonly artifacts?: CapturedArtifactPolicy;
     readonly issues: readonly Issue[];
 };
 /** The runtime hook catches each collection/policy failure and returns accumulated

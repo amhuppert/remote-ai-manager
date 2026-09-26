@@ -43,6 +43,13 @@ file contents, and input failures. Structured payloads use the library payload
 contract and generated check surface. A handler must not parse shell quoting or
 silently trim file prose.
 
+A check twin runs the write's `prepare` and never commits. When preparation already
+holds a server rehearsal, return its useful summary as the preparation `preview`
+instead of declaring a separate preview read; keep a separate read only when it must
+succeed where the write refuses (for example, `spec import-preview` shows blocking
+findings). The library appends the apply hint after a passing check, so do not add
+a guidance rule that only names the write.
+
 When changing a command:
 
 1. Update its typed specification, examples, and useful related edges.
@@ -83,9 +90,12 @@ in an outline must work in its detail command. Server-owned page cursors stay op
 
 Use the library's output levels and artifact policy for large results. CC's local
 artifact directory is `.cc/temp/cctl-artifacts`; `framework/artifact-policy.ts`
-owns its creation. `binaryArtifact` delivers original bytes through the same
-runtime, with an `output: "binary"` declaration. Do not create a second spill
-writer or return base64 content as a substitute for artifact bytes.
+owns its location, and the library creates it the first time a response needs an
+artifact. An automatic spill is normal delivery: the receipt carries `payload.spill`
+and text prints a `notice:` line, not a `KERNEL_OUTPUT` issue. `binaryArtifact`
+delivers original bytes through the same runtime, with an `output: "binary"`
+declaration. Do not create a second spill writer or return base64 content as a
+substitute for artifact bytes.
 
 A successful write returns `effect: "applied"` and real recovery facts: a returned
 record id, accepted job id, or addressed target. A refusal before mutation is

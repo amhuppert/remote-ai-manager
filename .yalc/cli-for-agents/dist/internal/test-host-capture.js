@@ -8,6 +8,7 @@ export function captureHost(host, calls) {
         canonicalPath(path) { record({ kind: "canonicalPath", path }); return host.files.canonicalPath(path); },
         kind(path) { record({ kind: "kind", path }); return host.files.kind(path); },
         writeAtomic(...args) { record({ kind: "write", path: args[0] }); return host.files.writeAtomic(...args); },
+        ensureDirectory(...args) { record({ kind: "ensureDirectory", path: args[0] }); return host.files.ensureDirectory(...args); },
     };
     return { files,
         now() { record({ kind: "clock" }); return host.now(); },

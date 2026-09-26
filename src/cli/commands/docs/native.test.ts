@@ -45,7 +45,7 @@ function fixture(body: unknown, status = 200) {
         }),
         argv,
         {
-          host: createTestHost({ files: { "/artifacts/.keep": "" } }),
+          host: createTestHost(),
           format,
           env: { ...env, ...overrides },
         },

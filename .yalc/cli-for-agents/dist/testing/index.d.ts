@@ -15,7 +15,7 @@ export type ContractCase = {
     readonly run: () => Promise<void>;
 };
 export type HostCall = {
-    readonly kind: "read" | "write" | "canonicalPath" | "kind";
+    readonly kind: "read" | "write" | "canonicalPath" | "kind" | "ensureDirectory";
     readonly path: string;
 } | {
     readonly kind: "stdin" | "sha256" | "clock";
@@ -28,8 +28,11 @@ export type TestHost = Host & Brand<"TestHost"> & {
     readonly filesSnapshot: () => Readonly<Record<string, Uint8Array>>;
     readonly advance: (duration: Milliseconds) => void;
 };
+/** Virtual POSIX filesystem. Seeded files create their parents; directories seed
+ * explicit empty directories. Seeding records no calls. */
 export declare function createTestHost(options?: {
     readonly files?: Readonly<Record<string, string | Uint8Array>>;
+    readonly directories?: readonly string[];
     readonly stdin?: string;
     readonly now?: number;
 }): TestHost;

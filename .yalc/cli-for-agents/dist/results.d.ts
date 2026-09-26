@@ -152,12 +152,16 @@ export type Prepared<Path extends string, Data> = Brand<"Prepared", Path> & {
     readonly value: Data;
     readonly payloadHash: Sha256;
 };
-export type Preparation<Data, Code extends string = string> = {
+/** The value stays opaque and reaches only commit. A validation twin returns the optional
+ * JSON-safe preview and successful guidance; a refusal applies to check and write alike. */
+export type Preparation<Data, Code extends string = string, Preview = JsonValue> = ({
     readonly ok: true;
     readonly value: Data;
+    readonly preview?: JsonData<Preview>;
     readonly error?: never;
-} | (Failure<never, Code> & {
+} & HandlerGuidance) | (Failure<never, Code> & {
     readonly value?: never;
+    readonly preview?: never;
 });
 /** Only app-reported identifiers may claim durable recovery; never synthesize an ID. */
 export type RecoveryReference = {

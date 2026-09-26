@@ -2,6 +2,7 @@ import { invocation } from "cli-for-agents";
 import { createCli, type ArtifactPolicySource } from "cli-for-agents/runtime";
 import { BUILD_INFO } from "@/lib/build-info/build-info.generated";
 import { formatBuildStamp } from "@/lib/build-info/stamp-value";
+import { localArtifactPolicy } from "./artifact-policy";
 import { resolveCcHost, type CcHostSource } from "./host-source";
 import type { CcContexts } from "./family";
 import { ccCommands } from "./family";
@@ -56,6 +57,8 @@ export function createCommandCenterCli(
   const doctor = createDoctorCommand(host);
   return createCli({
     name: "cctl",
+    description:
+      "Act on the running Command Center server with this session's identity. Help, exit-codes, and local log analysis work offline.",
     version: formatBuildStamp(BUILD_INFO),
     family: ccCommands,
     commands: [
@@ -132,11 +135,6 @@ export function createCommandCenterCli(
         });
       },
     },
-    output: {
-      artifacts: options.artifacts ?? {
-        resolve: async () =>
-          (await import("./artifact-policy")).localArtifactPolicy(),
-      },
-    },
+    output: { artifacts: options.artifacts ?? localArtifactPolicy() },
   });
 }

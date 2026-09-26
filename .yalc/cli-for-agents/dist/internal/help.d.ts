@@ -1,7 +1,8 @@
-import type { Cli, HelpNode } from "../runtime/index.js";
+import type { Cli, HelpNode, ReferenceSelection } from "../runtime/index.js";
 export declare function projectHelp<Contexts>(cli: Cli<Contexts>, path: string): HelpNode;
-/** One text projection serves offline runtime help and generated references. */
-export declare function renderHelp<Contexts>(cli: Cli<Contexts>, path: string): string;
+/** One text projection serves offline runtime help and generated references. A
+ * reference may limit child navigation to the nodes it documents. */
+export declare function renderHelp<Contexts>(cli: Cli<Contexts>, path: string, documented?: ReadonlySet<string>): string;
 /** Catalog inventory shared by offline exit-codes and reference output. */
 export declare function exitCodeInventory<Contexts>(cli: Cli<Contexts>): {
     exits: readonly [{
@@ -66,7 +67,10 @@ export declare function exitCodeInventory<Contexts>(cli: Cli<Contexts>): {
     };
 };
 export declare function renderExitCodes<Contexts>(cli: Cli<Contexts>): string;
-export declare function renderCommandReference<Contexts>(cli: Cli<Contexts>): string;
+/** Documented paths in registry order: every node, or selected command/validation leaves
+ * plus generated twins of selected writes, their ancestors and the root. */
+export declare function referencePaths<Contexts>(cli: Cli<Contexts>, selection?: ReferenceSelection): readonly string[];
+export declare function renderCommandReference<Contexts>(cli: Cli<Contexts>, selection?: ReferenceSelection): string;
 /** Runtime-composition calls this only for resolve()'s offline branch. */
 export declare function renderOffline<Contexts>(cli: Cli<Contexts>, route: Extract<import("./registry.js").Resolution, {
     readonly kind: "offline";

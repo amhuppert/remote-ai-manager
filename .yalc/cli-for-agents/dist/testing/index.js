@@ -7,7 +7,10 @@ import { makeTestHost } from "../internal/test-host.js";
 import { cliConfiguration, cliRegistry, commandCli, checkMembership, rebindInvocation, resolve } from "../internal/registry.js";
 import { invocationArgv } from "../internal/invocations.js";
 import { observeRun } from "../internal/test-observation.js";
-import { createCli, runCli, decodeEnvelope } from "../runtime/index.js";
+import { createCli, decodeEnvelope } from "../runtime/index.js";
+import { runProduction } from "../internal/runtime.js";
+/** Virtual POSIX filesystem. Seeded files create their parents; directories seed
+ * explicit empty directories. Seeding records no calls. */
 export function createTestHost(options) { return makeTestHost(options); }
 export async function runForTest(cli, input, options) {
     const configuration = cliConfiguration(cli);
@@ -19,12 +22,10 @@ export async function runForTest(cli, input, options) {
         tokens = invocationArgv(rebindInvocation(registry, input));
     if (options.format !== "text" && options.format !== "json")
         throw new TypeError("Invalid test format.");
-    const initial = resolve(registry, tokens);
-    const initialJson = initial.kind === "leaf" ? initial.invocation.json : initial.json;
-    const argv = initialJson === (options.format === "json") ? [...tokens] : [`--json=${options.format === "json"}`, ...tokens];
-    const resolution = resolve(registry, argv);
-    const json = resolution.kind === "leaf" ? resolution.invocation.json : resolution.json;
-    if (json !== (options.format === "json"))
+    // Only one valid explicit format flag can contradict the request; malformed or
+    // duplicate format flags stay testable as ordinary usage failures.
+    const { explicitJson } = resolve(registry, tokens);
+    if (explicitJson !== undefined && explicitJson !== (options.format === "json"))
         throw new TypeError("Input conflicts with test format.");
     let selected = cli;
     if (options.contexts !== undefined) {
@@ -46,7 +47,7 @@ export async function runForTest(cli, input, options) {
     const calls = [];
     const host = captureHost(options.host, calls);
     try {
-        const result = await runCli(selected, { argv, env: options.env ?? {}, host, signal: controller.signal });
+        const result = await runProduction(selected, { argv: tokens, env: options.env ?? {}, host, signal: controller.signal }, { format: options.format });
         const delivered = observation.envelope;
         if (!delivered)
             throw new Error("Runtime did not capture delivery evidence.");

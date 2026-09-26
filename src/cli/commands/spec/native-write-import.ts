@@ -137,7 +137,8 @@ type Import = MutationHandler<
   WriteContext,
   typeof ccErrors.definitions,
   typeof ccGlobalFlags,
-  z.infer<typeof importBundleSchema>
+  z.infer<typeof importBundleSchema>,
+  Pick<z.infer<typeof previewSchema>["preview"], "counts" | "findings">
 >;
 const importWrite: Import = {
   decode: writeBundleSchema,
@@ -156,7 +157,8 @@ const importWrite: Import = {
           details: response.value,
         }),
       };
-    return resolved;
+    const { counts, findings } = response.value.preview;
+    return { ok: true, value: resolved.value, preview: { counts, findings } };
   },
   commit: writeRunner<
     Parameters<Import["commit"]>[0],
