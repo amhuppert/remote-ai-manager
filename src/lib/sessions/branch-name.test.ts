@@ -17,4 +17,22 @@ describe("sanitizeBranchName", () => {
   it("returns an empty string for input with no slug characters", () => {
     expect(sanitizeBranchName("   !!!   ")).toBe("");
   });
+
+  it("uppercases a leading Jira ticket key", () => {
+    expect(sanitizeBranchName("track-123 fix some bug")).toBe(
+      "TRACK-123-fix-some-bug",
+    );
+  });
+
+  it("uppercases a ticket key that makes up the whole name", () => {
+    expect(sanitizeBranchName("Ab-7")).toBe("AB-7");
+  });
+
+  it.each([
+    ["a single leading letter", "a-1-thing", "a-1-thing"],
+    ["a number that runs into letters", "fix-2fa-login", "fix-2fa-login"],
+    ["a key that is not at the start", "fix track-123", "fix-track-123"],
+  ])("leaves the name lowercase for %s", (_case, input, expected) => {
+    expect(sanitizeBranchName(input)).toBe(expected);
+  });
 });
