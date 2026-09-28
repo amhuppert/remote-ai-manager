@@ -201,7 +201,7 @@ describe("contextNodeCrew", () => {
         seatId: "security",
         authority: "blocking",
         backend: "claude",
-        modelLabel: "Sonnet",
+        modelLabel: "Sonnet 5.5",
         parametersLabel: "high",
       },
       {

@@ -54,11 +54,13 @@ describe("getEffortLevelsForModel", () => {
     ]);
   });
 
-  it("returns low/medium/high for sonnet (no xhigh)", () => {
+  it("returns the full range for Sonnet 5.5 (including xhigh and max)", () => {
     expect(getEffortLevelsForModel("sonnet")).toEqual([
       "low",
       "medium",
       "high",
+      "xhigh",
+      "max",
     ]);
   });
 

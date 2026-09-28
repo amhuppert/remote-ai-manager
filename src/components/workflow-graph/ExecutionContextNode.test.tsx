@@ -688,7 +688,7 @@ it("lets clicks on read-only agent details select the context", () => {
       <ContextNodeCard data={makeData()} selected={false} />
     </div>,
   );
-  fireEvent.click(screen.getByText("Sonnet"));
+  fireEvent.click(screen.getByText("Sonnet 5.5"));
   expect(select).toHaveBeenCalledTimes(1);
 });
 

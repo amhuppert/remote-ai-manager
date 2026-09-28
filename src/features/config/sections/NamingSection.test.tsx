@@ -148,7 +148,7 @@ describe("NamingSection", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<NamingSection controller={controller} />);
 
-    selectModel("Sonnet");
+    selectModel("Sonnet 5.5");
 
     expect(getState().conversationNaming?.modelSelection).toEqual({
       modelId: "sonnet",

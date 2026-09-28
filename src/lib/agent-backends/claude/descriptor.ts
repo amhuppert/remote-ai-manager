@@ -56,7 +56,7 @@ export const claudeBackendMetadata: AgentBackendMetadata = {
     },
     {
       id: "sonnet",
-      label: "Sonnet",
+      label: "Sonnet 5.5",
       description: "Balanced",
       effortLevels: getEffortLevelsForModel("sonnet"),
     },

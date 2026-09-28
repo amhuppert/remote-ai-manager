@@ -229,13 +229,14 @@ describe("getEffortOptionsForBackend", () => {
     expect(result).not.toContain("minimal");
   });
 
-  it("excludes xhigh for Sonnet", () => {
+  it("includes xhigh and max for Sonnet 5.5", () => {
     const result = getEffortOptionsForBackend("claude", "sonnet");
     expect(result).toContain("low");
     expect(result).toContain("medium");
     expect(result).toContain("high");
-    expect(result).not.toContain("xhigh");
-    expect(result).not.toContain("max");
+    expect(result).toContain("xhigh");
+    expect(result).toContain("max");
+    expect(result).not.toContain("minimal");
   });
 
   it("returns Codex effort levels for codex backend", () => {

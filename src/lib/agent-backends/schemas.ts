@@ -316,7 +316,7 @@ export type ClaudeEffortLevel = z.infer<typeof claudeEffortLevelSchema>;
 const MODEL_EFFORT_LEVELS: Record<ClaudeModel, ClaudeEffortLevel[]> = {
   fable: ["low", "medium", "high", "xhigh", "max"],
   opus: ["low", "medium", "high", "xhigh", "max"],
-  sonnet: ["low", "medium", "high"],
+  sonnet: ["low", "medium", "high", "xhigh", "max"],
   haiku: [],
 };
 
