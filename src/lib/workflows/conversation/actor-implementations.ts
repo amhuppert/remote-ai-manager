@@ -1,4 +1,4 @@
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
 import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
 import { toPromptActorResult } from "./turn-result";
@@ -13,10 +13,8 @@ import { conversationTargetStoreSessionName } from "@/lib/conversations/conversa
 import type { ConversationActorDependencies } from "./actor-dependencies";
 import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
-import {
-  BackendAdmissionError,
-  type ExecutionClass,
-} from "@/lib/agent-backends/execution-admission";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
+import type { ExecutionClass } from "@/lib/agent-backends/execution-schemas";
 /**
  * Conversation execution with required construction-time collaborators.
  */
@@ -1549,9 +1547,7 @@ async function executePromptForMachine(
       onUserQuestion:
         (input.turn.askUserQuestionsEnabled ?? !input.turn.autonomous)
           ? async (questions, signal) => {
-              const { inTurnQuestionService } =
-                await import("@/lib/conversations/in-turn-question-service");
-              return inTurnQuestionService.request(
+              return deps.execution.requestUserQuestion(
                 {
                   projectPath: input.projectPath,
                   sessionName: conversationTargetStoreSessionName(input.target),

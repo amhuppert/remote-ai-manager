@@ -29,7 +29,7 @@ import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import {
   getConversationRuntimeConfiguration,
   readDesiredConversationRuntimeConfiguration,
-} from "@/lib/workflows/conversation/manager";
+} from "@/lib/workflows/conversation/lifecycle";
 
 import { readNextTurnContextLoss } from "@/lib/workflows/conversation/pre-turn/next-turn-context-loss";
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";

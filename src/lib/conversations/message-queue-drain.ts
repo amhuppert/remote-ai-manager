@@ -18,12 +18,10 @@ import type {
   NotepadFeedbackPayload,
 } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
-import { messageQueueService } from "@/lib/conversations/message-queue-service";
 import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
 import type { ParsedConversationCommand } from "@/lib/conversation-commands/schemas";
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
 import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
-import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
 import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
@@ -48,8 +46,8 @@ const logger = createLogger("conversation-manager");
 /**
  * Queue operations the drain action and startup recovery depend on. Method
  * syntax (bivariant) so production `messageQueueService` methods assign cleanly.
- * Tests inject fakes via {@link setConversationQueueDeps} instead of mocking the
- * internal queue-service module.
+ * Callers inject these operations into the drain engine instead of mocking
+ * the internal queue-service module.
  */
 export interface ConversationQueueDeps {
   submitTurn(input: ConversationTurnSubmission): Promise<TurnAdmission>;
@@ -95,35 +93,6 @@ export interface ConversationQueueDeps {
   runConversationCommand(
     input: ConversationCommandDispatchInput,
   ): Promise<RunCommandOutcome>;
-}
-
-const defaultConversationQueueDeps: ConversationQueueDeps = {
-  submitTurn: async (input) => {
-    const { submitConversationTurn } =
-      await import("@/lib/workflows/conversation/manager");
-    return submitConversationTurn(input);
-  },
-  claimNextTurnBatch: (input) => messageQueueService.claimNextTurnBatch(input),
-  markPending: (input) => messageQueueService.markPending(input),
-  markDelivered: (input) => messageQueueService.markDelivered(input),
-  markFailed: (input) => messageQueueService.markFailed(input),
-  recoverAbandonedDeliveries: (input) =>
-    messageQueueService.recoverAbandonedDeliveries(input),
-  runConversationCommand: (input) => dispatchConversationCommand(input),
-};
-
-let _conversationQueueDeps: ConversationQueueDeps | null = null;
-
-export function setConversationQueueDeps(deps: ConversationQueueDeps): void {
-  _conversationQueueDeps = deps;
-}
-
-export function _resetConversationQueueDepsForTesting(): void {
-  _conversationQueueDeps = null;
-}
-
-export function getConversationQueueDeps(): ConversationQueueDeps {
-  return _conversationQueueDeps ?? defaultConversationQueueDeps;
 }
 
 // ============================================================

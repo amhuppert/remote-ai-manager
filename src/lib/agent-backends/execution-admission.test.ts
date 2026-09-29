@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   backendExecutionRefusal,
   backendExecutionRefusalIn,
-  backendExecutionSchema,
   type ExecutionCatalogEntry,
-  type ExecutionRequirements,
 } from "./execution-admission";
+import {
+  backendExecutionSchema,
+  type ExecutionRequirements,
+} from "./execution-schemas";
 
 function limitedEntry(): ExecutionCatalogEntry {
   return {

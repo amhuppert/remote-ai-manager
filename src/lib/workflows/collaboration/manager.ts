@@ -65,10 +65,8 @@ import {
   type CollaborationSessionContextCapture,
 } from "./session-context";
 import { isAlignmentEligibleContext } from "@/lib/workflows/conversation/pre-turn/alignment-gate";
-import {
-  releaseIdleConversationRuntime as defaultReleaseIdleConversationRuntime,
-  type IdleRuntimeRelease,
-} from "@/lib/workflows/conversation/manager";
+import { type IdleRuntimeRelease } from "@/lib/workflows/conversation/manager";
+import { releaseIdleConversationRuntime as defaultReleaseIdleConversationRuntime } from "@/lib/workflows/conversation/lifecycle";
 import { getSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
 import type {
   CaptureActiveCharterInput,

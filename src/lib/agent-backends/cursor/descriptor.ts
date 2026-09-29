@@ -3,7 +3,7 @@ import { CURSOR_BACKGROUND_WARNING } from "./background-tasks";
 import type {
   ConversationExecutionPolicy,
   TaskExecutionPolicy,
-} from "../execution-admission";
+} from "../execution-schemas";
 import type {
   AgentBackendDescriptor,
   AgentBackendMetadata,

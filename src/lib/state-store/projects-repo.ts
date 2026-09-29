@@ -9,7 +9,7 @@ import {
 import { projectRowSchema } from "@/lib/projects/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { ProjectRow } from "@/lib/projects/schemas";
 type Db = InstanceType<typeof Database>;
 

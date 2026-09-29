@@ -6,13 +6,10 @@ import {
   deliveryPlanV4DocumentSchema,
   finalizedDeliveryPlanApprovalSchema,
   finalizedDeliveryPlanCandidateIdentitySchema,
-  finalizedDeliveryPlanPrelaunchSchema,
-  postLaunchPathsSentence,
   type DeliveryPlanCandidateRecord,
   type DeliveryPlanDocument,
   type FinalizedDeliveryPlanApproval,
   type FinalizedDeliveryPlanCandidateIdentity,
-  type FinalizedDeliveryPlanPrelaunch,
 } from "@/lib/specs/delivery-plan";
 import {
   deliveryPlanBindingHash,
@@ -25,7 +22,6 @@ import {
   specDeliveryPlanCommentRowSchema,
   specDeliveryPlanSnapshotRowSchema,
   type ActorProvenance,
-  type DeliveryPlanAttemptStatus,
   type SpecDeliveryDiscoveryRow,
   type SpecDeliveryPlanAttemptRow,
   type SpecDeliveryPlanCandidateApprovalRow,
@@ -33,7 +29,14 @@ import {
   type SpecDeliveryPlanSnapshotRow,
   type SpecEventRow,
 } from "@/lib/specs/schemas";
-import { stableStringify } from "./serialization";
+import {
+  decideDeliveryPlanTransition,
+  reaffirmDeliveryPlanCriteria,
+  requireEditableDeliveryPlanDraft,
+  requireReopenableDeliveryPlan,
+  type DeliveryPlanTransition,
+} from "@/lib/specs/delivery-plan-policy";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createSpecRepoHelpers } from "./spec-repo-helpers";
 import type { SpecEventInput } from "./spec-events-repo";
 
@@ -69,26 +72,6 @@ export class StaleDeliveryPlanDraftError extends Error {
       `delivery plan attempt ${attemptId} is at draft revision ${currentDraftRevision}, not ${expectedDraftRevision}. Nothing was written. Re-read the attempt with \`cctl spec plan get\` and re-apply the edit at draft revision ${currentDraftRevision}.`,
     );
     this.name = "StaleDeliveryPlanDraftError";
-  }
-}
-
-/**
- * An act asked for in a status that cannot serve it. Every message states the
- * act that IS available from here and the id it addresses, because a refusal
- * that only reports the status recreates the dead end one layer up.
- */
-export class DeliveryPlanStatusConflictError extends Error {
-  readonly code = "plan_status_conflict" as const;
-
-  constructor(
-    readonly attemptId: string,
-    readonly status: DeliveryPlanAttemptStatus,
-    readonly remedy: string,
-  ) {
-    super(
-      `delivery plan attempt ${attemptId} is ${status}. Nothing was written. ${remedy}`,
-    );
-    this.name = "DeliveryPlanStatusConflictError";
   }
 }
 
@@ -130,20 +113,6 @@ export interface ReaffirmDeliveryPlanDraftBatchInput {
   readonly criterionElementIds: readonly string[];
   readonly reaffirmedAt: string;
   readonly actor: ActorProvenance;
-}
-
-export class DeliveryPlanReaffirmationStateError extends Error {
-  readonly code = "plan_status_conflict" as const;
-
-  constructor(
-    readonly attemptId: string,
-    readonly criterionElementId: string,
-  ) {
-    super(
-      `delivery plan attempt ${attemptId} has no pending reaffirmation for criterion ${criterionElementId}. Nothing was written. Read the draft with \`cctl spec plan get\` and reaffirm only a criterion marked pending_reaffirmation.`,
-    );
-    this.name = "DeliveryPlanReaffirmationStateError";
-  }
 }
 
 /**
@@ -205,29 +174,6 @@ export interface ReopenDeliveryPlanResult {
     readonly candidateHash: string;
   } | null;
 }
-
-/**
- * The status moves this repo owns beyond propose and reopen. They are one
- * mutation rather than four near-identical ones so the audit row and the
- * status write can never be separated, whichever later context asks for the
- * move.
- *
- * `park` and `launch` both state the candidate identity they act on rather
- * than reading "whatever is signed now": the transaction re-reads the stored
- * snapshot and candidate and refuses a mismatch, so a reopen and fresh
- * sign-off racing the act cannot slide different bytes under it
- * (`exact-approval`).
- */
-export type DeliveryPlanTransition =
-  | ({
-      readonly kind: "park";
-      readonly reason: string | null;
-    } & FinalizedDeliveryPlanCandidateIdentity)
-  | ({
-      readonly kind: "launch";
-      readonly executionId: string;
-    } & FinalizedDeliveryPlanCandidateIdentity)
-  | { readonly kind: "abandon"; readonly reason: string };
 
 export class FinalizedDeliveryPlanApprovalIdentityMismatchError extends Error {
   readonly code = "integrity_mismatch" as const;
@@ -297,6 +243,13 @@ export interface SpecDeliveryPlanRepo {
     input: ApproveDeliveryPlanCandidateInput,
   ): ApproveDeliveryPlanCandidateResult;
   reopen(input: ReopenDeliveryPlanInput): ReopenDeliveryPlanResult;
+  /**
+   * The status write and its audit row share one mutation and transaction.
+   * `park` and `launch` state the candidate identity they act on: the
+   * transaction rereads the signed snapshot and refuses a mismatch before
+   * applying specs policy, so a reopen and fresh sign-off cannot slide
+   * different bytes under the act (`exact-approval`).
+   */
   recordTransition(input: {
     readonly attemptId: string;
     readonly transition: DeliveryPlanTransition;
@@ -327,20 +280,6 @@ export interface SpecDeliveryPlanRepo {
    */
   findDiscoveriesBySpecId(specId: string): SpecDeliveryDiscoveryRow[];
 }
-
-/**
- * Named in the reopen refusal because "the plan is launched" without the exits
- * is exactly the state-with-no-exit this workstream exists to remove. The list
- * itself is owned by `delivery-plan.ts`, so storage cannot drift from what the
- * CLI receipts state.
- *
- * Addressed by slug rather than by id: the only execution id storage holds is
- * `launched_execution_id`, the internal spec execution row id, and naming it
- * here would print a `--execution` command the resolver refuses (design 3.5,
- * D-B). The service layer, which owns both the slug and the workflow-id
- * lookup, states the id-bearing form.
- */
-const POST_LAUNCH_PATHS = () => postLaunchPathsSentence({});
 
 export function createSpecDeliveryPlanRepo(
   db: Db,
@@ -472,17 +411,11 @@ export function createSpecDeliveryPlanRepo(
     attempt: SpecDeliveryPlanAttemptRow,
     expectedDraftRevision: number,
   ): void {
-    if (attempt.status !== "draft") {
-      throw new DeliveryPlanStatusConflictError(
-        attempt.id,
-        attempt.status,
-        attempt.status === "launched" && attempt.launched_execution_id !== null
-          ? POST_LAUNCH_PATHS()
-          : attempt.status === "abandoned"
-            ? "Open a fresh attempt with `cctl spec plan open`."
-            : "Return it to draft with `cctl spec plan reopen` before editing it.",
-      );
-    }
+    requireEditableDeliveryPlanDraft({
+      attemptId: attempt.id,
+      status: attempt.status,
+      launchedExecutionId: attempt.launched_execution_id,
+    });
     if (attempt.draft_revision !== expectedDraftRevision) {
       throw new StaleDeliveryPlanDraftError(
         attempt.id,
@@ -576,29 +509,11 @@ export function createSpecDeliveryPlanRepo(
       const document = deliveryPlanDocumentSchema.parse(
         JSON.parse(attempt.content_json),
       );
-      for (const criterionElementId of input.criterionElementIds) {
-        const disposition = document.binding.dispositions.find(
-          (entry) => entry.criterionElementId === criterionElementId,
-        );
-        if (disposition?.disposition !== "pending_reaffirmation") {
-          throw new DeliveryPlanReaffirmationStateError(
-            attempt.id,
-            criterionElementId,
-          );
-        }
-      }
-      const targets = new Set(input.criterionElementIds);
-      const nextDocument = deliveryPlanDocumentSchema.parse({
-        ...document,
-        binding: {
-          ...document.binding,
-          dispositions: document.binding.dispositions.map((entry) =>
-            targets.has(entry.criterionElementId)
-              ? { ...entry, disposition: "reaffirmed" as const }
-              : entry,
-          ),
-        },
-      });
+      const nextDocument = reaffirmDeliveryPlanCriteria(
+        attempt.id,
+        document,
+        input.criterionElementIds,
+      );
       const next: SpecDeliveryPlanAttemptRow = {
         ...attempt,
         draft_revision: attempt.draft_revision + 1,
@@ -729,30 +644,14 @@ export function createSpecDeliveryPlanRepo(
     const document = deliveryPlanDocumentSchema.parse(
       JSON.parse(attempt.content_json),
     );
-    if (attempt.status === "draft" && document.schemaVersion === 4) {
-      throw new DeliveryPlanStatusConflictError(
-        attempt.id,
-        attempt.status,
-        "There is nothing to reopen. Author the graph with `cctl workflow replace <id> --file <plan.json>`.",
-      );
-    }
-    if (
-      attempt.status === "launched" &&
-      attempt.launched_execution_id !== null
-    ) {
-      throw new DeliveryPlanStatusConflictError(
-        attempt.id,
-        attempt.status,
-        POST_LAUNCH_PATHS(),
-      );
-    }
-    if (attempt.status === "abandoned") {
-      throw new DeliveryPlanStatusConflictError(
-        attempt.id,
-        attempt.status,
-        "Open a fresh attempt with `cctl spec plan open`.",
-      );
-    }
+    requireReopenableDeliveryPlan(
+      {
+        attemptId: attempt.id,
+        status: attempt.status,
+        launchedExecutionId: attempt.launched_execution_id,
+      },
+      document.schemaVersion,
+    );
     const approval =
       attempt.approval_json === null
         ? null
@@ -859,7 +758,25 @@ export function createSpecDeliveryPlanRepo(
           );
         }
       }
-      const next = applyTransition(attempt, input);
+      const decision = decideDeliveryPlanTransition(
+        {
+          attemptId: attempt.id,
+          status: attempt.status,
+          hasApproval: attempt.approval_json !== null,
+        },
+        input,
+      );
+      const next: SpecDeliveryPlanAttemptRow = {
+        ...attempt,
+        status: decision.status,
+        ...(decision.status === "parked"
+          ? { prelaunch_json: stableStringify(decision.prelaunch) }
+          : {}),
+        ...(decision.status === "launched"
+          ? { launched_execution_id: decision.executionId }
+          : {}),
+        updated_at: input.occurredAt,
+      };
       updateAttemptStmt.run(next);
       appendPlanEvent(
         next,
@@ -1031,69 +948,4 @@ export function createSpecDeliveryPlanRepo(
       );
     },
   };
-}
-
-function applyTransition(
-  attempt: SpecDeliveryPlanAttemptRow,
-  input: {
-    readonly transition: DeliveryPlanTransition;
-    readonly occurredAt: string;
-    readonly actor: ActorProvenance;
-  },
-): SpecDeliveryPlanAttemptRow {
-  const transition = input.transition;
-  if (transition.kind === "park") {
-    if (attempt.status !== "approved") {
-      throw new DeliveryPlanStatusConflictError(
-        attempt.id,
-        attempt.status,
-        "Only a signed-off attempt can be parked for prelaunch review. Sign off the draft first.",
-      );
-    }
-    const prelaunch: FinalizedDeliveryPlanPrelaunch = {
-      parkedAt: input.occurredAt,
-      parkedBy: input.actor,
-      reason: transition.reason,
-      candidate: {
-        candidateId: transition.candidateId,
-        candidateHash: transition.candidateHash,
-      },
-    };
-    return {
-      ...attempt,
-      status: "parked",
-      prelaunch_json: stableStringify(
-        finalizedDeliveryPlanPrelaunchSchema.parse(prelaunch),
-      ),
-      updated_at: input.occurredAt,
-    };
-  }
-  if (transition.kind === "launch") {
-    if (
-      (attempt.status !== "approved" && attempt.status !== "parked") ||
-      attempt.approval_json === null
-    ) {
-      throw new DeliveryPlanStatusConflictError(
-        attempt.id,
-        attempt.status,
-        attempt.status === "launched" || attempt.status === "abandoned"
-          ? "Open a fresh attempt with `cctl spec plan open`."
-          : "Only a signed-off candidate launches. Sign off the draft first.",
-      );
-    }
-    return {
-      ...attempt,
-      status: "launched",
-      launched_execution_id: transition.executionId,
-      updated_at: input.occurredAt,
-    };
-  }
-  if (attempt.status === "abandoned") {
-    throw new DeliveryPlanStatusConflictError(
-      attempt.id,
-      attempt.status,
-      "Open a fresh attempt with `cctl spec plan open`.",
-    );
-  }
-  return { ...attempt, status: "abandoned", updated_at: input.occurredAt };
 }

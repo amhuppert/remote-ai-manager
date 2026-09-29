@@ -30,7 +30,7 @@ import {
 } from "@/lib/state-store/specs-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";

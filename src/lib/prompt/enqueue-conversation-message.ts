@@ -46,7 +46,7 @@ const defaultDeps: EnqueueConversationMessageDeps = {
     // Dynamic import keeps the conversation-actor machinery off the static
     // import graph of the alignment/command callers (mirrors dispatch.ts).
     const { ensureConversationActorAndDrain } =
-      await import("@/lib/workflows/conversation/manager");
+      await import("@/lib/workflows/conversation/lifecycle");
     await ensureConversationActorAndDrain(
       projectPath,
       sessionName,

@@ -59,11 +59,11 @@ import type {
   GraphExecutionLifecycleContext,
 } from "./execution-lifecycle-port";
 import {
-  createGraphWorkflowManager,
   GraphWorkflowTransitionConflictError,
   WorkflowPrerequisitesUnmetError,
   WorkflowStartInputError,
 } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import { WorkflowStartGuardError } from "./start-guards";
 import { GraphExecutionContractViolationError } from "./execution-contract-port";
 import { assertExecutionPrincipalFence } from "./principal-fence";

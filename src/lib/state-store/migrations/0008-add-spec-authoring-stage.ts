@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { StateMigration } from "./types";
 
 /**

@@ -27,7 +27,7 @@ import {
 } from "../state-db";
 import { schemaCompatibilityBarrierPath } from "../schema-compatibility";
 import { workflowDefinitionFilePath } from "@/lib/workflow-graph/storage-paths";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   NATIVE_SDD_MANAGED_DEFINITIONS_SCHEMA_VERSION,
   nativeSddManagedWorkflowDefinitions,

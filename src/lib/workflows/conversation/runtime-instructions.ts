@@ -7,7 +7,7 @@ import {
   CC_CLI_INSTRUCTIONS,
   TDD_INSTRUCTIONS,
   selectAskQuestionInstructions,
-} from "@/lib/prompt/sdk-driver";
+} from "@/lib/prompt/runtime-instruction-policy";
 import {
   PROJECT_CC_CONTEXT,
   PROJECT_SPAWN_INSTRUCTIONS,

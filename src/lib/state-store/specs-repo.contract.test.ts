@@ -25,7 +25,7 @@ import {
   type TaskElementPayload,
 } from "@/lib/specs/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   createPersistenceFixture,
   type PersistenceFixture,

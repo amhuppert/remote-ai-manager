@@ -68,7 +68,7 @@ import type { GraphWorkflowContextOutputCaptureOutcome } from "@/lib/workflow-gr
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import { createUserInputGateService } from "./user-input-gate";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
-import { createGraphWorkflowManager } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import type {
   AskQuestionAnswer,

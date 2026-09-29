@@ -8,9 +8,12 @@ import type {
 import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
 
 import type {
+  AskQuestionItem,
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
+import type { InTurnQuestionScope } from "@/lib/conversations/in-turn-questions";
+import type { InTurnQuestionReply } from "@/lib/conversations/in-turn-question-schemas";
 
 import type { SessionState } from "@/lib/sessions/schemas";
 
@@ -54,6 +57,12 @@ import type { ConversationRuntimeState } from "./runtime-state";
 import type { CheckpointDeliveryDependencies } from "./pre-turn/checkpoint-seed";
 
 export interface TurnExecutionDependencies {
+  requestUserQuestion(
+    scope: InTurnQuestionScope,
+    questions: AskQuestionItem[],
+    signal: AbortSignal,
+  ): Promise<InTurnQuestionReply>;
+
   // Resource acquisition
   acquireConversationLock(
     projectPath: string,

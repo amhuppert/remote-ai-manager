@@ -32,7 +32,7 @@ import {
 import {
   checkpointAcceptsQueuedInput,
   ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
-} from "@/lib/workflows/conversation/manager";
+} from "@/lib/workflows/conversation/lifecycle";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import {

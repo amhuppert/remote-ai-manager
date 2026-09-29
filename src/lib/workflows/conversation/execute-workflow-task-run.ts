@@ -5,7 +5,6 @@ import {
   type ConversationBinding,
 } from "./turn-spec";
 import { toTaskRunResult } from "./turn-result";
-import { executeConversationTurn } from "./manager";
 /**
  * Named entrypoint workflow callers use to drive a single `task_run` turn
  * through the conversation actor.
@@ -96,14 +95,4 @@ export function createWorkflowTaskRunExecutor(
     });
     return result;
   };
-}
-
-const productionTaskRun = createWorkflowTaskRunExecutor({
-  executeConversationTurn,
-});
-export function executeWorkflowTaskRun(
-  input: ExecuteWorkflowTaskRunInput,
-  deps: ExecuteWorkflowTaskRunDeps = {},
-): Promise<TaskRunResult> {
-  return productionTaskRun(input, deps);
 }

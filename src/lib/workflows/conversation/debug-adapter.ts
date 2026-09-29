@@ -1,4 +1,4 @@
-import { resolveDebugOutputSchema } from "@/lib/workflows/debug/prompt-policy";
+import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
 /**
  * Debug adapter — single seam around debug-mode operations.
  *
@@ -105,7 +105,7 @@ async function defaultExecuteCommand(
   target: DebugTarget,
   command: DebugCommand,
 ): Promise<ConversationCommandOutcome> {
-  const { executeConversationCommand } = await import("./manager");
+  const { executeConversationCommand } = await import("./lifecycle");
   const { getProjectDisplayName } = await import("@/lib/projects/resolver");
   const { targetFromStoreSessionName } =
     await import("@/lib/conversations/conversation-target");
@@ -137,12 +137,7 @@ export function createDebugAdapter(deps: DebugAdapterDeps = {}): DebugAdapter {
   ): Promise<ConversationCommandOutcome> => executeCommand(target, command);
 
   return {
-    resolveOutputFormat(phase) {
-      if (phase == null) return undefined;
-      const schema = resolveDebugOutputSchema(phase);
-      if (!schema) return undefined;
-      return { type: "json_schema", schema };
-    },
+    resolveOutputFormat: resolveDebugOutputFormat,
 
     publishDebugModeStatus(input) {
       return publishSSE({

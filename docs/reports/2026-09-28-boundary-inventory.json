@@ -1,0 +1,2010 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "artifact": ".cc/temp/module-graph/phase2-before/production.json",
+    "sha256": "481946c7452855509cdd012541b5a3196634fbcd6dbeac06b22ed22da32a082b",
+    "head": "a19d978dd47960ffabc38353e4a909d5d10f1182",
+    "scope": "Production graph source/target pairs; state-store value imports plus both value and type-only workflows\u2194workflow-graph imports; external packages excluded."
+  },
+  "stateStore": {
+    "targetCount": 62,
+    "edgeCount": 218,
+    "targets": [
+      {
+        "target": "src/lib/agent-capabilities/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/conversation-row-codec.ts",
+          "src/lib/state-store/projects-repo.ts",
+          "src/lib/state-store/sessions-repo.ts"
+        ],
+        "owner": "agent-capabilities",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/agent-profiles/hashing.ts",
+        "classification": "contract",
+        "reason": "Migration recreates profile identity using the canonical hash.",
+        "callers": [
+          "src/lib/state-store/migrations/frozen-archived-execution.ts"
+        ],
+        "owner": "agent-profiles",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/agent-profiles/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/conversation-row-codec.ts"],
+        "owner": "agent-profiles",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/config/loader.ts",
+        "classification": "adapter",
+        "reason": "Database location comes from getConfigDirPath; storage needs config addressing, not configuration policy.",
+        "callers": ["src/lib/state-store/state-db.ts"],
+        "owner": "config",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/conversation-checkpoints/continuation.ts",
+        "classification": "composition",
+        "reason": "Store binds the checkpoint conversation gateway to both conversation repositories, keeping their writes in one transaction.",
+        "callers": ["src/lib/state-store/store.ts"],
+        "owner": "conversation-checkpoints",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/conversation-checkpoints/fork-schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/conversation-row-codec.ts"],
+        "owner": "conversation-checkpoints",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/conversations/conversation-target.ts",
+        "classification": "codec",
+        "reason": "Converts stored session identity into public conversation scope.",
+        "callers": ["src/lib/state-store/accessors.ts"],
+        "owner": "conversations",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/conversations/message-queue-schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/conversation-row-codec.ts"],
+        "owner": "conversations",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/conversations/project-conversation-scope.ts",
+        "classification": "contract",
+        "reason": "One canonical sentinel predicate across storage readers and writers.",
+        "callers": [
+          "src/lib/state-store/accessors.ts",
+          "src/lib/state-store/setters.ts",
+          "src/lib/state-store/store.ts"
+        ],
+        "owner": "conversations",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/conversations/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/conversation-row-codec.ts",
+          "src/lib/state-store/conversations-repo.ts",
+          "src/lib/state-store/project-conversations-repo.ts"
+        ],
+        "owner": "conversations",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/debug-log/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/conversation-row-codec.ts"],
+        "owner": "debug-log",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/document-comments/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/document-comments-repo.ts"],
+        "owner": "document-comments",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/documents/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/session-markdown-documents-repo.ts"],
+        "owner": "documents",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/logging/context.ts",
+        "classification": "adapter",
+        "reason": "Write queue preserves ambient diagnostic context.",
+        "callers": ["src/lib/state-store/write-queue.ts"],
+        "owner": "logging",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/logging/index.ts",
+        "classification": "adapter",
+        "reason": "Infrastructure diagnostics, not domain decisions.",
+        "callers": [
+          "src/lib/state-store/accessors.ts",
+          "src/lib/state-store/conversation-machine-snapshots-repo.ts",
+          "src/lib/state-store/conversation-row-codec.ts",
+          "src/lib/state-store/conversations-repo.ts",
+          "src/lib/state-store/document-comments-repo.ts",
+          "src/lib/state-store/execution-reference-repo.ts",
+          "src/lib/state-store/graph-plan-reviews-repo.ts",
+          "src/lib/state-store/graph-workflow-archived-executions-repo.ts",
+          "src/lib/state-store/graph-workflow-events-repo.ts",
+          "src/lib/state-store/graph-workflow-executions-repo.ts",
+          "src/lib/state-store/graph-workflow-pending-artifacts-repo.ts",
+          "src/lib/state-store/graph-workflow-result-deliveries-repo.ts",
+          "src/lib/state-store/graph-workflow-runtime-owner.ts",
+          "src/lib/state-store/memory-repo.ts",
+          "src/lib/state-store/memory-telemetry-repo.ts",
+          "src/lib/state-store/migrations/0002-split-graph-workflow-history.ts",
+          "src/lib/state-store/migrations/0003-split-graph-workflow-execution.ts",
+          "src/lib/state-store/migrations/0005-agent-session-ref-shape.ts",
+          "src/lib/state-store/migrations/0007-move-machine-snapshots-to-sidecar.ts",
+          "src/lib/state-store/migrations/0009-narrow-evidence-kinds.ts",
+          "src/lib/state-store/migrations/0011-workflow-agent-assignments.ts",
+          "src/lib/state-store/migrations/0013-script-validator-commands.ts",
+          "src/lib/state-store/migrations/0015-mint-graph-workflow-edge-ids.ts",
+          "src/lib/state-store/migrations/0016-graph-workflow-context-placement.ts",
+          "src/lib/state-store/migrations/0019-delivery-plan-approval-identity.ts",
+          "src/lib/state-store/migrations/0024-collab-lane-flow-agent-ids.ts",
+          "src/lib/state-store/migrations/0024-execution-lease-and-result-deliveries.ts",
+          "src/lib/state-store/migrations/0026-delivery-plan-launch-cutover.ts",
+          "src/lib/state-store/migrations/0027-retire-delivery-plan-amendments.ts",
+          "src/lib/state-store/migrations/0028-retire-legacy-spec-executions.ts",
+          "src/lib/state-store/migrations/0030-native-sdd-v2-cutover.ts",
+          "src/lib/state-store/migrations/0034-native-sdd-attention-citations.ts",
+          "src/lib/state-store/migrations/0035-generalized-model-selection.ts",
+          "src/lib/state-store/migrations/0038-ticket-relationships-and-status-updates.ts",
+          "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts",
+          "src/lib/state-store/migrations/0043-close-policy-admitted-approval-requests.ts",
+          "src/lib/state-store/migrations/0045-add-checkpoint-forks.ts",
+          "src/lib/state-store/migrations/0047-graph-workflow-lane-coverage.ts",
+          "src/lib/state-store/migrations/0048-graph-workflow-document-content.ts",
+          "src/lib/state-store/migrations/0049-graph-workflow-review-origin.ts",
+          "src/lib/state-store/migrations/0053-add-checkpoint-handoff.ts",
+          "src/lib/state-store/migrations/0056-close-withdrawn-revision-approval-requests.ts",
+          "src/lib/state-store/migrations/0057-continuous-spec-review.ts",
+          "src/lib/state-store/migrator.ts",
+          "src/lib/state-store/notepad-comments-repo.ts",
+          "src/lib/state-store/notepad-delivery-watermarks-repo.ts",
+          "src/lib/state-store/notepads-repo.ts",
+          "src/lib/state-store/project-conversations-repo.ts",
+          "src/lib/state-store/projects-repo.ts",
+          "src/lib/state-store/reference-documents-repo.ts",
+          "src/lib/state-store/schema-compatibility.ts",
+          "src/lib/state-store/session-markdown-documents-repo.ts",
+          "src/lib/state-store/sessions-repo.ts",
+          "src/lib/state-store/setters.ts",
+          "src/lib/state-store/spec-repo-helpers.ts",
+          "src/lib/state-store/specs-repo.ts",
+          "src/lib/state-store/state-db.ts",
+          "src/lib/state-store/store.ts",
+          "src/lib/state-store/ticket-relationships-store.ts",
+          "src/lib/state-store/ticket-status-updates-store.ts",
+          "src/lib/state-store/tickets-repo.ts",
+          "src/lib/state-store/validation-runs-repo.ts",
+          "src/lib/state-store/write-queue.ts"
+        ],
+        "owner": "logging",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/logging/timed.ts",
+        "classification": "adapter",
+        "reason": "Repository operation timing.",
+        "callers": [
+          "src/lib/state-store/setters.ts",
+          "src/lib/state-store/specs-repo.ts",
+          "src/lib/state-store/store.ts"
+        ],
+        "owner": "logging",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/mcp/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/conversation-row-codec.ts",
+          "src/lib/state-store/projects-repo.ts",
+          "src/lib/state-store/sessions-repo.ts"
+        ],
+        "owner": "mcp",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/memory/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/memory-repo.ts",
+          "src/lib/state-store/memory-telemetry-repo.ts"
+        ],
+        "owner": "memory",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/notepads/append-composition.ts",
+        "classification": "contract",
+        "reason": "Atomic append uses the same pure newline composition as the editor.",
+        "callers": ["src/lib/state-store/notepads-repo.ts"],
+        "owner": "notepads",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/notepads/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/notepad-comments-repo.ts",
+          "src/lib/state-store/notepad-delivery-watermarks-repo.ts",
+          "src/lib/state-store/notepads-repo.ts"
+        ],
+        "owner": "notepads",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/notifications/repo.ts",
+        "classification": "composition",
+        "reason": "Store constructs its notification repository over the existing database.",
+        "callers": ["src/lib/state-store/store.ts"],
+        "owner": "notifications",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/projects/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/projects-repo.ts"],
+        "owner": "projects",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/reference-documents/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/reference-documents-repo.ts"],
+        "owner": "reference-documents",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/sessions/derived.ts",
+        "classification": "contract",
+        "reason": "Read models reuse session-owned status, prompt-count and activity projection.",
+        "callers": ["src/lib/state-store/accessors.ts"],
+        "owner": "sessions",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/sessions/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/accessors.ts",
+          "src/lib/state-store/sessions-repo.ts"
+        ],
+        "owner": "sessions",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/shared/atomic-write-json.ts",
+        "classification": "adapter",
+        "reason": "Migration/config sidecar writes use the shared atomic filesystem writer.",
+        "callers": [
+          "src/lib/state-store/migrations/0011-workflow-agent-assignments.ts",
+          "src/lib/state-store/migrations/0013-script-validator-commands.ts",
+          "src/lib/state-store/migrations/0030-native-sdd-v2-cutover.ts",
+          "src/lib/state-store/migrations/0035-generalized-model-selection.ts",
+          "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts",
+          "src/lib/state-store/schema-compatibility.ts"
+        ],
+        "owner": "shared",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/shared/deep-equal.ts",
+        "classification": "contract",
+        "reason": "Pure JSON equality for unchanged-column decisions.",
+        "callers": ["src/lib/state-store/graph-workflow-executions-repo.ts"],
+        "owner": "shared",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/shared/errors.ts",
+        "classification": "contract",
+        "reason": "Shared persistence errors and safe error wording.",
+        "callers": [
+          "src/lib/state-store/conversation-machine-snapshots-repo.ts",
+          "src/lib/state-store/conversation-row-codec.ts",
+          "src/lib/state-store/document-comments-repo.ts",
+          "src/lib/state-store/graph-workflow-archived-executions-repo.ts",
+          "src/lib/state-store/graph-workflow-events-repo.ts",
+          "src/lib/state-store/graph-workflow-executions-repo.ts",
+          "src/lib/state-store/graph-workflow-pending-artifacts-repo.ts",
+          "src/lib/state-store/graph-workflow-result-deliveries-repo.ts",
+          "src/lib/state-store/memory-repo.ts",
+          "src/lib/state-store/memory-telemetry-repo.ts",
+          "src/lib/state-store/migrations/0005-agent-session-ref-shape.ts",
+          "src/lib/state-store/migrations/0011-workflow-agent-assignments.ts",
+          "src/lib/state-store/migrations/0013-script-validator-commands.ts",
+          "src/lib/state-store/migrations/0024-collab-lane-flow-agent-ids.ts",
+          "src/lib/state-store/migrations/0030-native-sdd-v2-cutover.ts",
+          "src/lib/state-store/migrator.ts",
+          "src/lib/state-store/notepad-comments-repo.ts",
+          "src/lib/state-store/notepad-delivery-watermarks-repo.ts",
+          "src/lib/state-store/notepads-repo.ts",
+          "src/lib/state-store/projects-repo.ts",
+          "src/lib/state-store/reference-documents-repo.ts",
+          "src/lib/state-store/sessions-repo.ts",
+          "src/lib/state-store/spec-repo-helpers.ts",
+          "src/lib/state-store/specs-repo.ts",
+          "src/lib/state-store/ticket-relationships-store.ts",
+          "src/lib/state-store/ticket-revision.ts",
+          "src/lib/state-store/ticket-status-updates-store.ts",
+          "src/lib/state-store/tickets-repo.ts",
+          "src/lib/state-store/validation-runs-repo.ts"
+        ],
+        "owner": "shared",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/shared/global-singleton.ts",
+        "classification": "composition",
+        "reason": "Owns process-global DB/write-queue/runtime-owner instances.",
+        "callers": [
+          "src/lib/state-store/graph-workflow-runtime-owner.ts",
+          "src/lib/state-store/index.ts",
+          "src/lib/state-store/reset-installed-state-db.ts",
+          "src/lib/state-store/state-db.ts",
+          "src/lib/state-store/write-queue.ts"
+        ],
+        "owner": "shared",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/shared/parse-trusted.ts",
+        "classification": "codec",
+        "reason": "Schema-checked conversion of trusted stored rows.",
+        "callers": [
+          "src/lib/state-store/document-comments-repo.ts",
+          "src/lib/state-store/memory-repo.ts",
+          "src/lib/state-store/memory-telemetry-repo.ts",
+          "src/lib/state-store/notepad-comments-repo.ts",
+          "src/lib/state-store/notepad-delivery-watermarks-repo.ts",
+          "src/lib/state-store/notepads-repo.ts",
+          "src/lib/state-store/projects-repo.ts",
+          "src/lib/state-store/reference-documents-repo.ts",
+          "src/lib/state-store/session-markdown-documents-repo.ts",
+          "src/lib/state-store/tickets-repo.ts",
+          "src/lib/state-store/validation-runs-repo.ts"
+        ],
+        "owner": "shared",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/shared/process-liveness.ts",
+        "classification": "adapter",
+        "reason": "Runtime-owner recovery probes local process identity.",
+        "callers": ["src/lib/state-store/graph-workflow-runtime-owner.ts"],
+        "owner": "shared",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/shared/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/conversation-row-codec.ts",
+          "src/lib/state-store/migrations/0005-agent-session-ref-shape.ts"
+        ],
+        "owner": "shared",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/shared/session-ref-codec.ts",
+        "classification": "codec",
+        "reason": "Provider-neutral stored continuation decoding.",
+        "callers": [
+          "src/lib/state-store/conversation-row-codec.ts",
+          "src/lib/state-store/migrations/0005-agent-session-ref-shape.ts"
+        ],
+        "owner": "shared",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/shared/versioned-row-cache.ts",
+        "classification": "adapter",
+        "reason": "Repository cache coherence mechanism.",
+        "callers": [
+          "src/lib/state-store/conversations-repo.ts",
+          "src/lib/state-store/project-conversations-repo.ts",
+          "src/lib/state-store/sessions-repo.ts"
+        ],
+        "owner": "shared",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/specs/approval-applicability.ts",
+        "classification": "contract",
+        "reason": "Migration backfills approval fingerprints using spec-owned applicability semantics.",
+        "callers": [
+          "src/lib/state-store/migrations/0057-continuous-spec-review.ts"
+        ],
+        "owner": "specs",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/specs/delivery-plan-finalization.ts",
+        "classification": "codec",
+        "reason": "Migration reconstructs current managed-definition sources from stored plan data.",
+        "callers": [
+          "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts"
+        ],
+        "owner": "specs",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/specs/delivery-plan-hash.ts",
+        "classification": "contract",
+        "reason": "Approval persistence validates the same immutable candidate identity as specs.",
+        "callers": [
+          "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts",
+          "src/lib/state-store/spec-delivery-plan-repo.ts"
+        ],
+        "owner": "specs",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/specs/delivery-plan.ts",
+        "classification": "codec / contract",
+        "reason": "Parses/canonicalizes delivery documents; also imports shared post-launch remedy wording. Local transition policy is the separate leak below.",
+        "callers": [
+          "src/lib/state-store/migrations/0028-retire-legacy-spec-executions.ts",
+          "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts",
+          "src/lib/state-store/spec-delivery-plan-repo.ts"
+        ],
+        "owner": "specs",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/specs/execution-binding.ts",
+        "classification": "codec / contract",
+        "reason": "Frozen binding schema, identity mismatch errors and repository read contract.",
+        "callers": ["src/lib/state-store/spec-execution-binding-repo.ts"],
+        "owner": "specs",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/specs/handles.ts",
+        "classification": "codec",
+        "reason": "Spec row display handles use the canonical handle grammar.",
+        "callers": ["src/lib/state-store/specs-repo.ts"],
+        "owner": "specs",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/specs/revision-diff.ts",
+        "classification": "contract",
+        "reason": "Migration reads subject changes through spec-owned revision semantics.",
+        "callers": [
+          "src/lib/state-store/migrations/0057-continuous-spec-review.ts"
+        ],
+        "owner": "specs",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/specs/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/spec-delivery-plan-repo.ts",
+          "src/lib/state-store/spec-delivery-repo.ts",
+          "src/lib/state-store/spec-events-repo.ts",
+          "src/lib/state-store/spec-links-repo.ts",
+          "src/lib/state-store/spec-review-repo.ts",
+          "src/lib/state-store/specs-repo.ts"
+        ],
+        "owner": "specs",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/tickets/disclosure-limits.ts",
+        "classification": "contract",
+        "reason": "Storage and API share the permitted page bounds.",
+        "callers": [
+          "src/lib/state-store/ticket-relationships-store.ts",
+          "src/lib/state-store/ticket-status-updates-store.ts"
+        ],
+        "owner": "tickets",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/tickets/relationship-semantics.ts",
+        "classification": "contract",
+        "reason": "Pure endpoint-relative relationship projection; SQL still owns atomic relationship constraints.",
+        "callers": ["src/lib/state-store/ticket-relationships-store.ts"],
+        "owner": "tickets",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/tickets/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/ticket-relationships-store.ts",
+          "src/lib/state-store/ticket-status-updates-store.ts",
+          "src/lib/state-store/tickets-repo.ts"
+        ],
+        "owner": "tickets",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/tickets/ticket-keyset-cursor.ts",
+        "classification": "codec",
+        "reason": "Canonical cursor encoding, parsing and limits keep API paging aligned with SQL ordering.",
+        "callers": [
+          "src/lib/state-store/ticket-relationships-store.ts",
+          "src/lib/state-store/ticket-status-updates-store.ts",
+          "src/lib/state-store/tickets-repo.ts"
+        ],
+        "owner": "tickets",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/validation/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/migrations/0013-script-validator-commands.ts",
+          "src/lib/state-store/validation-runs-repo.ts"
+        ],
+        "owner": "validation",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/definition-schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/graph-workflow-archived-executions-repo.ts",
+          "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts",
+          "src/lib/state-store/migrations/0048-graph-workflow-document-content.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/edge-identity.ts",
+        "classification": "codec",
+        "reason": "Stored-definition edge-ID floor; current authors still supply valid IDs.",
+        "callers": [
+          "src/lib/state-store/graph-workflow-execution-codec.ts",
+          "src/lib/state-store/migrations/0015-mint-graph-workflow-edge-ids.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/event-schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": ["src/lib/state-store/graph-workflow-events-repo.ts"],
+        "owner": "workflow-graph",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/workflow-graph/execution-events.ts",
+        "classification": "adapter \u2014 excessive capability",
+        "reason": "setters imports pure boundary construction from a module that also owns publication and push dispatch; extracted in this change.",
+        "callers": ["src/lib/state-store/setters.ts"],
+        "owner": "workflow-graph",
+        "deletionCondition": "Addressed by importing the pure boundary-event-projection module; type-only delivery vocabulary may remain."
+      },
+      {
+        "target": "src/lib/workflow-graph/execution-origin.ts",
+        "classification": "codec",
+        "reason": "Stored execution origin floor, using retained seed fields.",
+        "callers": ["src/lib/state-store/graph-workflow-execution-codec.ts"],
+        "owner": "workflow-graph",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/workflow-graph/execution-result-projection.ts",
+        "classification": "contract",
+        "reason": "Pure durable-event/current-or-history projection shared by store and public readers.",
+        "callers": [
+          "src/lib/state-store/accessors.ts",
+          "src/lib/state-store/setters.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/workflow-graph/lifecycle-classifier.ts",
+        "classification": "contract / codec",
+        "reason": "Lease ownership and admission remain graph-owned and execute in the SQL critical section. Raw-record wrapper is decoding used only by migrations.",
+        "callers": [
+          "src/lib/state-store/graph-workflow-executions-repo.ts",
+          "src/lib/state-store/migrations/0024-execution-lease-and-result-deliveries.ts",
+          "src/lib/state-store/migrations/0030-native-sdd-v2-cutover.ts",
+          "src/lib/state-store/setters.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/placement-migration.ts",
+        "classification": "codec",
+        "reason": "Deterministic repair of retained executions lacking authored lane placement.",
+        "callers": [
+          "src/lib/state-store/graph-workflow-execution-codec.ts",
+          "src/lib/state-store/migrations/0016-graph-workflow-context-placement.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/references.ts",
+        "classification": "codec",
+        "reason": "Execution-reference schema; no engine action is requested.",
+        "callers": ["src/lib/state-store/execution-reference-repo.ts"],
+        "owner": "workflow-graph",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/workflow-graph/schemas.ts",
+        "classification": "codec / contract",
+        "reason": "Domain-owned schemas validate stored/public shapes; importing their values is expected.",
+        "callers": [
+          "src/lib/state-store/graph-workflow-archived-executions-repo.ts",
+          "src/lib/state-store/graph-workflow-execution-codec.ts",
+          "src/lib/state-store/graph-workflow-executions-repo.ts",
+          "src/lib/state-store/graph-workflow-pending-artifacts-repo.ts",
+          "src/lib/state-store/graph-workflow-result-deliveries-repo.ts",
+          "src/lib/state-store/migrations/0028-retire-legacy-spec-executions.ts",
+          "src/lib/state-store/migrations/0047-graph-workflow-lane-coverage.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/shared-document-store.ts",
+        "classification": "adapter",
+        "reason": "Migration captures immutable document blobs outside SQLite then compare-and-swaps references.",
+        "callers": [
+          "src/lib/state-store/migrations/0048-graph-workflow-document-content.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/storage-paths.ts",
+        "classification": "adapter",
+        "reason": "Migration addresses managed definition files through the canonical path builder.",
+        "callers": [
+          "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflow-graph/structural-revision.ts",
+        "classification": "contract",
+        "reason": "Canonical structural-change predicate is evaluated on every storage mutation, preserving the concurrency fence.",
+        "callers": [
+          "src/lib/state-store/graph-workflow-executions-repo.ts",
+          "src/lib/state-store/setters.ts"
+        ],
+        "owner": "workflow-graph",
+        "deletionCondition": "No edge-count target; retain this domain-owned contract/codec or deliberate adapter while its supported behavior exists."
+      },
+      {
+        "target": "src/lib/workflows/conversation/persisted-snapshot-codec.ts",
+        "classification": "codec",
+        "reason": "Migration converts actor snapshots through the actor-owned persistence codec.",
+        "callers": [
+          "src/lib/state-store/migrations/0007-move-machine-snapshots-to-sidecar.ts"
+        ],
+        "owner": "workflows",
+        "deletionCondition": "Retire the migration/decoder only after every supported stored population no longer needs it; runtime callers remain governed by their canonical owner."
+      },
+      {
+        "target": "src/lib/workflows/plan-review/schemas.ts",
+        "classification": "codec / contract with excessive imported capability",
+        "reason": "Review repository needs verdict schema only; the same module imports authoring validation and Node crypto through definition hashing.",
+        "callers": ["src/lib/state-store/graph-plan-reviews-repo.ts"],
+        "owner": "workflows",
+        "deletionCondition": "Separate review-record schemas from review identity operations; repository schema import no longer reaches authoring validation or crypto."
+      }
+    ]
+  },
+  "workflowCrossings": {
+    "targetCount": 80,
+    "edgeCount": 184,
+    "groups": {
+      "primitives": {
+        "classification": "contract / adapter",
+        "owner": "workflows/primitives: shared AgentCall, lane, artifact, gate and envelope modules",
+        "disposition": "supported dependency",
+        "deletionCondition": "None while the supported primitive serves graph and its other consumers. Retire a primitive only through the adoption matrix; do not duplicate its decisions in graph."
+      },
+      "primitive-composition": {
+        "classification": "composition",
+        "owner": "graph production/lane tool composition, using workflow primitive stores",
+        "disposition": "retain at the composition boundary",
+        "deletionCondition": "Remove from a caller if that caller becomes a pure core; supply the store/service via its declared port then."
+      },
+      "conversation-contract": {
+        "classification": "contract",
+        "owner": "conversation lifecycle semantic manager and turn contracts",
+        "disposition": "supported dependency",
+        "deletionCondition": "None while graph turns run as conversations. Consumers use semantic admission, cancellation and result contracts, never raw actor events."
+      },
+      "conversation-adapter": {
+        "classification": "adapter",
+        "owner": "conversation lifecycle task dispatch",
+        "disposition": "supported dependency",
+        "deletionCondition": "Remove only when the graph operation no longer uses the conversation-hosted execution shape; do not bypass its transcript/cancellation ownership."
+      },
+      "conversation-composition": {
+        "classification": "composition",
+        "owner": "conversation production binding of graph-provided runtime instructions/result delivery",
+        "disposition": "retain only in the production boundary",
+        "deletionCondition": "Any occurrence in a designated lifecycle core must move behind an injected hook. Production bindings remain explicit while those graph features exist."
+      },
+      "graph-authoring-contract": {
+        "classification": "contract / codec",
+        "owner": "graph authoring semantics, persisted definitions and diagnostic vocabulary",
+        "disposition": "retain one canonical decision/schema",
+        "deletionCondition": "No edge-count deletion target. Consolidate ownership only if the authoring API itself changes; migrate historical decoders only after retained rows no longer need them."
+      },
+      "graph-authoring-adapter": {
+        "classification": "adapter",
+        "owner": "graph definition/template HTTP and validation adapters (currently split across workflows and workflow-graph)",
+        "disposition": "intentional application adapter",
+        "deletionCondition": "Move or delete only with a responsibility-based authoring-adapter consolidation. Graph engine and generic primitives must not acquire HTTP response construction."
+      },
+      "graph-authoring-composition": {
+        "classification": "composition",
+        "owner": "graph definition/template/planner entrypoint composition",
+        "disposition": "retain at entrypoints",
+        "deletionCondition": "Remove if a caller is extracted into a pure authoring core; bind the same service/port at the outer route instead."
+      },
+      "graph-merge-adapter": {
+        "classification": "adapter / contract",
+        "owner": "merge lifecycle; graph-merge-runner adapts graph joins to the supported merge machine",
+        "disposition": "supported orchestration adapter",
+        "deletionCondition": "None merely because it imports the machine. Replace only if a semantic merge-host API subsumes both graph and job hosting without duplicating phase/outcome logic."
+      },
+      "graph-merge-policy": {
+        "classification": "contract / adapter",
+        "owner": "graph lifecycle owns execution lease; merge initiation/publish consume its admission decision",
+        "disposition": "retain canonical graph lease decision",
+        "deletionCondition": "None while graph lease governs session delivery. Keep the authoritative publish check under its lock even when an advisory preflight exists."
+      },
+      "collaboration-contract": {
+        "classification": "contract",
+        "owner": "collaboration protocol and graph collaboration configuration",
+        "disposition": "retained shared protocol",
+        "deletionCondition": "Split neutral artifact vocabulary from graph configuration only if independent change or broader reuse requires it; preserve one artifact shape and frozen config decoding."
+      },
+      "collaboration-adapter": {
+        "classification": "adapter",
+        "owner": "collaboration slice; graph collaborator caller adapts graph lanes to its artifacts/prompts/policy",
+        "disposition": "supported composition of a collaboration slice",
+        "deletionCondition": "None while graph invokes this slice. Do not create a second negotiator to remove cross-folder edges."
+      },
+      "collaboration-composition": {
+        "classification": "composition",
+        "owner": "graph lane-tool production loader binding the collaboration slice",
+        "disposition": "retain at production loader",
+        "deletionCondition": "Move behind injected collaborators if lane-tool core is separated; production agent callers/stores must remain outside that core."
+      },
+      "workflow-composition": {
+        "classification": "composition / contract",
+        "owner": "workflows/production.ts composition shared by graph and merge hosts; graph/merge own the declared ports",
+        "disposition": "deliberate composition root",
+        "deletionCondition": "No deletion target while both hosts share these bindings. Pure engines must receive the resulting ports rather than import this root."
+      },
+      "live-read-contract": {
+        "classification": "contract / codec",
+        "owner": "graph lifecycle/result/event vocabularies; workflow queries and SSE reactions are client adapters",
+        "disposition": "supported read contract",
+        "deletionCondition": "None while UI and transport consume those graph records. Do not infer a runtime policy violation from a type-only import."
+      },
+      "review-identity": {
+        "classification": "contract",
+        "owner": "graph plan review identity; graph owns canonical definition hashing",
+        "disposition": "retain canonical hash; separate it from review-record schema loading",
+        "deletionCondition": "The review repository schema import must no longer reach plan validation or Node crypto. Keep canonical authored-field selection and resulting hashes identical."
+      }
+    },
+    "targets": [
+      {
+        "target": "src/lib/workflow-graph/approval-snapshot-schemas.ts",
+        "group": "live-read-contract",
+        "valueCallers": ["src/lib/workflows/approval-snapshot-query.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/assignment-reference-labels.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/plan-validation.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/assignment-references.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": [
+          "src/lib/workflows/assignment-reference-refusal.ts",
+          "src/lib/workflows/definition-edit-handler.ts",
+          "src/lib/workflows/definition-route-handlers.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/authored-launch-admission.ts",
+        "group": "graph-authoring-composition",
+        "valueCallers": [
+          "src/lib/workflows/definition-edit-handler.ts",
+          "src/lib/workflows/definition-route-handlers.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/collaboration-schemas.ts",
+        "group": "collaboration-contract",
+        "valueCallers": [
+          "src/lib/workflows/collaboration/decision-to-workflow-result.ts",
+          "src/lib/workflows/collaboration/feature-snapshot.ts",
+          "src/lib/workflows/collaboration/types.ts",
+          "src/lib/workflows/collaboration/workflow-envelope.ts",
+          "src/lib/workflows/edit-schemas.ts"
+        ],
+        "typeOnlyCallers": ["src/lib/workflows/collaboration/backend-pair.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/command-selector-validation.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/plan-validation.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/config-schemas.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/edit-schemas.ts"],
+        "typeOnlyCallers": ["src/lib/workflows/validation-fix/types.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/criteria/criterion-records.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": [
+          "src/lib/workflows/edit-schemas.ts",
+          "src/lib/workflows/plan-lints.ts",
+          "src/lib/workflows/plan-validation.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/definition-edits.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/definition-edit-handler.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/definition-mutation-coordinator.ts",
+        "group": "graph-authoring-composition",
+        "valueCallers": [
+          "src/lib/workflows/definition-route-handlers.ts",
+          "src/lib/workflows/managed-workflow-definition-composition.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/definition-schemas.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": [
+          "src/lib/workflows/edit-schemas.ts",
+          "src/lib/workflows/generate-route-handlers.ts",
+          "src/lib/workflows/plan-validation.ts",
+          "src/lib/workflows/queries.ts",
+          "src/lib/workflows/workflow-draft/server.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflows/definition-edit-handler.ts",
+          "src/lib/workflows/definition-route-handlers.ts",
+          "src/lib/workflows/graph-workflow-event-window.ts",
+          "src/lib/workflows/mutations.ts",
+          "src/lib/workflows/plan-review/schemas.ts",
+          "src/lib/workflows/workflow-draft/registry.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflow-graph/definition-validation.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/plan-validation.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/edge-guard-validation.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/plan-validation.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/event-schemas.ts",
+        "group": "live-read-contract",
+        "valueCallers": [
+          "src/lib/workflows/queries.ts",
+          "src/lib/workflows/sse-reactions.ts"
+        ],
+        "typeOnlyCallers": ["src/lib/workflows/graph-workflow-event-window.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/execution-contract-port.ts",
+        "group": "workflow-composition",
+        "valueCallers": [],
+        "typeOnlyCallers": [
+          "src/lib/workflows/definition-edit-handler.ts",
+          "src/lib/workflows/definition-route-handlers.ts",
+          "src/lib/workflows/production-contracts.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflow-graph/execution-lifecycle-port.ts",
+        "group": "workflow-composition",
+        "valueCallers": [],
+        "typeOnlyCallers": ["src/lib/workflows/production-contracts.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/execution-result-projection.ts",
+        "group": "live-read-contract",
+        "valueCallers": [],
+        "typeOnlyCallers": ["src/lib/workflows/queries.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/execution-target-resolver.ts",
+        "group": "conversation-contract",
+        "valueCallers": [],
+        "typeOnlyCallers": ["src/lib/workflows/conversation/manager.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/lifecycle-classifier.ts",
+        "group": "graph-merge-policy",
+        "valueCallers": ["src/lib/workflows/merge/actors.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/locked-regions.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/definition-route-handlers.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/managed-definition.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/definition-route-handlers.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/parameter-validation.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/committed-source-locator-lint.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/planner.ts",
+        "group": "graph-authoring-composition",
+        "valueCallers": ["src/lib/workflows/generate-route-handlers.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/planning-telemetry.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": ["src/lib/workflows/definition-route-handlers.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/resolve-config.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/definition-route-handlers.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/result-delivery-service.ts",
+        "group": "conversation-composition",
+        "valueCallers": ["src/lib/workflows/conversation/rehydration.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/result-output-contract.ts",
+        "group": "live-read-contract",
+        "valueCallers": ["src/lib/workflows/queries.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/schema-cutover-guard.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/plan-validation.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/schemas.ts",
+        "group": "live-read-contract",
+        "valueCallers": ["src/lib/workflows/queries.ts"],
+        "typeOnlyCallers": [
+          "src/lib/workflows/conversation/assemble-user-blocks.ts",
+          "src/lib/workflows/conversation/effects.ts",
+          "src/lib/workflows/merge/actors.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflow-graph/seeded-documents.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflows/committed-source-locator-lint.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/session-merge-admission.ts",
+        "group": "graph-merge-policy",
+        "valueCallers": ["src/lib/workflows/merge/initiation.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/stale-workflow-definition.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": [
+          "src/lib/workflows/definition-edit-handler.ts",
+          "src/lib/workflows/definition-route-handlers.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/storage.ts",
+        "group": "graph-authoring-composition",
+        "valueCallers": [
+          "src/lib/workflows/definition-edit-handler.ts",
+          "src/lib/workflows/definition-route-handlers.ts",
+          "src/lib/workflows/managed-workflow-definition-composition.ts"
+        ],
+        "typeOnlyCallers": ["src/lib/workflows/plan-validation.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/template-library-route-handlers.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": ["src/lib/workflows/route-handlers.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/template-library-service.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": [],
+        "typeOnlyCallers": ["src/lib/workflows/queries.ts"]
+      },
+      {
+        "target": "src/lib/workflow-graph/validate-route-handlers.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": ["src/lib/workflows/validate-route-composition.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/validator-runtime-instructions.ts",
+        "group": "conversation-composition",
+        "valueCallers": ["src/lib/workflows/conversation/production.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflow-graph/working-definition-hash.ts",
+        "group": "review-identity",
+        "valueCallers": ["src/lib/workflows/plan-review/schemas.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/assignment-reference-refusal.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/template-library-route-handlers.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/charter-schemas.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": [
+          "src/lib/workflow-graph/charter/render.ts",
+          "src/lib/workflow-graph/charter/service.ts",
+          "src/lib/workflow-graph/definition-schemas.ts",
+          "src/lib/workflow-graph/definition-validation.ts",
+          "src/lib/workflow-graph/live-outline-schemas.ts",
+          "src/lib/workflow-graph/runtime-edits.ts",
+          "src/lib/workflow-graph/schemas.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/charter/invariant-scope.ts",
+          "src/lib/workflow-graph/definition-edits.ts",
+          "src/lib/workflow-graph/iteration-prompt.ts",
+          "src/lib/workflow-graph/planner.ts",
+          "src/lib/workflow-graph/validator-runner.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/collaboration/agent-caller-production.ts",
+        "group": "collaboration-composition",
+        "valueCallers": ["src/lib/workflow-graph/lane-tool-context-loader.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/collaboration/artifact-files.ts",
+        "group": "collaboration-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/collaboration/artifacts-store.ts",
+        "group": "collaboration-composition",
+        "valueCallers": ["src/lib/workflow-graph/lane-tool-context-loader.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/collaboration/backend-pair.ts",
+        "group": "collaboration-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/lane-tool-context-loader.ts",
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/collaboration/helpers.ts",
+        "group": "collaboration-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/collaboration/policy.ts",
+        "group": "collaboration-composition",
+        "valueCallers": ["src/lib/workflow-graph/lane-tool-context-loader.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/collaboration/prompt-builders.ts",
+        "group": "collaboration-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/collaboration/workflow-envelope.ts",
+        "group": "collaboration-adapter",
+        "valueCallers": ["src/lib/workflow-graph/lane-tool-context-loader.ts"],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/committed-source-locator-lint.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/validate-route-handlers.ts",
+          "src/lib/workflow-graph/workflow-manager.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/conversation/execute-fresh-task-run.ts",
+        "group": "conversation-contract",
+        "valueCallers": [],
+        "typeOnlyCallers": ["src/lib/workflow-graph/graph-merge-runner.ts"]
+      },
+      {
+        "target": "src/lib/workflows/conversation/execute-workflow-task-run.ts",
+        "group": "conversation-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/plan-repair/agent-runner.ts",
+          "src/lib/workflow-graph/planner.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/conversation/manager.ts",
+        "group": "conversation-contract",
+        "valueCallers": [
+          "src/lib/workflow-graph/advisory-response-runner.ts",
+          "src/lib/workflow-graph/context-output-capture-runner.ts",
+          "src/lib/workflow-graph/implementer-runner.ts",
+          "src/lib/workflow-graph/production.ts",
+          "src/lib/workflow-graph/validator-runner.ts",
+          "src/lib/workflow-graph/workflow-manager.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/conversation-turn-result.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/conversation/turn-result.ts",
+        "group": "conversation-contract",
+        "valueCallers": [
+          "src/lib/workflow-graph/advisory-response-runner.ts",
+          "src/lib/workflow-graph/context-output-capture-runner.ts",
+          "src/lib/workflow-graph/validator-runner.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/conversation-turn-result.ts",
+          "src/lib/workflow-graph/errors.ts",
+          "src/lib/workflow-graph/plan-repair/agent-runner.ts",
+          "src/lib/workflow-graph/planner.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/conversation/turn-spec.ts",
+        "group": "conversation-contract",
+        "valueCallers": [],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/advisory-response-runner.ts",
+          "src/lib/workflow-graph/plan-repair/agent-runner.ts",
+          "src/lib/workflow-graph/validator-runner.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/definition-edit-handler.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": [
+          "src/lib/workflow-graph/template-library-route-handlers.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/edit-schemas.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": [
+          "src/lib/workflow-graph/plan-repair/schemas.ts",
+          "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+          "src/lib/workflow-graph/runtime-edits.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/definition-edits.ts",
+          "src/lib/workflow-graph/document-edit-mechanics.ts",
+          "src/lib/workflow-graph/execution-contract-port.ts",
+          "src/lib/workflow-graph/expansion-service.ts",
+          "src/lib/workflow-graph/live-edit-apply.ts",
+          "src/lib/workflow-graph/live-edit-preparation.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/managed-definition-contract.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflow-graph/managed-definition.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/managed-definition-preflight-contract.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": [
+          "src/lib/workflow-graph/managed-definition-preflight.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/merge/actors.ts",
+        "group": "graph-merge-adapter",
+        "valueCallers": ["src/lib/workflow-graph/graph-merge-runner.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/merge/delivery-lifecycle-port.ts",
+        "group": "graph-merge-adapter",
+        "valueCallers": ["src/lib/workflow-graph/graph-merge-runner.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/merge/machine.ts",
+        "group": "graph-merge-adapter",
+        "valueCallers": ["src/lib/workflow-graph/graph-merge-runner.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/merge/types.ts",
+        "group": "graph-merge-adapter",
+        "valueCallers": [],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/graph-merge-runner.ts",
+          "src/lib/workflow-graph/join-runner.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/plan-issue-locator.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": [
+          "src/lib/workflow-graph/authored-launch-admission.ts",
+          "src/lib/workflow-graph/execution-repository.ts",
+          "src/lib/workflow-graph/storage.ts",
+          "src/lib/workflow-graph/validate-route-handlers.ts",
+          "src/lib/workflow-graph/workflow-manager.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/plan-validation-schemas.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflow-graph/schemas.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/plan-validation.ts",
+        "group": "graph-authoring-contract",
+        "valueCallers": ["src/lib/workflow-graph/authored-launch-admission.ts"],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/assignment-references.ts",
+          "src/lib/workflow-graph/execution-route-handlers.ts",
+          "src/lib/workflow-graph/lifecycle-http.ts",
+          "src/lib/workflow-graph/validate-route-handlers.ts",
+          "src/lib/workflow-graph/workflow-manager.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/primitives/agent-call-vocabulary.ts",
+        "group": "primitives",
+        "valueCallers": [
+          "src/lib/workflow-graph/live-outline-schemas.ts",
+          "src/lib/workflow-graph/schemas.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/context-output-capture.ts",
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/primitives/artifact-registry.ts",
+        "group": "primitives",
+        "valueCallers": [
+          "src/lib/workflow-graph/charter/service.ts",
+          "src/lib/workflow-graph/script-validator-runner.ts",
+          "src/lib/workflow-graph/shared-documents.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/primitives/circuit-breaker-gate.ts",
+        "group": "primitives",
+        "valueCallers": [
+          "src/lib/workflow-graph/engine-composition.ts",
+          "src/lib/workflow-graph/execution-loop.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/context-validation-coordinator.ts",
+          "src/lib/workflow-graph/iteration-orchestrator.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/primitives/default-session-workflow-envelope-store.ts",
+        "group": "primitive-composition",
+        "valueCallers": ["src/lib/workflow-graph/lane-tool-context-loader.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/primitives/lane-service.ts",
+        "group": "primitives",
+        "valueCallers": [
+          "src/lib/workflow-graph/engine-composition.ts",
+          "src/lib/workflow-graph/lane-continuity.ts",
+          "src/lib/workflow-graph/lane-tool-context-loader.ts"
+        ],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/iteration-orchestrator.ts",
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/primitives/lane-store.ts",
+        "group": "primitives",
+        "valueCallers": ["src/lib/workflow-graph/lane-tool-context-loader.ts"],
+        "typeOnlyCallers": ["src/lib/workflow-graph/graph-lane-store.ts"]
+      },
+      {
+        "target": "src/lib/workflows/primitives/lane-vocabulary.ts",
+        "group": "primitives",
+        "valueCallers": [
+          "src/lib/workflow-graph/graph-lane-store.ts",
+          "src/lib/workflow-graph/schemas.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/primitives/output-schema-subset.ts",
+        "group": "primitives",
+        "valueCallers": [
+          "src/lib/workflow-graph/edge-guard-validation.ts",
+          "src/lib/workflow-graph/loop-resolver.ts",
+          "src/lib/workflow-graph/loop-settlement.ts",
+          "src/lib/workflow-graph/output-schema-validation.ts",
+          "src/lib/workflow-graph/route-projection.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/primitives/script-validation-gate.ts",
+        "group": "primitives",
+        "valueCallers": [
+          "src/lib/workflow-graph/context-validation-coordinator.ts"
+        ],
+        "typeOnlyCallers": ["src/lib/workflow-graph/script-validator-runner.ts"]
+      },
+      {
+        "target": "src/lib/workflows/primitives/workflow-agent-caller.ts",
+        "group": "primitives",
+        "valueCallers": [],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/workflow-collaborator-caller.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/production-contracts.ts",
+        "group": "workflow-composition",
+        "valueCallers": [],
+        "typeOnlyCallers": ["src/lib/workflow-graph/production.ts"]
+      },
+      {
+        "target": "src/lib/workflows/production.ts",
+        "group": "workflow-composition",
+        "valueCallers": [
+          "src/lib/workflow-graph/expansion-production.ts",
+          "src/lib/workflow-graph/lane-tool-context-loader.ts",
+          "src/lib/workflow-graph/production.ts",
+          "src/lib/workflow-graph/template-library-route-handlers.ts"
+        ],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/validation-fix/types.ts",
+        "group": "graph-merge-adapter",
+        "valueCallers": [],
+        "typeOnlyCallers": [
+          "src/lib/workflow-graph/graph-merge-runner.ts",
+          "src/lib/workflow-graph/join-runner.ts",
+          "src/lib/workflow-graph/lane-merge-validation.ts"
+        ]
+      },
+      {
+        "target": "src/lib/workflows/workflow-draft/portable-config.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": ["src/lib/workflow-graph/planner.ts"],
+        "typeOnlyCallers": []
+      },
+      {
+        "target": "src/lib/workflows/workflow-draft/registry.ts",
+        "group": "graph-authoring-adapter",
+        "valueCallers": ["src/lib/workflow-graph/planner.ts"],
+        "typeOnlyCallers": []
+      }
+    ]
+  },
+  "churn": {
+    "window": 60,
+    "head": "a19d978dd47960ffabc38353e4a909d5d10f1182",
+    "excludedMechanical": [
+      {
+        "commit": "3eedb6455f33dc4f08674c8a9de8ad0c93f20ea8",
+        "subject": "regenerate cursor catalog"
+      },
+      {
+        "commit": "8e9cc2ec7fb2b0e6f9b46ab34f422a848aad4f23",
+        "subject": "Delete historical docs"
+      },
+      {
+        "commit": "ef00e2318421df48675eafd4fbec5a97d4cb4300",
+        "subject": "update cursor catalog"
+      },
+      {
+        "commit": "2795b676136d0b28c2bc2420705aa20bbb45f0c0",
+        "subject": "updated cursor catalog"
+      },
+      {
+        "commit": "598a8f881e205186d1da0b7aeddee43b89d72d51",
+        "subject": "Add copy of graph-workflow-audit skill for Codex"
+      }
+    ],
+    "retainedCommits": 55,
+    "candidates": [
+      {
+        "candidate": "Conversation production composition",
+        "paths": [
+          "src/lib/workflows/conversation/manager.ts",
+          "src/lib/workflows/conversation/production.ts",
+          "src/lib/conversations/message-queue-drain.ts",
+          "src/lib/conversation-commands/dispatch.ts",
+          "src/lib/conversation-commands/service.ts"
+        ],
+        "touchingCommits": 10,
+        "perPath": {
+          "src/lib/workflows/conversation/manager.ts": 7,
+          "src/lib/workflows/conversation/production.ts": 6,
+          "src/lib/conversations/message-queue-drain.ts": 0,
+          "src/lib/conversation-commands/dispatch.ts": 0,
+          "src/lib/conversation-commands/service.ts": 2
+        },
+        "commits": [
+          "4c746e3185183e583a46e4418de3de5a65338a46",
+          "5fd69a5a8c3a8b3d3c481dcc84a4eca0a8f7f4a9",
+          "fa2de91e71cd213f13ee00d68e6c407b5dfeceb2",
+          "7a1dd012d7904d7c4de89acab50006c2ec70284f",
+          "fb948e5b090d7678950fbf3ec74f95baa1832177",
+          "10db71d79617a18c292da5eb89c0771844fb4620",
+          "17d22efe1d7ac342b6d0887ccb20879113e3466a",
+          "f5fa3994c742092e876fdcc8509b6a6b77c4969c",
+          "b310a7bb2402ef2b9f59a19de062fdb8e3ea94b8",
+          "3027635c2800539f378b3ebcd664c147ecbc3afa"
+        ]
+      },
+      {
+        "candidate": "Graph authoring adapters",
+        "paths": [
+          "src/lib/workflows/definition-route-handlers.ts",
+          "src/lib/workflows/definition-edit-handler.ts",
+          "src/lib/workflows/plan-validation.ts"
+        ],
+        "touchingCommits": 4,
+        "perPath": {
+          "src/lib/workflows/definition-route-handlers.ts": 2,
+          "src/lib/workflows/definition-edit-handler.ts": 1,
+          "src/lib/workflows/plan-validation.ts": 2
+        },
+        "commits": [
+          "5542641e68d541a99932fb17b641c5d46b375010",
+          "7a1dd012d7904d7c4de89acab50006c2ec70284f",
+          "b21f89327c510246050c0d305fe203deb20ebb30",
+          "b310a7bb2402ef2b9f59a19de062fdb8e3ea94b8"
+        ]
+      },
+      {
+        "candidate": "Boundary event projection",
+        "paths": [
+          "src/lib/state-store/setters.ts",
+          "src/lib/workflow-graph/execution-events.ts"
+        ],
+        "touchingCommits": 3,
+        "perPath": {
+          "src/lib/state-store/setters.ts": 2,
+          "src/lib/workflow-graph/execution-events.ts": 1
+        },
+        "commits": [
+          "5fd69a5a8c3a8b3d3c481dcc84a4eca0a8f7f4a9",
+          "b310a7bb2402ef2b9f59a19de062fdb8e3ea94b8",
+          "ab2746c503a18c9a10f7a198633b61fb607dddd1"
+        ]
+      },
+      {
+        "candidate": "Graph manager production composition",
+        "paths": [
+          "src/lib/workflow-graph/workflow-manager.ts",
+          "src/lib/workflows/production.ts",
+          "src/lib/jobs/queue.ts"
+        ],
+        "touchingCommits": 3,
+        "perPath": {
+          "src/lib/workflow-graph/workflow-manager.ts": 3,
+          "src/lib/workflows/production.ts": 1,
+          "src/lib/jobs/queue.ts": 1
+        },
+        "commits": [
+          "5640e05ddc4eb3ba93950aec80475c95cccaa021",
+          "b310a7bb2402ef2b9f59a19de062fdb8e3ea94b8",
+          "ab2746c503a18c9a10f7a198633b61fb607dddd1"
+        ]
+      },
+      {
+        "candidate": "Delivery-plan transition policy",
+        "paths": [
+          "src/lib/state-store/spec-delivery-plan-repo.ts",
+          "src/lib/specs/delivery-plan.ts"
+        ],
+        "touchingCommits": 2,
+        "perPath": {
+          "src/lib/state-store/spec-delivery-plan-repo.ts": 1,
+          "src/lib/specs/delivery-plan.ts": 2
+        },
+        "commits": [
+          "5542641e68d541a99932fb17b641c5d46b375010",
+          "7a1dd012d7904d7c4de89acab50006c2ec70284f"
+        ]
+      },
+      {
+        "candidate": "Plan-review schemas and hashing",
+        "paths": [
+          "src/lib/workflows/plan-review/schemas.ts",
+          "src/lib/state-store/graph-plan-reviews-repo.ts"
+        ],
+        "touchingCommits": 1,
+        "perPath": {
+          "src/lib/workflows/plan-review/schemas.ts": 1,
+          "src/lib/state-store/graph-plan-reviews-repo.ts": 0
+        },
+        "commits": ["7a1dd012d7904d7c4de89acab50006c2ec70284f"]
+      },
+      {
+        "candidate": "Session optimistic composition",
+        "paths": [
+          "src/lib/shared/optimistic.ts",
+          "src/lib/sessions/optimistic.ts"
+        ],
+        "touchingCommits": 1,
+        "perPath": {
+          "src/lib/shared/optimistic.ts": 1,
+          "src/lib/sessions/optimistic.ts": 0
+        },
+        "commits": ["b310a7bb2402ef2b9f59a19de062fdb8e3ea94b8"]
+      },
+      {
+        "candidate": "Backend admission schema split",
+        "paths": ["src/lib/agent-backends/execution-admission.ts"],
+        "touchingCommits": 0,
+        "perPath": {
+          "src/lib/agent-backends/execution-admission.ts": 0
+        },
+        "commits": []
+      },
+      {
+        "candidate": "Raw persisted lease decoding",
+        "paths": ["src/lib/workflow-graph/lifecycle-classifier.ts"],
+        "touchingCommits": 0,
+        "perPath": {
+          "src/lib/workflow-graph/lifecycle-classifier.ts": 0
+        },
+        "commits": []
+      },
+      {
+        "candidate": "Shared canonical serialization",
+        "paths": ["src/lib/state-store/serialization.ts"],
+        "touchingCommits": 0,
+        "perPath": {
+          "src/lib/state-store/serialization.ts": 0
+        },
+        "commits": []
+      }
+    ],
+    "commits": [
+      {
+        "commit": "a19d978dd47960ffabc38353e4a909d5d10f1182",
+        "subject": "Upgrade cli-for-agents to fd449bc and adopt its on-demand artifacts and check previews",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "3eedb6455f33dc4f08674c8a9de8ad0c93f20ea8",
+        "subject": "regenerate cursor catalog",
+        "mechanicalExcluded": true
+      },
+      {
+        "commit": "ac22ac5dd3a25f128042a4a9847dcc600badab60",
+        "subject": "Make memory index inclusion editable and explain the memory system",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "5dba7bbad95db158473739fb635e1e951b015343",
+        "subject": "Complete a displaced Claude external turn so later turns are admitted",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "9176b74f6594e34a9b5ff014490e22863f0f881b",
+        "subject": "Add a global dev-server view and project-root dev servers",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "5542641e68d541a99932fb17b641c5d46b375010",
+        "subject": "Review native SDD drafts continuously; sign-off is the only freeze",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "2ab8dff6a970f5c70c11f0e2910bd8629cb36e08",
+        "subject": "Deliver queued messages in-turn when the model selection is unchanged",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "8e9cc2ec7fb2b0e6f9b46ab34f422a848aad4f23",
+        "subject": "Delete historical docs",
+        "mechanicalExcluded": true
+      },
+      {
+        "commit": "4c746e3185183e583a46e4418de3de5a65338a46",
+        "subject": "Fix checkpoint-capture transcript noise, slow capture writes, and cleanup false failures",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "3a3b8ba289c89c9f7d2f839ad44315d2ed1e7cf7",
+        "subject": "Bound graph workflows to the operating envelope after the skill-sync audit",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "ef00e2318421df48675eafd4fbec5a97d4cb4300",
+        "subject": "update cursor catalog",
+        "mechanicalExcluded": true
+      },
+      {
+        "commit": "629a3b1141d44e8ba24024be9587d90f4b6f54f7",
+        "subject": "Generate Codex skills and agents from Claude sources in a pre-commit hook",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "17f8f2213eb51432ac2126c122cac87b3d269ac8",
+        "subject": "fix: simplify Native SDD amendments and improve cctl diagnostics",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "f67c251a936332a4833e00f032fe8bb055fa4621",
+        "subject": "Fix graph-workflow output capture, input export, and doc scoping from the songwriting audit",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "78ba2ba5b669774407704b678c8723e1dff85f76",
+        "subject": "Add GPT-6 Sol and Luna to Codex, make Sol the default, and upgrade Codex to 0.156.0",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "daba4e65ee5c81cc29f81a69bb805ed943a4421d",
+        "subject": "Make a signalled server exit even with open SSE streams",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "2795b676136d0b28c2bc2420705aa20bbb45f0c0",
+        "subject": "updated cursor catalog",
+        "mechanicalExcluded": true
+      },
+      {
+        "commit": "5fd69a5a8c3a8b3d3c481dcc84a4eca0a8f7f4a9",
+        "subject": "Align managed capability controls with backend delivery",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "197487a7d43b31ecd0b72ce1a62cb5e999aef842",
+        "subject": "Upgrade the Claude Agent SDK to 0.3.280 and run Opus 5.5",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "fa2de91e71cd213f13ee00d68e6c407b5dfeceb2",
+        "subject": "Verify the full Cursor application matrix and fix the /collab worker handoff (#125)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "7a1dd012d7904d7c4de89acab50006c2ec70284f",
+        "subject": "Upgrade Knip to 6.37, rewrite its config, and delete the dead code it found",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "8989f4dda886e541bbd039f44601284d45b12696",
+        "subject": "fix: make notepad rendering tests deterministic",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "2f0210006d96ffd29c9bf7008de16493c71a495a",
+        "subject": "Sync Cursor models at build time and make project config opt-out",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "c73068a42c758322364d67e6a6fb12423fbfa3e8",
+        "subject": "Redesign conversation actions and unify shared menu styling",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "fb948e5b090d7678950fbf3ec74f95baa1832177",
+        "subject": "Give structured output one owner: work, format, and on-session repair (#156)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "161021a0bdd22405185a5f1e838861baf5e2f0c0",
+        "subject": "Fix loop layout and grouping in the workflow builder (#157)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "10db71d79617a18c292da5eb89c0771844fb4620",
+        "subject": "Dispatch graph validators as conversation turns (#155)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "17d22efe1d7ac342b6d0887ccb20879113e3466a",
+        "subject": "Reconcile Cursor billed cost with a durable per-turn ledger (#120)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "aa434c3278dc31d8f567f98527d4237a1e1c800f",
+        "subject": "Generalize Collaboration Mode to admit Cursor in either position",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "cd384548775fe5aa84c3e7ccd5d96ced95fa3786",
+        "subject": "Retire a withdrawn design's approval asks on return to Requirements",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "84dbd472252c39caee6eec82da9b32ad9c8c4c55",
+        "subject": "Fix native skill discovery and invocation delivery",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "496a4e06187931c2ae053e74504edafeacbb35f7",
+        "subject": "feat(skills): add a native SDD design workflow trial",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "b21f89327c510246050c0d305fe203deb20ebb30",
+        "subject": "Remove task-strategy for graph workflow validators",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "5640e05ddc4eb3ba93950aec80475c95cccaa021",
+        "subject": "Remove graph workflow context limits and conversation rotation",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "22ffd48a0ba63bbd3ddc098442184902e321768c",
+        "subject": "fix(cli): encode session names in cctl recovery references",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "7941cff6cbb61d05c81b62e5d66220768abd4c68",
+        "subject": "fix(conversations): surface created conversations in the session detail cache",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "f5fa3994c742092e876fdcc8509b6a6b77c4969c",
+        "subject": "feat(checkpoints): add optional agent handoff before compaction",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "cb032a5c3a4078f6d23ce18689fb873f870fe7cb",
+        "subject": "feat(cursor): observe native summaries and disclose unknown context",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "3ab481053dd0c458cc3a8a0df9d8f6e982c4a205",
+        "subject": "Hide completed tickets by default in dependency maps (#147)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "e1e766ff78b8f00f918d29e7abba0f982345db35",
+        "subject": "Make fork checkpoint fields optional",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "836161822199825b86319e7c6906356bc4d06460",
+        "subject": "Fix dev serve command issue with spaces in session names",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "f138c012eae298cba0cf174d8f3a66a1bed475a4",
+        "subject": "feat(tickets): add title search, lane sorting, and dependency views",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "c561af712cef9cece08523fa0c1b057ff12f7a3e",
+        "subject": "fix(spec-studio): expose acceptance criteria reaffirmation (#145)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "0c34f2699e44d9da89dfd6150e5fa0468e405bf3",
+        "subject": "fix(workflows): lay out read-only graph contexts (#146)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "6f57771dc3ca5541bb0cad096bc8aa67c0bb6a93",
+        "subject": "Update cctl for the simplified cli-for-agents runtime",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "42946e4cc18de1b729653f679b042db6339a7279",
+        "subject": "Migrate cctl to cli-for-agents",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "478d2b13b8052c0cb77ca48562bbeef6e6d608e3",
+        "subject": "Preserve failed conversation turns as durable notices",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "b310a7bb2402ef2b9f59a19de062fdb8e3ea94b8",
+        "subject": "Simplify mechanisms outside the operating envelope (#141)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "12b0193965e478cbdd2dff1aecd29eaa6d909ec4",
+        "subject": "Dismiss the selection Comment/Clip affordance on an outside press",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "3027635c2800539f378b3ebcd664c147ecbc3afa",
+        "subject": "test: align queue regressions with in-turn delivery semantics",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "6ea6082edd6b9da1b6dd4b056a11c03db40c2001",
+        "subject": "Prevent MCP server error from killing Cursor conversation",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "2d1b564add93a132a2f3ef233e73dbf341e46603",
+        "subject": "Add ENVELOPE.md stating Command Center's operating envelope",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "d73fd355358f3a160bb56631cf305fd56d8bc23c",
+        "subject": "Unify agent instructions and correct stale workflow guidance",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "a626f4b4016d09d5e133b85bc1e9c595da41136a",
+        "subject": "docs: audit interface-first cli-for-agents workflow",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "ab2746c503a18c9a10f7a198633b61fb607dddd1",
+        "subject": "fix(workflow): make publication, recovery, and review state authoritative",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "598a8f881e205186d1da0b7aeddee43b89d72d51",
+        "subject": "Add copy of graph-workflow-audit skill for Codex",
+        "mechanicalExcluded": true
+      },
+      {
+        "commit": "74279970ac1e500a2822240b9360fde8140ca435",
+        "subject": "Move Codex structured output to post-validation (#84)",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "5248801dc0bc32e4cff3a0065beec86c93e44fb2",
+        "subject": "feat(cursor): support in-turn steering and interactive questions",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "d5957705afa2f4618da399e326b0cf6e54f0f8a6",
+        "subject": "feat(annotations): support selections spanning multiple blocks",
+        "mechanicalExcluded": false
+      },
+      {
+        "commit": "02847c42acde55e9b2c9a5a5608ba3d69cdfc3c0",
+        "subject": "fix(workflows): correct graph execution and validator edge cases",
+        "mechanicalExcluded": false
+      }
+    ]
+  },
+  "implementedChanges": [
+    {
+      "change": "shared canonical serialization",
+      "from": "src/lib/state-store/serialization.ts#stableStringify",
+      "to": "src/lib/shared/stable-stringify.ts",
+      "bodyPreservedExactly": true,
+      "storageRetains": "jsonOrNull",
+      "rewiredFiles": 61,
+      "compatibilityReexport": false,
+      "excluded": "src/lib/mcp/signature.ts uses different serializer semantics",
+      "scope": "Ownership cleanup only; no measured performance or large transitive-reach reduction claimed. Baseline edges above are unchanged historical evidence.",
+      "validation": {
+        "runId": "vrun-854842a8-cdfa-45e0-8a14-fdace3a056e9",
+        "filesMatched": 3,
+        "kind": "passed"
+      }
+    }
+  ]
+}

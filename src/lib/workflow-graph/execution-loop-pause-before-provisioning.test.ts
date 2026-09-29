@@ -565,6 +565,8 @@ function createRouteManager(
   modules: RouteModules,
 ): Generation["manager"] {
   return modules.createGraphWorkflowManager({
+    readSessionFinalizingMerge: () => null,
+    clearConversationQuestion: async () => false,
     abortConversation: () => {},
     stopExecutionLaneDevServers: async () => {},
 

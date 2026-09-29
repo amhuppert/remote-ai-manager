@@ -28,7 +28,7 @@ import {
   enforceSqliteSchemaCompatibility,
   schemaCompatibilityBarrierPath,
 } from "../schema-compatibility";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createSpecDeliveryRepo } from "../spec-delivery-repo";
 import { createSpecEventsRepo } from "../spec-events-repo";
 import { createSpecsRepo } from "../specs-repo";

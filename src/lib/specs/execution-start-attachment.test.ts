@@ -17,7 +17,7 @@ import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   createCapturingLogger,
   type CapturingLogger,

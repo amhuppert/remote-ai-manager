@@ -3,7 +3,7 @@ import {
   CC_CONTEXT,
   CC_CLI_INSTRUCTIONS,
   selectAskQuestionInstructions,
-} from "@/lib/prompt/sdk-driver";
+} from "@/lib/prompt/runtime-instruction-policy";
 import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 
 export function runtimeConfigurationFixture(

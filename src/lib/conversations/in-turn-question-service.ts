@@ -14,7 +14,7 @@ export const inTurnQuestionService = getGlobalSingleton(
       timeoutMs: IN_TURN_QUESTION_TIMEOUT_MS,
       async register(scope, questionId, questions) {
         const { registerConversationQuestion } =
-          await import("@/lib/workflows/conversation/manager");
+          await import("@/lib/workflows/conversation/lifecycle");
         return registerConversationQuestion(
           scope.projectPath,
           scope.sessionName,
@@ -30,7 +30,7 @@ export const inTurnQuestionService = getGlobalSingleton(
       },
       async retire(scope, questionId) {
         const { clearConversationQuestion } =
-          await import("@/lib/workflows/conversation/manager");
+          await import("@/lib/workflows/conversation/lifecycle");
         if (
           await clearConversationQuestion(
             scope.projectPath,

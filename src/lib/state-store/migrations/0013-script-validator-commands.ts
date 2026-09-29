@@ -5,7 +5,7 @@ import { createLogger } from "@/lib/logging";
 import { atomicWriteJson } from "@/lib/shared/atomic-write-json";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { repoValidationConfigSchema } from "@/lib/validation/schemas";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { StateMigration } from "./types";
 
 type Db = InstanceType<typeof Database>;

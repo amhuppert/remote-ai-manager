@@ -23,7 +23,11 @@ import { fromPromise } from "xstate";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import { createJobsRepo } from "@/lib/jobs/repo";
-import { runRegisteredMergeJob } from "@/lib/jobs/queue";
+import {
+  getFinalizingSessionMergeJob,
+  runRegisteredMergeJob,
+} from "@/lib/jobs/queue";
+import { clearConversationQuestion } from "@/lib/workflows/conversation/lifecycle";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
@@ -1408,6 +1412,13 @@ export function createSpecSpineWorld(
     mutateActive: mutateActiveImpl,
   };
   const workflowManager = createGraphWorkflowManager({
+    clearConversationQuestion,
+    readSessionFinalizingMerge(projectPath, sessionName) {
+      const job = getFinalizingSessionMergeJob(projectPath, sessionName);
+      return job === null
+        ? null
+        : { jobId: job.jobId, branchName: job.branchName };
+    },
     abortConversation: () => {},
     abortExecutionLoop: () => {},
     getSession: async () => null,

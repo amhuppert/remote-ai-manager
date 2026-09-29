@@ -31,11 +31,11 @@ import {
   seedDeliveryPlanParents,
 } from "./spec-delivery-plan-test-fixture";
 import {
-  DeliveryPlanStatusConflictError,
   FinalizedDeliveryPlanCandidateMismatchError,
   StaleDeliveryPlanDraftError,
   type SpecDeliveryPlanRepo,
 } from "./spec-delivery-plan-repo";
+import { DeliveryPlanStatusConflictError } from "@/lib/specs/delivery-plan-policy";
 import { _createTestDb } from "./state-db";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";

@@ -31,7 +31,7 @@ vi.setConfig({ testTimeout: 60_000 });
 
 import type BetterSqlite3 from "better-sqlite3";
 import { schemaCompatibilityBarrierPath } from "../schema-compatibility";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { _createTestDbAtPath } from "../state-db";
 import {
   GENERALIZED_MODEL_SELECTION_SCHEMA_VERSION,

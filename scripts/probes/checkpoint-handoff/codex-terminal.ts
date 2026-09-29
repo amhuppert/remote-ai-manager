@@ -71,7 +71,7 @@ export async function runCodexTerminalProbe(options: {
     await import("@/lib/conversations/testing/conversation-state-fixture");
   const { getTranscriptPath } = await import("@/lib/prompt/transcript");
   const { submitConversationTurn, stopConversationActor } =
-    await import("@/lib/workflows/conversation/manager");
+    await import("@/lib/workflows/conversation/lifecycle");
   assertIsolated(getStateDb().name, environment);
   const identityPath = path.join(
     environment.projectPath,

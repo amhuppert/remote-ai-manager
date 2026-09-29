@@ -442,7 +442,7 @@ export async function rehydrateConversationActors(
   deps?: RehydrateConversationActorsDeps,
 ): Promise<number> {
   if (!deps) {
-    const { restorePersistedConversations } = await import("./manager");
+    const { restorePersistedConversations } = await import("./lifecycle");
     return restorePersistedConversations();
   }
   const resolved = deps;

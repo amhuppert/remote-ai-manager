@@ -110,6 +110,8 @@ async function compose(
   });
   const stops: Promise<unknown>[] = [];
   const manager = createGraphWorkflowManager({
+    readSessionFinalizingMerge: () => null,
+    clearConversationQuestion: hosted.manager.clearConversationQuestion,
     abortExecutionLoop: () => {},
     getSession: async () => null,
     stopExecutionLaneDevServers: async () => {},

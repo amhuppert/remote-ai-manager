@@ -12,7 +12,7 @@
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 /** Configuration selected by CC and baked into a hosted backend session. */
 export interface DesiredRuntimeConfiguration {

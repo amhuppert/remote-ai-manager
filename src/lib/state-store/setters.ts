@@ -27,7 +27,7 @@ import type {
   GraphWorkflowEventDelivery,
   GraphWorkflowPushInfo,
 } from "@/lib/workflow-graph/execution-events";
-import { createGraphWorkflowBoundaryEvent } from "@/lib/workflow-graph/execution-events";
+import { createGraphWorkflowBoundaryEvent } from "@/lib/workflow-graph/boundary-event-projection";
 import { projectGraphWorkflowBoundaryResult } from "@/lib/workflow-graph/execution-result-projection";
 import type {
   GraphWorkflowExecution,

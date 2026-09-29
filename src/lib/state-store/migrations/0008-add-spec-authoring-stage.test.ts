@@ -15,7 +15,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { addSpecAuthoringStage } from "./0008-add-spec-authoring-stage";
 
 const PROJECT_PATH = "/repos/command-center";

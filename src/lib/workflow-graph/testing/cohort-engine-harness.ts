@@ -480,6 +480,8 @@ export function createHarness(params: {
   // round's attempt budget, so the harness drives them rather than imitating
   // them.
   const manager = createGraphWorkflowManager({
+    readSessionFinalizingMerge: () => null,
+    clearConversationQuestion: async () => false,
     abortConversation: () => {},
     abortExecutionLoop: () => {},
     getSession: async () => null,

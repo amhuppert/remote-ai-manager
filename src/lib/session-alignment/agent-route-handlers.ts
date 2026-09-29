@@ -26,7 +26,7 @@ import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { describeActiveTurn } from "@/lib/workflows/conversation/manager";
+import { describeActiveTurn } from "@/lib/workflows/conversation/lifecycle";
 
 import {
   ALIGNMENT_AUTONOMOUS_DENIAL_MESSAGE,

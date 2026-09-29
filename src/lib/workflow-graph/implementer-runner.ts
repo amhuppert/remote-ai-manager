@@ -1,7 +1,7 @@
 import { createLogger, type Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
-import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
+import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/lifecycle";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import {

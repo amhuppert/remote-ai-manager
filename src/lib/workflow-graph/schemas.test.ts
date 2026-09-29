@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 import type { CriterionRecord } from "./criteria/criterion-records";
 import { resolvedWorkflowSemanticDefinitionSchema } from "./definition-schemas";

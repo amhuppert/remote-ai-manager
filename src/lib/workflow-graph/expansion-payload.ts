@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 /**
  * Canonicalization, identity, and size for a parsed expansion request — the

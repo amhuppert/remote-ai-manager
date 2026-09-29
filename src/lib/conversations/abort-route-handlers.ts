@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession, getProjectConversation } from "@/lib/state-store";
-import { requestConversationStop } from "@/lib/workflows/conversation/manager";
+import { requestConversationStop } from "@/lib/workflows/conversation/lifecycle";
 import type {
   ConversationAddress,
   TurnCancelReason,

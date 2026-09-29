@@ -7,7 +7,7 @@ import {
 } from "@/lib/workflow-graph/schemas";
 import { PersistenceError } from "../shared/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { checkRowColumnSize } from "./row-size-telemetry";
 
 type Db = InstanceType<typeof Database>;

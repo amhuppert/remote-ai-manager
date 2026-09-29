@@ -66,7 +66,6 @@ import {
 } from "@/lib/workflow-graph/context-transitions";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import { defaultGitClient } from "@/lib/git/client";
-import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
 import {
   validateLaunchInputs,
   WorkflowStartInputError,
@@ -91,7 +90,6 @@ import {
   createUserInputGateService,
   type UserInputGateService,
 } from "@/lib/workflow-graph/user-input-gate";
-import { clearConversationQuestion } from "@/lib/workflows/conversation/manager";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { lintCommittedSourceLocators as defaultLintCommittedSourceLocators } from "@/lib/workflows/committed-source-locator-lint";
@@ -263,18 +261,6 @@ export interface GraphWorkflowLaunchOutcome {
   execution: GraphWorkflowExecution;
   awaitingDefinitionApproval: boolean;
   warnings?: WorkflowPlanIssue[];
-}
-
-/**
- * The production reader behind the session-finalizing launch guard. Narrowed to
- * the two facts the refusal names, so the manager never holds a whole job.
- */
-function defaultReadSessionFinalizingMerge(
-  projectPath: string,
-  sessionName: string,
-): SessionFinalizingMerge | null {
-  const job = getFinalizingSessionMergeJob(projectPath, sessionName);
-  return job === null ? null : { jobId: job.jobId, branchName: job.branchName };
 }
 
 // The ONE start-input refusal class, owned by the pure start-input-service
@@ -630,6 +616,12 @@ export type GraphWorkflowManagerEvent =
 
 export interface GraphWorkflowManagerDeps {
   executionRepository: GraphWorkflowExecutionRepository;
+  clearConversationQuestion(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    question: { questionId: string },
+  ): Promise<boolean>;
   loadDefinition(
     projectPath: string,
     definitionId: string,
@@ -657,14 +649,14 @@ export interface GraphWorkflowManagerDeps {
   ): Promise<void>;
   /**
    * The session's in-flight merge that will also finalize the session, or null.
-   * Backs the launch guard that mirrors the delivery gate (R13). Defaults to the
-   * real background-job registry reader.
+   * Backs the launch guard that mirrors the delivery gate (R13). Production
+   * supplies the background-job registry reader.
    *
    * Consulted TWICE per launch — advisorily up front, then again inside the
    * reserving transaction — so it must be synchronous and cheap: the second
    * call runs on the write queue.
    */
-  readSessionFinalizingMerge?(
+  readSessionFinalizingMerge(
     projectPath: string,
     sessionName: string,
   ): SessionFinalizingMerge | null;
@@ -916,7 +908,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
       deliver: eventPublisher.deliver,
-      clearConversationQuestion,
+      clearConversationQuestion: deps.clearConversationQuestion,
       now: () => getNow(deps),
     });
 
@@ -1264,8 +1256,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     // the more specific refusal above, which is why that check runs first — and
     // the AUTHORITATIVE half re-asks inside the reserving transaction, because
     // everything between here and there is asynchronous.
-    const readFinalizingMerge =
-      deps.readSessionFinalizingMerge ?? defaultReadSessionFinalizingMerge;
+    const readFinalizingMerge = deps.readSessionFinalizingMerge;
     const finalizingMerge = readFinalizingMerge(
       input.projectPath,
       input.sessionName,
@@ -3074,7 +3065,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     if (withdrawnQuestion !== null) {
       const question: { conversationId: string; questionBatchId: string } =
         withdrawnQuestion;
-      await clearConversationQuestion(
+      await deps.clearConversationQuestion(
         projectPath,
         sessionName,
         question.conversationId,

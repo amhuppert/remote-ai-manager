@@ -43,7 +43,7 @@ import {
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
 import { PersistenceError, getErrorMessage } from "@/lib/shared/errors";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { WriteQueue } from "./write-queue";
 
 type Db = InstanceType<typeof Database>;

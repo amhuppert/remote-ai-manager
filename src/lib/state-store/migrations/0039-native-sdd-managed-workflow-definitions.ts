@@ -22,7 +22,7 @@ import {
   workflowDefinitionHash,
 } from "@/lib/specs/delivery-plan-hash";
 import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalization";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   workflowDefinitionMutationSchema,
   type WorkflowDefinitionRecord,

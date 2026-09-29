@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { backendAdmissionRefusalSchema } from "./execution-admission";
+import { backendAdmissionRefusalSchema } from "./execution-schemas";
 
 export const agentFailureKindSchema = z.enum([
   "timeout",

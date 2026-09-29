@@ -43,8 +43,9 @@ import { resolveBranchPrefix } from "../config/cascade";
 import { stopAllForSession } from "../dev-server/registry";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
-import { executeOptimisticWorkflow } from "../shared/optimistic";
-import { stopConversationActor } from "@/lib/workflows/conversation/manager";
+import { executeOptimisticWorkflow } from "./optimistic";
+import { defaultOptimisticDeps } from "./optimistic-production";
+import { stopConversationActor } from "@/lib/workflows/conversation/lifecycle";
 import {
   getTaskRunner as registryGetTaskRunner,
   prepareManagedSkillsCheckout as registryPrepareManagedSkillsCheckout,
@@ -179,7 +180,9 @@ export interface SessionDeps {
   ): Promise<AgentProfileSnapshot>;
   stopAllForSession: typeof stopAllForSession;
   getProjectDisplayName: typeof getProjectDisplayName;
-  executeOptimisticWorkflow: typeof executeOptimisticWorkflow;
+  executeOptimisticWorkflow(
+    params: Parameters<typeof executeOptimisticWorkflow>[0],
+  ): Promise<void>;
   buildChildEnv: typeof buildChildEnv;
   /** Resolves the backend task runner used for the session-naming turn. */
   getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
@@ -296,7 +299,9 @@ const defaultSessionDeps: SessionDeps = {
   readRepoConfig,
   stopAllForSession,
   getProjectDisplayName,
-  executeOptimisticWorkflow,
+  executeOptimisticWorkflow(params) {
+    return executeOptimisticWorkflow(params, defaultOptimisticDeps);
+  },
   buildChildEnv,
   getTaskRunner: registryGetTaskRunner,
   deleteNotificationsForSession: (projectName, sessionName) =>

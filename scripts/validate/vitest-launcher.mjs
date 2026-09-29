@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { startVitest } from "vitest/node";
 import {
   COORDINATOR_FOOTPRINT_MB,
@@ -97,7 +98,11 @@ const workers = resolveWorkerBudget({
 await startVitest("test", filters, {
   run: true,
   color: false,
-  reporters: ["dot"],
+  // Registered wrappers serve other worktrees; the reporter belongs to the launcher.
+  reporters: [
+    "dot",
+    fileURLToPath(new URL("./test-timing-reporter.ts", import.meta.url)),
+  ],
   bail: testBail,
   passWithNoTests: mode !== "full",
   ...(changed ? { changed } : {}),

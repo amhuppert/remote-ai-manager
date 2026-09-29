@@ -15,7 +15,7 @@ import type {
   ActorProvenance,
 } from "@/lib/specs/schemas";
 import type { SpecEventInput } from "@/lib/state-store/spec-events-repo";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 const logger = createLogger("specs.events");
 

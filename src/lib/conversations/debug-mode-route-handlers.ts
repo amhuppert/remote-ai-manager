@@ -22,10 +22,8 @@ import {
   getDebugLogPath,
   clearDebugLog,
 } from "@/lib/debug-log/service";
-import {
-  type ConversationCommandOutcome,
-  ensureConversationLifecycle,
-} from "@/lib/workflows/conversation/manager";
+import { type ConversationCommandOutcome } from "@/lib/workflows/conversation/manager";
+import { ensureConversationLifecycle } from "@/lib/workflows/conversation/lifecycle";
 import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
 import { createDebugLogStatsHandlers } from "@/lib/debug-log/stats-route-handlers";
 import { resolveSessionConversationRoute } from "./route-resolution";

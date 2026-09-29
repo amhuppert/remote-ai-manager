@@ -7,7 +7,7 @@ import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import {
   executionIntentSchema,
   taskExecutionProfileSchema,
-} from "@/lib/agent-backends/execution-admission";
+} from "@/lib/agent-backends/execution-schemas";
 import { fsWritePolicySchema } from "@/lib/agent-backends/task";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import {

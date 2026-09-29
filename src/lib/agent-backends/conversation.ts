@@ -1,5 +1,5 @@
 import type { ResolvedCapabilityCascade } from "./runtime-config";
-import type { ExecutionIntent } from "./execution-admission";
+import type { ExecutionIntent } from "./execution-schemas";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type {
   ConversationBackgroundActivity,

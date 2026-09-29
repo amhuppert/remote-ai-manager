@@ -27,7 +27,7 @@ import {
 import { PersistenceError } from "../shared/errors";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
 import { checkRowColumnSize } from "./row-size-telemetry";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { WriteQueue } from "./write-queue";
 
 type Db = InstanceType<typeof Database>;

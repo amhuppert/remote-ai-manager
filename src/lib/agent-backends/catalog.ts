@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   backendExecutionSchema,
   type BackendExecution,
-} from "./execution-admission";
+} from "./execution-schemas";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import {
   capabilityApplyTimingSchema,

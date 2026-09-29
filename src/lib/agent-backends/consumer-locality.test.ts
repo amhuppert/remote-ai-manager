@@ -3,7 +3,7 @@ import { conversationTargetStoreSessionName } from "@/lib/conversations/conversa
 import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
 
-import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-production";
 import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
 const managerFixture: ReturnType<typeof createConversationManagerFixture> =
   createConversationManagerFixture({
@@ -63,7 +63,7 @@ import {
   getConversationQueueDeps,
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
-} from "@/lib/conversations/message-queue-drain";
+} from "@/lib/conversations/message-queue-production";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -250,6 +250,9 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
 
   const deps: ActorFixtureDependencies = {
     log: createCapturingLogger(),
+    async requestUserQuestion() {
+      throw new Error("in-memory harness has no in-turn question service");
+    },
     checkpoint: {
       async repo() {
         throw new Error("in-memory harness has no checkpoint repository");

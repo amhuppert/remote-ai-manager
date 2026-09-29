@@ -13,7 +13,7 @@ import {
   isConversationBusy,
   acquireConversationLock,
 } from "@/lib/prompt/single-flight";
-import { clearConversationQuestion } from "@/lib/workflows/conversation/manager";
+import { clearConversationQuestion } from "@/lib/workflows/conversation/lifecycle";
 
 type FixtureDefaultKeys =
   | "landingEvidenceProber"

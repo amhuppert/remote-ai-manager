@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   enforceCurrentSchemaCompatibility,
   publishSchemaCompatibilityBarrier,

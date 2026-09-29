@@ -28,7 +28,7 @@ import {
 import {
   registerConversationQuestion,
   clearConversationQuestion,
-} from "@/lib/workflows/conversation/manager";
+} from "@/lib/workflows/conversation/lifecycle";
 import { resolveSessionConversationRoute } from "./route-resolution";
 import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
 import {

@@ -2,7 +2,7 @@
 
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import { backendForkRefusalIn } from "@/lib/agent-backends/fork-admission";
-import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-admission";
+import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "./schemas";
 

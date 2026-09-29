@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createLogger } from "@/lib/logging";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { MigrationContext, StateMigration } from "./types";
 
 const logger = createLogger("state-store.migrations");

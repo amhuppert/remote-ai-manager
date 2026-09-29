@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { jsonOrNull, stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
+import { jsonOrNull } from "./serialization";
 
 describe("stableStringify", () => {
   it("emits object keys in sorted order recursively", () => {

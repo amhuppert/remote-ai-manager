@@ -3,7 +3,7 @@ import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
 import type { SpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { GraphWorkflowExecutionOrigin } from "@/lib/workflow-graph/spec-bridge";
 
 import { executionDispositionFromDeliveryPlan } from "./delivery-plan";

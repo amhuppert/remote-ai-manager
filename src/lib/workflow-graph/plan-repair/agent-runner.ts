@@ -21,10 +21,8 @@ import {
   composeImplementerLaneWriteEnvelope,
   type ImplementerLaneWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
-import {
-  executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
-  type ExecuteWorkflowTaskRunInput,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";

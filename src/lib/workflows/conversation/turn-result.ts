@@ -11,7 +11,7 @@ import type {
 } from "@/lib/agent-backends/errors";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-admission";
+import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-schemas";
 import type {
   ConversationContext,
   PromptActorResult,

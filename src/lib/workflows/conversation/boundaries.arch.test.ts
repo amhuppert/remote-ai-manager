@@ -156,7 +156,7 @@ describe("conversation lifecycle import boundaries", () => {
   it("allows semantic conversation APIs, feature results, descriptors and transcripts", () => {
     expect(
       forbiddenImports(
-        'import { executeConversationTurn } from "@/lib/workflows/conversation/manager"; import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";',
+        'import { executeConversationTurn } from "@/lib/workflows/conversation/lifecycle"; import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";',
         "lib/workflow-graph/validator-runner.ts",
       ),
     ).toEqual([]);

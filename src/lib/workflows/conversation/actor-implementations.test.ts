@@ -89,7 +89,7 @@ import {
   ASK_QUESTION_INSTRUCTIONS_ENABLED,
   CC_CLI_INSTRUCTIONS,
   TDD_INSTRUCTIONS,
-} from "@/lib/prompt/sdk-driver";
+} from "@/lib/prompt/runtime-instruction-policy";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";

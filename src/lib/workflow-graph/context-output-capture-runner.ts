@@ -29,7 +29,7 @@ import {
   composeImplementerLaneWriteEnvelope,
   resolveImplementerContinuationWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
-import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
+import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/lifecycle";
 import {
   toTaskRunResult,
   type TaskRunResult,

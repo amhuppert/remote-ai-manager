@@ -62,6 +62,9 @@ export function createActorDependenciesFixture(
   };
 
   return {
+    async requestUserQuestion() {
+      throw new Error("Fixture has no in-turn question service");
+    },
     acquireConversationLock: vi.fn(() => vi.fn()),
     acquireQuerySlot: vi.fn(async () => vi.fn()),
     getTranscriptPath: vi.fn(async (id: string) => `/transcripts/${id}.jsonl`),
@@ -259,6 +262,7 @@ export function groupActorFixtureDependencies(
 ): ConversationActorDependencies {
   return {
     execution: {
+      requestUserQuestion: deps.requestUserQuestion,
       acquireConversationLock: deps.acquireConversationLock,
       acquireQuerySlot: deps.acquireQuerySlot,
       readConfig: deps.readConfig,

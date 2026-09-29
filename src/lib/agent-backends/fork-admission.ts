@@ -1,5 +1,5 @@
 import type { BackendCatalogEntry } from "./catalog";
-import type { BackendAdmissionRefusal } from "./execution-admission";
+import type { BackendAdmissionRefusal } from "./execution-schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 export function backendForkRefusal(

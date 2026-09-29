@@ -21,8 +21,8 @@ import { createLogger, type Logger } from "@/lib/logging";
 import {
   BackendAdmissionError,
   type ExecutionCatalogEntry,
-  type ExecutionRequirements,
 } from "@/lib/agent-backends/execution-admission";
+import type { ExecutionRequirements } from "@/lib/agent-backends/execution-schemas";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {

@@ -21,7 +21,7 @@ import {
 } from "@/lib/specs/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { _createTestDb } from "./state-db";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   createSpecEventsRepo,
   type SpecEventInput,

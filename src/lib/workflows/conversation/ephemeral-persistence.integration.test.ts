@@ -6,7 +6,7 @@ let actorInputLoader: ConversationManagerDependencies["loadActorInput"] =
   };
 let admissionReader: ConversationManagerDependencies["readAdmissionState"] =
   async () => ({ found: true, requiresQueueReview: false });
-import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-production";
 import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
 const managerFixture: ReturnType<typeof createConversationManagerFixture> =
   createConversationManagerFixture({
@@ -100,7 +100,7 @@ import { _resetForTesting as resetRuntimeState } from "./runtime-state";
 import {
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
-} from "@/lib/conversations/message-queue-drain";
+} from "@/lib/conversations/message-queue-production";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -463,6 +463,7 @@ function makeFakeBackendActorDeps(
   };
   return {
     log: createCapturingLogger(),
+    requestUserQuestion: unusedInTaskRun("requestUserQuestion"),
     checkpoint: {
       repo: unusedInTaskRun("checkpoint.repo"),
       now: () => new Date().toISOString(),

@@ -190,7 +190,16 @@ export function buildDebugPromptContext(input: {
   return prefix || null;
 }
 
-export function resolveDebugOutputSchema(
+export function resolveDebugOutputFormat(
+  phase: DebugModePhase | null | undefined,
+): { type: "json_schema"; schema: Record<string, unknown> } | undefined {
+  if (phase == null) return undefined;
+  const schema = resolveDebugOutputSchema(phase);
+  if (!schema) return undefined;
+  return { type: "json_schema", schema };
+}
+
+function resolveDebugOutputSchema(
   phase: DebugModePhase | null | undefined,
 ): Record<string, unknown> | undefined {
   switch (phase) {

@@ -17,7 +17,7 @@ import {
 } from "@/lib/specs/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { _createTestDb } from "./state-db";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createSpecLinksRepo, type SpecLinksRepo } from "./spec-links-repo";
 
 type Db = InstanceType<typeof Database>;

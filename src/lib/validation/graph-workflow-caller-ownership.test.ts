@@ -26,7 +26,7 @@ import {
   LANE_IDENTITY_HEADER,
   readLaneIdentity,
 } from "@/lib/agent-gateway/lane-identity";
-import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import {
   createWorkflowDefinitionRecord,
   createWorkflowExecution,

@@ -31,7 +31,7 @@ import {
   specDiffViewSchema,
 } from "@/lib/specs/view-schemas";
 import { narrowEvidenceKinds } from "@/lib/state-store/migrations/0009-narrow-evidence-kinds";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";

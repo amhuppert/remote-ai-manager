@@ -21,7 +21,7 @@ import {
   createPlannerDraftSubmission as defaultCreatePlannerDraftSubmission,
   deletePlannerDraft as defaultDeletePlannerDraft,
 } from "@/lib/workflows/workflow-draft/registry";
-import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { generateWorkflowLayout } from "./layout";

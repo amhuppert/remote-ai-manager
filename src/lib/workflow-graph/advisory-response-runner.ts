@@ -46,7 +46,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationAdvisory,
 } from "@/lib/workflow-graph/schemas";
-import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
+import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/lifecycle";
 import type { ConversationTurnSpec } from "@/lib/workflows/conversation/turn-spec";
 import {
   toTaskRunResult,

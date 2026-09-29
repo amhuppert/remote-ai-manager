@@ -5,7 +5,7 @@ import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { buildConversation } from "@/lib/conversations/build-conversation";
 import { createLogger } from "@/lib/logging";
 

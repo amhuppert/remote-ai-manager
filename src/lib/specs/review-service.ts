@@ -43,7 +43,7 @@ import type {
   SpecsRepo,
   SpecsRepoTransaction,
 } from "@/lib/state-store/specs-repo";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 import { draftAuthoringSequence } from "./authoring-sequence";
 import {

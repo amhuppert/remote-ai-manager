@@ -224,8 +224,9 @@ export function createProvidedMachine(
       broadcastDebugModeStatus: ({ context }) => {
         void adapter.afterCommit(context, async () => {
           await adapter.whenDurable(context);
-          const { getDefaultDebugAdapter } = await import("./debug-adapter");
-          const outcome = getDefaultDebugAdapter().publishDebugModeStatus({
+          const { publishEvent } = await import("@/lib/events/publication");
+          const outcome = publishEvent({
+            type: "debug-mode-status",
             projectName: context.target.projectName,
             sessionName: conversationTargetStoreSessionName(context.target),
             conversationId: context.target.conversationId,

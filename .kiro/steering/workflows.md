@@ -2,7 +2,7 @@
 
 Command Center has three orchestration shapes. Pick by shape; do not invent a fourth (see P7 in `docs/reports/2026-07-12_consolidated-architecture-design-and-plan.md`):
 
-1. **Conversation actor** (XState v5, long-lived) — `src/lib/workflows/conversation/`. One actor per conversation; owns the prompt-turn lifecycle, queue drain, and rehydration. Conversation turns and hosted tasks enter through its semantic manager API. Fresh tasks use AgentCall without a conversation host.
+1. **Conversation actor** (XState v5, long-lived) — `src/lib/workflows/conversation/`. One actor per conversation; owns the prompt-turn lifecycle, queue drain, and rehydration. Conversation turns and hosted tasks enter through its semantic `lifecycle.ts` API. Fresh tasks use AgentCall without a conversation host.
 2. **Job machines** (XState v5, ephemeral) — `src/lib/workflows/merge/` (Smart Merge) and `src/lib/workflows/commit/` (Smart Commit), hosted by `src/lib/jobs/queue.ts`. Machine actors are not restart-durable by decision; the `BackgroundJob` registry records phases and outcomes.
 3. **Graph engine** (deterministic execution loop, NOT XState) — `src/lib/workflow-graph/`. Multi-context executions with loop-generation fencing at the persistence layer. Do not convert it to XState — the loop already has machine-grade guarantees plus fencing XState cannot provide.
 
@@ -18,7 +18,8 @@ src/lib/workflows/
 │   ├── machine.ts              # setup() → createMachine(); long-lived, zero final states by design
 │   ├── actors.ts               # provided actor invocations and owned settlement
 │   ├── actor-implementations.ts# production actor logic (AgentCall dispatch, pre/post-turn concerns)
-│   ├── manager.ts              # admission, semantic commands, observation and cancellation
+│   ├── manager.ts              # admission, semantic commands, observation and cancellation core
+│   ├── lifecycle.ts            # public semantic entrypoints, lazily composed production singleton
 │   ├── actor-host.ts           # shared creation/rehydration factory and subscriptions
 │   ├── production.ts           # lazy production dependency composition
 │   ├── turn-attempt.ts         # admitted work, cancellation and completion receipts
@@ -117,7 +118,7 @@ One row per shared concept: where the canonical implementation lives, who actual
 
 | Concept | Canonical module | Production consumers | Status | Competing path | Deletion condition |
 |---|---|---|---|---|---|
-| AgentCall (normalized agent execution) | `primitives/agent-call-facade.ts` + `agent-call-vocabulary.ts` (conversation + task-run adapters) | conversation actor (`conversation/actors.ts`, `actor-implementations.ts`, `execute-workflow-task-run.ts`); collaboration (`collaboration/agent-caller-production.ts`); graph (`workflow-graph/implementer-runner.ts`, `workflow-collaborator-caller.ts`); `shared/optimistic.ts` | supported | — | — |
+| AgentCall (normalized agent execution) | `primitives/agent-call-facade.ts` + `agent-call-vocabulary.ts` (conversation + task-run adapters) | conversation actor (`conversation/actors.ts`, `actor-implementations.ts`, `execute-workflow-task-run.ts`); collaboration (`collaboration/agent-caller-production.ts`); graph (`workflow-graph/implementer-runner.ts`, `workflow-collaborator-caller.ts`); `sessions/optimistic.ts` | supported | — | — |
 | Lane (agent continuity + scheduling) | `primitives/{lane-vocabulary,lane-service,lane-scheduler,lane-store}.ts`, composed by `primitives/workflow-agent-caller.ts` | Collaboration lanes; graph implementer/validator lanes via `LaneService` over the durable `workflow-graph/graph-lane-store.ts`, composed in `workflow-graph/lane-continuity.ts` | supported | — | — |
 | Graph lane identity (who a lane belongs to) | `workflow-graph/lane-identity.ts` — `laneStateKey` (the `laneStates[contextId]` inner key: `implementer` \| `context_validator:<assignmentId>`), `graphLaneId`/`parseGraphLaneId` (primitive lane id, NUL-joined `lane`/`contextId`/`assignment`), `assignmentFingerprint` (the frozen started assignment) | `graph-lane-store.ts`, `lane-continuity.ts`, `validator-runner.ts`; per-assignment artifacts in `execution-logger.ts` | supported | — | — |
 | Context placement (authored lane + file ownership) | `workflow-graph/definition-schemas.ts` (`contextPlacementSchema`, `ownedPathSchema`) for shape; `workflow-graph/placement-validation.ts` for accept-time semantics — lane grammar, the session lane's read-only restriction, the read-only output contract, same-lane ownership disjointness | every authoring surface through `validateAuthoredDefinition` (`cctl workflow validate`/`create`/`replace`, the saved- and live-edit appliers, the builder); lane provisioning, scheduler admission, the implementer write envelope, ownership-scoped landing | supported | placement-less STORED definitions and archived executions, inflated by the legacy transformer at the stored-load boundary | Delete the inflate-boundary transformer when no persisted definition, saved template, or archived execution predates placement. Never re-add a runtime default — an optional `placement` silently resurrects deterministic seed-time assignment |

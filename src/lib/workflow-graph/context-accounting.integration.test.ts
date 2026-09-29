@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
 import { createGraphWorkflowContextServices } from "./engine-composition";
-import { createGraphWorkflowManager } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";

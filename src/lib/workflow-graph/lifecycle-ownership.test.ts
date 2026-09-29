@@ -9,10 +9,8 @@ import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/e
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createWorkflowCharterService } from "./charter/service";
-import {
-  createGraphWorkflowManager,
-  type GraphWorkflowManagerDeps,
-} from "./workflow-manager";
+import { type GraphWorkflowManagerDeps } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import {
   createWorkflowDefinitionRecord,
   createWorkflowExecution,

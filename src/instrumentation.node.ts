@@ -1,6 +1,6 @@
 import { claimGraphWorkflowRuntimeOwner } from "./lib/state-store/graph-workflow-runtime-owner";
 import { initializeGraphWorkflowRuntimeAtStartup } from "./lib/workflow-graph/production";
-import { stopAllConversationActors } from "./lib/workflows/conversation/manager";
+import { stopAllConversationActors } from "./lib/workflows/conversation/lifecycle";
 import { listSessionConversationListItems } from "./lib/state-store";
 import { getStateDb } from "./lib/state-store/store";
 import { getDb } from "./lib/state-store/state-db";

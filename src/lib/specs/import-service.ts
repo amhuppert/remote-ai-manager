@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { createLogger } from "@/lib/logging";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type {

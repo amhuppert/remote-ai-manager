@@ -1,4 +1,4 @@
-import type { ExecutionRequirements } from "@/lib/agent-backends/execution-admission";
+import type { ExecutionRequirements } from "@/lib/agent-backends/execution-schemas";
 
 export const namingExecutionRequirements = {
   facet: "tasks",

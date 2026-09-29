@@ -587,7 +587,7 @@ async function main() {
     };
   }
   const { stopAllConversationActors } =
-    await import("@/lib/workflows/conversation/manager");
+    await import("@/lib/workflows/conversation/lifecycle");
   try {
     await stopAllConversationActors();
   } catch (error) {

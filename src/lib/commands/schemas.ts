@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { backendAdmissionRefusalSchema } from "@/lib/agent-backends/execution-admission";
+import { backendAdmissionRefusalSchema } from "@/lib/agent-backends/execution-schemas";
 
 export const builtInCommandNameSchema = z.enum([
   "/spec",

@@ -6,7 +6,7 @@ import { z } from "zod";
 import type {
   ConversationExecutionPolicy,
   TaskExecutionPolicy,
-} from "./execution-admission";
+} from "./execution-schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationBackendFactory } from "./conversation";
 import type { BackendContinuityAdapter } from "./continuity";

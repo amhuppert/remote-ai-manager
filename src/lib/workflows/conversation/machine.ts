@@ -76,7 +76,7 @@ import {
   clearDebugTurnFailure,
 } from "@/lib/workflows/debug/commands";
 import { resolveDebugFinalization } from "@/lib/workflows/debug/finalization";
-import { getDefaultDebugAdapter } from "./debug-adapter";
+import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("conversation-machine");
@@ -798,9 +798,7 @@ export const conversationMachine = setup({
               // debug-phase-derived format.
               const outputFormat =
                 activeTurn.outputFormat ??
-                getDefaultDebugAdapter().resolveOutputFormat(
-                  context.debugMode?.phase,
-                );
+                resolveDebugOutputFormat(context.debugMode?.phase);
 
               return {
                 turn: {

@@ -161,7 +161,7 @@ const defaultConversationsDeps: ConversationsDeps = {
     reason,
   ) => {
     const { stopConversationActor } =
-      await import("@/lib/workflows/conversation/manager");
+      await import("@/lib/workflows/conversation/lifecycle");
     await stopConversationActor(
       projectPath,
       sessionName,

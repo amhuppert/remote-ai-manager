@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useId, useState } from "react";
-import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-admission";
+import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-schemas";
 import { cn } from "@/lib/ui/cn";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import type {

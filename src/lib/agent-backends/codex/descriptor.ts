@@ -3,7 +3,7 @@ import { CODEX_IN_TURN_DELIVERY_ENABLED } from "./rollout-policy";
 import type {
   ConversationExecutionPolicy,
   TaskExecutionPolicy,
-} from "../execution-admission";
+} from "../execution-schemas";
 import type {
   AgentBackendDescriptor,
   AgentBackendMetadata,

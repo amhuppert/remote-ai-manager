@@ -12,7 +12,7 @@ import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createWorkflowExecution } from "./test-fixtures";
 
-import { createGraphWorkflowManager } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import { WorkflowStartGuardError } from "./start-guards";
 
 import {

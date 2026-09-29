@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { backendExecutionSchema } from "./execution-admission";
+import { backendExecutionSchema } from "./execution-schemas";
 import { createLogger } from "@/lib/logging";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import {

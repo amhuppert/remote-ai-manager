@@ -8,7 +8,7 @@ import {
   SPEC_ID,
   seedDeliveryPlanParents,
 } from "@/lib/state-store/spec-delivery-plan-test-fixture";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createNativeSddManagedWorkflowDefinitionPolicy } from "./managed-workflow-definition-policy";
 
 type Db = InstanceType<typeof Database>;

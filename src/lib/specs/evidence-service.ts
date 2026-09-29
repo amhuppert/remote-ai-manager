@@ -1,7 +1,7 @@
 import { createLogger } from "@/lib/logging";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,

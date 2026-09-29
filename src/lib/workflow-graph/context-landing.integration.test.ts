@@ -2,7 +2,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { defaultGitClient } from "@/lib/git/client";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
-import { createGraphWorkflowManager } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import {
   createContextLanding,

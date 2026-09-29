@@ -1,15 +1,10 @@
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import { executePromptStream } from "../prompt/sdk-driver";
-import { dispatchMergeJob } from "../jobs/queue";
-import { getProductionWorkflowComposition } from "@/lib/workflows/production";
-import { createJobNotification } from "../notifications/service";
-import {
-  evaluateMergeInitiation as evaluateSessionMergeAdmission,
-  type MergeInitiation as SessionMergeAdmission,
-} from "@/lib/workflows/merge/initiation";
+import type { executePromptStream } from "../prompt/sdk-driver";
+import type { dispatchMergeJob } from "../jobs/queue";
+import type { createJobNotification } from "../notifications/service";
+import type { MergeInitiation as SessionMergeAdmission } from "@/lib/workflows/merge/initiation";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { sleep } from "@/lib/shared/sleep";
 import { createLogger } from "../logging";
 
 const logger = createLogger("optimistic");
@@ -47,22 +42,6 @@ export interface OptimisticDeps {
   }): Promise<SessionMergeAdmission>;
 }
 
-export const defaultOptimisticDeps: OptimisticDeps = {
-  executePromptStream,
-  dispatchMergeJob,
-  createNotification: createJobNotification,
-  sleep,
-  evaluateSessionMergeAdmission(input) {
-    const policy = getProductionWorkflowComposition();
-    return evaluateSessionMergeAdmission({
-      ...input,
-      surface: "optimistic",
-      association: policy.mergeAssociation,
-      gate: policy.deliveryGate,
-    });
-  },
-};
-
 /**
  * Fire-and-forget orchestrator for optimistic mode sessions.
  *
@@ -80,7 +59,7 @@ export async function executeOptimisticWorkflow(
     instructions: string;
     images?: ImagePayload[];
   },
-  deps: OptimisticDeps = defaultOptimisticDeps,
+  deps: OptimisticDeps,
 ): Promise<void> {
   const { projectPath, projectName, session, instructions, images } = params;
   const conversationId = session.conversations[0]?.id;

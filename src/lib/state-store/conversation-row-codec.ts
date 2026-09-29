@@ -30,7 +30,8 @@ import {
   agentCapabilityRuntimeApplicationStateSchema,
 } from "@/lib/agent-capabilities/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
-import { jsonOrNull, stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
+import { jsonOrNull } from "./serialization";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type {
   ConversationState,

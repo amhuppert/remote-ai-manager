@@ -1,0 +1,599 @@
+{
+  "version": 1,
+  "allowances": [
+    {
+      "from": "src/lib/context-artifacts/route-handlers.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Context-artifact repository and compaction production bindings are currently exported by HTTP route handlers; this is a reviewed ownership inversion.",
+      "removeWhen": "Separate repository and compaction production bindings from HTTP routes, preserving the same database and lazy single-flight compaction instance; remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/conversation-checkpoints/fork-production.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Repository/project lookup currently shares ticket launch and service composition, broadening read-only consumers.",
+      "removeWhen": "Extract ticket repository/project-resolver bindings without changing singleton keys or write queues; rewire repository consumers and remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/conversation-commands/dispatch.ts",
+      "to": "src/lib/conversation-commands/service.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversation-commands/service.ts",
+      "to": "src/lib/jobs/queue.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversation-commands/service.ts",
+      "to": "src/lib/prompt/enqueue-conversation-message.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversation-commands/service.ts",
+      "to": "src/lib/session-alignment/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversation-commands/service.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversation-commands/service.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversation-commands/service.ts",
+      "to": "src/lib/workflows/production.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversations/in-turn-question-service.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversations/message-queue-production.ts",
+      "to": "src/lib/conversation-commands/dispatch.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversations/message-queue-production.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/conversations/service.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/jobs/queue.ts",
+      "to": "src/lib/workflows/commit/machine.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/jobs/queue.ts",
+      "to": "src/lib/workflows/merge/delivery-gate-port.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/jobs/queue.ts",
+      "to": "src/lib/workflows/merge/machine.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/jobs/queue.ts",
+      "to": "src/lib/workflows/production.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/jobs/queue.ts",
+      "to": "src/lib/workflows/rebase/machine.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/live-references/reader.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Repository/project lookup currently shares ticket launch and service composition, broadening read-only consumers.",
+      "removeWhen": "Extract ticket repository/project-resolver bindings without changing singleton keys or write queues; rewire repository consumers and remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/memory/service-factory.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Repository/project lookup currently shares ticket launch and service composition, broadening read-only consumers.",
+      "removeWhen": "Extract ticket repository/project-resolver bindings without changing singleton keys or write queues; rewire repository consumers and remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/memory/session-end.ts",
+      "to": "src/lib/memory/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/prompt/enqueue-conversation-message.ts",
+      "to": "src/lib/prompt/queue.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/prompt/enqueue-conversation-message.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/prompt/queue.ts",
+      "to": "src/lib/live-references/reader.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/prompt/sdk-driver.ts",
+      "to": "src/lib/conversation-commands/dispatch.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/prompt/sdk-driver.ts",
+      "to": "src/lib/conversations/service.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/prompt/sdk-driver.ts",
+      "to": "src/lib/workflows/collaboration/manager.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/prompt/sdk-driver.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/session-alignment/service-factory.ts",
+      "to": "src/lib/prompt/enqueue-conversation-message.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/conflict-resolution.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/optimistic-production.ts",
+      "to": "src/lib/jobs/queue.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/optimistic-production.ts",
+      "to": "src/lib/prompt/sdk-driver.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/optimistic-production.ts",
+      "to": "src/lib/workflows/production.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/service.ts",
+      "to": "src/lib/session-alignment/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/service.ts",
+      "to": "src/lib/sessions/optimistic-production.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/service.ts",
+      "to": "src/lib/tickets/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/service.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/sessions/service.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/specs/production-workflow-composition.ts",
+      "to": "src/lib/specs/workflow-cleanup-port.ts",
+      "reason": "Spec cleanup and graph production interact through forward cleanup operations and reverse lifecycle callbacks.",
+      "removeWhen": "Inject narrow graph cleanup operations into the cleanup adapter so it no longer imports graph production; preserve the shared runtime and honest failed-slot results, then remove obsolete cyclic allowances."
+    },
+    {
+      "from": "src/lib/specs/workflow-cleanup-port.ts",
+      "to": "src/lib/workflow-graph/production.ts",
+      "reason": "Spec cleanup and graph production interact through forward cleanup operations and reverse lifecycle callbacks.",
+      "removeWhen": "Inject narrow graph cleanup operations into the cleanup adapter so it no longer imports graph production; preserve the shared runtime and honest failed-slot results, then remove obsolete cyclic allowances."
+    },
+    {
+      "from": "src/lib/tickets/lifecycle.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Repository/project lookup currently shares ticket launch and service composition, broadening read-only consumers.",
+      "removeWhen": "Extract ticket repository/project-resolver bindings without changing singleton keys or write queues; rewire repository consumers and remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/tickets/service-factory.ts",
+      "to": "src/lib/context-artifacts/route-handlers.ts",
+      "reason": "Context-artifact repository and compaction production bindings are currently exported by HTTP route handlers; this is a reviewed ownership inversion.",
+      "removeWhen": "Separate repository and compaction production bindings from HTTP routes, preserving the same database and lazy single-flight compaction instance; remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/tickets/service-factory.ts",
+      "to": "src/lib/prompt/sdk-driver.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/tickets/service-factory.ts",
+      "to": "src/lib/session-alignment/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/tickets/service-factory.ts",
+      "to": "src/lib/sessions/service.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/tickets/service-factory.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflow-graph/advisory-response-runner.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/context-output-capture-runner.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/graph-merge-runner.ts",
+      "to": "src/lib/workflows/merge/actors.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/graph-merge-runner.ts",
+      "to": "src/lib/workflows/merge/machine.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/implementer-runner.ts",
+      "to": "src/lib/conversations/service.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/implementer-runner.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/plan-repair/agent-runner.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/conversations/service.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/jobs/queue.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflow-graph/advisory-response-runner.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflow-graph/context-output-capture-runner.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflow-graph/graph-merge-runner.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflow-graph/implementer-runner.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflow-graph/plan-repair/agent-runner.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflow-graph/validator-runner.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/production.ts",
+      "to": "src/lib/workflows/production.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflow-graph/validator-runner.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/collaboration/manager.ts",
+      "to": "src/lib/conversations/service.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/collaboration/manager.ts",
+      "to": "src/lib/session-alignment/service-factory.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/collaboration/manager.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/collaboration/manager.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Graph and collaboration production adapters execute through canonical conversation and merge lifecycles.",
+      "removeWhen": "Break opposing production-composition backedges while retaining supported runner-to-lifecycle and merge interfaces; remove this allowance when the forward edge ceases to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/commit/machine.ts",
+      "to": "src/lib/workflows/merge/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/commit/machine.ts",
+      "to": "src/lib/workflows/validation-fix/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/commit/machine.ts",
+      "to": "src/lib/workflows/validation-fix/states.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/conversation/lifecycle.ts",
+      "to": "src/lib/workflows/conversation/production.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/context-artifacts/route-handlers.ts",
+      "reason": "Context-artifact repository and compaction production bindings are currently exported by HTTP route handlers; this is a reviewed ownership inversion.",
+      "removeWhen": "Separate repository and compaction production bindings from HTTP routes, preserving the same database and lazy single-flight compaction instance; remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/conversation-checkpoints/fork-production.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/conversations/in-turn-question-service.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/conversations/message-queue-production.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/live-references/reader.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/memory/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/session-alignment/service-factory.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/tickets/service-factory.ts",
+      "reason": "Repository/project lookup currently shares ticket launch and service composition, broadening read-only consumers.",
+      "removeWhen": "Extract ticket repository/project-resolver bindings without changing singleton keys or write queues; rewire repository consumers and remove this allowance when its cycle disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/production.ts",
+      "to": "src/lib/workflows/conversation/rehydration.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/conversation/rehydration.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
+      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+    },
+    {
+      "from": "src/lib/workflows/merge/actors.ts",
+      "to": "src/lib/memory/session-end.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/actors.ts",
+      "to": "src/lib/sessions/conflict-resolution.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/actors.ts",
+      "to": "src/lib/sessions/service.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/actors.ts",
+      "to": "src/lib/tickets/lifecycle.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/actors.ts",
+      "to": "src/lib/workflows/validation-fix/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/delivery-gate-port.ts",
+      "to": "src/lib/workflows/merge/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/machine.ts",
+      "to": "src/lib/workflows/merge/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/machine.ts",
+      "to": "src/lib/workflows/validation-fix/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/merge/machine.ts",
+      "to": "src/lib/workflows/validation-fix/states.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/production.ts",
+      "to": "src/lib/specs/production-workflow-composition.ts",
+      "reason": "Spec cleanup and graph production interact through forward cleanup operations and reverse lifecycle callbacks.",
+      "removeWhen": "Inject narrow graph cleanup operations into the cleanup adapter so it no longer imports graph production; preserve the shared runtime and honest failed-slot results, then remove obsolete cyclic allowances."
+    },
+    {
+      "from": "src/lib/workflows/rebase/actors.ts",
+      "to": "src/lib/sessions/conflict-resolution.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/rebase/actors.ts",
+      "to": "src/lib/workflows/validation-fix/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/rebase/machine.ts",
+      "to": "src/lib/workflows/rebase/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/validation-fix.ts",
+      "to": "src/lib/workflows/conversation/lifecycle.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/validation-fix/actors.ts",
+      "to": "src/lib/workflows/validation-fix.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    },
+    {
+      "from": "src/lib/workflows/validation-fix/states.ts",
+      "to": "src/lib/workflows/validation-fix/actors.ts",
+      "reason": "Supported job hosts and merge/rebase/validation adapters coordinate session, ticket and memory effects through canonical workflow lifecycles.",
+      "removeWhen": "Supply actor/cleanup ports from production to break the return path into the host, preserving lease checks and cleanup ordering. Retain legitimate machine-to-actor imports; remove this allowance when they cease to be cyclic."
+    }
+  ]
+}

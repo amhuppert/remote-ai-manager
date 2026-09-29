@@ -15,7 +15,7 @@
  *  - `dispatchMergeJob`'s default broadcast routes job-status events through
  *    the shared session status bus end-to-end, so a refactor cannot silently
  *    drop the shared-bus routing without this test failing.
- *  - The imperative optimistic workflow (`@/lib/shared/optimistic`) keeps
+ *  - The imperative optimistic workflow (`@/lib/sessions/optimistic`) keeps
  *    `dispatchMergeJob` as its terminal step with the real background-jobs
  *    dispatch as its default dep, preserving the smart-merge entrypoint and
  *    the AgentCall-routed prompt half (`executePromptStream` →
@@ -66,10 +66,8 @@ import type {
   FixValidationOutput,
 } from "@/lib/workflows/validation-fix/actors";
 import type { MergePhase } from "@/lib/workflows/merge/types";
-import {
-  defaultOptimisticDeps,
-  executeOptimisticWorkflow,
-} from "@/lib/shared/optimistic";
+import { executeOptimisticWorkflow } from "@/lib/sessions/optimistic";
+import { defaultOptimisticDeps } from "@/lib/sessions/optimistic-production";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { JobStatus, JobStatusEvent } from "@/lib/jobs/schemas";
 import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";

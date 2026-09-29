@@ -1,5 +1,5 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { TaskExecutionProfile } from "../execution-admission";
+import type { TaskExecutionProfile } from "../execution-schemas";
 import { listBackends } from "../registry";
 import {
   _registerBackendForTesting,

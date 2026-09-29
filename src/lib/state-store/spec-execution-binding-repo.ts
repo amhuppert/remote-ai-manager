@@ -10,7 +10,7 @@ import {
   type SpecExecutionBindingReader,
   type SpecExecutionBindingSnapshotV2,
 } from "@/lib/specs/execution-binding";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createSpecRepoHelpers } from "./spec-repo-helpers";
 
 type Db = InstanceType<typeof Database>;

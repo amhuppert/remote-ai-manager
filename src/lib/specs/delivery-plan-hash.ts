@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   canonicalDeliveryPlanCandidateBytes,
   type DeliveryPlanBinding,

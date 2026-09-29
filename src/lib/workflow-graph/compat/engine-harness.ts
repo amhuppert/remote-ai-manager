@@ -712,6 +712,7 @@ export async function runEngineScenario<T>(
         }),
       },
       lifecycle: {
+        readSessionFinalizingMerge: () => null,
         abortConversation: () => {},
         abortExecutionLoop: () => {},
         loadDefinition: async () => null,

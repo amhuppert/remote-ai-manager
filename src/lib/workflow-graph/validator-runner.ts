@@ -74,7 +74,7 @@ import type {
 import {
   executeConversationTurn as defaultExecuteConversationTurn,
   stopConversationActor as defaultStopConversationActor,
-} from "@/lib/workflows/conversation/manager";
+} from "@/lib/workflows/conversation/lifecycle";
 import { toTaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import {
   composeValidatorLaneWriteEnvelope as defaultComposeValidatorLaneWriteEnvelope,

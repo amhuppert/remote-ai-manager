@@ -47,17 +47,19 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import { jsonError, notFound } from "@/lib/shared/route-resolution";
 import { getProjectConversation, getSession } from "@/lib/state-store";
 import {
-  cancelConversationCheckpoint,
-  checkConversationCheckpoint,
-  reconcileConversationCheckpoint,
-  startConversationCheckpoint,
-  skipConversationCheckpointHandoff,
   type ConversationCheckpointCancel,
   type ConversationCheckpointCheck,
   type ConversationCheckpointReconcile,
   type ConversationCheckpointRequest,
   type ConversationCheckpointStart,
 } from "@/lib/workflows/conversation/manager";
+import {
+  cancelConversationCheckpoint,
+  checkConversationCheckpoint,
+  reconcileConversationCheckpoint,
+  startConversationCheckpoint,
+  skipConversationCheckpointHandoff,
+} from "@/lib/workflows/conversation/lifecycle";
 import { checkpointScopeKeyForStoreIdentity } from "@/lib/workflows/conversation/actor-input-loader";
 import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
 

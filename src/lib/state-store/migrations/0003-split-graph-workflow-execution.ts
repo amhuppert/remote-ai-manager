@@ -3,7 +3,7 @@ import {
   DEFINITION_TIER_KEYS,
   RUNTIME_TIER_KEYS,
 } from "../graph-workflow-executions-repo";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { StateMigration } from "./types";
 
 const logger = createLogger(

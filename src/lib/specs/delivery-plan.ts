@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   actorProvenanceSchema,
   specCriterionDispositionSchema,

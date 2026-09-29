@@ -1,4 +1,4 @@
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 
 import type { FinalizedDeliveryPlanCandidateIdentity } from "./delivery-plan";

@@ -7,7 +7,7 @@ import {
 import {
   ASK_QUESTION_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS_ENABLED,
-} from "@/lib/prompt/sdk-driver";
+} from "@/lib/prompt/runtime-instruction-policy";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import {
   createWorkflowExecution,

@@ -57,7 +57,7 @@ import type { GraphWorkflowExecutionSeed } from "./execution-repository";
 import { _resetActiveLoopsForTesting } from "./execution-loop";
 import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
-import { createGraphWorkflowManager } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 import type { GraphWorkflowIterationResult } from "@/lib/workflow-graph/context-outcome";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";

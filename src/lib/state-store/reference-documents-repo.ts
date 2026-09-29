@@ -4,7 +4,7 @@ import { createLogger } from "@/lib/logging";
 import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
 import { PersistenceError } from "../shared/errors";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 type Db = InstanceType<typeof Database>;
 

@@ -50,7 +50,7 @@ import {
   appendNotice,
   readTranscriptEntriesWithSeq,
 } from "@/lib/prompt/transcript";
-import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
 import {
   createTicketAttachmentService,
   type EnsureConversationCompactionInput,

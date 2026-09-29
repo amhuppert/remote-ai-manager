@@ -1,7 +1,7 @@
 import { createLogger } from "@/lib/logging";
 import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
 import { graphWorkflowExecutionOriginSchema } from "@/lib/workflow-graph/schemas";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { StateMigration } from "./types";
 
 const logger = createLogger("state-store/migrations");

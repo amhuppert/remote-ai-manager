@@ -4,7 +4,7 @@ import { createConversationManagerFixture } from "@/lib/workflows/conversation/t
 let machineFactory: NonNullable<
   Parameters<typeof createConversationManagerFixture>[0]
 >["machine"];
-import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-production";
 import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
 const managerFixture: ReturnType<typeof createConversationManagerFixture> =
   createConversationManagerFixture({
@@ -40,11 +40,11 @@ import {
   type RehydrateConversationActorsDeps,
 } from "./rehydration";
 
+import { type ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
 import {
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
-  type ConversationQueueDeps,
-} from "@/lib/conversations/message-queue-drain";
+} from "@/lib/conversations/message-queue-production";
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 import { conversationMachine } from "./machine";
 import { validateRestoredSnapshot } from "./persistence";

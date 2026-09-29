@@ -28,7 +28,7 @@ import {
   createUserInputGateService,
   type UserInputGateService,
 } from "./user-input-gate";
-import { createGraphWorkflowManager } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture as createGraphWorkflowManager } from "@/lib/workflow-graph/testing/manager-fixture";
 
 /**
  * Task 6.2 — Prove the awaiting-user-input lifecycle and its edge flows against

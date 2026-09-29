@@ -8,10 +8,12 @@ import type {
 import {
   BackendAdmissionError,
   backendExecutionRefusal,
-  executionRequirementsSchema,
   type ExecutionCatalogEntry,
-  type ExecutionRequirements,
 } from "./execution-admission";
+import {
+  executionRequirementsSchema,
+  type ExecutionRequirements,
+} from "./execution-schemas";
 
 const logger = createLogger("agent-backends.execution");
 

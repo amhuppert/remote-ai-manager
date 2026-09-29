@@ -8,7 +8,7 @@ import { STRUCTURAL_REVISION_KEYS } from "@/lib/workflow-graph/structural-revisi
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import { PersistenceError } from "../shared/errors";
 import { decodeGraphWorkflowExecution } from "./graph-workflow-execution-codec";
-import { stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { checkRowColumnSize } from "./row-size-telemetry";
 

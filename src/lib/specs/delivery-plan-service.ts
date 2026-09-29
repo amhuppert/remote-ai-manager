@@ -13,7 +13,7 @@ import { buildPinnedSpecDocument, buildContextSpecDocument } from "./export";
 import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";
 import { buildSpecOwnershipProjection } from "./spec-ownership-projection";
 import { createLogger } from "@/lib/logging";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import {
   StaleDeliveryPlanDraftError,

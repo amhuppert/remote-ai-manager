@@ -204,6 +204,7 @@ export interface GraphWorkflowEnginePorts {
     | "executionRepository"
     | "eventPublisher"
     | "getSession"
+    | "clearConversationQuestion"
   >;
   git: EngineGit;
   scheduler?: Pick<ContextSchedulerDeps, "createBatchId">;
@@ -270,6 +271,7 @@ export function createGraphWorkflowEngine(ports: GraphWorkflowEnginePorts) {
   });
   const workflowManager = createGraphWorkflowManager({
     ...ports.lifecycle,
+    clearConversationQuestion: ports.clearConversationQuestion,
     userInputGateService: gates.userInputGateService,
     executionContract: ports.executionContract,
     executionRepository,

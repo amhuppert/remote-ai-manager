@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 
 import { specAssumptionCitationSnapshotSchema } from "@/lib/specs/schemas";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createSpecReviewRepo } from "../spec-review-repo";
 import { createSpecsRepo } from "../specs-repo";
 import { _createTestDb } from "../state-db";

@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 import type {
   ManagedWorkflowDefinitionLifecycle,

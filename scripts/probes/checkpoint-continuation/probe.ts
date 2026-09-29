@@ -56,7 +56,7 @@ import {
   startConversationCheckpoint,
   stopConversationActor,
   submitConversationTurn,
-} from "@/lib/workflows/conversation/manager";
+} from "@/lib/workflows/conversation/lifecycle";
 
 import { createProbeCallLedger, type ProbeCallLedger } from "./budget";
 import { instrumentTaskRunnersForProbe } from "./instrumentation";

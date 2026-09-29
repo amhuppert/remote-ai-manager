@@ -1,5 +1,5 @@
 "use client";
-import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-admission";
+import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-schemas";
 
 import { memo } from "react";
 import { cn } from "@/lib/ui/cn";

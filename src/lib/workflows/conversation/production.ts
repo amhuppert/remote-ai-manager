@@ -136,6 +136,11 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
       getSessionState: stateMod.getSession,
       fileExists: (await import("node:fs")).existsSync,
       executeAgentCall: defaultExecuteAgentCall,
+      async requestUserQuestion(scope, questions, signal) {
+        const { inTurnQuestionService } =
+          await import("@/lib/conversations/in-turn-question-service");
+        return inTurnQuestionService.request(scope, questions, signal);
+      },
       getTaskRunner: registryMod.getTaskRunner,
       getRuntime: getConversationRuntime,
       applyCostSettlementToHostedActor: applyHostedCostSettlement,
@@ -318,7 +323,7 @@ import {
 } from "./persistence-adapter";
 import { loadActorInput } from "./actor-input-loader";
 import { admitConversationProfileForTurn } from "@/lib/conversations/profile-admission";
-import { getConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
+import { getConversationQueueDeps } from "@/lib/conversations/message-queue-production";
 import {
   registerAbortController,
   unregisterAbortController,
@@ -590,8 +595,7 @@ export function createProductionConversationManagerDependencies(): ConversationM
         );
       },
       async executeTaskRun(input) {
-        const { executeWorkflowTaskRun } =
-          await import("./execute-workflow-task-run");
+        const { executeWorkflowTaskRun } = await import("./lifecycle");
         return executeWorkflowTaskRun(input);
       },
       backendSupportsCheckpoint: (backend) =>

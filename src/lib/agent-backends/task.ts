@@ -2,7 +2,7 @@ import { z } from "zod";
 import type {
   ExecutionIntent,
   TaskExecutionProfile,
-} from "./execution-admission";
+} from "./execution-schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationToolingOverrides } from "./types";
 import type { AgentTranscriptEntry } from "./transcript";

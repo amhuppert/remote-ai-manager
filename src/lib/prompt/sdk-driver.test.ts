@@ -40,12 +40,14 @@ import {
   BackendMismatchError,
   ModelSelectionValidationError,
   ConversationCommandDispatcherUnavailableError,
+  type PromptDeps,
+} from "./sdk-driver";
+import {
   TDD_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS_ENABLED,
   selectAskQuestionInstructions,
-  type PromptDeps,
-} from "./sdk-driver";
+} from "./runtime-instruction-policy";
 import {
   createConversationCommandService,
   type ConversationCommandDeps,

@@ -65,7 +65,7 @@ import { createLogger, withTracing, type Logger } from "@/lib/logging";
 import {
   ensureConversationActorAndDrain,
   clearConversationQuestion,
-} from "@/lib/workflows/conversation/manager";
+} from "@/lib/workflows/conversation/lifecycle";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ApiError } from "@/lib/api/errors";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";

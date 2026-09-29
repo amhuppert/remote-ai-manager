@@ -14,7 +14,7 @@
 import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
 import type { CommandItem } from "./schemas";
 import type { BuiltInCommandName } from "./schemas";
-import type { ExecutionRequirements } from "@/lib/agent-backends/execution-admission";
+import type { ExecutionRequirements } from "@/lib/agent-backends/execution-schemas";
 
 export const messageGenerationRequirements = {
   facet: "tasks",

@@ -11,7 +11,7 @@ let actorInputLoader: ConversationManagerDependencies["loadActorInput"] =
   };
 let admissionReader: ConversationManagerDependencies["readAdmissionState"] =
   async () => ({ found: true, requiresQueueReview: false });
-import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-production";
 import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
 const managerFixture: ReturnType<typeof createConversationManagerFixture> =
   createConversationManagerFixture({
@@ -54,7 +54,7 @@ import { conversationStateSchema } from "@/lib/conversations/schemas";
 import {
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
-} from "@/lib/conversations/message-queue-drain";
+} from "@/lib/conversations/message-queue-production";
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Tests for `executeWorkflowTaskRun` — the named entrypoint that routes

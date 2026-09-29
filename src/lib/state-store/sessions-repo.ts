@@ -12,7 +12,8 @@ import {
 } from "@/lib/sessions/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
 import { createVersionedRowCache } from "@/lib/shared/versioned-row-cache";
-import { jsonOrNull, stableStringify } from "./serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
+import { jsonOrNull } from "./serialization";
 import { checkRowColumnSize, checkRowColumnSizes } from "./row-size-telemetry";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
 type Db = InstanceType<typeof Database>;

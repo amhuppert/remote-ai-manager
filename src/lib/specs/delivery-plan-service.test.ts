@@ -73,7 +73,7 @@ import {
   deliveryPlanBindingHash,
   deliveryPlanCandidateHash,
 } from "./delivery-plan-hash";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   createDeliveryPlanService,
   type DeliveryPlanService,

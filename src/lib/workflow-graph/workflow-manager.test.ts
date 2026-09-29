@@ -1,3 +1,4 @@
+import type { GraphWorkflowManagerFixtureDeps } from "./testing/manager-fixture";
 import { createRepository } from "./testing/manager-scheduler-fixture";
 import type { ExecutionMutationDecision as FixtureDecision } from "@/lib/workflow-graph/execution-mutation";
 
@@ -43,13 +44,13 @@ import {
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { SESSION_LANE_NAME } from "@/lib/workflow-graph/lane-identity";
 import {
-  createGraphWorkflowManager as createProductionGraphWorkflowManager,
   interruptedDefinitionDecision,
   WorkflowDefinitionNotFoundError,
   WorkflowPrerequisitesUnmetError,
   WorkflowStartInputError,
   type GraphWorkflowManagerDeps,
 } from "./workflow-manager";
+import { createGraphWorkflowManagerFixture } from "@/lib/workflow-graph/testing/manager-fixture";
 
 import { WorkflowStartGuardError } from "./start-guards";
 import { lintCommittedSourceLocators } from "@/lib/workflows/committed-source-locator-lint";
@@ -86,8 +87,8 @@ import {
   workerJudgeDefinition,
 } from "./loop-test-fixtures";
 
-function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
-  return createProductionGraphWorkflowManager({
+function createGraphWorkflowManager(deps: GraphWorkflowManagerFixtureDeps) {
+  return createGraphWorkflowManagerFixture({
     assertSessionBranchReady: async () => {},
     captureExecutionLaneDevServerCleanup: (input) => () =>
       deps.stopExecutionLaneDevServers(input),
@@ -8074,7 +8075,7 @@ describe("graph workflow manager", () => {
       try {
         await defaultGitClient.git(["init", "--quiet"], worktreePath);
         const repository = createRepository();
-        const manager = createProductionGraphWorkflowManager({
+        const manager = createGraphWorkflowManagerFixture({
           abortConversation: () => {},
           abortExecutionLoop: () => {},
           stopExecutionLaneDevServers: async () => {},

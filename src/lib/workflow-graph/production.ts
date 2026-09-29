@@ -1,3 +1,5 @@
+import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
+import type { SessionFinalizingMerge } from "./start-guards";
 import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
 import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 import {
@@ -12,7 +14,7 @@ import {
   isConversationBusy,
   acquireConversationLock,
 } from "@/lib/prompt/single-flight";
-import { clearConversationQuestion } from "@/lib/workflows/conversation/manager";
+import { clearConversationQuestion } from "@/lib/workflows/conversation/lifecycle";
 import { createLandingEvidenceProber } from "./landing-evidence";
 import { createLaneDriftAuditor } from "./lane-drift";
 import {
@@ -51,7 +53,7 @@ import {
   createConversation,
   getConversation,
 } from "@/lib/conversations/service";
-import { requestConversationStop } from "@/lib/workflows/conversation/manager";
+import { requestConversationStop } from "@/lib/workflows/conversation/lifecycle";
 
 import {
   getActiveGraphWorkflowExecution,
@@ -116,6 +118,18 @@ import {
   createGraphWorkflowValidationRoundService,
   createGraphWorkflowScriptValidatorService,
 } from "./validation-services";
+
+/**
+ * The production reader behind the session-finalizing launch guard. Narrowed to
+ * the two facts the refusal names, so the manager never holds a whole job.
+ */
+function defaultReadSessionFinalizingMerge(
+  projectPath: string,
+  sessionName: string,
+): SessionFinalizingMerge | null {
+  const job = getFinalizingSessionMergeJob(projectPath, sessionName);
+  return job === null ? null : { jobId: job.jobId, branchName: job.branchName };
+}
 
 const logger = createLogger("graph-workflow-production");
 const GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT = 500;
@@ -267,6 +281,7 @@ function createProductionGraphWorkflowRuntime(
       }),
     },
     lifecycle: {
+      readSessionFinalizingMerge: defaultReadSessionFinalizingMerge,
       stopExecutionLaneDevServers: defaultStopExecutionLaneDevServers,
       loadDefinition: (projectPath, definitionId, tier) =>
         workflowStorage.get(scopeForTier(tier, projectPath), definitionId),

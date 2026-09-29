@@ -13,7 +13,7 @@ let actorInputLoader: ConversationManagerDependencies["loadActorInput"] =
   };
 let admissionReader: ConversationManagerDependencies["readAdmissionState"] =
   async () => ({ found: true, requiresQueueReview: false });
-import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-production";
 import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
 const managerFixture: ReturnType<typeof createConversationManagerFixture> =
   createConversationManagerFixture({
@@ -56,7 +56,7 @@ import { applySyncDerivedFields } from "@/lib/workflows/conversation/persistence
 import {
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
-} from "@/lib/conversations/message-queue-drain";
+} from "@/lib/conversations/message-queue-production";
 import {
   setConversationProfileAdmissionDeps,
   _resetConversationProfileAdmissionDepsForTesting,

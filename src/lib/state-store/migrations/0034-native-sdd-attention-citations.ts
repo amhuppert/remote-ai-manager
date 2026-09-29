@@ -6,7 +6,7 @@ import {
   enforceCurrentSchemaCompatibility,
   publishSchemaCompatibilityBarrier,
 } from "../schema-compatibility";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import type { MigrationContext, StateMigration } from "./types";
 
 const logger = createLogger("state-store.migrations");

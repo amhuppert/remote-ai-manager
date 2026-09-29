@@ -28,7 +28,7 @@ import {
   createSpecsRepo,
   type SpecsRepo,
 } from "@/lib/state-store/specs-repo";
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { Db } from "@/lib/state-store/schemas";
 

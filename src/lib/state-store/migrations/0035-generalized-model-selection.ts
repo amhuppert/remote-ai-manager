@@ -10,7 +10,7 @@ import {
   enforceCurrentSchemaCompatibility,
   publishSchemaCompatibilityBarrier,
 } from "../schema-compatibility";
-import { stableStringify } from "../serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   FROZEN_CURSOR_MODEL_SNAPSHOT,
   FROZEN_CURSOR_MODEL_VARIANT_PARAMETER_KEYS,

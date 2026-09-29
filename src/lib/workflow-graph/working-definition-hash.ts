@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { stableStringify } from "@/lib/state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 import type {
   ResolvedWorkflowSemanticDefinition,

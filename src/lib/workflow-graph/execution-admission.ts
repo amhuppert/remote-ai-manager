@@ -2,8 +2,8 @@ import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import {
   backendExecutionRefusal,
   type ExecutionCatalogEntry,
-  type ExecutionRequirements,
 } from "@/lib/agent-backends/execution-admission";
+import type { ExecutionRequirements } from "@/lib/agent-backends/execution-schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   PLAN_REPAIR_DEFAULT_AGENT,

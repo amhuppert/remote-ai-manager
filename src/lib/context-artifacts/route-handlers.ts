@@ -44,7 +44,7 @@ import { publishEvent } from "@/lib/events/publication";
 import { readConfig } from "@/lib/config/loader";
 import { resolveCompactionConfig } from "@/lib/config/cascade";
 import { readRepoConfig } from "@/lib/projects/repo-config";
-import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { deriveFreshness, type ArtifactFreshness } from "./freshness";

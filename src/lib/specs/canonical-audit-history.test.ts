@@ -17,7 +17,7 @@ import type {
   SpecReviewRecordMutatedEventPayload,
 } from "./schemas";
 import { computeSpecRevisionCitationHash } from "../state-store/specs-repo";
-import { stableStringify } from "../state-store/serialization";
+import { stableStringify } from "@/lib/shared/stable-stringify";
 
 const SPEC_ID = "spec-audit-history";
 const REVISION_ID = "revision-audit-history";

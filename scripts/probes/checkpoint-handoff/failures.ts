@@ -32,7 +32,7 @@ import {
   startConversationCheckpoint,
   stopConversationActor,
   submitConversationTurn,
-} from "@/lib/workflows/conversation/manager";
+} from "@/lib/workflows/conversation/lifecycle";
 import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
 import type { ProbeCallLedger } from "../checkpoint-continuation/budget";
 import {

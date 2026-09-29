@@ -2,7 +2,7 @@ import {
   executionIntentSchema,
   taskExecutionProfileSchema,
   backendAdmissionRefusalSchema,
-} from "@/lib/agent-backends/execution-admission";
+} from "@/lib/agent-backends/execution-schemas";
 /**
  * Capability-aware execution vocabulary for the AgentCall primitive.
  *

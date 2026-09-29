@@ -63,6 +63,17 @@ describe("readRepoConfig", () => {
             "Run unit tests in a worker pool clamped to the machine's memory budget",
           pathArgs: "paths",
         },
+        "test-impact": {
+          command: {
+            full: "scripts/validate/test-impact.sh",
+            changed: "scripts/validate/test-impact.sh",
+          },
+          cost: 3,
+          timeoutMs: 600_000,
+          description:
+            "Inspect native Vitest related-file selection without executing tests; excludes wrapper setup and declared-input expansion",
+          pathArgs: "paths",
+        },
         "cursor-acceptance": {
           command: { full: "scripts/validate/cursor-acceptance.sh" },
           cost: 5,
