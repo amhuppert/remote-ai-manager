@@ -72,7 +72,7 @@ import type {
   CaptureActiveCharterInput,
   CapturedAlignmentCharter,
 } from "@/lib/session-alignment/service";
-import { getLiveTicketContextProvider } from "@/lib/tickets/service-factory";
+import { getLiveTicketContextProvider } from "@/lib/tickets/storage-production";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";

@@ -22,7 +22,6 @@ import {
   getSession as defaultGetSession,
   getProjectConversation as defaultGetProjectConversation,
 } from "@/lib/state-store";
-import { getStateDb } from "@/lib/state-store/store";
 import {
   readTranscriptEntriesWithSeq as defaultReadTranscriptEntriesWithSeq,
   type TranscriptEntriesResult,
@@ -40,17 +39,14 @@ import {
 } from "@/lib/shared/route-resolution";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { CALLER_CONVERSATION_HEADER } from "@/lib/conversations/read-route-handlers";
-import { publishEvent } from "@/lib/events/publication";
-import { readConfig } from "@/lib/config/loader";
-import { resolveCompactionConfig } from "@/lib/config/cascade";
-import { readRepoConfig } from "@/lib/projects/repo-config";
-import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { deriveFreshness, type ArtifactFreshness } from "./freshness";
 import { PROMPT_VERSION } from "./generation";
-import { createCompactionService, type CompactionService } from "./service";
-import { createContextArtifactsRepo, type ContextArtifactsRepo } from "./repo";
+import type { CompactionService } from "./service";
+import { getCompactionService } from "./production";
+import type { ContextArtifactsRepo } from "./repo";
+import { getContextArtifactsRepo } from "./repo-production";
 import {
   artifactKindSchema,
   CONTEXT_ARTIFACT_SCHEMA_VERSION,
@@ -79,53 +75,14 @@ export interface ContextArtifactRouteDeps {
   auth: AgentAuth;
 }
 
-// Lazy production singletons: the repo opens the shared SQLite handle and the
-// service owns the process-wide single-flight map, so both must be created
-// once and only when a request actually arrives (not at module import).
-let _defaultRepo: ContextArtifactsRepo | null = null;
-function getDefaultRepo(): ContextArtifactsRepo {
-  _defaultRepo ??= createContextArtifactsRepo(getStateDb());
-  return _defaultRepo;
-}
-
-let _defaultService: CompactionService | null = null;
-function getDefaultService(): CompactionService {
-  _defaultService ??= createCompactionService({
-    executeTaskRun: executeWorkflowTaskRun,
-    readEntries: defaultReadTranscriptEntriesWithSeq,
-    repo: getDefaultRepo(),
-    resolveConfig: async (projectPath) =>
-      resolveCompactionConfig(
-        await readConfig(),
-        await readRepoConfig(projectPath),
-      ),
-    broadcast: publishEvent,
-    now: () => new Date().toISOString(),
-  });
-  return _defaultService;
-}
-
-/**
- * Process-wide compaction singletons for other domains (e.g. ticket
- * attachments). The service owns the single-flight generation map, so a
- * second instance would race generations — always share these.
- */
-export function getCompactionService(): CompactionService {
-  return getDefaultService();
-}
-
-export function getContextArtifactsRepo(): ContextArtifactsRepo {
-  return getDefaultRepo();
-}
-
 function defaultDeps(): ContextArtifactRouteDeps {
   return {
     resolveProjectPath: defaultResolveProjectPath,
     getSession: defaultGetSession,
     getProjectConversation: defaultGetProjectConversation,
     readTranscriptEntries: defaultReadTranscriptEntriesWithSeq,
-    getService: getDefaultService,
-    getRepo: getDefaultRepo,
+    getService: getCompactionService,
+    getRepo: getContextArtifactsRepo,
     auth: createAgentAuth(),
   };
 }

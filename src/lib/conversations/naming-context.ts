@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getContextArtifactsRepo } from "@/lib/context-artifacts/route-handlers";
+import { getContextArtifactsRepo } from "@/lib/context-artifacts/repo-production";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import { createLogger } from "@/lib/logging";

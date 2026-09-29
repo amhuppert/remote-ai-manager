@@ -11,7 +11,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
-import { planDefinitionHash } from "./plan-review/schemas";
+import { planDefinitionHash } from "./plan-review/definition-hash";
 import {
   createPlanReviewService,
   type PlanReviewLookup,

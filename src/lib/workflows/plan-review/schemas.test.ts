@@ -9,10 +9,10 @@ import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalizati
 import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 
 import {
-  graphPlanReviewSchema,
   planDefinitionHash,
   canonicalPlanDefinitionHash,
-} from "./schemas";
+} from "./definition-hash";
+import { graphPlanReviewSchema } from "./schemas";
 
 /** A well-formed create/replace body: `{ name, description?, definition, layout }`. */
 function makePlan(definition = createWorkflowDefinition()) {

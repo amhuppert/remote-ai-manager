@@ -18,7 +18,7 @@ import {
 } from "@/lib/state-store";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
-import { getTicketsRepo } from "@/lib/tickets/service-factory";
+import { getTicketsRepo } from "@/lib/tickets/storage-production";
 
 import { getConversationCheckpointsRepo } from "./service-factory";
 import {

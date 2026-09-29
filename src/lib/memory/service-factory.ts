@@ -20,7 +20,7 @@ import {
 import { resolveBoundSpecExecution } from "@/lib/specs/execution-service";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
-import { getTicketsRepo } from "@/lib/tickets/service-factory";
+import { getTicketsRepo } from "@/lib/tickets/storage-production";
 import { findLaneBindingForConversation } from "@/lib/workflow-graph/lane-binding";
 import {
   createMemoryContributionGate,

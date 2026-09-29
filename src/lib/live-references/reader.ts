@@ -67,7 +67,7 @@ export const liveReferenceReader: LiveReferenceReader = {
       };
     }
     const { getTicketProjectResolver, getTicketsRepo } =
-      await import("@/lib/tickets/service-factory");
+      await import("@/lib/tickets/storage-production");
     const projectPath =
       await getTicketProjectResolver().resolveKnownProjectPath(
         target.projectName,

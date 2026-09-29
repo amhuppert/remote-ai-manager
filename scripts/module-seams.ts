@@ -12,6 +12,48 @@ import { productionEntryFiles } from "./module-graph-roots";
 
 export const CORE_BOUNDARIES = [
   {
+    roots: ["src/lib/tickets/storage-production.ts"],
+    forbidden: [
+      "src/lib/tickets/service-factory.ts",
+      "src/lib/tickets/start-service.ts",
+      "src/lib/tickets/route-handlers.ts",
+      "src/lib/sessions/service.ts",
+      "src/lib/prompt/sdk-driver.ts",
+      "src/lib/context-artifacts/production.ts",
+      "src/lib/workflows/conversation/lifecycle.ts",
+    ],
+  },
+  {
+    roots: [
+      "src/lib/workflows/plan-review/schemas.ts",
+      "src/lib/state-store/graph-plan-reviews-repo.ts",
+    ],
+    forbidden: [
+      "src/lib/workflows/plan-review/definition-hash.ts",
+      "src/lib/workflows/plan-validation.ts",
+      "src/lib/workflow-graph/working-definition-hash.ts",
+    ],
+  },
+  {
+    roots: ["src/lib/context-artifacts/repo-production.ts"],
+    forbidden: [
+      "src/lib/context-artifacts/production.ts",
+      "src/lib/context-artifacts/service.ts",
+      "src/lib/context-artifacts/route-handlers.ts",
+      "src/lib/workflows/conversation/lifecycle.ts",
+      "src/lib/agent-gateway/token.ts",
+    ],
+  },
+  {
+    roots: [
+      "src/lib/context-artifacts/production.ts",
+      "src/lib/tickets/service-factory.ts",
+      "src/lib/workflows/conversation/production.ts",
+      "src/lib/conversations/naming-context.ts",
+    ],
+    forbidden: ["src/lib/context-artifacts/route-handlers.ts"],
+  },
+  {
     roots: [
       "src/lib/tickets/schemas.ts",
       "src/lib/commands/schemas.ts",

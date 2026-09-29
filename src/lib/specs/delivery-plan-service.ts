@@ -7,7 +7,7 @@ import {
   type AuthoredAccountabilityCoverageGroup,
 } from "@/lib/workflow-graph/spec-bridge";
 import type { PlanReviewLookup } from "@/lib/workflows/plan-review/service";
-import { canonicalPlanDefinitionHash } from "@/lib/workflows/plan-review/schemas";
+import { canonicalPlanDefinitionHash } from "@/lib/workflows/plan-review/definition-hash";
 import type { PlanReviewAdvisory } from "@/lib/workflows/plan-review/status-schemas";
 import { buildPinnedSpecDocument, buildContextSpecDocument } from "./export";
 import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";

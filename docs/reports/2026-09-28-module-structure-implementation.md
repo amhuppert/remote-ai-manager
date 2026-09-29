@@ -162,19 +162,75 @@ than hidden behind a global count. Follow-up work should select a named decision
 or concrete composition leak and remove all alternate import paths, then verify
 production behavior and the affected test corpus.
 
-The next three candidates, in order:
+### Context-artifact composition follow-up (2026-09-29)
 
-1. Separate context-artifact repository bindings and compaction production
-   composition from `context-artifacts/route-handlers.ts`. Ticket attachments
-   need compaction, and conversation composition needs a read-only repository;
-   neither should acquire HTTP/auth/route dispatch. Preserve the same database
-   and single lazy compaction instance with its single-flight map.
-2. Separate ticket repository/read bindings from `tickets/service-factory.ts`.
-   Checkpoint fork, memory, live references and session cleanup currently acquire
-   launch, prompt and session composition through getters that only need storage.
-3. Separate persisted plan-review record schemas from canonical hashing and
-   workflow validation in `workflows/plan-review/schemas.ts`, so the state-store
-   record decoder does not import the workflow validator.
+Completed the first candidate. `context-artifacts/repo-production.ts` now owns
+one lazy repository bound through the same `getStateDb()` accessor.
+`context-artifacts/production.ts` owns one lazy compaction service, including its
+single-flight map, and uses that repository. Routes and ticket attachments call
+the same getters; conversation composition and naming-context readers import
+only the repository binding. Checkpoint probes use the compaction entrypoint.
+There are no compatibility re-exports from the HTTP module.
+
+Task execution, configuration resolution, transcript reads, publication, clock,
+and route behavior are unchanged. Transitive seam rules keep the repository
+binding independent of compaction, lifecycle, and authentication, and keep the
+non-HTTP consumers independent of the context-artifact route handlers. The cycle
+baseline replaces two moved composition edges and deletes the eliminated
+conversation-production-to-route edge: 99 reviewed edges become 98. The remaining
+ticket/compaction/lifecycle cycle is still recorded, with ticket read bindings
+as its next separation point. This change makes no compile/test speed claim.
+
+Follow-up validation passed: five targeted files covering route behavior,
+compaction (including concurrent-trigger coalescing), naming context, ticket
+attachments, and transitive boundaries
+(`vrun-15822dad-b9a0-45c2-876d-963843aacfda`); full typecheck
+(`vrun-b8f1d05b-7549-40c5-a540-198d99c1a2ee`); seams
+(`vrun-57bf54f6-6af2-48b8-8ce2-5a16d1881e0d`); lint
+(`vrun-c8f617d3-6e02-4664-a079-2bc26cb7a459`); and formatting
+(`vrun-370a7947-8d11-46f6-9459-d06d39a30c9e`). Independent code review found no
+substantive issues. The full suite was not rerun for this mechanical extraction.
+
+### Ticket storage and plan-review follow-ups (2026-09-29)
+
+Completed both remaining candidates:
+
+- `tickets/storage-production.ts` owns the ticket repository, project resolver,
+  content store, and live-context provider. Launch, enrichment, compaction, and
+  session orchestration remain in `tickets/service-factory.ts`. Repository-only
+  callers, session cleanup, memory, checkpoint fork, live references, bundles,
+  lifecycle observers, and conversation/collaboration readers now use storage
+  bindings directly. Every moved global singleton retains its original key;
+  the same database accessor and shared write-queue functions still own writes.
+  Project lookup fallback, content paths, and per-turn rereads are unchanged.
+- `workflows/plan-review/schemas.ts` now imports only Zod. The persisted record,
+  digest pattern, terminal verdicts, and findings refinement are unchanged.
+  `definition-hash.ts` owns the unchanged canonical hash and plan-validation
+  operations. Storage decodes the same record without acquiring the workflow
+  validator. Hash consumers import the new module directly; canonicalization
+  and the advisory review semantics are unchanged.
+
+Transitive guards cover both boundaries. The ticket separation removes 16 more
+production cycle edges (98 to 82), with no added allowances. The remaining
+cycles stay explicitly recorded; completing these candidates does not mean the
+whole production graph is acyclic. No database migration, compatibility
+re-export, or measured compile/test performance claim accompanies these moves.
+
+Validation passed for all six targeted plan-review, workflow-definition,
+delivery-plan, and record durability test files
+(`vrun-c4739878-7173-453a-a197-2c5efd38849b`), plus all eight targeted ticket
+storage, project resolution, content, live-context, lifecycle, launch, and
+boundary test files (`vrun-8cd44f61-6d25-4de9-92d4-106ddde2e938`). Full typecheck
+passed (`vrun-03dfa8a7-90ab-40ae-8faf-c73296d814ba`), as did lint
+(`vrun-0666922e-4860-4ab2-ba42-fa2a4c0a6008`) and formatting
+(`vrun-e7f758b3-57d8-433a-8b5d-4f433e04b482`). Independent review found no
+substantive issues. These mechanical extractions used existing behavior tests;
+the full suite was not rerun. The final seams check passed against the shrunk
+82-edge baseline (`vrun-e305eca2-3254-4b64-9f73-c60044548e0b`).
+
+The three named follow-ups are complete. Further structural work should start
+from a fresh graph and concrete source witnesses before selecting another
+ownership change.
 
 Preserve legitimate canonical schemas and policy calls inside storage
 transactions. Do not reorganize the workflows folders solely to make a
@@ -194,11 +250,9 @@ The added mechanisms have current consumers:
 | Exact cycle allowances and core restrictions | The existing seams gate rejects added edges, duplicates, stale entries and forbidden core paths. Each failure has a distinct repair; a global cycle-count budget could hide a new edge inside the existing component. |
 | Timing artifacts and native test selection | This experiment needs observed test phases and selection. Unavailable transform measurements are `null`; treating them as zero or inferring them from static reach would misstate evidence. |
 
-Current qualitative score for the sampled seams: **7.5/10** (six of eight
-diagnostics). Scope clarity, useful interface depth, abstraction comments,
-design review, single-decision ownership in the changed modules, and deliberate
-simplification pass. Implementation independence still fails where repository
-consumers acquire route/service composition; the first two follow-ups above
-address that. Boundary discoverability still fails in mixed record-schema and
-validation modules; the third follow-up addresses that. This is a review judgment
-about the sampled seams, not a measured repository-wide quality score.
+The earlier phase-two review scored the sampled seams at 7.5/10. Its two named
+ownership concerns are now addressed: repository consumers have storage
+bindings separate from route/launch composition, and persisted plan-review
+records have a schema module separate from hashing and validation. This is a
+review of those specific boundaries, not a repository-wide quality score or a
+claim that every production composition cycle has disappeared.

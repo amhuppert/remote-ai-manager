@@ -2,7 +2,7 @@ import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/e
 import { collectStableAccountabilityContextIds } from "@/lib/workflow-graph/authored-accountability";
 import { locateAuthoredAccountabilityCoverage } from "@/lib/workflow-graph/authored-accountability-coverage";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
-import { canonicalPlanDefinitionHash } from "@/lib/workflows/plan-review/schemas";
+import { canonicalPlanDefinitionHash } from "@/lib/workflows/plan-review/definition-hash";
 import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
 import { createPlanReviewService } from "@/lib/workflows/plan-review/service";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

@@ -36,7 +36,7 @@ import {
   assignmentReferenceRefusalBody,
 } from "./assignment-reference-refusal";
 import { defaultPlanReviewService } from "./plan-review/default-service";
-import { canonicalPlanDefinitionHash } from "./plan-review/schemas";
+import { canonicalPlanDefinitionHash } from "./plan-review/definition-hash";
 import type { PlanReviewLookup } from "./plan-review/service";
 import {
   planReviewAcknowledgementRequestSchema,

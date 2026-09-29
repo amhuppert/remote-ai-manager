@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { extractImportStatements } from "./seam-adoption";
 import { readValueGraph, shortestImportPath } from "./module-imports";
+import { CORE_BOUNDARIES, coreBoundaryViolations } from "./module-seams";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,6 +28,24 @@ function valueImports(file: string): string[] {
 }
 
 describe("reviewed module boundaries", () => {
+  it("keeps ticket storage bindings and persisted plan reviews independent of execution composition", () => {
+    const roots = [
+      "src/lib/tickets/storage-production.ts",
+      "src/lib/workflows/plan-review/schemas.ts",
+      "src/lib/state-store/graph-plan-reviews-repo.ts",
+    ];
+    expect(coreBoundaryViolations(readValueGraph(repoRoot, roots))).toEqual([]);
+  }, 30000);
+  it("keeps context-artifact storage independent of compaction and non-HTTP consumers independent of routes", () => {
+    const roots = CORE_BOUNDARIES.flatMap((rule) => rule.roots).filter(
+      (root) =>
+        root.startsWith("src/lib/context-artifacts/") ||
+        root === "src/lib/tickets/service-factory.ts" ||
+        root === "src/lib/workflows/conversation/production.ts" ||
+        root === "src/lib/conversations/naming-context.ts",
+    );
+    expect(coreBoundaryViolations(readValueGraph(repoRoot, roots))).toEqual([]);
+  }, 30000);
   it("keeps the conversation core and lifecycle fixture independent of production composition", () => {
     const cores = [
       "src/lib/workflows/conversation/manager.ts",

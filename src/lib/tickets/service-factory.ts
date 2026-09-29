@@ -1,21 +1,18 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import packageMetadata from "../../../package.json";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { resolveConfiguredAgentBackendDefaults } from "@/lib/agent-backends/conversation-policy";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { getBuildInfo } from "@/lib/build-info";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import { getConfigDirPath, readConfig } from "@/lib/config/loader";
+import { readConfig } from "@/lib/config/loader";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
 import { findConversationById } from "@/lib/conversations/cross-project-list";
 import { createFirstTurnDispatcher } from "@/lib/prompt/first-turn-dispatch";
 import { executePromptStream } from "@/lib/prompt/sdk-driver";
 import { isConversationBusy } from "@/lib/prompt/single-flight";
-import {
-  getCompactionService,
-  getContextArtifactsRepo,
-} from "@/lib/context-artifacts/route-handlers";
+import { getCompactionService } from "@/lib/context-artifacts/production";
+import { getContextArtifactsRepo } from "@/lib/context-artifacts/repo-production";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
@@ -30,22 +27,7 @@ import {
   createReferenceDocument,
   getProjectConversation,
   getSession,
-  getStateDb,
 } from "@/lib/state-store";
-import {
-  createTicketsRepo,
-  type TicketsRepo,
-} from "@/lib/state-store/tickets-repo";
-import {
-  createProjectsRepo,
-  type ProjectsRepo,
-} from "@/lib/state-store/projects-repo";
-import {
-  _resetForTesting,
-  tryWithWriteQueue,
-  withWriteQueue,
-  withWriteQueueSync,
-} from "@/lib/state-store/write-queue";
 import {
   appendNotice,
   readTranscriptEntriesWithSeq,
@@ -66,11 +48,6 @@ import {
   createTicketCommandRunner,
   type TicketCommandRunner,
 } from "./slash-command";
-import {
-  createTicketContentStore,
-  TICKET_CONTENT_ROOT_DIRNAME,
-  type TicketContentStore,
-} from "./content-store";
 import { createTicketKickoffQueuer, type TicketKickoffQueuer } from "./kickoff";
 import { composeQuickTicketDiagnosticReport } from "./diagnostics";
 import {
@@ -78,17 +55,9 @@ import {
   type TicketEnrichmentService,
 } from "./enrichment";
 import {
-  createLiveTicketContextProvider,
-  type LiveTicketContextProvider,
-} from "./live-context";
-import {
   createTicketRelationshipService,
   type TicketRelationshipService,
 } from "./relationship-service";
-import {
-  createTicketProjectResolver,
-  type TicketProjectResolver,
-} from "./project-resolver";
 import {
   createTicketMaterializer,
   type TicketMaterializer,
@@ -112,44 +81,13 @@ import {
   type TicketStartService,
 } from "./start-service";
 
+import {
+  getTicketsRepo,
+  getTicketProjectResolver,
+  getTicketContentStore,
+} from "./storage-production";
+
 const logger = createLogger("tickets.service-factory");
-
-/**
- * One repo per process: it shares the module-level write queue so ticket
- * writes serialize with every other state-store write, and route handlers
- * reuse the same prepared statements as the service.
- */
-export function getTicketsRepo(): TicketsRepo {
-  return getGlobalSingleton("__cc_tickets_repo", () =>
-    createTicketsRepo(getStateDb(), {
-      withWriteQueue,
-      withWriteQueueSync,
-      tryWithWriteQueue,
-      _resetForTesting,
-    }),
-  );
-}
-
-function getTicketProjectsRepo(): ProjectsRepo {
-  return getGlobalSingleton("__cc_ticket_projects_repo", () =>
-    createProjectsRepo(getStateDb()),
-  );
-}
-
-export function getTicketProjectResolver(): TicketProjectResolver {
-  return getGlobalSingleton("__cc_ticket_project_resolver", () =>
-    createTicketProjectResolver({
-      resolveAvailableProjectPath(projectName) {
-        return resolveProjectPath(projectName);
-      },
-      listKnownProjectPaths() {
-        return getTicketProjectsRepo()
-          .listAll()
-          .map((project) => project.rootPath);
-      },
-    }),
-  );
-}
 
 /** One start/delete lock per process — the keys are process-wide identities. */
 export function getTicketOperationLock(): TicketOperationLock {
@@ -347,29 +285,6 @@ export function getTicketStatusUpdateService(): TicketStatusUpdateService {
       },
       generateId() {
         return randomUUID();
-      },
-    }),
-  );
-}
-
-/** One provider per process; reads through the shared repo every turn. */
-export function getLiveTicketContextProvider(): LiveTicketContextProvider {
-  return getGlobalSingleton("__cc_live_ticket_context_provider", () =>
-    createLiveTicketContextProvider({
-      findLinkedTicket(projectPath, sessionName) {
-        return getTicketsRepo().findLinkedTicket(projectPath, sessionName);
-      },
-    }),
-  );
-}
-
-/** Durable attachment snapshots live under `<config-dir>/ticket-content/`. */
-export function getTicketContentStore(): TicketContentStore {
-  return getGlobalSingleton("__cc_ticket_content_store", () =>
-    createTicketContentStore({
-      contentRoot: path.join(getConfigDirPath(), TICKET_CONTENT_ROOT_DIRNAME),
-      listTicketIdsForProject(projectPath) {
-        return getTicketsRepo().listTicketIds(projectPath);
       },
     }),
   );

@@ -50,7 +50,7 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     capabilitiesDepsMod,
     messageQueueMod,
     alignmentServiceFactoryMod,
-    ticketServiceFactoryMod,
+    ticketStorageMod,
     notepadServiceFactoryMod,
     modelSelectionAdmissionMod,
     memoryServiceFactoryMod,
@@ -76,7 +76,7 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     import("@/lib/agent-capabilities/default-deps"),
     import("@/lib/conversations/message-queue-service"),
     import("@/lib/session-alignment/service-factory"),
-    import("@/lib/tickets/service-factory"),
+    import("@/lib/tickets/storage-production"),
     import("@/lib/notepads/service-factory"),
     import("@/lib/agent-backends/model-selection-admission"),
     import("@/lib/memory/service-factory"),
@@ -264,7 +264,7 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
       getActiveAlignmentVersion: (projectPath: string, sessionName: string) =>
         alignmentService.getActiveVersion(projectPath, sessionName),
       getLiveTicketBlock: (projectPath: string, sessionName: string) =>
-        ticketServiceFactoryMod
+        ticketStorageMod
           .getLiveTicketContextProvider()
           .getForSession(projectPath, sessionName),
       getMemoryIndexBlock: (request) =>
@@ -572,7 +572,7 @@ export function createProductionConversationManagerDependencies(): ConversationM
       },
       async findArtifact(conversationId) {
         const { getContextArtifactsRepo } =
-          await import("@/lib/context-artifacts/route-handlers");
+          await import("@/lib/context-artifacts/repo-production");
         return (
           getContextArtifactsRepo()
             .findByConversation(conversationId)

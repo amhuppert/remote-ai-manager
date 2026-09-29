@@ -44,7 +44,7 @@ import {
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import { getStateStore } from "@/lib/state-store";
-import { getTicketsRepo } from "@/lib/tickets/service-factory";
+import { getTicketsRepo } from "@/lib/tickets/storage-production";
 import { findLaneBindingForConversation } from "@/lib/workflow-graph/lane-binding";
 
 import type {

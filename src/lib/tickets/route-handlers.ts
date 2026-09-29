@@ -20,7 +20,8 @@ import type {
   TicketResult,
   TicketValidationIssue,
 } from "./schemas";
-import { getTicketProjectResolver, getTicketService } from "./service-factory";
+import { getTicketService } from "./service-factory";
+import { getTicketProjectResolver } from "./storage-production";
 import {
   createTicketServiceInputSchema,
   listTicketsServiceQuerySchema,

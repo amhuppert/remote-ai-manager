@@ -12,7 +12,7 @@ import { createLogger, withTracing } from "@/lib/logging";
 import { NextResponse } from "next/server";
 import { parseProjectNameParam } from "./route-handlers";
 import { resolveTicketProjectOr404 } from "./route-resolution";
-import { getTicketProjectResolver, getTicketsRepo } from "./service-factory";
+import { getTicketProjectResolver, getTicketsRepo } from "./storage-production";
 import type { TicketLinkSummary } from "./schemas";
 
 const logger = createLogger("tickets.routes.session-links");

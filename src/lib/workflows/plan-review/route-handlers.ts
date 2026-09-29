@@ -15,7 +15,8 @@ import {
   defaultReviewerConversationResolver,
   type ReviewerConversationResolver,
 } from "./reviewer-conversation";
-import { graphPlanReviewVerdictSchema, planDefinitionHash } from "./schemas";
+import { planDefinitionHash } from "./definition-hash";
+import { graphPlanReviewVerdictSchema } from "./schemas";
 import type { PlanReviewService } from "./service";
 import type { PlanReviewStatus } from "./status-schemas";
 

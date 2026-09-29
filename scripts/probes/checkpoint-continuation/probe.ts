@@ -36,7 +36,7 @@ import {
 } from "@/lib/conversation-checkpoints/fixtures/continuity-corpus";
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
 import { checkpointScopeKeyForStoreIdentity } from "@/lib/workflows/conversation/actor-input-loader";
-import { getCompactionService } from "@/lib/context-artifacts/route-handlers";
+import { getCompactionService } from "@/lib/context-artifacts/production";
 import { createHistoryImageService } from "@/lib/conversations/history-image-service";
 import type { ImagePayload } from "@/lib/images/schemas";
 import { getMemoryService } from "@/lib/memory/service-factory";

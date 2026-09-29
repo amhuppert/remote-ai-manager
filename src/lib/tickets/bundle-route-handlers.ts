@@ -8,7 +8,7 @@ import { publishEvent } from "@/lib/events/publication";
 import { readBodyBounded } from "@/lib/shared/bounded-body";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { resolveTicketProjectOr404 } from "./route-resolution";
-import { getTicketContentStore, getTicketsRepo } from "./service-factory";
+import { getTicketContentStore, getTicketsRepo } from "./storage-production";
 import { getTicketProjectOperationGate } from "./project-operation-gate";
 import { parseTicketNumberSegment } from "./ticket-number";
 import { publishTicketChange } from "./events";

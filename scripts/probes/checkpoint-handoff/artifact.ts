@@ -1,5 +1,5 @@
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
-import { getCompactionService } from "@/lib/context-artifacts/route-handlers";
+import { getCompactionService } from "@/lib/context-artifacts/production";
 import {
   getConversation,
   getProjectConversation,

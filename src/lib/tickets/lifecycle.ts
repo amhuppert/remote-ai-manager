@@ -174,7 +174,7 @@ export function createTicketLifecycleObserver(
 
 async function createProductionObserver() {
   const [{ getTicketsRepo }, { publishEvent }] = await Promise.all([
-    import("./service-factory"),
+    import("./storage-production"),
     import("@/lib/events/publication"),
   ]);
   return createTicketLifecycleObserver({

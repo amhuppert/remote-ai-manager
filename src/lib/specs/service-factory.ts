@@ -31,10 +31,8 @@ import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { getStateDb } from "@/lib/state-store/store";
 import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
-import {
-  getTicketContentStore,
-  getTicketService,
-} from "@/lib/tickets/service-factory";
+import { getTicketService } from "@/lib/tickets/service-factory";
+import { getTicketContentStore } from "@/lib/tickets/storage-production";
 import type { TicketAttachment } from "@/lib/tickets/schemas";
 import {
   admitAuthoredWorkflowLaunch,

@@ -324,14 +324,12 @@ const defaultSessionDeps: SessionDeps = {
       sessionName,
     ),
   captureTicketContentForProject: async (projectPath) => {
-    const { getTicketsRepo } = await import("@/lib/tickets/service-factory");
+    const { getTicketsRepo } = await import("@/lib/tickets/storage-production");
     return getTicketsRepo().listTicketIds(projectPath);
   },
   cleanupTicketContentForProject: async (projectPath, ticketIds) => {
-    // Lazy: the sessions service must never import ticket modules statically
-    // (service-factory imports back into sessions/service — an ESM cycle).
     const { getTicketContentStore } =
-      await import("@/lib/tickets/service-factory");
+      await import("@/lib/tickets/storage-production");
     await getTicketContentStore().deleteProject(projectPath, ticketIds);
   },
   captureNotepadContentForProject: async (projectPath) => {

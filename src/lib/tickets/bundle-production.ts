@@ -22,7 +22,7 @@ import {
   renderVerifiedCanonicalBundle,
 } from "@/lib/specs/export";
 import { createProductionSpecWorkflowCleanupPort } from "@/lib/specs/workflow-cleanup-port";
-import { getTicketContentStore, getTicketsRepo } from "./service-factory";
+import { getTicketContentStore, getTicketsRepo } from "./storage-production";
 import type { BundleCaptureDeps, BundleContext } from "./bundle-capture";
 
 /** Registry adapters enumerate explicit context; archive capture never needs to know each domain's storage layout. */
