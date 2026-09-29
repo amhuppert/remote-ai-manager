@@ -364,9 +364,14 @@ function SelectionAffordanceLayer({
         <span
           ref={triggerRef}
           className="fixed z-popover inline-flex items-center gap-xs"
+          aria-hidden={open || undefined}
           style={
             placedTrigger
-              ? { top: placedTrigger.top, left: placedTrigger.left }
+              ? {
+                  top: placedTrigger.top,
+                  left: placedTrigger.left,
+                  visibility: open ? "hidden" : "visible",
+                }
               : { visibility: "hidden" }
           }
         >

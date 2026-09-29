@@ -147,3 +147,7 @@ export const Expanded: Story = {
   },
   render: () => <Interactive initialExpanded={true} />,
 };
+
+export const Sending: Story = {
+  args: { ...Expanded.args, isSending: true },
+};

@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
-import { useDeleteDocumentCommentMutation } from "@/lib/document-comments/mutations";
+import { ApiCallError } from "@/lib/api/errors";
+import { mutationFetch } from "@/lib/api/fetcher";
+import { documentCommentKeys } from "@/lib/document-comments/query-keys";
+import { documentCommentSchema } from "@/lib/document-comments/schemas";
 import type {
   DocumentComment,
   DocumentFeedbackItem,
@@ -183,9 +187,9 @@ export interface UseSendDocumentFeedbackResult {
    * Deliver the given comments as ONE feedback submission to the chosen target
    * (or a new conversation when none) and remove them on success — once sent, a
    * comment's in-document indicator and highlight are no longer useful, so the
-   * comment is deleted rather than kept as a "sent" marker. Returns whether
-   * delivery succeeded; on failure the comments stay pending and the error is
-   * surfaced via `error` (8.5).
+   * comment is deleted when possible and otherwise marked sent. Returns whether
+   * delivery was accepted, independently of cleanup. A delivery failure leaves
+   * comments pending; cleanup errors report that feedback was already sent.
    */
   sendFeedback: (comments: readonly DocumentComment[]) => Promise<boolean>;
   isSending: boolean;
@@ -193,72 +197,179 @@ export interface UseSendDocumentFeedbackResult {
   clearError: () => void;
 }
 
+/** Once delivery is accepted, a cleanup failure must never roll it back to pending. */
+async function retireDeliveredComments(
+  docRef: DocumentRef,
+  comments: readonly DocumentComment[],
+  queryClient: QueryClient,
+): Promise<boolean> {
+  const listKey = documentCommentKeys.list(
+    docRef.projectName,
+    docRef.sessionName,
+    docRef.docPath,
+  );
+  await queryClient.cancelQueries({ queryKey: listKey });
+  const ids = new Set(comments.map(({ id }) => id));
+  const sentAt = new Date().toISOString();
+  queryClient.setQueryData<DocumentComment[]>(listKey, (old) =>
+    old?.map((comment) =>
+      ids.has(comment.id)
+        ? { ...comment, status: "sent", sentAt: comment.sentAt ?? sentAt }
+        : comment,
+    ),
+  );
+
+  const results = await Promise.allSettled(
+    comments.map(async (comment) => {
+      const url = `/api/projects/${enc(docRef.projectName)}/sessions/${enc(docRef.sessionName)}/document-comments/${enc(comment.id)}`;
+      try {
+        await mutationFetch(url, "delete-document-comment", {
+          method: "DELETE",
+        });
+      } catch (error) {
+        if (!(error instanceof ApiCallError && error.status === 404)) {
+          // Preserve the accepted state durably when removal is unavailable.
+          await mutationFetch(
+            url,
+            "update-document-comment",
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "sent" }),
+            },
+            documentCommentSchema,
+          );
+          return;
+        }
+      }
+      queryClient.setQueryData<DocumentComment[]>(listKey, (old) =>
+        old?.filter(({ id }) => id !== comment.id),
+      );
+    }),
+  );
+  const persisted = results.every(({ status }) => status === "fulfilled");
+  if (persisted) void queryClient.invalidateQueries({ queryKey: listKey });
+  return persisted;
+}
+
+function feedbackVersion(comment: DocumentComment): string {
+  return JSON.stringify([comment.note, comment.anchor]);
+}
+
 export function useSendDocumentFeedback({
   docRef,
   target,
 }: UseSendDocumentFeedbackArgs): UseSendDocumentFeedbackResult {
+  const queryClient = useQueryClient();
+  const sendingRef = useRef(false);
+  const acceptedVersions = useRef(new Map<string, string>());
   const [isSending, setIsSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Comments are document-scoped, so removing them after a send uses the
-  // DOCUMENT's own project/session/docPath (not the target conversation's scope).
-  const deleteComment = useDeleteDocumentCommentMutation(
-    docRef?.projectName ?? "",
-    docRef?.sessionName ?? "",
-    docRef?.docPath ?? "",
+  const errorScope = JSON.stringify([
+    docRef?.projectName,
+    docRef?.sessionName,
+    docRef?.docPath,
+    target?.projectName,
+    target?.sessionName,
+    target?.conversationId,
+  ]);
+  const [failure, setFailure] = useState<{
+    scope: string;
+    message: string;
+  } | null>(null);
+  const error = failure?.scope === errorScope ? failure.message : null;
+  const setError = useCallback(
+    (message: string | null) => {
+      setFailure(message === null ? null : { scope: errorScope, message });
+    },
+    [errorScope],
   );
 
   const sendFeedback = useCallback(
     async (comments: readonly DocumentComment[]): Promise<boolean> => {
-      if (!docRef || comments.length === 0) return false;
+      if (
+        !docRef ||
+        comments.length === 0 ||
+        sendingRef.current ||
+        comments.some(({ id }) => id.startsWith("optimistic-"))
+      )
+        return false;
 
-      const items = buildFeedbackItems(comments);
-      const payload: DocumentFeedbackPayload = { items };
-      const text = formatDocumentFeedbackPrompt(items);
-
+      sendingRef.current = true;
       setIsSending(true);
       setError(null);
+      let accepted = false;
       try {
-        const outcome = await deliverFeedback({
-          docRef,
-          target,
-          text,
-          payload,
-          fetchImpl: tracedFetch,
-        });
-        if (!outcome.ok) {
-          logger.warn("document-feedback.send_failed", {
+        const unsent = comments.filter(
+          (comment) =>
+            comment.status === "pending" &&
+            acceptedVersions.current.get(comment.id) !==
+              feedbackVersion(comment),
+        );
+        if (unsent.length > 0) {
+          const items = buildFeedbackItems(unsent);
+          const outcome = await deliverFeedback({
+            docRef,
+            target,
+            text: formatDocumentFeedbackPrompt(items),
+            payload: { items },
+            fetchImpl: tracedFetch,
+          });
+          if (!outcome.ok) {
+            logger.warn("document-feedback.send_failed", {
+              docPath: docRef.docPath,
+              conversationId: target?.conversationId ?? null,
+              count: unsent.length,
+              error: outcome.message,
+            });
+            setError(outcome.message);
+            return false;
+          }
+          for (const comment of unsent) {
+            acceptedVersions.current.set(comment.id, feedbackVersion(comment));
+          }
+          logger.info("document-feedback.sent", {
             docPath: docRef.docPath,
             conversationId: target?.conversationId ?? null,
-            count: comments.length,
-            error: outcome.message,
+            count: unsent.length,
+            queued: target?.status === "running",
+            newConversation: target === null,
           });
-          setError(outcome.message);
-          return false;
         }
+        accepted = true;
 
-        await Promise.all(comments.map((c) => deleteComment.mutateAsync(c.id)));
-        logger.info("document-feedback.sent", {
-          docPath: docRef.docPath,
-          conversationId: target?.conversationId ?? null,
-          count: comments.length,
-          queued: target?.status === "running",
-          newConversation: target === null,
-        });
+        const persisted = await retireDeliveredComments(
+          docRef,
+          comments,
+          queryClient,
+        );
+        if (!persisted) {
+          logger.warn("document-feedback.cleanup_failed", {
+            docPath: docRef.docPath,
+            count: comments.length,
+          });
+          setError(
+            "Feedback sent, but comments could not be cleared. Do not resend them after reloading.",
+          );
+        }
         return true;
-      } catch (e) {
-        const message =
-          e instanceof Error ? e.message : "Failed to send feedback";
-        setError(message);
-        return false;
+      } catch (error) {
+        setError(
+          accepted
+            ? "Feedback sent, but comments could not be cleared. Do not resend them after reloading."
+            : error instanceof Error
+              ? error.message
+              : "Failed to send feedback",
+        );
+        return accepted;
       } finally {
+        sendingRef.current = false;
         setIsSending(false);
       }
     },
-    [docRef, target, deleteComment],
+    [docRef, target, queryClient, setError],
   );
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => setFailure(null), []);
 
   return { sendFeedback, isSending, error, clearError };
 }

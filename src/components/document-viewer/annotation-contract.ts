@@ -81,14 +81,7 @@ export interface ClipCaptureCapability {
   deriveIsCode(selection: ClipSelectionContext): boolean;
 }
 
-export type CommentComposerCapability =
-  | {
-      kind: "persist-only";
-      submit(input: PersistCommentInput): Promise<void>;
-    }
-  | {
-      kind: "persist-or-send";
-      submit(
-        input: PersistCommentInput & { delivery: "queue" | "send" },
-      ): Promise<void>;
-    };
+export interface CommentComposerCapability {
+  kind: "persist-only";
+  submit(input: PersistCommentInput): Promise<void>;
+}

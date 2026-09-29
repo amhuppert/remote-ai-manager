@@ -290,7 +290,7 @@ function renderAnnotated(
   const submit = vi.fn<CommentComposerCapability["submit"]>();
   submit.mockResolvedValue(undefined);
   const composer: CommentComposerCapability = {
-    kind: "persist-or-send",
+    kind: "persist-only",
     submit,
   };
   const utils = renderWithQuery(
@@ -731,6 +731,29 @@ describe("AnnotatedMarkdown composition", () => {
     expect(
       screen.getByRole("dialog", { name: "Add comment" }),
     ).toBeInTheDocument();
+  });
+
+  it("hides selection actions while composing and removes them after adding", async () => {
+    const user = userEvent.setup();
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+    fireEvent.pointerUp(document);
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+    expect(
+      screen.queryByRole("button", { name: "Comment" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /clip/i }),
+    ).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox"), "pending note");
+    await user.click(screen.getByRole("button", { name: "Add comment" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Comment", hidden: true }),
+    ).not.toBeInTheDocument();
   });
 
   it("dismisses an idle selection composer through a real outside interaction", async () => {

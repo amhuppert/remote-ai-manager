@@ -20,11 +20,11 @@ export interface CommentCardSave {
 interface CommentCardProps {
   comment: ResolvedComment;
   /** Persist a note edit (and the sent→pending revert when applicable). */
-  onSave: (update: CommentCardSave) => void;
+  onSave(update: CommentCardSave): void | Promise<void>;
   /** Delete the comment (6.6). */
-  onRemove: () => void;
-  /** Send this single pending comment now (6.7); shown only while pending. */
-  onSendNow: () => void;
+  onRemove(): void | Promise<void>;
+  /** Prevent mutations while pending comments are being sent. */
+  disabled?: boolean;
   /** Dismiss the card. */
   onClose?: () => void;
   /** Open straight into note-editing — used when the card is reached via an
@@ -46,48 +46,88 @@ const statusChip: Record<CommentStatus, string> = {
 
 /**
  * View and manage a single comment: status, source location, quoted passage,
- * and note (6.3), with edit, remove, and send-now actions. Editing the note of
- * an already-sent comment reverts it to pending (6.5). Every action stays
- * available for a stale comment — it is still fully viewable/editable/removable/
- * sendable (11.5) — only the in-document highlight is missing.
+ * and note (6.3), with edit and remove actions. Editing the note of an
+ * already-sent comment reverts it to pending (6.5) for sending from the tray.
+ * A stale comment remains viewable, editable, and removable (11.5); only its
+ * in-document highlight is missing.
  */
 export default function CommentCard({
   comment,
   onSave,
   onRemove,
-  onSendNow,
+  disabled = false,
   onClose,
   initiallyEditing = false,
 }: CommentCardProps): React.JSX.Element {
   const [editing, setEditing] = useState(initiallyEditing);
   const [draft, setDraft] = useState(comment.note);
+  const [action, setAction] = useState<"saving" | "removing" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const mutationRef = useRef(false);
+  const busy = disabled || action !== null;
   const [saveVoiceBusy, setSaveVoiceBusy] = useState(false);
   const saveActionRef = useRef<MultilineInputActionHandle | null>(null);
 
   const startEditing = (): void => {
+    if (busy) return;
+    setError(null);
     setDraft(comment.note);
     setEditing(true);
   };
 
   const cancelEditing = (): void => {
+    if (busy) return;
+    setError(null);
     setDraft(comment.note);
     setEditing(false);
   };
 
-  const save = (nextDraft = draft): void => {
+  const save = async (nextDraft = draft): Promise<void> => {
+    if (disabled || mutationRef.current) return;
     const trimmed = nextDraft.trim();
     if (trimmed.length === 0) return;
     const changed = trimmed !== comment.note;
     // A sent comment whose text actually changed returns to pending (6.5).
     const status: CommentStatus | undefined =
       comment.status === "sent" && changed ? "pending" : undefined;
-    onSave(status ? { note: trimmed, status } : { note: trimmed });
-    setEditing(false);
+    mutationRef.current = true;
+    setAction("saving");
+    setError(null);
+    try {
+      await onSave(status ? { note: trimmed, status } : { note: trimmed });
+      setEditing(false);
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not save comment.",
+      );
+    } finally {
+      mutationRef.current = false;
+      setAction(null);
+    }
+  };
+
+  const remove = async (): Promise<void> => {
+    if (disabled || mutationRef.current) return;
+    mutationRef.current = true;
+    setAction("removing");
+    setError(null);
+    try {
+      await onRemove();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not remove comment.",
+      );
+    } finally {
+      mutationRef.current = false;
+      setAction(null);
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
+      if (busy) return;
       if (editing) {
         cancelEditing();
       } else {
@@ -129,6 +169,7 @@ export default function CommentCard({
       {editing ? (
         <MultilineInput
           autoFocus
+          disabled={busy}
           value={draft}
           onValueChange={setDraft}
           onPrimaryAction={save}
@@ -144,6 +185,12 @@ export default function CommentCard({
         </p>
       )}
 
+      {error ? (
+        <p role="alert" className="m-0 font-mono text-[0.7rem] text-red">
+          {error}
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-end gap-sm">
         {editing ? (
           <>
@@ -152,6 +199,7 @@ export default function CommentCard({
               variant="ghost"
               size="sm"
               type="button"
+              disabled={busy}
               onClick={cancelEditing}
             >
               Cancel
@@ -161,10 +209,10 @@ export default function CommentCard({
               variant="primary"
               size="sm"
               type="button"
-              disabled={!canSave && !saveVoiceBusy}
+              disabled={busy || (!canSave && !saveVoiceBusy)}
               onClick={() => saveActionRef.current?.primaryAction()}
             >
-              Save
+              {action === "saving" ? "Saving…" : "Save"}
             </Button>
           </>
         ) : (
@@ -174,30 +222,21 @@ export default function CommentCard({
               variant="ghost"
               size="sm"
               type="button"
-              onClick={onRemove}
+              disabled={busy}
+              onClick={remove}
             >
-              Remove
+              {action === "removing" ? "Removing…" : "Remove"}
             </Button>
             <Button
               touch
               variant="default"
               size="sm"
               type="button"
+              disabled={busy}
               onClick={startEditing}
             >
               Edit
             </Button>
-            {comment.status === "pending" ? (
-              <Button
-                touch
-                variant="primary"
-                size="sm"
-                type="button"
-                onClick={onSendNow}
-              >
-                Send now
-              </Button>
-            ) : null}
           </>
         )}
       </div>

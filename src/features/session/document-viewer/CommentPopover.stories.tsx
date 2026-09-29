@@ -44,17 +44,8 @@ const persistOnly: CommentComposerCapability = {
   submit: fn().mockResolvedValue(undefined),
 };
 
-const persistOrSend: CommentComposerCapability = {
-  kind: "persist-or-send",
-  submit: fn().mockResolvedValue(undefined),
-};
-
 export const PersistOnly: Story = {
   args: { composer: persistOnly },
-};
-
-export const PersistOrSend: Story = {
-  args: { composer: persistOrSend },
 };
 
 export const Pending: Story = {

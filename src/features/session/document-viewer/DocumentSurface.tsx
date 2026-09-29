@@ -136,15 +136,15 @@ function CommentCardLayer({
   initiallyEditing,
   onSave,
   onRemove,
-  onSendNow,
+  disabled,
   onClose,
 }: {
   comment: ResolvedComment;
   contentRef: React.RefObject<HTMLDivElement | null>;
   initiallyEditing: boolean;
-  onSave: (update: CommentCardSave) => void;
-  onRemove: () => void;
-  onSendNow: () => void;
+  onSave: (update: CommentCardSave) => Promise<void>;
+  onRemove: () => Promise<void>;
+  disabled: boolean;
   onClose: () => void;
 }): React.JSX.Element | null {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -182,12 +182,13 @@ function CommentCardLayer({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent): void => {
-      if (!wrapRef.current?.contains(event.target as Node)) onClose();
+      if (!disabled && !wrapRef.current?.contains(event.target as Node))
+        onClose();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () =>
       document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [onClose]);
+  }, [disabled, onClose]);
 
   if (typeof document === "undefined") return null;
 
@@ -206,7 +207,7 @@ function CommentCardLayer({
         initiallyEditing={initiallyEditing}
         onSave={onSave}
         onRemove={onRemove}
-        onSendNow={onSendNow}
+        disabled={disabled}
         onClose={onClose}
       />
     </div>,
@@ -218,8 +219,8 @@ function CommentCardLayer({
  * The full single-document review experience shared by the Docs viewer and the
  * Specs surface: the annotated markdown body (selection→comment + highlights +
  * gutter pins), the per-comment card opened from a highlight/pin, and the
- * pending-comments tray with its conversation target picker. Owns the create,
- * immediate-send, bulk-send, and send-now wiring (8.5) by composing the comment
+ * pending-comments tray with its conversation target picker. Owns comment
+ * persistence and tray delivery by composing the comment
  * mutations with the target-aware send orchestration. Source-agnostic: the
  * caller supplies `content`/`isLoading`/`contentError` (reference docs load via
  * the content endpoint, specs via the Kiro file query) while comment identity is
@@ -256,8 +257,8 @@ export default function DocumentSurface({
     docRef.docPath,
   );
 
-  // The chosen target lives in the store so every surface, the tray, and the
-  // card share one destination (req 9.4); fall back to the recency default until
+  // The chosen target lives in the store so each document tray shares one
+  // destination (req 9.4); fall back to the recency default until
   // the user picks one explicitly.
   const chosenTarget = useFeedbackTarget();
   const setFeedbackTarget = useSetFeedbackTarget();
@@ -266,6 +267,17 @@ export default function DocumentSurface({
 
   const { sendFeedback, isSending, error, clearError } =
     useSendDocumentFeedback({ docRef, target });
+
+  const [clearing, setClearing] = useState(false);
+  const [clearFailure, setClearFailure] = useState<string | null>(null);
+  const actionError =
+    error ?? clearFailure ?? deleteComment.error?.message ?? null;
+
+  const dismissError = (): void => {
+    clearError();
+    setClearFailure(null);
+    deleteComment.reset();
+  };
 
   const trayExpanded = usePendingTrayExpanded();
   const toggleTray = useTogglePendingTray();
@@ -296,23 +308,15 @@ export default function DocumentSurface({
     setOpenInEditMode(true);
   }, []);
 
-  // Create from a selection: persist the pending comment, then immediately send
-  // it when the user chose "Add & send" (5.3, 5.4).
   const handleCreateComment = useCallback(
-    async ({
-      anchor,
-      note,
-      delivery,
-    }: PersistCommentInput & {
-      delivery: "queue" | "send";
-    }): Promise<void> => {
-      const created = await createComment.mutateAsync({ anchor, note });
-      if (delivery === "send") await sendFeedback([created]);
+    async ({ anchor, note }: PersistCommentInput): Promise<void> => {
+      setClearFailure(null);
+      await createComment.mutateAsync({ anchor, note });
     },
-    [createComment, sendFeedback],
+    [createComment],
   );
   const composer = useMemo<CommentComposerCapability>(
-    () => ({ kind: "persist-or-send", submit: handleCreateComment }),
+    () => ({ kind: "persist-only", submit: handleCreateComment }),
     [handleCreateComment],
   );
   const clip = useMemo(
@@ -329,37 +333,60 @@ export default function DocumentSurface({
   );
 
   const handleSave = useCallback(
-    (update: CommentCardSave): void => {
+    async (update: CommentCardSave): Promise<void> => {
       if (!openComment) return;
-      updateComment.mutate({ id: openComment.id, ...update });
+      setClearFailure(null);
+      await updateComment.mutateAsync({ id: openComment.id, ...update });
       closeComment();
     },
     [openComment, updateComment, closeComment],
   );
 
-  const handleRemoveOpen = useCallback((): void => {
+  const handleRemoveOpen = useCallback(async (): Promise<void> => {
     if (!openComment) return;
-    deleteComment.mutate(openComment.id);
+    setClearFailure(null);
+    await deleteComment.mutateAsync(openComment.id);
     closeComment();
   }, [openComment, deleteComment, closeComment]);
 
-  const handleSendNow = useCallback(async (): Promise<void> => {
-    if (!openComment) return;
-    const sent = await sendFeedback([openComment]);
-    if (sent) closeComment();
-  }, [openComment, sendFeedback, closeComment]);
+  const mutating =
+    clearing ||
+    createComment.isPending ||
+    updateComment.isPending ||
+    deleteComment.isPending;
 
   const handleSendAll = useCallback((): void => {
+    if (mutating) return;
+    setClearFailure(null);
     void sendFeedback(pendingComments);
-  }, [sendFeedback, pendingComments]);
+  }, [sendFeedback, pendingComments, mutating]);
 
-  const handleClear = useCallback((): void => {
-    // Pass ONLY pending comments so sent comments are untouched (7.5).
-    for (const comment of pendingComments) deleteComment.mutate(comment.id);
-  }, [pendingComments, deleteComment]);
+  const handleClear = useCallback(async (): Promise<void> => {
+    if (mutating || isSending) return;
+    setClearFailure(null);
+    setClearing(true);
+    try {
+      // Track the whole batch; a mutation observer reports only its latest call.
+      // Pass ONLY pending comments so sent comments are untouched (7.5).
+      const results = await Promise.allSettled(
+        pendingComments.map((comment) => deleteComment.mutateAsync(comment.id)),
+      );
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") {
+        const cause: unknown = failed.reason;
+        setClearFailure(
+          cause instanceof Error ? cause.message : "Could not clear comments.",
+        );
+      }
+    } finally {
+      deleteComment.reset();
+      setClearing(false);
+    }
+  }, [pendingComments, deleteComment, mutating, isSending]);
 
   const handleTrayRemove = useCallback(
     (id: string): void => {
+      setClearFailure(null);
       deleteComment.mutate(id);
     },
     [deleteComment],
@@ -403,12 +430,13 @@ export default function DocumentSurface({
 
       {openComment ? (
         <CommentCardLayer
+          key={openComment.id}
           comment={openComment}
           contentRef={contentRef}
           initiallyEditing={openInEditMode}
           onSave={handleSave}
           onRemove={handleRemoveOpen}
-          onSendNow={() => void handleSendNow()}
+          disabled={isSending || mutating}
           onClose={closeComment}
         />
       ) : null}
@@ -424,19 +452,6 @@ export default function DocumentSurface({
               onSelect={setFeedbackTarget}
               docProjectName={docRef.projectName}
             />
-            {error ? (
-              <button
-                type="button"
-                onClick={clearError}
-                title="Dismiss"
-                className={cn(
-                  "ml-auto truncate text-left font-mono text-[0.68rem] text-red",
-                  "cursor-pointer border-none bg-transparent",
-                )}
-              >
-                {error}
-              </button>
-            ) : null}
           </div>
           <PendingCommentsTray
             pendingComments={pendingComments}
@@ -447,7 +462,29 @@ export default function DocumentSurface({
             onRemove={handleTrayRemove}
             onClear={handleClear}
             onSendAll={handleSendAll}
+            isSending={isSending}
+            disabled={mutating}
           />
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div
+          role="alert"
+          className="flex items-center gap-sm px-md py-sm font-mono text-[0.7rem] text-red-text"
+        >
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={dismissError}
+            aria-label="Dismiss feedback error"
+            className={cn(
+              "ml-auto cursor-pointer border-none bg-transparent font-mono text-[0.7rem] text-text-primary",
+              "focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
+            )}
+          >
+            Dismiss
+          </button>
         </div>
       ) : null}
 

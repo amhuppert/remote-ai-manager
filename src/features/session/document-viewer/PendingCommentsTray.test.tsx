@@ -42,7 +42,11 @@ function staleify(comment: ResolvedComment): ResolvedComment {
   return { ...comment, reanchor: { status: "stale" }, stale: true };
 }
 
-function setup(comments: ResolvedComment[], expanded = false) {
+function setup(
+  comments: ResolvedComment[],
+  expanded = false,
+  state: { isSending?: boolean; disabled?: boolean } = {},
+) {
   const onToggleExpanded = vi.fn();
   const onJump = vi.fn();
   const onOpen = vi.fn();
@@ -51,6 +55,7 @@ function setup(comments: ResolvedComment[], expanded = false) {
   const onSendAll = vi.fn();
   const utils = render(
     <PendingCommentsTray
+      {...state}
       pendingComments={comments}
       expanded={expanded}
       onToggleExpanded={onToggleExpanded}
@@ -179,5 +184,38 @@ describe("PendingCommentsTray", () => {
     const sendButton = screen.getByRole("button", { name: /send 3/i });
     await user.click(sendButton);
     expect(onSendAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows sending progress and blocks conflicting actions until sending settles", async () => {
+    const user = userEvent.setup();
+    const callbacks = setup([pending({ id: "a" })], true, { isSending: true });
+    const send = screen.getByRole("button", { name: "Sending…" });
+    const clear = screen.getByRole("button", { name: "Clear" });
+    const edit = screen.getByRole("button", { name: "Edit comment" });
+    const remove = screen.getByRole("button", { name: "Remove comment" });
+    for (const button of [send, clear, edit, remove]) {
+      expect(button).toBeDisabled();
+      await user.click(button);
+    }
+    expect(callbacks.onSendAll).not.toHaveBeenCalled();
+    expect(callbacks.onClear).not.toHaveBeenCalled();
+    expect(callbacks.onOpen).not.toHaveBeenCalled();
+    expect(callbacks.onRemove).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Jump to passage" }),
+    ).toBeEnabled();
+  });
+
+  it("blocks pending mutations without claiming feedback is being sent", () => {
+    setup([pending({ id: "a" })], true, { disabled: true });
+    expect(screen.getByRole("button", { name: /send 1/i })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Sending…" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit comment" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Remove comment" }),
+    ).toBeDisabled();
   });
 });

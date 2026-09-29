@@ -46,9 +46,9 @@ describe("CommentPopover", () => {
   });
 
   it("uses touch-size, contrast-safe comment actions", () => {
-    setup({ kind: "persist-or-send", submit: vi.fn() });
+    setup({ kind: "persist-only", submit: vi.fn() });
 
-    for (const name of ["Cancel", "Add comment", "Add & send"]) {
+    for (const name of ["Cancel", "Add comment"]) {
       expect(screen.getByRole("button", { name })).toHaveClass(
         "min-h-[44px]",
         "min-w-[44px]",
@@ -60,7 +60,7 @@ describe("CommentPopover", () => {
   });
 
   it("fits a narrow zoomed viewport and wraps its action row", () => {
-    const { container } = setup({ kind: "persist-or-send", submit: vi.fn() });
+    const { container } = setup({ kind: "persist-only", submit: vi.fn() });
 
     expect(container.firstElementChild).toHaveClass("max-w-[calc(100vw-16px)]");
     expect(
@@ -69,7 +69,7 @@ describe("CommentPopover", () => {
   });
 
   it("keeps wrapped editor controls reachable within the available popover height", () => {
-    const { container } = setup({ kind: "persist-or-send", submit: vi.fn() });
+    const { container } = setup({ kind: "persist-only", submit: vi.fn() });
 
     expect(container.firstElementChild).toHaveClass(
       "max-h-[var(--radix-popover-content-available-height)]",
@@ -94,7 +94,7 @@ describe("CommentPopover", () => {
     vi.stubGlobal("visualViewport", visualViewport);
 
     const { container } = setup({
-      kind: "persist-or-send",
+      kind: "persist-only",
       submit: vi.fn(),
     });
     expect(container.firstElementChild).toHaveStyle({ maxWidth: "179px" });
@@ -121,29 +121,17 @@ describe("CommentPopover", () => {
     });
   });
 
-  it("keeps queue and send distinct for persist-or-send composition", async () => {
+  it("offers only adding to pending comments", async () => {
     const user = userEvent.setup();
-    const queueSubmit = vi.fn().mockResolvedValue(undefined);
-    const queue = setup({ kind: "persist-or-send", submit: queueSubmit });
+    const submit = vi.fn().mockResolvedValue(undefined);
+    const { onSuccess } = setup({ kind: "persist-only", submit });
+    expect(
+      screen.queryByRole("button", { name: /send/i }),
+    ).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox"), "queue this");
     await user.click(screen.getByRole("button", { name: "Add comment" }));
-    expect(queueSubmit).toHaveBeenCalledWith({
-      anchor: ANCHOR,
-      note: "queue this",
-      delivery: "queue",
-    });
-    expect(queue.onSuccess).toHaveBeenCalledOnce();
-
-    document.body.innerHTML = "";
-    const sendSubmit = vi.fn().mockResolvedValue(undefined);
-    setup({ kind: "persist-or-send", submit: sendSubmit });
-    await user.type(screen.getByRole("textbox"), "send this");
-    await user.click(screen.getByRole("button", { name: "Add & send" }));
-    expect(sendSubmit).toHaveBeenCalledWith({
-      anchor: ANCHOR,
-      note: "send this",
-      delivery: "send",
-    });
+    expect(submit).toHaveBeenCalledWith({ anchor: ANCHOR, note: "queue this" });
+    expect(onSuccess).toHaveBeenCalledOnce();
   });
 
   it("disables every action and ignores Escape while submission is pending", async () => {
@@ -195,17 +183,16 @@ describe("CommentPopover", () => {
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
-  it("uses the selected capability for the keyboard primary action", async () => {
+  it("adds to pending comments with the keyboard primary action", async () => {
     const user = userEvent.setup();
     const submit = vi.fn().mockResolvedValue(undefined);
-    setup({ kind: "persist-or-send", submit });
+    setup({ kind: "persist-only", submit });
     await user.type(screen.getByRole("textbox"), "keyboard submit");
     await user.keyboard("{Control>}{Enter}{/Control}");
 
     expect(submit).toHaveBeenCalledWith({
       anchor: ANCHOR,
       note: "keyboard submit",
-      delivery: "send",
     });
   });
 });

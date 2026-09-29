@@ -24,8 +24,6 @@ export interface CommentPopoverProps {
   onPendingChange?(pending: boolean): void;
 }
 
-type SubmissionMode = "queue" | "send";
-
 export default function CommentPopover({
   anchor,
   composer,
@@ -35,18 +33,15 @@ export default function CommentPopover({
 }: CommentPopoverProps): React.JSX.Element {
   const [note, setNote] = useState("");
   const [voiceBusy, setVoiceBusy] = useState(false);
-  const [pendingMode, setPendingMode] = useState<SubmissionMode | null>(null);
+  const [pending, setPending] = useState(false);
+  const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [visualViewportMaxWidth, setVisualViewportMaxWidth] = useState<
     number | null
   >(null);
   const errorId = useId();
   const actionRef = useRef<MultilineInputActionHandle | null>(null);
-  const primaryModeRef = useRef<SubmissionMode>(
-    composer.kind === "persist-only" ? "queue" : "send",
-  );
   const trimmed = note.trim();
-  const pending = pendingMode !== null;
   const canSubmit = trimmed.length > 0;
 
   useLayoutEffect(() => {
@@ -61,21 +56,16 @@ export default function CommentPopover({
     return () => viewport.removeEventListener("resize", updateMaxWidth);
   }, []);
 
-  async function submit(mode: SubmissionMode, nextNote: string): Promise<void> {
+  async function submit(nextNote: string): Promise<void> {
     const nextTrimmed = nextNote.trim();
-    if (pending || nextTrimmed.length === 0) return;
+    if (submittingRef.current || nextTrimmed.length === 0) return;
 
     setError(null);
-    setPendingMode(mode);
+    submittingRef.current = true;
+    setPending(true);
     onPendingChange?.(true);
     try {
-      if (composer.kind === "persist-only") {
-        await composer.submit({ anchor, note: nextTrimmed });
-      } else {
-        await composer.submit({ anchor, note: nextTrimmed, delivery: mode });
-      }
-      onPendingChange?.(false);
-      setPendingMode(null);
+      await composer.submit({ anchor, note: nextTrimmed });
       onSuccess();
     } catch (submissionError) {
       setError(
@@ -83,7 +73,9 @@ export default function CommentPopover({
           ? submissionError.message
           : "Couldn't add this comment.",
       );
-      setPendingMode(null);
+    } finally {
+      submittingRef.current = false;
+      setPending(false);
       onPendingChange?.(false);
     }
   }
@@ -93,11 +85,6 @@ export default function CommentPopover({
     event.preventDefault();
     event.stopPropagation();
     if (!pending) onCancel();
-  }
-
-  function runPrimaryAction(mode: SubmissionMode): void {
-    primaryModeRef.current = mode;
-    actionRef.current?.primaryAction();
   }
 
   return (
@@ -121,12 +108,7 @@ export default function CommentPopover({
           if (error !== null) setError(null);
         }}
         actionRef={actionRef}
-        onPrimaryAction={(nextNote) => {
-          const mode = primaryModeRef.current;
-          primaryModeRef.current =
-            composer.kind === "persist-only" ? "queue" : "send";
-          void submit(mode, nextNote);
-        }}
+        onPrimaryAction={(nextNote) => void submit(nextNote)}
         onVoiceStateChange={setVoiceBusy}
         placeholder="Add a comment…"
         aria-label="Comment note"
@@ -156,27 +138,15 @@ export default function CommentPopover({
           Cancel
         </Button>
         <Button
-          variant={composer.kind === "persist-only" ? "primary" : "default"}
+          variant="primary"
           size="touch"
           type="button"
           disabled={pending || (!canSubmit && !voiceBusy)}
-          aria-busy={pendingMode === "queue"}
-          onClick={() => runPrimaryAction("queue")}
+          aria-busy={pending}
+          onClick={() => actionRef.current?.primaryAction()}
         >
-          {pendingMode === "queue" ? "Adding…" : "Add comment"}
+          {pending ? "Adding…" : "Add comment"}
         </Button>
-        {composer.kind === "persist-or-send" ? (
-          <Button
-            variant="primary"
-            size="touch"
-            type="button"
-            disabled={pending || (!canSubmit && !voiceBusy)}
-            aria-busy={pendingMode === "send"}
-            onClick={() => runPrimaryAction("send")}
-          >
-            {pendingMode === "send" ? "Adding & sending…" : "Add & send"}
-          </Button>
-        ) : null}
       </div>
     </div>
   );

@@ -89,7 +89,6 @@ function Interactive({
         comment={current}
         onSave={handleSave}
         onRemove={() => setLastSave({ note: "(removed)" })}
-        onSendNow={() => setLastSave({ note: "(sent now)" })}
       />
       <pre
         style={{
@@ -109,7 +108,6 @@ export const Pending: Story = {
     comment: makeComment({ status: "pending" }),
     onSave: () => {},
     onRemove: () => {},
-    onSendNow: () => {},
   },
   render: (args) => <Interactive comment={args.comment} />,
 };
@@ -119,7 +117,6 @@ export const Sent: Story = {
     comment: makeComment({ status: "sent" }),
     onSave: () => {},
     onRemove: () => {},
-    onSendNow: () => {},
   },
   render: (args) => <Interactive comment={args.comment} />,
 };
@@ -129,7 +126,32 @@ export const StalePending: Story = {
     comment: makeComment({ status: "pending", stale: true }),
     onSave: () => {},
     onRemove: () => {},
-    onSendNow: () => {},
   },
   render: (args) => <Interactive comment={args.comment} />,
+};
+
+export const Editing: Story = {
+  args: {
+    comment: makeComment({ status: "pending" }),
+    initiallyEditing: true,
+    onSave: () => {},
+    onRemove: () => {},
+  },
+};
+
+export const SaveFailure: Story = {
+  args: {
+    ...Editing.args,
+    onSave: () =>
+      Promise.reject(new Error("Could not save comment. Try again.")),
+  },
+};
+
+export const SendingFromTray: Story = {
+  args: {
+    comment: makeComment({ status: "pending" }),
+    disabled: true,
+    onSave: () => {},
+    onRemove: () => {},
+  },
 };

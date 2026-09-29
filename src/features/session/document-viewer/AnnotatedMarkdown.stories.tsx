@@ -351,7 +351,7 @@ export const Loading: Story = {
 
 /**
  * Selection → comment: select a passage to reveal the affordance, open the
- * popover, and queue or send. The last created payload is shown for inspection.
+ * popover, and add a pending comment. The last created payload is shown for inspection.
  */
 export const SelectionCreateFlow: Story = {
   args: {
@@ -366,9 +366,7 @@ export const SelectionCreateFlow: Story = {
     annotations: [],
   },
   render: () => {
-    const [created, setCreated] = useState<
-      (PersistCommentInput & { delivery: "queue" | "send" }) | null
-    >(null);
+    const [created, setCreated] = useState<PersistCommentInput | null>(null);
     return (
       <>
         <pre
@@ -395,7 +393,7 @@ export const SelectionCreateFlow: Story = {
           isLoading={false}
           annotations={[]}
           composer={{
-            kind: "persist-or-send",
+            kind: "persist-only",
             submit: async (input) => setCreated(input),
           }}
         />
@@ -442,7 +440,7 @@ export const SelectionCreateFlow: Story = {
 
     await waitFor(() =>
       expect(within(canvasElement).getByTestId("created")).toHaveTextContent(
-        '"delivery":"queue"',
+        '"note":"Clarify what counts as agent-produced."',
       ),
     );
   },

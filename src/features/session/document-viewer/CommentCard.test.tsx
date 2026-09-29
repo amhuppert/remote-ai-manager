@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
 import type { ResolvedComment } from "./types";
@@ -40,16 +40,8 @@ function resolved(over: Partial<DocumentComment>): ResolvedComment {
 function setup(comment: ResolvedComment) {
   const onSave = vi.fn();
   const onRemove = vi.fn();
-  const onSendNow = vi.fn();
-  render(
-    <CommentCard
-      comment={comment}
-      onSave={onSave}
-      onRemove={onRemove}
-      onSendNow={onSendNow}
-    />,
-  );
-  return { onSave, onRemove, onSendNow };
+  render(<CommentCard comment={comment} onSave={onSave} onRemove={onRemove} />);
+  return { onSave, onRemove };
 }
 
 describe("CommentCard", () => {
@@ -126,11 +118,84 @@ describe("CommentCard", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it("offers send-now only for pending comments", async () => {
+  it("leaves sending pending comments to the pending tray", () => {
+    setup(resolved({ status: "pending" }));
+    expect(
+      screen.queryByRole("button", { name: /send now/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the edited draft while saving, then recovers from a failure for retry", async () => {
     const user = userEvent.setup();
-    const { onSendNow } = setup(resolved({ status: "pending" }));
-    await user.click(screen.getByRole("button", { name: /send now/i }));
-    expect(onSendNow).toHaveBeenCalledTimes(1);
+    const deferred = Promise.withResolvers<void>();
+    const onSave = vi.fn().mockReturnValueOnce(deferred.promise);
+    render(
+      <CommentCard
+        comment={resolved({})}
+        initiallyEditing
+        onSave={onSave}
+        onRemove={vi.fn()}
+      />,
+    );
+    const textarea = screen.getByRole("textbox", {
+      name: /edit comment note/i,
+    });
+    await user.clear(textarea);
+    await user.type(textarea, "keep this draft");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(screen.getByRole("textbox")).toHaveValue("keep this draft");
+    expect(screen.getByRole("button", { name: /saving/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
+
+    await act(async () => deferred.reject(new Error("Could not save comment")));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not save comment",
+    );
+    expect(screen.getByRole("textbox")).toHaveValue("keep this draft");
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("recovers from a failed removal without closing the card", async () => {
+    const user = userEvent.setup();
+    const deferred = Promise.withResolvers<void>();
+    const onRemove = vi.fn().mockReturnValueOnce(deferred.promise);
+    render(
+      <CommentCard
+        comment={resolved({})}
+        onSave={vi.fn()}
+        onRemove={onRemove}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /^remove$/i }));
+    expect(screen.getByRole("button", { name: /removing/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /edit/i })).toBeDisabled();
+    await act(async () =>
+      deferred.reject(new Error("Could not remove comment")),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not remove comment",
+    );
+    expect(screen.getByRole("button", { name: /^remove$/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /^remove$/i }));
+    expect(onRemove).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("disables edits and removal while the tray sends comments", () => {
+    render(
+      <CommentCard
+        comment={resolved({})}
+        onSave={vi.fn()}
+        onRemove={vi.fn()}
+        disabled
+      />,
+    );
+    expect(screen.getByRole("button", { name: /edit/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /remove/i })).toBeDisabled();
   });
 
   it("opens straight into note-editing when initiallyEditing is set", async () => {
@@ -142,7 +207,6 @@ describe("CommentCard", () => {
         initiallyEditing
         onSave={onSave}
         onRemove={vi.fn()}
-        onSendNow={vi.fn()}
       />,
     );
     // The note textarea is present without first clicking an Edit button.
@@ -162,30 +226,19 @@ describe("CommentCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps a stale comment fully actionable (view, edit, remove, send)", async () => {
+  it("keeps a stale comment viewable, editable, and removable", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     const onRemove = vi.fn();
-    const onSendNow = vi.fn();
     const stale: ResolvedComment = {
       ...resolved({ status: "pending" }),
       reanchor: { status: "stale" },
       stale: true,
     };
-    render(
-      <CommentCard
-        comment={stale}
-        onSave={onSave}
-        onRemove={onRemove}
-        onSendNow={onSendNow}
-      />,
-    );
+    render(<CommentCard comment={stale} onSave={onSave} onRemove={onRemove} />);
     // Stale indicator + the quoted passage are still shown.
     expect(screen.getByText("Stale")).toBeInTheDocument();
     expect(screen.getByText("the selected passage")).toBeInTheDocument();
-    // Send-now still available (pending), and edit still works.
-    await user.click(screen.getByRole("button", { name: /send now/i }));
-    expect(onSendNow).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: /edit/i }));
     const textarea = screen.getByRole("textbox", {
       name: /edit comment note/i,

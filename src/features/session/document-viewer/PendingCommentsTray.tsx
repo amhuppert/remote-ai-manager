@@ -20,6 +20,10 @@ interface PendingCommentsTrayProps {
   onClear: () => void;
   /** Send every pending comment as one feedback submission (7.4, wired upstream). */
   onSendAll: () => void;
+  /** Delivery is in progress; display progress and prevent conflicting edits. */
+  isSending?: boolean;
+  /** A pending comment mutation temporarily prevents send/edit/remove actions. */
+  disabled?: boolean;
 }
 
 function formatLocation(headingLabel: string, line: number): string {
@@ -79,19 +83,22 @@ export default function PendingCommentsTray({
   onRemove,
   onClear,
   onSendAll,
+  isSending = false,
+  disabled = false,
 }: PendingCommentsTrayProps): React.JSX.Element | null {
   const count = pendingComments.length;
+  const actionsDisabled = disabled || isSending;
   if (count === 0) return null;
 
   return (
     <section aria-label="Pending comments" className="flex min-h-0 flex-col">
-      <div className="flex items-center gap-[10px] px-[14px] py-[10px]">
+      <div className="flex flex-wrap items-center gap-[10px] px-[14px] py-[10px]">
         <button
           type="button"
           onClick={onToggleExpanded}
           aria-expanded={expanded}
           aria-label={`${count} pending comment${count === 1 ? "" : "s"} to send`}
-          className="inline-flex cursor-pointer items-center gap-[9px] border-none bg-transparent p-0 text-text-primary"
+          className="inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap gap-[9px] border-none bg-transparent p-0 text-text-primary"
         >
           <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-[7px] bg-cyan px-[6px] font-mono text-[0.74rem] font-bold text-bg-void">
             {count}
@@ -103,12 +110,24 @@ export default function PendingCommentsTray({
             {expanded ? "▾" : "▸"}
           </span>
         </button>
-        <div className="ml-auto flex items-center gap-sm">
-          <Button variant="ghost" size="sm" type="button" onClick={onClear}>
+        <div className="ml-auto flex shrink-0 items-center gap-sm whitespace-nowrap">
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            onClick={onClear}
+            disabled={actionsDisabled}
+          >
             Clear
           </Button>
-          <Button variant="primary" size="sm" type="button" onClick={onSendAll}>
-            Send {count} to agent →
+          <Button
+            variant="primary"
+            size="sm"
+            type="button"
+            onClick={onSendAll}
+            disabled={actionsDisabled}
+          >
+            {isSending ? "Sending…" : `Send ${count} to agent →`}
           </Button>
         </div>
       </div>
@@ -159,6 +178,7 @@ export default function PendingCommentsTray({
               <div className="flex shrink-0 items-center gap-[1px]">
                 <button
                   type="button"
+                  disabled={actionsDisabled}
                   onClick={() => onOpen(comment.id)}
                   title="Edit comment"
                   aria-label="Edit comment"
@@ -168,6 +188,7 @@ export default function PendingCommentsTray({
                 </button>
                 <button
                   type="button"
+                  disabled={actionsDisabled}
                   onClick={() => onRemove(comment.id)}
                   title="Remove comment"
                   aria-label="Remove comment"

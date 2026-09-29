@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { documentCommentKeys } from "@/lib/document-comments/query-keys";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
 import {
   useSendDocumentFeedback,
@@ -277,5 +279,252 @@ describe("useSendDocumentFeedback", () => {
     expect(callsTo("/document-comments/c1")).toHaveLength(0);
     await waitFor(() => expect(result.current.error).toBeTruthy());
     expect(result.current.error).toContain("Project not found");
+  });
+});
+
+describe("feedback send lifecycle", () => {
+  let api: FetchFixture;
+  let client: QueryClient;
+  const promptPath =
+    "/api/projects/t-proj/sessions/t-sess/conversations/conv-1/prompt";
+  const commentPath =
+    "/api/projects/doc-proj/sessions/doc-sess/document-comments/c1";
+  const listKey = documentCommentKeys.list("doc-proj", "doc-sess", "design.md");
+
+  beforeEach(() => {
+    api = installFetchFixture();
+    client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(listKey, [cmt({ id: "c1" })]);
+  });
+  afterEach(() => {
+    client.clear();
+    api.restore();
+  });
+
+  function Wrapper({ children }: { children: React.ReactNode }) {
+    return (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+  }
+
+  it("accepts only one send until the previous delivery and cleanup finish", async () => {
+    const delivery = Promise.withResolvers<{ json: unknown }>();
+    api.reply("POST", promptPath, () => delivery.promise);
+    api.json("DELETE", commentPath, { ok: true });
+    const { result } = renderHook(
+      () => useSendDocumentFeedback({ docRef: DOC_REF, target: target() }),
+      { wrapper: Wrapper },
+    );
+
+    let first: Promise<boolean> = Promise.resolve(false);
+    let second: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      first = result.current.sendFeedback([cmt({ id: "c1" })]);
+      second = result.current.sendFeedback([cmt({ id: "c1" })]);
+    });
+    expect(result.current.isSending).toBe(true);
+    await act(async () => {
+      delivery.resolve({ json: { ok: true } });
+      await Promise.all([first, second]);
+    });
+    expect(api.requestsTo("POST", promptPath)).toHaveLength(1);
+    expect(await first).toBe(true);
+    expect(await second).toBe(false);
+    expect(result.current.isSending).toBe(false);
+    expect(client.getQueryData(listKey)).toEqual([]);
+  });
+
+  it("clears the loading state on rejection and allows retrying the pending comments", async () => {
+    api.reply("POST", promptPath, {
+      json: { error: "Delivery refused" },
+      status: 503,
+    });
+    api.json("DELETE", commentPath, { ok: true });
+    const { result } = renderHook(
+      () => useSendDocumentFeedback({ docRef: DOC_REF, target: target() }),
+      { wrapper: Wrapper },
+    );
+    await act(async () => {
+      expect(await result.current.sendFeedback([cmt({ id: "c1" })])).toBe(
+        false,
+      );
+    });
+    expect(result.current.isSending).toBe(false);
+    expect(result.current.error).toBe("Delivery refused");
+    expect(client.getQueryData(listKey)).toEqual([cmt({ id: "c1" })]);
+    api.json("POST", promptPath, { ok: true });
+    await act(async () => {
+      expect(await result.current.sendFeedback([cmt({ id: "c1" })])).toBe(true);
+    });
+    expect(result.current.isSending).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("never sends an optimistic comment that has not been saved", async () => {
+    api.json("POST", promptPath, { ok: true });
+    const { result } = renderHook(
+      () => useSendDocumentFeedback({ docRef: DOC_REF, target: target() }),
+      { wrapper: Wrapper },
+    );
+    await act(async () => {
+      expect(
+        await result.current.sendFeedback([cmt({ id: "optimistic-unsaved" })]),
+      ).toBe(false);
+    });
+    expect(api.requestsTo("POST", promptPath)).toHaveLength(0);
+    expect(result.current.isSending).toBe(false);
+  });
+
+  it("keeps accepted feedback sent when deleting its comment fails", async () => {
+    api.json("POST", promptPath, { ok: true });
+    api.reply("DELETE", commentPath, {
+      json: { error: "Delete failed" },
+      status: 500,
+    });
+    api.json(
+      "PATCH",
+      commentPath,
+      cmt({ id: "c1", status: "sent", sentAt: "2026-01-02T00:00:00.000Z" }),
+    );
+    const { result } = renderHook(
+      () => useSendDocumentFeedback({ docRef: DOC_REF, target: target() }),
+      { wrapper: Wrapper },
+    );
+
+    let accepted = false;
+    await act(async () => {
+      accepted = await result.current.sendFeedback([cmt({ id: "c1" })]);
+    });
+    expect(accepted).toBe(true);
+    expect(result.current.isSending).toBe(false);
+    expect(api.requestsTo("PATCH", commentPath)[0]?.jsonBody).toEqual({
+      status: "sent",
+    });
+    expect(client.getQueryData<DocumentComment[]>(listKey)?.[0]?.status).toBe(
+      "sent",
+    );
+
+    api.json("DELETE", commentPath, { ok: true });
+    await act(async () => {
+      await result.current.sendFeedback([cmt({ id: "c1" })]);
+    });
+    expect(api.requestsTo("POST", promptPath)).toHaveLength(1);
+    expect(client.getQueryData(listKey)).toEqual([]);
+  });
+
+  it("reports cleanup separately and never redelivers when both cleanup writes fail", async () => {
+    api.json("POST", promptPath, { ok: true });
+    api.reply("DELETE", commentPath, {
+      json: { error: "Store unavailable" },
+      status: 500,
+    });
+    api.reply("PATCH", commentPath, {
+      json: { error: "Store unavailable" },
+      status: 500,
+    });
+    const { result } = renderHook(
+      () => useSendDocumentFeedback({ docRef: DOC_REF, target: target() }),
+      { wrapper: Wrapper },
+    );
+    await act(async () => {
+      expect(await result.current.sendFeedback([cmt({ id: "c1" })])).toBe(true);
+    });
+    expect(result.current.error).toContain("Feedback sent");
+    expect(result.current.isSending).toBe(false);
+    expect(client.getQueryData<DocumentComment[]>(listKey)?.[0]?.status).toBe(
+      "sent",
+    );
+    await act(async () => {
+      await result.current.sendFeedback([cmt({ id: "c1" })]);
+    });
+    expect(api.requestsTo("POST", promptPath)).toHaveLength(1);
+  });
+
+  it("cleans up the original document if the hook changes documents during delivery", async () => {
+    const delivery = Promise.withResolvers<{ json: unknown }>();
+    api.reply("POST", promptPath, () => delivery.promise);
+    api.json("DELETE", commentPath, { ok: true });
+    const { result, rerender } = renderHook(
+      ({ docRef }) => useSendDocumentFeedback({ docRef, target: target() }),
+      { wrapper: Wrapper, initialProps: { docRef: DOC_REF } },
+    );
+    let pending: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      pending = result.current.sendFeedback([cmt({ id: "c1" })]);
+    });
+    rerender({
+      docRef: { ...DOC_REF, sessionName: "other-session", docPath: "other.md" },
+    });
+    await act(async () => {
+      delivery.resolve({ json: { ok: true } });
+      await pending;
+    });
+    expect(await pending).toBe(true);
+    expect(api.requestsTo("DELETE", commentPath)).toHaveLength(1);
+    expect(api.unmatched).toHaveLength(0);
+    expect(client.getQueryData(listKey)).toEqual([]);
+  });
+
+  it("does not show the previous destination's error after choosing another conversation", async () => {
+    const delivery = Promise.withResolvers<{ json: unknown; status: number }>();
+    api.reply("POST", promptPath, () => delivery.promise);
+    const { result, rerender } = renderHook(
+      ({ chosen }) =>
+        useSendDocumentFeedback({ docRef: DOC_REF, target: chosen }),
+      { wrapper: Wrapper, initialProps: { chosen: target() } },
+    );
+    let pending: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      pending = result.current.sendFeedback([cmt({ id: "c1" })]);
+    });
+    rerender({ chosen: target({ conversationId: "conv-2" }) });
+    await act(async () => {
+      delivery.resolve({
+        json: { error: "Previous conversation is unavailable" },
+        status: 404,
+      });
+      await pending;
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.isSending).toBe(false);
+    expect(api.requestsTo("POST", /\/prompt$/)).toHaveLength(1);
+  });
+
+  it("allows sending an edited version of a comment whose earlier feedback was accepted", async () => {
+    api.json("POST", promptPath, { ok: true });
+    api.reply("DELETE", commentPath, {
+      json: { error: "Delete failed" },
+      status: 500,
+    });
+    api.json(
+      "PATCH",
+      commentPath,
+      cmt({ id: "c1", status: "sent", sentAt: "2026-01-02T00:00:00.000Z" }),
+    );
+    const { result } = renderHook(
+      () => useSendDocumentFeedback({ docRef: DOC_REF, target: target() }),
+      { wrapper: Wrapper },
+    );
+    await act(async () => {
+      await result.current.sendFeedback([cmt({ id: "c1" })]);
+    });
+    api.json("DELETE", commentPath, { ok: true });
+    await act(async () => {
+      await result.current.sendFeedback([
+        cmt({ id: "c1", note: "One more detail" }),
+      ]);
+    });
+    const deliveries = api.requestsTo("POST", promptPath);
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[1]?.jsonBody).toMatchObject({
+      documentFeedback: {
+        items: [expect.objectContaining({ note: "One more detail" })],
+      },
+    });
   });
 });

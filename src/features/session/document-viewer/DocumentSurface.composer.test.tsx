@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -104,6 +105,10 @@ interface RequestHarness {
   deliveryBodies: unknown[];
   persisted: DocumentComment[];
   failNextCreate: boolean;
+  failDelete?: boolean;
+  remove?: (id: string) => Promise<void>;
+  deliver?: () => Promise<Response>;
+  create?: () => Promise<void>;
 }
 
 function requestHarness(): RequestHarness {
@@ -120,7 +125,16 @@ function requestHarness(): RequestHarness {
 
     if (url.includes("/document-comments")) {
       if (method === "GET") return jsonResponse(harness.persisted);
+      if (method === "DELETE") {
+        const id = url.split("/").at(-1) ?? "";
+        await harness.remove?.(id);
+        if (harness.failDelete)
+          return jsonResponse({ error: "Could not remove comment" }, 503);
+        harness.persisted = harness.persisted.filter((c) => c.id !== id);
+        return jsonResponse({ success: true });
+      }
       if (method === "POST") {
+        await harness.create?.();
         if (harness.failNextCreate) {
           harness.failNextCreate = false;
           return jsonResponse({ error: "Persistence refused" }, 409);
@@ -144,7 +158,9 @@ function requestHarness(): RequestHarness {
 
     if (method === "POST" && url.endsWith("/prompt")) {
       harness.deliveryBodies.push(JSON.parse(String(init?.body)));
-      return jsonResponse({ error: "Agent unavailable" }, 503);
+      return harness.deliver
+        ? harness.deliver()
+        : jsonResponse({ error: "Agent unavailable" }, 503);
     }
 
     throw new Error(`Unexpected request: ${method} ${url}`);
@@ -170,13 +186,13 @@ function renderSurface(client: QueryClient): void {
 }
 
 async function composer(): Promise<
-  Extract<CommentComposerCapability, { kind: "persist-or-send" }>
+  Extract<CommentComposerCapability, { kind: "persist-only" }>
 > {
   await waitFor(() => expect(capturedComposer).toBeDefined());
-  expect(capturedComposer?.kind).toBe("persist-or-send");
+  expect(capturedComposer?.kind).toBe("persist-only");
   return capturedComposer as Extract<
     CommentComposerCapability,
-    { kind: "persist-or-send" }
+    { kind: "persist-only" }
   >;
 }
 
@@ -198,25 +214,167 @@ describe("DocumentSurface composer", () => {
     vi.unstubAllGlobals();
   });
 
-  it("supplies persist-or-send and keeps queue distinct from immediate delivery", async () => {
+  it("persists comments to the tray without delivering them", async () => {
     renderSurface(makeClient());
     const capability = await composer();
-
-    await capability.submit({
-      anchor: ANCHOR,
-      note: "queue this",
-      delivery: "queue",
-    });
+    await capability.submit({ anchor: ANCHOR, note: "queue this" });
     expect(requests.createBodies).toHaveLength(1);
     expect(requests.deliveryBodies).toHaveLength(0);
+    expect(
+      await screen.findByRole("button", { name: "1 pending comment to send" }),
+    ).toBeInTheDocument();
+  });
 
-    await capability.submit({
-      anchor: ANCHOR,
-      note: "send this",
-      delivery: "send",
+  it("uses the selected comment's note when switching edit cards with the keyboard", async () => {
+    const user = userEvent.setup();
+    renderSurface(makeClient());
+    const capability = await composer();
+    await act(async () => {
+      await capability.submit({ anchor: ANCHOR, note: "first comment" });
+      await capability.submit({ anchor: ANCHOR, note: "second comment" });
     });
-    expect(requests.createBodies).toHaveLength(2);
+    await user.click(
+      await screen.findByRole("button", { name: "2 pending comments to send" }),
+    );
+    const [firstEdit, secondEdit] = screen.getAllByRole("button", {
+      name: "Edit comment",
+    });
+    if (!firstEdit || !secondEdit) throw new Error("Expected two comment rows");
+    await user.click(firstEdit);
+    const note = screen.getByRole("textbox", { name: "Edit comment note" });
+    await user.clear(note);
+    await user.type(note, "unsaved first draft");
+
+    secondEdit.focus();
+    await user.keyboard("{Enter}");
+
+    expect(
+      screen.getByRole("textbox", { name: "Edit comment note" }),
+    ).toHaveValue("second comment");
+  });
+
+  it("disables tray actions during delivery and clears the pending tray after success", async () => {
+    let finish: ((response: Response) => void) | undefined;
+    requests.deliver = () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    renderSurface(makeClient());
+    const capability = await composer();
+    await act(async () =>
+      capability.submit({ anchor: ANCHOR, note: "send once" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Send 1 to agent/ }),
+    );
+    expect(screen.getByRole("button", { name: /Sending/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
+    await act(async () => finish?.(jsonResponse({ success: true })));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Pending comments" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(requests.persisted).toHaveLength(0);
     expect(requests.deliveryBodies).toHaveLength(1);
+    expect(screen.queryByText("Sending feedback…")).not.toBeInTheDocument();
+  });
+
+  it("does not send an optimistic comment while it is still saving", async () => {
+    let finish: (() => void) | undefined;
+    requests.create = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    renderSurface(makeClient());
+    const capability = await composer();
+    let creation: Promise<void> | undefined;
+    act(() => {
+      creation = capability.submit({ anchor: ANCHOR, note: "still saving" });
+    });
+    expect(
+      await screen.findByRole("button", { name: /Send 1 to agent/ }),
+    ).toBeDisabled();
+    await act(async () => {
+      finish?.();
+      await creation;
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Send 1 to agent/ }),
+      ).toBeEnabled(),
+    );
+    expect(requests.deliveryBodies).toHaveLength(0);
+  });
+
+  it("reports a failed tray clear and restores comments for retry", async () => {
+    requests.failDelete = true;
+    renderSurface(makeClient());
+    const capability = await composer();
+    await act(async () =>
+      capability.submit({ anchor: ANCHOR, note: "keep on failure" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Clear" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not remove comment",
+    );
+    expect(screen.getByRole("button", { name: "Clear" })).toBeEnabled();
+    expect(requests.persisted).toHaveLength(1);
+  });
+
+  it("keeps the tray disabled until every deletion in a clear finishes", async () => {
+    const firstDeletion = Promise.withResolvers<void>();
+    requests.remove = async (id) => {
+      if (id === "comment-1") await firstDeletion.promise;
+    };
+    renderSurface(makeClient());
+    const capability = await composer();
+    await act(async () => {
+      await capability.submit({ anchor: ANCHOR, note: "first comment" });
+      await capability.submit({ anchor: ANCHOR, note: "second comment" });
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(requests.persisted).toHaveLength(1));
+    expect(
+      await screen.findByRole("button", { name: /Send 1 to agent/ }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
+
+    await act(async () => firstDeletion.resolve());
+    await waitFor(() => expect(requests.persisted).toHaveLength(0));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Pending comments" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("reports an earlier clear failure even when the last deletion succeeds", async () => {
+    const firstDeletion = Promise.withResolvers<void>();
+    requests.remove = async (id) => {
+      if (id === "comment-1") await firstDeletion.promise;
+    };
+    renderSurface(makeClient());
+    const capability = await composer();
+    await act(async () => {
+      await capability.submit({ anchor: ANCHOR, note: "first comment" });
+      await capability.submit({ anchor: ANCHOR, note: "second comment" });
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(requests.persisted).toHaveLength(1));
+    await act(async () =>
+      firstDeletion.reject(new Error("First comment could not be removed")),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "First comment could not be removed",
+    );
+    expect(screen.getByRole("button", { name: "Clear" })).toBeEnabled();
+    expect(requests.persisted).toHaveLength(1);
+    delete requests.remove;
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(requests.persisted).toHaveLength(0));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("rejects failed persistence so the composer can retain its draft", async () => {
@@ -228,13 +386,12 @@ describe("DocumentSurface composer", () => {
       capability.submit({
         anchor: ANCHOR,
         note: "retain this",
-        delivery: "queue",
       }),
     ).rejects.toThrow("Persistence refused");
     expect(requests.persisted).toHaveLength(0);
   });
 
-  it("resolves after persistence when immediate delivery fails and exposes retry", async () => {
+  it("retains pending comments when delivery from the tray fails", async () => {
     renderSurface(makeClient());
     const capability = await composer();
 
@@ -242,7 +399,6 @@ describe("DocumentSurface composer", () => {
       capability.submit({
         anchor: ANCHOR,
         note: "persist before delivery",
-        delivery: "send",
       }),
     ).resolves.toBeUndefined();
 
@@ -252,7 +408,10 @@ describe("DocumentSurface composer", () => {
         name: "1 pending comment to send",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Agent unavailable")).toBeInTheDocument();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Send 1 to agent/ }),
+    );
+    expect(await screen.findByText("Agent unavailable")).toBeInTheDocument();
   });
 });
 
