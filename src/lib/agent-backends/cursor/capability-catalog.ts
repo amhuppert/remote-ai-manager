@@ -92,7 +92,7 @@ export async function discoverCursorCatalog(
     if (found.has(key)) {
       diagnostic(
         "cursor-capability-collision",
-        "Duplicate capability name: project sources take precedence over user sources; within a scope, .cursor takes precedence over .agents.",
+        "Duplicate capability name: project sources take precedence over user sources; within a scope, precedence is .cursor, then .agents, then .claude.",
         item.id,
       );
       return;
@@ -240,6 +240,7 @@ export async function discoverCursorCatalog(
   ] as const) {
     await scan(path.join(root, ".cursor", "skills"), scope, "skills");
     await scan(path.join(root, ".agents", "skills"), scope, "skills");
+    await scan(path.join(root, ".claude", "skills"), scope, "skills");
     await scan(path.join(root, ".cursor", "agents"), scope, "agents");
   }
   const pluginRoot = path.join(input.home, ".cursor", "plugins", "local");

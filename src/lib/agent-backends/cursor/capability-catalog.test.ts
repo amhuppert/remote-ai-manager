@@ -28,19 +28,78 @@ afterEach(async () => {
 });
 
 describe("Cursor CC capability catalog", () => {
-  it("discovers project and user skills without including their bodies in the index", async () => {
-    await file("workspace/.cursor/skills/check/SKILL.md", skill("check"));
-    await file("home/.cursor/skills/audit/SKILL.md", skill("audit"));
+  it.each([".cursor", ".agents", ".claude"])(
+    "discovers project and user skills from %s without including their bodies in the index",
+    async (directory) => {
+      await file(
+        `workspace/${directory}/skills/check/SKILL.md`,
+        skill("check"),
+      );
+      await file(`home/${directory}/skills/audit/SKILL.md`, skill("audit"));
+      const catalog = await discoverCursorCatalog({
+        worktreePath,
+        home,
+        bundle: null,
+      });
+      expect(catalog.items.map((i) => i.id).sort()).toEqual(["audit", "check"]);
+      expect(catalog.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "check",
+            scope: "project",
+            path: path.join(worktreePath, directory, "skills/check/SKILL.md"),
+          }),
+          expect.objectContaining({
+            id: "audit",
+            scope: "user",
+            path: path.join(home, directory, "skills/audit/SKILL.md"),
+          }),
+        ]),
+      );
+      const index = renderCursorSkillCatalog(catalog.items);
+      expect(index).toContain("Use for checking selected capabilities.");
+      expect(index).toContain("/check");
+      expect(index).not.toContain("SECRET_BODY");
+    },
+  );
+  it("keeps existing skill roots ahead of Claude roots within each scope and project skills ahead of user skills", async () => {
+    for (const scope of ["workspace", "home"]) {
+      for (const directory of [".cursor", ".agents"]) {
+        const name = `${scope}-${directory.slice(1)}`;
+        await file(
+          `${scope}/${directory}/skills/${name}/SKILL.md`,
+          skill(name),
+        );
+        await file(`${scope}/.claude/skills/${name}/SKILL.md`, skill(name));
+      }
+    }
+    await file("workspace/.claude/skills/check/SKILL.md", skill("check"));
+    await file("home/.cursor/skills/check/SKILL.md", skill("check"));
+
     const catalog = await discoverCursorCatalog({
       worktreePath,
       home,
       bundle: null,
     });
-    expect(catalog.items.map((i) => i.id).sort()).toEqual(["audit", "check"]);
-    const index = renderCursorSkillCatalog(catalog.items);
-    expect(index).toContain("Use for checking selected capabilities.");
-    expect(index).toContain("/check");
-    expect(index).not.toContain("SECRET_BODY");
+
+    expect(catalog.items).toHaveLength(5);
+    for (const scope of ["workspace", "home"]) {
+      for (const directory of [".cursor", ".agents"]) {
+        const name = `${scope}-${directory.slice(1)}`;
+        expect(catalog.items.find((item) => item.id === name)?.path).toBe(
+          path.join(root, scope, directory, "skills", name, "SKILL.md"),
+        );
+      }
+    }
+    expect(catalog.items.find((item) => item.id === "check")).toMatchObject({
+      scope: "project",
+      path: path.join(worktreePath, ".claude/skills/check/SKILL.md"),
+    });
+    expect(
+      catalog.diagnostics.filter(
+        (item) => item.code === "cursor-capability-collision",
+      ),
+    ).toHaveLength(5);
   });
   it("uses project precedence and reports collisions without walking symlink cycles", async () => {
     await file("home/.cursor/skills/check/SKILL.md", skill("check"));

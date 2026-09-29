@@ -172,6 +172,8 @@ Strict MCP authority is **not** claimed: the provider exposes no way to read or 
 
 Command Center's immutable managed skill bundle reaches Cursor conversations and tasks, alongside project and user skills discovered from disk, while ambient provider settings stay suppressed. Skills are delivered as a rendered catalog in the session instructions rather than as provider-native skill objects, and the catalog is capped at 16 KiB. Skills, plugins, and agents resolve through the shared capability cascade and are applied when the next conversation starts; a change made mid-conversation is deferred rather than applied live, and plugin rules, hooks, and commands are not translated.
 
+The skill scanner reads `.cursor/skills`, `.agents/skills`, and `.claude/skills` beneath both the active worktree and the user's home directory. Project skills take precedence over user skills; within either scope, duplicate names resolve in that directory order. Skills in `.claude/skills` use the same capability controls and metadata validation as the other directories. They become available in new conversations.
+
 The command palette lists the built-in commands Cursor can actually execute, and skill-derived commands share its `/` prefix.
 
 ---
