@@ -37,7 +37,7 @@ export const RefPasteHandler = Extension.create({
             let insertedChip = false;
 
             const pushText = (value: string) => {
-              value.split("\n").forEach((line, lineIndex) => {
+              value.split(/\r\n?|\n/).forEach((line, lineIndex) => {
                 if (lineIndex > 0 && hardBreakType) {
                   nodes.push(hardBreakType.create());
                 }

@@ -25,6 +25,7 @@ import {
   MessageMentionNode,
   NotepadImageNode,
   NotepadMentionNode,
+  PlainTextPaste,
   QuestionMentionNode,
   ReferencePicker,
   RefPasteHandler,
@@ -190,6 +191,7 @@ export const NotepadEditor = forwardRef<
         trailingNode: false,
       }),
       CodeFormatting,
+      PlainTextPaste,
       // Readline bindings the rest of the platform's editors carry. There is
       // nothing to submit here, so Mod-Enter stays with the default keymap.
       TerminalHotkeys.configure({ onSubmit: null }),

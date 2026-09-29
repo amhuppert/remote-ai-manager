@@ -45,3 +45,4 @@ export { TerminalHotkeys } from "./terminal-hotkeys-extension";
 export { REFERENCE_REGISTRY } from "./reference-registry";
 export type { ReferenceType } from "./reference-registry";
 export { CodeFormatting } from "./code-formatting-extension";
+export { PlainTextPaste } from "./plain-text-paste-extension";

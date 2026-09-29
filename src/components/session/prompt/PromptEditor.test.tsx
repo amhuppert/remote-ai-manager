@@ -158,6 +158,27 @@ function pastePlainText(element: HTMLElement, text: string): void {
 }
 
 describe("PromptEditor", () => {
+  it("preserves Markdown blank lines and indentation on paste", () => {
+    const onChange = vi.fn();
+    const text = "\n# Heading\n\nFirst paragraph.\n\n\n  indented\n\n";
+    const { getByTestId } = render(
+      <PromptEditor
+        conversationId="conv-1"
+        value=""
+        onChange={onChange}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+
+    pastePlainText(getByTestId("prompt-input"), text);
+
+    expect(onChange).toHaveBeenLastCalledWith(text);
+  });
+
   it("renders an editable contenteditable surface", () => {
     const { container } = render(
       <PromptEditor

@@ -189,6 +189,64 @@ describe("NotepadEditor registry paste parity", () => {
 });
 
 describe("NotepadEditor content round-trip", () => {
+  it.each([
+    "# Heading\n\nFirst paragraph.\n\n## Subheading\n\nSecond paragraph.",
+    "\n\n  indented\n\n\n\tcode  \n\n",
+    "\n\n\n",
+    "# Heading\r\n\r\nParagraph\r\rLast\r\n",
+  ])("preserves pasted text and every blank line: %j", (text) => {
+    const changes: string[] = [];
+    const { editor, handle } = mountEditor({
+      onContentChange: (value) => changes.push(value),
+    });
+
+    pasteText(editor, text);
+
+    const expected = text.replace(/\r\n?/g, "\n");
+    expect(handle.serialize()).toBe(expected);
+    expect(changes.at(-1)).toBe(expected);
+  });
+
+  it("preserves blank lines when replacing selected text and undoing the paste", () => {
+    const { editor, handle } = mountEditor({
+      initialContent: "before OLD after",
+    });
+    editor.commands.setTextSelection({ from: 8, to: 11 });
+    const text = "first\n\n\nlast";
+
+    editor.view.pasteText(text, pasteEvent({ text }));
+
+    expect(handle.serialize()).toBe(`before ${text} after`);
+    editor.commands.undo();
+    expect(handle.serialize()).toBe("before OLD after");
+  });
+
+  it("preserves blank lines when pasting into an existing code block", () => {
+    const { editor, handle } = mountEditor({
+      initialContent: "```\nbefore\n```",
+    });
+
+    pasteText(editor, "\n\n  after\n\n");
+
+    expect(countNodes(editor, "codeBlock")).toBe(1);
+    expect(handle.serialize()).toBe("```\nbefore\n\n  after\n\n\n```");
+  });
+
+  it("keeps internal HTML paste metadata for reference chips and blank lines", () => {
+    const content = `# Heading\n\n${NOTEPAD_XML}\n\nLast paragraph`;
+    const { editor, handle } = mountEditor({ initialContent: content });
+    editor.commands.selectAll();
+    const copied = editor.view.serializeForClipboard(
+      editor.state.selection.content(),
+    );
+    editor.commands.clearContent();
+
+    editor.view.pasteHTML(copied.dom.innerHTML, pasteEvent({}));
+
+    expect(countNodes(editor, "notepadMention")).toBe(1);
+    expect(handle.serialize()).toBe(content);
+  });
+
   const content = [
     "# plan",
     "",

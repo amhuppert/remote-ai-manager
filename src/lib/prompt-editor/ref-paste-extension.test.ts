@@ -114,6 +114,22 @@ const TICKET_XML = buildTicketRefXml({
 });
 
 describe("RefPasteHandler ticket refs", () => {
+  it.each(["\n", "\r\n", "\r"])(
+    "preserves blank lines around reference chips with %j line endings",
+    (newline) => {
+      const editor = makeEditor();
+      const lines = ["", "# Heading", "", TICKET_XML, "", "", "  last", ""];
+
+      paste(editor, lines.join(newline));
+
+      expect(findTicketMentions(editor)).toHaveLength(1);
+      expect(
+        serializePromptDoc({ doc: editor.state.doc, attachments: [] }).prompt,
+      ).toBe(lines.join("\n"));
+      editor.destroy();
+    },
+  );
+
   it("renders a pasted ticket ref among text as a ticketMention atom", () => {
     const editor = makeEditor();
     paste(editor, `before ${TICKET_XML} after`);
