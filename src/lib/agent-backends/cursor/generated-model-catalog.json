@@ -3984,6 +3984,167 @@
       ]
     },
     {
+      "id": "claude-sonnet-5-5",
+      "label": "Claude Sonnet 5.5",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning_effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "low"
+            }
+          },
+          "label": "Claude Sonnet 5.5  Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "medium"
+            }
+          },
+          "label": "Claude Sonnet 5.5  Medium",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "high"
+            }
+          },
+          "label": "Claude Sonnet 5.5  High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "xhigh"
+            }
+          },
+          "label": "Claude Sonnet 5.5  Extra High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "max"
+            }
+          },
+          "label": "Claude Sonnet 5.5  Max",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "low"
+            }
+          },
+          "label": "Claude Sonnet 5.5 1M Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "medium"
+            }
+          },
+          "label": "Claude Sonnet 5.5 1M Medium",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "high"
+            }
+          },
+          "label": "Claude Sonnet 5.5 1M High",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "xhigh"
+            }
+          },
+          "label": "Claude Sonnet 5.5 1M Extra High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "max"
+            }
+          },
+          "label": "Claude Sonnet 5.5 1M Max",
+          "isDefault": false
+        }
+      ]
+    },
+    {
       "id": "claude-sonnet-5",
       "label": "Claude Sonnet 5",
       "aliases": [
@@ -7123,11 +7284,129 @@
           "isDefault": false
         }
       ]
+    },
+    {
+      "id": "glm-5p3",
+      "label": "GLM 5.3",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "emphasis": "exceeds-scale"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "glm-5p3",
+            "parameters": {
+              "reasoning": "low"
+            }
+          },
+          "label": "GLM 5.3 Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "glm-5p3",
+            "parameters": {
+              "reasoning": "high"
+            }
+          },
+          "label": "GLM 5.3 High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "glm-5p3",
+            "parameters": {
+              "reasoning": "max"
+            }
+          },
+          "label": "GLM 5.3 Max",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "glm-5p3-flash",
+      "label": "GLM 5.3 Flash",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "emphasis": "exceeds-scale"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "glm-5p3-flash",
+            "parameters": {
+              "reasoning": "low"
+            }
+          },
+          "label": "GLM 5.3 Flash Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "glm-5p3-flash",
+            "parameters": {
+              "reasoning": "high"
+            }
+          },
+          "label": "GLM 5.3 Flash High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "glm-5p3-flash",
+            "parameters": {
+              "reasoning": "max"
+            }
+          },
+          "label": "GLM 5.3 Flash Max",
+          "isDefault": true
+        }
+      ]
     }
   ],
   "provenance": {
     "source": "Cursor.models.list",
-    "generatedAt": "2026-09-25T16:36:42.844Z",
+    "generatedAt": "2026-09-29T19:00:25.504Z",
     "sdkVersion": "1.0.31"
   }
 }
