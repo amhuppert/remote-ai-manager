@@ -44,7 +44,7 @@ export const CURSOR_PARITY_AREAS = [
 
 export type CursorParityArea = (typeof CURSOR_PARITY_AREAS)[number];
 
-/** Ticket #59 delivered the Phase 1 backend; #111–#124 are #125's dependencies. */
+/** Phase 1, parity delivery, and subsequent capability owners. */
 export const CURSOR_PARITY_OWNERS = [
   "command-center#59",
   "command-center#111",
@@ -61,6 +61,7 @@ export const CURSOR_PARITY_OWNERS = [
   "command-center#122",
   "command-center#123",
   "command-center#124",
+  "command-center#165",
 ] as const;
 
 export type CursorParityOwner = (typeof CURSOR_PARITY_OWNERS)[number];
@@ -474,26 +475,52 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     id: "checkpoint-capture",
     area: "continuity",
     claim:
-      "Command Center declares checkpoint capture, checkpoint forks and agent handoff unavailable for Cursor, so those actions are withheld rather than offered and then failing.",
-    mechanism: "unavailable",
+      "Cursor supports immutable CC continuation documents, checkpoint forks, and optional handoff capture through a supervised worker with tools disabled.",
+    mechanism: "cc-owned",
     limitation:
-      "Cursor conversations cannot produce a Command Center checkpoint, a checkpoint fork or a handoff summary; history zoom and checkpoint-based recovery stay Claude and Codex features.",
-    owner: "command-center#111",
+      "CC checkpoints start a fresh agent from a saved continuation document; they do not preserve hidden Cursor provider state. Handoff text is separate advisory context.",
+    owner: "command-center#165",
     verdict: "verified",
     blocker: null,
-    liveFlow: false,
+    liveFlow: true,
     facts: [
       "conversation.capabilities.checkpoint",
       "conversation.capabilities.checkpointFork",
       "conversation.capabilities.handoffCapture.available",
       "conversation.capabilities.handoffCapture.mode",
-      "conversation.capabilities.handoffCapture.reason",
     ],
     auditGaps: [],
     evidence: [
       test("src/lib/conversation-checkpoints/fork-capabilities.test.ts"),
       test("src/lib/agent-backends/cursor/descriptor.test.ts"),
+      test(
+        "src/lib/agent-backends/cursor/conversation-runtime-capture.test.ts",
+      ),
+      test(
+        "src/lib/workflows/conversation/checkpoint-fork.integration.test.ts",
+      ),
+      test(
+        "src/lib/workflows/conversation/checkpoint-delivery.integration.test.ts",
+      ),
+      report("docs/reports/2026-09-29-cursor-continuity.md"),
     ],
+  },
+  {
+    id: "native-fork",
+    area: "continuity",
+    claim:
+      "Independent forks from supported Cursor provider-state anchors remain unresolved.",
+    mechanism: "unavailable",
+    limitation:
+      "Ordinary forks retain the disclosed synthetic transcript fallback.",
+    owner: "command-center#165",
+    verdict: "unresolved",
+    blocker:
+      "SDK 1.0.31 and the assessed 1.0.32 API expose no independent fork or historical checkpoint selector. A successful store-transplant experiment required replacing SDK-owned metadata and does not establish a supported branching contract.",
+    liveFlow: true,
+    facts: [],
+    auditGaps: [],
+    evidence: [report("docs/reports/2026-09-29-cursor-continuity.md")],
   },
 
   // ----- interaction -----------------------------------------------------

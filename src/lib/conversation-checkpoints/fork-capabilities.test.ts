@@ -1,8 +1,8 @@
 import { expect, it } from "vitest";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
-it("admits certified Claude and Codex checkpoint forks consistently in the server and client catalog", () => {
-  for (const backend of ["claude", "codex"] as const) {
+it("admits certified Claude, Codex and Cursor checkpoint forks consistently in the server and client catalog", () => {
+  for (const backend of ["claude", "codex", "cursor"] as const) {
     expect(
       getBackendDescriptor(backend).conversation?.capabilities.checkpointFork,
     ).toBe(true);
@@ -11,7 +11,4 @@ it("admits certified Claude and Codex checkpoint forks consistently in the serve
         ?.capabilities?.checkpointFork,
     ).toBe(true);
   }
-  expect(
-    getBackendDescriptor("cursor").conversation?.capabilities.checkpointFork,
-  ).toBe(false);
 });

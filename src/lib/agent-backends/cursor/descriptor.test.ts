@@ -141,12 +141,11 @@ describe("cursor descriptor — conversation capabilities", () => {
       contextWindowMetrics: false,
       nativeMidTurnAskUser: false,
       externalTurns: false,
-      checkpoint: false,
-      checkpointFork: false,
+      checkpoint: true,
+      checkpointFork: true,
       handoffCapture: {
-        available: false,
-        mode: null,
-        reason: "Capture is unavailable",
+        available: true,
+        mode: "tool-disabled",
       },
     });
     expect(

@@ -12,6 +12,8 @@ import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type {
+  CaptureHandoffInput,
+  CaptureHandoffResult,
   ConversationBackendCreateInput,
   ConversationBackendEvent,
   ConversationBackendRuntime,
@@ -19,6 +21,7 @@ import type {
   ConversationBackendTurnResult,
   ConversationQueuedUserInput,
 } from "../conversation";
+import type { CaptureOmissionReason } from "../schemas";
 import {
   applyBillingSnapshot,
   applyBillingUnavailable,
@@ -98,6 +101,56 @@ const failureClassifier = createCursorFailureClassifier();
  * runtime's whole life.
  */
 const MAX_SEEN_EVENT_KEYS = 20_000;
+
+function captureAbortReason(signal: AbortSignal): CaptureOmissionReason {
+  return signal.reason === "skip" || signal.reason === "skipped"
+    ? "skipped"
+    : signal.reason === "cancel" || signal.reason === "cancelled"
+      ? "cancelled"
+      : "interrupted";
+}
+
+function hasCursorToolActivity(value: unknown): boolean {
+  const pending = [value];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (next === null || typeof next !== "object") continue;
+    if (Array.isArray(next)) {
+      pending.push(...next);
+      continue;
+    }
+    const record = next as Record<string, unknown>;
+    if (
+      record.type === "tool_call" ||
+      record.type === "tool_use" ||
+      record.type === "tool-call-delta" ||
+      record.type === "server_tool_use"
+    )
+      return true;
+    pending.push(...Object.values(record));
+  }
+  return false;
+}
+
+async function settlesWithin(
+  work: Promise<unknown>,
+  ms: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work.then(
+        () => true,
+        () => false,
+      ),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export interface CursorConversationRuntimeDeps {
   steerTimeoutMs?: number;
@@ -224,6 +277,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   private readonly workflowContextId: string | undefined;
   private readonly workflowCallerConversationId: string | undefined;
   private readonly deps: CursorConversationRuntimeDeps;
+  private readonly initialPurpose: ConversationBackendCreateInput["initialPurpose"];
+  private captureRestricted = false;
+  private captureAttached = false;
+  private captureUsed = false;
   private readonly workerOwnerToken = {};
   private readonly steering: CursorSteering;
 
@@ -303,6 +360,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   ) {
     assertCursorRuntimePolicy(input);
     this.conversationId = input.conversationId;
+    this.initialPurpose = input.initialPurpose;
+    this.captureRestricted =
+      input.initialPurpose?.kind === "checkpoint_handoff";
     this.onBackgroundActivity = input.onBackgroundActivity;
     this.conversationTarget = input.conversationTarget;
     this.worktreePath = input.worktreePath;
@@ -345,6 +405,296 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
   get isTurnActive(): boolean {
     return this.activeTurn !== null;
+  }
+
+  async captureHandoff(
+    input: CaptureHandoffInput,
+  ): Promise<CaptureHandoffResult> {
+    const ref = this.currentRef();
+    const base: CaptureHandoffResult = {
+      modeEstablished: false,
+      submitted: false,
+      correlatedCompletion: false,
+      candidateText: null,
+      omissionReason: "unavailable",
+      executionSettled: true,
+      cleanupFailure: null,
+      continuation: ref
+        ? { disposition: "retain", backendRef: ref, nextRuntime: "current" }
+        : {
+            disposition: "clear",
+            backendRef: null,
+            nextRuntime: "unavailable",
+          },
+      activity: {
+        transport: "complete",
+        native: "unavailable",
+        prohibited: "not_observed",
+        inspectedBytes: null,
+      },
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        cachedInputTokens: null,
+        costUsd: null,
+        costBasis: null,
+        executionMs: null,
+        settlementMs: null,
+      },
+    };
+    if (
+      input.mode !== "tool-disabled" ||
+      (this.initialPurpose &&
+        (this.initialPurpose.mode !== input.mode ||
+          this.initialPurpose.captureId !== input.captureId))
+    )
+      return { ...base, omissionReason: "mode_changed" };
+    if (!ref) return { ...base, omissionReason: "continuity_unavailable" };
+    if (
+      this.captureUsed ||
+      this._status === "dead" ||
+      this.activeTurn ||
+      (this.attaching !== null && this.session === null)
+    )
+      return base;
+
+    const prompt = appendStructuredOutputInstruction(
+      input.promptText,
+      input.outputSchema,
+    );
+    if (Buffer.byteLength(prompt, "utf8") > input.limits.inputBytes)
+      return { ...base, omissionReason: "input_limit" };
+    if (input.signal.aborted)
+      return { ...base, omissionReason: captureAbortReason(input.signal) };
+
+    this.captureUsed = true;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    let omission: CaptureOmissionReason | null = null;
+    let inspectedBytes = 0;
+    let answerBytes = 0;
+    let nativeObserved = false;
+    let inspectionMs = 0;
+    let nativeIncomplete = false;
+    let transportIncomplete = false;
+    let prohibited = false;
+    let submitted = false;
+    const stop = (reason: CaptureOmissionReason) => {
+      omission ??= reason;
+      if (!controller.signal.aborted) controller.abort(reason);
+    };
+    const onAbort = () => stop(captureAbortReason(input.signal));
+    input.signal.addEventListener("abort", onAbort, { once: true });
+    const executionTimer = setTimeout(
+      () => stop("execution_limit"),
+      input.limits.executionMs,
+    );
+    executionTimer.unref?.();
+    let turnResult: ConversationBackendTurnResult | null = null;
+    let settlementStartedAt = Date.now();
+    let cleanupUnverified = false;
+    let runDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // The ordinary worker may have inherited tools and MCP. Retire it before
+      // resume; the source ref, rather than a generated prompt seed, is reused.
+      if (this.session !== null) {
+        this.discardSession("checkpoint_handoff_capture");
+        if (
+          this.discarding !== null &&
+          !(await settlesWithin(this.discarding, input.limits.settlementMs))
+        )
+          cleanupUnverified = true;
+      }
+      if (cleanupUnverified || this.cleanupFailure !== null) {
+        omission = "cleanup_unverified";
+      } else if (controller.signal.aborted) {
+        omission ??= "cancelled";
+      } else {
+        this.captureRestricted = true;
+        const run = this.sendTurn({
+          promptText: prompt,
+          imageRefs: [],
+          sessionInstructions: [],
+          modelSelection: this.modelSelection,
+          autonomous: true,
+          signal: controller.signal,
+          onEvent: async (event) => {
+            if (event.type === "input_accepted") submitted = true;
+            if (event.type === "error") {
+              transportIncomplete = true;
+              nativeIncomplete = true;
+              stop("native_inspection_incomplete");
+            }
+            if (event.type === "content") {
+              if (
+                event.block.type === "tool_use" ||
+                event.block.type === "tool_result"
+              ) {
+                prohibited = true;
+                stop("prohibited_activity");
+              }
+              if (event.block.type === "text") {
+                answerBytes += Buffer.byteLength(event.block.text, "utf8");
+                if (answerBytes > input.limits.outputBytes)
+                  stop("output_limit");
+              }
+            }
+            if (event.type !== "transcript_entry") return;
+            nativeObserved = true;
+            const inspectionStartedAt = performance.now();
+            try {
+              const encoded = JSON.stringify(event.entry.raw);
+              if (encoded === undefined) {
+                transportIncomplete = true;
+                nativeIncomplete = true;
+                stop("native_inspection_incomplete");
+                return;
+              }
+              inspectedBytes += Buffer.byteLength(encoded, "utf8");
+              if (
+                inspectedBytes > input.limits.nativeInspectionBytes ||
+                inspectionMs > input.limits.nativeInspectionMs
+              ) {
+                nativeIncomplete = true;
+                stop("native_inspection_incomplete");
+                return;
+              }
+              if (hasCursorToolActivity(event.entry.raw)) {
+                prohibited = true;
+                stop("prohibited_activity");
+              }
+              if (
+                !(await settlesWithin(
+                  input.onTranscript(event.entry),
+                  Math.min(
+                    input.limits.nativeInspectionMs,
+                    input.limits.settlementMs,
+                  ),
+                ))
+              ) {
+                transportIncomplete = true;
+                nativeIncomplete = true;
+                stop("native_inspection_incomplete");
+              }
+            } catch {
+              transportIncomplete = true;
+              stop("capture_failed");
+            } finally {
+              // Charge inspection and archival work, not the model's time
+              // between streamed events; execution has its own deadline.
+              inspectionMs += performance.now() - inspectionStartedAt;
+              if (inspectionMs > input.limits.nativeInspectionMs) {
+                nativeIncomplete = true;
+                stop("native_inspection_incomplete");
+              }
+            }
+          },
+        });
+        turnResult = await Promise.race([
+          run,
+          new Promise<null>((resolve) => {
+            const remainingMs = Math.max(
+              1,
+              input.limits.executionMs +
+                input.limits.settlementMs -
+                (Date.now() - startedAt),
+            );
+            runDeadlineTimer = setTimeout(() => resolve(null), remainingMs);
+          }),
+        ]);
+        if (turnResult === null) {
+          stop("execution_limit");
+          cleanupUnverified = true;
+          transportIncomplete = true;
+        }
+      }
+    } catch {
+      omission ??= "capture_failed";
+    } finally {
+      clearTimeout(executionTimer);
+      clearTimeout(runDeadlineTimer);
+      input.signal.removeEventListener("abort", onAbort);
+      settlementStartedAt = Date.now();
+      if (!(await settlesWithin(this.close(), input.limits.settlementMs)))
+        cleanupUnverified = true;
+    }
+    const settledAt = Date.now();
+    const cleanupFailure =
+      !cleanupUnverified && this.cleanupFailure === null
+        ? null
+        : {
+            code: "cleanup_unverified" as const,
+            message:
+              this.cleanupFailure ??
+              "Cursor capture worker collection could not be verified",
+          };
+    if (cleanupFailure) omission = "cleanup_unverified";
+    const finalRef = turnResult?.backendRef ?? this.currentRef();
+    const finalText = turnResult?.finalText ?? null;
+    if (
+      finalText !== null &&
+      Buffer.byteLength(finalText, "utf8") > input.limits.outputBytes
+    )
+      omission ??= "output_limit";
+    if (prohibited) omission = "prohibited_activity";
+    if (!omission && (turnResult?.aborted || turnResult?.failure))
+      omission = turnResult?.aborted ? "interrupted" : "capture_failed";
+    if (!omission && (!submitted || !this.captureAttached))
+      omission = "mode_establishment_failed";
+    if (!omission && !finalText) omission = "invalid_output";
+    const usage = turnResult?.tokenUsage;
+    const costUsd = turnResult?.costUsd ?? null;
+    return {
+      ...base,
+      modeEstablished: this.captureAttached,
+      submitted,
+      correlatedCompletion:
+        turnResult !== null &&
+        submitted &&
+        !turnResult.aborted &&
+        !turnResult.failure,
+      candidateText: omission === null ? finalText : null,
+      omissionReason: omission,
+      executionSettled: cleanupFailure === null,
+      cleanupFailure,
+      continuation:
+        finalRef !== null && turnResult?.continuationDisposition !== "clear"
+          ? {
+              disposition: "retain",
+              backendRef: finalRef,
+              nextRuntime: "recreate_from_ref",
+            }
+          : {
+              disposition: "clear",
+              backendRef: null,
+              nextRuntime: "unavailable",
+            },
+      activity: {
+        transport:
+          transportIncomplete || cleanupFailure ? "incomplete" : "complete",
+        native:
+          nativeIncomplete || transportIncomplete
+            ? "incomplete"
+            : nativeObserved
+              ? "complete"
+              : "unavailable",
+        prohibited: prohibited
+          ? "observed"
+          : nativeIncomplete || transportIncomplete
+            ? "unknown"
+            : "not_observed",
+        inspectedBytes: nativeObserved ? inspectedBytes : null,
+      },
+      usage: {
+        inputTokens: usage?.inputTokens ?? null,
+        outputTokens: usage?.outputTokens ?? null,
+        cachedInputTokens: usage?.cacheReadTokens ?? null,
+        costUsd,
+        costBasis: costUsd === null ? null : "provider_reported",
+        executionMs: Math.max(0, settlementStartedAt - startedAt),
+        settlementMs: Math.max(0, settledAt - settlementStartedAt),
+      },
+    };
   }
 
   async queueUserInput(input: ConversationQueuedUserInput): Promise<void> {
@@ -423,7 +773,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
     if (input.signal.aborted) return this.cancelledBeforeDispatch(startedAt);
     const onAttachAbort = () => {
-      void this.close();
+      // The lifecycle owner observes the cached close outcome; an abort event
+      // cannot await it and must not create an unhandled rejection.
+      void this.close().catch(() => undefined);
     };
     input.signal.addEventListener("abort", onAttachAbort, { once: true });
     let attached: AttachOutcome;
@@ -444,7 +796,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       );
     }
 
-    if (!this.tasksLoaded) {
+    if (!this.captureRestricted && !this.tasksLoaded) {
       this.tasks = (await this.taskStore?.load()) ?? [];
       this.tasksLoaded = true;
       this.loseTasks("runtime_recovery", true);
@@ -463,6 +815,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // for. It is attempted at most once, and only after the active-worker
     // registry has proven no OTHER live worker owns this conversation.
     if (
+      !this.captureRestricted &&
       isBusyAgentOutcome(turn.outcome) &&
       !turn.state.aborted &&
       mayForceExpire(this.deps.transport, this.conversationId, session.workerId)
@@ -491,7 +844,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     await this.liveInputBarrier;
     await this.emitChain;
     await this.ledgerWriting;
-    if (this.acceptedThisPrompt)
+    if (this.acceptedThisPrompt && !this.captureRestricted)
       await this.deps.capabilityDelivery?.markDelivered();
 
     if (this.liveInputArchiveFailure !== null) {
@@ -552,13 +905,14 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       input.signal.addEventListener("abort", onAbort, { once: true });
       this.armStallTimer(turn);
       session.startTurn({
-        allowQuestions: input.onUserQuestion !== undefined,
+        allowQuestions:
+          !this.captureRestricted && input.onUserQuestion !== undefined,
         runId: turn.runId,
         promptText: dispatch.promptText,
         images: dispatch.images,
         structuredOutputInstruction: null,
         modelSelection: dispatch.modelSelection,
-        mcpServers: this.mcpServerMap(),
+        mcpServers: this.captureRestricted ? {} : this.mcpServerMap(),
         forceExpirePersistedRun: dispatch.forceExpirePersistedRun,
         queryBilling: this.shouldQueryBilling(),
       });
@@ -572,7 +926,11 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   }
 
   close(): Promise<void> {
-    this.closing ??= this.closeRuntime();
+    this.closing ??= this.closeRuntime().then(() => {
+      // A failed collection must stay failed on reconciliation so the owner
+      // retains the runtime and its worktree hold.
+      if (this.cleanupFailure !== null) throw new Error(this.cleanupFailure);
+    });
     return this.closing;
   }
 
@@ -757,6 +1115,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       cwd: this.worktreePath,
       storePath: this.deps.storePath(this.conversationId),
       modelSelection,
+      ...(this.captureRestricted
+        ? { executionProfile: "isolated-one-shot" as const }
+        : {}),
       ownerToken: this.workerOwnerToken,
       onFrame: (frame) => this.handleFrame(frame),
       onExit: (info) => this.handleExit(info.expected),
@@ -812,8 +1173,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       // Re-passed on resume, not just on create: the SDK does not persist the
       // MCP map with the agent, so a resumed agent whose attach omitted it
       // would run with no servers at all (D11, D18).
-      mcpServers: this.mcpServerMap(),
-      agents: this.deps.capabilityDelivery?.snapshot.agents ?? {},
+      mcpServers: this.captureRestricted ? {} : this.mcpServerMap(),
+      agents: this.captureRestricted
+        ? {}
+        : (this.deps.capabilityDelivery?.snapshot.agents ?? {}),
     });
     const timer = setTimeout(() => {
       settlement.resolve({
@@ -1449,6 +1812,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       case "attachResult": {
         const settlement = this.pendingAttach;
         this.pendingAttach = null;
+        if (this.captureRestricted && frame.outcome === "attached")
+          this.captureAttached = true;
         if (frame.outcome === "attached") this.reconcileBillingOnAttach();
         settlement?.resolve(
           frame.outcome === "attached"
@@ -1465,8 +1830,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
           this.touch(turn);
           if (this.acceptedThisPrompt) return;
           this.acceptedThisPrompt = true;
-          this.taskLossInstruction = null;
-          this.updateTasks([], true);
+          if (!this.captureRestricted) {
+            this.taskLossInstruction = null;
+            this.updateTasks([], true);
+          }
           this.emit({
             type: "input_accepted",
             mcpConfigHash: turn.mcpConfigHash,
@@ -1604,23 +1971,27 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // before any block derived from it reaches a consumer.
     this.emit({ type: "transcript_entry", entry: projection.entry });
     turn.compacted ||= projection.compacted;
-    const tasks = applyCursorTaskEvent(
-      this.tasks,
-      decoded.value,
-      turn.runId,
-      new Date(this.deps.now()).toISOString(),
-    );
-    if (tasks !== this.tasks) {
-      const persist =
-        tasks.length !== this.tasks.length ||
-        tasks.some((task, index) => task.status !== this.tasks[index]?.status);
-      if (persist)
-        logger.info("cursor-runtime.task_state", {
-          conversationId: this.conversationId,
-          runId: turn.runId,
-          tasks: tasks.map(({ taskId, status }) => ({ taskId, status })),
-        });
-      this.updateTasks(tasks, persist);
+    if (!this.captureRestricted) {
+      const tasks = applyCursorTaskEvent(
+        this.tasks,
+        decoded.value,
+        turn.runId,
+        new Date(this.deps.now()).toISOString(),
+      );
+      if (tasks !== this.tasks) {
+        const persist =
+          tasks.length !== this.tasks.length ||
+          tasks.some(
+            (task, index) => task.status !== this.tasks[index]?.status,
+          );
+        if (persist)
+          logger.info("cursor-runtime.task_state", {
+            conversationId: this.conversationId,
+            runId: turn.runId,
+            tasks: tasks.map(({ taskId, status }) => ({ taskId, status })),
+          });
+        this.updateTasks(tasks, persist);
+      }
     }
     for (const block of projection.blocks) {
       turn.contentDeltaCount += 1;
@@ -1911,6 +2282,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   // ============================================================
 
   private buildPromptText(input: ConversationBackendTurnInput): string {
+    if (this.captureRestricted) return input.promptText;
     const parts: string[] = [];
     if (input.onUserQuestion) {
       parts.push(

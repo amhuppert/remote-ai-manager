@@ -365,7 +365,17 @@ export function createCursorTaskRunner(
       } finally {
         if (timer) clearTimeout(timer);
         input.signal?.removeEventListener("abort", onAbort);
-        await runtime?.close();
+        try {
+          await runtime?.close();
+        } catch (error) {
+          // The task result below reports known worker collection failures.
+          // Keep other close failures visible to the caller.
+          if (
+            !(error instanceof Error) ||
+            error.message !== runtime?.cleanupFailure
+          )
+            throw error;
+        }
       }
       if (runtime?.cleanupFailure) {
         return {

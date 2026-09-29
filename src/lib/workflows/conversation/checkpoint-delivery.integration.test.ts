@@ -1058,6 +1058,7 @@ describe.each(["session", "project"] as const)(
     it.each([
       { backend: "claude" as const, mode: "tool-disabled" as const },
       { backend: "codex" as const, mode: "instruction-only" as const },
+      { backend: "cursor" as const, mode: "tool-disabled" as const },
     ])(
       "$backend captures once and delivers exact seed with one ordinary queued turn",
       async ({ backend, mode }) => {

@@ -142,13 +142,13 @@ export const cursorConversationCapabilities: BackendConversationCapabilities = {
   contextWindowMetrics: false,
   nativeMidTurnAskUser: false,
   externalTurns: false,
-  // Disabled until backend-continuation-probes holds real continuation evidence.
-  checkpoint: false,
-  checkpointFork: false,
+  // CC continuation documents, not native provider-state snapshots.
+  // See docs/reports/2026-09-29-cursor-continuity.md.
+  checkpoint: true,
+  checkpointFork: true,
   handoffCapture: {
-    available: false,
-    mode: null,
-    reason: "Capture is unavailable",
+    available: true,
+    mode: "tool-disabled",
   },
   capabilityKinds: [
     {

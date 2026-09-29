@@ -24,7 +24,7 @@ type SeedFixture = "current" | "pre-handoff-v1" | "included" | "omitted";
 
 async function fork(
   scope: "session" | "project",
-  backend: "claude" | "codex",
+  backend: "claude" | "codex" | "cursor",
   seedFixture: SeedFixture = "current",
 ) {
   let captureAvailable = true;
@@ -175,7 +175,12 @@ async function fork(
   );
   h.fixture.restart();
   const selection = {
-    modelId: backend === "codex" ? "gpt-6-astra" : "claude-opus-5",
+    modelId:
+      backend === "codex"
+        ? "gpt-6-astra"
+        : backend === "cursor"
+          ? "composer-2.5"
+          : "claude-opus-5",
     parameters: {},
   };
   const submit = (promptText: string) =>
@@ -201,7 +206,7 @@ async function fork(
 describe.each(["session", "project"] as const)(
   "%s checkpoint fork delivery",
   (scope) => {
-    it.each(["claude", "codex"] as const)(
+    it.each(["claude", "codex", "cursor"] as const)(
       "dispatches on the edited %s backend after restart, accepts the exact seed once, and leaves source continuity intact",
       async (backend) => {
         const f = await fork(scope, backend);
@@ -286,8 +291,10 @@ describe.each(["session", "project"] as const)(
       ["pre-handoff-v1", "codex"],
       ["included", "claude"],
       ["included", "codex"],
+      ["included", "cursor"],
       ["omitted", "claude"],
       ["omitted", "codex"],
+      ["omitted", "cursor"],
     ] as const)(
       "delivers and forks %s unchanged to %s without destination capture support",
       async (variant, backend) => {

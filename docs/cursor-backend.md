@@ -98,7 +98,11 @@ A Cursor agent id is a real provider handle: resuming a conversation returns to 
 
 Forks are **synthetic**: a fork seeds an independent agent and store with bounded transcript text from the source conversation, and the UI labels that seed as synthetic. Provider checkpoints and hidden state are not inherited, so a fork resumes from the visible transcript rather than from the source agent's internal state.
 
-Command Center checkpoint capture, checkpoint forks, and handoff summaries are declared unavailable for Cursor. Those actions are withheld rather than offered and then failing; history zoom and checkpoint-based recovery remain Claude and Codex features.
+Cursor supports **CC checkpoints** through the existing Compact context, history zoom, and checkpoint-fork actions. A checkpoint saves an immutable continuation document and provenance in SQLite; continuation starts a fresh agent with that document. Checkpoint forks select the saved document, excluding later source turns. These are not Cursor provider-state snapshots.
+
+**Compact with agent handoff** optionally captures advisory text from the source agent before checkpoint creation. The supervised worker resumes the same source reference with native tools, MCP, and custom tools disabled, then closes. Cancellation keeps the source reference; ordinary continuation reapplies its launch policy and tools. An unverified worker cleanup keeps the runtime hold rather than reporting successful collection.
+
+Native forks remain unresolved: SDK 1.0.31 and the assessed 1.0.32 API provide no supported independent fork or historical checkpoint selector. An authenticated storage-transplant experiment preserved state and independent identities, but required replacing SDK-owned metadata; it is not shipped as a native guarantee. See the [continuity evidence](./reports/2026-09-29-cursor-continuity.md) for anchor granularity, restart checks, and the exact blocker.
 
 ### Queueing and in-turn steering
 
@@ -232,11 +236,10 @@ The table below is rendered from Cursor's registered backend descriptor and is c
 | `conversation.capabilities.contextWindowMetrics` | false |
 | `conversation.capabilities.nativeMidTurnAskUser` | false |
 | `conversation.capabilities.externalTurns` | false |
-| `conversation.capabilities.checkpoint` | false |
-| `conversation.capabilities.checkpointFork` | false |
-| `conversation.capabilities.handoffCapture.available` | false |
-| `conversation.capabilities.handoffCapture.mode` | null |
-| `conversation.capabilities.handoffCapture.reason` | Capture is unavailable |
+| `conversation.capabilities.checkpoint` | true |
+| `conversation.capabilities.checkpointFork` | true |
+| `conversation.capabilities.handoffCapture.available` | true |
+| `conversation.capabilities.handoffCapture.mode` | tool-disabled |
 | `conversation.capabilities.capabilityKinds` | skills:next_conversation:available:source-only:translator:true:Skill selection is fixed for this conversation. Changes apply in a new conversation., plugins:next_conversation:available:source-only:translator:true:Supported plugin skills and agents are available. Native hooks, rules, and plugin MCP are not delivered; configure needed servers in CC's MCP settings., Plugin selection is fixed for this conversation. Changes apply in a new conversation., agents:next_conversation:available:source-only:translator:true:Agent definitions are fixed for this conversation. Changes apply in a new conversation. |
 | `conversation.fsWriteRestriction` | instruction-only |
 | `tasks.execution.classes` | nongoverned-task, governed-execution |
@@ -306,7 +309,7 @@ The most recent authenticated run, together with the application pass it accompa
 | Cursor turns fail with a runtime/platform error | The worker's Node is below 22.13, or `@cursor/sdk` / the derived `@cursor/sdk-${platform}-${arch}` package at 1.0.31 is missing, mismatched, or incompletely extracted. |
 | The model selector shows a model in red | This project's `agentBackends.cursor.disabledModels` turns that model off. Pick an available one, or remove the entry from `CommandCenter.json`. |
 | A turn is refused before it starts, naming a model | Same cause, arriving from the API — the model was validated before any worker or billable turn. |
-| A checkpoint, history zoom, or handoff action is missing on a Cursor conversation | Expected: checkpoint capture, checkpoint forks, and handoff are declared unavailable for Cursor. |
+| A checkpoint or handoff action is disabled | Wait for the current turn and any runtime hold to settle; checkpoint creation requires an eligible conversation boundary. Cursor supports CC continuation documents, not native provider snapshots. |
 | A script inside a Cursor conversation cannot find an API token | Expected: credential-shaped environment variables are stripped from Cursor workers. See [Cursor workers inherit no credentials](#cursor-workers-inherit-no-credentials-from-the-server). |
 | The conversation shows a "billed cost is unavailable" notice | The account's key cannot reach the provider's usage endpoint. Token counts are still recorded; cost stays unknown rather than estimated. |
 | The transcript header shows *Context unknown* | Expected and permanent: the SDK publishes no context-window figures. |

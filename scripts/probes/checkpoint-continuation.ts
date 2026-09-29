@@ -13,6 +13,7 @@
  * the probe itself arrives through a dynamic import below.
  */
 
+import { createProbeCallLedger } from "./checkpoint-continuation/budget";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -23,7 +24,7 @@ import {
   type ProbeModelSelection,
 } from "./checkpoint-continuation/environment";
 
-const BACKENDS = ["claude", "codex"] as const;
+const BACKENDS = ["claude", "codex", "cursor"] as const;
 type ProbeBackend = (typeof BACKENDS)[number];
 
 interface ProbeArgs {
@@ -32,11 +33,12 @@ interface ProbeArgs {
   runId: string;
   tempRoot: string;
   modelSelection: ProbeModelSelection | null;
+  compactionCallBudget: number;
 }
 
 function usage(): string {
   return [
-    "usage: run-checkpoint-continuation.sh --backend <claude|codex> [--scope <session|project>] [--run-id <id>] [--model <id>] [--reasoning <level>]",
+    "usage: run-checkpoint-continuation.sh --backend <claude|codex|cursor> [--scope <session|project>] [--run-id <id>] [--model <id>] [--reasoning <level>]",
     "",
     "--model pins the model every call in the run uses, for an account whose",
     "supported models differ from CC's default. The run's evidence names it.",
@@ -44,6 +46,7 @@ function usage(): string {
     "Runs three real checkpoint cycles, one of them delivered from the message",
     "queue, against an isolated scratch datastore and worktree under .cc/temp.",
     "Spends real provider credit, bounded to 12 ordinary and 6 compaction calls.",
+    "--compaction-call-budget (1-18) can cover work/format/repair transport turns.",
   ].join("\n");
 }
 
@@ -71,9 +74,19 @@ function parseArgs(argv: readonly string[]): ProbeArgs {
   if (scope !== "session" && scope !== "project") {
     throw new Error(`--scope must be session or project\n\n${usage()}`);
   }
+  const compactionCallBudget = Number(
+    values.get("compaction-call-budget") ?? 6,
+  );
+  if (
+    !Number.isInteger(compactionCallBudget) ||
+    compactionCallBudget < 1 ||
+    compactionCallBudget > 18
+  )
+    throw new Error("--compaction-call-budget must be an integer from 1 to 18");
   const modelId = values.get("model");
   return {
     backend: backend as ProbeBackend,
+    compactionCallBudget,
     scope,
     runId:
       values.get("run-id") ??
@@ -90,7 +103,9 @@ function parseArgs(argv: readonly string[]): ProbeArgs {
                     fast: "false",
                     reasoning: values.get("reasoning") ?? "high",
                   }
-                : { effort: values.get("reasoning") ?? "high" },
+                : backend === "cursor"
+                  ? { fast: "false" }
+                  : { effort: values.get("reasoning") ?? "high" },
           },
   };
 }
@@ -118,6 +133,9 @@ async function main(): Promise<number> {
     backend: args.backend,
     scope: args.scope,
     environment,
+    ledger: createProbeCallLedger({
+      budget: { ordinary: 12, compaction: args.compactionCallBudget },
+    }),
   });
 
   mkdirSync(environment.evidenceDir, { recursive: true });

@@ -15,6 +15,7 @@
  * references, hashes and receipts.
  */
 
+import { readProbeAssistantTexts } from "./transcript";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -441,22 +442,10 @@ export async function runCheckpointContinuationProbe(
       .join("");
   }
 
-  function assistantTexts(): string[] {
-    return archiveLines(transcriptPath)
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as TranscriptEntry)
-      .filter((entry) => entry.role === "assistant")
-      .map((entry) =>
-        (entry.content ?? [])
-          .map((block) => (block.type === "text" ? block.text : ""))
-          .join("\n"),
-      );
-  }
-
   /** Drain the queue and wait for the delivered turn to settle. */
   async function drainQueuedTurn(label: string): Promise<string> {
     const token = ledger.admit("ordinary", label, backend);
-    const before = assistantTexts().length;
+    const before = (await readProbeAssistantTexts(transcriptPath)).length;
     const completionsBefore = promptCompletionCosts(
       readRunLog(environment.configDir),
     ).length;
@@ -474,7 +463,11 @@ export async function runCheckpointContinuationProbe(
           (entry) =>
             entry.status !== "pending" && entry.status !== "delivering",
         );
-      if (drained && assistantTexts().length > before) break;
+      if (
+        drained &&
+        (await readProbeAssistantTexts(transcriptPath)).length > before
+      )
+        break;
       if (Date.now() > deadline) {
         throw new Error(`queued turn "${label}" never settled`);
       }
@@ -495,7 +488,7 @@ export async function runCheckpointContinuationProbe(
     ledger.settle(token, {
       costUsd: delivered.length === 1 ? (delivered[0] ?? null) : null,
     });
-    return assistantTexts().at(-1) ?? "";
+    return (await readProbeAssistantTexts(transcriptPath)).at(-1) ?? "";
   }
 
   // ---- one warm-up turn, so a live runtime exists to retire --------------
