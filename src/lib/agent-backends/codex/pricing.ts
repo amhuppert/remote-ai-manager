@@ -18,8 +18,14 @@ import {
  * Published OpenAI API standard short-context rates (USD per 1M tokens).
  * Cached input is billed at 10% of fresh input per OpenAI's prompt-caching
  * discount; the GPT-5.4-family cached rates apply that published discount.
+ * GPT-6.1 Sol publishes a 5% cached rate instead.
  */
 export const DEFAULT_CODEX_PRICING: CodexPricingTable = {
+  "gpt-6.1-sol": {
+    inputPerMillion: 2,
+    cachedInputPerMillion: 0.1,
+    outputPerMillion: 10,
+  },
   "gpt-6-astra": {
     inputPerMillion: 10,
     cachedInputPerMillion: 1,

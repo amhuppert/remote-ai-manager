@@ -203,6 +203,7 @@ describe("getModelOptionsForBackend", () => {
 
   it("returns Codex models for codex backend", () => {
     expect(getModelOptionsForBackend("codex")).toEqual([
+      "gpt-6.1-sol",
       "gpt-6-astra",
       "gpt-6-sol",
       "gpt-6-luna",

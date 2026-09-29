@@ -252,7 +252,7 @@ describe("Implementer screen", () => {
         agent: {
           backend: "codex",
           modelSelection: {
-            modelId: "gpt-6-sol",
+            modelId: "gpt-6.1-sol",
             parameters: { reasoning: "high", fast: "false" },
           },
         },

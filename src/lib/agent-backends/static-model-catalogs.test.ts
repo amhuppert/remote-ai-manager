@@ -78,17 +78,43 @@ describe("static backend model catalogs", () => {
     ).toBe(false);
   });
 
-  it("defaults Codex to GPT-6 Sol", () => {
+  it("defaults Codex to GPT-6.1 Sol", () => {
     expect(getStaticBackendModelCatalog("codex").defaultModelId).toBe(
-      "gpt-6-sol",
+      "gpt-6.1-sol",
     );
+  });
+
+  it("offers GPT-6.1 Sol as the flagship with low through ultra", () => {
+    const catalog = getStaticBackendModelCatalog("codex");
+
+    expect(catalog.models.find(({ id }) => id === "gpt-6.1-sol")).toEqual(
+      expect.objectContaining({
+        label: "GPT-6.1 Sol",
+        description: "Flagship",
+      }),
+    );
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6.1-sol",
+        parameters: { reasoning: "ultra", fast: "false" },
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6.1-sol",
+        parameters: { reasoning: "minimal", fast: "false" },
+      }).valid,
+    ).toBe(false);
   });
 
   it("offers GPT-6 Sol and Luna with only their supported reasoning levels", () => {
     const catalog = getStaticBackendModelCatalog("codex");
 
     expect(catalog.models.find(({ id }) => id === "gpt-6-sol")).toEqual(
-      expect.objectContaining({ label: "GPT-6 Sol", description: "Flagship" }),
+      expect.objectContaining({
+        label: "GPT-6 Sol",
+        description: "Previous flagship",
+      }),
     );
     expect(catalog.models.find(({ id }) => id === "gpt-6-luna")).toEqual(
       expect.objectContaining({

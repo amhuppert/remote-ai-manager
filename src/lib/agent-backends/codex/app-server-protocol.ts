@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CODEX_APP_SERVER_VERSION = "0.156.0";
+export const CODEX_APP_SERVER_VERSION = "0.159.0";
 export const APP_SERVER_LIMITS = {
   recordBytes: 16 * 1024 * 1024,
   queuedBytes: 16 * 1024 * 1024,

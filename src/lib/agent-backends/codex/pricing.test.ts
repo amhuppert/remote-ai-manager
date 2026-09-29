@@ -72,6 +72,13 @@ describe("estimateCodexCostUsd", () => {
     );
   });
 
+  it("prices GPT-6.1 Sol at its standard short-context rates", () => {
+    expect(estimateCodexCostUsd(usage, "gpt-6.1-sol")).toBeCloseTo(
+      (90 * 2 + 10 * 0.1 + 50 * 10) / 1_000_000,
+      10,
+    );
+  });
+
   it("prices GPT-6 Sol and Luna at their standard short-context rates", () => {
     expect(estimateCodexCostUsd(usage, "gpt-6-sol")).toBeCloseTo(
       (90 * 2 + 10 * 0.2 + 50 * 10) / 1_000_000,
@@ -85,7 +92,7 @@ describe("estimateCodexCostUsd", () => {
 
   it("falls back to the default Codex model when modelId is undefined", () => {
     expect(estimateCodexCostUsd(usage, undefined)).toBe(
-      estimateCodexCostUsd(usage, "gpt-6-sol"),
+      estimateCodexCostUsd(usage, "gpt-6.1-sol"),
     );
   });
 
